@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wb-wrap-ui</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="app-title">wb-wrap</span>
+      <button id="btn-new" title="New session">+</button>
+    </div>
+    <div id="session-list"></div>
+  </div>
+  <div id="main">
+    <div id="terminal-container"></div>
+    <div id="empty-state">
+      <p>No sessions yet</p>
+      <p class="hint">Click <strong>+</strong> to create one</p>
+    </div>
+  </div>
+
+  <!-- New session dialog -->
+  <div id="dialog-overlay" class="hidden">
+    <div id="dialog">
+      <h3>New Session</h3>
+      <label>Name
+        <input type="text" id="input-name" placeholder="e.g. alice">
+      </label>
+      <label>Type
+        <select id="input-type">
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+          <option value="bash">bash</option>
+        </select>
+      </label>
+      <label>Working Directory
+        <div class="dir-picker">
+          <input type="text" id="input-cwd" readonly>
+          <button id="btn-browse" class="secondary" type="button">Browse</button>
+        </div>
+      </label>
+      <div class="dialog-actions">
+        <button id="btn-cancel" class="secondary">Cancel</button>
+        <button id="btn-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

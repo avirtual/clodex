@@ -1,0 +1,330 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --sidebar-width: 220px;
+  --bg: #1a1a2e;
+  --sidebar-bg: #16213e;
+  --sidebar-hover: #1a2744;
+  --active-bg: #0f3460;
+  --accent: #e94560;
+  --text: #eee;
+  --text-dim: #8892a4;
+  --border: #253253;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Draggable titlebar area — only the sidebar header */
+#sidebar-header {
+  -webkit-app-region: drag;
+}
+#sidebar-header button {
+  -webkit-app-region: no-drag;
+}
+
+#sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100%;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+#sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 10px;
+  padding-top: 42px;
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+#btn-new {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+}
+
+#btn-new:hover {
+  opacity: 0.85;
+}
+
+#session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  position: relative;
+}
+
+.session-item:hover {
+  background: var(--sidebar-hover);
+}
+
+.session-item.active {
+  background: var(--active-bg);
+}
+
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.session-item.active .session-dot {
+  background: #4ade80;
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-type {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.session-close {
+  opacity: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.session-item:hover .session-close {
+  opacity: 1;
+}
+
+.session-close:hover {
+  color: var(--accent);
+}
+
+/* Main area */
+
+#main {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  bottom: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#terminal-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.terminal-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  visibility: hidden;
+}
+
+.terminal-wrapper.visible {
+  visibility: visible;
+}
+
+.terminal-wrapper .xterm {
+  height: 100%;
+}
+
+#empty-state {
+  text-align: center;
+  color: var(--text-dim);
+  z-index: 1;
+}
+
+#empty-state p {
+  margin-bottom: 6px;
+}
+
+#empty-state .hint {
+  font-size: 12px;
+}
+
+/* Dialog */
+
+#dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#dialog-overlay.hidden {
+  display: none;
+}
+
+#dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 360px;
+}
+
+#dialog h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+}
+
+#dialog label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+#dialog input,
+#dialog select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+#dialog input:focus,
+#dialog select:focus {
+  border-color: var(--accent);
+}
+
+.dir-picker {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.dir-picker input {
+  flex: 1;
+  margin-top: 0;
+  cursor: pointer;
+}
+
+.dir-picker button {
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.dialog-actions button {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+#btn-create {
+  background: var(--accent);
+  color: #fff;
+}
+
+#btn-create:hover {
+  opacity: 0.85;
+}
+
+.secondary {
+  background: var(--border);
+  color: var(--text);
+}
+
+.secondary:hover {
+  background: #2e4068;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
