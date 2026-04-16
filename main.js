@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -56,6 +56,14 @@ const persistence = {
     const entry = all.find(s => s.name === name);
     if (entry && entry.sessionId !== sessionId) {
       entry.sessionId = sessionId;
+      this._save(all);
+    }
+  },
+  setLabel(name, label) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      entry.label = label;
       this._save(all);
     }
   },
@@ -407,10 +415,11 @@ function extractText(obj) {
 }
 
 class JsonlWatcher {
-  constructor(name, onText, onSessionId) {
+  constructor(name, onText, onSessionId, onActivity) {
     this._name = name;
     this._onText = onText;
     this._onSessionId = onSessionId || (() => {});
+    this._onActivity = onActivity || (() => {});
     this._stopped = false;
     this._timer = null;
     this._fd = null;
@@ -419,6 +428,14 @@ class JsonlWatcher {
     this._pendingText = null;
     this._pendingTime = 0;
     this._readBuf = '';
+    this._activityState = 'idle';
+  }
+
+  _setActivity(state) {
+    if (this._activityState !== state) {
+      this._activityState = state;
+      try { this._onActivity(state); } catch {}
+    }
   }
 
   start() {
@@ -498,6 +515,7 @@ class JsonlWatcher {
         this._pendingRid = rid;
         this._pendingText = text;
         this._pendingTime = Date.now();
+        this._setActivity('thinking');
       } else if (!['assistant', 'response_item'].includes(obj.type || '')) {
         if (this._pendingText) this._flushPending();
       }
@@ -507,6 +525,7 @@ class JsonlWatcher {
   _flushPending() {
     if (this._pendingText) {
       try { this._onText(this._pendingText); } catch {}
+      this._setActivity('idle');
     }
     this._pendingRid = null;
     this._pendingText = null;
@@ -650,6 +669,7 @@ class SessionManager {
     if (agentType) {
       persistence.upsert({
         name, type, cwd,
+        extraArgs,
         sessionId: resumeId || null,
       });
     }
@@ -662,6 +682,23 @@ class SessionManager {
         (sessionId) => {
           session.sessionId = sessionId;
           persistence.setSessionId(name, sessionId);
+        },
+        (state) => {
+          // state: 'thinking' | 'idle'
+          this._send('session-activity', name, state);
+          // Surface a system notification when an agent finishes
+          if (state === 'idle' && this.win && !this.win.isFocused()) {
+            try {
+              const { Notification } = require('electron');
+              if (Notification.isSupported()) {
+                new Notification({
+                  title: `${name} finished`,
+                  body: 'Agent completed a turn.',
+                  silent: false,
+                }).show();
+              }
+            } catch {}
+          }
         },
       );
       session.watcher.start();
@@ -926,6 +963,7 @@ app.whenReady().then(() => {
   ipcMain.handle('session:list', () => manager.list());
   ipcMain.handle('session:kill', (_e, name) => manager.kill(name));
   ipcMain.handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
+  ipcMain.handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
 
   ipcMain.handle('dialog:selectDirectory', async () => {
     const result = await dialog.showOpenDialog({
@@ -933,6 +971,54 @@ app.whenReady().then(() => {
       defaultPath: os.homedir(),
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.on('session:context-menu', (e, { name, cwd }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'Switch to Session',
+        click: () => e.sender.send('session:context-action', { action: 'switch', name }),
+      },
+      {
+        label: 'Rename…',
+        click: () => e.sender.send('session:context-action', { action: 'rename', name }),
+      },
+      { type: 'separator' },
+      {
+        label: 'Reveal Working Directory in Finder',
+        enabled: !!cwd,
+        click: () => { if (cwd) shell.showItemInFolder(cwd); },
+      },
+      {
+        label: 'Open in Terminal',
+        enabled: !!cwd,
+        click: () => {
+          if (!cwd) return;
+          // Open Terminal.app at the cwd
+          const { exec } = require('child_process');
+          exec(`open -a Terminal "${cwd.replace(/"/g, '\\"')}"`);
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Kill Session',
+        click: () => e.sender.send('session:context-action', { action: 'kill', name }),
+      },
+    ]);
+    menu.popup({ window: win });
+  });
+
+  ipcMain.handle('dialog:confirmKill', async (_e, name) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'warning',
+      buttons: ['Kill', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Kill session "${name}"?`,
+      detail: 'This ends the agent process. The conversation history is preserved and can be resumed later.',
+    });
+    return result.response === 0;
   });
 
   ipcMain.on('pty-input', (_e, name, data) => {
@@ -945,8 +1031,19 @@ app.whenReady().then(() => {
     const restored = [];
     for (const entry of saved) {
       try {
-        await manager.create(entry.name, entry.type, entry.cwd, [], entry.sessionId);
-        restored.push({ name: entry.name, type: entry.type });
+        await manager.create(
+          entry.name,
+          entry.type,
+          entry.cwd,
+          entry.extraArgs || [],
+          entry.sessionId,
+        );
+        restored.push({
+          name: entry.name,
+          type: entry.type,
+          cwd: entry.cwd,
+          label: entry.label || null,
+        });
       } catch (err) {
         console.error(`Failed to restore session ${entry.name}:`, err.message);
         persistence.remove(entry.name);

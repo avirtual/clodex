@@ -21,6 +21,17 @@
       <p>No sessions yet</p>
       <p class="hint">Click <strong>+</strong> to create one</p>
     </div>
+    <div id="ipc-log" class="collapsed">
+      <div id="ipc-log-header">
+        <span class="ipc-title">IPC Traffic</span>
+        <span class="ipc-count" id="ipc-count">0</span>
+        <button id="ipc-clear" title="Clear log" type="button">Clear</button>
+        <button id="ipc-toggle" title="Toggle panel" type="button">▲</button>
+      </div>
+      <div id="ipc-log-body">
+        <div id="ipc-empty">No messages yet. Inter-agent DMs and broadcasts will appear here.</div>
+      </div>
+    </div>
   </div>
 
   <!-- New session dialog -->
@@ -42,6 +53,10 @@
           <input type="text" id="input-cwd" readonly>
           <button id="btn-browse" class="secondary" type="button">Browse</button>
         </div>
+      </label>
+      <label>Extra CLI args
+        <input type="text" id="input-args" placeholder="(none)">
+        <span class="hint-text" id="args-hint"></span>
       </label>
       <div class="dialog-actions">
         <button id="btn-cancel" class="secondary">Cancel</button>

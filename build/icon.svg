@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Background: rounded square in deep navy -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a1a2e"/>
+      <stop offset="1" stop-color="#0f3460"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e94560"/>
+      <stop offset="1" stop-color="#ff6b8a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Two stacked terminal "windows" suggesting two agents -->
+  <!-- Back window -->
+  <rect x="220" y="180" width="640" height="430" rx="36" ry="36" fill="#16213e" stroke="#253253" stroke-width="6"/>
+  <circle cx="270" cy="230" r="14" fill="#e94560"/>
+  <circle cx="312" cy="230" r="14" fill="#fbbf24"/>
+  <circle cx="354" cy="230" r="14" fill="#4ade80"/>
+  <text x="280" y="430" font-family="SF Mono, Menlo, monospace" font-size="180" font-weight="700" fill="#8892a4">&gt;_</text>
+
+  <!-- Front window (offset) -->
+  <rect x="160" y="410" width="640" height="430" rx="36" ry="36" fill="#1a2744" stroke="url(#accent)" stroke-width="8"/>
+  <circle cx="210" cy="460" r="14" fill="#e94560"/>
+  <circle cx="252" cy="460" r="14" fill="#fbbf24"/>
+  <circle cx="294" cy="460" r="14" fill="#4ade80"/>
+  <text x="220" y="660" font-family="SF Mono, Menlo, monospace" font-size="180" font-weight="700" fill="url(#accent)">&gt;_</text>
+
+  <!-- Connection arrow between them -->
+  <path d="M 720 450 Q 800 500 720 550" fill="none" stroke="url(#accent)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M 700 535 L 720 555 L 740 535" fill="none" stroke="url(#accent)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

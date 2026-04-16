@@ -111,10 +111,22 @@ html, body {
   border-radius: 50%;
   background: var(--text-dim);
   flex-shrink: 0;
+  transition: background 0.2s;
 }
 
 .session-item.active .session-dot {
   background: #4ade80;
+}
+
+/* Thinking: pulsing amber dot */
+.session-item[data-activity="thinking"] .session-dot {
+  background: #fbbf24;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
 }
 
 .session-info {
@@ -130,11 +142,42 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.rename-input {
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  width: calc(100% - 4px);
+  outline: none;
+}
+
+.session-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
 .session-type {
   font-size: 11px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.session-cwd {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'SF Mono', 'Menlo', monospace;
 }
 
 .session-close {
@@ -176,7 +219,12 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 32px; /* collapsed IPC log header height */
+  transition: bottom 0.2s ease;
+}
+
+#main.ipc-expanded #terminal-container {
+  bottom: 220px;
 }
 
 .terminal-wrapper {
@@ -266,6 +314,14 @@ html, body {
   border-color: var(--accent);
 }
 
+.hint-text {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .dir-picker {
   display: flex;
   gap: 6px;
@@ -315,6 +371,153 @@ html, body {
 
 .secondary:hover {
   background: #2e4068;
+}
+
+/* IPC log panel */
+
+#ipc-log {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--sidebar-bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+  transition: height 0.2s ease;
+  height: 220px;
+  max-height: 50%;
+}
+
+#ipc-log.collapsed {
+  height: 32px;
+}
+
+#ipc-log.collapsed #ipc-log-body {
+  display: none;
+}
+
+#ipc-log-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.ipc-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ipc-count {
+  font-size: 10px;
+  background: var(--accent);
+  color: white;
+  border-radius: 10px;
+  padding: 1px 7px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.ipc-count.zero {
+  background: var(--border);
+  color: var(--text-dim);
+}
+
+#ipc-log-header button {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+#ipc-log-header button:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+#ipc-toggle {
+  font-size: 10px !important;
+  transition: transform 0.2s;
+}
+
+#ipc-log.collapsed #ipc-toggle {
+  transform: rotate(180deg);
+}
+
+#ipc-log-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+}
+
+#ipc-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  text-align: center;
+  padding: 30px 0;
+}
+
+.ipc-entry {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  align-items: flex-start;
+}
+
+.ipc-time {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.ipc-arrow {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ipc-from, .ipc-to {
+  font-weight: 600;
+  color: #60a5fa;
+  flex-shrink: 0;
+}
+
+.ipc-to {
+  color: #4ade80;
+}
+
+.ipc-body {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+.ipc-bcast {
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.ipc-bcast .ipc-to {
+  color: #fbbf24;
 }
 
 /* Scrollbar */
