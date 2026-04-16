@@ -13,6 +13,8 @@ window.api = {
     ipcRenderer.send('pty-input', name, data),
   selectDirectory: () =>
     ipcRenderer.invoke('dialog:selectDirectory'),
+  restoreSessions: () =>
+    ipcRenderer.invoke('app:restore-sessions'),
 
   onPtyData: (callback) =>
     ipcRenderer.on('pty-data', (_e, name, data) => callback(name, data)),

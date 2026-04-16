@@ -17,6 +17,51 @@ const LONG_TEXT_DELAY = 1000;
 const SHORT_TEXT_DELAY = 50;
 
 // ---------------------------------------------------------------------------
+// Persistence — remember sessions across app restarts
+// ---------------------------------------------------------------------------
+
+let PERSIST_FILE = null; // initialized after app.whenReady() (needs app.getPath)
+
+const persistence = {
+  _load() {
+    try {
+      return JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
+    } catch {
+      return [];
+    }
+  },
+  _save(entries) {
+    try {
+      fs.mkdirSync(path.dirname(PERSIST_FILE), { recursive: true });
+      fs.writeFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
+    } catch (e) {
+      console.error('persistence save failed:', e);
+    }
+  },
+  list() {
+    return this._load();
+  },
+  upsert(entry) {
+    const all = this._load();
+    const idx = all.findIndex(s => s.name === entry.name);
+    if (idx >= 0) all[idx] = { ...all[idx], ...entry };
+    else all.push(entry);
+    this._save(all);
+  },
+  remove(name) {
+    this._save(this._load().filter(s => s.name !== name));
+  },
+  setSessionId(name, sessionId) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry && entry.sessionId !== sessionId) {
+      entry.sessionId = sessionId;
+      this._save(all);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -362,9 +407,10 @@ function extractText(obj) {
 }
 
 class JsonlWatcher {
-  constructor(name, onText) {
+  constructor(name, onText, onSessionId) {
     this._name = name;
     this._onText = onText;
+    this._onSessionId = onSessionId || (() => {});
     this._stopped = false;
     this._timer = null;
     this._fd = null;
@@ -403,6 +449,11 @@ class JsonlWatcher {
         this._fd = fs.openSync(target, 'r');
         this._currentTarget = target;
         this._readBuf = '';
+        // Session id = transcript filename without .jsonl extension
+        const sessionId = path.basename(target, '.jsonl');
+        if (sessionId) {
+          try { this._onSessionId(sessionId); } catch {}
+        }
       }
     } catch {}
 
@@ -510,7 +561,7 @@ class SessionManager {
     }
   }
 
-  async create(name, type, cwd, extraArgs = []) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
@@ -531,6 +582,10 @@ class SessionManager {
         // Allow reading spilled message files without prompting
         ensureDir(MSG_DIR);
         if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+        // Resume previous conversation if we have a session id
+        if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
+          args.push('--resume', resumeId);
+        }
         break;
       }
       case 'codex': {
@@ -541,6 +596,9 @@ class SessionManager {
         if (!args.includes('--no-alt-screen')) args.push('--no-alt-screen');
         ensureDir(MSG_DIR);
         if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+        if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
+          args.push('--resume', resumeId);
+        }
         break;
       }
       case 'bash':
@@ -563,31 +621,49 @@ class SessionManager {
       env,
     });
 
-    // Registry + transport
-    const socketPath = path.join(REGISTRY_DIR, `${name}.sock`);
-    const transport = new Transport(socketPath, (msg) => {
-      this._onIncoming(name, msg);
-    });
-    await transport.start();
+    // Registry + transport — only for agent sessions; bash sessions are private
+    let transport = null;
+    let socketPath = null;
+    if (agentType) {
+      socketPath = path.join(REGISTRY_DIR, `${name}.sock`);
+      transport = new Transport(socketPath, (msg) => {
+        this._onIncoming(name, msg);
+      });
+      await transport.start();
 
-    try {
-      registry.register(name, socketPath);
-    } catch (e) {
-      await transport.stop();
-      throw e;
+      try {
+        registry.register(name, socketPath);
+      } catch (e) {
+        await transport.stop();
+        throw e;
+      }
     }
 
     const session = {
       name, type, cwd, pty: ptyProc, transport, socketPath,
       agentType, lineBuffer: '', watcher: null,
+      sessionId: resumeId || null,
     };
     this.sessions.set(name, session);
 
+    // Persist this session so we can resume it on next launch
+    if (agentType) {
+      persistence.upsert({
+        name, type, cwd,
+        sessionId: resumeId || null,
+      });
+    }
+
     // JSONL watcher for agent modes
     if (agentType) {
-      session.watcher = new JsonlWatcher(name, (text) => {
-        this._scanJsonlText(text, name);
-      });
+      session.watcher = new JsonlWatcher(
+        name,
+        (text) => this._scanJsonlText(text, name),
+        (sessionId) => {
+          session.sessionId = sessionId;
+          persistence.setSessionId(name, sessionId);
+        },
+      );
       session.watcher.start();
     }
 
@@ -621,6 +697,9 @@ class SessionManager {
   async kill(name) {
     const s = this.sessions.get(name);
     if (!s) return;
+    // User-initiated kill — forget this session so it doesn't resume on relaunch
+    s._userKilled = true;
+    persistence.remove(name);
     s.pty.kill();
     setTimeout(() => {
       try { process.kill(s.pty.pid, 'SIGKILL'); } catch {}
@@ -637,8 +716,13 @@ class SessionManager {
   }
 
   async killAll() {
+    // App shutdown — mark all sessions so _cleanup knows not to wipe persistence
+    for (const s of this.sessions.values()) {
+      s._shuttingDown = true;
+    }
     for (const [name] of this.sessions) {
-      await this.kill(name);
+      const s = this.sessions.get(name);
+      s.pty.kill();
     }
   }
 
@@ -646,8 +730,8 @@ class SessionManager {
     const s = this.sessions.get(name);
     if (!s) return;
     if (s.watcher) s.watcher.stop();
-    s.transport.stop();
-    registry.unregister(name);
+    if (s.transport) s.transport.stop();
+    if (s.agentType) registry.unregister(name);
     if (s.agentType === 'claude') cleanupClaudeHook(name);
     if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
     this.sessions.delete(name);
@@ -700,11 +784,11 @@ class SessionManager {
 
     switch (intent.type) {
       case 'dm': {
-        // Try local session first, then external peer
+        // Only deliver to agent sessions; bash sessions can't process intents
         const localTarget = this.sessions.get(intent.target);
-        if (localTarget) {
+        if (localTarget && localTarget.agentType) {
           this._deliverMessage(intent.target, senderName, intent.body, 'dm');
-        } else {
+        } else if (!localTarget) {
           const peer = registry.getPeer(intent.target);
           if (peer) {
             await Transport.send(peer.socket, {
@@ -718,9 +802,9 @@ class SessionManager {
         break;
       }
       case 'broadcast': {
-        // Local sessions
-        for (const [name] of this.sessions) {
-          if (name !== senderName) {
+        // Local agent sessions only
+        for (const [name, s] of this.sessions) {
+          if (name !== senderName && s.agentType) {
             this._deliverMessage(name, senderName, intent.body, 'broadcast');
           }
         }
@@ -737,11 +821,14 @@ class SessionManager {
         break;
       }
       case 'who': {
-        const localNames = Array.from(this.sessions.keys());
+        // Only agent sessions are addressable peers — bash can't process intents
+        const localAgents = Array.from(this.sessions.values())
+          .filter(s => s.agentType)
+          .map(s => s.name);
         const externalNames = registry.listPeers()
           .map(p => p.name)
           .filter(n => !this.sessions.has(n));
-        const allNames = [...localNames, ...externalNames];
+        const allNames = [...localAgents, ...externalNames];
         const others = allNames.filter(n => n !== senderName);
         const list = others.length ? others.join(', ') : '(none)';
         if (session) this._injectText(session, `[peers] ${list}`);
@@ -823,6 +910,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  PERSIST_FILE = path.join(app.getPath('userData'), 'sessions.json');
+
   cleanupOldMessages();
   registry.cleanup();
 
@@ -848,6 +937,22 @@ app.whenReady().then(() => {
 
   ipcMain.on('pty-input', (_e, name, data) => {
     manager.write(name, data);
+  });
+
+  // Renderer tells us it's ready — that's when we restore saved sessions
+  ipcMain.handle('app:restore-sessions', async () => {
+    const saved = persistence.list();
+    const restored = [];
+    for (const entry of saved) {
+      try {
+        await manager.create(entry.name, entry.type, entry.cwd, [], entry.sessionId);
+        restored.push({ name: entry.name, type: entry.type });
+      } catch (err) {
+        console.error(`Failed to restore session ${entry.name}:`, err.message);
+        persistence.remove(entry.name);
+      }
+    }
+    return restored;
   });
 
   createWindow();

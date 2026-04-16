@@ -206,15 +206,9 @@ inputCwd.addEventListener('click', async () => {
   if (dir) inputCwd.value = dir;
 });
 
-// Enter to create, Escape to cancel
+// Enter to create (Escape no longer closes — only Cancel button does)
 dialogOverlay.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') doCreate();
-  if (e.key === 'Escape') closeDialog();
-});
-
-// Click outside dialog to cancel
-dialogOverlay.addEventListener('click', (e) => {
-  if (e.target === dialogOverlay) closeDialog();
 });
 
 // ---------------------------------------------------------------------------
@@ -244,6 +238,22 @@ const resizeObserver = new ResizeObserver(() => {
 });
 
 resizeObserver.observe(terminalContainer);
+
+// ---------------------------------------------------------------------------
+// Restore sessions on startup
+// ---------------------------------------------------------------------------
+
+(async function restoreSessions() {
+  const restored = await window.api.restoreSessions();
+  if (!restored || restored.length === 0) return;
+
+  for (const entry of restored) {
+    createTerminal(entry.name);
+    addSessionToSidebar(entry.name, entry.type);
+  }
+  // Focus the first restored session
+  switchSession(restored[0].name);
+})();
 
 // ---------------------------------------------------------------------------
 // Helpers
