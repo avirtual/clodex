@@ -1,5 +1,6 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
+const { SearchAddon } = require('@xterm/addon-search');
 
 // ---------------------------------------------------------------------------
 // State
@@ -18,6 +19,10 @@ const inputType = document.getElementById('input-type');
 const inputCwd = document.getElementById('input-cwd');
 const inputArgs = document.getElementById('input-args');
 const argsHint = document.getElementById('args-hint');
+const inputTemplate = document.getElementById('input-template');
+const templateRow = document.getElementById('template-row');
+const btnTemplateDelete = document.getElementById('btn-template-delete');
+const btnSaveTemplate = document.getElementById('btn-save-template');
 
 // Default extra CLI args per session type — user can edit or clear
 const DEFAULT_ARGS = {
@@ -119,6 +124,13 @@ window.api.onSessionContextAction(({ action, name }) => {
         if (ok) window.api.killSession(name);
       });
       break;
+    case 'export':
+      window.api.exportSessionMarkdown(name).then((res) => {
+        if (!res.ok && res.error !== 'cancelled') {
+          console.error('Export failed:', res.error);
+        }
+      });
+      break;
   }
 });
 
@@ -216,6 +228,16 @@ function createTerminal(name) {
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
 
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
+  searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+    // Only update UI if this is the active session
+    if (activeSession === name) {
+      if (resultCount === 0) searchInfo.textContent = 'no matches';
+      else searchInfo.textContent = `${resultIndex + 1}/${resultCount}`;
+    }
+  });
+
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'terminal-wrapper';
   wrapperEl.dataset.name = name;
@@ -228,13 +250,16 @@ function createTerminal(name) {
     window.api.writeToSession(name, data);
   });
 
-  sessions.set(name, { terminal, fitAddon, wrapperEl });
+  sessions.set(name, { terminal, fitAddon, searchAddon, wrapperEl });
   updateWindowTitle();
-  return { terminal, fitAddon, wrapperEl };
+  return { terminal, fitAddon, searchAddon, wrapperEl };
 }
 
 function switchSession(name) {
   if (!sessions.has(name)) return;
+
+  // Close search if open — decorations are per-terminal
+  if (!searchBar.classList.contains('hidden')) closeSearch();
 
   activeSession = name;
 
@@ -288,17 +313,70 @@ function applyTypeDefaults() {
   argsHint.textContent = ARGS_HINTS[type] || '';
 }
 
-function openDialog() {
+async function refreshTemplatesDropdown() {
+  const list = await window.api.listTemplates();
+  // Clear existing options except the placeholder
+  while (inputTemplate.options.length > 1) inputTemplate.remove(1);
+  for (const t of list) {
+    const opt = document.createElement('option');
+    opt.value = t.id;
+    opt.textContent = t.name;
+    inputTemplate.appendChild(opt);
+  }
+  templateRow.style.display = list.length > 0 ? '' : 'none';
+  return list;
+}
+
+async function openDialog() {
   sessionCounter++;
   inputName.value = `session-${sessionCounter}`;
   inputType.value = 'claude';
+  inputCwd.value = homeDir;
+  inputTemplate.value = '';
   applyTypeDefaults();
   inputName.style.borderColor = '';
+  await refreshTemplatesDropdown();
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
 }
 
 inputType.addEventListener('change', applyTypeDefaults);
+
+// Apply a template's values to the form when selected
+inputTemplate.addEventListener('change', async () => {
+  const id = inputTemplate.value;
+  if (!id) return;
+  const list = await window.api.listTemplates();
+  const t = list.find(x => x.id === id);
+  if (!t) return;
+  inputType.value = t.type;
+  inputCwd.value = t.cwd || homeDir;
+  inputArgs.value = (t.extraArgs || []).join(' ');
+  argsHint.textContent = ARGS_HINTS[t.type] || '';
+});
+
+btnTemplateDelete.addEventListener('click', async () => {
+  const id = inputTemplate.value;
+  if (!id) return;
+  await window.api.removeTemplate(id);
+  await refreshTemplatesDropdown();
+  inputTemplate.value = '';
+});
+
+btnSaveTemplate.addEventListener('click', async () => {
+  const templateName = prompt('Template name:', '');
+  if (!templateName || !templateName.trim()) return;
+  const template = {
+    id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: templateName.trim(),
+    type: inputType.value,
+    cwd: inputCwd.value || homeDir,
+    extraArgs: parseArgs(inputArgs.value || ''),
+  };
+  await window.api.saveTemplate(template);
+  await refreshTemplatesDropdown();
+  inputTemplate.value = template.id;
+});
 
 function closeDialog() {
   dialogOverlay.classList.add('hidden');
@@ -467,6 +545,92 @@ window.api.onIpcMessage((msg) => {
   appendIpcEntry(msg);
 });
 
+const broadcastInput = document.getElementById('broadcast-input');
+const broadcastSend = document.getElementById('broadcast-send');
+
+async function sendBroadcast() {
+  const body = broadcastInput.value.trim();
+  if (!body) return;
+  broadcastInput.disabled = true;
+  broadcastSend.disabled = true;
+  try {
+    await window.api.broadcast(body);
+    broadcastInput.value = '';
+  } finally {
+    broadcastInput.disabled = false;
+    broadcastSend.disabled = false;
+    broadcastInput.focus();
+  }
+}
+
+broadcastSend.addEventListener('click', sendBroadcast);
+broadcastInput.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') sendBroadcast();
+});
+
+// ---------------------------------------------------------------------------
+// Terminal search (Cmd+F)
+// ---------------------------------------------------------------------------
+
+const searchBar = document.getElementById('search-bar');
+const searchInput = document.getElementById('search-input');
+const searchInfo = document.getElementById('search-info');
+const searchPrev = document.getElementById('search-prev');
+const searchNext = document.getElementById('search-next');
+const searchClose = document.getElementById('search-close');
+
+const SEARCH_OPTS = {
+  decorations: {
+    matchBackground: '#e94560',
+    matchBorder: '#e94560',
+    matchOverviewRuler: '#e94560',
+    activeMatchBackground: '#fbbf24',
+    activeMatchBorder: '#fbbf24',
+    activeMatchColorOverviewRuler: '#fbbf24',
+  },
+};
+
+function openSearch() {
+  searchBar.classList.remove('hidden');
+  searchInput.focus();
+  searchInput.select();
+}
+
+function closeSearch() {
+  searchBar.classList.add('hidden');
+  searchInfo.textContent = '';
+  if (activeSession) {
+    const s = sessions.get(activeSession);
+    if (s && s.searchAddon) s.searchAddon.clearDecorations();
+    if (s) s.terminal.focus();
+  }
+}
+
+function findInTerminal(direction = 'next') {
+  if (!activeSession) return;
+  const s = sessions.get(activeSession);
+  if (!s || !s.searchAddon) return;
+  const term = searchInput.value;
+  if (!term) {
+    s.searchAddon.clearDecorations();
+    searchInfo.textContent = '';
+    return;
+  }
+  const method = direction === 'prev' ? 'findPrevious' : 'findNext';
+  s.searchAddon[method](term, SEARCH_OPTS);
+}
+
+searchInput.addEventListener('input', () => findInTerminal('next'));
+searchInput.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') findInTerminal(e.shiftKey ? 'prev' : 'next');
+  if (e.key === 'Escape') closeSearch();
+});
+searchPrev.addEventListener('click', () => findInTerminal('prev'));
+searchNext.addEventListener('click', () => findInTerminal('next'));
+searchClose.addEventListener('click', closeSearch);
+
 // ---------------------------------------------------------------------------
 // Resize handling
 // ---------------------------------------------------------------------------
@@ -521,6 +685,16 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       e.stopPropagation();
       switchSession(items[idx].dataset.name);
+    }
+    return;
+  }
+
+  // Cmd+F — open search bar for active terminal
+  if (e.key === 'f' && !e.shiftKey) {
+    if (activeSession) {
+      e.preventDefault();
+      e.stopPropagation();
+      openSearch();
     }
     return;
   }

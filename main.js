@@ -70,6 +70,44 @@ const persistence = {
 };
 
 // ---------------------------------------------------------------------------
+// Templates — saved session configurations (type, cwd, args)
+// ---------------------------------------------------------------------------
+
+let TEMPLATES_FILE = null;
+
+const templates = {
+  _load() {
+    try {
+      return JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf-8'));
+    } catch {
+      return [];
+    }
+  },
+  _save(entries) {
+    try {
+      fs.mkdirSync(path.dirname(TEMPLATES_FILE), { recursive: true });
+      fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(entries, null, 2));
+    } catch (e) {
+      console.error('templates save failed:', e);
+    }
+  },
+  list() {
+    return this._load();
+  },
+  save(template) {
+    // template: { id, name, type, cwd, extraArgs }
+    const all = this._load();
+    const idx = all.findIndex(t => t.id === template.id);
+    if (idx >= 0) all[idx] = template;
+    else all.push(template);
+    this._save(all);
+  },
+  remove(id) {
+    this._save(this._load().filter(t => t.id !== id));
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -392,6 +430,84 @@ function cleanupCodexHook(name, cwd) {
   }
 }
 
+// Convert a Claude/Codex JSONL transcript into a clean Markdown document
+function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
+  const raw = fs.readFileSync(jsonlPath, 'utf-8');
+  const lines = raw.split('\n').filter(l => l.trim());
+
+  const parts = [];
+  parts.push(`# ${sessionName} — conversation transcript`);
+  parts.push(`*Agent: ${agentType} · Exported: ${new Date().toISOString()}*`);
+  parts.push(`*Source: \`${jsonlPath}\`*`);
+  parts.push('---');
+
+  let lastRole = null;
+
+  for (const line of lines) {
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const type = obj.type || '';
+
+    // --- Claude format ---
+    if (type === 'user') {
+      const content = (obj.message || {}).content;
+      const text = typeof content === 'string' ? content : extractClaudeBlocks(content);
+      if (text && text.trim()) {
+        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
+        parts.push(text.trim());
+        lastRole = 'user';
+      }
+    } else if (type === 'assistant') {
+      const content = (obj.message || {}).content;
+      const text = extractClaudeBlocks(content);
+      if (text && text.trim()) {
+        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
+        parts.push(text.trim());
+        lastRole = 'assistant';
+      }
+    }
+    // --- Codex format ---
+    else if (type === 'event_msg') {
+      const payload = obj.payload || {};
+      if (payload.type === 'agent_message' && payload.message) {
+        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
+        parts.push(String(payload.message).trim());
+        lastRole = 'assistant';
+      } else if (payload.type === 'user_message' && payload.message) {
+        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
+        parts.push(String(payload.message).trim());
+        lastRole = 'user';
+      }
+    }
+  }
+
+  return parts.join('\n') + '\n';
+}
+
+function extractClaudeBlocks(content) {
+  if (!Array.isArray(content)) return typeof content === 'string' ? content : '';
+  const out = [];
+  for (const block of content) {
+    if (!block) continue;
+    if (block.type === 'text' && block.text) {
+      out.push(block.text);
+    } else if (block.type === 'tool_use') {
+      out.push(`\n\n> 🔧 *Used tool: \`${block.name}\`*`);
+    } else if (block.type === 'tool_result') {
+      const txt = typeof block.content === 'string'
+        ? block.content
+        : Array.isArray(block.content)
+          ? block.content.filter(c => c?.type === 'text').map(c => c.text).join('\n')
+          : '';
+      if (txt.trim()) {
+        const truncated = txt.length > 500 ? txt.slice(0, 500) + '\n…[truncated]' : txt;
+        out.push(`\n\n> 📥 *Tool result:*\n> \`\`\`\n> ${truncated.split('\n').join('\n> ')}\n> \`\`\``);
+      }
+    }
+  }
+  return out.join('\n');
+}
+
 function extractText(obj) {
   const type = obj.type || '';
   // Claude format
@@ -653,8 +769,30 @@ class SessionManager {
       try {
         registry.register(name, socketPath);
       } catch (e) {
-        await transport.stop();
-        throw e;
+        // If a stale registration with a dead PID is blocking us, force-clean it
+        if (e.code === 'EEXIST') {
+          try {
+            const existing = JSON.parse(
+              fs.readFileSync(path.join(REGISTRY_DIR, `${name}.json`), 'utf-8'),
+            );
+            if (!isAlive(existing.pid)) {
+              registry.unregister(name);
+              try { fs.unlinkSync(existing.socket); } catch {}
+              registry.register(name, socketPath);
+            } else {
+              await transport.stop();
+              throw new Error(
+                `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
+              );
+            }
+          } catch (retryErr) {
+            await transport.stop();
+            throw retryErr;
+          }
+        } else {
+          await transport.stop();
+          throw e;
+        }
       }
     }
 
@@ -948,6 +1086,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   PERSIST_FILE = path.join(app.getPath('userData'), 'sessions.json');
+  TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
 
   cleanupOldMessages();
   registry.cleanup();
@@ -971,6 +1110,50 @@ app.whenReady().then(() => {
       defaultPath: os.homedir(),
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle('templates:list', () => templates.list());
+  ipcMain.handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
+  ipcMain.handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
+
+  ipcMain.handle('ui:broadcast', async (_e, body) => {
+    if (!body || !body.trim()) return { ok: false, error: 'Empty message' };
+    await manager._handleIntent('_ui', { type: 'broadcast', body: body.trim() });
+    return { ok: true };
+  });
+
+  ipcMain.handle('session:exportMarkdown', async (_e, name) => {
+    const s = manager.sessions.get(name);
+    if (!s) return { ok: false, error: 'Session not found' };
+    if (!s.agentType) return { ok: false, error: 'Export only works for agent sessions' };
+
+    // Resolve the JSONL file via the symlink
+    const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
+    let jsonlPath;
+    try {
+      jsonlPath = fs.realpathSync(linkPath);
+    } catch {
+      return { ok: false, error: 'No transcript found yet — wait until the agent has responded at least once.' };
+    }
+
+    // Ask user where to save
+    const defaultPath = path.join(
+      app.getPath('desktop'),
+      `${name}-${new Date().toISOString().slice(0, 10)}.md`,
+    );
+    const result = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow(), {
+      defaultPath,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: false, error: 'cancelled' };
+
+    try {
+      const md = jsonlToMarkdown(jsonlPath, s.agentType, name);
+      fs.writeFileSync(result.filePath, md);
+      return { ok: true, path: result.filePath };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   });
 
   ipcMain.on('session:context-menu', (e, { name, cwd }) => {
@@ -999,6 +1182,11 @@ app.whenReady().then(() => {
           const { exec } = require('child_process');
           exec(`open -a Terminal "${cwd.replace(/"/g, '\\"')}"`);
         },
+      },
+      { type: 'separator' },
+      {
+        label: 'Export Conversation as Markdown…',
+        click: () => e.sender.send('session:context-action', { action: 'export', name }),
       },
       { type: 'separator' },
       {

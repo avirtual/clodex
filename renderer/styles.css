@@ -214,6 +214,65 @@ html, body {
   justify-content: center;
 }
 
+#search-bar {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#search-bar.hidden {
+  display: none;
+}
+
+#search-input {
+  width: 220px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+
+#search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-info {
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 40px;
+  text-align: center;
+}
+
+#search-bar button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+#search-bar button:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
 #terminal-container {
   position: absolute;
   top: 0;
@@ -320,6 +379,21 @@ html, body {
   font-size: 11px;
   color: var(--text-dim);
   font-style: italic;
+}
+
+.template-picker {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.template-picker select {
+  flex: 1;
+  margin-top: 0 !important;
+}
+
+.template-picker button {
+  padding: 6px 12px !important;
 }
 
 .dir-picker {
@@ -455,6 +529,50 @@ html, body {
 
 #ipc-log.collapsed #ipc-toggle {
   transform: rotate(180deg);
+}
+
+#ipc-broadcast {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#broadcast-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+
+#broadcast-input:focus {
+  border-color: var(--accent);
+}
+
+#broadcast-send {
+  padding: 6px 14px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+#broadcast-send:hover {
+  opacity: 0.85;
+}
+
+#broadcast-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 #ipc-log-body {

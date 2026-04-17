@@ -1,6 +1,6 @@
 {
   "name": "clodex",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
   "main": "main.js",
   "scripts": {
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.16.0",
     "@xterm/xterm": "^5.5.0",
     "node-pty": "^1.0.0"
   },
@@ -25,8 +26,20 @@
     "afterPack": "build/afterPack.js",
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] },
-        { "target": "zip", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",

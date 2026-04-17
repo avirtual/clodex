@@ -16,6 +16,13 @@
     <div id="session-list"></div>
   </div>
   <div id="main">
+    <div id="search-bar" class="hidden">
+      <input type="text" id="search-input" placeholder="Find in terminal…">
+      <span id="search-info" class="search-info"></span>
+      <button id="search-prev" title="Previous match (Shift+Enter)" type="button">▲</button>
+      <button id="search-next" title="Next match (Enter)" type="button">▼</button>
+      <button id="search-close" title="Close (Esc)" type="button">×</button>
+    </div>
     <div id="terminal-container"></div>
     <div id="empty-state">
       <p>No sessions yet</p>
@@ -28,6 +35,10 @@
         <button id="ipc-clear" title="Clear log" type="button">Clear</button>
         <button id="ipc-toggle" title="Toggle panel" type="button">▲</button>
       </div>
+      <div id="ipc-broadcast">
+        <input type="text" id="broadcast-input" placeholder="Broadcast a message to all agents (Enter to send)…">
+        <button id="broadcast-send" type="button">Send</button>
+      </div>
       <div id="ipc-log-body">
         <div id="ipc-empty">No messages yet. Inter-agent DMs and broadcasts will appear here.</div>
       </div>
@@ -38,6 +49,14 @@
   <div id="dialog-overlay" class="hidden">
     <div id="dialog">
       <h3>New Session</h3>
+      <label id="template-row" style="display:none;">Template
+        <div class="template-picker">
+          <select id="input-template">
+            <option value="">(none — fill manually)</option>
+          </select>
+          <button id="btn-template-delete" class="secondary" type="button" title="Delete selected template">×</button>
+        </div>
+      </label>
       <label>Name
         <input type="text" id="input-name" placeholder="e.g. alice">
       </label>
@@ -59,6 +78,8 @@
         <span class="hint-text" id="args-hint"></span>
       </label>
       <div class="dialog-actions">
+        <button id="btn-save-template" class="secondary" type="button" title="Save these settings as a reusable template">Save as Template…</button>
+        <div style="flex: 1;"></div>
         <button id="btn-cancel" class="secondary">Cancel</button>
         <button id="btn-create">Create</button>
       </div>

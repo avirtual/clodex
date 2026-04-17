@@ -13,6 +13,16 @@ window.api = {
     ipcRenderer.invoke('session:setLabel', name, label),
   showSessionContextMenu: (name, cwd) =>
     ipcRenderer.send('session:context-menu', { name, cwd }),
+  broadcast: (body) =>
+    ipcRenderer.invoke('ui:broadcast', body),
+  exportSessionMarkdown: (name) =>
+    ipcRenderer.invoke('session:exportMarkdown', name),
+  listTemplates: () =>
+    ipcRenderer.invoke('templates:list'),
+  saveTemplate: (template) =>
+    ipcRenderer.invoke('templates:save', template),
+  removeTemplate: (id) =>
+    ipcRenderer.invoke('templates:remove', id),
   onSessionContextAction: (callback) =>
     ipcRenderer.on('session:context-action', (_e, msg) => callback(msg)),
   writeToSession: (name, data) =>
