@@ -7,6 +7,10 @@ window.api = {
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
     ipcRenderer.invoke('session:kill', name),
+  retrySpawnSession: (name) =>
+    ipcRenderer.invoke('session:retrySpawn', name),
+  forgetSession: (name) =>
+    ipcRenderer.invoke('session:forget', name),
   resizeSession: (name, cols, rows) =>
     ipcRenderer.invoke('session:resize', name, cols, rows),
   setSessionLabel: (name, label) =>

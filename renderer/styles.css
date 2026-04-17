@@ -164,6 +164,40 @@ html, body {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* Failed restore: red dot, muted name, click to retry */
+.session-item.failed .session-dot {
+  background: var(--accent);
+}
+
+.session-item.failed .session-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.session-item.failed .session-type {
+  color: var(--accent);
+}
+
+.session-item.failed:hover .session-name {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.session-item.failed::after {
+  content: '↻';
+  position: absolute;
+  right: 32px;
+  color: var(--text-dim);
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.session-item.failed:hover::after {
+  opacity: 0.7;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.3); }

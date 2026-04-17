@@ -373,6 +373,61 @@ Single-file orchestrator, roughly:
 - **IPC log panel uses `visibility` not `display`** for collapsing so
   xterm.js doesn't lose its measurements — this same gotcha bit us with
   session switching initially.
+- **`ptyProc.onExit` must call `_sendToSession` BEFORE `_cleanup`**
+  because `windowForSession(name)` resolves the window through
+  `this.sessions.get(name).workspaceId`. If cleanup runs first, the
+  session is gone from the map and the renderer never receives
+  `session-exit` — the sidebar tab sticks around as a "dead" entry.
+  Fixed in v0.5.3.
+- **Restore failures must NOT remove from persistence.** Pre-v0.5.3,
+  if `manager.create()` threw during `app:restore-sessions` (e.g., the
+  old Clodex was still holding a `/tmp/wb-wrap/` socket, `claude --resume`
+  failed because the JSONL moved, etc.), we called
+  `persistence.remove(entry.name)` — silently wiping the saved session
+  forever. This caused "upgrade kills my agents" reports. Now we keep
+  the entry and return it with `{ failed: true, error }` so the renderer
+  can render it as a greyed-out row with a retry button (click) or
+  forget button (× → `session:forget` IPC).
+
+## Persistence model (the mental model)
+
+Everything lives in `~/Library/Application Support/Clodex/` when packaged
+or `~/Library/Application Support/clodex/` under `npm start` (lowercase
+because the dev name comes from `package.json` → `name`, not
+`productName`). Files:
+
+- **`sessions.json`** — `[{ name, type, cwd, extraArgs, sessionId,
+  workspaceId, label }]`. One entry per session. `sessionId` is the
+  Claude/Codex transcript UUID used for `--resume`; updated by the
+  JsonlWatcher when it sees the symlink repoint.
+- **`workspaces.json`** — `[{ id, name, bounds, lastFocusedAt }]`. One
+  entry per workspace. `bounds` is the last `{x,y,width,height}` before
+  close/blur. `lastFocusedAt` is an epoch ms stamp used by
+  `sortedByRecent()` to pick which workspace to open on startup.
+- **`templates.json`** — saved new-session dialog configs.
+- **`prompts.json`** — saved reusable prompts for injection.
+
+### Lifecycle rules
+
+| Event | sessions.json | Process | UI |
+|---|---|---|---|
+| User clicks X (kill) | entry removed | killed | tab removed |
+| User Cmd+W (kill) | entry removed | killed | tab removed |
+| PTY exits naturally (e.g. user types /exit) | entry kept | dead | tab removed |
+| App Cmd+Q | entries kept | all killed | windows closed |
+| Restore fails on launch | entry kept (with `failed: true`) | never spawned | failed tab shown |
+
+The "natural exit keeps entry" rule means: if claude exits for any
+reason other than you explicitly killing it from the UI, we'll attempt
+to `--resume` it next time the workspace opens. Accidental Ctrl-C out,
+network hiccup, etc. → you get your conversation back.
+
+### Single-instance lock
+
+`app.requestSingleInstanceLock()` on startup. Second launch focuses the
+existing window(s) instead of running in parallel. Prevents two
+Clodexes fighting over `/tmp/wb-wrap/*.sock` and wiping each other's
+persistence entries during a restore race.
 
 ## Related
 

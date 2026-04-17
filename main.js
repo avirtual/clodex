@@ -1009,8 +1009,11 @@ class SessionManager {
     });
 
     ptyProc.onExit(({ exitCode }) => {
-      this._cleanup(name);
+      // Send the exit event BEFORE cleanup so the renderer can still resolve
+      // the session → workspace → window mapping. Otherwise the sidebar
+      // tab sticks around as a "dead" entry.
       this._sendToSession(name, 'session-exit', name, exitCode);
+      this._cleanup(name);
       if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
     });
 
@@ -1740,6 +1743,24 @@ function workspaceOfSender(e) {
   return DEFAULT_WORKSPACE_ID;
 }
 
+// Prevent two Clodex instances from racing on /tmp/wb-wrap/ sockets and
+// persistence files. If a second instance launches, focus the existing one.
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Bring the most-recently-used existing window forward
+    const wins = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
+    if (wins.length > 0) {
+      const w = wins[0];
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    }
+  });
+}
+
 app.whenReady().then(() => {
   PERSIST_FILE = path.join(app.getPath('userData'), 'sessions.json');
   TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
@@ -1939,11 +1960,47 @@ app.whenReady().then(() => {
           label: entry.label || null,
         });
       } catch (err) {
+        // DO NOT remove from persistence — surface the failure to the UI
+        // so the user can retry or delete. Silently wiping was the cause
+        // of the "agents vanish after upgrade" bug.
         console.error(`Failed to restore session ${entry.name}:`, err.message);
-        persistence.remove(entry.name);
+        restored.push({
+          name: entry.name,
+          type: entry.type,
+          cwd: entry.cwd,
+          label: entry.label || null,
+          failed: true,
+          error: err.message,
+        });
       }
     }
     return restored;
+  });
+
+  // Retry spawning a session that failed during restore
+  ipcMain.handle('session:retrySpawn', async (e, name) => {
+    const workspaceId = workspaceOfSender(e);
+    const entry = persistence.list().find(s => s.name === name);
+    if (!entry) return { ok: false, error: 'No saved entry found' };
+    try {
+      await manager.create(
+        entry.name,
+        entry.type,
+        entry.cwd,
+        entry.extraArgs || [],
+        entry.sessionId,
+        workspaceId,
+      );
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // "Forget" a session — remove from persistence without killing (it's not running)
+  ipcMain.handle('session:forget', (_e, name) => {
+    persistence.remove(name);
+    return true;
   });
 
   // Workspace management

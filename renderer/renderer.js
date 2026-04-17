@@ -116,6 +116,53 @@ window.api.onRequestRenameWorkspace(() => startWorkspaceRename());
 // Session UI
 // ---------------------------------------------------------------------------
 
+// Add a sidebar entry for a session that failed to restore
+function addFailedSessionToSidebar(entry) {
+  const item = document.createElement('div');
+  item.className = 'session-item failed';
+  item.dataset.name = entry.name;
+  item.dataset.cwd = entry.cwd || '';
+  item.dataset.failed = '1';
+  const displayName = entry.label || entry.name;
+  const cwdLabel = entry.cwd ? esc(shortPath(entry.cwd)) : '';
+  item.innerHTML = `
+    <span class="session-dot"></span>
+    <div class="session-info">
+      <div class="session-name" title="Restore failed: ${esc(entry.error || 'unknown error')}">${esc(displayName)}</div>
+      <div class="session-meta">
+        <span class="session-type">${esc(entry.type)} — failed</span>
+        ${cwdLabel ? `<span class="session-cwd" title="${esc(entry.cwd || '')}">${cwdLabel}</span>` : ''}
+      </div>
+    </div>
+    <button class="session-close" title="Forget session">&times;</button>
+  `;
+
+  // Click anywhere (except close) to retry
+  item.addEventListener('click', async (e) => {
+    if (e.target.closest('.session-close')) return;
+    const res = await window.api.retrySpawnSession(entry.name);
+    if (!res.ok) {
+      alert(`Retry failed: ${res.error}`);
+      return;
+    }
+    // Reload this item: remove the failed placeholder and add a real one
+    item.remove();
+    createTerminal(entry.name);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
+    switchSession(entry.name);
+  });
+
+  item.querySelector('.session-close').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (confirm(`Forget session "${entry.name}"? It isn't running — this just removes the saved entry.`)) {
+      await window.api.forgetSession(entry.name);
+      item.remove();
+    }
+  });
+
+  sessionList.appendChild(item);
+}
+
 // Shorten a path by replacing $HOME with ~ and showing only the last 2 segments
 function shortPath(p) {
   if (!p) return '';
@@ -945,12 +992,20 @@ promptBody.addEventListener('keydown', (e) => e.stopPropagation());
   const restored = await window.api.restoreSessions();
   if (!restored || restored.length === 0) return;
 
+  let firstHealthy = null;
   for (const entry of restored) {
+    if (entry.failed) {
+      // Render as a ghost entry — no xterm, but visible in the sidebar so
+      // the user can either retry it or forget it.
+      addFailedSessionToSidebar(entry);
+      continue;
+    }
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
-    // Replay any output buffered while this workspace had no window
     if (entry.replay) terminal.write(entry.replay);
+    if (!firstHealthy) firstHealthy = entry.name;
   }
+  if (firstHealthy) switchSession(firstHealthy);
   // Focus the first restored session
   switchSession(restored[0].name);
 })();
