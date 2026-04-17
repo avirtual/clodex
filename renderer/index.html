@@ -10,10 +10,47 @@
 <body>
   <div id="sidebar">
     <div id="sidebar-header">
-      <span class="app-title">wb-wrap</span>
-      <button id="btn-new" title="New session">+</button>
+      <span class="app-title">Clodex</span>
+      <button id="btn-prompts" title="Prompts library">📝</button>
+      <button id="btn-new" title="New session (Cmd+T)">+</button>
     </div>
     <div id="session-list"></div>
+    <div id="update-banner" class="hidden" title="Click to view the release">
+      <span class="update-dot">●</span>
+      <span id="update-text">Update available</span>
+    </div>
+  </div>
+
+  <!-- Prompts library drawer -->
+  <div id="prompts-drawer" class="hidden">
+    <div id="prompts-header">
+      <span class="prompts-title">Prompts Library</span>
+      <button id="prompts-new" title="New prompt" type="button">+ New</button>
+      <button id="prompts-close" title="Close" type="button">×</button>
+    </div>
+    <div id="prompts-list"></div>
+    <div id="prompts-empty" class="hint">
+      No prompts yet. Click <strong>+ New</strong> to save a reusable prompt.<br><br>
+      When a session is active, click any prompt to inject it directly into the agent's input.
+    </div>
+  </div>
+
+  <!-- Prompt editor modal -->
+  <div id="prompt-editor" class="hidden">
+    <div class="prompt-editor-box">
+      <h3 id="prompt-editor-title">New Prompt</h3>
+      <label>Title
+        <input type="text" id="prompt-title" placeholder="e.g. Run tests">
+      </label>
+      <label>Body
+        <textarea id="prompt-body" rows="8" placeholder="The prompt text to inject into the agent's input"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button id="prompt-delete" class="secondary" type="button" style="margin-right: auto;">Delete</button>
+        <button id="prompt-cancel" class="secondary" type="button">Cancel</button>
+        <button id="prompt-save" type="button">Save</button>
+      </div>
+    </div>
   </div>
   <div id="main">
     <div id="search-bar" class="hidden">

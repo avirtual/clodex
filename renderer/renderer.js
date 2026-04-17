@@ -717,6 +717,159 @@ document.addEventListener('keydown', (e) => {
 // Restore sessions on startup
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Update banner
+// ---------------------------------------------------------------------------
+
+const updateBanner = document.getElementById('update-banner');
+const updateText = document.getElementById('update-text');
+
+function showUpdateBanner(info) {
+  updateText.textContent = `Update available: v${info.version}`;
+  updateBanner.classList.remove('hidden');
+}
+
+updateBanner.addEventListener('click', () => {
+  window.api.openUpdate();
+});
+
+// Check if an update was already detected before the renderer loaded
+window.api.getUpdateInfo().then((info) => { if (info) showUpdateBanner(info); });
+
+// Listen for updates detected while running
+window.api.onUpdateAvailable((info) => showUpdateBanner(info));
+
+// Tray-triggered actions
+window.api.onRequestSwitchSession((name) => switchSession(name));
+window.api.onRequestOpenNewDialog(() => openDialog());
+
+// ---------------------------------------------------------------------------
+// Prompts library
+// ---------------------------------------------------------------------------
+
+const promptsDrawer = document.getElementById('prompts-drawer');
+const promptsList = document.getElementById('prompts-list');
+const promptsEmpty = document.getElementById('prompts-empty');
+const promptEditor = document.getElementById('prompt-editor');
+const promptEditorTitle = document.getElementById('prompt-editor-title');
+const promptTitle = document.getElementById('prompt-title');
+const promptBody = document.getElementById('prompt-body');
+const promptSave = document.getElementById('prompt-save');
+const promptCancel = document.getElementById('prompt-cancel');
+const promptDelete = document.getElementById('prompt-delete');
+const btnPrompts = document.getElementById('btn-prompts');
+const promptsNew = document.getElementById('prompts-new');
+const promptsClose = document.getElementById('prompts-close');
+
+let editingPromptId = null;
+
+async function refreshPromptsList() {
+  const items = await window.api.listPrompts();
+  promptsList.innerHTML = '';
+  if (items.length === 0) {
+    promptsEmpty.style.display = '';
+    return;
+  }
+  promptsEmpty.style.display = 'none';
+  for (const p of items) {
+    const el = document.createElement('div');
+    el.className = 'prompt-item';
+    const preview = p.body.split('\n')[0].slice(0, 80) + (p.body.length > 80 ? '…' : '');
+    el.innerHTML = `
+      <div class="prompt-item-title">${esc(p.title)}</div>
+      <div class="prompt-item-preview">${esc(preview)}</div>
+      <div class="prompt-item-actions">
+        <button class="primary" data-action="inject">Inject</button>
+        <button data-action="edit">Edit</button>
+      </div>
+    `;
+    el.querySelector('[data-action="inject"]').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!activeSession) {
+        alert('No active session. Select one first.');
+        return;
+      }
+      await window.api.injectPrompt(activeSession, p.body);
+    });
+    el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPromptEditor(p);
+    });
+    // Clicking the body (not a button) = inject
+    el.addEventListener('click', async () => {
+      if (!activeSession) { alert('No active session. Select one first.'); return; }
+      await window.api.injectPrompt(activeSession, p.body);
+    });
+    promptsList.appendChild(el);
+  }
+}
+
+function openPromptsDrawer() {
+  promptsDrawer.classList.remove('hidden');
+  refreshPromptsList();
+}
+
+function closePromptsDrawer() {
+  promptsDrawer.classList.add('hidden');
+}
+
+function openPromptEditor(prompt = null) {
+  if (prompt) {
+    editingPromptId = prompt.id;
+    promptEditorTitle.textContent = 'Edit Prompt';
+    promptTitle.value = prompt.title;
+    promptBody.value = prompt.body;
+    promptDelete.style.display = '';
+  } else {
+    editingPromptId = null;
+    promptEditorTitle.textContent = 'New Prompt';
+    promptTitle.value = '';
+    promptBody.value = '';
+    promptDelete.style.display = 'none';
+  }
+  promptEditor.classList.remove('hidden');
+  setTimeout(() => promptTitle.focus(), 50);
+}
+
+function closePromptEditor() {
+  promptEditor.classList.add('hidden');
+  editingPromptId = null;
+}
+
+btnPrompts.addEventListener('click', () => {
+  if (promptsDrawer.classList.contains('hidden')) openPromptsDrawer();
+  else closePromptsDrawer();
+});
+promptsClose.addEventListener('click', closePromptsDrawer);
+promptsNew.addEventListener('click', () => openPromptEditor(null));
+
+promptSave.addEventListener('click', async () => {
+  const title = promptTitle.value.trim();
+  const body = promptBody.value;
+  if (!title || !body.trim()) return;
+  const id = editingPromptId || `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  await window.api.savePrompt({ id, title, body });
+  closePromptEditor();
+  refreshPromptsList();
+});
+
+promptCancel.addEventListener('click', closePromptEditor);
+promptDelete.addEventListener('click', async () => {
+  if (!editingPromptId) return;
+  if (!confirm('Delete this prompt?')) return;
+  await window.api.removePrompt(editingPromptId);
+  closePromptEditor();
+  refreshPromptsList();
+});
+
+// Prevent keyboard shortcuts from firing inside the editor
+promptTitle.addEventListener('keydown', (e) => e.stopPropagation());
+promptBody.addEventListener('keydown', (e) => e.stopPropagation());
+
+// ---------------------------------------------------------------------------
+// Restore sessions on startup
+// ---------------------------------------------------------------------------
+
 (async function restoreSessions() {
   const restored = await window.api.restoreSessions();
   if (!restored || restored.length === 0) return;

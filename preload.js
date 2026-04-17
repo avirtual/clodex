@@ -23,6 +23,24 @@ window.api = {
     ipcRenderer.invoke('templates:save', template),
   removeTemplate: (id) =>
     ipcRenderer.invoke('templates:remove', id),
+  listPrompts: () =>
+    ipcRenderer.invoke('prompts:list'),
+  savePrompt: (prompt) =>
+    ipcRenderer.invoke('prompts:save', prompt),
+  removePrompt: (id) =>
+    ipcRenderer.invoke('prompts:remove', id),
+  injectPrompt: (name, body) =>
+    ipcRenderer.invoke('prompts:inject', name, body),
+  checkForUpdate: () =>
+    ipcRenderer.invoke('update:check'),
+  getUpdateInfo: () =>
+    ipcRenderer.invoke('update:info'),
+  openUpdate: () =>
+    ipcRenderer.invoke('update:open'),
+  getVersion: () =>
+    ipcRenderer.invoke('app:getVersion'),
+  onUpdateAvailable: (callback) =>
+    ipcRenderer.on('update-available', (_e, info) => callback(info)),
   onSessionContextAction: (callback) =>
     ipcRenderer.on('session:context-action', (_e, msg) => callback(msg)),
   writeToSession: (name, data) =>
@@ -42,4 +60,8 @@ window.api = {
     ipcRenderer.on('ipc-message', (_e, msg) => callback(msg)),
   onSessionActivity: (callback) =>
     ipcRenderer.on('session-activity', (_e, name, state) => callback(name, state)),
+  onRequestSwitchSession: (callback) =>
+    ipcRenderer.on('request-switch-session', (_e, name) => callback(name)),
+  onRequestOpenNewDialog: (callback) =>
+    ipcRenderer.on('request-open-new-dialog', () => callback()),
 };

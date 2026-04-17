@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, Notification, Tray, nativeImage } = require('electron');
+const https = require('https');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -105,6 +106,34 @@ const templates = {
   remove(id) {
     this._save(this._load().filter(t => t.id !== id));
   },
+};
+
+// ---------------------------------------------------------------------------
+// Prompts library
+// ---------------------------------------------------------------------------
+
+let PROMPTS_FILE = null;
+
+const prompts = {
+  _load() {
+    try { return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf-8')); }
+    catch { return []; }
+  },
+  _save(entries) {
+    try {
+      fs.mkdirSync(path.dirname(PROMPTS_FILE), { recursive: true });
+      fs.writeFileSync(PROMPTS_FILE, JSON.stringify(entries, null, 2));
+    } catch (e) { console.error('prompts save failed:', e); }
+  },
+  list() { return this._load(); },
+  save(prompt) {
+    const all = this._load();
+    const idx = all.findIndex(p => p.id === prompt.id);
+    if (idx >= 0) all[idx] = prompt;
+    else all.push(prompt);
+    this._save(all);
+  },
+  remove(id) { this._save(this._load().filter(p => p.id !== id)); },
 };
 
 // ---------------------------------------------------------------------------
@@ -854,8 +883,10 @@ class SessionManager {
     ptyProc.onExit(({ exitCode }) => {
       this._cleanup(name);
       this._send('session-exit', name, exitCode);
+      if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
     });
 
+    if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
     return { name, type, pid: ptyProc.pid };
   }
 
@@ -1056,6 +1087,176 @@ class SessionManager {
 }
 
 // ---------------------------------------------------------------------------
+// Update checker — queries GitHub Releases, notifies if newer version
+// ---------------------------------------------------------------------------
+
+const UPDATE_REPO = 'avirtual/clodex';
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+
+function fetchJson(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      headers: {
+        'User-Agent': 'Clodex-UpdateChecker',
+        'Accept': 'application/vnd.github+json',
+      },
+    }, (res) => {
+      // Follow redirects
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        resolve(fetchJson(res.headers.location));
+        return;
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8'))); }
+        catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+// Simple semver compare: returns true if `a` is newer than `b`
+function isNewer(a, b) {
+  const clean = (v) => String(v).replace(/^v/, '').split(/[.-]/).map(Number);
+  const [aM = 0, am = 0, ap = 0] = clean(a);
+  const [bM = 0, bm = 0, bp = 0] = clean(b);
+  if (aM !== bM) return aM > bM;
+  if (am !== bm) return am > bm;
+  return ap > bp;
+}
+
+let updateInfo = null; // { version, url }
+
+async function checkForUpdate(silent = true) {
+  try {
+    const release = await fetchJson(
+      `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`,
+    );
+    const latestTag = release.tag_name || '';
+    const latestVersion = latestTag.replace(/^v/, '');
+    const current = app.getVersion();
+
+    if (isNewer(latestVersion, current)) {
+      updateInfo = { version: latestVersion, url: release.html_url };
+      // Notify the renderer so it can show a banner / menu indicator
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('update-available', updateInfo);
+      }
+      if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
+      // Native notification (only the first time per session, unless user manually checks)
+      if (silent && Notification.isSupported()) {
+        const n = new Notification({
+          title: `Clodex ${latestVersion} is available`,
+          body: `You have ${current}. Click to view the release.`,
+        });
+        n.on('click', () => shell.openExternal(updateInfo.url));
+        n.show();
+      }
+    } else if (!silent) {
+      // Manual check — confirm we're on the latest
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Clodex is up to date',
+          body: `You're on the latest version (${current}).`,
+        }).show();
+      }
+    }
+  } catch (err) {
+    if (!silent) console.error('Update check failed:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Menu bar (tray) icon
+// ---------------------------------------------------------------------------
+
+let tray = null;
+
+function buildTrayMenu() {
+  const sessions = manager.list();
+  const template = [
+    {
+      label: 'Show Clodex',
+      click: () => {
+        let win = BrowserWindow.getAllWindows()[0];
+        if (!win) { createWindow(); return; }
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      },
+    },
+    { type: 'separator' },
+  ];
+
+  if (sessions.length > 0) {
+    template.push({ label: 'Sessions', enabled: false });
+    for (const s of sessions) {
+      const indicator = s.type === 'bash' ? '•' : '●';
+      template.push({
+        label: `  ${indicator} ${s.name} (${s.type})`,
+        click: () => {
+          let win = BrowserWindow.getAllWindows()[0];
+          if (win) {
+            win.show();
+            win.focus();
+            win.webContents.send('request-switch-session', s.name);
+          }
+        },
+      });
+    }
+    template.push({ type: 'separator' });
+  } else {
+    template.push({ label: 'No sessions', enabled: false });
+    template.push({ type: 'separator' });
+  }
+
+  template.push({
+    label: 'New Session…',
+    click: () => {
+      let win = BrowserWindow.getAllWindows()[0];
+      if (!win) { createWindow(); return; }
+      win.show();
+      win.focus();
+      win.webContents.send('request-open-new-dialog');
+    },
+  });
+
+  if (updateInfo) {
+    template.push({ type: 'separator' });
+    template.push({
+      label: `Update to v${updateInfo.version}`,
+      click: () => shell.openExternal(updateInfo.url),
+    });
+  }
+
+  template.push({ type: 'separator' });
+  template.push({ label: 'Check for Updates', click: () => checkForUpdate(false) });
+  template.push({ label: 'Quit Clodex', role: 'quit' });
+  return Menu.buildFromTemplate(template);
+}
+
+function initTray() {
+  const iconPath = path.join(__dirname, 'build', 'tray-iconTemplate.png');
+  const img = nativeImage.createFromPath(iconPath);
+  img.setTemplateImage(true);
+  tray = new Tray(img);
+  tray.setToolTip('Clodex');
+  tray.setContextMenu(buildTrayMenu());
+}
+
+function refreshTrayMenu() {
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
@@ -1087,9 +1288,16 @@ function createWindow() {
 app.whenReady().then(() => {
   PERSIST_FILE = path.join(app.getPath('userData'), 'sessions.json');
   TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
+  PROMPTS_FILE = path.join(app.getPath('userData'), 'prompts.json');
 
   cleanupOldMessages();
   registry.cleanup();
+
+  // Check for updates on startup and every 6 hours
+  checkForUpdate(true);
+  setInterval(() => checkForUpdate(true), UPDATE_CHECK_INTERVAL);
+
+  initTray();
 
   ipcMain.handle('session:create', async (_e, name, type, cwd, extraArgs) => {
     try {
@@ -1112,9 +1320,26 @@ app.whenReady().then(() => {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  ipcMain.handle('update:check', () => checkForUpdate(false));
+  ipcMain.handle('update:info', () => updateInfo);
+  ipcMain.handle('update:open', () => {
+    if (updateInfo) shell.openExternal(updateInfo.url);
+  });
+  ipcMain.handle('app:getVersion', () => app.getVersion());
+
   ipcMain.handle('templates:list', () => templates.list());
   ipcMain.handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   ipcMain.handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
+
+  ipcMain.handle('prompts:list', () => prompts.list());
+  ipcMain.handle('prompts:save', (_e, prompt) => { prompts.save(prompt); return prompts.list(); });
+  ipcMain.handle('prompts:remove', (_e, id) => { prompts.remove(id); return prompts.list(); });
+  ipcMain.handle('prompts:inject', (_e, name, body) => {
+    const s = manager.sessions.get(name);
+    if (!s) return { ok: false, error: 'Session not found' };
+    manager._injectText(s, body);
+    return { ok: true };
+  });
 
   ipcMain.handle('ui:broadcast', async (_e, body) => {
     if (!body || !body.trim()) return { ok: false, error: 'Empty message' };
