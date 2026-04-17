@@ -808,10 +808,29 @@ class SessionManager {
     return out;
   }
 
-  // Send an event scoped to the window that owns this session
+  // Send an event scoped to the window that owns this session.
+  // If no window is currently attached to this session's workspace,
+  // buffer pty-data so it can be replayed when a window reopens.
   _sendToSession(name, channel, ...args) {
     const win = this.windowForSession(name);
-    if (win) win.webContents.send(channel, ...args);
+    if (win) {
+      win.webContents.send(channel, ...args);
+      return;
+    }
+    // Buffer PTY output for detached sessions (no window in their workspace)
+    if (channel === 'pty-data') {
+      const session = this.sessions.get(name);
+      if (!session) return;
+      if (!session.pendingOutput) session.pendingOutput = '';
+      session.pendingOutput += args[1];
+      const MAX_BUFFER = 2 * 1024 * 1024; // 2MB per session
+      if (session.pendingOutput.length > MAX_BUFFER) {
+        session.pendingOutput = session.pendingOutput.slice(-MAX_BUFFER);
+      }
+    }
+    // session-exit / session-activity for detached sessions: just drop.
+    // They don't have a UI to notify, and the state will be recomputed
+    // from scratch when a window reattaches.
   }
 
   // Broadcast to every window (used for app-wide events like IPC traffic)
@@ -1352,13 +1371,31 @@ function buildTrayMenu() {
     },
   });
   template.push({
-    label: 'New Window',
+    label: 'New Workspace',
     accelerator: 'Shift+Cmd+N',
     click: () => {
       const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       createWindow(id);
+      refreshAppMenu();
+      refreshTrayMenu();
     },
   });
+
+  // Reopen closed workspaces, if any
+  const closedWorkspaces = wsList.filter(w => !manager.windowForWorkspace(w.id));
+  if (closedWorkspaces.length > 0) {
+    template.push({
+      label: 'Reopen Workspace',
+      submenu: closedWorkspaces.map(ws => {
+        const wsSessions = sessions.filter(s => s.workspaceId === ws.id).length;
+        const suffix = wsSessions > 0 ? ` (${wsSessions} session${wsSessions === 1 ? '' : 's'})` : '';
+        return {
+          label: `${ws.name || ws.id}${suffix}`,
+          click: () => createWindow(ws.id),
+        };
+      }),
+    });
+  }
 
   if (updateInfo) {
     template.push({ type: 'separator' });
@@ -1414,11 +1451,13 @@ function buildAppMenu() {
       label: 'File',
       submenu: [
         {
-          label: 'New Window',
+          label: 'New Workspace',
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => {
             const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             createWindow(id);
+            refreshAppMenu();
+            refreshTrayMenu();
           },
         },
         {
@@ -1427,6 +1466,14 @@ function buildAppMenu() {
           click: () => {
             const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
             if (win) win.webContents.send('request-open-new-dialog');
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Rename Workspace…',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) win.webContents.send('request-rename-workspace');
           },
         },
         { type: 'separator' },
@@ -1470,15 +1517,17 @@ function buildAppMenu() {
     },
   ];
 
-  // Add workspace list under Window menu
+  // Add workspace list under Window menu — always shown, with indicator
   const wsMenu = template.find(m => m.label === 'Window');
   if (wsMenu) {
     const all = workspaces.list();
-    if (all.length > 1) {
+    if (all.length > 0) {
       wsMenu.submenu.push({ type: 'separator' }, { label: 'Workspaces', enabled: false });
       for (const ws of all) {
+        const isOpen = !!manager.windowForWorkspace(ws.id);
+        const indicator = isOpen ? '●' : '○';
         wsMenu.submenu.push({
-          label: ws.name || ws.id,
+          label: `${indicator}  ${ws.name || ws.id}`,
           click: () => {
             const win = manager.windowForWorkspace(ws.id);
             if (win) { win.show(); win.focus(); }
@@ -1486,6 +1535,39 @@ function buildAppMenu() {
           },
         });
       }
+      wsMenu.submenu.push({ type: 'separator' });
+      wsMenu.submenu.push({
+        label: 'Close Workspace Permanently…',
+        click: async () => {
+          const focused = BrowserWindow.getFocusedWindow();
+          if (!focused) return;
+          let wsId = null;
+          for (const [id, w] of manager.windows) if (w === focused) { wsId = id; break; }
+          if (!wsId) return;
+          const ws = workspaces.get(wsId);
+          const wsName = ws ? (ws.name || wsId) : wsId;
+          const sessionCount = manager.listForWorkspace(wsId).length;
+          const result = await dialog.showMessageBox(focused, {
+            type: 'warning',
+            buttons: ['Close Workspace', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+            message: `Close workspace "${wsName}" permanently?`,
+            detail: sessionCount > 0
+              ? `This will kill ${sessionCount} running session${sessionCount === 1 ? '' : 's'} and remove the workspace. Conversation transcripts on disk are preserved.`
+              : 'This removes the empty workspace record. No sessions will be affected.',
+          });
+          if (result.response !== 0) return;
+          // Kill all sessions in this workspace
+          for (const s of manager.listForWorkspace(wsId)) {
+            manager.kill(s.name);
+          }
+          workspaces.remove(wsId);
+          focused.close();
+          refreshAppMenu();
+          refreshTrayMenu();
+        },
+      });
     }
   }
 
@@ -1554,6 +1636,8 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 
   win.on('closed', () => {
     manager.unregisterWindow(workspaceId);
+    refreshAppMenu();
+    refreshTrayMenu();
   });
 
   win.webContents.on('console-message', (_e, level, msg) => {
@@ -1747,12 +1831,17 @@ app.whenReady().then(() => {
     const restored = [];
     for (const entry of saved) {
       if (manager.sessions.has(entry.name)) {
-        // Already running — just report it back for rendering
+        // Already running — report it and flush any buffered output so the
+        // new terminal shows everything that happened while detached
+        const session = manager.sessions.get(entry.name);
+        const replay = session.pendingOutput || null;
+        session.pendingOutput = '';
         restored.push({
           name: entry.name,
           type: entry.type,
           cwd: entry.cwd,
           label: entry.label || null,
+          replay,
         });
         continue;
       }

@@ -76,7 +76,15 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: text;
+  padding: 1px 4px;
+  margin-left: -4px;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+
+.workspace-name:hover {
+  background: var(--sidebar-hover);
 }
 
 .workspace-name-input {

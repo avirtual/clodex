@@ -109,6 +109,9 @@ sidebarHeader.addEventListener('dblclick', (e) => {
   if (target) startWorkspaceRename();
 });
 
+// Triggered from the File menu > Rename Workspace…
+window.api.onRequestRenameWorkspace(() => startWorkspaceRename());
+
 // ---------------------------------------------------------------------------
 // Session UI
 // ---------------------------------------------------------------------------
@@ -943,8 +946,10 @@ promptBody.addEventListener('keydown', (e) => e.stopPropagation());
   if (!restored || restored.length === 0) return;
 
   for (const entry of restored) {
-    createTerminal(entry.name);
+    const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
+    // Replay any output buffered while this workspace had no window
+    if (entry.replay) terminal.write(entry.replay);
   }
   // Focus the first restored session
   switchSession(restored[0].name);
