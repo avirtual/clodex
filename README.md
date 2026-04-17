@@ -8,10 +8,12 @@ A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run mul
 
 - **Sidebar with agent sessions** — switch between Claude, Codex, and bash sessions with a click
 - **Embedded xterm.js terminals** — each session is a real PTY with full terminal support
-- **Inter-agent IPC** — agents can write `[cli:dm bob] hello` in their responses to message each other; DMs land in the recipient's stdin as `[from alice] hello`
-- **Multi-window workspaces** — each window is a workspace with its own session set; restored on relaunch
+- **Inter-agent IPC** — agents can write `[cli:dm bob] hello` in their responses to message each other; DMs land in the recipient's stdin as `[from alice] hello`. Sidebar tab pulses amber when a session receives a message.
+- **Multi-window workspaces** — each window is a workspace with its own session set; restored on relaunch. Broadcast and `[cli:who]` are workspace-scoped; DM is global by agent name.
+- **Live context indicator** — for Claude sessions, sidebar shows a color-coded badge (green/orange/red) with the current context window usage
 - **Prompts library** — save reusable prompts and either inject them into a running session or seed a new one as a system prompt
 - **Templates** — save New Session dialog configs and pick them from a dropdown
+- **Edit args mid-stream** — right-click a session → "Edit Args…" to update its CLI args; choose to apply on next spawn or restart immediately (sessionId is preserved across restart)
 - **Customizable statusline** — via Preferences (⌘,), pick which components show in Claude and Codex statuslines
 - **Persistence** — sessions resume across app restarts via `claude --resume` / `codex resume`
 - **Wire-compatible with [wb-wrap](https://github.com/bogdan/wb-wrap)** — registers on `/tmp/wb-wrap/` so Clodex sessions and external `wb-wrap` instances can talk
@@ -64,6 +66,8 @@ Once two or more agent sessions are running, they can message each other. Just t
 - *"Tell everyone the build is broken"* → `[cli:broadcast] heads up, build is broken on main`
 
 Bash sessions are private terminals — they don't participate in IPC.
+
+**Scoping:** `[cli:broadcast]` and `[cli:who]` are scoped to the sender's workspace — they only see agents in the same window. External `wb-wrap` peers on the machine are still reached (they have no workspace concept). `[cli:dm <name>]` is global: if an agent by that name exists anywhere, it'll receive the DM.
 
 ### Prompts library
 

@@ -64,6 +64,10 @@ window.api = {
     ipcRenderer.on('ipc-message', (_e, msg) => callback(msg)),
   onSessionActivity: (callback) =>
     ipcRenderer.on('session-activity', (_e, name, state) => callback(name, state)),
+  onSessionCtx: (callback) =>
+    ipcRenderer.on('session-ctx', (_e, name, pct) => callback(name, pct)),
+  onSessionMention: (callback) =>
+    ipcRenderer.on('session-mention', (_e, name, mtype, from) => callback(name, mtype, from)),
   onRequestSwitchSession: (callback) =>
     ipcRenderer.on('request-switch-session', (_e, name) => callback(name)),
   onRequestOpenNewDialog: (callback) =>
@@ -76,6 +80,10 @@ window.api = {
   // UI settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
+
+  // Session args
+  getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
+  setSessionArgs: (name, extraArgs, restart) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart),
 
   // Workspaces
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),

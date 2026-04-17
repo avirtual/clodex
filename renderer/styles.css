@@ -254,6 +254,30 @@ html, body {
   font-family: 'SF Mono', 'Menlo', monospace;
 }
 
+.session-ctx {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: auto;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #fff;
+}
+.session-ctx:empty { display: none; }
+
+@keyframes mentionPulse {
+  0%   { background: transparent; }
+  15%  { background: rgba(255, 193, 7, 0.35); }
+  100% { background: transparent; }
+}
+.session-item.mention-pulse {
+  animation: mentionPulse 1.6s ease-out;
+}
+.session-ctx[data-level="low"]  { background: #2ea043; }
+.session-ctx[data-level="mid"]  { background: #d47b16; }
+.session-ctx[data-level="high"] { background: #cf222e; }
+
 .session-close {
   opacity: 0;
   border: none;
@@ -394,7 +418,7 @@ html, body {
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -404,8 +428,23 @@ html, body {
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden {
   display: none;
+}
+
+#args-dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 420px;
+}
+#args-dialog h3 { margin-bottom: 8px; font-size: 16px; }
+#args-dialog label { display: block; margin: 12px 0; }
+#args-dialog label span { font-size: 13px; }
+#args-dialog input[type="text"] {
+  width: 100%; margin-top: 4px; padding: 6px 8px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: monospace;
 }
 
 #prefs-dialog {

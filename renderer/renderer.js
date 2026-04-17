@@ -194,6 +194,7 @@ function addSessionToSidebar(name, type, cwd, label) {
       </div>
     </div>
     <button class="session-close" title="Kill session">&times;</button>
+    <span class="session-ctx" title="Context used"></span>
   `;
 
   item.addEventListener('click', (e) => {
@@ -228,6 +229,9 @@ function addSessionToSidebar(name, type, cwd, label) {
 // Handle context menu actions from main process
 window.api.onSessionContextAction(({ action, name }) => {
   switch (action) {
+    case 'editArgs':
+      openArgsDialog(name);
+      break;
     case 'rename': {
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (item) {
@@ -594,6 +598,27 @@ window.api.onSessionActivity((name, state) => {
   if (el) el.dataset.activity = state;
 });
 
+function applyCtxBadge(name, pct) {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  const badge = el.querySelector('.session-ctx');
+  if (!badge) return;
+  badge.textContent = pct > 0 ? `${pct}%` : '';
+  badge.dataset.level = pct >= 80 ? 'high' : pct >= 60 ? 'mid' : 'low';
+}
+
+window.api.onSessionCtx((name, pct) => applyCtxBadge(name, pct));
+
+window.api.onSessionMention((name, mtype /* 'dm'|'broadcast' */) => {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  el.classList.remove('mention-pulse');
+  // Force reflow so re-adding the class restarts the animation
+  void el.offsetWidth;
+  el.classList.add('mention-pulse');
+  setTimeout(() => el.classList.remove('mention-pulse'), 2000);
+});
+
 // ---------------------------------------------------------------------------
 // IPC log panel
 // ---------------------------------------------------------------------------
@@ -953,6 +978,56 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
 window.api.onRequestOpenPreferences(() => openPrefs());
 
 // ---------------------------------------------------------------------------
+// Edit Session Args
+// ---------------------------------------------------------------------------
+
+const argsOverlay = document.getElementById('args-overlay');
+const argsInput = document.getElementById('args-input');
+const argsTarget = document.getElementById('args-target');
+const argsRestart = document.getElementById('args-restart');
+let argsEditingName = null;
+
+async function openArgsDialog(name) {
+  const res = await window.api.getSessionArgs(name);
+  if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+  argsEditingName = name;
+  argsTarget.textContent = `${name} (${res.type}) — new args apply on next spawn.`;
+  argsInput.value = (res.extraArgs || []).map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
+  argsRestart.checked = false;
+  argsOverlay.classList.remove('hidden');
+  setTimeout(() => argsInput.focus(), 50);
+}
+
+function closeArgsDialog() {
+  argsOverlay.classList.add('hidden');
+  argsEditingName = null;
+}
+
+document.getElementById('btn-args-cancel').addEventListener('click', closeArgsDialog);
+document.getElementById('btn-args-save').addEventListener('click', async () => {
+  if (!argsEditingName) return closeArgsDialog();
+  const parsed = parseArgs(argsInput.value || '');
+  const restart = argsRestart.checked;
+  const name = argsEditingName;
+  // Snapshot metadata from the current sidebar entry so we can re-render it
+  // after the kill+respawn wipes it via session-exit.
+  const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = existing ? existing.querySelector('.session-type')?.textContent : null;
+  const snapCwd = existing ? existing.dataset.cwd : null;
+  closeArgsDialog();
+  const res = await window.api.setSessionArgs(name, parsed, restart);
+  if (!res || !res.ok) {
+    alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+    return;
+  }
+  if (res.restarted && snapType) {
+    createTerminal(name);
+    addSessionToSidebar(name, snapType, snapCwd, null);
+    switchSession(name);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Prompts library
 // ---------------------------------------------------------------------------
 
@@ -1094,6 +1169,7 @@ promptBody.addEventListener('keydown', (e) => e.stopPropagation());
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
     if (entry.replay) terminal.write(entry.replay);
+    if (typeof entry.ctx === 'number') applyCtxBadge(entry.name, entry.ctx);
     if (!firstHealthy) firstHealthy = entry.name;
   }
   if (firstHealthy) switchSession(firstHealthy);

@@ -132,6 +132,26 @@
     </div>
   </div>
 
+  <!-- Edit Args dialog -->
+  <div id="args-overlay" class="hidden">
+    <div id="args-dialog">
+      <h3>Edit Session Args</h3>
+      <p class="hint-text" id="args-target"></p>
+      <label>Extra CLI args
+        <input type="text" id="args-input" placeholder="(none)">
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="args-restart" style="margin: 0;">
+        <span>Restart session now (kills running process, respawns with new args)</span>
+      </label>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="btn-args-cancel" class="secondary">Cancel</button>
+        <button id="btn-args-save">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Preferences dialog -->
   <div id="prefs-overlay" class="hidden">
     <div id="prefs-dialog">

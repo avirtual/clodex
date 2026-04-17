@@ -79,6 +79,17 @@ const persistence = {
       this._save(all);
     }
   },
+  setExtraArgs(name, extraArgs) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      entry.extraArgs = extraArgs;
+      this._save(all);
+    }
+  },
+  get(name) {
+    return this._load().find(s => s.name === name) || null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -523,14 +534,17 @@ function renderClaudeStatusScript(name) {
     : '';
   return `#!/bin/bash
 INPUT="$(cat)"
-IFS=$'\\t' read -r MODEL CTX_PCT COST CWD <<<"$(echo "$INPUT" | jq -r '[
+IFS=$'\\t' read -r MODEL CTX_NUM CTX_PCT COST CWD <<<"$(echo "$INPUT" | jq -r '[
   (.model.display_name // "?"),
+  ((.context_window.used_percentage // 0) | floor | tostring),
   (((.context_window.used_percentage // 0) | floor | tostring) + "%"),
   ("$" + (((.cost.total_cost_usd // 0) * 100 | floor) / 100 | tostring)),
   (.workspace.current_dir // .cwd // "")
 ] | @tsv' 2>/dev/null)"
 SHORT_CWD="\${CWD##*/}"
 ${branchSh}
+# Side-channel: expose the numeric ctx% to Clodex for sidebar decoration
+echo -n "\${CTX_NUM}" > "${REGISTRY_DIR}/${name}-ctx" 2>/dev/null || true
 printf '${format}'${fmt.length ? ' ' + fmt.map(v => `"${v}"`).join(' ') : ''}
 `;
 }
@@ -662,7 +676,7 @@ mv -f "$TMPLINK" "$LINK"
 }
 
 function cleanupClaudeHook(name) {
-  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-statusline.sh', '-append-prompt.md', '.jsonl']) {
+  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-statusline.sh', '-append-prompt.md', '-ctx', '.jsonl']) {
     try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
   }
 }
@@ -1169,6 +1183,29 @@ class SessionManager {
       session.watcher.start();
     }
 
+    // Claude sidechannel: statusline script writes numeric ctx% to a file;
+    // tail it to decorate the sidebar tab.
+    if (agentType === 'claude') {
+      const ctxPath = path.join(REGISTRY_DIR, `${name}-ctx`);
+      let lastPct = null;
+      const readCtx = () => {
+        try {
+          const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
+          const n = parseInt(raw, 10);
+          if (!isNaN(n) && n !== lastPct) {
+            lastPct = n;
+            this._sendToSession(name, 'session-ctx', name, n);
+          }
+        } catch {}
+      };
+      try {
+        session.ctxWatcher = fs.watch(REGISTRY_DIR, (_event, fname) => {
+          if (fname === `${name}-ctx`) readCtx();
+        });
+      } catch {}
+      readCtx();
+    }
+
     ptyProc.onData((data) => {
       this._sendToSession(name, 'pty-data', name, data);
 
@@ -1242,6 +1279,7 @@ class SessionManager {
     const s = this.sessions.get(name);
     if (!s) return;
     if (s.watcher) s.watcher.stop();
+    if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
     if (s.transport) s.transport.stop();
     if (s.agentType) registry.unregister(name);
     if (s.agentType === 'claude') cleanupClaudeHook(name);
@@ -1291,8 +1329,13 @@ class SessionManager {
 
   // --- Intent handling + message routing ---
 
-  async _handleIntent(senderName, intent) {
+  async _handleIntent(senderName, intent, senderWorkspaceId = null) {
     const session = this.sessions.get(senderName);
+    // Broadcast & who are workspace-scoped for Clodex-originated intents:
+    // they only see sessions in the same workspace. External peers stay
+    // global because they have no workspace concept. Inbound wb-wrap
+    // broadcasts bypass this entirely (handled in the Transport callback).
+    const senderWs = senderWorkspaceId ?? (session && session.workspaceId) ?? null;
 
     switch (intent.type) {
       case 'dm': {
@@ -1314,11 +1357,11 @@ class SessionManager {
         break;
       }
       case 'broadcast': {
-        // Local agent sessions only
+        // Local agent sessions in the sender's workspace only
         for (const [name, s] of this.sessions) {
-          if (name !== senderName && s.agentType) {
-            this._deliverMessage(name, senderName, intent.body, 'broadcast');
-          }
+          if (name === senderName || !s.agentType) continue;
+          if (senderWs && s.workspaceId !== senderWs) continue;
+          this._deliverMessage(name, senderName, intent.body, 'broadcast');
         }
         // External peers
         const msg = { type: 'broadcast', from: senderName, body: intent.body };
@@ -1333,9 +1376,9 @@ class SessionManager {
         break;
       }
       case 'who': {
-        // Only agent sessions are addressable peers — bash can't process intents
+        // Only agent sessions in the sender's workspace — bash can't process intents
         const localAgents = Array.from(this.sessions.values())
-          .filter(s => s.agentType)
+          .filter(s => s.agentType && (!senderWs || s.workspaceId === senderWs))
           .map(s => s.name);
         const externalNames = registry.listPeers()
           .map(p => p.name)
@@ -1370,6 +1413,7 @@ class SessionManager {
     } else {
       this._injectText(target, `${prefix} ${body}`);
     }
+    this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
   }
 
   _injectText(session, text) {
@@ -2003,6 +2047,27 @@ app.whenReady().then(() => {
     return { ok: true };
   });
 
+  ipcMain.handle('session:getArgs', (_e, name) => {
+    const entry = persistence.get(name);
+    return entry ? { ok: true, extraArgs: entry.extraArgs || [], type: entry.type } : { ok: false };
+  });
+  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart) => {
+    const beforeKill = persistence.get(name);
+    persistence.setExtraArgs(name, extraArgs);
+    if (!restart) return { ok: true, restarted: false };
+    if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
+    const wsId = workspaceOfSender(e);
+    try {
+      if (manager.sessions.has(name)) await manager.kill(name);
+      await new Promise(r => setTimeout(r, 300));
+      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId);
+      if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
+      return { ok: true, restarted: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('settings:get', () => ({
     statusline: uiSettings.get().statusline,
     claudeComponents: CLAUDE_SL_COMPONENTS,
@@ -2016,7 +2081,8 @@ app.whenReady().then(() => {
 
   ipcMain.handle('ui:broadcast', async (_e, body) => {
     if (!body || !body.trim()) return { ok: false, error: 'Empty message' };
-    await manager._handleIntent('_ui', { type: 'broadcast', body: body.trim() });
+    const wsId = workspaceOfSender(_e);
+    await manager._handleIntent('user', { type: 'broadcast', body: body.trim() }, wsId);
     return { ok: true };
   });
 
@@ -2060,6 +2126,10 @@ app.whenReady().then(() => {
       {
         label: 'Rename…',
         click: () => e.sender.send('session:context-action', { action: 'rename', name }),
+      },
+      {
+        label: 'Edit Args…',
+        click: () => e.sender.send('session:context-action', { action: 'editArgs', name }),
       },
       { type: 'separator' },
       {
@@ -2111,6 +2181,13 @@ app.whenReady().then(() => {
   // Sessions already running (this can happen for the default workspace on
   // second window creation via tray) are returned as-is so the renderer can
   // render them without double-spawning.
+  const readCtxFor = (name) => {
+    try {
+      const n = parseInt(fs.readFileSync(path.join(REGISTRY_DIR, `${name}-ctx`), 'utf-8').trim(), 10);
+      return isNaN(n) ? null : n;
+    } catch { return null; }
+  };
+
   ipcMain.handle('app:restore-sessions', async (e) => {
     const workspaceId = workspaceOfSender(e);
     const saved = persistence.listForWorkspace(workspaceId);
@@ -2128,6 +2205,7 @@ app.whenReady().then(() => {
           cwd: entry.cwd,
           label: entry.label || null,
           replay,
+          ctx: readCtxFor(entry.name),
         });
         continue;
       }
@@ -2145,6 +2223,7 @@ app.whenReady().then(() => {
           type: entry.type,
           cwd: entry.cwd,
           label: entry.label || null,
+          ctx: readCtxFor(entry.name),
         });
       } catch (err) {
         // DO NOT remove from persistence — surface the failure to the UI

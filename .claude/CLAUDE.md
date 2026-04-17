@@ -1,5 +1,10 @@
 # Clodex — Visual multi-agent PTY manager
 
+> **Start-of-session**: read `.claude/memory.md` first — it captures in-flight
+> work, settled design positions the user has already decided on, and open
+> follow-ups from prior sessions. This file has the project's stable shape;
+> memory has the current state of play.
+
 ## What it is
 
 Clodex is an Electron app that wraps the Claude Code CLI and Codex CLI, giving
