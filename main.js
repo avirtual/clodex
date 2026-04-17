@@ -11,6 +11,7 @@ const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
+const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
 const LONG_TEXT_THRESHOLD = 200;
@@ -208,6 +209,53 @@ const prompts = {
     this._save(all);
   },
   remove(id) { this._save(this._load().filter(p => p.id !== id)); },
+};
+
+// ---------------------------------------------------------------------------
+// UI preferences — statusline components per CLI, global
+// ---------------------------------------------------------------------------
+
+let UI_SETTINGS_FILE = null;
+
+const CLAUDE_SL_COMPONENTS = ['model', 'context', 'cost', 'cwd', 'git-branch'];
+const CODEX_SL_COMPONENTS = [
+  'context-used', 'model-name', 'project-root', 'git-branch',
+  'five-hour-limit', 'current-dir', 'context-remaining', 'model-with-reasoning',
+];
+const DEFAULT_UI_SETTINGS = {
+  statusline: {
+    claude: ['model', 'context', 'cost', 'cwd'],
+    codex: ['context-used', 'model-name', 'project-root', 'git-branch', 'five-hour-limit', 'current-dir'],
+  },
+};
+
+const uiSettings = {
+  _load() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, 'utf-8'));
+      return {
+        statusline: {
+          claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : DEFAULT_UI_SETTINGS.statusline.claude,
+          codex: Array.isArray(raw?.statusline?.codex) ? raw.statusline.codex : DEFAULT_UI_SETTINGS.statusline.codex,
+        },
+      };
+    } catch { return DEFAULT_UI_SETTINGS; }
+  },
+  get() { return this._load(); },
+  set(partial) {
+    const cur = this._load();
+    const next = {
+      statusline: {
+        claude: partial?.statusline?.claude ?? cur.statusline.claude,
+        codex: partial?.statusline?.codex ?? cur.statusline.codex,
+      },
+    };
+    try {
+      fs.mkdirSync(path.dirname(UI_SETTINGS_FILE), { recursive: true });
+      fs.writeFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
+    } catch (e) { console.error('ui-settings save failed:', e); }
+    return next;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -415,12 +463,102 @@ RULES:
 - Do NOT echo or repeat incoming [from ...] messages. They are delivered to
   you — just read them and respond with your own words or intents.`;
 
+// Merge IPC prompt + optional library prompt + any user-supplied
+// --append-system-prompt(-file) from extraArgs into one blob. Returns the
+// cleaned argv (user flags stripped) plus the merged body.
+function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, libraryBody) {
+  const parts = [ipcPrompt];
+  if (libraryBody) parts.push(libraryBody);
+  const cleaned = [];
+  for (let i = 0; i < extraArgs.length; i++) {
+    const a = extraArgs[i];
+    if (a === '--append-system-prompt' && i + 1 < extraArgs.length) {
+      parts.push(extraArgs[++i]);
+      continue;
+    }
+    if (a === '--append-system-prompt-file' && i + 1 < extraArgs.length) {
+      try { parts.push(fs.readFileSync(extraArgs[++i], 'utf-8')); } catch { i++; }
+      continue;
+    }
+    cleaned.push(a);
+  }
+  return { cleaned, merged: parts.filter(Boolean).join('\n\n') };
+}
+
+// Same idea for Codex: inline any user-supplied model_instructions_file
+// so we can bundle everything into our own single file.
+function mergeCodexInstructions(extraArgs, ipcPrompt, libraryBody) {
+  const parts = [ipcPrompt];
+  if (libraryBody) parts.push(libraryBody);
+  const cleaned = [];
+  for (let i = 0; i < extraArgs.length; i++) {
+    const a = extraArgs[i];
+    if (a === '-c' && i + 1 < extraArgs.length && /^model_instructions_file=/.test(extraArgs[i + 1])) {
+      const raw = extraArgs[++i].replace(/^model_instructions_file=/, '').replace(/^~/, os.homedir());
+      try { parts.push(fs.readFileSync(raw, 'utf-8')); } catch {}
+      continue;
+    }
+    cleaned.push(a);
+  }
+  return { cleaned, merged: parts.filter(Boolean).join('\n\n') };
+}
+
+// Render Claude's statusline bash script based on user-selected components.
+// Session name prefix is always shown. Components: model, context, cost,
+// cwd, git-branch. Context % is a byte-count estimate (bytes/5 ≈ tokens
+// vs 200k budget) — cheap and monotonic enough for a status indicator.
+function renderClaudeStatusScript(name) {
+  const enabled = new Set(uiSettings.get().statusline.claude);
+  const pieces = [`\\033[36m[clodex:${name}]\\033[0m`];
+  const fmt = [];
+  const vars = [];
+  if (enabled.has('model')) { pieces.push('\\033[33m%s\\033[0m'); fmt.push('$MODEL'); vars.push('MODEL'); }
+  if (enabled.has('context')) { pieces.push('\\033[90mctx %s\\033[0m'); fmt.push('$CTX_PCT'); vars.push('CTX_PCT'); }
+  if (enabled.has('cost')) { pieces.push('\\033[35m%s\\033[0m'); fmt.push('$COST'); vars.push('COST'); }
+  if (enabled.has('git-branch')) { pieces.push('\\033[34m%s\\033[0m'); fmt.push('$BRANCH'); vars.push('BRANCH'); }
+  if (enabled.has('cwd')) { pieces.push('\\033[32m%s\\033[0m'); fmt.push('$SHORT_CWD'); vars.push('SHORT_CWD'); }
+  const format = pieces.join(' ');
+  const branchSh = enabled.has('git-branch')
+    ? `BRANCH="$(cd "$CWD" 2>/dev/null && git symbolic-ref --short HEAD 2>/dev/null || echo "")"`
+    : '';
+  return `#!/bin/bash
+INPUT="$(cat)"
+IFS=$'\\t' read -r MODEL CTX_PCT COST CWD <<<"$(echo "$INPUT" | jq -r '[
+  (.model.display_name // "?"),
+  (((.context_window.used_percentage // 0) | floor | tostring) + "%"),
+  ("$" + (((.cost.total_cost_usd // 0) * 100 | floor) / 100 | tostring)),
+  (.workspace.current_dir // .cwd // "")
+] | @tsv' 2>/dev/null)"
+SHORT_CWD="\${CWD##*/}"
+${branchSh}
+printf '${format}'${fmt.length ? ' ' + fmt.map(v => `"${v}"`).join(' ') : ''}
+`;
+}
+
+// Re-render statusline scripts for all running Claude sessions. Called when
+// the user updates preferences — Claude re-reads the script on each status
+// update, so changes show up within a tick.
+function rebuildAllStatusScripts(manager) {
+  for (const [name, s] of manager.sessions) {
+    if (s.agentType !== 'claude') continue;
+    const p = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
+    try { fs.writeFileSync(p, renderClaudeStatusScript(name), { mode: 0o700 }); } catch {}
+  }
+}
+
+function codexStatusLineArg() {
+  const list = uiSettings.get().statusline.codex;
+  const quoted = list.map(c => `"${c}"`).join(',');
+  return `tui.status_line=[${quoted}]`;
+}
+
 function setupClaudeHook(name) {
   ensureDir(REGISTRY_DIR);
   const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
   const scriptPath = path.join(REGISTRY_DIR, `${name}-hook.sh`);
   const settingsPath = path.join(REGISTRY_DIR, `${name}-hook.json`);
   const outputPath = path.join(REGISTRY_DIR, `${name}-hook-output.json`);
+  const statusPath = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
   const msgDir = path.join(REGISTRY_DIR, 'messages');
 
   // Pre-render hook output
@@ -433,6 +571,10 @@ function setupClaudeHook(name) {
   fs.writeFileSync(outputPath, hookOutput + '\n');
 
   // Hook script
+  // Note: IPC prompt delivery via additionalContext is disabled — we inject
+  // it through --append-system-prompt instead. The outputPath file is still
+  // generated in case we want to revive this transport; uncomment the
+  // final `cat` to switch back.
   const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
@@ -441,13 +583,16 @@ TPATH="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)
 TMPLINK="${linkPath}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "${linkPath}"
-cat "${outputPath}"
+# cat "${outputPath}"
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+
+  fs.writeFileSync(statusPath, renderClaudeStatusScript(name), { mode: 0o700 });
 
   // Settings JSON
   const settings = {
     trustedDirectories: [msgDir],
+    statusLine: { type: 'command', command: statusPath },
     hooks: {
       SessionStart: [{
         matcher: '',
@@ -475,6 +620,10 @@ function setupCodexHook(name, cwd) {
   fs.writeFileSync(outputPath, hookOutput + '\n');
 
   // Generic hook script
+  // Note: IPC prompt delivery via additionalContext is disabled — we inject
+  // it through model_instructions_file instead. Codex renders
+  // additionalContext as a flattened wall of text, which was ugly. The
+  // OUTPUT file is still generated; uncomment the final `cat` to revive.
   const script = `#!/bin/bash
 set -euo pipefail
 NAME="\${WB_WRAP_NAME:-}"
@@ -486,8 +635,8 @@ LINK="${REGISTRY_DIR}/\${NAME}.jsonl"
 TMPLINK="\${LINK}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "$LINK"
-OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
-[ -f "$OUTPUT" ] && cat "$OUTPUT"
+# OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
+# [ -f "$OUTPUT" ] && cat "$OUTPUT"
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
 
@@ -513,13 +662,13 @@ OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
 }
 
 function cleanupClaudeHook(name) {
-  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '.jsonl']) {
+  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-statusline.sh', '-append-prompt.md', '.jsonl']) {
     try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
   }
 }
 
 function cleanupCodexHook(name, cwd) {
-  for (const suffix of ['-hook-output.json', '.jsonl']) {
+  for (const suffix of ['-hook-output.json', '-instructions.md', '.jsonl']) {
     try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
   }
   const codexDir = path.join(cwd, '.codex');
@@ -643,6 +792,7 @@ class JsonlWatcher {
     this._timer = null;
     this._fd = null;
     this._currentTarget = null;
+    this._position = 0;
     this._pendingRid = null;
     this._pendingText = null;
     this._pendingTime = 0;
@@ -685,7 +835,12 @@ class JsonlWatcher {
         this._fd = fs.openSync(target, 'r');
         this._currentTarget = target;
         this._readBuf = '';
-        // Session id = transcript filename without .jsonl extension
+        // Start at EOF. On Clodex restart / resume, the transcript already
+        // contains historical turns we've processed before; replaying them
+        // would re-fire past [cli:...] intents. We only care about turns
+        // appended from now on.
+        try { this._position = fs.fstatSync(this._fd).size; }
+        catch { this._position = 0; }
         const sessionId = path.basename(target, '.jsonl');
         if (sessionId) {
           try { this._onSessionId(sessionId); } catch {}
@@ -704,7 +859,8 @@ class JsonlWatcher {
     const buf = Buffer.alloc(8192);
     let bytesRead;
     try {
-      bytesRead = fs.readSync(this._fd, buf, 0, buf.length, null);
+      bytesRead = fs.readSync(this._fd, buf, 0, buf.length, this._position);
+      this._position += bytesRead;
     } catch { return; }
 
     if (bytesRead === 0) {
@@ -850,7 +1006,7 @@ class SessionManager {
     }
   }
 
-  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
@@ -862,31 +1018,45 @@ class SessionManager {
     switch (type) {
       case 'claude': {
         cmd = 'claude';
-        args = [...extraArgs];
-        // Inject hook settings
+        // IPC protocol always goes in; library prompt only on first create
+        const libBody = (systemPromptBody && !resumeId) ? systemPromptBody : null;
+        const { cleaned, merged } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), libBody);
+        args = cleaned;
         if (!args.includes('--settings')) {
           const settingsPath = setupClaudeHook(name);
           args.push('--settings', settingsPath);
         }
-        // Allow reading spilled message files without prompting
         ensureDir(MSG_DIR);
         if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-        // Resume previous conversation if we have a session id
         if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
           args.push('--resume', resumeId);
         }
+        const promptPath = path.join(REGISTRY_DIR, `${name}-append-prompt.md`);
+        fs.writeFileSync(promptPath, merged, { mode: 0o600 });
+        args.push('--append-system-prompt-file', promptPath);
         break;
       }
       case 'codex': {
         cmd = 'codex';
-        args = [...extraArgs];
+        const libBody = (systemPromptBody && !resumeId) ? systemPromptBody : null;
+        const { cleaned, merged } = mergeCodexInstructions(extraArgs, IPC_PROMPT(name), libBody);
+        // Build top-level flags first, then the optional `resume <uuid>`
+        // subcommand — clap expects subcommands AFTER top-level args.
+        args = [...cleaned];
         setupCodexHook(name, cwd);
         if (!args.includes('codex_hooks')) args.push('--enable', 'codex_hooks');
         if (!args.includes('--no-alt-screen')) args.push('--no-alt-screen');
+        if (!args.some(a => a.startsWith('tui.status_line'))) {
+          args.push('-c', codexStatusLineArg());
+        }
         ensureDir(MSG_DIR);
         if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-        if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
-          args.push('--resume', resumeId);
+        const instructionsPath = path.join(REGISTRY_DIR, `${name}-instructions.md`);
+        fs.writeFileSync(instructionsPath, merged, { mode: 0o600 });
+        args.push('-c', `model_instructions_file=${instructionsPath}`);
+        if (resumeId) {
+          const uuidMatch = resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          args.push('resume', uuidMatch ? uuidMatch[1] : resumeId);
         }
         break;
       }
@@ -1495,6 +1665,14 @@ function buildAppMenu() {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        {
+          label: 'Preferences…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) win.webContents.send('request-open-preferences');
+          },
+        },
         { label: 'Check for Updates…', click: () => checkForUpdate(false) },
         { type: 'separator' },
         { role: 'services' },
@@ -1766,8 +1944,10 @@ app.whenReady().then(() => {
   TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
   PROMPTS_FILE = path.join(app.getPath('userData'), 'prompts.json');
   WORKSPACES_FILE = path.join(app.getPath('userData'), 'workspaces.json');
+  UI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ui-settings.json');
 
   cleanupOldMessages();
+  setInterval(cleanupOldMessages, MSG_CLEANUP_INTERVAL);
   registry.cleanup();
 
   // Check for updates on startup and every 6 hours
@@ -1776,12 +1956,12 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody) => {
     try {
       const workspaceId = workspaceOfSender(e);
       return {
         ok: true,
-        session: await manager.create(name, type, cwd, extraArgs, null, workspaceId),
+        session: await manager.create(name, type, cwd, extraArgs, null, workspaceId, systemPromptBody || null),
       };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -1821,6 +2001,17 @@ app.whenReady().then(() => {
     if (!s) return { ok: false, error: 'Session not found' };
     manager._injectText(s, body);
     return { ok: true };
+  });
+
+  ipcMain.handle('settings:get', () => ({
+    statusline: uiSettings.get().statusline,
+    claudeComponents: CLAUDE_SL_COMPONENTS,
+    codexComponents: CODEX_SL_COMPONENTS,
+  }));
+  ipcMain.handle('settings:set', (_e, partial) => {
+    const next = uiSettings.set(partial);
+    rebuildAllStatusScripts(manager);
+    return next;
   });
 
   ipcMain.handle('ui:broadcast', async (_e, body) => {
@@ -1866,10 +2057,6 @@ app.whenReady().then(() => {
   ipcMain.on('session:context-menu', (e, { name, cwd }) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const menu = Menu.buildFromTemplate([
-      {
-        label: 'Switch to Session',
-        click: () => e.sender.send('session:context-action', { action: 'switch', name }),
-      },
       {
         label: 'Rename…',
         click: () => e.sender.send('session:context-action', { action: 'rename', name }),

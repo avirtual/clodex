@@ -1,10 +1,11 @@
 {
   "name": "clodex",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "postinstall": "node build/dev-rename-electron.js",
     "rebuild": "electron-rebuild",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac --arm64 && electron-builder --mac --x64"

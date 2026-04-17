@@ -113,6 +113,12 @@
           <button id="btn-browse" class="secondary" type="button">Browse</button>
         </div>
       </label>
+      <label id="system-prompt-row">System Prompt
+        <select id="input-system-prompt">
+          <option value="">(none)</option>
+        </select>
+        <span class="hint-text">Applied at create only — Claude: --append-system-prompt · Codex: model_instructions_file</span>
+      </label>
       <label>Extra CLI args
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
@@ -122,6 +128,28 @@
         <div style="flex: 1;"></div>
         <button id="btn-cancel" class="secondary">Cancel</button>
         <button id="btn-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preferences dialog -->
+  <div id="prefs-overlay" class="hidden">
+    <div id="prefs-dialog">
+      <h3>Preferences</h3>
+      <section>
+        <h4>Claude statusline</h4>
+        <p class="hint-text">Session name <code>[clodex:NAME]</code> is always shown.</p>
+        <div id="prefs-claude-components" class="prefs-checkboxes"></div>
+      </section>
+      <section>
+        <h4>Codex statusline</h4>
+        <p class="hint-text">Applied at session start. Existing Codex sessions need a restart to pick up changes.</p>
+        <div id="prefs-codex-components" class="prefs-checkboxes"></div>
+      </section>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="btn-prefs-cancel" class="secondary">Cancel</button>
+        <button id="btn-prefs-save">Save</button>
       </div>
     </div>
   </div>

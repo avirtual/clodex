@@ -21,6 +21,8 @@ const inputArgs = document.getElementById('input-args');
 const argsHint = document.getElementById('args-hint');
 const inputTemplate = document.getElementById('input-template');
 const templateRow = document.getElementById('template-row');
+const inputSystemPrompt = document.getElementById('input-system-prompt');
+const systemPromptRow = document.getElementById('system-prompt-row');
 const btnTemplateDelete = document.getElementById('btn-template-delete');
 const btnSaveTemplate = document.getElementById('btn-save-template');
 
@@ -226,9 +228,6 @@ function addSessionToSidebar(name, type, cwd, label) {
 // Handle context menu actions from main process
 window.api.onSessionContextAction(({ action, name }) => {
   switch (action) {
-    case 'switch':
-      switchSession(name);
-      break;
     case 'rename': {
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (item) {
@@ -429,6 +428,21 @@ function applyTypeDefaults() {
   const type = inputType.value;
   inputArgs.value = DEFAULT_ARGS[type] || '';
   argsHint.textContent = ARGS_HINTS[type] || '';
+  const supportsSystemPrompt = type === 'claude' || type === 'codex';
+  systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
+  if (!supportsSystemPrompt) inputSystemPrompt.value = '';
+}
+
+async function refreshSystemPromptDropdown() {
+  const list = await window.api.listPrompts();
+  while (inputSystemPrompt.options.length > 1) inputSystemPrompt.remove(1);
+  for (const p of list) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.title;
+    opt.dataset.body = p.body;
+    inputSystemPrompt.appendChild(opt);
+  }
 }
 
 async function refreshTemplatesDropdown() {
@@ -451,9 +465,10 @@ async function openDialog() {
   inputType.value = 'claude';
   inputCwd.value = homeDir;
   inputTemplate.value = '';
+  inputSystemPrompt.value = '';
   applyTypeDefaults();
   inputName.style.borderColor = '';
-  await refreshTemplatesDropdown();
+  await Promise.all([refreshTemplatesDropdown(), refreshSystemPromptDropdown()]);
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
 }
@@ -517,6 +532,12 @@ async function doCreate() {
   const cwd = inputCwd.value || homeDir;
   const extraArgs = parseArgs(inputArgs.value || '');
 
+  let systemPromptBody = null;
+  if ((type === 'claude' || type === 'codex') && inputSystemPrompt.value) {
+    const opt = inputSystemPrompt.options[inputSystemPrompt.selectedIndex];
+    systemPromptBody = (opt && opt.dataset.body) || null;
+  }
+
   if (!name) return;
   if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     inputName.style.borderColor = '#e94560';
@@ -525,7 +546,7 @@ async function doCreate() {
 
   closeDialog();
 
-  const result = await window.api.createSession(name, type, cwd, extraArgs);
+  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     return;
@@ -860,6 +881,76 @@ window.api.onUpdateAvailable((info) => showUpdateBanner(info));
 // Tray-triggered actions
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
+
+// ---------------------------------------------------------------------------
+// Preferences dialog
+// ---------------------------------------------------------------------------
+
+const prefsOverlay = document.getElementById('prefs-overlay');
+const prefsClaudeBox = document.getElementById('prefs-claude-components');
+const prefsCodexBox = document.getElementById('prefs-codex-components');
+const CLAUDE_LABELS = {
+  'model': 'Model name',
+  'context': 'Context usage (estimated)',
+  'cost': 'Session cost',
+  'cwd': 'Working directory',
+  'git-branch': 'Git branch',
+};
+const CODEX_LABELS = {
+  'context-used': 'Context used (%)',
+  'model-name': 'Model name',
+  'project-root': 'Project root',
+  'git-branch': 'Git branch',
+  'five-hour-limit': '5-hour usage limit',
+  'current-dir': 'Current directory',
+  'context-remaining': 'Context remaining (%)',
+  'model-with-reasoning': 'Model + reasoning level',
+};
+
+function renderPrefsCheckboxes(container, all, enabled, labels) {
+  container.innerHTML = '';
+  const enabledSet = new Set(enabled);
+  for (const key of all) {
+    const row = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = key;
+    cb.checked = enabledSet.has(key);
+    const span = document.createElement('span');
+    span.textContent = labels[key] || key;
+    row.appendChild(cb);
+    row.appendChild(span);
+    container.appendChild(row);
+  }
+}
+
+async function openPrefs() {
+  const s = await window.api.getSettings();
+  renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
+  renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
+  prefsOverlay.classList.remove('hidden');
+}
+
+function closePrefs() {
+  prefsOverlay.classList.add('hidden');
+}
+
+function collectChecked(container) {
+  return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.value);
+}
+
+document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
+document.getElementById('btn-prefs-save').addEventListener('click', async () => {
+  await window.api.setSettings({
+    statusline: {
+      claude: collectChecked(prefsClaudeBox),
+      codex: collectChecked(prefsCodexBox),
+    },
+  });
+  closePrefs();
+});
+
+window.api.onRequestOpenPreferences(() => openPrefs());
 
 // ---------------------------------------------------------------------------
 // Prompts library

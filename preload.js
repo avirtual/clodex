@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
@@ -70,6 +70,12 @@ window.api = {
     ipcRenderer.on('request-open-new-dialog', () => callback()),
   onRequestRenameWorkspace: (callback) =>
     ipcRenderer.on('request-rename-workspace', () => callback()),
+  onRequestOpenPreferences: (callback) =>
+    ipcRenderer.on('request-open-preferences', () => callback()),
+
+  // UI settings
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
 
   // Workspaces
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
