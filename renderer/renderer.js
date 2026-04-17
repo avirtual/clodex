@@ -42,6 +42,74 @@ const homeDir = require('os').homedir();
 inputCwd.value = homeDir;
 
 // ---------------------------------------------------------------------------
+// Workspace (window) name display and rename
+// ---------------------------------------------------------------------------
+
+const sidebarHeader = document.getElementById('sidebar-header');
+let currentWorkspaceId = null;
+let currentWorkspaceName = 'Workspace';
+
+function renderWorkspaceName() {
+  const el = document.getElementById('workspace-name');
+  if (el) el.textContent = currentWorkspaceName;
+}
+
+(async function initWorkspace() {
+  currentWorkspaceId = await window.api.currentWorkspace();
+  const all = await window.api.listWorkspaces();
+  const ws = all.find(w => w.id === currentWorkspaceId);
+  if (ws) {
+    currentWorkspaceName = ws.name || 'Workspace';
+    renderWorkspaceName();
+    document.title = currentWorkspaceName;
+  }
+})();
+
+function startWorkspaceRename() {
+  const span = document.getElementById('workspace-name');
+  if (!span) return;
+  const current = span.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.className = 'workspace-name-input';
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = async (commit) => {
+    if (done) return;
+    done = true;
+    const newName = commit ? (input.value.trim() || 'Workspace') : current;
+    const newSpan = document.createElement('span');
+    newSpan.id = 'workspace-name';
+    newSpan.className = 'workspace-name';
+    newSpan.title = 'Double-click to rename workspace';
+    newSpan.textContent = newName;
+    input.replaceWith(newSpan);
+    if (commit && newName !== current) {
+      currentWorkspaceName = newName;
+      await window.api.setWorkspaceName(newName);
+      document.title = newName;
+    }
+  };
+
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  });
+}
+
+// Event delegation — survives element replacement
+sidebarHeader.addEventListener('dblclick', (e) => {
+  const target = e.target.closest('#workspace-name');
+  if (target) startWorkspaceRename();
+});
+
+// ---------------------------------------------------------------------------
 // Session UI
 // ---------------------------------------------------------------------------
 

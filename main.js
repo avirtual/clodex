@@ -26,7 +26,14 @@ let PERSIST_FILE = null; // initialized after app.whenReady() (needs app.getPath
 const persistence = {
   _load() {
     try {
-      return JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
+      const all = JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
+      // Migrate entries without a workspaceId → assign to default
+      let changed = false;
+      for (const e of all) {
+        if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
+      }
+      if (changed) this._save(all);
+      return all;
     } catch {
       return [];
     }
@@ -41,6 +48,9 @@ const persistence = {
   },
   list() {
     return this._load();
+  },
+  listForWorkspace(workspaceId) {
+    return this._load().filter(s => s.workspaceId === workspaceId);
   },
   upsert(entry) {
     const all = this._load();
@@ -105,6 +115,60 @@ const templates = {
   },
   remove(id) {
     this._save(this._load().filter(t => t.id !== id));
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Workspaces — each window owns one, sessions are scoped to workspaces
+// ---------------------------------------------------------------------------
+
+let WORKSPACES_FILE = null;
+const DEFAULT_WORKSPACE_ID = 'default';
+
+const workspaces = {
+  _load() {
+    try {
+      const all = JSON.parse(fs.readFileSync(WORKSPACES_FILE, 'utf-8'));
+      return Array.isArray(all) ? all : [];
+    } catch { return []; }
+  },
+  _save(entries) {
+    try {
+      fs.mkdirSync(path.dirname(WORKSPACES_FILE), { recursive: true });
+      fs.writeFileSync(WORKSPACES_FILE, JSON.stringify(entries, null, 2));
+    } catch (e) { console.error('workspaces save failed:', e); }
+  },
+  list() {
+    const all = this._load();
+    // Ensure at least one workspace exists
+    if (all.length === 0) {
+      const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
+      this._save([def]);
+      return [def];
+    }
+    return all;
+  },
+  get(id) { return this._load().find(w => w.id === id) || null; },
+  upsert(ws) {
+    const all = this._load();
+    const idx = all.findIndex(w => w.id === ws.id);
+    if (idx >= 0) all[idx] = { ...all[idx], ...ws };
+    else all.push(ws);
+    this._save(all);
+  },
+  remove(id) {
+    const all = this._load().filter(w => w.id !== id);
+    this._save(all);
+  },
+  setName(id, name) {
+    const all = this._load();
+    const w = all.find(x => x.id === id);
+    if (w) { w.name = name; this._save(all); }
+  },
+  setBounds(id, bounds) {
+    const all = this._load();
+    const w = all.find(x => x.id === id);
+    if (w) { w.bounds = bounds; this._save(all); }
   },
 };
 
@@ -712,20 +776,52 @@ function spillToFile(sender, body) {
 class SessionManager {
   constructor() {
     this.sessions = new Map();
-    this.win = null;
+    this.windows = new Map(); // workspaceId -> BrowserWindow
   }
 
-  setWindow(win) {
-    this.win = win;
+  // --- Window <-> workspace registration ---
+
+  registerWindow(workspaceId, win) {
+    this.windows.set(workspaceId, win);
   }
 
-  _send(channel, ...args) {
-    if (this.win && !this.win.isDestroyed()) {
-      this.win.webContents.send(channel, ...args);
+  unregisterWindow(workspaceId) {
+    this.windows.delete(workspaceId);
+  }
+
+  windowForWorkspace(workspaceId) {
+    const w = this.windows.get(workspaceId);
+    return w && !w.isDestroyed() ? w : null;
+  }
+
+  windowForSession(name) {
+    const s = this.sessions.get(name);
+    if (!s) return null;
+    return this.windowForWorkspace(s.workspaceId);
+  }
+
+  allLiveWindows() {
+    const out = [];
+    for (const w of this.windows.values()) {
+      if (w && !w.isDestroyed()) out.push(w);
+    }
+    return out;
+  }
+
+  // Send an event scoped to the window that owns this session
+  _sendToSession(name, channel, ...args) {
+    const win = this.windowForSession(name);
+    if (win) win.webContents.send(channel, ...args);
+  }
+
+  // Broadcast to every window (used for app-wide events like IPC traffic)
+  _broadcast(channel, ...args) {
+    for (const w of this.allLiveWindows()) {
+      w.webContents.send(channel, ...args);
     }
   }
 
-  async create(name, type, cwd, extraArgs = [], resumeId = null) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
@@ -829,6 +925,7 @@ class SessionManager {
       name, type, cwd, pty: ptyProc, transport, socketPath,
       agentType, lineBuffer: '', watcher: null,
       sessionId: resumeId || null,
+      workspaceId,
     };
     this.sessions.set(name, session);
 
@@ -838,6 +935,7 @@ class SessionManager {
         name, type, cwd,
         extraArgs,
         sessionId: resumeId || null,
+        workspaceId,
       });
     }
 
@@ -852,9 +950,10 @@ class SessionManager {
         },
         (state) => {
           // state: 'thinking' | 'idle'
-          this._send('session-activity', name, state);
+          this._sendToSession(name, 'session-activity', name, state);
           // Surface a system notification when an agent finishes
-          if (state === 'idle' && this.win && !this.win.isFocused()) {
+          const owningWin = this.windowForSession(name);
+          if (state === 'idle' && (!owningWin || !owningWin.isFocused())) {
             try {
               const { Notification } = require('electron');
               if (Notification.isSupported()) {
@@ -872,7 +971,7 @@ class SessionManager {
     }
 
     ptyProc.onData((data) => {
-      this._send('pty-data', name, data);
+      this._sendToSession(name, 'pty-data', name, data);
 
       // In agent mode, PTY output is pass-through (intents come from JSONL)
       if (!agentType) {
@@ -882,7 +981,7 @@ class SessionManager {
 
     ptyProc.onExit(({ exitCode }) => {
       this._cleanup(name);
-      this._send('session-exit', name, exitCode);
+      this._sendToSession(name, 'session-exit', name, exitCode);
       if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
     });
 
@@ -918,7 +1017,12 @@ class SessionManager {
       type: s.type,
       pid: s.pty.pid,
       cwd: s.cwd,
+      workspaceId: s.workspaceId,
     }));
+  }
+
+  listForWorkspace(workspaceId) {
+    return this.list().filter(s => s.workspaceId === workspaceId);
   }
 
   async killAll() {
@@ -1002,7 +1106,7 @@ class SessionManager {
             });
           }
         }
-        this._send('ipc-message', {
+        this._broadcast('ipc-message', {
           type: 'dm', from: senderName, to: intent.target, body: intent.body,
         });
         break;
@@ -1021,7 +1125,7 @@ class SessionManager {
             Transport.send(peer.socket, msg);
           }
         }
-        this._send('ipc-message', {
+        this._broadcast('ipc-message', {
           type: 'broadcast', from: senderName, body: intent.body,
         });
         break;
@@ -1182,37 +1286,56 @@ let tray = null;
 
 function buildTrayMenu() {
   const sessions = manager.list();
-  const template = [
-    {
+  const wsList = workspaces.list();
+  const template = [];
+
+  // Show all windows
+  if (manager.allLiveWindows().length === 0) {
+    template.push({
+      label: 'Show Clodex',
+      click: () => createWindow(DEFAULT_WORKSPACE_ID),
+    });
+  } else {
+    template.push({
       label: 'Show Clodex',
       click: () => {
-        let win = BrowserWindow.getAllWindows()[0];
-        if (!win) { createWindow(); return; }
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
+        for (const w of manager.allLiveWindows()) {
+          if (w.isMinimized()) w.restore();
+          w.show();
+        }
+        const focused = manager.allLiveWindows()[0];
+        if (focused) focused.focus();
       },
-    },
-    { type: 'separator' },
-  ];
+    });
+  }
+  template.push({ type: 'separator' });
 
+  // Sessions grouped by workspace
   if (sessions.length > 0) {
-    template.push({ label: 'Sessions', enabled: false });
+    const byWs = new Map();
     for (const s of sessions) {
-      const indicator = s.type === 'bash' ? '•' : '●';
-      template.push({
-        label: `  ${indicator} ${s.name} (${s.type})`,
-        click: () => {
-          let win = BrowserWindow.getAllWindows()[0];
-          if (win) {
+      if (!byWs.has(s.workspaceId)) byWs.set(s.workspaceId, []);
+      byWs.get(s.workspaceId).push(s);
+    }
+    for (const [wsId, list] of byWs) {
+      const ws = wsList.find(w => w.id === wsId);
+      const wsName = ws ? (ws.name || 'Workspace') : 'Workspace';
+      template.push({ label: wsName, enabled: false });
+      for (const s of list) {
+        const indicator = s.type === 'bash' ? '•' : '●';
+        template.push({
+          label: `  ${indicator} ${s.name} (${s.type})`,
+          click: () => {
+            let win = manager.windowForWorkspace(s.workspaceId);
+            if (!win) win = createWindow(s.workspaceId);
             win.show();
             win.focus();
             win.webContents.send('request-switch-session', s.name);
-          }
-        },
-      });
+          },
+        });
+      }
+      template.push({ type: 'separator' });
     }
-    template.push({ type: 'separator' });
   } else {
     template.push({ label: 'No sessions', enabled: false });
     template.push({ type: 'separator' });
@@ -1221,11 +1344,19 @@ function buildTrayMenu() {
   template.push({
     label: 'New Session…',
     click: () => {
-      let win = BrowserWindow.getAllWindows()[0];
-      if (!win) { createWindow(); return; }
+      let win = BrowserWindow.getFocusedWindow() || manager.allLiveWindows()[0];
+      if (!win) win = createWindow(DEFAULT_WORKSPACE_ID);
       win.show();
       win.focus();
       win.webContents.send('request-open-new-dialog');
+    },
+  });
+  template.push({
+    label: 'New Window',
+    accelerator: 'Shift+Cmd+N',
+    click: () => {
+      const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      createWindow(id);
     },
   });
 
@@ -1257,15 +1388,147 @@ function refreshTrayMenu() {
 }
 
 // ---------------------------------------------------------------------------
+// Application menu (File > New Window, etc.)
+// ---------------------------------------------------------------------------
+
+function buildAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.getName(),
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Check for Updates…', click: () => checkForUpdate(false) },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => {
+            const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            createWindow(id);
+          },
+        },
+        {
+          label: 'New Session…',
+          accelerator: 'CmdOrCtrl+T',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) win.webContents.send('request-open-new-dialog');
+          },
+        },
+        { type: 'separator' },
+        { role: 'close' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [
+          { type: 'separator' },
+          { role: 'front' },
+          { type: 'separator' },
+          { role: 'window' },
+        ] : []),
+      ],
+    },
+  ];
+
+  // Add workspace list under Window menu
+  const wsMenu = template.find(m => m.label === 'Window');
+  if (wsMenu) {
+    const all = workspaces.list();
+    if (all.length > 1) {
+      wsMenu.submenu.push({ type: 'separator' }, { label: 'Workspaces', enabled: false });
+      for (const ws of all) {
+        wsMenu.submenu.push({
+          label: ws.name || ws.id,
+          click: () => {
+            const win = manager.windowForWorkspace(ws.id);
+            if (win) { win.show(); win.focus(); }
+            else createWindow(ws.id);
+          },
+        });
+      }
+    }
+  }
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function refreshAppMenu() {
+  buildAppMenu();
+}
+
+// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
 const manager = new SessionManager();
 
-function createWindow() {
+function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
+  // If a window for this workspace already exists, just bring it forward
+  const existing = manager.windowForWorkspace(workspaceId);
+  if (existing) {
+    existing.show();
+    existing.focus();
+    return existing;
+  }
+
+  // Ensure the workspace record exists
+  let ws = workspaces.get(workspaceId);
+  if (!ws) {
+    ws = {
+      id: workspaceId,
+      name: workspaceId === DEFAULT_WORKSPACE_ID ? 'Workspace' : 'New Workspace',
+      bounds: null,
+    };
+    workspaces.upsert(ws);
+  }
+
+  const bounds = ws.bounds || { width: 1200, height: 800 };
+
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width || 1200,
+    height: bounds.height || 800,
     minWidth: 600,
     minHeight: 400,
     titleBarStyle: 'hiddenInset',
@@ -1274,10 +1537,30 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
       contextIsolation: false,
+      // Pass the workspaceId to the renderer via an additional preload argument
+      additionalArguments: [`--workspace-id=${workspaceId}`],
     },
   });
 
-  manager.setWindow(win);
+  manager.registerWindow(workspaceId, win);
+
+  // Save bounds when the user resizes/moves the window
+  const saveBounds = () => {
+    if (win.isDestroyed()) return;
+    workspaces.setBounds(workspaceId, win.getBounds());
+  };
+  win.on('resize', saveBounds);
+  win.on('move', saveBounds);
+
+  win.on('closed', () => {
+    manager.unregisterWindow(workspaceId);
+  });
+
+  win.webContents.on('console-message', (_e, level, msg) => {
+    const labels = ['LOG', 'WARN', 'ERROR'];
+    console.log(`[RENDERER ${labels[level] || level}]`, msg);
+  });
+
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   if (process.argv.includes('--devtools')) {
     win.webContents.openDevTools({ mode: 'bottom' });
@@ -1285,10 +1568,21 @@ function createWindow() {
   return win;
 }
 
+// Find the workspace ID that owns the renderer that sent an IPC event.
+function workspaceOfSender(e) {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return DEFAULT_WORKSPACE_ID;
+  for (const [wsId, w] of manager.windows) {
+    if (w === win) return wsId;
+  }
+  return DEFAULT_WORKSPACE_ID;
+}
+
 app.whenReady().then(() => {
   PERSIST_FILE = path.join(app.getPath('userData'), 'sessions.json');
   TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
   PROMPTS_FILE = path.join(app.getPath('userData'), 'prompts.json');
+  WORKSPACES_FILE = path.join(app.getPath('userData'), 'workspaces.json');
 
   cleanupOldMessages();
   registry.cleanup();
@@ -1299,15 +1593,20 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (_e, name, type, cwd, extraArgs) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs) => {
     try {
-      return { ok: true, session: await manager.create(name, type, cwd, extraArgs) };
+      const workspaceId = workspaceOfSender(e);
+      return {
+        ok: true,
+        session: await manager.create(name, type, cwd, extraArgs, null, workspaceId),
+      };
     } catch (err) {
       return { ok: false, error: err.message };
     }
   });
 
-  ipcMain.handle('session:list', () => manager.list());
+  ipcMain.handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
+  ipcMain.handle('session:listAll', () => manager.list());
   ipcMain.handle('session:kill', (_e, name) => manager.kill(name));
   ipcMain.handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
   ipcMain.handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
@@ -1438,11 +1737,25 @@ app.whenReady().then(() => {
     manager.write(name, data);
   });
 
-  // Renderer tells us it's ready — that's when we restore saved sessions
-  ipcMain.handle('app:restore-sessions', async () => {
-    const saved = persistence.list();
+  // Renderer tells us it's ready — restore sessions for its workspace.
+  // Sessions already running (this can happen for the default workspace on
+  // second window creation via tray) are returned as-is so the renderer can
+  // render them without double-spawning.
+  ipcMain.handle('app:restore-sessions', async (e) => {
+    const workspaceId = workspaceOfSender(e);
+    const saved = persistence.listForWorkspace(workspaceId);
     const restored = [];
     for (const entry of saved) {
+      if (manager.sessions.has(entry.name)) {
+        // Already running — just report it back for rendering
+        restored.push({
+          name: entry.name,
+          type: entry.type,
+          cwd: entry.cwd,
+          label: entry.label || null,
+        });
+        continue;
+      }
       try {
         await manager.create(
           entry.name,
@@ -1450,6 +1763,7 @@ app.whenReady().then(() => {
           entry.cwd,
           entry.extraArgs || [],
           entry.sessionId,
+          workspaceId,
         );
         restored.push({
           name: entry.name,
@@ -1465,16 +1779,46 @@ app.whenReady().then(() => {
     return restored;
   });
 
-  createWindow();
+  // Workspace management
+  ipcMain.handle('workspace:list', () => workspaces.list());
+  ipcMain.handle('workspace:current', (e) => workspaceOfSender(e));
+  ipcMain.handle('workspace:setName', (e, name) => {
+    workspaces.setName(workspaceOfSender(e), name || 'Workspace');
+    refreshTrayMenu();
+    refreshAppMenu();
+    return true;
+  });
+  ipcMain.handle('workspace:new', () => {
+    const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    createWindow(id);
+    refreshAppMenu();
+    refreshTrayMenu();
+  });
+
+  buildAppMenu();
+
+  // Open a window per saved workspace, or create the default if none exist
+  const allWorkspaces = workspaces.list();
+  if (allWorkspaces.length === 0) {
+    createWindow(DEFAULT_WORKSPACE_ID);
+  } else {
+    for (const ws of allWorkspaces) createWindow(ws.id);
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow(DEFAULT_WORKSPACE_ID);
+    }
   });
 });
 
+// On macOS, apps stay running when all windows are closed (accessible via tray).
+// Sessions keep running too — reopen a window via the tray to see them again.
 app.on('window-all-closed', () => {
-  manager.killAll();
-  app.quit();
+  if (process.platform !== 'darwin') {
+    manager.killAll();
+    app.quit();
+  }
 });
 
 app.on('before-quit', () => {

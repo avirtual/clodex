@@ -64,4 +64,10 @@ window.api = {
     ipcRenderer.on('request-switch-session', (_e, name) => callback(name)),
   onRequestOpenNewDialog: (callback) =>
     ipcRenderer.on('request-open-new-dialog', () => callback()),
+
+  // Workspaces
+  listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
+  currentWorkspace: () => ipcRenderer.invoke('workspace:current'),
+  setWorkspaceName: (name) => ipcRenderer.invoke('workspace:setName', name),
+  newWorkspace: () => ipcRenderer.invoke('workspace:new'),
 };

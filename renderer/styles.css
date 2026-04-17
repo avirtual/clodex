@@ -54,10 +54,42 @@ html, body {
   padding-top: 42px;
 }
 
-.app-title {
+.app-title-stack {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-brand {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.workspace-name {
   font-weight: 700;
   font-size: 14px;
-  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.workspace-name-input {
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  width: 100%;
+  outline: none;
 }
 
 #btn-new {
