@@ -170,6 +170,16 @@ const workspaces = {
     const w = all.find(x => x.id === id);
     if (w) { w.bounds = bounds; this._save(all); }
   },
+  touch(id) {
+    const all = this._load();
+    const w = all.find(x => x.id === id);
+    if (w) { w.lastFocusedAt = Date.now(); this._save(all); }
+  },
+  sortedByRecent() {
+    return this.list().slice().sort((a, b) =>
+      (b.lastFocusedAt || 0) - (a.lastFocusedAt || 0),
+    );
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1381,17 +1391,63 @@ function buildTrayMenu() {
     },
   });
 
-  // Reopen closed workspaces, if any
-  const closedWorkspaces = wsList.filter(w => !manager.windowForWorkspace(w.id));
-  if (closedWorkspaces.length > 0) {
+  // Recent Workspaces — all of them, open or closed, sorted by recency.
+  // Each is a submenu with Open/Rename/Delete so users can manage them
+  // without needing to open a window first.
+  const recent = workspaces.sortedByRecent();
+  if (recent.length > 0) {
     template.push({
-      label: 'Reopen Workspace',
-      submenu: closedWorkspaces.map(ws => {
+      label: 'Recent Workspaces',
+      submenu: recent.map(ws => {
+        const isOpen = !!manager.windowForWorkspace(ws.id);
+        const indicator = isOpen ? '●' : '○';
         const wsSessions = sessions.filter(s => s.workspaceId === ws.id).length;
-        const suffix = wsSessions > 0 ? ` (${wsSessions} session${wsSessions === 1 ? '' : 's'})` : '';
+        const suffix = wsSessions > 0 ? ` — ${wsSessions} session${wsSessions === 1 ? '' : 's'}` : '';
         return {
-          label: `${ws.name || ws.id}${suffix}`,
-          click: () => createWindow(ws.id),
+          label: `${indicator}  ${ws.name || ws.id}${suffix}`,
+          submenu: [
+            {
+              label: isOpen ? 'Focus Window' : 'Open',
+              click: () => {
+                const win = manager.windowForWorkspace(ws.id);
+                if (win) { win.show(); win.focus(); }
+                else createWindow(ws.id);
+              },
+            },
+            {
+              label: 'Rename…',
+              click: () => {
+                let win = manager.windowForWorkspace(ws.id);
+                if (!win) win = createWindow(ws.id);
+                win.show();
+                win.focus();
+                win.webContents.send('request-rename-workspace');
+              },
+            },
+            { type: 'separator' },
+            {
+              label: 'Delete Workspace…',
+              click: async () => {
+                const result = await dialog.showMessageBox({
+                  type: 'warning',
+                  buttons: ['Delete', 'Cancel'],
+                  defaultId: 1,
+                  cancelId: 1,
+                  message: `Delete workspace "${ws.name || ws.id}"?`,
+                  detail: wsSessions > 0
+                    ? `This will kill ${wsSessions} running session${wsSessions === 1 ? '' : 's'} and remove the workspace.`
+                    : 'This removes the empty workspace record.',
+                });
+                if (result.response !== 0) return;
+                for (const s of manager.listForWorkspace(ws.id)) manager.kill(s.name);
+                workspaces.remove(ws.id);
+                const win = manager.windowForWorkspace(ws.id);
+                if (win) win.close();
+                refreshAppMenu();
+                refreshTrayMenu();
+              },
+            },
+          ],
         };
       }),
     });
@@ -1517,57 +1573,75 @@ function buildAppMenu() {
     },
   ];
 
-  // Add workspace list under Window menu — always shown, with indicator
+  // Per-workspace submenu under Window menu: Open / Rename / Delete
   const wsMenu = template.find(m => m.label === 'Window');
   if (wsMenu) {
-    const all = workspaces.list();
+    const all = workspaces.sortedByRecent();
     if (all.length > 0) {
       wsMenu.submenu.push({ type: 'separator' }, { label: 'Workspaces', enabled: false });
       for (const ws of all) {
         const isOpen = !!manager.windowForWorkspace(ws.id);
         const indicator = isOpen ? '●' : '○';
+        const sessionCount = manager.listForWorkspace(ws.id).length;
+        const countSuffix = sessionCount > 0
+          ? ` — ${sessionCount} session${sessionCount === 1 ? '' : 's'}`
+          : '';
         wsMenu.submenu.push({
-          label: `${indicator}  ${ws.name || ws.id}`,
-          click: () => {
-            const win = manager.windowForWorkspace(ws.id);
-            if (win) { win.show(); win.focus(); }
-            else createWindow(ws.id);
-          },
+          label: `${indicator}  ${ws.name || ws.id}${countSuffix}`,
+          submenu: [
+            {
+              label: isOpen ? 'Focus Window' : 'Open',
+              click: () => {
+                const win = manager.windowForWorkspace(ws.id);
+                if (win) { win.show(); win.focus(); }
+                else createWindow(ws.id);
+              },
+            },
+            {
+              label: 'Rename…',
+              click: () => {
+                let win = manager.windowForWorkspace(ws.id);
+                if (!win) win = createWindow(ws.id);
+                win.show();
+                win.focus();
+                win.webContents.send('request-rename-workspace');
+              },
+            },
+            { type: 'separator' },
+            {
+              label: isOpen ? 'Close Window (keep workspace)' : 'Already closed',
+              enabled: isOpen,
+              click: () => {
+                const win = manager.windowForWorkspace(ws.id);
+                if (win) win.close();
+              },
+            },
+            {
+              label: 'Delete Workspace…',
+              click: async () => {
+                const parent = BrowserWindow.getFocusedWindow();
+                const result = await dialog.showMessageBox(parent, {
+                  type: 'warning',
+                  buttons: ['Delete', 'Cancel'],
+                  defaultId: 1,
+                  cancelId: 1,
+                  message: `Delete workspace "${ws.name || ws.id}"?`,
+                  detail: sessionCount > 0
+                    ? `This will kill ${sessionCount} running session${sessionCount === 1 ? '' : 's'} and remove the workspace. Conversation transcripts on disk are preserved and can be resumed in a new workspace.`
+                    : 'This removes the empty workspace record. No sessions will be affected.',
+                });
+                if (result.response !== 0) return;
+                for (const s of manager.listForWorkspace(ws.id)) manager.kill(s.name);
+                workspaces.remove(ws.id);
+                const win = manager.windowForWorkspace(ws.id);
+                if (win) win.close();
+                refreshAppMenu();
+                refreshTrayMenu();
+              },
+            },
+          ],
         });
       }
-      wsMenu.submenu.push({ type: 'separator' });
-      wsMenu.submenu.push({
-        label: 'Close Workspace Permanently…',
-        click: async () => {
-          const focused = BrowserWindow.getFocusedWindow();
-          if (!focused) return;
-          let wsId = null;
-          for (const [id, w] of manager.windows) if (w === focused) { wsId = id; break; }
-          if (!wsId) return;
-          const ws = workspaces.get(wsId);
-          const wsName = ws ? (ws.name || wsId) : wsId;
-          const sessionCount = manager.listForWorkspace(wsId).length;
-          const result = await dialog.showMessageBox(focused, {
-            type: 'warning',
-            buttons: ['Close Workspace', 'Cancel'],
-            defaultId: 1,
-            cancelId: 1,
-            message: `Close workspace "${wsName}" permanently?`,
-            detail: sessionCount > 0
-              ? `This will kill ${sessionCount} running session${sessionCount === 1 ? '' : 's'} and remove the workspace. Conversation transcripts on disk are preserved.`
-              : 'This removes the empty workspace record. No sessions will be affected.',
-          });
-          if (result.response !== 0) return;
-          // Kill all sessions in this workspace
-          for (const s of manager.listForWorkspace(wsId)) {
-            manager.kill(s.name);
-          }
-          workspaces.remove(wsId);
-          focused.close();
-          refreshAppMenu();
-          refreshTrayMenu();
-        },
-      });
     }
   }
 
@@ -1633,6 +1707,10 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   };
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
+
+  // Track recency for "open most recent on startup" behavior
+  workspaces.touch(workspaceId);
+  win.on('focus', () => workspaces.touch(workspaceId));
 
   win.on('closed', () => {
     manager.unregisterWindow(workspaceId);
@@ -1886,12 +1964,13 @@ app.whenReady().then(() => {
 
   buildAppMenu();
 
-  // Open a window per saved workspace, or create the default if none exist
-  const allWorkspaces = workspaces.list();
-  if (allWorkspaces.length === 0) {
+  // IDE-style startup: open only the most recently used workspace.
+  // Others are accessible via the File / Window / tray menus.
+  const sortedWorkspaces = workspaces.sortedByRecent();
+  if (sortedWorkspaces.length === 0) {
     createWindow(DEFAULT_WORKSPACE_ID);
   } else {
-    for (const ws of allWorkspaces) createWindow(ws.id);
+    createWindow(sortedWorkspaces[0].id);
   }
 
   app.on('activate', () => {

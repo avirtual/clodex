@@ -303,6 +303,19 @@ Single-file orchestrator, roughly:
 - IPC traffic (`ipc-message` channel) broadcasts to every window, because
   any window might care about conversations in another.
 
+### Startup behavior (IDE-style, v0.5.2+)
+
+- On startup, Clodex opens **only the most recently focused workspace**
+  (not all of them). This matches how VS Code / IntelliJ handle projects.
+- Recency is tracked via `workspaces.touch(id)` on window focus and
+  creation; `workspaces.sortedByRecent()` returns them sorted by
+  `lastFocusedAt` desc.
+- To open additional workspaces, use the tray menu's "Recent Workspaces"
+  submenu or the Window menu's "Workspaces" section. Each workspace entry
+  is itself a submenu: **Open / Focus Window · Rename… · Delete…**.
+- "Delete Workspace…" kills any running sessions and removes the record.
+- Legacy behavior (open all on startup) was in v0.5.0–0.5.1.
+
 ### Closing and reopening workspaces
 
 - Closing a workspace window does NOT kill its sessions. The workspace
