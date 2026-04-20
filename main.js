@@ -257,7 +257,8 @@ let UI_SETTINGS_FILE = null;
 const CLAUDE_SL_COMPONENTS = ['model', 'context', 'cost', 'cwd', 'git-branch'];
 const CODEX_SL_COMPONENTS = [
   'context-used', 'model-name', 'project-root', 'git-branch',
-  'five-hour-limit', 'current-dir', 'context-remaining', 'model-with-reasoning',
+  'five-hour-limit', 'weekly-limit', 'current-dir', 'context-remaining',
+  'model-with-reasoning',
 ];
 const DEFAULT_UI_SETTINGS = {
   statusline: {

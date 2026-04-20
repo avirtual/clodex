@@ -928,6 +928,7 @@ const CODEX_LABELS = {
   'project-root': 'Project root',
   'git-branch': 'Git branch',
   'five-hour-limit': '5-hour usage limit',
+  'weekly-limit': 'Weekly usage limit',
   'current-dir': 'Current directory',
   'context-remaining': 'Context remaining (%)',
   'model-with-reasoning': 'Model + reasoning level',

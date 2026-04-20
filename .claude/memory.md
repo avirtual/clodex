@@ -2,14 +2,9 @@
 
 This file preserves context between Claude sessions. Read it at start so you don't re-litigate settled design decisions or miss in-flight work.
 
-## In-flight (release v0.6.1)
+## Last shipped: v0.6.1
 
-At session end, a build for v0.6.1 was launched in the background (`npm run dist:mac`). Before resuming:
-
-1. Check `ls dist/*.dmg dist/*.zip` — if four artifacts (arm64/x64 × dmg/zip) exist, the build finished.
-2. Still need to: `git add -A && git commit -m "v0.6.1: ..." && git push && git tag v0.6.1 && git push origin v0.6.1 && gh release create v0.6.1 dist/*.dmg dist/*.zip --title "..." --notes "..."`
-3. `package.json` version is already bumped to 0.6.1. `README.md` has been updated with the new features.
-4. If the build failed, don't retry blindly — look at the tail of the output file for the actual error.
+Tagged + pushed + GitHub release created. Nothing in-flight.
 
 **Changes included in v0.6.1:**
 - Sidebar context-% badge (green/orange/red at 60/80 thresholds) — reads live from Claude's statusline via `/tmp/wb-wrap/{name}-ctx` side-channel file
@@ -28,6 +23,22 @@ The user made deliberate calls on several things. If a new session re-raises any
 4. **Workspace-scoped broadcast/who, global DM** is the intended split. Don't unify. External wb-wrap peers still broadcast globally on their side (protocol unchanged for them).
 5. **System prompt only applies on first create**, not on resume. IPC prompt applies always. This is product contract, not a bug.
 6. **Templates do NOT currently save the System Prompt selection.** User is aware. This is a noted follow-up but not a fire.
+7. **PTY-only intent capture was attempted and reverted (post-v0.6.1).** The
+   theory: scan PTY bytes for `[cli:*]` intents instead of JSONL, escaping the
+   JSONL-symlink dependency (which Workbench especially suffers from due to
+   subagent session_id hijacking). The reality: Claude's renderer composes the
+   visual terminal row with the assistant's text on the left and chrome (✻
+   Thinking…, horizontal divider, status widgets) on the right via absolute
+   column positioning. In the PTY byte stream, the entire row arrives as one
+   logical line. `parseIntent` happily matches the opener and swallows the
+   chrome into the body. This is NOT fixable by flush-timing (the chrome is
+   intra-line, not inter-line), and is NOT fixable by cursor-up detection (the
+   chrome is emitted as part of the same line, not after a cursor move). JSONL
+   exists precisely because it carries semantic content, not terminal
+   composition. For modern rich CLIs with status widgets, PTY-live intent
+   capture is structurally hostile. Do not re-attempt for Clodex. For
+   Workbench's migration away from JSONL, this is the hard part — not a
+   drop-in refactor.
 
 ## Open follow-ups the user might pick up
 
@@ -53,6 +64,30 @@ Listed in the order we discussed them; none are committed. Don't start any witho
 - **UI-broadcast sender label is `user`** (was `_ui`). If changing, mirror in both `_handleIntent` call sites and the IPC log display.
 - **Build artifact paths** after `npm run dist:mac`: `dist/Clodex-<ver>-arm64.dmg`, `dist/Clodex-<ver>.dmg` (x64 — no suffix), `dist/Clodex-<ver>-arm64-mac.zip`, `dist/Clodex-<ver>-mac.zip`. `gh release create v<ver> dist/*.dmg dist/*.zip` globs all four.
 - **Update checker** polls `https://api.github.com/repos/avirtual/clodex/releases/latest` on startup + every 6h. Existing users see the red banner and a tray entry when a new tag is published.
+- **node-pty spawn-helper exec bit (v0.6.2 fix).** npm extraction strips
+  the exec bit from `node-pty/prebuilds/darwin-{arch}/spawn-helper`,
+  leaving it at 0644. Every Clodex .dmg through v0.6.1 shipped broken —
+  `posix_spawnp failed` on fresh installs (but worked for dev because
+  `npm install` + local build retains perms). `build/afterPack.js` now
+  `chmod 0755`s spawn-helper before the ad-hoc codesign step, for both
+  arm64 and x64 bundles. Do not remove this — it's invisible in dev.
+- **`npmRebuild: false` in package.json electron-builder config.**
+  node-pty 1.x uses NAPI prebuilds which are ABI-stable across Node
+  versions, so electron-builder's rebuild pass is unnecessary and
+  actively fails on Python 3.12+ (distutils removed). Set alongside the
+  spawn-helper fix in v0.6.2. Don't re-enable.
+- **GUI launch PATH inheritance (v0.6.3 fix).** macOS apps launched via
+  Dock/Finder/Launchpad inherit launchd's minimal PATH
+  (`/usr/bin:/bin:/usr/sbin:/sbin`), NOT the user's shell PATH. `claude`
+  (typically `~/.local/bin`) and `codex` (typically `/opt/homebrew/bin`)
+  weren't resolvable, so agent spawns failed silently. `main.js` now
+  runs `$SHELL -ilc 'printf __CLODEX_PATH__%s__CLODEX_PATH__ "$PATH"'`
+  on startup in packaged builds and merges the result into
+  `process.env.PATH` before any PTY spawn. Dev mode skips it
+  (`app.isPackaged` gate) because npm start inherits the shell env
+  already. Also: renderer now alerts on session creation failure
+  instead of only console.error'ing — prevents the "nothing happens"
+  silent-failure UX that hid the bug for so long.
 
 ## Multi-agent conventions that work
 
