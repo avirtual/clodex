@@ -553,6 +553,7 @@ async function doCreate() {
   const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
+    alert(`Failed to create session: ${result.error || 'unknown error'}`);
     return;
   }
 

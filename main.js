@@ -4,7 +4,33 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
+const { execSync } = require('child_process');
 const pty = require('node-pty');
+
+// Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin), so `claude`/`codex` from ~/.local/bin or
+// /opt/homebrew/bin aren't resolvable. Pull PATH from the user's login shell
+// and merge it in. Only needed in packaged builds — dev mode inherits the
+// shell env already.
+function fixPathFromLoginShell() {
+  if (!app.isPackaged) return;
+  if (process.platform === 'win32') return;
+  const userShell = process.env.SHELL || '/bin/bash';
+  try {
+    const out = execSync(
+      `${userShell} -ilc 'printf __CLODEX_PATH__%s__CLODEX_PATH__ "$PATH"'`,
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const m = out.match(/__CLODEX_PATH__(.*?)__CLODEX_PATH__/);
+    if (!m || !m[1]) return;
+    const shellPath = m[1].split(':').filter(Boolean);
+    const current = (process.env.PATH || '').split(':').filter(Boolean);
+    process.env.PATH = [...new Set([...shellPath, ...current])].join(':');
+  } catch (e) {
+    console.error('fixPathFromLoginShell failed:', e.message);
+  }
+}
+fixPathFromLoginShell();
 
 const REGISTRY_DIR = '/tmp/wb-wrap';
 const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
