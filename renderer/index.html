@@ -151,10 +151,16 @@
   <!-- Edit Args dialog -->
   <div id="args-overlay" class="hidden">
     <div id="args-dialog">
-      <h3>Edit Session Args</h3>
+      <h3>Edit Session</h3>
       <p class="hint-text" id="args-target"></p>
       <label>Extra CLI args
         <input type="text" id="args-input" placeholder="(none)">
+      </label>
+      <label id="args-prompt-row">System prompt (appended)
+        <select id="args-prompt-select">
+          <option value="">Load from library…</option>
+        </select>
+        <textarea id="args-prompt-body" rows="6" spellcheck="false" placeholder="(none) — appended to the CLI's system prompt on every spawn, including resume"></textarea>
       </label>
       <label id="args-proxy-row">API Proxy
         <select id="args-proxy-mode">

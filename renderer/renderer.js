@@ -263,6 +263,25 @@ window.api.onSessionContextAction(({ action, name }) => {
     case 'editArgs':
       openArgsDialog(name);
       break;
+    case 'restart': {
+      // Snapshot sidebar metadata before the kill+respawn wipes the tab
+      // via session-exit, same dance as the Edit Session save path.
+      const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+      const snapType = item ? item.querySelector('.session-type')?.textContent : null;
+      const snapCwd = item ? item.dataset.cwd : null;
+      window.api.restartSession(name).then((res) => {
+        if (!res || !res.ok) {
+          alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
+          return;
+        }
+        if (snapType) {
+          createTerminal(name);
+          addSessionToSidebar(name, snapType, snapCwd, null);
+          switchSession(name);
+        }
+      });
+      break;
+    }
     case 'rename': {
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (item) {
@@ -1063,6 +1082,9 @@ const argsRestart = document.getElementById('args-restart');
 const argsProxyRow = document.getElementById('args-proxy-row');
 const argsProxyMode = document.getElementById('args-proxy-mode');
 const argsProxyUrl = document.getElementById('args-proxy-url');
+const argsPromptRow = document.getElementById('args-prompt-row');
+const argsPromptSelect = document.getElementById('args-prompt-select');
+const argsPromptBody = document.getElementById('args-prompt-body');
 let argsEditingName = null;
 
 argsProxyMode.addEventListener('change', () => {
@@ -1070,10 +1092,19 @@ argsProxyMode.addEventListener('change', () => {
   if (argsProxyMode.value === 'custom') argsProxyUrl.focus();
 });
 
+// Picking a library prompt fills the textarea; the textarea is what gets
+// saved, so library edits stay local to this session.
+argsPromptSelect.addEventListener('change', () => {
+  const opt = argsPromptSelect.selectedOptions[0];
+  if (opt && opt.dataset.body !== undefined) argsPromptBody.value = opt.dataset.body;
+  argsPromptSelect.value = '';
+});
+
 async function openArgsDialog(name) {
-  const [res, settings] = await Promise.all([
+  const [res, settings, promptLib] = await Promise.all([
     window.api.getSessionArgs(name),
     window.api.getSettings(),
+    window.api.listPrompts(),
   ]);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
   argsEditingName = name;
@@ -1083,6 +1114,16 @@ async function openArgsDialog(name) {
   argsProxyRow.style.display = isAgent ? '' : 'none';
   setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.proxyUrl);
   labelProxyDefault(argsProxyMode, settings);
+  argsPromptRow.style.display = isAgent ? '' : 'none';
+  argsPromptBody.value = res.systemPrompt || '';
+  while (argsPromptSelect.options.length > 1) argsPromptSelect.remove(1);
+  for (const p of promptLib || []) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.title;
+    opt.dataset.body = p.body;
+    argsPromptSelect.appendChild(opt);
+  }
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);
@@ -1100,6 +1141,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const restart = argsRestart.checked;
   const proxy = argsProxyRow.style.display === 'none'
     ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
+  const systemPrompt = argsPromptRow.style.display === 'none'
+    ? null : (argsPromptBody.value.trim() || null);
   const name = argsEditingName;
   // Snapshot metadata from the current sidebar entry so we can re-render it
   // after the kill+respawn wipes it via session-exit.
@@ -1107,7 +1150,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const snapType = existing ? existing.querySelector('.session-type')?.textContent : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
   closeArgsDialog();
-  const res = await window.api.setSessionArgs(name, parsed, restart, proxy);
+  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, systemPrompt);
   if (!res || !res.ok) {
     alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;

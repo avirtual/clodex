@@ -126,6 +126,14 @@ const persistence = {
       this._save(all);
     }
   },
+  setSystemPrompt(name, body) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      entry.systemPrompt = body || null;
+      this._save(all);
+    }
+  },
   get(name) {
     return this._load().find(s => s.name === name) || null;
   },
@@ -1114,9 +1122,10 @@ class SessionManager {
     switch (type) {
       case 'claude': {
         cmd = 'claude';
-        // IPC protocol always goes in; library prompt only on first create
-        const libBody = (systemPromptBody && !resumeId) ? systemPromptBody : null;
-        const { cleaned, merged } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), libBody);
+        // IPC protocol always goes in; the posture prompt is a persistent
+        // session property — applied on resume/restart too, editable via
+        // the Edit Session dialog.
+        const { cleaned, merged } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), systemPromptBody || null);
         args = cleaned;
         // Drop a stale user-persisted --settings that points into the old
         // /tmp/wb-wrap dir — keeping it would skip hook generation entirely
@@ -1141,8 +1150,7 @@ class SessionManager {
       }
       case 'codex': {
         cmd = 'codex';
-        const libBody = (systemPromptBody && !resumeId) ? systemPromptBody : null;
-        const { cleaned, merged } = mergeCodexInstructions(extraArgs, IPC_PROMPT(name), libBody);
+        const { cleaned, merged } = mergeCodexInstructions(extraArgs, IPC_PROMPT(name), systemPromptBody || null);
         // Build top-level flags first, then the optional `resume <uuid>`
         // subcommand — clap expects subcommands AFTER top-level args.
         args = [...cleaned];
@@ -1246,6 +1254,7 @@ class SessionManager {
       extraArgs,
       sessionId: resumeId || null,
       workspaceId,
+      systemPrompt: systemPromptBody || null,
       // Tri-state, NOT the resolved base: inheriting sessions must keep
       // following the Clodex-level preference across restarts.
       proxy: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
@@ -2160,23 +2169,71 @@ app.whenReady().then(() => {
 
   ipcMain.handle('session:getArgs', (_e, name) => {
     const entry = persistence.get(name);
-    return entry ? { ok: true, extraArgs: entry.extraArgs || [], type: entry.type, proxy: entry.proxy ?? null } : { ok: false };
+    return entry ? {
+      ok: true,
+      extraArgs: entry.extraArgs || [],
+      type: entry.type,
+      proxy: entry.proxy ?? null,
+      systemPrompt: entry.systemPrompt || null,
+    } : { ok: false };
   });
-  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy) => {
+  // kill() only sends the signal — removal from manager.sessions happens in
+  // the PTY's onExit, which can land well after a fixed sleep (kill() falls
+  // back to SIGKILL at 5s). Spinning until the slot is actually free is the
+  // only safe pre-respawn wait; a fixed 300ms caused "session already
+  // exists" on respawn, which lost the session entirely.
+  async function waitForSessionExit(name, timeoutMs = 8000) {
+    const start = Date.now();
+    while (manager.sessions.has(name) && Date.now() - start < timeoutMs) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    return !manager.sessions.has(name);
+  }
+
+  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt) => {
     const beforeKill = persistence.get(name);
     persistence.setExtraArgs(name, extraArgs);
     persistence.setProxy(name, proxy ?? null);
+    persistence.setSystemPrompt(name, systemPrompt ?? null);
     if (!restart) return { ok: true, restarted: false };
     if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
     const wsId = workspaceOfSender(e);
     try {
-      if (manager.sessions.has(name)) await manager.kill(name);
-      await new Promise(r => setTimeout(r, 300));
-      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, null, false, proxy ?? null);
+      if (manager.sessions.has(name)) {
+        await manager.kill(name);
+        if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
+      }
+      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, systemPrompt ?? null, false, proxy ?? null);
       if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
       return { ok: true, restarted: true };
     } catch (err) {
-      return { ok: false, error: err.message };
+      // kill() dropped the persistence entry and create() failed before
+      // re-adding it. Put it back (with the edited settings) so the session
+      // survives as a restorable entry instead of vanishing.
+      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: systemPrompt ?? null });
+      return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
+    }
+  });
+
+  // Restart in place: kill the PTY and respawn with the persisted settings,
+  // resuming the same conversation. Useful after a CLI upgrade, a global
+  // preference change, or a wedged TUI.
+  ipcMain.handle('session:restart', async (e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    const wsId = workspaceOfSender(e);
+    try {
+      if (manager.sessions.has(name)) {
+        await manager.kill(name);
+        if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
+      }
+      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], entry.sessionId || null, wsId, entry.systemPrompt || null, false, entry.proxy ?? null);
+      if (entry.label) persistence.setLabel(name, entry.label);
+      return { ok: true, restarted: true };
+    } catch (err) {
+      // Same safety net as setArgs: never let a failed respawn eat the entry.
+      persistence.upsert(entry);
+      return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
     }
   });
 
@@ -2245,8 +2302,12 @@ app.whenReady().then(() => {
         click: () => e.sender.send('session:context-action', { action: 'rename', name }),
       },
       {
-        label: 'Edit Args…',
+        label: 'Edit Session…',
         click: () => e.sender.send('session:context-action', { action: 'editArgs', name }),
+      },
+      {
+        label: 'Restart Session',
+        click: () => e.sender.send('session:context-action', { action: 'restart', name }),
       },
       { type: 'separator' },
       {
@@ -2334,7 +2395,7 @@ app.whenReady().then(() => {
           entry.extraArgs || [],
           entry.sessionId,
           workspaceId,
-          null,
+          entry.systemPrompt || null,
           false,
           entry.proxy ?? null,
         );
@@ -2376,7 +2437,7 @@ app.whenReady().then(() => {
         entry.extraArgs || [],
         entry.sessionId,
         workspaceId,
-        null,
+        entry.systemPrompt || null,
         false,
         entry.proxy ?? null,
       );

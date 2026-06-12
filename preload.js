@@ -83,7 +83,8 @@ window.api = {
 
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
-  setSessionArgs: (name, extraArgs, restart, proxy) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy),
+  setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt),
+  restartSession: (name) => ipcRenderer.invoke('session:restart', name),
 
   // Workspaces
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
