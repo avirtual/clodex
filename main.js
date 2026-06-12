@@ -1079,6 +1079,12 @@ class SessionManager {
         const libBody = (systemPromptBody && !resumeId) ? systemPromptBody : null;
         const { cleaned, merged } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), libBody);
         args = cleaned;
+        // Drop a stale user-persisted --settings that points into the old
+        // /tmp/wb-wrap dir — keeping it would skip hook generation entirely
+        // and silently break intent delivery after the ~/.clodex move.
+        const staleSettings = args.findIndex(
+          (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
+        if (staleSettings !== -1) args.splice(staleSettings, 2);
         if (!args.includes('--settings')) {
           const settingsPath = setupClaudeHook(name);
           args.push('--settings', settingsPath);
