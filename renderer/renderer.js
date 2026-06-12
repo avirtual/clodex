@@ -26,6 +26,9 @@ const systemPromptRow = document.getElementById('system-prompt-row');
 const inputResume = document.getElementById('input-resume');
 const inputFork = document.getElementById('input-fork');
 const resumeRow = document.getElementById('resume-row');
+const proxyRow = document.getElementById('proxy-row');
+const inputProxyEnabled = document.getElementById('input-proxy-enabled');
+const inputProxyUrl = document.getElementById('input-proxy-url');
 const btnTemplateDelete = document.getElementById('btn-template-delete');
 const btnSaveTemplate = document.getElementById('btn-save-template');
 
@@ -444,6 +447,10 @@ function applyTypeDefaults() {
     inputResume.value = '';
     inputFork.checked = false;
   }
+  // Proxy routing only makes sense for agent types
+  proxyRow.style.display = supportsResume ? '' : 'none';
+  if (!supportsResume) inputProxyEnabled.checked = false;
+  inputProxyUrl.disabled = !inputProxyEnabled.checked;
 }
 
 async function refreshSystemPromptDropdown() {
@@ -481,14 +488,25 @@ async function openDialog() {
   inputSystemPrompt.value = '';
   inputResume.value = '';
   inputFork.checked = false;
+  inputProxyEnabled.checked = false;
   applyTypeDefaults();
   inputName.style.borderColor = '';
-  await Promise.all([refreshTemplatesDropdown(), refreshSystemPromptDropdown()]);
+  const [, , settings] = await Promise.all([
+    refreshTemplatesDropdown(),
+    refreshSystemPromptDropdown(),
+    window.api.getSettings(),
+  ]);
+  inputProxyUrl.value = settings?.proxyUrl || 'http://127.0.0.1:7800';
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
 }
 
 inputType.addEventListener('change', applyTypeDefaults);
+
+inputProxyEnabled.addEventListener('change', () => {
+  inputProxyUrl.disabled = !inputProxyEnabled.checked;
+  if (inputProxyEnabled.checked) inputProxyUrl.focus();
+});
 
 // Apply a template's values to the form when selected
 inputTemplate.addEventListener('change', async () => {
@@ -568,10 +586,13 @@ async function doCreate() {
 
   const resumeId = (type === 'claude' || type === 'codex') ? inputResume.value.trim() || null : null;
   const fork = (type === 'claude' || type === 'codex') ? inputFork.checked : false;
+  const proxy = (type === 'claude' || type === 'codex') && inputProxyEnabled.checked
+    ? inputProxyUrl.value.trim() || null : null;
 
   closeDialog();
 
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork);
+  if (proxy) window.api.setSettings({ proxyUrl: proxy }); // remember last used
+  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);

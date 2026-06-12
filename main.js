@@ -270,6 +270,7 @@ const DEFAULT_UI_SETTINGS = {
     claude: ['model', 'context', 'cost', 'cwd'],
     codex: ['context-used', 'model-name', 'project-root', 'git-branch', 'five-hour-limit', 'current-dir'],
   },
+  proxyUrl: 'http://127.0.0.1:7800',
 };
 
 const uiSettings = {
@@ -281,6 +282,7 @@ const uiSettings = {
           claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : DEFAULT_UI_SETTINGS.statusline.claude,
           codex: Array.isArray(raw?.statusline?.codex) ? raw.statusline.codex : DEFAULT_UI_SETTINGS.statusline.codex,
         },
+        proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl : DEFAULT_UI_SETTINGS.proxyUrl,
       };
     } catch { return DEFAULT_UI_SETTINGS; }
   },
@@ -292,6 +294,7 @@ const uiSettings = {
         claude: partial?.statusline?.claude ?? cur.statusline.claude,
         codex: partial?.statusline?.codex ?? cur.statusline.codex,
       },
+      proxyUrl: partial?.proxyUrl ?? cur.proxyUrl,
     };
     try {
       fs.mkdirSync(path.dirname(UI_SETTINGS_FILE), { recursive: true });
@@ -609,7 +612,14 @@ function codexStatusLineArg() {
   return `tui.status_line=[${quoted}]`;
 }
 
-function setupClaudeHook(name) {
+// Normalize a proxy base URL: trim + drop trailing slashes. Returns null for
+// blank input so callers can treat "field left empty" as proxy-off.
+function normalizeProxyBase(url) {
+  const u = (url || '').trim().replace(/\/+$/, '');
+  return u || null;
+}
+
+function setupClaudeHook(name, proxyBase = null) {
   ensureDir(REGISTRY_DIR);
   const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
   const scriptPath = path.join(REGISTRY_DIR, `${name}-hook.sh`);
@@ -657,6 +667,13 @@ mv -f "$TMPLINK" "${linkPath}"
       }]
     }
   };
+  // Optional API proxy routing. The --settings env block outranks the
+  // project's .claude/settings.json, so this wins even in repos that set
+  // their own ANTHROPIC_BASE_URL. /agent/<name>/ is the proxy's per-agent
+  // addressing scheme (session name = agent name).
+  if (proxyBase) {
+    settings.env = { ANTHROPIC_BASE_URL: `${proxyBase}/agent/${name}/anthropic` };
+  }
   fs.writeFileSync(settingsPath, JSON.stringify(settings));
   return settingsPath;
 }
@@ -1063,10 +1080,11 @@ class SessionManager {
     }
   }
 
-  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
+    const proxyBase = normalizeProxyBase(proxy);
 
     let cmd, args;
     const shell = process.env.SHELL || '/bin/bash';
@@ -1086,7 +1104,7 @@ class SessionManager {
           (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
         if (staleSettings !== -1) args.splice(staleSettings, 2);
         if (!args.includes('--settings')) {
-          const settingsPath = setupClaudeHook(name);
+          const settingsPath = setupClaudeHook(name, proxyBase);
           args.push('--settings', settingsPath);
         }
         ensureDir(MSG_DIR);
@@ -1120,6 +1138,10 @@ class SessionManager {
         const instructionsPath = path.join(REGISTRY_DIR, `${name}-instructions.md`);
         fs.writeFileSync(instructionsPath, merged, { mode: 0o600 });
         args.push('-c', `model_instructions_file=${instructionsPath}`);
+        // Optional API proxy routing (skip if the user already set one in args)
+        if (proxyBase && !args.some(a => a.startsWith('openai_base_url='))) {
+          args.push('-c', `openai_base_url=${proxyBase}/agent/${name}/openai/v1`);
+        }
         if (resumeId) {
           const uuidMatch = resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
           const uuid = uuidMatch ? uuidMatch[1] : resumeId;
@@ -1203,6 +1225,7 @@ class SessionManager {
       extraArgs,
       sessionId: resumeId || null,
       workspaceId,
+      proxy: proxyBase,
     });
 
     // JSONL watcher for agent modes
@@ -2065,12 +2088,12 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy) => {
     try {
       const workspaceId = workspaceOfSender(e);
       return {
         ok: true,
-        session: await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork),
+        session: await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy || null),
       };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -2137,6 +2160,7 @@ app.whenReady().then(() => {
     statusline: uiSettings.get().statusline,
     claudeComponents: CLAUDE_SL_COMPONENTS,
     codexComponents: CODEX_SL_COMPONENTS,
+    proxyUrl: uiSettings.get().proxyUrl,
   }));
   ipcMain.handle('settings:set', (_e, partial) => {
     const next = uiSettings.set(partial);
@@ -2282,6 +2306,9 @@ app.whenReady().then(() => {
           entry.extraArgs || [],
           entry.sessionId,
           workspaceId,
+          null,
+          false,
+          entry.proxy || null,
         );
         restored.push({
           name: entry.name,
@@ -2321,6 +2348,9 @@ app.whenReady().then(() => {
         entry.extraArgs || [],
         entry.sessionId,
         workspaceId,
+        null,
+        false,
+        entry.proxy || null,
       );
       return { ok: true };
     } catch (err) {

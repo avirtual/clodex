@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>

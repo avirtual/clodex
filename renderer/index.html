@@ -123,6 +123,14 @@
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
       </label>
+      <label id="proxy-row">
+        <label style="display: flex; align-items: center; gap: 6px; font-weight: normal;">
+          <input type="checkbox" id="input-proxy-enabled" style="margin: 0;">
+          <span>Route through API proxy</span>
+        </label>
+        <input type="text" id="input-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" disabled>
+        <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url</span>
+      </label>
       <label id="resume-row">Resume from session ID
         <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
