@@ -1256,6 +1256,11 @@ const prefsClaudeCmd = document.getElementById('prefs-claude-sl-cmd');
 const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsProxyUrl = document.getElementById('prefs-proxy-url');
+const prefsWsDir = document.getElementById('prefs-ws-dir');
+const prefsWsPort = document.getElementById('prefs-ws-port');
+const wsDot = document.getElementById('ws-dot');
+const wsStatusText = document.getElementById('ws-status-text');
+const wsToggleBtn = document.getElementById('btn-ws-toggle');
 const CLAUDE_LABELS = {
   'model': 'Model name',
   'context': 'Context usage (estimated)',
@@ -1292,6 +1297,42 @@ function renderPrefsCheckboxes(container, all, enabled, labels) {
   }
 }
 
+// wirescope status dot — colors + label per supervisor state.
+const WS_DOT = { managed: '#3fb950', external: '#58a6ff', starting: '#d29922', stopped: '#888', error: '#f85149' };
+
+function renderWsStatus(st) {
+  const err = st && st.error;
+  let color = WS_DOT[st ? st.state : 'stopped'] || '#888';
+  let text;
+  if (st && st.state === 'managed') {
+    text = `Running (managed)${st.version ? ' — wirescope ' + st.version : ''}`;
+  } else if (st && st.state === 'external') {
+    text = `Adopted a wirescope already running on this port${st.version ? ' — ' + st.version : ''} · managed externally`;
+  } else if (st && st.state === 'starting') {
+    text = 'Starting…';
+  } else {
+    text = err ? err : 'Stopped';
+    if (err) color = WS_DOT.error;
+  }
+  wsDot.style.background = color;
+  wsStatusText.textContent = text;
+  // The toggle only makes sense for a Clodex-managed lifecycle: Start when
+  // nothing's running, Stop when it's ours. When a wirescope is already running
+  // (adopted/external) neither applies, so hide the button rather than show a
+  // dead greyed-out "Start". 'starting' keeps a disabled button for feedback.
+  const state = st ? st.state : 'stopped';
+  const managed = state === 'managed';
+  const starting = state === 'starting';
+  wsToggleBtn.style.display = state === 'external' ? 'none' : '';
+  wsToggleBtn.textContent = managed ? 'Stop' : 'Start';
+  wsToggleBtn.disabled = starting;
+}
+
+let wsPollTimer = null;
+async function refreshWsStatus() {
+  try { renderWsStatus(await window.api.wirescopeStatus()); } catch {}
+}
+
 async function openPrefs() {
   const s = await window.api.getSettings();
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
@@ -1299,12 +1340,57 @@ async function openPrefs() {
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsProxyUrl.value = s.proxyUrl || 'http://127.0.0.1:7800';
+  prefsWsDir.value = s.wirescopeDir || '';
+  prefsWsPort.value = s.wirescopePort || 7800;
   prefsOverlay.classList.remove('hidden');
+  refreshWsStatus();
+  if (wsPollTimer) clearInterval(wsPollTimer);
+  wsPollTimer = setInterval(refreshWsStatus, 1500);
 }
 
 function closePrefs() {
   prefsOverlay.classList.add('hidden');
+  if (wsPollTimer) { clearInterval(wsPollTimer); wsPollTimer = null; }
 }
+
+// Persist the live wirescope dir/port so the supervisor (which reads settings)
+// acts on what's in the fields right now.
+async function saveWsFields() {
+  const port = parseInt(prefsWsPort.value, 10);
+  await window.api.setSettings({
+    wirescopeDir: prefsWsDir.value.trim(),
+    wirescopePort: Number.isInteger(port) && port > 0 ? port : 7800,
+  });
+}
+
+document.getElementById('btn-ws-browse').addEventListener('click', async () => {
+  const dir = await window.api.selectDirectory();
+  if (dir) { prefsWsDir.value = dir; await saveWsFields(); refreshWsStatus(); }
+});
+
+// The supervisor probes the SAVED port/dir, so persist edits live — otherwise
+// changing the port to a free one wouldn't flip "adopted" back to a startable
+// "stopped". (These two operational fields intentionally save on edit, not just
+// on the Save button.)
+for (const el of [prefsWsDir, prefsWsPort]) {
+  el.addEventListener('change', async () => { await saveWsFields(); refreshWsStatus(); });
+}
+
+wsToggleBtn.addEventListener('click', async () => {
+  const st = await window.api.wirescopeStatus();
+  if (st && st.state === 'managed') {
+    await window.api.wirescopeStop();
+  } else {
+    await saveWsFields();
+    await window.api.wirescopeStart();
+  }
+  refreshWsStatus();
+});
+
+document.getElementById('ws-repo-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.api.openExternal('https://github.com/avirtual/wirescope');
+});
 
 function collectChecked(container) {
   return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.value);
@@ -1320,6 +1406,8 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     },
     proxyEnabled: prefsProxyEnabled.checked,
     proxyUrl: prefsProxyUrl.value.trim() || 'http://127.0.0.1:7800',
+    wirescopeDir: prefsWsDir.value.trim(),
+    wirescopePort: (() => { const p = parseInt(prefsWsPort.value, 10); return Number.isInteger(p) && p > 0 ? p : 7800; })(),
   });
   closePrefs();
 });

@@ -5,7 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, shapeProxyRecord,
+  PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord,
 } = require('../proxy-util');
 
 test('mintProxyAgent: prefixed, name-embedded, unique against taken set', () => {
@@ -91,4 +91,36 @@ test('shapeProxyRecord: codex-style nulls (no warmth/context) degrade cleanly', 
   assert.strictEqual(p.warmth, null);
   assert.strictEqual(p.context, null);
   assert.deepStrictEqual(p.cost, { usd: 0.01, requests: 3 });
+});
+
+test('pickProxyRecord: empty / null candidates → null', () => {
+  assert.strictEqual(pickProxyRecord(null, 'x'), null);
+  assert.strictEqual(pickProxyRecord([], 'x'), null);
+});
+
+test('pickProxyRecord: /clear regression — binds the live session, not the clear-ended one', () => {
+  // The real /_status order that bit us: live record FIRST, clear-ended SECOND,
+  // both under one agent id. Last-writer-wins would pick the dead one.
+  const live = { agent: 'clodex-clodex-1bf', session_id: 'new', ended: null, last_seen: 200 };
+  const dead = { agent: 'clodex-clodex-1bf', session_id: 'old', ended: { reason: 'clear' }, last_seen: 100 };
+  assert.strictEqual(pickProxyRecord([live, dead], 'new'), live);
+});
+
+test('pickProxyRecord: exact session id wins even against a newer record', () => {
+  const tracked = { session_id: 'mine', ended: null, last_seen: 1 };
+  const newer = { session_id: 'other', ended: null, last_seen: 999 };
+  assert.strictEqual(pickProxyRecord([newer, tracked], 'mine'), tracked);
+});
+
+test('pickProxyRecord: no session id → prefer live, most-recently-seen', () => {
+  const dead = { session_id: 'a', ended: { reason: 'clear' }, last_seen: 999 };
+  const liveOld = { session_id: 'b', ended: null, last_seen: 10 };
+  const liveNew = { session_id: 'c', ended: null, last_seen: 50 };
+  assert.strictEqual(pickProxyRecord([dead, liveOld, liveNew], null), liveNew);
+});
+
+test('pickProxyRecord: all ended → fall back to most-recently-seen', () => {
+  const older = { session_id: 'a', ended: { reason: 'clear' }, last_seen: 10 };
+  const newer = { session_id: 'b', ended: { reason: 'clear' }, last_seen: 20 };
+  assert.strictEqual(pickProxyRecord([older, newer], 'missing'), newer);
 });

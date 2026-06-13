@@ -88,6 +88,11 @@ window.api = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
 
+  // wirescope integration (phase-0)
+  wirescopeStatus: () => ipcRenderer.invoke('wirescope:status'),
+  wirescopeStart: () => ipcRenderer.invoke('wirescope:start'),
+  wirescopeStop: () => ipcRenderer.invoke('wirescope:stop'),
+
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
   setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt),

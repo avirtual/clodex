@@ -208,6 +208,22 @@
         </label>
         <input type="text" id="prefs-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false">
       </section>
+      <section>
+        <h4>wirescope</h4>
+        <p class="hint-text">Cost, context &amp; cache-warming telemetry. Point Clodex at a local <a href="#" id="ws-repo-link">wirescope</a> checkout and start it here. If one is already running on the port, Clodex adopts it instead of starting a second.</p>
+        <p class="hint-text" style="margin-bottom: 2px;">Source directory</p>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="prefs-ws-dir" placeholder="/path/to/wirescope" spellcheck="false" style="flex: 1;">
+          <button id="btn-ws-browse" class="secondary" type="button">Browse…</button>
+        </div>
+        <p class="hint-text" style="margin: 8px 0 2px;">Port</p>
+        <input type="number" id="prefs-ws-port" placeholder="7800" min="1" max="65535" style="width: 120px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+          <span id="ws-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
+          <span id="ws-status-text" class="hint-text" style="flex: 1;">—</span>
+          <button id="btn-ws-toggle" class="secondary" type="button">Start</button>
+        </div>
+      </section>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>

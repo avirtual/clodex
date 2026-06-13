@@ -31,6 +31,27 @@ function resolveProxyAgentId({ name, fork, existing, taken, rand }) {
   return mintProxyAgent(name, taken, rand);
 }
 
+// Pick the right /_status record when several share one proxy agent id.
+// `/clear` (and /compact) KEEP the agent id but mint a new session_id, so the
+// proxy reports one ended record per past session plus the live one — all under
+// the same `agent`. Last-writer-wins over /_status order would bind us to a dead
+// `clear`-ended record (the bug this fixes). Disambiguate by, in order:
+//   1. exact session_id == the id Clodex already tracks (JsonlWatcher-fresh) —
+//      the authoritative bind; it follows the transcript through /clear.
+//   2. a live (not-ended) record, most recently seen.
+//   3. failing that, the most recently seen record at all.
+function pickProxyRecord(candidates, sessionId) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+  if (sessionId) {
+    const exact = candidates.find((r) => r && r.session_id === sessionId);
+    if (exact) return exact;
+  }
+  const live = candidates.filter((r) => r && !r.ended);
+  const pool = live.length ? live : candidates;
+  return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
+}
+
 // Normalize one /_status record into the renderer payload. `r` is null when no
 // proxy record matches the session (unlinked). `probe` carries version + caps.
 function shapeProxyRecord(r, probe, now = Date.now()) {
@@ -67,4 +88,4 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
   };
 }
 
-module.exports = { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, shapeProxyRecord };
+module.exports = { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord };

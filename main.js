@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const pty = require('node-pty');
 
 // Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
@@ -290,6 +290,10 @@ const DEFAULT_UI_SETTINGS = {
   },
   proxyEnabled: false,
   proxyUrl: 'http://127.0.0.1:7800',
+  // wirescope integration (phase-0): a user-pointed source checkout Clodex can
+  // start/stop. Empty dir = nothing to manage (detect-only).
+  wirescopeDir: '',
+  wirescopePort: 7800,
 };
 
 const uiSettings = {
@@ -304,6 +308,8 @@ const uiSettings = {
         },
         proxyEnabled: typeof raw?.proxyEnabled === 'boolean' ? raw.proxyEnabled : DEFAULT_UI_SETTINGS.proxyEnabled,
         proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl : DEFAULT_UI_SETTINGS.proxyUrl,
+        wirescopeDir: typeof raw?.wirescopeDir === 'string' ? raw.wirescopeDir : DEFAULT_UI_SETTINGS.wirescopeDir,
+        wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
       };
     } catch { return DEFAULT_UI_SETTINGS; }
   },
@@ -318,6 +324,8 @@ const uiSettings = {
       },
       proxyEnabled: partial?.proxyEnabled ?? cur.proxyEnabled,
       proxyUrl: partial?.proxyUrl ?? cur.proxyUrl,
+      wirescopeDir: partial?.wirescopeDir ?? cur.wirescopeDir,
+      wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
     };
     try {
       fs.mkdirSync(path.dirname(UI_SETTINGS_FILE), { recursive: true });
@@ -682,7 +690,7 @@ function resolveProxyBase(proxy) {
 // streaming/refusals, a clodex2 concern).
 // See https://github.com/avirtual/wirescope (INTEGRATION.md).
 
-const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, shapeProxyRecord } = require('./proxy-util');
+const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord } = require('./proxy-util');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms
 const PROXY_PROBE_TTL = 60000;    // ms — re-confirm identity at most this often
@@ -825,13 +833,17 @@ class ProxyPoller {
         try { records = await ProxyClient.status(base); } catch { continue; }
         const byAgent = new Map();
         for (const r of records) {
-          // Prefilter to our namespace; exact equality below is the real bind.
+          // Prefilter to our namespace. One agent id can map to MANY records:
+          // /clear keeps the id but mints a new session, so collect per agent
+          // and let pickProxyRecord choose the live one (see proxy-util).
           if (r && typeof r.agent === 'string' && r.agent.startsWith(PROXY_AGENT_PREFIX)) {
-            byAgent.set(r.agent, r);
+            let arr = byAgent.get(r.agent);
+            if (!arr) byAgent.set(r.agent, arr = []);
+            arr.push(r);
           }
         }
         for (const s of sess) {
-          const payload = shapeProxyRecord(byAgent.get(s.proxyAgent), probe);
+          const payload = shapeProxyRecord(pickProxyRecord(byAgent.get(s.proxyAgent), s.sessionId), probe);
           payload.base = base; // poller context, not record shape — for the session-page link
           this.last.set(s.name, payload);
           this.manager._sendToSession(s.name, 'session-proxy', s.name, payload);
@@ -842,6 +854,140 @@ class ProxyPoller {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// WirescopeSupervisor (phase-0): start/stop a user-pointed wirescope checkout
+// ---------------------------------------------------------------------------
+// Detect-first: if a wirescope is already answering on the configured port we
+// ADOPT it (never spawn a second — that's how the user's shared :7800 stays the
+// single ledger). Otherwise spawn `uvicorn logproxy:app` from the source dir
+// with the PORT + LOG_DIR + WARMTH_DB triple so a managed instance is fully
+// owner-scoped and coexists with anything else. SIGTERM is a clean shutdown
+// (uvicorn graceful + atexit writer drain). We only ever stop OUR child.
+// See https://github.com/avirtual/wirescope and .claude/memory.md.
+class WirescopeSupervisor {
+  constructor() {
+    this.child = null;       // ChildProcess of a managed instance, else null
+    this.startedPort = null; // port we spawned on
+    this.lastError = null;   // surfaced to the prefs UI
+    this._stderr = '';       // tail of child stderr for diagnostics
+  }
+
+  _base(port) { return `http://127.0.0.1:${port}`; }
+
+  _dirs() {
+    const root = path.join(app.getPath('userData'), 'wirescope');
+    return { logDir: path.join(root, 'logs'), warmthDb: path.join(root, 'warmth.sqlite') };
+  }
+
+  // dir looks like a wirescope checkout if it has the logproxy entrypoint.
+  _looksValid(dir) {
+    try { return !!dir && fs.existsSync(path.join(dir, 'logproxy.py')); } catch { return false; }
+  }
+
+  async status() {
+    const s = uiSettings.get();
+    const port = s.wirescopePort || 7800;
+    const base = this._base(port);
+    const dir = s.wirescopeDir || '';
+    const dirValid = this._looksValid(dir);
+    const probe = await ProxyClient.probe(base).catch(() => null);
+    const alive = !!(this.child && this.child.exitCode === null && !this.child.killed);
+
+    let state;
+    if (probe) state = alive ? 'managed' : 'external';
+    else if (alive) state = 'starting';
+    else state = 'stopped';
+
+    return {
+      state, port, base, dir, dirValid,
+      product: probe ? probe.product : null,
+      version: probe ? probe.version : null,
+      managed: alive,
+      error: this.lastError,
+    };
+  }
+
+  // Returns { ok, state, error? }. Adopts an existing wirescope rather than
+  // spawning a duplicate. Spawn errors surface asynchronously via status().
+  async start() {
+    const s = uiSettings.get();
+    const port = s.wirescopePort || 7800;
+    const dir = s.wirescopeDir || '';
+    const base = this._base(port);
+
+    // Detect-first: already serving here? adopt, don't spawn.
+    const probe = await ProxyClient.probe(base).catch(() => null);
+    if (probe) {
+      this.lastError = null;
+      return { ok: true, state: 'external', adopted: true };
+    }
+    if (this.child && this.child.exitCode === null) {
+      return { ok: true, state: 'starting' };
+    }
+    if (!this._looksValid(dir)) {
+      this.lastError = dir
+        ? `Not a wirescope checkout (no logproxy.py in ${dir})`
+        : 'No wirescope source directory set';
+      return { ok: false, error: this.lastError };
+    }
+
+    const { logDir, warmthDb } = this._dirs();
+    try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+
+    this.lastError = null;
+    this._stderr = '';
+    let child;
+    try {
+      child = spawn('python3',
+        ['-m', 'uvicorn', 'logproxy:app', '--host', '127.0.0.1', '--port', String(port)],
+        {
+          cwd: dir,
+          env: { ...process.env, PORT: String(port), LOG_DIR: logDir, WARMTH_DB: warmthDb },
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+    } catch (e) {
+      this.lastError = `Failed to launch python3: ${e.message}`;
+      return { ok: false, error: this.lastError };
+    }
+
+    this.child = child;
+    this.startedPort = port;
+    if (child.stderr) {
+      child.stderr.on('data', (d) => {
+        this._stderr = (this._stderr + d.toString()).slice(-2000);
+      });
+    }
+    child.on('error', (e) => {
+      this.lastError = e.code === 'ENOENT'
+        ? 'python3 not found on PATH — install Python 3.9+ or check your PATH'
+        : `wirescope failed to start: ${e.message}`;
+      if (this.child === child) { this.child = null; this.startedPort = null; }
+    });
+    child.on('exit', (code, signal) => {
+      if (this.child === child) { this.child = null; this.startedPort = null; }
+      if (code && code !== 0) {
+        const tail = this._stderr.trim().split('\n').slice(-3).join(' ').slice(-300);
+        this.lastError = `wirescope exited (code ${code})${tail ? ': ' + tail : ''}`;
+      } else if (signal && signal !== 'SIGTERM') {
+        this.lastError = `wirescope terminated (${signal})`;
+      }
+    });
+
+    return { ok: true, state: 'starting' };
+  }
+
+  // Stop ONLY a Clodex-managed child — never an adopted/external instance.
+  stop() {
+    if (this.child && this.child.exitCode === null) {
+      try { this.child.kill('SIGTERM'); } catch {}
+    }
+    this.child = null;
+    this.startedPort = null;
+    return { ok: true };
+  }
+}
+const wirescope = new WirescopeSupervisor();
 
 function setupClaudeHook(name, proxyBase = null, proxyAgent = null) {
   ensureDir(REGISTRY_DIR);
@@ -1596,6 +1742,7 @@ class SessionManager {
       const s = this.sessions.get(name);
       s.pty.kill();
     }
+    wirescope.stop(); // only stops a Clodex-managed instance, never an adopted one
   }
 
   _cleanup(name) {
@@ -2491,6 +2638,8 @@ app.whenReady().then(() => {
       codexComponents: CODEX_SL_COMPONENTS,
       proxyEnabled: s.proxyEnabled,
       proxyUrl: s.proxyUrl,
+      wirescopeDir: s.wirescopeDir,
+      wirescopePort: s.wirescopePort,
     };
   });
   ipcMain.handle('settings:set', (_e, partial) => {
@@ -2498,6 +2647,10 @@ app.whenReady().then(() => {
     rebuildAllStatusScripts(manager);
     return next;
   });
+
+  ipcMain.handle('wirescope:status', () => wirescope.status());
+  ipcMain.handle('wirescope:start', () => wirescope.start());
+  ipcMain.handle('wirescope:stop', () => wirescope.stop());
 
   ipcMain.handle('ui:broadcast', async (_e, body) => {
     if (!body || !body.trim()) return { ok: false, error: 'Empty message' };
