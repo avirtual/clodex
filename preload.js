@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
@@ -79,6 +79,8 @@ window.api = {
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   getProxySnapshot: (name) =>
     ipcRenderer.invoke('proxy:snapshot', name),
+  getProxyContext: (name) =>
+    ipcRenderer.invoke('proxy:context', name),
   proxyHold: (name, hours, force) =>
     ipcRenderer.invoke('proxy:hold', name, hours, force),
   onSessionMention: (callback) =>
@@ -109,8 +111,9 @@ window.api = {
 
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
-  setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins),
+  setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools),
   restartSession: (name) => ipcRenderer.invoke('session:restart', name),
+  setSessionTools: (name, disabledTools) => ipcRenderer.invoke('session:setTools', name, disabledTools),
 
   // Workspaces
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),

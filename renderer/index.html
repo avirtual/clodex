@@ -95,7 +95,26 @@
       <button id="search-close" title="Close (Esc)" type="button">×</button>
     </div>
     <div id="terminal-container"></div>
-    <div id="proxy-bar" style="display:none;"></div>
+    <div id="proxy-bar" style="display:none;">
+      <span id="proxy-telemetry"></span>
+      <span id="proxy-actions"></span>
+    </div>
+    <div id="tools-popover" class="hidden">
+      <div class="popover-title">Tools — <span id="tools-popover-name"></span></div>
+      <div id="popover-tools-list" class="agent-checklist"></div>
+      <label class="tools-popover-restart">
+        <input type="checkbox" id="tools-popover-restart">
+        <span class="hint-text">Restart now to apply (otherwise applies on next start)</span>
+      </label>
+      <div class="popover-actions">
+        <button id="tools-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="tools-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
+    <div id="ctx-popover" class="hidden">
+      <div class="popover-title">Context — <span id="ctx-popover-name"></span></div>
+      <div id="ctx-popover-body"></div>
+    </div>
     <div id="empty-state">
       <p>No sessions yet</p>
       <p class="hint">Click <strong>+</strong> to create one</p>
@@ -158,6 +177,10 @@
           <span class="hint-text">Deny built-in <code>general-purpose</code> so the model must use the selected lean agents (cuts the big tool/skill load).</span>
         </label>
       </label>
+      <label id="tools-row" style="display:none;">Tools
+        <div id="input-tools-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
+      </label>
       <label>Extra CLI args
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
@@ -207,6 +230,10 @@
           <input type="checkbox" id="args-deny-builtins">
           <span class="hint-text">Deny built-in <code>general-purpose</code> so the model must use the selected lean agents.</span>
         </label>
+      </label>
+      <label id="args-tools-row">Tools
+        <div id="args-tools-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>).</span>
       </label>
       <label id="args-proxy-row">API Proxy
         <select id="args-proxy-mode">

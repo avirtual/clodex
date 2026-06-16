@@ -435,9 +435,23 @@ html, body {
 #main.ipc-expanded #proxy-bar {
   bottom: 220px;
 }
-#proxy-bar.px-stale { opacity: 0.6; }
-#proxy-bar.px-dead { opacity: 0.4; }
-#proxy-bar.px-muted { opacity: 0.5; font-style: italic; }
+/* Staleness dims the telemetry only — the action icons stay fully usable. */
+#proxy-telemetry { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
+#proxy-telemetry.px-stale { opacity: 0.6; }
+#proxy-telemetry.px-dead { opacity: 0.4; }
+#proxy-telemetry.px-muted { opacity: 0.5; font-style: italic; }
+#proxy-actions { display: flex; align-items: center; gap: 6px; margin-left: 10px; flex: none; }
+#proxy-bar .px-action {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text);
+  background: var(--active-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+#proxy-bar .px-action:hover { border-color: var(--accent); }
 #proxy-bar .px-seg { color: var(--text); }
 #proxy-bar .px-sep { margin: 0 8px; color: var(--text-dim); }
 #proxy-bar .px-warm { color: #e0a030; }
@@ -467,6 +481,103 @@ html, body {
 }
 #proxy-bar .px-hold:hover { border-color: var(--accent); }
 #proxy-bar .px-hold:disabled { opacity: 0.5; cursor: default; }
+
+/* Per-session Tools quick-access popover (anchored above the status bar). */
+#tools-popover {
+  position: fixed;
+  z-index: 50;
+  width: 340px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#tools-popover.hidden { display: none; }
+#tools-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+#tools-popover #popover-tools-list { overflow-y: auto; flex: 1; }
+#tools-popover .tools-popover-restart {
+  display: flex; align-items: center; gap: 6px; margin: 8px 0 0;
+}
+#tools-popover .popover-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
+}
+
+/* Keep-warm duration dropdown (anchored above the fire button). */
+.warm-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.warm-menu .warm-menu-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 4px 6px 2px;
+}
+.warm-menu .warm-item {
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.warm-menu .warm-item:hover { background: var(--active-bg); }
+.warm-menu .warm-item:disabled { opacity: 0.5; cursor: default; }
+.warm-menu .warm-stop {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 7px;
+  border-radius: 0 0 4px 4px;
+}
+
+/* Context-breakdown popover (anchored above the ctx telemetry seg). */
+#proxy-bar .px-ctx-btn { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+#proxy-bar .px-ctx-btn:hover { color: var(--text); }
+#ctx-popover {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#ctx-popover.hidden { display: none; }
+#ctx-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.ctx-line-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; color: var(--text-dim); margin: 8px 0 6px;
+}
+.ctx-line-head:first-child { margin-top: 0; }
+.ctx-line-total { color: var(--text); font-weight: 600; }
+.ctx-est { color: var(--text-dim); font-style: italic; font-size: 10px; margin-left: 4px; }
+.ctx-row { margin-bottom: 6px; font-size: 11px; }
+.ctx-row-top { display: flex; justify-content: space-between; margin-bottom: 2px; }
+.ctx-cat { color: var(--text); }
+.ctx-nums { color: var(--text-dim); }
+.ctx-bar { height: 5px; background: var(--active-bg); border-radius: 3px; overflow: hidden; }
+.ctx-bar > i { display: block; height: 100%; background: var(--accent); }
+.ctx-note { font-size: 11px; color: var(--text-dim); }
+.ctx-tools-link { display: block; margin-top: 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.ctx-tools-link:hover { color: var(--text); text-decoration: underline; }
 
 .terminal-wrapper {
   position: absolute;

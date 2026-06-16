@@ -500,8 +500,9 @@ function applyTypeDefaults() {
   const supportsSystemPrompt = type === 'claude' || type === 'codex';
   systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (!supportsSystemPrompt) inputSystemPrompt.value = '';
-  // Custom subagents are Claude-only (--agents has no Codex equivalent).
+  // Custom subagents and per-session tool gating are Claude-only.
   agentsRow.style.display = type === 'claude' ? '' : 'none';
+  toolsRow.style.display = type === 'claude' ? '' : 'none';
   const supportsResume = type === 'claude' || type === 'codex';
   resumeRow.style.display = supportsResume ? '' : 'none';
   if (!supportsResume) {
@@ -573,6 +574,45 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
+// --- Per-session tool gating (Claude only). The catalog is a curated static
+// list supplied by main via getSettings().claudeTools. Checkboxes default to
+// checked (= tool available); unchecking adds the tool to `disabledTools`,
+// which becomes a permissions.deny entry at spawn. A stored disabled tool that
+// isn't in the current catalog is still shown (unchecked) so editing a session
+// never silently re-enables a tool the catalog dropped. ---
+const toolsRow = document.getElementById('tools-row');
+const inputToolsList = document.getElementById('input-tools-list');
+let claudeToolsCache = [];
+
+function renderToolChecklist(container, disabledSet) {
+  container.innerHTML = '';
+  // Catalog is authoritative: render only known tools. A stale name in
+  // disabledSet (removed from the catalog, or persisted before our time) is
+  // intentionally NOT shown — it falls out of the deny on the next Apply.
+  const names = [...claudeToolsCache];
+  if (!names.length) {
+    container.innerHTML = '<span class="hint-text">No tool catalog available.</span>';
+    return;
+  }
+  for (const name of names) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = name;
+    cb.checked = !disabledSet.has(name);
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(name)}</strong>`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+// Returns the UNCHECKED tools (the disabled set).
+function collectToolChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
+}
+
 async function openDialog() {
   sessionCounter++;
   inputName.value = `session-${sessionCounter}`;
@@ -593,6 +633,8 @@ async function openDialog() {
   agentLibCache = agentLib || [];
   renderAgentChecklist(inputAgentsList, new Set());
   inputDenyBuiltins.checked = false;
+  claudeToolsCache = settings?.claudeTools || [];
+  renderToolChecklist(inputToolsList, new Set());
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
   dialogOverlay.classList.remove('hidden');
@@ -688,11 +730,12 @@ async function doCreate() {
     ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null;
   const agents = type === 'claude' ? collectAgentChecklist(inputAgentsList) : [];
   const denyBuiltins = (type === 'claude' && inputDenyBuiltins.checked) ? ['general-purpose'] : [];
+  const disabledTools = type === 'claude' ? collectToolChecklist(inputToolsList) : [];
 
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins);
+  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);
@@ -786,14 +829,56 @@ function fmtCountdown(remaining_s) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Type of a session, read from its sidebar tab (the renderer's source for it).
+function sessionTypeOf(name) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  return item ? (item.querySelector('.session-type')?.textContent || null) : null;
+}
+function activeIsAgent() {
+  const t = activeSession ? sessionTypeOf(activeSession) : null;
+  return t === 'claude' || t === 'codex';
+}
+
+// Per-session quick-access icons on the left of the status bar. Claude gets a
+// Tools button (tool gating is Claude-only); both agent types get an Edit
+// shortcut so the crowded right-click menu isn't the only way in.
+// Right side of the bar: session actions (tools, edit) plus the keep-warm
+// control. `holdHtml` is the warm-control markup built by renderProxyBar from
+// the live payload; the early-return paths call this with no argument.
+function renderSessionActions(holdHtml = '') {
+  const el = document.getElementById('proxy-actions');
+  if (!el) return;
+  const type = activeSession ? sessionTypeOf(activeSession) : null;
+  const btns = [];
+  if (type === 'claude') {
+    btns.push('<button class="px-action" data-act="tools" title="Enable/disable tools for this session">🛠 tools</button>');
+  }
+  if (type === 'claude' || type === 'codex') {
+    btns.push('<button class="px-action" data-act="edit" title="Edit session settings">⚙ edit</button>');
+  }
+  el.innerHTML = btns.join('') + (holdHtml || '');
+}
+
 function renderProxyBar() {
   const bar = document.getElementById('proxy-bar');
   if (!bar) return;
   const main = document.getElementById('main');
+  const tele = document.getElementById('proxy-telemetry');
+  renderSessionActions();
   const st = activeSession ? proxyState.get(activeSession) : null;
+  // Show the bar whenever an agent session is active (so the action icons are
+  // always reachable), or whenever there's telemetry to show. Hide it only for
+  // non-agent sessions with nothing to display.
   if (!st || !st.payload) {
-    bar.style.display = 'none';
-    if (main) main.classList.remove('has-proxy-bar');
+    if (activeIsAgent()) {
+      bar.style.display = '';
+      if (main) main.classList.add('has-proxy-bar');
+      tele.className = '';
+      tele.innerHTML = '';
+    } else {
+      bar.style.display = 'none';
+      if (main) main.classList.remove('has-proxy-bar');
+    }
     return;
   }
   const p = st.payload;
@@ -801,15 +886,15 @@ function renderProxyBar() {
   if (main) main.classList.add('has-proxy-bar');
 
   if (!p.linked) {
-    bar.className = 'px-muted';
-    bar.textContent = 'proxy: no live session for this agent';
+    tele.className = 'px-muted';
+    tele.textContent = 'proxy: no live session for this agent';
     return;
   }
 
   const ageMs = Date.now() - st.at;
   const stale = ageMs > PROXY_POLL_MS * 2;
   const dead = ageMs > PROXY_POLL_MS * 4;
-  bar.className = dead ? 'px-dead' : (stale ? 'px-stale' : '');
+  tele.className = dead ? 'px-dead' : (stale ? 'px-stale' : '');
 
   const segs = [];
   if (p.model) segs.push(`<span class="px-seg">${esc(p.model)}</span>`);
@@ -824,18 +909,25 @@ function renderProxyBar() {
   const wireTok = p.context && typeof p.context.inputTokens === 'number' ? p.context.inputTokens : null;
   const usedTok = wireTok != null ? wireTok : (sc && sc.used > 0 ? sc.used : null);
   const sizeTok = sc && sc.size > 0 ? sc.size : null;
+  // When wirescope exposes the breakdown, the ctx seg becomes a button that
+  // opens the composition popover. Standalone (no cap) → plain text.
+  const ctxClickable = !!(p.linked && p.capabilities &&
+    (p.capabilities.context_composition || p.capabilities.context_view));
+  const ctxCls = ctxClickable ? ' px-ctx-btn' : '';
+  const ctxAttr = ctxClickable ? ' data-act="ctx"' : '';
+  const ctxTip = ctxClickable ? 'Click for context breakdown' : null;
   if (usedTok != null && usedTok > 0) {
     const heavy = usedTok >= CTX_HEAVY_TOKENS ? ' px-ctx-heavy' : usedTok >= CTX_WARN_TOKENS ? ' px-ctx-warn' : '';
     if (sizeTok) {
       const p2 = Math.round((usedTok / sizeTok) * 100);
-      segs.push(`<span class="px-seg${heavy}" title="Context: tokens used / window size">ctx ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context: tokens used / window size'}">ctx ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
     } else {
-      segs.push(`<span class="px-seg${heavy}" title="Context tokens used">ctx ${fmtTokens(usedTok)}</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context tokens used'}">ctx ${fmtTokens(usedTok)}</span>`);
     }
   } else if (typeof pct === 'number' && pct > 0) {
-    segs.push(`<span class="px-seg" title="Context window used">ctx ${pct}%</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Context window used'}">ctx ${pct}%</span>`);
   } else if (p.context && p.context.messages != null) {
-    segs.push(`<span class="px-seg" title="Messages in context">ctx ${p.context.messages} msg</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Messages in context'}">ctx ${p.context.messages} msg</span>`);
   }
   if (p.turns != null) segs.push(`<span class="px-seg">turn ${p.turns}</span>`);
   if (p.warmth) {
@@ -862,7 +954,8 @@ function renderProxyBar() {
     segs.push(`<a class="px-seg px-link" data-url="${esc(url)}" title="Open this session's page on wirescope">🔍 wirescope</a>`);
   }
 
-  // Keep-warm control (only when the proxy advertises the capability).
+  // Keep-warm control (only when the proxy advertises the capability): a single
+  // fire button that opens a duration dropdown (1h/4h/8h, plus Stop when held).
   let holdHtml = '';
   if (p.capabilities && p.capabilities.hold) {
     if (p.hold) {
@@ -873,14 +966,16 @@ function renderProxyBar() {
       const remH = untilS != null ? Math.max(0, (untilS - Date.now() / 1000) / 3600) : null;
       const remTxt = remH == null ? '' : (remH < 1 ? ` ~${Math.round(remH * 60)}m` : ` ~${remH.toFixed(1)}h`);
       const pending = p.pingable === false;
-      const label = pending ? '🔒 armed (next turn)' : `🔒 held${remTxt}`;
-      const tip = pending ? 'Armed — starts keeping warm after the next turn. Click to disarm.' : 'Hold active. Click to disarm.';
-      holdHtml = `<span class="px-hold-group"><button class="px-hold" data-act="off" title="${tip}">${label} ✕</button></span>`;
+      const label = pending ? '🔒 armed' : `🔒 held${remTxt}`;
+      const tip = pending ? 'Armed — starts keeping warm after the next turn. Click to change or stop.' : 'Keeping cache warm. Click to change or stop.';
+      holdHtml = `<button class="px-hold" data-act="warm-menu" data-held="1" title="${tip}">${label}</button>`;
     } else {
-      holdHtml = `<span class="px-hold-group"><span class="px-hold-label">keep warm:</span>${[1, 4, 8].map((h) => `<button class="px-hold" data-hours="${h}">${h}h</button>`).join('')}</span>`;
+      holdHtml = `<button class="px-hold" data-act="warm-menu" title="Keep prompt cache warm">🔥 keep warm</button>`;
     }
   }
-  bar.innerHTML = segs.join('<span class="px-sep">·</span>') + holdHtml;
+  tele.innerHTML = segs.join('<span class="px-sep">·</span>');
+  // Keep-warm lives with the actions on the right, not in the info column.
+  renderSessionActions(holdHtml);
 }
 
 // Lightweight per-second update: refresh only the countdown text + staleness
@@ -893,9 +988,11 @@ function tickProxyBar() {
   const p = st.payload;
   const ageMs = Date.now() - st.at;
   const stale = ageMs > PROXY_POLL_MS * 2, dead = ageMs > PROXY_POLL_MS * 4;
-  bar.classList.toggle('px-stale', stale && !dead);
-  bar.classList.toggle('px-dead', dead);
-  const w = bar.querySelector('.px-warm');
+  const tele = document.getElementById('proxy-telemetry');
+  if (!tele) return;
+  tele.classList.toggle('px-stale', stale && !dead);
+  tele.classList.toggle('px-dead', dead);
+  const w = tele.querySelector('.px-warm');
   if (!w) return;
   if (dead) w.textContent = '🔥 ?';
   else if (p.warmth.state === 'warm' && p.warmth.remaining_s != null
@@ -957,35 +1054,268 @@ setInterval(() => {
   bar.addEventListener('click', async (e) => {
     const link = e.target.closest('.px-link');
     if (link && link.dataset.url) { e.preventDefault(); window.api.openExternal(link.dataset.url); return; }
-    const btn = e.target.closest('.px-hold');
-    if (!btn || !activeSession) return;
-    const name = activeSession;
-    btn.disabled = true;
-    try {
-      if (btn.dataset.act === 'off') {
-        const r = await window.api.proxyHold(name, 0, false);
-        if (!r.ok) alert('Could not disarm hold: ' + r.error);
-      } else {
-        const hours = Number(btn.dataset.hours);
-        if (!confirm(`Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`)) return;
-        let r = await window.api.proxyHold(name, hours, false);
-        if (r.ok && !r.armed && r.skipped) {
-          if (confirm(`Proxy declined (${r.skipped}): the cache prefix isn't warm yet, so there's nothing to keep warm. Force the hold anyway?`)) {
-            r = await window.api.proxyHold(name, hours, true);
-          } else return;
-        }
-        if (!r.ok) alert('Hold failed: ' + r.error);
-        else if (!r.armed) alert('Hold not armed' + (r.skipped ? ` (${r.skipped})` : ''));
-        else if (r.body && r.body.pingable === false) {
-          alert(`Hold armed for "${name}". It will start keeping the cache warm after the next turn (nothing to ping yet).`);
-        }
-      }
-      // The armed/disarmed state shows on the next poll (≤5s).
-    } finally {
-      btn.disabled = false;
+    const ctxSeg = e.target.closest('[data-act="ctx"]');
+    if (ctxSeg && activeSession) { openContextPopover(activeSession, ctxSeg); return; }
+    const action = e.target.closest('.px-action');
+    if (action && activeSession) {
+      if (action.dataset.act === 'edit') openArgsDialog(activeSession);
+      else if (action.dataset.act === 'tools') openToolsPopover(activeSession, action);
+      return;
     }
+    const btn = e.target.closest('.px-hold');
+    if (!btn || !activeSession || btn.dataset.act !== 'warm-menu') return;
+    if (warmMenu) closeWarmMenu();
+    else openWarmMenu(btn, btn.dataset.held === '1');
   });
 })();
+
+// --- Keep-warm duration dropdown ----------------------------------------
+// The fire button in the bottom bar opens this; items arm/extend a hold
+// (1h/4h/8h) or stop it. Floats above the button, dismissed on outside-click.
+let warmMenu = null;
+
+function closeWarmMenu() {
+  if (warmMenu) { warmMenu.remove(); warmMenu = null; }
+}
+
+function openWarmMenu(anchorBtn, held) {
+  closeWarmMenu();
+  warmMenu = document.createElement('div');
+  warmMenu.className = 'warm-menu';
+  const items = ['<div class="warm-menu-label">Keep cache warm for</div>'];
+  for (const h of [1, 4, 8]) items.push(`<button class="warm-item" data-hours="${h}">${h} hours</button>`);
+  if (held) items.push('<button class="warm-item warm-stop" data-act="off">Stop keeping warm</button>');
+  warmMenu.innerHTML = items.join('');
+  warmMenu.addEventListener('click', async (e) => {
+    const item = e.target.closest('.warm-item');
+    if (!item || !activeSession) return;
+    const name = activeSession;
+    closeWarmMenu();
+    if (item.dataset.act === 'off') await doWarmHold(name, { off: true });
+    else await doWarmHold(name, { hours: Number(item.dataset.hours) });
+  });
+  document.body.appendChild(warmMenu);
+  // Anchor above the button, clamped to the viewport.
+  const r = anchorBtn.getBoundingClientRect();
+  const w = warmMenu.offsetWidth;
+  warmMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  warmMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+
+// off:true disarms; otherwise arms/extends for opts.hours. Mirrors the prior
+// inline handler (confirm, force-on-not-warm, armed/pending feedback).
+async function doWarmHold(name, opts) {
+  if (opts.off) {
+    const r = await window.api.proxyHold(name, 0, false);
+    if (!r.ok) alert('Could not disarm hold: ' + r.error);
+    return;
+  }
+  const hours = opts.hours;
+  if (!confirm(`Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`)) return;
+  let r = await window.api.proxyHold(name, hours, false);
+  if (r.ok && !r.armed && r.skipped) {
+    if (confirm(`Proxy declined (${r.skipped}): the cache prefix isn't warm yet, so there's nothing to keep warm. Force the hold anyway?`)) {
+      r = await window.api.proxyHold(name, hours, true);
+    } else return;
+  }
+  if (!r.ok) alert('Hold failed: ' + r.error);
+  else if (!r.armed) alert('Hold not armed' + (r.skipped ? ` (${r.skipped})` : ''));
+  else if (r.body && r.body.pingable === false) {
+    alert(`Hold armed for "${name}". It will start keeping the cache warm after the next turn (nothing to ping yet).`);
+  }
+  // The armed/disarmed state shows on the next poll (≤5s).
+}
+
+document.addEventListener('click', (e) => {
+  if (!warmMenu) return;
+  if (warmMenu.contains(e.target)) return;
+  if (e.target.closest('.px-hold[data-act="warm-menu"]')) return; // toggle handled by the bar
+  closeWarmMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && warmMenu) closeWarmMenu();
+});
+
+// --- Tools quick-access popover ------------------------------------------
+// Opened from the status-bar "tools" icon. Reads the session's current
+// disabled set + the known-tool catalog, lets the user toggle, and persists
+// via session:setTools (optionally restarting to apply immediately). The disabled
+// set drives permissions.deny at spawn — see CLAUDE_TOOLS in main.js.
+const toolsPopover = document.getElementById('tools-popover');
+const toolsPopoverName = document.getElementById('tools-popover-name');
+const popoverToolsList = document.getElementById('popover-tools-list');
+const toolsPopoverRestart = document.getElementById('tools-popover-restart');
+
+function closeToolsPopover() {
+  toolsPopover.classList.add('hidden');
+  toolsPopover.dataset.name = '';
+}
+
+async function openToolsPopover(name, anchorBtn) {
+  const [settings, res] = await Promise.all([
+    window.api.getSettings(),
+    window.api.getSessionArgs(name),
+  ]);
+  if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+  claudeToolsCache = settings?.claudeTools || [];
+  renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []));
+  toolsPopoverRestart.checked = false;
+  toolsPopoverName.textContent = name;
+  toolsPopover.dataset.name = name;
+  toolsPopover.classList.remove('hidden');
+  // Anchor above the button, clamped to the viewport.
+  const r = anchorBtn.getBoundingClientRect();
+  const w = toolsPopover.offsetWidth;
+  toolsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  toolsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+
+document.getElementById('tools-popover-cancel').addEventListener('click', closeToolsPopover);
+document.getElementById('tools-popover-apply').addEventListener('click', async () => {
+  const name = toolsPopover.dataset.name;
+  if (!name) return closeToolsPopover();
+  const disabledTools = collectToolChecklist(popoverToolsList);
+  const restart = toolsPopoverRestart.checked;
+  closeToolsPopover();
+  const r = await window.api.setSessionTools(name, disabledTools);
+  if (!r || !r.ok) { alert(`Failed to update tools: ${r && r.error ? r.error : 'unknown error'}`); return; }
+  if (!restart) return;
+  // Same re-attach dance as the context-menu restart path.
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.querySelector('.session-type')?.textContent : null;
+  const snapCwd = item ? item.dataset.cwd : null;
+  const rr = await window.api.restartSession(name);
+  if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+  if (snapType) {
+    createTerminal(name);
+    addSessionToSidebar(name, snapType, snapCwd, null);
+    switchSession(name);
+  }
+});
+// Dismiss on outside click / Escape.
+document.addEventListener('mousedown', (e) => {
+  if (toolsPopover.classList.contains('hidden')) return;
+  if (toolsPopover.contains(e.target)) return;
+  if (e.target.closest('.px-action')) return; // the toggle button handles itself
+  closeToolsPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !toolsPopover.classList.contains('hidden')) closeToolsPopover();
+});
+
+// --- Context-breakdown popover -------------------------------------------
+// Opened from the ctx telemetry seg (only when wirescope advertises
+// context_view/context_composition). Pulls /_context for the live session and
+// renders the per-category composition (biggest-first), per agent line. Falls
+// back to the tools roster on a context_view-only proxy. Standalone clodex
+// (no proxy) never shows the button — see renderProxyBar.
+const ctxPopover = document.getElementById('ctx-popover');
+const ctxPopoverName = document.getElementById('ctx-popover-name');
+const ctxPopoverBody = document.getElementById('ctx-popover-body');
+
+const CTX_CAT_LABELS = {
+  tools: 'Tools', system: 'System prompt', claudemd: 'CLAUDE.md',
+  useremail: 'User email', user: 'User messages', assistant: 'Assistant',
+  thinking: 'Thinking', tool_calls: 'Tool calls', tool_results: 'Tool results',
+};
+// Unknown future categories collapse to "other" (forward-compatible per the
+// wirescope contract).
+const ctxCatLabel = (c) => CTX_CAT_LABELS[c] || 'other';
+
+function closeContextPopover() {
+  ctxPopover.classList.add('hidden');
+  ctxPopover.dataset.name = '';
+}
+
+function placeCtxPopover(anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = ctxPopover.offsetWidth;
+  ctxPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  ctxPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+
+function renderCompositionLine(a) {
+  const comp = a.composition;
+  const head = a.line === 'main' ? 'main' : (a.display_name || a.agent_id || 'subagent');
+  const est = comp.basis === 'estimate' ? '<span class="ctx-est">~est</span>' : '';
+  const rows = (comp.by_category || []).map((c) => {
+    const pct = typeof c.pct === 'number' ? c.pct : 0;
+    const pctTxt = pct < 10 ? pct.toFixed(1) : Math.round(pct);
+    return `<div class="ctx-row"><div class="ctx-row-top">` +
+      `<span class="ctx-cat">${esc(ctxCatLabel(c.category))}</span>` +
+      `<span class="ctx-nums">${fmtTokens(c.tokens)} · ${pctTxt}%</span></div>` +
+      `<div class="ctx-bar"><i style="width:${Math.max(1, Math.min(100, pct))}%"></i></div></div>`;
+  }).join('');
+  return `<div class="ctx-line-head"><span>${esc(head)}${est}</span>` +
+    `<span class="ctx-line-total">${fmtTokens(comp.total_tokens)}</span></div>${rows}`;
+}
+
+async function openContextPopover(name, anchor) {
+  ctxPopoverName.textContent = name;
+  ctxPopover.dataset.name = name;
+  ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
+  ctxPopover.classList.remove('hidden');
+  placeCtxPopover(anchor);
+  const res = await window.api.getProxyContext(name);
+  // Bail if the popover was closed or retargeted while the fetch was in flight.
+  if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
+  if (!res || !res.ok) {
+    ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(res && res.error ? res.error : 'Unavailable')}</div>`;
+    placeCtxPopover(anchor); return;
+  }
+  const agents = (res.data && Array.isArray(res.data.agents)) ? res.data.agents : [];
+  if (!agents.length) {
+    const note = (res.data && res.data.note) || 'No live context for this session.';
+    ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(note)}</div>`;
+    placeCtxPopover(anchor); return;
+  }
+  const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
+  let html;
+  if (withComp.length) {
+    withComp.sort((a, b) => (a.line === 'main' ? -1 : b.line === 'main' ? 1 : 0));
+    html = withComp.map(renderCompositionLine).join('');
+  } else {
+    // context_view-only proxy: no composition, but the tools roster is there.
+    const main = agents.find((a) => a.line === 'main') || agents[0];
+    const t = main && main.tools;
+    if (t && Array.isArray(t.per_tool)) {
+      const rows = t.per_tool.slice(0, 12).map((pt) =>
+        `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span>` +
+        `<span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join('');
+      html = `<div class="ctx-line-head"><span>tools (${t.count})</span>` +
+        `<span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}` +
+        `<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
+    } else {
+      html = '<div class="ctx-note">No breakdown available.</div>';
+    }
+  }
+  // Cross-link to the tools manager for Claude sessions.
+  const mainTools = agents.find((a) => a.line === 'main')?.tools;
+  if (mainTools && sessionTypeOf(name) === 'claude') {
+    html += `<span class="ctx-tools-link" data-act="manage-tools">Manage tools (${mainTools.count}) →</span>`;
+  }
+  ctxPopoverBody.innerHTML = html;
+  placeCtxPopover(anchor);
+}
+
+ctxPopoverBody.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-act="manage-tools"]')) return;
+  const name = ctxPopover.dataset.name;
+  closeContextPopover();
+  // Anchor the tools popover to the live ctx seg (still visible in the bar).
+  const anchor = document.querySelector('#proxy-bar [data-act="ctx"]');
+  if (name && anchor) openToolsPopover(name, anchor);
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (ctxPopover.classList.contains('hidden')) return;
+  if (ctxPopover.contains(e.target)) return;
+  if (e.target.closest('[data-act="ctx"]')) return; // toggle handled by the bar
+  closeContextPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !ctxPopover.classList.contains('hidden')) closeContextPopover();
+});
 
 window.api.onSessionMention((name, mtype /* 'dm'|'broadcast' */) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -1476,6 +1806,8 @@ const argsPromptBody = document.getElementById('args-prompt-body');
 const argsAgentsRow = document.getElementById('args-agents-row');
 const argsAgentsList = document.getElementById('args-agents-list');
 const argsDenyBuiltins = document.getElementById('args-deny-builtins');
+const argsToolsRow = document.getElementById('args-tools-row');
+const argsToolsList = document.getElementById('args-tools-list');
 let argsEditingName = null;
 
 argsProxyMode.addEventListener('change', () => {
@@ -1522,6 +1854,9 @@ async function openArgsDialog(name) {
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []));
   argsDenyBuiltins.checked = (res.denyBuiltins || []).includes('general-purpose');
+  argsToolsRow.style.display = isClaude ? '' : 'none';
+  claudeToolsCache = settings?.claudeTools || [];
+  renderToolChecklist(argsToolsList, new Set(res.disabledTools || []));
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);
@@ -1544,6 +1879,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const agents = argsAgentsRow.style.display === 'none' ? [] : collectAgentChecklist(argsAgentsList);
   const denyBuiltins = (argsAgentsRow.style.display !== 'none' && argsDenyBuiltins.checked)
     ? ['general-purpose'] : [];
+  const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
   const name = argsEditingName;
   // Snapshot metadata from the current sidebar entry so we can re-render it
   // after the kill+respawn wipes it via session-exit.
@@ -1551,7 +1887,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const snapType = existing ? existing.querySelector('.session-type')?.textContent : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
   closeArgsDialog();
-  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, systemPrompt, agents, denyBuiltins);
+  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools);
   if (!res || !res.ok) {
     alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;

@@ -50,6 +50,39 @@ const LONG_TEXT_THRESHOLD = 200;
 const LONG_TEXT_DELAY = 1000;
 const SHORT_TEXT_DELAY = 50;
 
+// Crash-safe file write: same-dir temp → fsync contents → atomic rename →
+// fsync the parent dir. A power loss or interrupted write leaves the previous
+// file fully intact (rename is atomic on one volume); the fsyncs make the
+// bytes — and the rename itself — durable, not just the name swap. All JSON
+// stores route through this so a torn write can never truncate a whole store.
+function atomicWriteFileSync(filePath, data) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}`);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w', 0o600);
+    fs.writeSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch {}
+    throw e;
+  }
+  // fsync the directory so the rename survives a crash, not just the contents.
+  let dfd;
+  try {
+    dfd = fs.openSync(dir, 'r');
+    fs.fsyncSync(dfd);
+  } catch {} finally {
+    if (dfd !== undefined) { try { fs.closeSync(dfd); } catch {} }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Persistence — remember sessions across app restarts
 // ---------------------------------------------------------------------------
@@ -58,23 +91,40 @@ let PERSIST_FILE = null; // initialized after app.whenReady() (needs app.getPath
 
 const persistence = {
   _load() {
+    let all;
     try {
-      const all = JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
-      // Migrate entries without a workspaceId → assign to default
-      let changed = false;
-      for (const e of all) {
-        if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
-      }
-      if (changed) this._save(all);
-      return all;
+      all = JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
     } catch {
-      return [];
+      // Primary missing or corrupt — fall back to the last known-good copy
+      // before giving up (catches a bad hand-edit, not just a torn write).
+      try {
+        all = JSON.parse(fs.readFileSync(PERSIST_FILE + '.bak', 'utf-8'));
+        console.error('sessions.json unreadable; recovered from .bak');
+      } catch {
+        return [];
+      }
     }
+    if (!Array.isArray(all)) return [];
+    // Migrate entries without a workspaceId → assign to default
+    let changed = false;
+    for (const e of all) {
+      if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
+    }
+    if (changed) this._save(all);
+    return all;
   },
   _save(entries) {
     try {
-      fs.mkdirSync(path.dirname(PERSIST_FILE), { recursive: true });
-      fs.writeFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
+      // Snapshot the current known-good file to .bak before overwriting, so a
+      // logically-bad-but-valid write (or a hand-edit slip) stays recoverable —
+      // atomicWriteFileSync only protects against torn writes. Validate first
+      // so we never back up garbage.
+      try {
+        const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
+        JSON.parse(cur);
+        atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
+      } catch {}
+      atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
     } catch (e) {
       console.error('persistence save failed:', e);
     }
@@ -144,6 +194,14 @@ const persistence = {
       this._save(all);
     }
   },
+  setDisabledTools(name, disabledTools) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      entry.disabledTools = Array.isArray(disabledTools) ? disabledTools : [];
+      this._save(all);
+    }
+  },
   get(name) {
     return this._load().find(s => s.name === name) || null;
   },
@@ -165,8 +223,7 @@ const templates = {
   },
   _save(entries) {
     try {
-      fs.mkdirSync(path.dirname(TEMPLATES_FILE), { recursive: true });
-      fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(entries, null, 2));
+      atomicWriteFileSync(TEMPLATES_FILE, JSON.stringify(entries, null, 2));
     } catch (e) {
       console.error('templates save failed:', e);
     }
@@ -203,8 +260,7 @@ const workspaces = {
   },
   _save(entries) {
     try {
-      fs.mkdirSync(path.dirname(WORKSPACES_FILE), { recursive: true });
-      fs.writeFileSync(WORKSPACES_FILE, JSON.stringify(entries, null, 2));
+      atomicWriteFileSync(WORKSPACES_FILE, JSON.stringify(entries, null, 2));
     } catch (e) { console.error('workspaces save failed:', e); }
   },
   list() {
@@ -264,8 +320,7 @@ const prompts = {
   },
   _save(entries) {
     try {
-      fs.mkdirSync(path.dirname(PROMPTS_FILE), { recursive: true });
-      fs.writeFileSync(PROMPTS_FILE, JSON.stringify(entries, null, 2));
+      atomicWriteFileSync(PROMPTS_FILE, JSON.stringify(entries, null, 2));
     } catch (e) { console.error('prompts save failed:', e); }
   },
   list() { return this._load(); },
@@ -343,6 +398,45 @@ const agentLibrary = {
 
 let UI_SETTINGS_FILE = null;
 
+// Per-session tool gating (Claude-only). The known built-in tool catalog —
+// the universe a user picks from when deciding what to disable. This is the
+// standalone source of truth: clodex must work without wirescope, so the list
+// is maintained here (mirrors Claude Code's tools-reference). When a wirescope
+// proxy IS integrated, /_context can enrich this with the session's actually-
+// loaded roster + per-tool token costs (and surface session-specific MCP /
+// connector tools, e.g. DesignSync, which aren't built-ins and can't live in a
+// static list) — but that's optional, never required.
+//
+// Unchecking a tool adds its name to the session's `disabledTools`, rendered
+// into settings.permissions.deny at spawn. Denylist semantics: empty = all
+// available, and a future built-in we haven't listed is never accidentally
+// excluded. Any tool can also be denied by hand via --disallowedTools in
+// Extra CLI args. Ordered by category for the checklist.
+const CLAUDE_TOOLS = [
+  // Filesystem & code
+  'Read', 'Edit', 'Write', 'NotebookEdit', 'Glob', 'Grep', 'LSP',
+  // Shell
+  'Bash', 'PowerShell', 'Monitor',
+  // Web
+  'WebFetch', 'WebSearch',
+  // Subagents & teams
+  'Agent', 'SendMessage',
+  // Skills & workflows
+  'Skill', 'Workflow',
+  // Plan mode & worktrees
+  'EnterPlanMode', 'ExitPlanMode', 'EnterWorktree', 'ExitWorktree',
+  // Task list
+  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TaskOutput', 'TodoWrite',
+  // Scheduling
+  'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup',
+  // Notifications, remote & prompts
+  'PushNotification', 'RemoteTrigger', 'ShareOnboardingGuide', 'AskUserQuestion',
+  // MCP plumbing
+  'ListMcpResourcesTool', 'ReadMcpResourceTool', 'WaitForMcpServers',
+  // Connectors
+  'DesignSync',
+];
+
 const CLAUDE_SL_COMPONENTS = ['model', 'context', 'cost', 'cwd', 'git-branch'];
 const CODEX_SL_COMPONENTS = [
   'context-used', 'model-name', 'project-root', 'git-branch',
@@ -395,8 +489,7 @@ const uiSettings = {
       wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
     };
     try {
-      fs.mkdirSync(path.dirname(UI_SETTINGS_FILE), { recursive: true });
-      fs.writeFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
+      atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
     } catch (e) { console.error('ui-settings save failed:', e); }
     return next;
   },
@@ -1057,7 +1150,7 @@ class WirescopeSupervisor {
 }
 const wirescope = new WirescopeSupervisor();
 
-function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = []) {
+function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = []) {
   ensureDir(REGISTRY_DIR);
   const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
   const scriptPath = path.join(REGISTRY_DIR, `${name}-hook.sh`);
@@ -1112,10 +1205,22 @@ mv -f "$TMPLINK" "${linkPath}"
   if (proxyBase) {
     settings.env = { ANTHROPIC_BASE_URL: `${proxyBase}/agent/${proxyAgent || name}/anthropic` };
   }
-  // Suppress built-in subagents so the model can't fall back to the heavy
-  // general-purpose instead of an enabled lean custom one (--agents is
-  // additive — built-ins stay registered unless explicitly denied here).
-  const denyRules = denyAgentRules(denyBuiltins);
+  // permissions.deny serves two features:
+  //  - subagent suppression: deny built-in general-purpose so the model can't
+  //    fall back to the heavy default instead of an enabled lean custom agent
+  //    (--agents is additive — built-ins stay registered unless denied here);
+  //  - per-session tool gating: each disabled tool name is a bare deny entry.
+  // Both are plain deny rules, so they concatenate. Deduped to keep the array
+  // tidy if a tool is named twice.
+  // Filter disabled tools to the known catalog: a stale name (e.g. a tool
+  // removed from CLAUDE_TOOLS, or a typo persisted before our time) would make
+  // the CLI emit "matches no known tool" warnings on every startup. The catalog
+  // is authoritative, so anything not in it is silently dropped from the deny.
+  const toolSet = new Set(CLAUDE_TOOLS);
+  const denyRules = [...new Set([
+    ...denyAgentRules(denyBuiltins),
+    ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
+  ])];
   if (denyRules.length) settings.permissions = { deny: denyRules };
   fs.writeFileSync(settingsPath, JSON.stringify(settings));
   return settingsPath;
@@ -1523,7 +1628,7 @@ class SessionManager {
     }
   }
 
-  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = []) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = []) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
@@ -1561,7 +1666,7 @@ class SessionManager {
           (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
         if (staleSettings !== -1) args.splice(staleSettings, 2);
         if (!args.includes('--settings')) {
-          const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins);
+          const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools);
           args.push('--settings', settingsPath);
         }
         ensureDir(MSG_DIR);
@@ -1697,6 +1802,7 @@ class SessionManager {
       proxyAgent,
       agents: Array.isArray(agents) ? agents : [],
       denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
+      disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
     });
 
     // JSONL watcher for agent modes
@@ -2620,12 +2726,12 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools) => {
     try {
       const workspaceId = workspaceOfSender(e);
       return {
         ok: true,
-        session: await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || []),
+        session: await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], disabledTools || []),
       };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -2680,6 +2786,26 @@ app.whenReady().then(() => {
   // status bar immediately on attach/switch instead of waiting for the next poll.
   ipcMain.handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
 
+  // Fetch the per-line tool roster + context composition for a session
+  // (wirescope /_context). Read-only; gated by the caller on the
+  // context_view/context_composition capability. Uses the live record's
+  // session_id (from the snapshot), never a possibly-stale persisted one.
+  ipcMain.handle('proxy:context', async (_e, name) => {
+    const s = manager.sessions.get(name);
+    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+    const snap = proxyPoller.snapshot(name);
+    if (!snap || !snap.linked || !snap.sessionId) {
+      return { ok: false, error: 'No live proxy session (unlinked)' };
+    }
+    try {
+      const r = await ProxyClient._getJson(s.proxyBase, `/_context?session=${encodeURIComponent(snap.sessionId)}`);
+      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+      return { ok: true, data: r.json };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
   // Open an external URL in the default browser (e.g. the proxy session page).
   // http(s) only — never hand arbitrary schemes to the OS opener.
   ipcMain.handle('app:openExternal', (_e, url) => {
@@ -2721,8 +2847,18 @@ app.whenReady().then(() => {
       systemPrompt: entry.systemPrompt || null,
       agents: entry.agents || [],
       denyBuiltins: entry.denyBuiltins || [],
+      disabledTools: entry.disabledTools || [],
     } : { ok: false };
   });
+  // Focused per-session tool gating: persist disabledTools only (leaves
+  // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;
+  // the renderer calls session:restart afterward if the user wants it now.
+  ipcMain.handle('session:setTools', (_e, name, disabledTools) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
+    persistence.setDisabledTools(name, Array.isArray(disabledTools) ? disabledTools : []);
+    return { ok: true };
+  });
+
   // kill() only sends the signal — removal from manager.sessions happens in
   // the PTY's onExit, which can land well after a fixed sleep (kill() falls
   // back to SIGKILL at 5s). Spinning until the slot is actually free is the
@@ -2736,14 +2872,16 @@ app.whenReady().then(() => {
     return !manager.sessions.has(name);
   }
 
-  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins) => {
+  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools) => {
     const beforeKill = persistence.get(name);
     const nextAgents = agents !== undefined ? (agents || []) : (beforeKill?.agents || []);
     const nextDeny = denyBuiltins !== undefined ? (denyBuiltins || []) : (beforeKill?.denyBuiltins || []);
+    const nextTools = disabledTools !== undefined ? (disabledTools || []) : (beforeKill?.disabledTools || []);
     persistence.setExtraArgs(name, extraArgs);
     persistence.setProxy(name, proxy ?? null);
     persistence.setSystemPrompt(name, systemPrompt ?? null);
     persistence.setAgents(name, nextAgents, nextDeny);
+    persistence.setDisabledTools(name, nextTools);
     if (!restart) return { ok: true, restarted: false };
     if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
     const wsId = workspaceOfSender(e);
@@ -2752,14 +2890,14 @@ app.whenReady().then(() => {
         await manager.kill(name);
         if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
       }
-      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, systemPrompt ?? null, false, proxy ?? null, nextAgents, nextDeny);
+      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, systemPrompt ?? null, false, proxy ?? null, nextAgents, nextDeny, nextTools);
       if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
       return { ok: true, restarted: true };
     } catch (err) {
       // kill() dropped the persistence entry and create() failed before
       // re-adding it. Put it back (with the edited settings) so the session
       // survives as a restorable entry instead of vanishing.
-      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: systemPrompt ?? null, agents: nextAgents, denyBuiltins: nextDeny });
+      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: systemPrompt ?? null, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools });
       return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
     }
   });
@@ -2776,7 +2914,7 @@ app.whenReady().then(() => {
         await manager.kill(name);
         if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
       }
-      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], entry.sessionId || null, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || []);
+      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], entry.sessionId || null, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || []);
       if (entry.label) persistence.setLabel(name, entry.label);
       return { ok: true, restarted: true };
     } catch (err) {
@@ -2792,6 +2930,7 @@ app.whenReady().then(() => {
       statusline: s.statusline,
       claudeComponents: CLAUDE_SL_COMPONENTS,
       codexComponents: CODEX_SL_COMPONENTS,
+      claudeTools: CLAUDE_TOOLS,
       proxyEnabled: s.proxyEnabled,
       proxyUrl: s.proxyUrl,
       wirescopeDir: s.wirescopeDir,
@@ -2956,6 +3095,7 @@ app.whenReady().then(() => {
           entry.proxy ?? null,
           entry.agents || [],
           entry.denyBuiltins || [],
+          entry.disabledTools || [],
         );
         restored.push({
           name: entry.name,
@@ -3001,6 +3141,7 @@ app.whenReady().then(() => {
         entry.proxy ?? null,
         entry.agents || [],
         entry.denyBuiltins || [],
+        entry.disabledTools || [],
       );
       return { ok: true };
     } catch (err) {
