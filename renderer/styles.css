@@ -579,6 +579,24 @@ html, body {
 .ctx-tools-link { display: block; margin-top: 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
 .ctx-tools-link:hover { color: var(--text); text-decoration: underline; }
 
+/* Tool-utilization block (the "did the loaded tools pay off" view) */
+.ctx-util { margin: 4px 0 2px; }
+.ctx-util-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; margin: 10px 0 2px;
+}
+.ctx-util-head > span:first-child { color: var(--text); font-weight: 600; }
+.ctx-util-stat { color: var(--text-dim); }
+.ctx-util-stat b { color: var(--accent); font-weight: 600; }
+.ctx-util-conf { font-size: 10px; color: var(--text-dim); font-style: italic; margin-bottom: 4px; }
+.ctx-util-group {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); margin: 6px 0 4px;
+}
+.ctx-row.ctx-dead .ctx-cat { color: var(--text-dim); }
+.ctx-row.ctx-dead .ctx-nums { color: var(--accent); }
+.ctx-util-more { font-size: 10px; color: var(--text-dim); margin: 2px 0 4px; }
+
 .terminal-wrapper {
   position: absolute;
   top: 0;

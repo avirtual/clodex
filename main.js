@@ -1538,20 +1538,33 @@ let msgCounter = 0;
 function cleanupOldMessages() {
   if (!fs.existsSync(MSG_DIR)) return;
   const now = Date.now();
-  for (const fname of fs.readdirSync(MSG_DIR)) {
+  // Spilled messages live one level deep, in a per-recipient subfolder.
+  // Walk both the subfolders and (for back-compat) any stray files at the root.
+  for (const entry of fs.readdirSync(MSG_DIR, { withFileTypes: true })) {
     try {
-      const fpath = path.join(MSG_DIR, fname);
-      const stat = fs.statSync(fpath);
-      if ((now - stat.mtimeMs) / 1000 > MSG_MAX_AGE) fs.unlinkSync(fpath);
+      const epath = path.join(MSG_DIR, entry.name);
+      if (entry.isDirectory()) {
+        for (const fname of fs.readdirSync(epath)) {
+          try {
+            const fpath = path.join(epath, fname);
+            if ((now - fs.statSync(fpath).mtimeMs) / 1000 > MSG_MAX_AGE) fs.unlinkSync(fpath);
+          } catch {}
+        }
+      } else if ((now - fs.statSync(epath).mtimeMs) / 1000 > MSG_MAX_AGE) {
+        fs.unlinkSync(epath);
+      }
     } catch {}
   }
 }
 
-function spillToFile(sender, body) {
-  ensureDir(MSG_DIR);
+function spillToFile(sender, body, recipient) {
+  // Each recipient gets its own subfolder so two agents never appear to share
+  // an inbox — names are already constrained to [a-zA-Z0-9._-], safe as a path.
+  const dir = path.join(MSG_DIR, recipient);
+  ensureDir(dir);
   msgCounter++;
   const fname = `msg-${process.pid}-${msgCounter}.txt`;
-  const fpath = path.join(MSG_DIR, fname);
+  const fpath = path.join(dir, fname);
   const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${body.length} bytes\n\n`;
   fs.writeFileSync(fpath, header + body);
   return fpath;
@@ -2068,7 +2081,7 @@ class SessionManager {
       : `[from ${senderName}]`;
 
     if (body.length > MSG_SPILL_THRESHOLD) {
-      const filePath = spillToFile(senderName, body);
+      const filePath = spillToFile(senderName, body, targetName);
       // @-mention makes Claude Code attach the file inline instead of
       // spending a turn on a Read call; Codex has no equivalent. The
       // trailing space after the path closes the @-autocomplete popup —
@@ -2790,7 +2803,7 @@ app.whenReady().then(() => {
   // (wirescope /_context). Read-only; gated by the caller on the
   // context_view/context_composition capability. Uses the live record's
   // session_id (from the snapshot), never a possibly-stale persisted one.
-  ipcMain.handle('proxy:context', async (_e, name) => {
+  ipcMain.handle('proxy:context', async (_e, name, opts) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
     const snap = proxyPoller.snapshot(name);
@@ -2798,7 +2811,12 @@ app.whenReady().then(() => {
       return { ok: false, error: 'No live proxy session (unlinked)' };
     }
     try {
-      const r = await ProxyClient._getJson(s.proxyBase, `/_context?session=${encodeURIComponent(snap.sessionId)}`);
+      // utilization=1 opts into wirescope's capture-scan (tool used-counts +
+      // deadweight rollup) — heavier I/O, so only requested when the popover
+      // will render it (gated on the context_utilization capability).
+      let q = `/_context?session=${encodeURIComponent(snap.sessionId)}`;
+      if (opts && opts.utilization) q += '&utilization=1';
+      const r = await ProxyClient._getJson(s.proxyBase, q);
       if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
       return { ok: true, data: r.json };
     } catch (e) {

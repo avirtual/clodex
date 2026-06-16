@@ -911,11 +911,14 @@ function renderProxyBar() {
   const sizeTok = sc && sc.size > 0 ? sc.size : null;
   // When wirescope exposes the breakdown, the ctx seg becomes a button that
   // opens the composition popover. Standalone (no cap) → plain text.
+  const ctxUtil = !!(p.capabilities && p.capabilities.context_utilization);
   const ctxClickable = !!(p.linked && p.capabilities &&
-    (p.capabilities.context_composition || p.capabilities.context_view));
+    (p.capabilities.context_composition || p.capabilities.context_view || ctxUtil));
   const ctxCls = ctxClickable ? ' px-ctx-btn' : '';
   const ctxAttr = ctxClickable ? ' data-act="ctx"' : '';
-  const ctxTip = ctxClickable ? 'Click for context breakdown' : null;
+  const ctxTip = ctxClickable
+    ? (ctxUtil ? 'Click for context + tool-utilization breakdown' : 'Click for context breakdown')
+    : null;
   if (usedTok != null && usedTok > 0) {
     const heavy = usedTok >= CTX_HEAVY_TOKENS ? ' px-ctx-heavy' : usedTok >= CTX_WARN_TOKENS ? ' px-ctx-warn' : '';
     if (sizeTok) {
@@ -1250,13 +1253,82 @@ function renderCompositionLine(a) {
     `<span class="ctx-line-total">${fmtTokens(comp.total_tokens)}</span></div>${rows}`;
 }
 
+// Below this many evaluable (tool-loading) turns, a `used:0` verdict is too
+// thin to trust — a never-called tool over 2 turns is inconclusive, over 40
+// it's genuine deadweight. We say so rather than crying "deadweight" early.
+// Aligned to wirescope's analyze_tools.DEFAULT_MIN_TURNS so the popover's
+// idle→dead graduation matches the offline ledger exactly (a floor, not a
+// cliff: confidence keeps rising with turns; 0/40 is just more damning).
+const UTIL_MIN_TURNS = 3;
+// Cap the unused trim-list; the rest collapse into a "+N more" summary.
+const UTIL_UNUSED_CAP = 12;
+
+// Renders the tool-utilization block for one agent line (the "did it pay off"
+// view). Mirrors the per-agent composition shape; '' when the agent carries no
+// utilization (Codex/openai lines, or a non-utilization proxy build).
+function renderUtilization(a) {
+  const u = a.utilization;
+  const t = a.tools;
+  if (!u || !t || !Array.isArray(t.per_tool)) return '';
+  const turns = u.evaluable_turns || 0;
+  const loaded = u.loaded != null ? u.loaded : (t.count || t.per_tool.length);
+  const usedDistinct = u.used_distinct != null ? u.used_distinct : t.per_tool.filter((x) => (x.used || 0) > 0).length;
+  const deadweight = u.deadweight_tokens || 0;
+  const lowConf = turns < UTIL_MIN_TURNS;
+  // "dead" is a verdict; only claim it once enough turns back it. Until then
+  // the same tokens are merely "idle" — present but not yet proven wasted.
+  const deadWord = lowConf ? 'idle' : 'dead';
+
+  const head = `<div class="ctx-util-head"><span>Tool utilization</span>` +
+    `<span class="ctx-util-stat">${loaded} loaded · ${usedDistinct} used` +
+    (deadweight > 0 ? ` · <b>~${fmtTokens(deadweight)} ${deadWord}</b>` : '') + `</span></div>`;
+
+  // No tool-loading turn has actually run yet — nothing to judge.
+  if (turns === 0) {
+    return `<div class="ctx-util">${head}` +
+      `<div class="ctx-util-conf">No evaluable turns yet — run the session to see usage.</div></div>`;
+  }
+  const conf = lowConf
+    ? `<div class="ctx-util-conf">Only ${turns} turn${turns === 1 ? '' : 's'} evaluated — unused ≠ dead yet.</div>`
+    : `<div class="ctx-util-conf">Over ${turns} turns.</div>`;
+
+  // per_tool arrives deadweight-first (used==0, then highest est_tokens); keep
+  // wirescope's order and just split the two groups.
+  const unused = t.per_tool.filter((pt) => (pt.used || 0) === 0);
+  const used = t.per_tool.filter((pt) => (pt.used || 0) > 0);
+
+  let body = '';
+  if (unused.length) {
+    body += `<div class="ctx-util-group">Unused${lowConf ? '' : ' — trim to save'}` +
+      (!lowConf && deadweight > 0 ? ` ~${fmtTokens(deadweight)}` : '') + `</div>`;
+    body += unused.slice(0, UTIL_UNUSED_CAP).map((pt) =>
+      `<div class="ctx-row ctx-dead"><div class="ctx-row-top">` +
+      `<span class="ctx-cat">${esc(pt.name)}</span>` +
+      `<span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)}</span></div></div>`).join('');
+    if (unused.length > UTIL_UNUSED_CAP) {
+      body += `<div class="ctx-util-more">+${unused.length - UTIL_UNUSED_CAP} more unused</div>`;
+    }
+  }
+  if (used.length) {
+    body += `<div class="ctx-util-group">Used</div>`;
+    body += used.map((pt) =>
+      `<div class="ctx-row"><div class="ctx-row-top">` +
+      `<span class="ctx-cat">${esc(pt.name)}</span>` +
+      `<span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)} · ${pt.used}×</span></div></div>`).join('');
+  }
+  return `<div class="ctx-util">${head}${conf}${body}</div>`;
+}
+
 async function openContextPopover(name, anchor) {
   ctxPopoverName.textContent = name;
   ctxPopover.dataset.name = name;
   ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
   ctxPopover.classList.remove('hidden');
   placeCtxPopover(anchor);
-  const res = await window.api.getProxyContext(name);
+  // Opt into the (heavier) utilization capture-scan only when the proxy
+  // advertises it — otherwise this is byte-identical to the composition fetch.
+  const wantUtil = !!(proxyState.get(name)?.payload?.capabilities?.context_utilization);
+  const res = await window.api.getProxyContext(name, { utilization: wantUtil });
   // Bail if the popover was closed or retargeted while the fetch was in flight.
   if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
   if (!res || !res.ok) {
@@ -1273,7 +1345,8 @@ async function openContextPopover(name, anchor) {
   let html;
   if (withComp.length) {
     withComp.sort((a, b) => (a.line === 'main' ? -1 : b.line === 'main' ? 1 : 0));
-    html = withComp.map(renderCompositionLine).join('');
+    // Per agent: composition (what's loaded) then utilization (did it pay off).
+    html = withComp.map((a) => renderCompositionLine(a) + renderUtilization(a)).join('');
   } else {
     // context_view-only proxy: no composition, but the tools roster is there.
     const main = agents.find((a) => a.line === 'main') || agents[0];
@@ -1289,10 +1362,21 @@ async function openContextPopover(name, anchor) {
       html = '<div class="ctx-note">No breakdown available.</div>';
     }
   }
-  // Cross-link to the tools manager for Claude sessions.
-  const mainTools = agents.find((a) => a.line === 'main')?.tools;
+  // Cross-link to the tools manager for Claude sessions. When utilization data
+  // is present, frame it as the trim lever: how many tools to drop and the
+  // tokens it frees (the main agent's deadweight, only once it's conclusive).
+  const mainAgent = agents.find((a) => a.line === 'main');
+  const mainTools = mainAgent?.tools;
   if (mainTools && sessionTypeOf(name) === 'claude') {
-    html += `<span class="ctx-tools-link" data-act="manage-tools">Manage tools (${mainTools.count}) →</span>`;
+    const mu = mainAgent.utilization;
+    const conclusive = mu && (mu.evaluable_turns || 0) >= UTIL_MIN_TURNS;
+    const unusedCount = mainTools.per_tool
+      ? mainTools.per_tool.filter((pt) => (pt.used || 0) === 0).length : 0;
+    const label = (conclusive && unusedCount > 0)
+      ? `Trim ${unusedCount} unused tool${unusedCount === 1 ? '' : 's'}` +
+        (mu.deadweight_tokens > 0 ? ` (~${fmtTokens(mu.deadweight_tokens)})` : '') + ' →'
+      : `Manage tools (${mainTools.count}) →`;
+    html += `<span class="ctx-tools-link" data-act="manage-tools">${label}</span>`;
   }
   ctxPopoverBody.innerHTML = html;
   placeCtxPopover(anchor);

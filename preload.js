@@ -79,8 +79,8 @@ window.api = {
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   getProxySnapshot: (name) =>
     ipcRenderer.invoke('proxy:snapshot', name),
-  getProxyContext: (name) =>
-    ipcRenderer.invoke('proxy:context', name),
+  getProxyContext: (name, opts) =>
+    ipcRenderer.invoke('proxy:context', name, opts),
   proxyHold: (name, hours, force) =>
     ipcRenderer.invoke('proxy:hold', name, hours, force),
   onSessionMention: (callback) =>
