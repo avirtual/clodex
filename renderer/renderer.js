@@ -1056,6 +1056,7 @@ function renderSessionActions(holdHtml = '') {
     btns.push('<button class="px-action" data-act="skills" title="Enable/disable skills for this session">🧩 skills</button>');
   }
   if (type === 'claude' || type === 'codex') {
+    btns.push('<button class="px-action" data-act="history" title="Past conversations — resume an earlier session">🕘 history</button>');
     btns.push('<button class="px-action" data-act="edit" title="Edit session settings">⚙ edit</button>');
   }
   el.innerHTML = btns.join('') + (holdHtml || '');
@@ -1330,6 +1331,7 @@ setInterval(() => {
       if (action.dataset.act === 'edit') openArgsDialog(activeSession);
       else if (action.dataset.act === 'tools') openToolsPopover(activeSession, action);
       else if (action.dataset.act === 'skills') openSkillsPopover(activeSession, action);
+      else if (action.dataset.act === 'history') openHistoryMenu(activeSession, action);
       return;
     }
     const btn = e.target.closest('.px-hold');
@@ -1404,6 +1406,82 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && warmMenu) closeWarmMenu();
+});
+
+// --- Per-session history picker (past conversations) ---------------------
+// A lightweight dynamic menu (like the warm menu) listing the agent's prior
+// conversations: observed ids first (authoritative — clodex watched them mint
+// on each /clear), then dimmed "inferred" transcripts found in the same project
+// dir but never observed. Picking one restarts the session with --resume <id>,
+// switching it to that conversation; the live one stays re-selectable here.
+let historyMenu = null;
+function closeHistoryMenu() { if (historyMenu) { historyMenu.remove(); historyMenu = null; } }
+
+function histRelTime(iso) {
+  const t = Date.parse(iso || '');
+  if (!isFinite(t)) return '';
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
+  return shortTs(iso);
+}
+
+async function openHistoryMenu(name, anchorBtn) {
+  closeHistoryMenu();
+  const res = await window.api.getSessionHistory(name);
+  if (activeSession !== name) return; // user switched away while it loaded
+  historyMenu = document.createElement('div');
+  historyMenu.className = 'history-menu';
+  if (!res || !res.ok) {
+    historyMenu.innerHTML = '<div class="history-empty">Could not load history.</div>';
+  } else if (!res.sessions.length) {
+    historyMenu.innerHTML = '<div class="history-empty">No past conversations yet.</div>';
+  } else {
+    const rows = res.sessions.map((s) => {
+      const title = s.title || (s.missing ? 'conversation (transcript gone)' : 'untitled conversation');
+      const badges =
+        (s.active ? '<span class="history-badge active">active</span>' : '') +
+        (s.inferred ? '<span class="history-badge inferred" title="found in the project dir but not observed by clodex — may belong to another agent sharing this cwd">inferred</span>' : '');
+      const meta = [s.lastActive ? histRelTime(s.lastActive) : '', s.turns ? `${s.turns} msgs` : '']
+        .filter(Boolean).join(' · ');
+      const cls = 'history-item' + (s.active ? ' is-active' : '') + (s.inferred ? ' is-inferred' : '');
+      const dis = (s.active || s.missing) ? ' data-disabled="1"' : '';
+      return `<button class="${cls}"${dis} data-sid="${esc(s.sessionId)}" title="${esc(s.sessionId)}">` +
+        `<span class="history-title">${esc(title)}${badges}</span>` +
+        `<span class="history-meta">${esc(meta)}</span></button>`;
+    }).join('');
+    historyMenu.innerHTML = `<div class="history-menu-label">Past conversations — ${esc(name)}</div>` + rows;
+  }
+  historyMenu.addEventListener('click', async (e) => {
+    const item = e.target.closest('.history-item');
+    if (!item || item.dataset.disabled) return;
+    const sid = item.dataset.sid;
+    closeHistoryMenu();
+    if (!confirm(`Switch "${name}" to this past conversation?\n\nThe session restarts with --resume on ${sid.slice(0, 8)}…. The current conversation is kept and stays re-selectable here.`)) return;
+    const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    const snapType = el ? el.querySelector('.session-type')?.textContent : null;
+    const snapCwd = el ? el.dataset.cwd : null;
+    const rr = await window.api.restartSession(name, { resumeId: sid });
+    if (!rr || !rr.ok) { alert(`Resume failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+    if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
+  });
+  document.body.appendChild(historyMenu);
+  // Anchor above the button, clamped to the viewport (mirrors the warm menu).
+  const r = anchorBtn.getBoundingClientRect();
+  const w = historyMenu.offsetWidth;
+  historyMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  historyMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+document.addEventListener('click', (e) => {
+  if (!historyMenu) return;
+  if (historyMenu.contains(e.target)) return;
+  if (e.target.closest('.px-action[data-act="history"]')) return; // toggle handled by the bar
+  closeHistoryMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && historyMenu) closeHistoryMenu();
 });
 
 // --- Tools quick-access popover ------------------------------------------

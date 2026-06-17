@@ -150,6 +150,14 @@ const persistence = {
     const entry = all.find(s => s.name === name);
     if (entry && entry.sessionId !== sessionId) {
       entry.sessionId = sessionId;
+      // Ordered history of observed conversation ids (oldest → newest). Each
+      // /clear mints a new id and JsonlWatcher reports it here, so this chain
+      // accumulates every conversation the agent has had — authoritative, no
+      // cwd guessing. Dedup + move-to-end so re-resuming an old id marks it
+      // most-recent. Powers the session picker (session:history).
+      const hist = (Array.isArray(entry.sessionIds) ? entry.sessionIds : []).filter((id) => id !== sessionId);
+      hist.push(sessionId);
+      entry.sessionIds = hist;
       this._save(all);
     }
   },
@@ -1377,6 +1385,38 @@ function readEffectiveToolState(cwd) {
     }
   }
   return { overrides };
+}
+
+// Claude Code stores transcripts under ~/.claude/projects/<slug>/<uuid>.jsonl,
+// where the slug is the cwd with every '/' and '.' turned into '-'. Used only
+// as a FALLBACK for the session picker when the live ~/.clodex/<name>.jsonl
+// symlink can't be resolved (e.g. a never-run / dead session); the symlink's
+// real directory is preferred and authoritative when present.
+function claudeProjectDir(cwd) {
+  if (!cwd) return null;
+  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
+}
+
+// Pull picker metadata out of one transcript file: the generated title (last
+// ai-title entry — they're rewritten as the session grows, latest wins), the
+// first/last activity timestamps, and a user-turn count. Tolerant of partial
+// lines (file may be mid-write) — bad lines are skipped, never thrown.
+function readSessionMeta(file) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const lines = raw.split('\n');
+  let first = null, last = null, title = null, turns = 0;
+  const ts = (ln) => { try { return JSON.parse(ln).timestamp || null; } catch { return null; } };
+  for (let i = 0; i < lines.length && !first; i++) first = ts(lines[i]);
+  for (let i = lines.length - 1; i >= 0 && !last; i--) last = ts(lines[i]);
+  for (let i = lines.length - 1; i >= 0 && !title; i--) {
+    if (lines[i].includes('"type":"ai-title"')) {
+      try { title = JSON.parse(lines[i]).aiTitle || null; } catch {}
+    }
+  }
+  for (const ln of lines) if (ln.includes('"type":"user"')) turns++;
+  if (!first && !last && !title) return null;
+  return { title, first, last, turns };
 }
 
 function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = []) {
@@ -3253,6 +3293,51 @@ app.whenReady().then(() => {
       injectSkills: entry.injectSkills || [],
     } : { ok: false };
   });
+
+  // Past conversations for the session picker. Two tiers:
+  //  - tracked: ids clodex observed live (persisted sessionIds ∪ current active
+  //    id) — authoritative, correctly attributed even when agents share a cwd.
+  //  - inferred: other recent transcripts sitting in the same project dir that
+  //    clodex never observed (pre-feature history, or started outside clodex).
+  //    Best-effort and flagged: a cwd shared by >1 agent can't be split, so
+  //    these may belong to a sibling agent. The renderer renders them dimmed.
+  ipcMain.handle('session:history', (_e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found' };
+    if (entry.type !== 'claude' && entry.type !== 'codex') return { ok: true, sessions: [], activeId: null };
+    // Prefer the live symlink's real directory; fall back to the cwd→slug path.
+    let slugDir = null;
+    try { slugDir = path.dirname(fs.realpathSync(path.join(REGISTRY_DIR, `${name}.jsonl`))); } catch {}
+    if (!slugDir) slugDir = claudeProjectDir(entry.cwd);
+    const activeId = entry.sessionId || null;
+    const tracked = new Set([...(Array.isArray(entry.sessionIds) ? entry.sessionIds : []), ...(activeId ? [activeId] : [])]);
+    const out = [];
+    const seen = new Set();
+    const add = (sid, inferred) => {
+      if (!sid || seen.has(sid)) return;
+      seen.add(sid);
+      const meta = slugDir ? readSessionMeta(path.join(slugDir, `${sid}.jsonl`)) : null;
+      if (!meta) {
+        if (!inferred) out.push({ sessionId: sid, title: null, lastActive: null, active: sid === activeId, inferred: false, missing: true });
+        return;
+      }
+      out.push({ sessionId: sid, title: meta.title, firstActive: meta.first, lastActive: meta.last, turns: meta.turns, active: sid === activeId, inferred });
+    };
+    for (const sid of tracked) add(sid, false);
+    // Bootstrap: recent sibling transcripts we didn't observe (last 7 days).
+    try {
+      const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+      for (const fn of fs.readdirSync(slugDir)) {
+        if (!fn.endsWith('.jsonl')) continue;
+        const sid = fn.slice(0, -6);
+        if (tracked.has(sid)) continue;
+        let st; try { st = fs.statSync(path.join(slugDir, fn)); } catch { continue; }
+        if (st.mtimeMs >= cutoff) add(sid, true);
+      }
+    } catch {}
+    out.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
+    return { ok: true, sessions: out, activeId };
+  });
   // Focused per-session tool gating: persist disabledTools only (leaves
   // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;
   // the renderer calls session:restart afterward if the user wants it now.
@@ -3378,7 +3463,14 @@ app.whenReady().then(() => {
     // created, so --resume replays the roster frozen before the change (proven
     // live — skillOverrides never lands on a resumed session). Costs the
     // conversation history; the caller is responsible for warning the user.
-    const resumeId = opts && opts.fresh ? null : (entry.sessionId || null);
+    // opts.resumeId switches to a chosen PAST conversation (the session picker):
+    // respawn with --resume <that id> and make it the active id so subsequent
+    // restarts continue from there (setSessionId also moves it to the head of
+    // the history chain). Falls back to the current id for a plain restart.
+    if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
+      persistence.setSessionId(name, opts.resumeId);
+    }
+    const resumeId = opts && opts.fresh ? null : ((opts && opts.resumeId) || entry.sessionId || null);
     try {
       if (manager.sessions.has(name)) {
         await manager.kill(name);

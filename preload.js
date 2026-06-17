@@ -127,6 +127,7 @@ window.api = {
 
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
+  getSessionHistory: (name) => ipcRenderer.invoke('session:history', name),
   setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills),
   restartSession: (name, opts) => ipcRenderer.invoke('session:restart', name, opts),
   setSessionTools: (name, disabledTools) => ipcRenderer.invoke('session:setTools', name, disabledTools),
