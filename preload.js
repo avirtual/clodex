@@ -133,6 +133,7 @@ window.api = {
   setSessionSkills: (name, disabledSkills, injectSkills) => ipcRenderer.invoke('session:setSkills', name, disabledSkills, injectSkills),
   getSkillCatalog: (name) => ipcRenderer.invoke('session:skillCatalog', name),
   getSkillCatalogFor: (cwd) => ipcRenderer.invoke('settings:skillCatalogFor', cwd),
+  getToolCatalogFor: (cwd) => ipcRenderer.invoke('settings:toolCatalogFor', cwd),
 
   // Workspaces
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),

@@ -575,7 +575,7 @@ function applyTypeDefaults() {
   toolsRow.style.display = type === 'claude' ? '' : 'none';
   skillsRow.style.display = type === 'claude' ? '' : 'none';
   injectSkillsRow.style.display = type === 'claude' ? '' : 'none';
-  if (type === 'claude') { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); }
+  if (type === 'claude') { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
   const supportsResume = type === 'claude' || type === 'codex';
   resumeRow.style.display = supportsResume ? '' : 'none';
   if (!supportsResume) {
@@ -704,9 +704,25 @@ async function refreshNewSessionSkills() {
   renderSkillChecklist(inputSkillsList, res.names || [], new Set(),
     res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
 }
+// Tool provenance for the new-session dialog — same cwd-dependence as skills: a
+// lower settings layer for the chosen cwd may already deny tools, shown
+// read-only here. claudeToolsCache is seeded from getSettings in openDialog.
+async function refreshNewSessionTools() {
+  if (inputType.value !== 'claude') return;
+  const cwd = expandPath(inputCwd.value.trim()) || homeDir;
+  const res = await window.api.getToolCatalogFor(cwd);
+  renderToolChecklist(inputToolsList, new Set(), (res && res.ok && res.effective) || {});
+}
 let claudeToolsCache = [];
 
-function renderToolChecklist(container, disabledSet) {
+// Mirror of renderSkillChecklist for tools. `disabledSet` is clodex's own
+// layer-4 off list; `effective` (tool -> {value:'off', source, locked}) is the
+// lower-layer permissions.deny state. A tool denied in a layer clodex doesn't
+// own renders unchecked + read-only + labeled with provenance — and because
+// permissions.deny is union (no allow overrides a deny), it is ALWAYS read-only
+// here, never re-enableable from clodex's settings (unlike skills' canReenable).
+function renderToolChecklist(container, disabledSet, effective) {
+  effective = effective || {};
   container.innerHTML = '';
   // Catalog is authoritative: render only known tools. A stale name in
   // disabledSet (removed from the catalog, or persisted before our time) is
@@ -717,22 +733,31 @@ function renderToolChecklist(container, disabledSet) {
     return;
   }
   for (const name of names) {
+    const eff = effective[name];
+    const lowerOff = !!(eff && eff.value === 'off');
+    const clodexOff = disabledSet.has(name);
     const row = document.createElement('label');
-    row.className = 'agent-check';
+    row.className = 'agent-check' + (lowerOff ? ' skill-readonly' : '');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = name;
-    cb.checked = !disabledSet.has(name);
+    cb.checked = !clodexOff && !lowerOff;
+    if (lowerOff) cb.disabled = true; // external deny is unrevokable from here
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(name)}</strong>`;
+    let note = '';
+    if (lowerOff) note = eff.locked
+      ? ' <span class="skill-src">denied by policy</span>'
+      : ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
+    txt.innerHTML = `<strong>${esc(name)}</strong>${note}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);
   }
 }
-// Returns the UNCHECKED tools (the disabled set).
+// Returns the UNCHECKED, toggleable tools (clodex's off list). A read-only row
+// is owned by a lower settings layer / policy, not clodex, so it's excluded.
 function collectToolChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked):not(:disabled)')).map(cb => cb.value);
 }
 
 // Skills mirror tools. The catalog combines a static seed (CLAUDE_SKILLS), the
@@ -804,6 +829,7 @@ async function openDialog() {
   inputDenyBuiltins.checked = false;
   claudeToolsCache = settings?.claudeTools || [];
   renderToolChecklist(inputToolsList, new Set());
+  refreshNewSessionTools();
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
   dialogOverlay.classList.remove('hidden');
@@ -814,6 +840,7 @@ inputType.addEventListener('change', applyTypeDefaults);
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
 // so re-fetch when it changes.
 inputCwd.addEventListener('change', refreshNewSessionSkills);
+inputCwd.addEventListener('change', refreshNewSessionTools);
 
 inputProxyMode.addEventListener('change', () => {
   inputProxyUrl.style.display = inputProxyMode.value === 'custom' ? '' : 'none';
@@ -927,7 +954,7 @@ document.getElementById('btn-create').addEventListener('click', doCreate);
 
 document.getElementById('btn-browse').addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
-  if (dir) { inputCwd.value = dir; refreshNewSessionSkills(); }
+  if (dir) { inputCwd.value = dir; refreshNewSessionSkills(); refreshNewSessionTools(); }
 });
 
 // Enter to create (Escape no longer closes — only Cancel button does)
@@ -1401,7 +1428,7 @@ async function openToolsPopover(name, anchorBtn) {
   ]);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
   claudeToolsCache = settings?.claudeTools || [];
-  renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []));
+  renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   toolsPopoverRestart.checked = false;
   toolsPopoverName.textContent = name;
   toolsPopover.dataset.name = name;
@@ -2631,7 +2658,7 @@ async function openArgsDialog(name) {
   argsDenyBuiltins.checked = (res.denyBuiltins || []).includes('general-purpose');
   argsToolsRow.style.display = isClaude ? '' : 'none';
   claudeToolsCache = settings?.claudeTools || [];
-  renderToolChecklist(argsToolsList, new Set(res.disabledTools || []));
+  renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);

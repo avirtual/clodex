@@ -1347,6 +1347,38 @@ function readEffectiveSkillState(cwd) {
   return { overrides, skillsLocked };
 }
 
+// Tools mirror of readEffectiveSkillState: reads permissions.deny across the
+// same settings chain (user < project < local) plus the macOS managed file, so
+// the tools popover can render a tool disabled in a layer clodex doesn't own as
+// unchecked + read-only + labeled, instead of a checked toggle that silently
+// does nothing. Only a BARE tool name ("SendMessage") turns the whole tool off;
+// a SCOPED entry ("Agent(foo)", "Bash(rm:*)") denies a slice and leaves the tool
+// available, so it's ignored here. permissions.deny is UNION (deny always wins,
+// no allow overrides it), so such a deny is unrevokable from clodex's own
+// layer-4 settings — hence always read-only (skills' canReenable has no analog).
+function readEffectiveToolState(cwd) {
+  const layers = [
+    { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
+    { src: 'project', file: cwd ? path.join(cwd, '.claude', 'settings.json') : null },
+    { src: 'local', file: cwd ? path.join(cwd, '.claude', 'settings.local.json') : null },
+  ];
+  if (process.platform === 'darwin') {
+    layers.push({ src: 'policy', file: '/Library/Application Support/ClaudeCode/managed-settings.json' });
+  }
+  const overrides = {}; // tool -> { value:'off', source, locked } — later layer wins
+  for (const { src, file } of layers) {
+    if (!file) continue;
+    const data = readJsonSafe(file);
+    const deny = data && data.permissions && data.permissions.deny;
+    if (!Array.isArray(deny)) continue;
+    for (const entry of deny) {
+      if (typeof entry !== 'string' || entry.includes('(')) continue; // bare names only
+      overrides[entry] = { value: 'off', source: src, locked: src === 'policy' };
+    }
+  }
+  return { overrides };
+}
+
 function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = []) {
   ensureDir(REGISTRY_DIR);
   const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
@@ -3216,6 +3248,7 @@ app.whenReady().then(() => {
       agents: entry.agents || [],
       denyBuiltins: entry.denyBuiltins || [],
       disabledTools: entry.disabledTools || [],
+      effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
       disabledSkills: entry.disabledSkills || [],
       injectSkills: entry.injectSkills || [],
     } : { ok: false };
@@ -3277,6 +3310,13 @@ app.whenReady().then(() => {
     const eff = readEffectiveSkillState(cwd || null);
     const names = [...new Set([...CLAUDE_SKILLS, ...Object.keys(eff.overrides)])].sort();
     return { ok: true, names, effective: eff.overrides, skillsLocked: eff.skillsLocked, canReenable: SKILL_REENABLE_CONFIRMED };
+  });
+  // Tool provenance for the NEW-SESSION dialog (mirror of skillCatalogFor): the
+  // tool list itself is the static CLAUDE_TOOLS seed (sent via getSettings), so
+  // here we only need the per-cwd lower-layer deny state to render externally-
+  // off tools as read-only + labeled before the session exists.
+  ipcMain.handle('settings:toolCatalogFor', (_e, cwd) => {
+    return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
   // kill() only sends the signal — removal from manager.sessions happens in
