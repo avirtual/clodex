@@ -3359,6 +3359,33 @@ app.whenReady().then(() => {
     if (injectSkills !== undefined) persistence.setInjectSkills(name, Array.isArray(injectSkills) ? injectSkills : []);
     return { ok: true };
   });
+  // Focused per-session agent composition (mirror of setSkills/setTools):
+  // persist the enabled custom-subagent list + denyBuiltins only, leaving
+  // extraArgs/proxy/posture/tools/skills untouched. Takes effect on the next
+  // FRESH start — the agent roster, like skills, is frozen at conversation
+  // creation, so --resume replays the old one (the popover does the fresh
+  // restart when the user asks for it now).
+  ipcMain.handle('session:setAgents', (_e, name, agents, denyBuiltins) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
+    persistence.setAgents(name,
+      Array.isArray(agents) ? agents : [],
+      Array.isArray(denyBuiltins) ? denyBuiltins : []);
+    return { ok: true };
+  });
+  // Agent catalog for the Agents popover. Unlike skills there's no transcript
+  // roster or lower-layer/policy state to merge — built-ins are irreducible and
+  // have no trim lever — so the catalog is simply the custom-subagent library
+  // plus this session's persisted enabled set + denyBuiltins flag.
+  ipcMain.handle('session:agentCatalog', (_e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    return {
+      ok: true,
+      agents: agentLibrary.list(),
+      enabled: Array.isArray(entry.agents) ? entry.agents : [],
+      denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
+    };
+  });
   // Skill catalog for the Skills popover. Three sources unioned: the static
   // CLAUDE_SKILLS seed (known built-ins — visible even when disabled in another
   // settings source so they never hit the roster), the live roster parsed from

@@ -290,6 +290,18 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: 'SF Mono', 'Menlo', monospace;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Warmth + context badges live on the meta (second) line, pushed to the right,
+   so the session name keeps the full first line and isn't truncated by them. */
+.session-badges {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .session-ctx {
@@ -297,7 +309,6 @@ html, body {
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 8px;
-  margin-left: auto;
   line-height: 1.4;
   white-space: nowrap;
   color: #fff;
@@ -337,11 +348,15 @@ html, body {
 }
 
 .session-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
   opacity: 0;
   border: none;
   background: none;
   color: var(--text-dim);
   font-size: 16px;
+  line-height: 1;
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 4px;
@@ -497,6 +512,9 @@ html, body {
 #proxy-bar .px-refusal { color: var(--accent); }
 #proxy-bar .px-link { color: var(--text-dim); cursor: pointer; text-decoration: none; }
 #proxy-bar .px-link:hover { color: var(--text); text-decoration: underline; }
+/* Cost-as-timeline-link: keep the green, just make it clickable. */
+#proxy-bar .px-cost.px-link { color: #4caa6e; }
+#proxy-bar .px-cost.px-link:hover { color: #6fd99a; text-decoration: underline; }
 #proxy-bar .px-ctx-warn { color: var(--warn); }
 #proxy-bar .px-ctx-heavy { color: var(--error); font-weight: 600; }
 #proxy-bar .px-hold-group {
@@ -522,7 +540,8 @@ html, body {
 
 /* Per-session Tools / Skills quick-access popovers (anchored above the bar). */
 #tools-popover,
-#skills-popover {
+#skills-popover,
+#agents-popover {
   position: fixed;
   z-index: 50;
   width: 520px;
@@ -536,11 +555,13 @@ html, body {
   padding: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
-#tools-popover.hidden, #skills-popover.hidden { display: none; }
+#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden { display: none; }
 #tools-popover .popover-title,
-#skills-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+#skills-popover .popover-title,
+#agents-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #tools-popover #popover-tools-list,
-#skills-popover #popover-skills-list { overflow-y: auto; flex: 1; }
+#skills-popover #popover-skills-list,
+#agents-popover #popover-agents-list { overflow-y: auto; flex: 1; }
 
 /* Lay the (short, single-word) tool/skill checklists out in two columns so the
    popover stays wide-and-short instead of a tall scroll. */
@@ -556,6 +577,23 @@ html, body {
   gap: 2px 18px;
   align-content: start;
 }
+
+/* Bulk check/uncheck controls above a popover checklist. Small text buttons so
+   they read as a secondary affordance, not a primary action. */
+.popover-bulk {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.popover-bulk button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+.popover-bulk button:hover { text-decoration: underline; }
 
 /* Sub-section heading inside a popover (e.g. the library-injection block). */
 .popover-subhead {
@@ -585,11 +623,13 @@ html, body {
 .ctx-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
 .ctx-col { min-width: 0; }
 #tools-popover .tools-popover-restart,
-#skills-popover .tools-popover-restart {
+#skills-popover .tools-popover-restart,
+#agents-popover .tools-popover-restart {
   display: flex; align-items: center; gap: 6px; margin: 8px 0 0;
 }
 #tools-popover .popover-actions,
-#skills-popover .popover-actions {
+#skills-popover .popover-actions,
+#agents-popover .popover-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
 }
 
@@ -696,7 +736,8 @@ html, body {
 /* Context-breakdown popover (anchored above the ctx telemetry seg). */
 #proxy-bar .px-ctx-btn { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
 #proxy-bar .px-ctx-btn:hover { color: var(--text); }
-#ctx-popover {
+#ctx-popover,
+#cost-popover {
   position: fixed;
   z-index: 50;
   width: 640px;
@@ -709,8 +750,30 @@ html, body {
   padding: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
-#ctx-popover.hidden { display: none; }
-#ctx-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+#ctx-popover.hidden, #cost-popover.hidden { display: none; }
+#ctx-popover .popover-title,
+#cost-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+
+/* Cost-over-time popover (native render of wirescope's detail=1 series). */
+.cost-head { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+.cost-head b { color: var(--text); font-weight: 600; }
+.cost-sec-title {
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin: 12px 0 6px;
+}
+.cost-sec-title:first-child { margin-top: 0; }
+/* Stacked horizontal bar (spine + content split). */
+.cost-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--active-bg); }
+.cost-bar > span { display: block; height: 100%; }
+.cost-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11px; }
+.cost-legend .ck { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+.cost-legend .cv { color: var(--text-dim); }
+.cost-note { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+.cost-chart { margin-top: 4px; }
+.cost-chart svg { display: block; width: 100%; height: auto; }
+#cost-popover .px-link-ext { display: inline-block; margin-top: 12px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: none; }
+#cost-popover .px-link-ext:hover { text-decoration: underline; }
 .ctx-line-head {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 11px; color: var(--text-dim); margin: 8px 0 6px;

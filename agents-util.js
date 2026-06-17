@@ -78,7 +78,10 @@ function buildAgentsArg(names, library) {
 // permissions.deny rules that suppress built-in subagents. Because --agents is
 // ADDITIVE (built-ins stay registered), merely supplying a lean agent does not
 // stop the model from falling back to the heavy general-purpose; denying the
-// built-ins is what forces the lean choice and actually banks the token win.
+// built-ins is what forces the lean choice. The CLI's listing builder filters
+// denied agentTypes (Agent(name), case-sensitive) out of the injected roster
+// before emitting it, so a deny also reclaims that agent's per-turn description
+// tokens — not just an invocation block.
 function denyAgentRules(denyBuiltins) {
   if (!Array.isArray(denyBuiltins)) return [];
   return denyBuiltins.filter(Boolean).map((a) => `Agent(${a})`);

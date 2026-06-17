@@ -135,6 +135,7 @@
     </div>
     <div id="tools-popover" class="hidden">
       <div class="popover-title"><span>Tools — <span id="tools-popover-name"></span></span><button type="button" class="popover-close" id="tools-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
       <div id="popover-tools-list" class="agent-checklist"></div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="tools-popover-restart">
@@ -147,6 +148,7 @@
     </div>
     <div id="skills-popover" class="hidden">
       <div class="popover-title"><span>Skills — <span id="skills-popover-name"></span></span><button type="button" class="popover-close" id="skills-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
       <div id="popover-skills-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
       <div id="popover-inject-skills-section" style="display:none;">
@@ -163,9 +165,30 @@
         <button id="skills-popover-apply" type="button">Apply</button>
       </div>
     </div>
+    <div id="agents-popover" class="hidden">
+      <div class="popover-title"><span>Agents — <span id="agents-popover-name"></span></span><button type="button" class="popover-close" id="agents-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div id="popover-agents-list" class="agent-checklist"></div>
+      <span class="hint-text">Checked custom subagents are injected into this session (<code>--agents</code>).</span>
+      <div class="popover-subhead">Built-in agents</div>
+      <div id="popover-builtins-list" class="agent-checklist"></div>
+      <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster — reclaiming their per-turn description tokens — and no longer delegatable. This removes the capability too, so it's a trim <em>and</em> a behavior change. Not every session loads all of these; denying an absent one is a no-op.</span>
+      <label class="tools-popover-restart">
+        <input type="checkbox" id="agents-popover-restart">
+        <span class="hint-text">Restart fresh now to apply. The agent roster only takes effect in a NEW conversation, so this clears the current session's history. Leave unchecked to apply on the next fresh start.</span>
+      </label>
+      <div class="popover-actions">
+        <button id="agents-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="agents-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
     <div id="ctx-popover" class="hidden">
       <div class="popover-title"><span>Context — <span id="ctx-popover-name"></span></span><button type="button" class="popover-close" id="ctx-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="ctx-popover-body"></div>
+    </div>
+    <div id="cost-popover" class="hidden">
+      <div class="popover-title"><span>Cost over time — <span id="cost-popover-name"></span></span><button type="button" class="popover-close" id="cost-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="cost-popover-body"></div>
     </div>
     <div id="report-overlay" class="hidden">
       <div id="report-modal">
@@ -230,16 +253,17 @@
       </label>
       <label id="agents-row" style="display:none;">Custom subagents
         <div id="input-agents-list" class="agent-checklist"></div>
-        <label class="agent-deny">
-          <input type="checkbox" id="input-deny-builtins">
-          <span class="hint-text">Deny built-in <code>general-purpose</code> so the model must use the selected lean agents (cuts the big tool/skill load).</span>
-        </label>
+        <div class="popover-subhead">Built-in agents</div>
+        <div id="input-builtins-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
       </label>
       <label id="tools-row" style="display:none;">Tools
+        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
         <div id="input-tools-list" class="agent-checklist"></div>
         <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
       </label>
       <label id="skills-row" style="display:none;">Skills
+        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
         <div id="input-skills-list" class="agent-checklist"></div>
         <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
       </label>
@@ -292,12 +316,12 @@
       </label>
       <label id="args-agents-row">Custom subagents
         <div id="args-agents-list" class="agent-checklist"></div>
-        <label class="agent-deny">
-          <input type="checkbox" id="args-deny-builtins">
-          <span class="hint-text">Deny built-in <code>general-purpose</code> so the model must use the selected lean agents.</span>
-        </label>
+        <div class="popover-subhead">Built-in agents</div>
+        <div id="args-builtins-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op. Applies on a fresh restart.</span>
       </label>
       <label id="args-tools-row">Tools
+        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
         <div id="args-tools-list" class="agent-checklist"></div>
         <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>).</span>
       </label>

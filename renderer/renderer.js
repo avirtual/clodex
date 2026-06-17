@@ -305,11 +305,13 @@ function addSessionToSidebar(name, type, cwd, label) {
       <div class="session-meta">
         <span class="session-type">${esc(type)}</span>
         ${cwdLabel ? `<span class="session-cwd" title="${esc(cwd)}">${cwdLabel}</span>` : ''}
+        <span class="session-badges">
+          <span class="session-warm" title="Prompt-cache warmth (time to expiry)"></span>
+          <span class="session-ctx" title="Context used"></span>
+        </span>
       </div>
     </div>
     <button class="session-close" title="Kill session">&times;</button>
-    <span class="session-warm" title="Prompt-cache warmth (time to expiry)"></span>
-    <span class="session-ctx" title="Context used"></span>
   `;
 
   item.addEventListener('click', (e) => {
@@ -620,7 +622,7 @@ async function refreshTemplatesDropdown() {
 // and edit-session dialogs; the library itself lives in the Agents drawer. ---
 const agentsRow = document.getElementById('agents-row');
 const inputAgentsList = document.getElementById('input-agents-list');
-const inputDenyBuiltins = document.getElementById('input-deny-builtins');
+const inputBuiltinsList = document.getElementById('input-builtins-list');
 let agentLibCache = [];
 
 function renderAgentChecklist(container, enabledSet) {
@@ -647,6 +649,52 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
+// The built-in subagents the CLI injects into the roster (each costs its
+// description line every turn). Denying one via permissions.deny Agent(name)
+// filters it out of the injected listing — a real roster trim (traced through
+// the listing builder; confirmed on the wire) AND stops delegation to it.
+// Names are case-sensitive — exactly the agentType strings, verified present
+// across live transcripts. Not every session injects all six (a session
+// launched with --agents/append-prompt can drop claude-code-guide/statusline-
+// setup), so denying an absent one is a harmless no-op.
+const BUILTIN_AGENTS = ['Explore', 'Plan', 'general-purpose', 'claude', 'claude-code-guide', 'statusline-setup'];
+
+// Checklist polarity matches tools/skills: checked = available, unchecked =
+// denied. `deniedSet` is the persisted denyBuiltins list; collect returns the
+// unchecked (denied) names.
+function renderBuiltinChecklist(container, deniedSet) {
+  container.innerHTML = '';
+  for (const name of BUILTIN_AGENTS) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = name;
+    cb.checked = !deniedSet.has(name);
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(name)}</strong>`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+function collectBuiltinChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
+}
+
+// Bulk check/uncheck for a popover checklist. Skips :disabled rows (e.g. skills
+// locked by a lower settings layer) so "Check all" never tries to re-enable
+// something clodex can't actually toggle. `wireBulkToggles` hooks the
+// data-bulk="all"/"none" buttons sitting above `listEl` to it.
+function setChecklistAll(listEl, checked) {
+  listEl.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach(cb => { cb.checked = checked; });
+}
+function wireBulkToggles(popoverEl, listEl) {
+  popoverEl.querySelectorAll('.popover-bulk [data-bulk]').forEach(btn => {
+    btn.addEventListener('click', () => setChecklistAll(listEl, btn.dataset.bulk === 'all'));
+  });
+}
+
 // --- Per-session tool gating (Claude only). The catalog is a curated static
 // list supplied by main via getSettings().claudeTools. Checkboxes default to
 // checked (= tool available); unchecking adds the tool to `disabledTools`,
@@ -657,6 +705,10 @@ const toolsRow = document.getElementById('tools-row');
 const inputToolsList = document.getElementById('input-tools-list');
 const skillsRow = document.getElementById('skills-row');
 const inputSkillsList = document.getElementById('input-skills-list');
+// Bulk check/uncheck for the new-session dialog's catalog checklists (same
+// control as the popovers). wireBulkToggles is defined just above.
+wireBulkToggles(toolsRow, inputToolsList);
+wireBulkToggles(skillsRow, inputSkillsList);
 const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
 
@@ -826,7 +878,7 @@ async function openDialog() {
   ]);
   agentLibCache = agentLib || [];
   renderAgentChecklist(inputAgentsList, new Set());
-  inputDenyBuiltins.checked = false;
+  renderBuiltinChecklist(inputBuiltinsList, new Set());
   claudeToolsCache = settings?.claudeTools || [];
   renderToolChecklist(inputToolsList, new Set());
   refreshNewSessionTools();
@@ -928,7 +980,7 @@ async function doCreate() {
   const proxy = (type === 'claude' || type === 'codex')
     ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null;
   const agents = type === 'claude' ? collectAgentChecklist(inputAgentsList) : [];
-  const denyBuiltins = (type === 'claude' && inputDenyBuiltins.checked) ? ['general-purpose'] : [];
+  const denyBuiltins = type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [];
   const disabledTools = type === 'claude' ? collectToolChecklist(inputToolsList) : [];
   const disabledSkills = type === 'claude' ? collectSkillChecklist(inputSkillsList) : [];
   const injectSkills = type === 'claude' ? collectInjectChecklist(inputInjectSkillsList) : [];
@@ -1054,6 +1106,10 @@ function renderSessionActions(holdHtml = '') {
   if (type === 'claude') {
     btns.push('<button class="px-action" data-act="tools" title="Enable/disable tools for this session">🛠 tools</button>');
     btns.push('<button class="px-action" data-act="skills" title="Enable/disable skills for this session">🧩 skills</button>');
+    // Always shown for Claude: the popover composes the custom-subagent library
+    // AND toggles the built-in agents (denying Explore/Plan/general-purpose
+    // trims them from the roster), so it's useful even with an empty library.
+    btns.push('<button class="px-action" data-act="agents" title="Enable/disable custom + built-in subagents for this session">🤖 agents</button>');
   }
   if (type === 'claude' || type === 'codex') {
     btns.push('<button class="px-action" data-act="history" title="Past conversations — resume an earlier session">🕘 history</button>');
@@ -1127,16 +1183,23 @@ function renderProxyBar() {
     const heavy = usedTok >= CTX_HEAVY_TOKENS ? ' px-ctx-heavy' : usedTok >= CTX_WARN_TOKENS ? ' px-ctx-warn' : '';
     if (sizeTok) {
       const p2 = Math.round((usedTok / sizeTok) * 100);
-      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context: tokens used / window size'}">ctx ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context: tokens used / window size'}">🧠 ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
     } else {
-      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context tokens used'}">ctx ${fmtTokens(usedTok)}</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context tokens used'}">🧠 ${fmtTokens(usedTok)}</span>`);
     }
   } else if (typeof pct === 'number' && pct > 0) {
-    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Context window used'}">ctx ${pct}%</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Context window used'}">🧠 ${pct}%</span>`);
   } else if (p.context && p.context.messages != null) {
-    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Messages in context'}">ctx ${p.context.messages} msg</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Messages in context'}">🧠 ${p.context.messages} msg</span>`);
   }
   if (p.turns != null) segs.push(`<span class="px-seg">turn ${p.turns}</span>`);
+  // API roundtrips — the truer "how busy" gauge than turns (one prompt fans out
+  // into many tool-loop roundtrips; ~8× is typical). From wirescope's
+  // session_totals.requests, already shaped onto cost.requests. Aggregate incl.
+  // count_tokens probes — fine for an activity gauge.
+  if (p.cost && p.cost.requests != null) {
+    segs.push(`<span class="px-seg" title="API roundtrips this session (tool-loop calls, not just your prompts)">req ${p.cost.requests}</span>`);
+  }
   if (p.warmth) {
     let txt;
     if (dead) {
@@ -1153,7 +1216,16 @@ function renderProxyBar() {
     // ~ signals "estimate"; drop the cryptic "px est." label. Trim decimals once
     // the number is large enough that 4 places are just noise.
     const costTxt = p.cost.usd >= 1 ? p.cost.usd.toFixed(2) : p.cost.usd.toFixed(4);
-    segs.push(`<span class="px-seg px-cost" title="wirescope cost estimate">~$${costTxt}</span>`);
+    // When wirescope advertises the cost-over-time timeline, the cost number
+    // opens a native breakdown popover (read-carriage vs output, cumulative),
+    // which itself links out to the full /_timeline dashboard. Stays plain text
+    // otherwise, so a pre-deploy/standalone session just shows the estimate.
+    const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId);
+    if (timeline) {
+      segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" title="Cost over time — click for the breakdown">~$${costTxt}</span>`);
+    } else {
+      segs.push(`<span class="px-seg px-cost" title="wirescope cost estimate">~$${costTxt}</span>`);
+    }
   }
   if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">⚠ ${p.refusals}</span>`);
   if (p.base && p.sessionId) {
@@ -1327,11 +1399,14 @@ setInterval(() => {
     if (link && link.dataset.url) { e.preventDefault(); window.api.openExternal(link.dataset.url); return; }
     const ctxSeg = e.target.closest('[data-act="ctx"]');
     if (ctxSeg && activeSession) { openContextPopover(activeSession, ctxSeg); return; }
+    const costSeg = e.target.closest('[data-act="cost"]');
+    if (costSeg && activeSession) { openCostPopover(activeSession, costSeg); return; }
     const action = e.target.closest('.px-action');
     if (action && activeSession) {
       if (action.dataset.act === 'edit') openArgsDialog(activeSession);
       else if (action.dataset.act === 'tools') openToolsPopover(activeSession, action);
       else if (action.dataset.act === 'skills') openSkillsPopover(activeSession, action);
+      else if (action.dataset.act === 'agents') openAgentsPopover(activeSession, action);
       else if (action.dataset.act === 'history') openHistoryMenu(activeSession, action);
       else if (action.dataset.act === 'reload') doHardRestart(activeSession);
       return;
@@ -1656,6 +1731,84 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !skillsPopover.classList.contains('hidden')) closeSkillsPopover();
 });
 
+// --- Per-session Agents popover ------------------------------------------
+// A shortcut for composing the custom-subagent library into a running session
+// (--agents) + toggling the built-in agents, instead of right-click → Edit
+// settings → check/uncheck. Denying a built-in (Agent(Explore) etc.) filters it
+// out of the injected roster — reclaiming its per-turn description tokens — and
+// stops delegation to it, so this IS a (capability-costing) trim lever. Like
+// skills, the roster is frozen at conversation creation, so applying needs a
+// FRESH (non-resume) restart.
+const agentsPopover = document.getElementById('agents-popover');
+const agentsPopoverName = document.getElementById('agents-popover-name');
+const popoverAgentsList = document.getElementById('popover-agents-list');
+const popoverBuiltinsList = document.getElementById('popover-builtins-list');
+const agentsPopoverRestart = document.getElementById('agents-popover-restart');
+
+function closeAgentsPopover() {
+  agentsPopover.classList.add('hidden');
+  agentsPopover.dataset.name = '';
+}
+
+async function openAgentsPopover(name, anchorBtn) {
+  const res = await window.api.getAgentCatalog(name);
+  if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+  agentLibCache = res.agents || [];
+  renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []));
+  renderBuiltinChecklist(popoverBuiltinsList, new Set(res.denyBuiltins || []));
+  agentsPopoverRestart.checked = false;
+  agentsPopoverName.textContent = name;
+  agentsPopover.dataset.name = name;
+  agentsPopover.classList.remove('hidden');
+  const r = anchorBtn.getBoundingClientRect();
+  const w = agentsPopover.offsetWidth;
+  agentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  agentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+
+document.getElementById('agents-popover-cancel').addEventListener('click', closeAgentsPopover);
+document.getElementById('agents-popover-close').addEventListener('click', closeAgentsPopover);
+document.getElementById('agents-popover-apply').addEventListener('click', async () => {
+  const name = agentsPopover.dataset.name;
+  if (!name) return closeAgentsPopover();
+  const agents = collectAgentChecklist(popoverAgentsList);
+  const denyBuiltins = collectBuiltinChecklist(popoverBuiltinsList);
+  const restart = agentsPopoverRestart.checked;
+  // The agent roster is fixed at conversation creation (--resume replays the
+  // old one), so a restart that applies it must be the fresh, history-clearing
+  // kind — confirm before doing it.
+  if (restart && !confirm(`Apply agent changes to "${name}" now?\n\nThis starts a NEW conversation — the current session's history will be cleared. (Leave "Restart fresh" unchecked to apply on the next fresh start instead.)`)) return;
+  closeAgentsPopover();
+  const r = await window.api.setSessionAgents(name, agents, denyBuiltins);
+  if (!r || !r.ok) { alert(`Failed to update agents: ${r && r.error ? r.error : 'unknown error'}`); return; }
+  if (!restart) return;
+  // Fresh (non-resume) restart — same re-attach dance as the skills popover.
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.querySelector('.session-type')?.textContent : null;
+  const snapCwd = item ? item.dataset.cwd : null;
+  const rr = await window.api.restartSession(name, { fresh: true });
+  if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+  if (snapType) {
+    createTerminal(name);
+    addSessionToSidebar(name, snapType, snapCwd, null);
+    switchSession(name);
+  }
+});
+document.addEventListener('mousedown', (e) => {
+  if (agentsPopover.classList.contains('hidden')) return;
+  if (agentsPopover.contains(e.target)) return;
+  if (e.target.closest('.px-action')) return;
+  closeAgentsPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !agentsPopover.classList.contains('hidden')) closeAgentsPopover();
+});
+
+// Bulk "Check all / Uncheck all" controls for the three checklist popovers.
+wireBulkToggles(toolsPopover, popoverToolsList);
+wireBulkToggles(skillsPopover, popoverSkillsList);
+wireBulkToggles(agentsPopover, popoverAgentsList);
+
 // --- Context-breakdown popover -------------------------------------------
 // Opened from the ctx telemetry seg (only when wirescope advertises
 // context_view/context_composition). Pulls /_context for the live session and
@@ -1909,11 +2062,132 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !ctxPopover.classList.contains('hidden')) closeContextPopover();
 });
+
+// --- Cost-over-time popover ----------------------------------------------
+// Native render of wirescope's detail=1 `series` (gated on context_timeline):
+// the exact spine (read/write/generation), a cumulative-cost line chart over
+// requests, and the ~est content split — plus a link out to the full
+// /_timeline HTML dashboard. Opened from the bar's ~$N cost segment.
+const costPopover = document.getElementById('cost-popover');
+const costPopoverName = document.getElementById('cost-popover-name');
+const costPopoverBody = document.getElementById('cost-popover-body');
+
+// read = window carriage, write = cache toll, generation = output (receipt-exact).
+const COST_SPINE = [
+  { key: 'read', label: 'read · carriage', color: '#61afef' },
+  { key: 'write', label: 'write · cache toll', color: '#e5c07b' },
+  { key: 'generation', label: 'generation · output', color: '#98c379' },
+];
+// content_carriage_est apportions the READ dollars to content (estimate).
+const COST_CONTENT = [
+  { key: 'conversation', label: 'conversation', color: '#61afef' },
+  { key: 'preamble', label: 'preamble', color: '#98c379' },
+  { key: 'thinking', label: 'thinking', color: '#c678dd' },
+];
+
+function closeCostPopover() { costPopover.classList.add('hidden'); costPopover.dataset.name = ''; }
+
+function costStackBlock(title, badge, defs, vals, total) {
+  const rows = defs.map(d => ({ d, v: vals[d.key] || 0 })).filter(x => x.v > 0);
+  const bar = rows.map(x => `<span style="width:${(total > 0 ? x.v / total * 100 : 0).toFixed(2)}%;background:${x.d.color}"></span>`).join('');
+  const legend = rows.map(x => {
+    const pct = total > 0 ? Math.round(x.v / total * 100) : 0;
+    return `<span><span class="ck" style="background:${x.d.color}"></span>${esc(x.d.label)} <span class="cv">${fmtUsd(x.v)} · ${pct}%</span></span>`;
+  }).join('');
+  return `<div class="cost-sec-title"><span>${title}${badge}</span><span class="ctx-line-total">${fmtUsd(total)}</span></div>`
+    + `<div class="cost-bar">${bar}</div><div class="cost-legend">${legend}</div>`;
+}
+
+// Cumulative-cost line chart: one line per spine bucket over request index.
+// read towers and bends super-linearly; write/generation stay near the floor —
+// that contrast is the point. Colors match the spine legend above.
+function svgCostChart(reqs, defs) {
+  const W = 600, H = 150, pl = 6, pr = 6, pt = 10, pb = 14;
+  const n = reqs.length;
+  const cum = {}; const run = {};
+  defs.forEach(d => { cum[d.key] = []; run[d.key] = 0; });
+  reqs.forEach(r => defs.forEach(d => { run[d.key] += (r[d.key + '_usd'] || 0); cum[d.key].push(run[d.key]); }));
+  let maxY = 0;
+  defs.forEach(d => { const last = cum[d.key][n - 1] || 0; if (last > maxY) maxY = last; });
+  maxY = maxY || 1;
+  const X = i => pl + (n <= 1 ? 0 : (i / (n - 1)) * (W - pl - pr));
+  const Y = v => H - pb - (v / maxY) * (H - pt - pb);
+  const paths = defs.map(d => {
+    const pts = cum[d.key].map((v, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
+    return `<path d="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative cost by type over requests">`
+    + `<line x1="${pl}" y1="${H - pb}" x2="${W - pr}" y2="${H - pb}" stroke="#444" stroke-width="1"/>`
+    + paths
+    + `<text x="${pl}" y="${pt}" font-size="9" fill="#888">${esc(fmtUsd(maxY))}</text>`
+    + `<text x="${pl}" y="${H - 3}" font-size="9" fill="#888">req 1</text>`
+    + `<text x="${W - pr}" y="${H - 3}" font-size="9" fill="#888" text-anchor="end">req ${n}</text>`
+    + `</svg>`;
+}
+
+function renderCostTimeline(d, base, sid) {
+  const s = d && d.series;
+  const link = (base && sid)
+    ? `<span class="px-link-ext" data-url="${esc(base + '/_timeline?session=' + encodeURIComponent(sid))}">Open full dashboard →</span>`
+    : '';
+  if (!s || !Array.isArray(s.requests) || !s.requests.length) {
+    return `<div class="cost-note">No per-request cost series yet — give the session a turn or two.</div>${link}`;
+  }
+  const st = s.spine_totals || {};
+  const total = (st.read || 0) + (st.write || 0) + (st.generation || 0);
+  const reqs = s.requests;
+  const cc = s.content_carriage_est || {};
+  const ccTotal = (cc.preamble || 0) + (cc.conversation || 0) + (cc.thinking || 0);
+  return `<div class="cost-head"><b>${fmtUsd(total)}</b> over <b>${s.count != null ? s.count : reqs.length}</b> requests · main line</div>`
+    + costStackBlock('Cost by type', '', COST_SPINE, st, total)
+    + `<div class="cost-sec-title"><span>Cumulative cost · req 1 → ${reqs.length}</span></div>`
+    + `<div class="cost-chart">${svgCostChart(reqs, COST_SPINE)}</div>`
+    + costStackBlock('What read pays to carry', ' <span class="ctx-est">~est</span>', COST_CONTENT, cc, ccTotal)
+    + `<div class="cost-note">Preamble = system + tools + agents + skills + CLAUDE.md, the fixed tax trimmed via 🛠 / 🧩 / 🤖. Conversation (incl. tool results) is the tail that grows with session depth.</div>`
+    + link;
+}
+
+async function openCostPopover(name, anchor) {
+  const p = (proxyState.get(name) || {}).payload;
+  const base = p && p.base, sid = p && p.sessionId;
+  costPopoverName.textContent = name;
+  costPopover.dataset.name = name;
+  costPopoverBody.innerHTML = '<div class="cost-note">Loading cost timeline…</div>';
+  costPopover.classList.remove('hidden');
+  const r = anchor.getBoundingClientRect();
+  const w = costPopover.offsetWidth;
+  costPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  costPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+  const res = await window.api.getProxyReport(name, { detail: true });
+  if (costPopover.dataset.name !== name || costPopover.classList.contains('hidden')) return;
+  if (!res || !res.ok) {
+    costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cost timeline unavailable')}</div>`;
+    return;
+  }
+  try { costPopoverBody.innerHTML = renderCostTimeline(res.data, base, sid); }
+  catch (e) { costPopoverBody.innerHTML = `<div class="cost-note">Could not render: ${esc(String((e && e.message) || e))}</div>`; }
+}
+
+costPopoverBody.addEventListener('click', (e) => {
+  const ext = e.target.closest('[data-url]');
+  if (ext && ext.dataset.url) window.api.openExternal(ext.dataset.url);
+});
+document.addEventListener('mousedown', (e) => {
+  if (costPopover.classList.contains('hidden')) return;
+  if (costPopover.contains(e.target)) return;
+  if (e.target.closest('[data-act="cost"]')) return; // toggle handled by the bar
+  closeCostPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !costPopover.classList.contains('hidden')) closeCostPopover();
+});
+
 // Always-reachable close buttons (a tall popover can put outside-click/Escape
 // out of a user's reach — the ✕ never moves).
 document.getElementById('tools-popover-close').addEventListener('click', closeToolsPopover);
 document.getElementById('skills-popover-close').addEventListener('click', closeSkillsPopover);
 document.getElementById('ctx-popover-close').addEventListener('click', closeContextPopover);
+document.getElementById('cost-popover-close').addEventListener('click', closeCostPopover);
 
 // ── Session report (wirescope /_report, report_version 1) ─────────────
 // wirescope owns every number (pricing, cache math, thresholds, verdict
@@ -2708,9 +2982,10 @@ const argsPromptSelect = document.getElementById('args-prompt-select');
 const argsPromptBody = document.getElementById('args-prompt-body');
 const argsAgentsRow = document.getElementById('args-agents-row');
 const argsAgentsList = document.getElementById('args-agents-list');
-const argsDenyBuiltins = document.getElementById('args-deny-builtins');
+const argsBuiltinsList = document.getElementById('args-builtins-list');
 const argsToolsRow = document.getElementById('args-tools-row');
 const argsToolsList = document.getElementById('args-tools-list');
+wireBulkToggles(argsToolsRow, argsToolsList);
 let argsEditingName = null;
 
 argsProxyMode.addEventListener('change', () => {
@@ -2756,7 +3031,7 @@ async function openArgsDialog(name) {
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []));
-  argsDenyBuiltins.checked = (res.denyBuiltins || []).includes('general-purpose');
+  renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = isClaude ? '' : 'none';
   claudeToolsCache = settings?.claudeTools || [];
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
@@ -2780,8 +3055,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const systemPrompt = argsPromptRow.style.display === 'none'
     ? null : (argsPromptBody.value.trim() || null);
   const agents = argsAgentsRow.style.display === 'none' ? [] : collectAgentChecklist(argsAgentsList);
-  const denyBuiltins = (argsAgentsRow.style.display !== 'none' && argsDenyBuiltins.checked)
-    ? ['general-purpose'] : [];
+  const denyBuiltins = argsAgentsRow.style.display === 'none'
+    ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
   const name = argsEditingName;
   // Snapshot metadata from the current sidebar entry so we can re-render it
