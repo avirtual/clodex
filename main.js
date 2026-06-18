@@ -226,10 +226,35 @@ const persistence = {
       this._save(all);
     }
   },
+  // Per-session wirescope strip-aggressiveness LEVEL (a cumulative ladder, not
+  // independent toggles): 0 = off, 1 = strip prior thinking, 2 = + strip
+  // superseded tool results. Each level is a superset of the one below. clodex
+  // is authoritative — the proxy's overrides are in-memory, so the poller
+  // re-asserts the level's wire state on relink (see ProxyPoller._tick).
+  setStripLevel(name, level) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      const lvl = (level === 1 || level === 2) ? level : 0;
+      if (lvl > 0) entry.stripLevel = lvl; else delete entry.stripLevel;
+      delete entry.stripThinking; // migrate off the old boolean field
+      this._save(all);
+    }
+  },
   get(name) {
     return this._load().find(s => s.name === name) || null;
   },
 };
+
+// Resolve a session's strip level from its persisted entry, honoring the legacy
+// `stripThinking:'on'` field (pre-leveled) as level 1. Single source of truth
+// for both the poller's wire re-assert and the IPC/getArgs surface.
+function stripLevelOf(entry) {
+  if (!entry) return 0;
+  if (entry.stripLevel === 1 || entry.stripLevel === 2) return entry.stripLevel;
+  if (entry.stripThinking === 'on') return 1; // legacy boolean field
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // Templates — saved session configurations (type, cwd, args)
@@ -1029,6 +1054,18 @@ const ProxyClient = {
     return this._req(base, `/_hold?${qs.toString()}`, 'POST');
   },
 
+  // Set the per-session "strip prior thinking" override. mode 'on'/'off' sets an
+  // explicit override; 'clear' reverts to the proxy's global default. The setter
+  // is an in-memory write on the proxy (no turn, no credit), so it's cheap and
+  // idempotent — safe to re-fire on every relink. Body carries the resolved
+  // `effective` bool; branch on the body, not the HTTP status.
+  async stripThinking(base, sessionId, mode) {
+    const qs = new URLSearchParams({ session: sessionId });
+    if (mode === 'clear') qs.set('action', 'clear');
+    else qs.set('on', mode === 'on' ? '1' : '0');
+    return this._req(base, `/_strip?${qs.toString()}`, 'POST');
+  },
+
   // Confirm a base is our telemetry proxy (wirescope) and read its live
   // capabilities. Prefers the /_identity handshake (v0.2.8+); falls back to
   // /_status + proxy.version/flags for older deployments. Returns null when
@@ -1085,7 +1122,19 @@ class ProxyPoller {
     this.timer = null;
     this.probeCache = new Map(); // base -> { result, ts }
     this.last = new Map();       // session name -> last shaped payload
+    // session name -> { sessionId, level } we've pushed to the proxy's in-memory
+    // strip overrides. Cleared when a session goes unlinked so the next linked
+    // tick re-asserts (covers proxy restarts, which wipe the overrides).
+    this.stripAsserted = new Map();
     this._busy = false;
+  }
+
+  // Keep the strip re-assert tracking in sync after an explicit level change
+  // (proxy:setStripLevel POSTs directly), so the next tick doesn't redundantly
+  // re-fire. level 0 → forget (the push reverted the wire to default).
+  noteStripAsserted(name, sessionId, level) {
+    if ((level === 1 || level === 2) && sessionId) this.stripAsserted.set(name, { sessionId, level });
+    else this.stripAsserted.delete(name);
   }
 
   start() {
@@ -1142,11 +1191,35 @@ class ProxyPoller {
             arr.push(r);
           }
         }
+        const stripCap = !!(probe.capabilities && probe.capabilities.strip_thinking && probe.capabilities.strip_thinking.available);
         for (const s of sess) {
           const payload = shapeProxyRecord(pickProxyRecord(byAgent.get(s.proxyAgent), s.sessionId), probe);
           payload.base = base; // poller context, not record shape — for the session-page link
+          // clodex-side authoritative strip level (the proxy overrides are
+          // in-memory and not trustworthy pre-relink). Surfaced for the bar menu.
+          const level = stripLevelOf(persistence.get(s.name));
+          payload.stripLevel = level;
           this.last.set(s.name, payload);
           this.manager._sendToSession(s.name, 'session-proxy', s.name, payload);
+          // Re-assert the wire state on (re)link or when the live session id rolls
+          // (/clear mints a new id; a proxy restart surfaces as unlinked→linked).
+          // Only level>=1 needs a push: level 0 == the global default (off), so
+          // a cleared-on-restart override already matches it. Level>=1 strips
+          // prior thinking; level 2's tool-result strip rides a separate
+          // wirescope endpoint, wired when that capability ships.
+          if (!payload.linked) {
+            this.stripAsserted.delete(s.name);
+          } else if (stripCap && payload.sessionId && level >= 1) {
+            const last = this.stripAsserted.get(s.name);
+            if (!last || last.sessionId !== payload.sessionId || last.level !== level) {
+              this.stripAsserted.set(s.name, { sessionId: payload.sessionId, level });
+              ProxyClient.stripThinking(base, payload.sessionId, 'on').catch(() => {
+                // Failed to push — forget so the next tick retries.
+                const cur = this.stripAsserted.get(s.name);
+                if (cur && cur.sessionId === payload.sessionId) this.stripAsserted.delete(s.name);
+              });
+            }
+          }
         }
       }
     } finally {
@@ -3147,13 +3220,16 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel) => {
     try {
       const workspaceId = workspaceOfSender(e);
-      return {
-        ok: true,
-        session: await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], disabledTools || [], disabledSkills || [], injectSkills || []),
-      };
+      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], disabledTools || [], disabledSkills || [], injectSkills || []);
+      // Strip level isn't a spawn arg (it's a proxy-side override the poller
+      // asserts once the session links), so persist it onto the entry after
+      // create() rather than threading it through the 15-param spawn path.
+      // Set at creation = the cold-cache path: the first re-write is tiny.
+      if (stripLevel === 1 || stripLevel === 2) persistence.setStripLevel(name, stripLevel);
+      return { ok: true, session };
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -3321,6 +3397,43 @@ app.whenReady().then(() => {
     }
   });
 
+  // Set the per-session strip LEVEL (0 off / 1 thinking / 2 thinking + tool
+  // results). Cumulative ladder. Persists our authoritative level (the proxy
+  // overrides are in-memory) and pushes the level's wire state now. Level 2's
+  // tool-result strip is gated on a separate capability and rejected until the
+  // proxy advertises it (the menu disables it too).
+  ipcMain.handle('proxy:setStripLevel', async (_e, name, level) => {
+    const s = manager.sessions.get(name);
+    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+    const snap = proxyPoller.snapshot(name);
+    if (!snap || !snap.linked || !snap.sessionId) {
+      return { ok: false, error: 'No live proxy session (unlinked)' };
+    }
+    const caps = snap.capabilities || {};
+    const cap = caps.strip_thinking;
+    if (!cap || !cap.available) {
+      return { ok: false, error: 'This proxy does not support strip-thinking' };
+    }
+    let lvl = (level === 1 || level === 2) ? level : 0;
+    if (lvl === 2 && !(caps.strip_stale_tool_results && caps.strip_stale_tool_results.available)) {
+      return { ok: false, error: 'This proxy does not support tool-result stripping (level 2) yet' };
+    }
+    persistence.setStripLevel(name, lvl);
+    proxyPoller.noteStripAsserted(name, snap.sessionId, lvl);
+    try {
+      // Level >=1 strips prior thinking. (Level 2's tool-result strip rides a
+      // separate wirescope endpoint, wired when that capability ships.)
+      const r = await ProxyClient.stripThinking(s.proxyBase, snap.sessionId, lvl >= 1 ? 'on' : 'clear');
+      const j = r.json || {};
+      return { ok: true, status: r.status, level: lvl, effective: !!j.effective, body: j };
+    } catch (e) {
+      // The push failed but our level is persisted; the poller will retry on the
+      // next tick. Surface the error so the UI can flag it.
+      proxyPoller.stripAsserted.delete(name);
+      return { ok: false, error: e.message, level: lvl };
+    }
+  });
+
   ipcMain.handle('session:getArgs', (_e, name) => {
     const entry = persistence.get(name);
     return entry ? {
@@ -3335,6 +3448,7 @@ app.whenReady().then(() => {
       effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
       disabledSkills: entry.disabledSkills || [],
       injectSkills: entry.injectSkills || [],
+      stripLevel: stripLevelOf(entry),
     } : { ok: false };
   });
 

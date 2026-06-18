@@ -271,6 +271,14 @@
         <div id="input-inject-skills-list" class="agent-checklist"></div>
         <span class="hint-text">Inject skills from your <strong>Skill Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
       </label>
+      <label id="strip-row" style="display:none;">Wire stripping
+        <select id="input-strip-level">
+          <option value="0">Off</option>
+          <option value="1">Level 1 — strip prior-turn thinking</option>
+          <option value="2" disabled>Level 2 — + superseded tool results (coming soon)</option>
+        </select>
+        <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
+      </label>
       <label>Extra CLI args
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>

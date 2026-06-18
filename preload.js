@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
@@ -94,6 +94,8 @@ window.api = {
     ipcRenderer.invoke('proxy:report', name, opts),
   proxyHold: (name, hours, force) =>
     ipcRenderer.invoke('proxy:hold', name, hours, force),
+  setStripLevel: (name, level) =>
+    ipcRenderer.invoke('proxy:setStripLevel', name, level),
   onSessionMention: (callback) =>
     ipcRenderer.on('session-mention', (_e, name, mtype, from) => callback(name, mtype, from)),
   onRequestSwitchSession: (callback) =>

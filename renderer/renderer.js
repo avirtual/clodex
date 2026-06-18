@@ -577,6 +577,8 @@ function applyTypeDefaults() {
   toolsRow.style.display = type === 'claude' ? '' : 'none';
   skillsRow.style.display = type === 'claude' ? '' : 'none';
   injectSkillsRow.style.display = type === 'claude' ? '' : 'none';
+  // Wire-stripping is Anthropic-only (thinking blocks) → Claude sessions only.
+  if (stripRow) stripRow.style.display = type === 'claude' ? '' : 'none';
   if (type === 'claude') { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
   const supportsResume = type === 'claude' || type === 'codex';
   resumeRow.style.display = supportsResume ? '' : 'none';
@@ -711,6 +713,8 @@ wireBulkToggles(toolsRow, inputToolsList);
 wireBulkToggles(skillsRow, inputSkillsList);
 const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
+const stripRow = document.getElementById('strip-row');
+const inputStripLevel = document.getElementById('input-strip-level');
 
 // Custom-skill injection checklist (opt-in: unchecked by default). Mirrors the
 // subagent checklist — checked names are scaffolded into a --plugin-dir at
@@ -868,6 +872,7 @@ async function openDialog() {
   inputSystemPrompt.value = '';
   inputResume.value = '';
   inputFork.checked = false;
+  if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   applyTypeDefaults();
   inputName.style.borderColor = '';
   const [, , settings, agentLib] = await Promise.all([
@@ -984,11 +989,12 @@ async function doCreate() {
   const disabledTools = type === 'claude' ? collectToolChecklist(inputToolsList) : [];
   const disabledSkills = type === 'claude' ? collectSkillChecklist(inputSkillsList) : [];
   const injectSkills = type === 'claude' ? collectInjectChecklist(inputInjectSkillsList) : [];
+  const stripLevel = type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0;
 
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills);
+  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);
@@ -1252,9 +1258,26 @@ function renderProxyBar() {
       holdHtml = `<button class="px-hold" data-act="warm-menu" title="Keep prompt cache warm">🔥 keep warm</button>`;
     }
   }
+
+  // Strip-level control (only when wirescope advertises the lever + the session
+  // is linked). A cumulative ladder opened via dropdown: 0 off · 1 strips prior-
+  // turn thinking · 2 also strips superseded tool results. The current turn is
+  // never touched; non-destructive (local transcript unchanged). clodex is
+  // authoritative — p.stripLevel is our persisted level, re-asserted on relink.
+  let stripHtml = '';
+  const stripCap = p.capabilities && p.capabilities.strip_thinking;
+  if (stripCap && stripCap.available && p.base && p.sessionId) {
+    const lvl = typeof p.stripLevel === 'number' ? p.stripLevel : 0;
+    const label = lvl === 0 ? '🧠 strip' : `🧠 strip L${lvl}`;
+    const tip = lvl === 0
+      ? 'Strip wasted re-read carriage from the wire to reclaim cost. Click to choose a level.'
+      : `Strip level ${lvl} active${lvl >= 2 ? ' (thinking + superseded tool results)' : ' (prior-turn thinking)'}. Click to change.`;
+    stripHtml = `<button class="px-action px-strip${lvl > 0 ? ' is-on' : ''}" data-act="strip-menu" data-level="${lvl}" title="${esc(tip)}">${label}</button>`;
+  }
+
   tele.innerHTML = segs.join('<span class="px-sep">·</span>');
-  // Keep-warm lives with the actions on the right, not in the info column.
-  renderSessionActions(holdHtml);
+  // Keep-warm + strip level live with the actions on the right, not the info column.
+  renderSessionActions(stripHtml + holdHtml);
 }
 
 // Lightweight per-second update: refresh only the countdown text + staleness
@@ -1420,6 +1443,10 @@ setInterval(() => {
       else if (action.dataset.act === 'agents') openAgentsPopover(activeSession, action);
       else if (action.dataset.act === 'history') openHistoryMenu(activeSession, action);
       else if (action.dataset.act === 'reload') doHardRestart(activeSession);
+      else if (action.dataset.act === 'strip-menu') {
+        if (stripMenu) closeStripMenu();
+        else openStripMenu(action, Number(action.dataset.level) || 0);
+      }
       return;
     }
     const btn = e.target.closest('.px-hold');
@@ -1494,6 +1521,79 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && warmMenu) closeWarmMenu();
+});
+
+// --- Strip-level dropdown ------------------------------------------------
+// The 🧠 strip button opens this. A cumulative ladder (each level a superset):
+// 0 off · 1 prior-turn thinking · 2 + superseded tool results. Level 2 is gated
+// on the (future) tool-strip capability — shown disabled until wirescope ships
+// it dark, then it lights up automatically. Mirrors the keep-warm menu.
+let stripMenu = null;
+function closeStripMenu() { if (stripMenu) { stripMenu.remove(); stripMenu = null; } }
+
+const STRIP_LEVELS = [
+  { lvl: 0, name: 'Off', desc: 'No stripping' },
+  { lvl: 1, name: 'Level 1 — thinking', desc: 'Strip prior-turn reasoning (~30% off, no visible degradation)' },
+  { lvl: 2, name: 'Level 2 — + tool results', desc: 'Also drop superseded tool results' },
+];
+
+function openStripMenu(anchorBtn, currentLevel) {
+  closeStripMenu();
+  const caps = (activeSession && proxyState.get(activeSession)?.payload?.capabilities) || {};
+  const toolsAvail = !!(caps.strip_stale_tool_results && caps.strip_stale_tool_results.available);
+  stripMenu = document.createElement('div');
+  stripMenu.className = 'warm-menu strip-menu';
+  const items = ['<div class="warm-menu-label">Wire stripping level</div>'];
+  for (const s of STRIP_LEVELS) {
+    const cur = s.lvl === currentLevel ? ' strip-cur' : '';
+    const lock = (s.lvl === 2 && !toolsAvail);
+    const dis = lock ? ' disabled' : '';
+    const note = lock ? '<span class="strip-soon">coming soon</span>' : `<span class="strip-desc">${esc(s.desc)}</span>`;
+    items.push(`<button class="warm-item strip-item${cur}" data-level="${s.lvl}"${dis}>` +
+      `<span class="strip-name">${esc(s.name)}${s.lvl === currentLevel ? ' ✓' : ''}</span>${note}</button>`);
+  }
+  stripMenu.innerHTML = items.join('');
+  stripMenu.addEventListener('click', async (e) => {
+    const item = e.target.closest('.strip-item');
+    if (!item || item.disabled || !activeSession) return;
+    const level = Number(item.dataset.level) || 0;
+    const name = activeSession;
+    closeStripMenu();
+    if (level === currentLevel) return;
+    // Changing strip state on a WARM cache forces a one-time full-window premium
+    // re-write: stripped vs unstripped is a maximal prefix byte-difference, so the
+    // whole cached message region busts (wirescope measured 95k–261k tokens/flip).
+    // It's cheap on a cold cache, and pays off if you KEEP the new level — but
+    // flipping back and forth is the most expensive mode of all. So gate it: free
+    // when cold, confirm-with-warning when the cache is established/warm.
+    const pl = proxyState.get(name)?.payload;
+    const warm = pl && pl.warmth ? pl.warmth.state === 'warm' : (pl && pl.turns > 0);
+    if (warm && !confirm(
+      `Changing the strip level mid-session forces a one-time full-window cache re-write ` +
+      `(premium-priced — often 100k–250k tokens). It only pays off if you keep the new level ` +
+      `for the rest of this conversation; flipping back and forth is the most expensive option.\n\n` +
+      `Set ${(STRIP_LEVELS.find((s) => s.lvl === level) || {}).name || `level ${level}`} now?\n\n` +
+      `(Tip: cheapest to set the level on a fresh session, or after /clear when the cache is cold.)`
+    )) return;
+    const r = await window.api.setStripLevel(name, level);
+    if (!r || !r.ok) alert('Could not change strip level: ' + ((r && r.error) || 'unknown error'));
+    // New level shows on the next poll (≤5s).
+  });
+  document.body.appendChild(stripMenu);
+  const r = anchorBtn.getBoundingClientRect();
+  const w = stripMenu.offsetWidth;
+  stripMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  stripMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+}
+
+document.addEventListener('click', (e) => {
+  if (!stripMenu) return;
+  if (stripMenu.contains(e.target)) return;
+  if (e.target.closest('.px-strip[data-act="strip-menu"]')) return; // toggle handled by the bar
+  closeStripMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && stripMenu) closeStripMenu();
 });
 
 // --- Per-session history picker (past conversations) ---------------------
@@ -1852,7 +1952,7 @@ function placeCtxPopover(anchor) {
   ctxPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
 }
 
-function renderCompositionLine(a) {
+function renderCompositionLine(a, stripOn = false) {
   const comp = a.composition;
   const head = a.line === 'main' ? 'main' : (a.display_name || a.agent_id || 'subagent');
   const est = comp.basis === 'estimate' ? '<span class="ctx-est">~est</span>' : '';
@@ -1865,7 +1965,39 @@ function renderCompositionLine(a) {
       `<div class="ctx-bar"><i style="width:${Math.max(1, Math.min(100, pct))}%"></i></div></div>`;
   }).join('');
   return `<div class="ctx-line-head"><span>${esc(head)}${est}</span>` +
-    `<span class="ctx-line-total">${fmtTokens(comp.total_tokens)}</span></div>${rows}`;
+    `<span class="ctx-line-total">${fmtTokens(comp.total_tokens)}</span></div>${rows}` +
+    renderStripPanel(comp.strip_prior_thinking, stripOn);
+}
+
+// The wirescope strip-prior-thinking story for one agent line, from
+// composition.strip_prior_thinking (always present when there's prior thinking
+// to evaluate; absent on turn 1 / right after a compact = nothing to strip).
+// `would_strip` is the gate's verdict on the window, independent of opt-in — so
+// "actually stripping" = stripOn AND would_strip. When opted-in but would_strip
+// is false, the monster guard skipped this turn (low thinking density).
+function renderStripPanel(sp, stripOn) {
+  if (!sp || typeof sp.prior_thinking_tokens !== 'number' || sp.prior_thinking_tokens <= 0) return '';
+  const tok = sp.prior_thinking_tokens;
+  const usd = typeof sp.est_read_reclaim_usd_per_turn === 'number' ? sp.est_read_reclaim_usd_per_turn : null;
+  const pct = typeof sp.pct_of_window === 'number' ? sp.pct_of_window : null;
+  const usdTxt = usd == null ? '' : (usd >= 0.01 ? ` (~$${usd.toFixed(2)}/turn)` : ` (~$${usd.toFixed(4)}/turn)`);
+  const pctTxt = pct == null ? '' : ` · ${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% of window`;
+  let verdict, cls;
+  if (stripOn && sp.would_strip) {
+    verdict = `Stripping ~${fmtTokens(tok)}/turn${usdTxt}`;
+    cls = 'on';
+  } else if (stripOn && !sp.would_strip) {
+    const ratio = typeof sp.body_thinking_ratio === 'number' ? sp.body_thinking_ratio.toFixed(1) : '?';
+    const max = typeof sp.max_body_ratio === 'number' ? sp.max_body_ratio.toFixed(1) : '?';
+    verdict = `On, but this turn skipped: low thinking density (ratio ${ratio} > ${max})`;
+    cls = 'skip';
+  } else {
+    verdict = `Off — turn on 🧠 strip to reclaim ~${fmtTokens(tok)}/turn${usdTxt}`;
+    cls = 'off';
+  }
+  return `<div class="ctx-strip ctx-strip-${cls}">` +
+    `<div class="ctx-strip-head">🧠 prior thinking: <b>${fmtTokens(tok)}</b>${pctTxt}</div>` +
+    `<div class="ctx-strip-verdict">${esc(verdict)}</div></div>`;
 }
 
 // Below this many evaluable (tool-loading) turns, a `used:0` verdict is too
@@ -1980,7 +2112,8 @@ async function openContextPopover(name, anchor) {
     // Two columns so the popover stays short: composition (what's loaded) on the
     // left, tool + skill utilization (did it pay off) on the right. Falls back to
     // a single column when there's no utilization (composition-only proxy).
-    const compCol = withComp.map(renderCompositionLine).join('');
+    const stripOn = (proxyState.get(name)?.payload?.stripLevel || 0) >= 1;
+    const compCol = withComp.map((a) => renderCompositionLine(a, stripOn)).join('');
     const utilCol = withComp.map((a) => renderUtilization(a) + renderSkillUtilization(a)).join('');
     html = utilCol.trim()
       ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>`

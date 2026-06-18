@@ -505,6 +505,12 @@ html, body {
   cursor: pointer;
 }
 #proxy-bar .px-action:hover { border-color: var(--accent); }
+/* Strip-thinking toggle: muted when off, lit when actively stripping. */
+#proxy-bar .px-strip.is-on {
+  color: #4caa6e;
+  border-color: #4caa6e;
+  background: rgba(76, 170, 110, 0.12);
+}
 #proxy-bar .px-seg { color: var(--text); }
 #proxy-bar .px-sep { margin: 0 8px; color: var(--text-dim); }
 #proxy-bar .px-warm { color: #e0a030; }
@@ -671,6 +677,13 @@ html, body {
   padding-top: 7px;
   border-radius: 0 0 4px 4px;
 }
+/* Strip-level menu: wider, each item a name + one-line description. */
+.strip-menu { min-width: 240px; max-width: 300px; }
+.strip-menu .strip-item { display: flex; flex-direction: column; gap: 1px; }
+.strip-menu .strip-name { font-size: 12px; }
+.strip-menu .strip-item.strip-cur .strip-name { color: #4caa6e; }
+.strip-menu .strip-desc { font-size: 10px; color: var(--text-dim); }
+.strip-menu .strip-soon { font-size: 10px; color: var(--warn); font-style: italic; }
 
 /* Per-session history picker (mirrors the warm menu, list of conversations). */
 .history-menu {
@@ -788,6 +801,21 @@ html, body {
 .ctx-bar { height: 5px; background: var(--active-bg); border-radius: 3px; overflow: hidden; }
 .ctx-bar > i { display: block; height: 100%; background: var(--accent); }
 .ctx-note { font-size: 11px; color: var(--text-dim); }
+/* Strip-prior-thinking panel under a composition line. */
+.ctx-strip {
+  margin: 4px 0 10px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  background: var(--active-bg);
+  border-left: 2px solid var(--border);
+}
+.ctx-strip-head { color: var(--text); margin-bottom: 2px; }
+.ctx-strip-verdict { color: var(--text-dim); }
+.ctx-strip-on { border-left-color: #4caa6e; }
+.ctx-strip-on .ctx-strip-verdict { color: #4caa6e; }
+.ctx-strip-skip { border-left-color: var(--warn); }
+.ctx-strip-off { border-left-color: var(--border); }
 .ctx-tools-link { display: block; margin-top: 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
 .ctx-tools-link:hover { color: var(--text); text-decoration: underline; }
 
