@@ -1995,7 +1995,7 @@ function placeCtxPopover(anchor) {
   ctxPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
 }
 
-function renderCompositionLine(a, stripOn = false) {
+function renderCompositionLine(a, stripLevel = 0) {
   const comp = a.composition;
   const head = a.line === 'main' ? 'main' : (a.display_name || a.agent_id || 'subagent');
   const est = comp.basis === 'estimate' ? '<span class="ctx-est">~est</span>' : '';
@@ -2009,7 +2009,13 @@ function renderCompositionLine(a, stripOn = false) {
   }).join('');
   return `<div class="ctx-line-head"><span>${esc(head)}${est}</span>` +
     `<span class="ctx-line-total">${fmtTokens(comp.total_tokens)}</span></div>${rows}` +
-    renderStripPanel(comp.strip_prior_thinking, stripOn);
+    renderStripPanel(comp.strip_prior_thinking, stripLevel >= 1) +
+    (stripLevel >= 2 ? (
+      renderL2StripPanel(comp.strip_prior_tool_errors, true, 'prior tool errors',
+        (comp.strip_prior_tool_errors ? (comp.strip_prior_tool_errors.failed_calls || 0) + (comp.strip_prior_tool_errors.error_results || 0) : 0)) +
+      renderL2StripPanel(comp.strip_prior_edit_acks, true, 'prior edit acks',
+        (comp.strip_prior_edit_acks ? (comp.strip_prior_edit_acks.collapsed_acks || 0) : 0))
+    ) : '');
 }
 
 // The wirescope strip-prior-thinking story for one agent line, from
@@ -2040,6 +2046,39 @@ function renderStripPanel(sp, stripOn) {
   }
   return `<div class="ctx-strip ctx-strip-${cls}">` +
     `<div class="ctx-strip-head">🧠 prior thinking: <b>${fmtTokens(tok)}</b>${pctTxt}</div>` +
+    `<div class="ctx-strip-verdict">${esc(verdict)}</div></div>`;
+}
+
+// The two L2 add-ons, from composition.strip_prior_tool_errors (failed calls +
+// error results) and composition.strip_prior_edit_acks (succeeded Edit/Write
+// acks collapsed to "ok"). Same shape; each is present only on an L2-capable
+// proxy once the prior window holds collapsible items (edit_acks key landed in
+// wirescope v0.6.1 — gate on presence). `rides_thinking_bust` means the add-on
+// only reclaims on turns where L1's thinking strip ALSO rewrote the window, so
+// the stripping verdict gates on would_strip just like L1. Rendered at level 2.
+function renderL2StripPanel(d, stripOn, label, count) {
+  if (!d) return '';
+  const tok = typeof d.read_reclaim_tokens_per_turn === 'number' ? d.read_reclaim_tokens_per_turn : 0;
+  if (!(tok > 0)) return '';
+  const usd = typeof d.est_read_reclaim_usd_per_turn === 'number' ? d.est_read_reclaim_usd_per_turn : null;
+  const usdTxt = usd == null ? '' : (usd >= 0.01 ? ` (~$${usd.toFixed(2)}/turn)` : ` (~$${usd.toFixed(4)}/turn)`);
+  const n = count || 0;
+  const countTxt = n > 0 ? ` · ${n} item${n === 1 ? '' : 's'}` : '';
+  let verdict, cls;
+  if (stripOn && d.would_strip) {
+    verdict = `Also stripping ~${fmtTokens(tok)}/turn${usdTxt}`;
+    cls = 'on';
+  } else if (stripOn && !d.would_strip) {
+    verdict = d.rides_thinking_bust
+      ? 'On, but idle this turn — rides the thinking bust (nothing extra until thinking strips)'
+      : 'On, but nothing to strip this turn';
+    cls = 'skip';
+  } else {
+    verdict = `+~${fmtTokens(tok)}/turn${usdTxt} on top of thinking`;
+    cls = 'off';
+  }
+  return `<div class="ctx-strip ctx-strip-${cls}">` +
+    `<div class="ctx-strip-head">🧠 ${esc(label)}: <b>${fmtTokens(tok)}</b>${countTxt}</div>` +
     `<div class="ctx-strip-verdict">${esc(verdict)}</div></div>`;
 }
 
@@ -2155,8 +2194,8 @@ async function openContextPopover(name, anchor) {
     // Two columns so the popover stays short: composition (what's loaded) on the
     // left, tool + skill utilization (did it pay off) on the right. Falls back to
     // a single column when there's no utilization (composition-only proxy).
-    const stripOn = (proxyState.get(name)?.payload?.stripLevel || 0) >= 1;
-    const compCol = withComp.map((a) => renderCompositionLine(a, stripOn)).join('');
+    const stripLevel = (proxyState.get(name)?.payload?.stripLevel || 0);
+    const compCol = withComp.map((a) => renderCompositionLine(a, stripLevel)).join('');
     const utilCol = withComp.map((a) => renderUtilization(a) + renderSkillUtilization(a)).join('');
     html = utilCol.trim()
       ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>`

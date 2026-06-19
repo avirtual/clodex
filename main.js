@@ -1220,14 +1220,16 @@ class ProxyPoller {
     // strip overrides. Cleared when a session goes unlinked so the next linked
     // tick re-asserts (covers proxy restarts, which wipe the overrides).
     this.stripAsserted = new Map();
-    // Bases that have advertised strip_thinking on a genuine wirescope probe.
-    // strip_thinking.available is a hardcoded-true STATIC property of a wirescope
-    // deployment (confirmed by wirescope: it's a dict literal, not a runtime flag),
-    // so once a real wirescope probe shows it we latch it PERMANENTLY per base and
-    // never let a later failed/foreign/fallback probe retract it. The 🧠 strip
-    // button's DOM presence is a deployment property, not a per-tick network fact —
-    // this is what stops the button from vanishing on a probe hiccup.
-    this.stripCapBases = new Set();
+    // Bases that have advertised strip_thinking on a genuine wirescope probe,
+    // mapped to the LAST genuine cap object (so max_level/levels survive a
+    // downgrade tick — see the re-impose below). strip_thinking.available is a
+    // hardcoded-true STATIC property of a wirescope deployment (confirmed by
+    // wirescope: it's a dict literal, not a runtime flag), so once a real
+    // wirescope probe shows it we latch it PERMANENTLY per base and never let a
+    // later failed/foreign/fallback probe retract it. The 🧠 strip button's DOM
+    // presence is a deployment property, not a per-tick network fact — this is
+    // what stops the button from vanishing (or L2 relocking) on a probe hiccup.
+    this.stripCapBases = new Map();
     this._busy = false;
   }
 
@@ -1283,14 +1285,16 @@ class ProxyPoller {
         // Latch strip capability per base (see this.stripCapBases). Only a genuine
         // wirescope probe may SET the latch; a foreign/fallback probe (the legacy
         // logproxy /_status downgrade carries no strip_thinking key) may only READ
-        // it. Once latched, re-impose the cap on this tick's probe so a downgraded
-        // payload can't retract the button. We replace probe.capabilities rather
-        // than mutate it in place to avoid poisoning the 60s probe cache.
-        const probeStripCap = !!(probe.capabilities.strip_thinking && probe.capabilities.strip_thinking.available);
+        // it. Once latched, re-impose the LAST GENUINE cap on this tick's probe so a
+        // downgraded payload can't retract the button OR drop max_level (which would
+        // relock L2 to "coming soon"). We replace probe.capabilities rather than
+        // mutate it in place to avoid poisoning the 60s probe cache.
+        const probeStripThinking = probe.capabilities.strip_thinking;
+        const probeStripCap = !!(probeStripThinking && probeStripThinking.available);
         if (probe.product === 'wirescope' && probeStripCap) {
-          this.stripCapBases.add(base);
+          this.stripCapBases.set(base, probeStripThinking);
         } else if (this.stripCapBases.has(base) && !probeStripCap) {
-          probe.capabilities = { ...probe.capabilities, strip_thinking: { available: true } };
+          probe.capabilities = { ...probe.capabilities, strip_thinking: this.stripCapBases.get(base) };
         }
         let records;
         try { records = await ProxyClient.status(base); } catch { continue; }
