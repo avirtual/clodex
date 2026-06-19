@@ -1023,14 +1023,47 @@ html, body {
   align-content: start;
 }
 
-/* Header, full-width checklist rows, and the action bar all span both columns. */
+/* Header, the collapsible advanced sections, and the action bar span both columns. */
 #dialog h3,
 #dialog .dialog-actions,
-#dialog #agents-row,
-#dialog #tools-row,
-#dialog #skills-row,
-#dialog #inject-skills-row {
+#dialog .dialog-section {
   grid-column: 1 / -1;
+}
+
+/* Collapsible accordion sections (Tools / Skills / Other options). Collapsed by
+   default to keep the dialog short; click the summary to expand. */
+.dialog-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  background: var(--bg);
+}
+.dialog-section > summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.dialog-section > summary::-webkit-details-marker { display: none; }
+.dialog-section > summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+.dialog-section[open] > summary::before { transform: rotate(90deg); }
+.dialog-section[open] > summary { border-bottom: 1px solid var(--border); }
+/* Inner control rows sit inside the section body with breathing room. */
+.dialog-section > label {
+  display: block;
+  padding: 0 10px;
+  margin: 10px 0;
 }
 
 #dialog h3 {
@@ -1533,11 +1566,20 @@ html, body {
   margin: 0 0 4px;
   font-weight: normal;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--text);
 }
 
 .agent-check:last-child { margin-bottom: 0; }
-.agent-check input { margin: 2px 0 0; }
+/* Don't stretch the checkbox to the row height; align it to the first text line
+   (rows can wrap when a tool/skill carries a provenance note). flex:none keeps
+   it from squashing; the small top offset centers it against the first line. */
+.agent-check input {
+  margin: 0;
+  flex: none;
+  align-self: flex-start;
+  margin-top: 0.2em;
+}
 
 /* A skill clodex can't toggle from its own settings layer (off in a lower
    settings layer, or policy-locked) — shown checked-state honest but inert. */

@@ -572,14 +572,14 @@ function applyTypeDefaults() {
   const supportsSystemPrompt = type === 'claude' || type === 'codex';
   systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (!supportsSystemPrompt) inputSystemPrompt.value = '';
-  // Custom subagents and per-session tool/skill gating are Claude-only.
-  agentsRow.style.display = type === 'claude' ? '' : 'none';
-  toolsRow.style.display = type === 'claude' ? '' : 'none';
-  skillsRow.style.display = type === 'claude' ? '' : 'none';
-  injectSkillsRow.style.display = type === 'claude' ? '' : 'none';
-  // Wire-stripping is Anthropic-only (thinking blocks) → Claude sessions only.
-  if (stripRow) stripRow.style.display = type === 'claude' ? '' : 'none';
-  if (type === 'claude') { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
+  // Custom subagents and per-session tool/skill/strip gating are Claude-only.
+  // These live in collapsible accordion sections (Tools / Skills / Other) so the
+  // dialog stays short by default; toggle the whole section per type.
+  const claudeOnly = type === 'claude';
+  for (const sec of [toolsSection, skillsSection, otherSection]) {
+    if (sec) sec.style.display = claudeOnly ? '' : 'none';
+  }
+  if (claudeOnly) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
   const supportsResume = type === 'claude' || type === 'codex';
   resumeRow.style.display = supportsResume ? '' : 'none';
   if (!supportsResume) {
@@ -715,6 +715,11 @@ const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
 const stripRow = document.getElementById('strip-row');
 const inputStripLevel = document.getElementById('input-strip-level');
+// Collapsible accordion sections grouping the Claude-only advanced controls, so
+// the new-session dialog stays short by default (expand the one you need).
+const toolsSection = document.getElementById('tools-section');
+const skillsSection = document.getElementById('skills-section');
+const otherSection = document.getElementById('other-section');
 
 // Custom-skill injection checklist (opt-in: unchecked by default). Mirrors the
 // subagent checklist — checked names are scaffolded into a --plugin-dir at
@@ -878,6 +883,10 @@ async function openDialog() {
   inputResume.value = '';
   inputFork.checked = false;
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
+  // Collapse the advanced accordions each open so the dialog starts short.
+  for (const sec of [toolsSection, skillsSection, otherSection]) {
+    if (sec) sec.open = false;
+  }
   applyTypeDefaults();
   inputName.style.borderColor = '';
   const [, , settings, agentLib] = await Promise.all([

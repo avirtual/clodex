@@ -251,34 +251,43 @@
         </select>
         <span class="hint-text">Applied at create only — Claude: --append-system-prompt · Codex: model_instructions_file</span>
       </label>
-      <label id="agents-row" style="display:none;">Custom subagents
-        <div id="input-agents-list" class="agent-checklist"></div>
-        <div class="popover-subhead">Built-in agents</div>
-        <div id="input-builtins-list" class="agent-checklist"></div>
-        <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
-      </label>
-      <label id="tools-row" style="display:none;">Tools
-        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
-        <div id="input-tools-list" class="agent-checklist"></div>
-        <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
-      </label>
-      <label id="skills-row" style="display:none;">Skills
-        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
-        <div id="input-skills-list" class="agent-checklist"></div>
-        <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
-      </label>
-      <label id="inject-skills-row" style="display:none;">Custom skills
-        <div id="input-inject-skills-list" class="agent-checklist"></div>
-        <span class="hint-text">Inject skills from your <strong>Skill Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
-      </label>
-      <label id="strip-row" style="display:none;">Wire stripping
-        <select id="input-strip-level">
-          <option value="0">Off</option>
-          <option value="1">Level 1 — strip prior-turn thinking</option>
-          <option value="2" disabled>Level 2 — + superseded tool results (coming soon)</option>
-        </select>
-        <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
-      </label>
+      <details id="tools-section" class="dialog-section" style="display:none;">
+        <summary>Tools</summary>
+        <label id="tools-row">
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div id="input-tools-list" class="agent-checklist"></div>
+          <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
+        </label>
+      </details>
+      <details id="skills-section" class="dialog-section" style="display:none;">
+        <summary>Skills</summary>
+        <label id="skills-row">Skills
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div id="input-skills-list" class="agent-checklist"></div>
+          <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
+        </label>
+        <label id="inject-skills-row">Custom skills
+          <div id="input-inject-skills-list" class="agent-checklist"></div>
+          <span class="hint-text">Inject skills from your <strong>Skill Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
+        </label>
+      </details>
+      <details id="other-section" class="dialog-section" style="display:none;">
+        <summary>Other options</summary>
+        <label id="agents-row">Custom subagents
+          <div id="input-agents-list" class="agent-checklist"></div>
+          <div class="popover-subhead">Built-in agents</div>
+          <div id="input-builtins-list" class="agent-checklist"></div>
+          <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
+        </label>
+        <label id="strip-row">Wire stripping
+          <select id="input-strip-level">
+            <option value="0">Off</option>
+            <option value="1">Level 1 — strip prior-turn thinking</option>
+            <option value="2" disabled>Level 2 — + superseded tool results (coming soon)</option>
+          </select>
+          <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
+        </label>
+      </details>
       <label>Extra CLI args
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
