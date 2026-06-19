@@ -767,9 +767,14 @@ async function refreshNewSessionTools() {
   if (inputType.value !== 'claude') return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
-  renderToolChecklist(inputToolsList, new Set(), (res && res.ok && res.effective) || {});
+  // Pre-uncheck the global default deny set so a fresh session inherits the
+  // shared, lean tools loadout out of the box (still editable here per session).
+  renderToolChecklist(inputToolsList, new Set(defaultToolDenyCache), (res && res.ok && res.effective) || {});
 }
 let claudeToolsCache = [];
+// Global default tool-deny set (the "*" agent-default), seeded from getSettings
+// in openDialog; new sessions start with these tools unchecked.
+let defaultToolDenyCache = [];
 
 // Mirror of renderSkillChecklist for tools. `disabledSet` is clodex's own
 // layer-4 off list; `effective` (tool -> {value:'off', source, locked}) is the
@@ -885,7 +890,8 @@ async function openDialog() {
   renderAgentChecklist(inputAgentsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   claudeToolsCache = settings?.claudeTools || [];
-  renderToolChecklist(inputToolsList, new Set());
+  defaultToolDenyCache = settings?.defaultToolDeny || [];
+  renderToolChecklist(inputToolsList, new Set(defaultToolDenyCache));
   refreshNewSessionTools();
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
@@ -2989,6 +2995,9 @@ const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsProxyUrl = document.getElementById('prefs-proxy-url');
 const prefsWsDir = document.getElementById('prefs-ws-dir');
 const prefsWsPort = document.getElementById('prefs-ws-port');
+const prefsToolsRow = document.getElementById('prefs-tools-row');
+const prefsToolsList = document.getElementById('prefs-tools-list');
+wireBulkToggles(prefsToolsRow, prefsToolsList);
 const wsDot = document.getElementById('ws-dot');
 const wsStatusText = document.getElementById('ws-status-text');
 const wsToggleBtn = document.getElementById('btn-ws-toggle');
@@ -3073,6 +3082,10 @@ async function openPrefs() {
   prefsProxyUrl.value = s.proxyUrl || 'http://127.0.0.1:7800';
   prefsWsDir.value = s.wirescopeDir || '';
   prefsWsPort.value = s.wirescopePort || 7800;
+  // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
+  // Unchecked = denied by default for new sessions.
+  claudeToolsCache = s.claudeTools || [];
+  renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
   if (wsPollTimer) clearInterval(wsPollTimer);
@@ -3140,6 +3153,10 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     wirescopeDir: prefsWsDir.value.trim(),
     wirescopePort: (() => { const p = parseInt(prefsWsPort.value, 10); return Number.isInteger(p) && p > 0 ? p : 7800; })(),
   });
+  // Default tool denies live in a separate store (the "*" agent-default), so
+  // persist them via their own setter. collectToolChecklist returns the
+  // unchecked (= denied) tools.
+  await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   closePrefs();
 });
 

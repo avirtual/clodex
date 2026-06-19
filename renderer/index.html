@@ -399,6 +399,14 @@
           <button id="btn-ws-toggle" class="secondary" type="button">Start</button>
         </div>
       </section>
+      <section>
+        <h4>Default tools for new sessions</h4>
+        <p class="hint-text">Unchecked tools are denied for new Claude sessions by default (you can still adjust per session at create). A consistent set lets sessions share one cached tools segment — leaving rarely-used tools off also trims each prompt. Applies only to new sessions; existing ones are unaffected.</p>
+        <label id="prefs-tools-row">Tools
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div id="prefs-tools-list" class="agent-checklist"></div>
+        </label>
+      </section>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>

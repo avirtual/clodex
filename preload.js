@@ -121,6 +121,7 @@ window.api = {
   onSetTheme: (callback) =>
     ipcRenderer.on('set-theme', (_e, name) => callback(name)),
   setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
+  setDefaultToolDeny: (list) => ipcRenderer.invoke('defaults:setToolDeny', list),
 
   openWirescope: (url, backgroundColor) => ipcRenderer.invoke('app:openWirescope', url, backgroundColor),
 

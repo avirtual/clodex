@@ -420,6 +420,33 @@ const agentDefaults = {
     if (Object.keys(e).length) map[name] = e; else delete map[name];
     this._save(map);
   },
+  // Global default tool-deny set that NEW sessions inherit when the create
+  // dialog didn't pass an explicit one. Keyed by "*" (not a legal session name,
+  // so it can't collide with a per-agent entry). A uniform deny set across
+  // sessions yields a byte-identical, lean first cache segment (tools[] sits
+  // before the M1 cache breakpoint), so sessions share one warm tools segment
+  // instead of each cold-writing its own — measured cross-instance + cross-type.
+  //
+  // Tri-state: key ABSENT -> the in-code DEFAULT_TOOL_DENY_FLOOR (shipped
+  // default); key PRESENT with a deny array (incl. EMPTY) -> the user's explicit
+  // choice wins, so "" means "deny nothing" not "fall back to the floor".
+  getDefaultDeny() {
+    const e = this._load()['*'];
+    if (e && Array.isArray(e.deny)) return e.deny.filter((t) => CLAUDE_TOOLS.includes(t));
+    return DEFAULT_TOOL_DENY_FLOOR.slice();
+  },
+  // Persist the global default deny set. An explicit [] is recorded as-is (the
+  // user opting out of the floor), distinct from clearing the key.
+  setDefaultDeny(list) {
+    const map = this._load();
+    const clean = Array.isArray(list)
+      ? [...new Set(list.filter((t) => CLAUDE_TOOLS.includes(t)))]
+      : [];
+    const e = map['*'] || {};
+    e.deny = clean;
+    map['*'] = e;
+    this._save(map);
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -593,6 +620,23 @@ const CLAUDE_TOOLS = [
   'ListMcpResourcesTool', 'ReadMcpResourceTool', 'WaitForMcpServers',
   // Connectors
   'DesignSync',
+];
+
+// Shipped default tool-deny floor for NEW sessions (the "*" agent-default seed).
+// On 2.1.183 a denied tool's schema is omitted from the wire tools[] (verified
+// on live bytes), so a uniform deny set shrinks AND shares the first cache
+// segment. This floor is deliberately conservative — only the provably-near-
+// universally-unused tools, so override probability (which would re-fragment
+// the shared segment) stays ~0: Jupyter-only (NotebookEdit), heavy/niche (LSP),
+// Windows-only (PowerShell), onboarding fluff (ShareOnboardingGuide), a connector
+// absent from a default session anyway (DesignSync), and Workflow (~5.2k tokens,
+// the single biggest reclaim, ~never used in an interactive console). Orchestration
+// tools (Cron*/Task*/Monitor/worktrees) are intentionally NOT here — some agents
+// genuinely use them, and denying-by-default would force the per-session overrides
+// that re-fragment M1. The default is an editable FLOOR, not a ceiling; specialized
+// sessions add to it. Not perfect on purpose — adjust via the settings panel.
+const DEFAULT_TOOL_DENY_FLOOR = [
+  'NotebookEdit', 'LSP', 'PowerShell', 'ShareOnboardingGuide', 'DesignSync', 'Workflow',
 ];
 
 // Known CLI-shipped built-in skills. Unlike tools, skills are normally
@@ -3303,7 +3347,13 @@ app.whenReady().then(() => {
   ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel) => {
     try {
       const workspaceId = workspaceOfSender(e);
-      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], disabledTools || [], disabledSkills || [], injectSkills || []);
+      // Seed tool denies from the global "*" default when the caller passed none.
+      // The new-session dialog always pre-populates its checklist from the default
+      // and sends an explicit array (incl. [] for "deny nothing"), so this only
+      // fires for non-dialog callers — keeping new sessions on the shared, lean
+      // tools segment. An explicit array always wins (undefined === "untouched").
+      const seedTools = (disabledTools === undefined) ? agentDefaults.getDefaultDeny() : disabledTools;
+      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || []);
       // Strip level isn't a spawn arg (it's a proxy-side override the poller
       // asserts once the session links), so persist it onto the entry after
       // create() rather than threading it through the 15-param spawn path.
@@ -3775,6 +3825,7 @@ app.whenReady().then(() => {
       claudeComponents: CLAUDE_SL_COMPONENTS,
       codexComponents: CODEX_SL_COMPONENTS,
       claudeTools: CLAUDE_TOOLS,
+      defaultToolDeny: agentDefaults.getDefaultDeny(),
       proxyEnabled: s.proxyEnabled,
       proxyUrl: s.proxyUrl,
       wirescopeDir: s.wirescopeDir,
@@ -3786,6 +3837,14 @@ app.whenReady().then(() => {
     const next = uiSettings.set(partial);
     rebuildAllStatusScripts(manager);
     return next;
+  });
+
+  // Global default tool-deny set new sessions inherit (the "*" agent-default).
+  // An explicit [] is honored (deny nothing); separate store from uiSettings, so
+  // it gets its own setter. Returns the persisted set for the renderer to render.
+  ipcMain.handle('defaults:setToolDeny', (_e, list) => {
+    agentDefaults.setDefaultDeny(Array.isArray(list) ? list : []);
+    return agentDefaults.getDefaultDeny();
   });
 
   // Theme set from a renderer's Preferences picker. The sender already applied
