@@ -1204,6 +1204,20 @@ const ProxyClient = {
     }
     return [];
   },
+
+  // On-demand detail for one subagent instance (the live-activity popover).
+  // Deliberately NOT in the 5s poll — the request body it reads is heavy. Returns
+  // `{ found, last_text, last_tool, last_tool_input, turn_ts, ... }`; on a miss
+  // the body carries `{ found:false, reason }` with a 200 (wirescope's
+  // action-endpoint convention — HTTP status = request validity, outcome in the
+  // body). `maxlen` clamps string VALUES inside last_tool_input server-side so we
+  // don't pull whole file bodies for a one-line preview. `child` is the
+  // sub_agents[].key (== agent_id when present, else role).
+  async subagentDetail(base, sessionId, child, maxlen) {
+    const qs = new URLSearchParams({ session: sessionId, child, detail: '1' });
+    if (maxlen) qs.set('maxlen', String(maxlen));
+    return this._getJson(base, `/_subagents?${qs.toString()}`);
+  },
 };
 
 // App-global poller (one per process, shared across windows): a single
@@ -3499,6 +3513,29 @@ app.whenReady().then(() => {
       let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
       if (opts && opts.detail) q += '&detail=1';
       const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
+      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+      return { ok: true, data: r.json };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  // On-demand live-activity detail for one subagent row (the child popover).
+  // Resolves the live session_id from the poller snapshot (never a stale
+  // persisted one), then fetches /_subagents for the given child key. Called on
+  // a 1-2s loop only while the popover is open — never in the 5s poll. A `found:
+  // false` body is a normal outcome (child expired / session cold), surfaced as
+  // ok:true with the proxy's reason so the popover can close gracefully.
+  ipcMain.handle('proxy:subagentDetail', async (_e, name, child, maxlen) => {
+    const s = manager.sessions.get(name);
+    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+    const snap = proxyPoller.snapshot(name);
+    if (!snap || !snap.linked || !snap.sessionId) {
+      return { ok: false, error: 'No live proxy session (unlinked)' };
+    }
+    if (typeof child !== 'string' || !child) return { ok: false, error: 'Missing child key' };
+    try {
+      const r = await ProxyClient.subagentDetail(s.proxyBase, snap.sessionId, child, maxlen);
       if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
       return { ok: true, data: r.json };
     } catch (e) {

@@ -52,6 +52,39 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
+// Normalize one /_status `sub_agents[]` entry (a Task/background subagent that
+// shares the parent's session_id on the wire) into the renderer's child-row
+// shape. `key` is the instance key (agent_id when the wire carried the
+// x-claude-code-agent-id header, else role) — it's BOTH the row key and the
+// `/_subagents?child=` detail param, identical by construction (wirescope
+// contract). Returns null for an unkeyable/garbage entry so the caller filters.
+// `last_active_s` is a server-computed fact (now - last_seen, dodges clock skew
+// between the proxy and us); we fall back to our own clock only on a pre-add
+// proxy that doesn't emit it yet. Running/idle/done + aging are POLICY and live
+// entirely renderer-side — we surface raw facts only (same split as /_health).
+function shapeSubagent(s, now) {
+  if (!s || typeof s !== 'object') return null;
+  const key = typeof s.key === 'string' && s.key ? s.key
+    : (typeof s.agent_id === 'string' && s.agent_id ? s.agent_id
+      : (typeof s.role === 'string' && s.role ? s.role : null));
+  if (!key) return null;
+  const lastSeen = typeof s.last_seen === 'number' ? s.last_seen : null;
+  const lastActiveS = typeof s.last_active_s === 'number' ? s.last_active_s
+    : (lastSeen != null ? Math.max(0, now / 1000 - lastSeen) : null);
+  return {
+    key,
+    agentId: typeof s.agent_id === 'string' ? s.agent_id : null,
+    role: typeof s.role === 'string' ? s.role : null,
+    label: (typeof s.display_name === 'string' && s.display_name) ? s.display_name
+      : (typeof s.role === 'string' && s.role ? s.role : key),
+    model: typeof s.model === 'string' ? s.model : null,
+    requests: typeof s.requests === 'number' ? s.requests : null,
+    firstSeen: typeof s.first_seen === 'number' ? s.first_seen : null,
+    lastSeen,
+    lastActiveS,
+  };
+}
+
 // Normalize one /_status record into the renderer payload. `r` is null when no
 // proxy record matches the session (unlinked). `probe` carries version + caps.
 function shapeProxyRecord(r, probe, now = Date.now()) {
@@ -85,7 +118,13 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
       ttl_s: typeof w.ttl_s === 'number' ? w.ttl_s : null,
     } : null,
     hold: r.hold || null,
+    // Task/background subagents nested under this session (share its session_id
+    // on the wire). Empty until a real subagent makes a wire turn. Sorted
+    // newest-active first to match wirescope's emission order.
+    subagents: Array.isArray(r.sub_agents)
+      ? r.sub_agents.map((s) => shapeSubagent(s, now)).filter(Boolean)
+      : [],
   };
 }
 
-module.exports = { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord };
+module.exports = { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent };

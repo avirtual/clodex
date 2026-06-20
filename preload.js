@@ -96,6 +96,8 @@ window.api = {
     ipcRenderer.invoke('proxy:hold', name, hours, force),
   setStripLevel: (name, level) =>
     ipcRenderer.invoke('proxy:setStripLevel', name, level),
+  getProxySubagentDetail: (name, child, maxlen) =>
+    ipcRenderer.invoke('proxy:subagentDetail', name, child, maxlen),
   onSessionMention: (callback) =>
     ipcRenderer.on('session-mention', (_e, name, mtype, from) => callback(name, mtype, from)),
   onRequestSwitchSession: (callback) =>
