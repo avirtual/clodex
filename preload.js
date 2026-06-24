@@ -60,6 +60,8 @@ window.api = {
     ipcRenderer.invoke('update:open'),
   getVersion: () =>
     ipcRenderer.invoke('app:getVersion'),
+  getDiagnostics: () =>
+    ipcRenderer.invoke('diagnostics:get'),
   onUpdateAvailable: (callback) =>
     ipcRenderer.on('update-available', (_e, info) => callback(info)),
   onSessionContextAction: (callback) =>

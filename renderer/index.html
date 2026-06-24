@@ -21,6 +21,10 @@
       <span class="update-dot">●</span>
       <span id="update-text">Update available</span>
     </div>
+    <div id="diag-banner" class="hidden" title="Spawn diagnostics — click to copy details">
+      <span class="diag-dot">▲</span>
+      <span id="diag-text">Sessions can't start</span>
+    </div>
   </div>
 
   <!-- Prompts library drawer -->
@@ -419,6 +423,12 @@
           <span id="ws-status-text" class="hint-text" style="flex: 1;">—</span>
           <button id="btn-ws-toggle" class="secondary" type="button">Start</button>
         </div>
+        <p class="hint-text" style="margin: 14px 0 2px;">Resume-time transcript bake</p>
+        <p class="hint-text">When resuming a session, bake its on-disk transcript down to the same set wirescope already strips on the wire, so the replayed prefix is permanently slimmer. Byte-identical to the live wire (it only removes what the wire already drops), so it never busts a warm cache. Requires a running wirescope; fail-safe — resumes the original transcript on any error.</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-compact-on-resume" style="margin: 0;">
+          <span>Bake transcripts on resume</span>
+        </label>
       </section>
       <section>
         <h4>Default tools for new sessions</h4>

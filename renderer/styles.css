@@ -1743,6 +1743,39 @@ html, body {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* Spawn diagnostics banner — louder than the update banner since it means
+   sessions are broken until the user runs electron-rebuild. */
+#diag-banner {
+  margin: 6px 12px 10px;
+  padding: 8px 10px;
+  background: rgba(240, 173, 78, 0.14);
+  border: 1px solid rgba(240, 173, 78, 0.45);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  transition: background 0.15s;
+}
+
+#diag-banner.hidden {
+  display: none;
+}
+
+#diag-banner:hover {
+  background: rgba(240, 173, 78, 0.24);
+}
+
+.diag-dot {
+  color: #f0ad4e;
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 /* IPC log panel */
 
 #ipc-log {

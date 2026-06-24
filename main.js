@@ -33,6 +33,122 @@ function fixPathFromLoginShell() {
 }
 fixPathFromLoginShell();
 
+// ── Spawn diagnostics ───────────────────────────────────────────────────────
+// node-pty's "posix_spawnp failed." (pty.cc:373) is the spawn of its prebuilt
+// `spawn-helper`, NOT of claude/codex — the user command is exec'd later by the
+// helper. So `which claude` succeeding tells you nothing: the real culprit is
+// almost always a spawn-helper arch mismatch (e.g. x86_64 helper under an arm64
+// Electron, or running under Rosetta), which posix_spawn rejects with EBADARCH.
+// `npx electron-rebuild` is the fix. These helpers turn the opaque error into
+// something actionable and log the system state at startup.
+
+// `which`-style PATH lookup: node-pty exec's bare names ('claude'/'codex'), so
+// a null here distinguishes "binary missing" from a deeper helper failure.
+function whichBin(cmd) {
+  if (!cmd) return null;
+  if (cmd.includes('/')) { try { fs.accessSync(cmd, fs.constants.X_OK); return cmd; } catch { return null; } }
+  for (const d of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    const p = path.join(d, cmd);
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+  }
+  return null;
+}
+
+// CPU arch from a Mach-O header (first 8 bytes). Naming matches `process.arch`
+// expectations via expectedArch() below.
+function machoArch(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(8);
+    fs.readSync(fd, buf, 0, 8, 0);
+    fs.closeSync(fd);
+    const be = buf.readUInt32BE(0), le = buf.readUInt32LE(0);
+    if (be === 0xcafebabe || be === 0xcafebabf) return 'universal';
+    if (le === 0xfeedfacf) { // MH_MAGIC_64 (little-endian binary)
+      const cpu = buf.readUInt32LE(4);
+      if (cpu === 0x0100000c) return 'arm64';
+      if (cpu === 0x01000007) return 'x86_64';
+      return `cputype 0x${cpu.toString(16)}`;
+    }
+    if (le === 0xfeedface) return '32-bit';
+    return 'not Mach-O';
+  } catch (e) { return `unreadable (${e.code || e.message})`; }
+}
+
+// process.arch uses 'x64'; Mach-O reports 'x86_64'. Normalize to compare.
+function expectedArch() { return process.arch === 'x64' ? 'x86_64' : process.arch; }
+
+// Mirror node-pty's helperPath resolution (incl. the asar.unpacked rewrites).
+function spawnHelperPath() {
+  let p = path.join(path.dirname(require.resolve('node-pty')), '..', 'build', 'Release', 'spawn-helper');
+  return p.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked');
+}
+
+function detectRosetta() {
+  if (process.platform !== 'darwin') return false;
+  try {
+    return execSync('sysctl -n sysctl.proc_translated', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() === '1';
+  } catch { return false; }
+}
+
+function collectSystemDiagnostics() {
+  const helper = spawnHelperPath();
+  let helperExecutable = false;
+  try { fs.accessSync(helper, fs.constants.X_OK); helperExecutable = true; } catch {}
+  return {
+    platform: process.platform, procArch: process.arch, rosetta: detectRosetta(),
+    electron: process.versions.electron, node: process.versions.node,
+    claude: whichBin('claude'), codex: whichBin('codex'),
+    helperPath: helper, helperExists: fs.existsSync(helper),
+    helperExecutable, helperArch: machoArch(helper),
+  };
+}
+
+// Compact, single-line summary suitable for embedding in a thrown spawn error.
+function diagSummary(d = collectSystemDiagnostics()) {
+  return `proc=${d.platform}/${d.procArch}${d.rosetta ? '(rosetta)' : ''} helper=${d.helperArch} `
+    + `electron=${d.electron} node=${d.node}`;
+}
+
+// The single source of truth for "is this install broken in a way that will
+// fail every spawn?". Returns a short, user-facing string (or null when fine)
+// shared by the startup log, the thrown spawn error, and the UI banner. The
+// node-pty spawn-helper is what posix_spawn actually launches, so any problem
+// with it — missing, non-executable, or wrong arch — sinks every session.
+function diagWarning(d = collectSystemDiagnostics()) {
+  if (d.platform !== 'darwin') return null;
+  if (!d.helperExists) {
+    return 'node-pty spawn-helper is missing — sessions can\'t start. Fix: npx electron-rebuild';
+  }
+  if (!d.helperExecutable) {
+    return 'node-pty spawn-helper is not executable — sessions can\'t start. Fix: npx electron-rebuild';
+  }
+  if (!['universal', '32-bit'].includes(d.helperArch) && d.helperArch !== expectedArch()) {
+    return `spawn-helper arch (${d.helperArch}) != app arch (${expectedArch()}) — `
+      + 'every session fails with "posix_spawnp failed." Fix: npx electron-rebuild';
+  }
+  if (d.rosetta) {
+    return 'Running under Rosetta — rebuild native modules for the running arch: npx electron-rebuild';
+  }
+  return null;
+}
+
+function logStartupDiagnostics() {
+  const d = collectSystemDiagnostics();
+  const lines = [
+    '── Clodex startup diagnostics ──',
+    `process:      ${d.platform}/${d.procArch}${d.rosetta ? '  ⚠ Rosetta-translated' : ''}   electron ${d.electron}  node ${d.node}`,
+    `spawn-helper: ${d.helperPath}`,
+    `              exists=${d.helperExists} executable=${d.helperExecutable} arch=${d.helperArch}`,
+    `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
+    `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
+  ];
+  const warning = diagWarning(d);
+  if (warning) lines.push(`⚠ ${warning}`);
+  console.log(lines.join('\n'));
+  return d;
+}
+
 // Clodex-owned runtime dir: registry, sockets, hook scripts, prompt files,
 // jsonl symlinks, spilled messages. Lives in $HOME (not /tmp) so macOS's
 // 3-day tmp reaper can't delete files under long-running sessions, and kept
@@ -690,6 +806,13 @@ const DEFAULT_UI_SETTINGS = {
   // start/stop. Empty dir = nothing to manage (detect-only).
   wirescopeDir: '',
   wirescopePort: 7800,
+  // Cold-resume compaction: when a parked session is resumed (GUI relaunch =
+  // cold by construction), ask wirescope to BAKE its transcript down to the
+  // safe-to-drop set before --resume. The re-cache is unavoidable on a cold
+  // resume, so baking just makes it cheaper + permanently slimmer. OFF by
+  // default — it mutates the on-disk transcript (wirescope backs up + integrity-
+  // gates; clodex fails safe to the original on any error). Needs a live proxy.
+  compactOnResume: false,
   // Built-in Claude Design MCP: the CLI auto-injects the claude.ai `claude_design`
   // connector (20 `mcp__claude_design__*` tools, ~4k tok/turn cache carriage) on
   // every launch for entitled accounts, with no honored global opt-out. The PRIMARY
@@ -725,6 +848,7 @@ const uiSettings = {
         proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl : DEFAULT_UI_SETTINGS.proxyUrl,
         wirescopeDir: typeof raw?.wirescopeDir === 'string' ? raw.wirescopeDir : DEFAULT_UI_SETTINGS.wirescopeDir,
         wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
+        compactOnResume: typeof raw?.compactOnResume === 'boolean' ? raw.compactOnResume : DEFAULT_UI_SETTINGS.compactOnResume,
         disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
         theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
       };
@@ -743,6 +867,7 @@ const uiSettings = {
       proxyUrl: partial?.proxyUrl ?? cur.proxyUrl,
       wirescopeDir: partial?.wirescopeDir ?? cur.wirescopeDir,
       wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
+      compactOnResume: partial?.compactOnResume ?? cur.compactOnResume,
       disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
       theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
     };
@@ -1181,6 +1306,25 @@ const ProxyClient = {
     else if (explicitZero) qs.set('level', '0');
     else qs.set('action', 'clear');
     return this._req(base, `/_strip?${qs.toString()}`, 'POST');
+  },
+
+  // Ask wirescope to BAKE a session's transcript down to its safe-to-drop set
+  // (prior thinking; at L2 also the edit-ack / failed-call folds). A one-time
+  // source rewrite — pay one re-cache, then run permanently slimmer with ~0
+  // repeat live-strip work (see the strip arc: this is NOT a free recycle).
+  // File-level op keyed by transcript PATH so it works on a COLD session the
+  // proxy no longer holds in memory. wirescope owns the transform (bake ⊆ the
+  // session's effective strip level, kept in-repo so it can't drift), backs up
+  // (.bak-<ts>), atomic-renames, and integrity-gates the chain; on any !ok the
+  // caller MUST resume the ORIGINAL transcript untouched.
+  async compact(base, sessionId, transcriptPath, level = 0) {
+    const qs = new URLSearchParams({ session: sessionId, path: transcriptPath });
+    // Tell wirescope our INTENDED strip level so the bake depth matches it: at
+    // cold resume the proxy holds no live override to read, so clodex is the
+    // source of intent. Thinking is always safe to bake (level-independent);
+    // level>=2 also opts into the edit-ack / failed-call folds.
+    if (level >= 1) qs.set('level', String(level));
+    return this._req(base, `/_compact?${qs.toString()}`, 'POST');
   },
 
   // Confirm a base is our telemetry proxy (wirescope) and read its live
@@ -1663,6 +1807,61 @@ function readEffectiveToolState(cwd) {
 function claudeProjectDir(cwd) {
   if (!cwd) return null;
   return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
+}
+
+// Resume-time transcript bake. Before --resume, ask wirescope to bake the
+// session's on-disk transcript down to its safe-to-drop set so the prefix the
+// CLI replays is already slim — moving the strip from per-turn-on-the-wire to
+// once-on-disk.
+//
+// Warmth is IRRELEVANT, and that's the whole point. The prefix cache is keyed
+// on the WIRE bytes wirescope sends the API, not on what the CLI reads off
+// disk. With live-strip active, a plain resume sends the fat transcript and
+// wirescope strips it to X; a baked resume sends the slim transcript and
+// wirescope strips it to the SAME X (the bake is idempotent under the strip).
+// Same wire bytes → same cache key → the bake can't bust a warm cache. So
+// there is no cold-only gate: the safety isn't warmth, it's the invariant
+// bake ⊆ live-strip — the bake removes ONLY what the wire already drops, which
+// is what keeps the result byte-identical to the live wire (asserted by
+// wire_delta.byte_identical_to_live_wire). We pass the session's strip level so
+// wirescope matches bake depth to it; wirescope owns the transform and MUST
+// fail-safe (!ok, no rewrite) on anything it can't guarantee identical.
+// FAIL-SAFE throughout: opt-in, proxy-gated, and ANY error / !ok returns
+// quietly so the caller resumes the ORIGINAL transcript untouched.
+async function maybeCompactBeforeResume(entry) {
+  try {
+    if (!uiSettings.get().compactOnResume) return;     // opt-in — off by default
+    if (!entry || entry.type !== 'claude' || !entry.sessionId) return;
+    const base = resolveProxyBase(entry.proxy);        // null when proxy disabled → skip
+    if (!base) return;
+    // Fire only once the proxy actually answers /_identity — robust against the
+    // launch race (proxy not up yet at restore → skip → resume original), rather
+    // than relying on auto-start ordering. /_compact is wirescope-only.
+    const probe = await ProxyClient.probe(base);
+    if (!probe || probe.product !== 'wirescope') return;
+    const dir = claudeProjectDir(entry.cwd);
+    if (!dir) return;
+    const tpath = path.join(dir, `${entry.sessionId}.jsonl`);
+    if (!fs.existsSync(tpath)) return;
+    const r = await ProxyClient.compact(base, entry.sessionId, tpath, stripLevelOf(entry));
+    const j = (r && r.json) || {};
+    if (j.ok && !j.noop) {
+      // wire_delta (wirescope v0.6.12+) reports the byte-identity readout: how
+      // many pure-thinking turns bake out-stripped live-strip (each re-caches
+      // once) and whether the baked source is byte-identical to the live wire.
+      const wd = j.wire_delta || {};
+      const ptt = wd.pure_thinking_turns;
+      const bid = wd.byte_identical_to_live_wire;
+      const tag = ptt != null
+        ? ` [pure_thinking_turns:${ptt}, byte_identical:${bid}]`
+        : '';
+      console.log(`compact ${entry.name}: ${j.lines_in ?? '?'}→${j.lines_out ?? '?'} lines, ~${j.tokens_removed ?? '?'} tok removed${tag}`);
+    } else if (j.ok === false) {
+      console.warn(`compact ${entry.name} skipped (${j.reason || 'unknown'}) — resuming original`);
+    }
+  } catch (e) {
+    console.warn(`compact ${entry?.name} failed (${e.message}) — resuming original`);
+  }
 }
 
 // Pull picker metadata out of one transcript file: the generated title (last
@@ -2333,13 +2532,30 @@ class SessionManager {
     const env = { ...process.env, TERM: 'xterm-256color' };
     if (type === 'codex') env.WB_WRAP_NAME = name;
 
-    const ptyProc = pty.spawn(cmd, args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: cwd || process.env.HOME || os.homedir(),
-      env,
-    });
+    let ptyProc;
+    try {
+      ptyProc = pty.spawn(cmd, args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 30,
+        cwd: cwd || process.env.HOME || os.homedir(),
+        env,
+      });
+    } catch (e) {
+      // node-pty's "posix_spawnp failed." hides whether the helper or the target
+      // binary is at fault. Append the resolved cmd + system state so the UI alert
+      // is self-diagnosing (arch mismatch is the usual answer — see diagnostics).
+      // Lead with diagWarning() when it fires so the alert names the FIX
+      // (npx electron-rebuild), not just the raw state.
+      const d = collectSystemDiagnostics();
+      const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
+      const warning = diagWarning(d);
+      throw new Error(
+        `${e.message}${warning ? ` — ${warning}` : ''} `
+        + `[cmd=${cmd} resolved=${resolved || 'NOT FOUND on PATH'} `
+        + `cwd=${cwd || '(home)'} ${diagSummary(d)}]`,
+      );
+    }
 
     // Registry + transport — only for agent sessions; bash sessions are private
     let transport = null;
@@ -3436,6 +3652,8 @@ app.whenReady().then(() => {
   UI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ui-settings.json');
   AGENT_DEFAULTS_FILE = path.join(app.getPath('userData'), 'agent-defaults.json');
 
+  logStartupDiagnostics();
+
   cleanupOldMessages();
   setInterval(cleanupOldMessages, MSG_CLEANUP_INTERVAL);
   registry.cleanup();
@@ -3490,6 +3708,13 @@ app.whenReady().then(() => {
     if (updateInfo) shell.openExternal(updateInfo.url);
   });
   ipcMain.handle('app:getVersion', () => app.getVersion());
+
+  // Spawn-health diagnostics for the renderer banner — recomputed live so a
+  // post-launch `electron-rebuild` clears the warning on the next poll.
+  ipcMain.handle('diagnostics:get', () => {
+    const d = collectSystemDiagnostics();
+    return { ...d, warning: diagWarning(d), summary: diagSummary(d) };
+  });
 
   ipcMain.handle('templates:list', () => templates.list());
   ipcMain.handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
@@ -4120,6 +4345,12 @@ app.whenReady().then(() => {
         continue;
       }
       try {
+        // Resume-time bake (opt-in, fail-safe): slim the transcript before
+        // --resume so the replayed prefix is small + permanently slimmer. Safe
+        // regardless of cache warmth — the bake is byte-identical to the live
+        // wire (bake ⊆ live-strip), so it can't bust a warm prefix. No-op unless
+        // the compactOnResume setting + a live wirescope are both present.
+        await maybeCompactBeforeResume(entry);
         await manager.create(
           entry.name,
           entry.type,

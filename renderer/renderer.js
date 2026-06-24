@@ -1017,6 +1017,7 @@ async function doCreate() {
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);
+    refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
     return;
   }
 
@@ -3312,6 +3313,41 @@ window.api.getUpdateInfo().then((info) => { if (info) showUpdateBanner(info); })
 // Listen for updates detected while running
 window.api.onUpdateAvailable((info) => showUpdateBanner(info));
 
+// ---------------------------------------------------------------------------
+// Spawn diagnostics banner — surfaces a broken-install warning (the usual
+// cause of "posix_spawnp failed.") so Finder-launched users who never see
+// stdout still get a pointer to `npx electron-rebuild`.
+// ---------------------------------------------------------------------------
+
+const diagBanner = document.getElementById('diag-banner');
+const diagText = document.getElementById('diag-text');
+let diagDetails = '';
+
+async function refreshDiagBanner() {
+  try {
+    const d = await window.api.getDiagnostics();
+    if (d && d.warning) {
+      diagText.textContent = d.warning;
+      diagDetails = `${d.warning}\n${d.summary}\nhelper=${d.helperPath}`;
+      diagBanner.classList.remove('hidden');
+    } else {
+      diagBanner.classList.add('hidden');
+    }
+  } catch { /* diagnostics are best-effort */ }
+}
+
+// Clicking copies the full details so users can paste them into a bug report.
+diagBanner.addEventListener('click', () => {
+  if (!diagDetails) return;
+  navigator.clipboard.writeText(diagDetails).then(() => {
+    const prev = diagText.textContent;
+    diagText.textContent = 'Copied diagnostics to clipboard';
+    setTimeout(() => { diagText.textContent = prev; }, 1500);
+  }).catch(() => {});
+});
+
+refreshDiagBanner();
+
 // Tray-triggered actions
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
@@ -3333,6 +3369,7 @@ const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsProxyUrl = document.getElementById('prefs-proxy-url');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
+const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsWsDir = document.getElementById('prefs-ws-dir');
 const prefsWsPort = document.getElementById('prefs-ws-port');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -3421,6 +3458,7 @@ async function openPrefs() {
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsProxyUrl.value = s.proxyUrl || 'http://127.0.0.1:7800';
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
+  prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsWsDir.value = s.wirescopeDir || '';
   prefsWsPort.value = s.wirescopePort || 7800;
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
@@ -3492,6 +3530,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     proxyEnabled: prefsProxyEnabled.checked,
     proxyUrl: prefsProxyUrl.value.trim() || 'http://127.0.0.1:7800',
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
+    compactOnResume: prefsCompactOnResume.checked,
     wirescopeDir: prefsWsDir.value.trim(),
     wirescopePort: (() => { const p = parseInt(prefsWsPort.value, 10); return Number.isInteger(p) && p > 0 ? p : 7800; })(),
   });
