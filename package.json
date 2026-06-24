@@ -1,6 +1,6 @@
 {
   "name": "clodex",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
   "main": "main.js",
   "scripts": {
