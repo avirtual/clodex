@@ -2,6 +2,7 @@
   "name": "clodex",
   "version": "0.21.0",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
+  "author": "Bogdan Ionescu <bogdan.ionescu@gmail.com>",
   "main": "main.js",
   "scripts": {
     "start": "ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
