@@ -1638,8 +1638,10 @@ function renderSubagentFeed() {
     if (e.tool) {
       const preview = subagentToolPreview(e.toolInput);
       const clamped = preview.length > 600 ? preview.slice(0, 600) + '…' : preview;
-      entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${esc(e.tool)}</span>` +
-        (clamped ? `<span class="subagent-tool-arg">${esc(clamped)}</span>` : '') + '</div>');
+      // Tool name is the colored first word, args flow inline after it: "Read: …".
+      const nameTxt = clamped ? `${esc(e.tool)}:` : esc(e.tool);
+      entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${nameTxt}</span>` +
+        (clamped ? ` <span class="subagent-tool-arg">${esc(clamped)}</span>` : '') + '</div>');
       if (e.truncated) entry.push('<div class="subagent-detail-note">(arguments truncated)</div>');
     }
     if (e.text) {
@@ -3019,7 +3021,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !reportOverlay.classList.contains('hidden')) closeReportPanel();
 });
 
-window.api.onSessionMention((name, mtype /* 'dm'|'broadcast' */) => {
+window.api.onSessionMention((name, mtype /* 'dm' */) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   el.classList.remove('mention-pulse');
@@ -3092,13 +3094,11 @@ function appendIpcEntry(msg) {
 
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const entry = document.createElement('div');
-  entry.className = 'ipc-entry' + (msg.type === 'broadcast' ? ' ipc-bcast' : '');
+  entry.className = 'ipc-entry';
 
   const fromBadge = `<span class="ipc-from">${esc(msg.from)}</span>`;
   const arrow = `<span class="ipc-arrow">→</span>`;
-  const targetBadge = msg.type === 'broadcast'
-    ? `<span class="ipc-to">all</span>`
-    : `<span class="ipc-to">${esc(msg.to)}</span>`;
+  const targetBadge = `<span class="ipc-to">${esc(msg.to)}</span>`;
   const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
 
   entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
@@ -3117,30 +3117,6 @@ function appendIpcEntry(msg) {
 
 window.api.onIpcMessage((msg) => {
   appendIpcEntry(msg);
-});
-
-const broadcastInput = document.getElementById('broadcast-input');
-const broadcastSend = document.getElementById('broadcast-send');
-
-async function sendBroadcast() {
-  const body = broadcastInput.value.trim();
-  if (!body) return;
-  broadcastInput.disabled = true;
-  broadcastSend.disabled = true;
-  try {
-    await window.api.broadcast(body);
-    broadcastInput.value = '';
-  } finally {
-    broadcastInput.disabled = false;
-    broadcastSend.disabled = false;
-    broadcastInput.focus();
-  }
-}
-
-broadcastSend.addEventListener('click', sendBroadcast);
-broadcastInput.addEventListener('keydown', (e) => {
-  e.stopPropagation();
-  if (e.key === 'Enter') sendBroadcast();
 });
 
 // ---------------------------------------------------------------------------
@@ -3355,7 +3331,6 @@ window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
 window.api.onRequestOpenPromptsDrawer(() => openPromptsDrawer());
 window.api.onRequestOpenIpcLog(() => {
   if (ipcLog.classList.contains('collapsed')) toggleIpcLog();
-  broadcastInput.focus();
 });
 
 // ---------------------------------------------------------------------------

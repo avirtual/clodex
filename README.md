@@ -1,6 +1,6 @@
 # Clodex
 
-A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run multiple agent sessions side-by-side in a single Mac app, with built-in inter-agent messaging — agents can DM each other, broadcast updates, and discover peers.
+A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run multiple agent sessions side-by-side in a single Mac app, with built-in inter-agent messaging — agents can DM each other and discover peers.
 
 ![Sidebar with agent sessions, terminal viewport on the right](./docs/screenshot.png)
 
@@ -8,8 +8,8 @@ A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run mul
 
 - **Sidebar with agent sessions** — switch between Claude, Codex, and bash sessions with a click
 - **Embedded xterm.js terminals** — each session is a real PTY with full terminal support
-- **Inter-agent IPC** — agents can write `[cli:dm bob] hello` in their responses to message each other; DMs land in the recipient's stdin as `[from alice] hello`. Sidebar tab pulses amber when a session receives a message.
-- **Multi-window workspaces** — each window is a workspace with its own session set; restored on relaunch. Broadcast and `[cli:who]` are workspace-scoped; DM is global by agent name.
+- **Inter-agent IPC** — agents can write `[agent:dm bob] hello` in their responses to message each other; DMs land in the recipient's stdin as `[agent:from alice] hello`. Sidebar tab pulses amber when a session receives a message.
+- **Multi-window workspaces** — each window is a workspace with its own session set; restored on relaunch. `[agent:who]` is workspace-scoped; DM is global by agent name.
 - **Live context indicator** — for Claude sessions, sidebar shows a color-coded badge (green/orange/red) with the current context window usage
 - **Prompts library** — save reusable prompts and either inject them into a running session or seed a new one as a system prompt
 - **Templates** — save New Session dialog configs and pick them from a dropdown
@@ -62,13 +62,12 @@ This removes macOS's quarantine flag, which is added to anything downloaded from
 
 Once two or more agent sessions are running, they can message each other. Just talk to Claude/Codex normally — the protocol is injected as a system prompt at spawn time. Examples:
 
-- *"Who is online?"* → agent writes `[cli:who]` → gets `[peers] alice, bob`
-- *"DM bob and ask him to check the failing test"* → agent writes `[cli:dm bob] please check the failing test` → bob receives it as `[from alice] please check the failing test`
-- *"Tell everyone the build is broken"* → `[cli:broadcast] heads up, build is broken on main`
+- *"Who is online?"* → agent writes `[agent:who]` → gets `[agent:peers] alice, bob`
+- *"DM bob and ask him to check the failing test"* → agent writes `[agent:dm bob] please check the failing test` → bob receives it as `[agent:from alice] please check the failing test`
 
 Bash sessions are private terminals — they don't participate in IPC.
 
-**Scoping:** `[cli:broadcast]` and `[cli:who]` are scoped to the sender's workspace — they only see agents in the same window. `[cli:dm <name>]` is global: if an agent by that name exists in any workspace, it'll receive the DM.
+**Scoping:** `[agent:who]` is scoped to the sender's workspace — it only sees agents in the same window. `[agent:dm <name>]` is global: if an agent by that name exists in any workspace, it'll receive the DM.
 
 ### Prompts library
 
@@ -132,9 +131,9 @@ Each agent session is a node-pty subprocess running `claude` or `codex`. Clodex 
 
 1. **Registers on `~/.clodex/{name}.sock`** so messages can be delivered across Clodex windows.
 2. **Installs a SessionStart hook** that creates a symlink (`~/.clodex/{name}.jsonl`) pointing at the agent's transcript file.
-3. **Injects the IPC protocol as a system prompt** — `--append-system-prompt-file` for Claude, `-c model_instructions_file=…` for Codex — so the agent knows the `[cli:…]` intents it can emit.
+3. **Injects the IPC protocol as a system prompt** — `--append-system-prompt-file` for Claude, `-c model_instructions_file=…` for Codex — so the agent knows the `[agent:…]` intents it can emit.
 
-A watcher tails the JSONL (seeking to EOF on first open so past turns don't re-fire), extracts assistant text, and scans it for `[cli:…]` intents. Matching intents get routed to the target session's PTY stdin. Messages larger than 500 bytes spill to `~/.clodex/messages/` and are delivered as a pointer for the recipient to read via its file-access tool.
+A watcher tails the JSONL (seeking to EOF on first open so past turns don't re-fire), extracts assistant text, and scans it for `[agent:…]` intents. Matching intents get routed to the target session's PTY stdin. Messages larger than 500 bytes spill to `~/.clodex/messages/` and are delivered as a pointer for the recipient to read via its file-access tool.
 
 Persistent data lives under `~/Library/Application Support/Clodex/`:
 - `sessions.json` — one entry per session with name, type, cwd, extraArgs, sessionId (for resume), workspaceId, label

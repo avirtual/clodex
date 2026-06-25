@@ -17,8 +17,6 @@ window.api = {
     ipcRenderer.invoke('session:setLabel', name, label),
   showSessionContextMenu: (name, cwd) =>
     ipcRenderer.send('session:context-menu', { name, cwd }),
-  broadcast: (body) =>
-    ipcRenderer.invoke('ui:broadcast', body),
   exportSessionMarkdown: (name) =>
     ipcRenderer.invoke('session:exportMarkdown', name),
   listTemplates: () =>
