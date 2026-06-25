@@ -20,9 +20,9 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "electron": "^35.0.0",
-    "electron-builder": "^25.1.8",
-    "electron-rebuild": "^3.2.9"
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.bogdan.clodex",
