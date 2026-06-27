@@ -1183,6 +1183,7 @@ Write an intent line in your response text. Intents are the ONLY channel that re
   [agent:name]                     Your own wrapper name
   [agent:context compact]          Compact your own context window (manage it yourself when no operator is present)
   [agent:context clear]            Clear your own history, keeping the session (heavier than compact — drops the conversation)
+  [agent:context reload]           Cold-restart your own session (drops history; adopts edited config like your system prompt — rare, nuclear)
 
 Replies arrive later as separate labeled "[agent:from SENDER]" messages in your input.
 
@@ -3058,12 +3059,59 @@ class SessionManager {
 
   _handleContextIntent(session, sub) {
     if (sub === 'reload') {
-      // Tier 3: not a slash injection — a fresh respawn (resumeId omitted) to
-      // force a cold boot that re-adopts changed static config + re-includes the
-      // durable briefing. Built separately (deferred teardown + UI reattach).
-      console.warn(`[agent:context reload] from ${session.name}: not yet implemented`);
+      // Tier 3 (rare nuclear option): not a slash injection — a fresh respawn
+      // with resumeId OMITTED to force a cold boot. Its real purpose is adopting
+      // changed STATIC config a running session can't pick up (the prefix is
+      // snapshotted at spawn): canonical case is "a library/prompts/system/*
+      // building block was edited, respawn to run under it." Re-including the
+      // durable briefing is a consequence of the cold boot (the briefing gate
+      // keys on resumeId===null), not the motivation.
+      const name = session.name;
+      const entry = persistence.get(name);
+      if (!entry) return;
       this._broadcast('ipc-message', {
-        type: 'context', from: session.name, to: session.name, body: 'context reload (not yet implemented)',
+        type: 'context', from: name, to: name, body: 'context reload → fresh restart',
+      });
+      // Defer off the JsonlWatcher scan callback that triggered us: reload kills
+      // the very watcher mid-emit, and tearing it down from inside its own
+      // callback risks a closed-fd reentrancy crash (same defer discipline as
+      // _injectText's deferred Enter). setImmediate lets the scan unwind first.
+      const waitExit = async (nm, timeoutMs = 8000) => {
+        const start = Date.now();
+        while (this.sessions.has(nm)) {
+          if (Date.now() - start > timeoutMs) return false;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        return true;
+      };
+      setImmediate(async () => {
+        try {
+          if (this.sessions.has(name)) {
+            await this.kill(name);
+            if (!await waitExit(name)) throw new Error('old process did not exit in time');
+          }
+          // kill() dropped the persistence entry; create() rebuilds it from the
+          // snapshot. resumeId=null → cold boot adopts changed static config.
+          await this.create(
+            name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
+            entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+            entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+            entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+          );
+          const lvl = stripLevelOf(entry);
+          if (lvl >= 1) persistence.setStripLevel(name, lvl);
+          if (entry.label) persistence.setLabel(name, entry.label);
+          // The intent path bypasses the renderer's restartSessionWithReattach,
+          // so tell the owning window to rebuild the sidebar tab + terminal the
+          // kill removed. Dropped harmlessly if the window is detached — the
+          // session still respawned and the UI recomputes on reattach.
+          this._sendToSession(name, 'session:context-action', {
+            action: 'reattach', name, type: entry.type, cwd: entry.cwd,
+          });
+        } catch (err) {
+          console.error(`[agent:context reload] ${name} failed:`, err.message);
+          persistence.upsert(entry); // never let a failed respawn eat the entry
+        }
       });
       return;
     }

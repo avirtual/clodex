@@ -366,13 +366,24 @@ function restartSessionWithReattach(name) {
   });
 }
 
-window.api.onSessionContextAction(({ action, name }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
       break;
     case 'restart':
       restartSessionWithReattach(name);
+      break;
+    case 'reattach':
+      // Main-process-driven respawn ([agent:context reload]) already killed +
+      // recreated the session; the kill removed our sidebar tab + terminal via
+      // session-exit, so rebuild them. Mirrors restartSessionWithReattach's
+      // success branch, but main owns the respawn (type/cwd come in the signal).
+      if (type) {
+        createTerminal(name);
+        addSessionToSidebar(name, type, cwd, null);
+        switchSession(name);
+      }
       break;
     case 'promptsChanged':
       // The quick-picker persisted new prompt refs; they only take effect on a
