@@ -36,8 +36,9 @@
     </div>
     <div id="prompts-list"></div>
     <div id="prompts-empty" class="hint">
-      No prompts yet. Click <strong>+ New</strong> to save a reusable prompt.<br><br>
-      When a session is active, click any prompt to inject it directly into the agent's input.
+      No prompts yet. Click <strong>+ New</strong> to author a reusable prompt.<br><br>
+      Stored as markdown in <code>~/.clodex/library/prompts/</code>. <strong>system</strong> prompts replace the CLI default; <strong>append</strong> prompts compose on top. Attach them per session in the New / Edit Session dialog.<br><br>
+      When a session is active, click any prompt to inject its text into the agent's input.
     </div>
   </div>
 
@@ -45,11 +46,17 @@
   <div id="prompt-editor" class="hidden">
     <div class="prompt-editor-box">
       <h3 id="prompt-editor-title">New Prompt</h3>
-      <label>Title
-        <input type="text" id="prompt-title" placeholder="e.g. Run tests">
+      <label>Kind
+        <select id="prompt-kind">
+          <option value="append">append — composable, appended (non-system)</option>
+          <option value="system">system — replaces the default system prompt</option>
+        </select>
       </label>
-      <label>Body
-        <textarea id="prompt-body" rows="8" placeholder="The prompt text to inject into the agent's input"></textarea>
+      <label>Name
+        <input type="text" id="prompt-name" placeholder="e.g. clodex-syntax (filename stem; prefix 00- to order appends)" spellcheck="false">
+      </label>
+      <label class="editor-grow">Body
+        <textarea id="prompt-body" rows="8" placeholder="The prompt text"></textarea>
       </label>
       <div class="dialog-actions">
         <button id="prompt-delete" class="secondary" type="button" style="margin-right: auto;">Delete</button>
@@ -79,7 +86,7 @@
       <label>Name
         <input type="text" id="agent-name" placeholder="e.g. lean-explore" spellcheck="false">
       </label>
-      <label>Definition (markdown + YAML frontmatter)
+      <label class="editor-grow">Definition (markdown + YAML frontmatter)
         <textarea id="agent-content" rows="16" spellcheck="false"></textarea>
       </label>
       <span class="hint-text">Frontmatter fields: description, tools (allowlist), disallowedTools, model, skills, permissionMode. Body is the system prompt.</span>
@@ -112,7 +119,7 @@
       <label>Name
         <input type="text" id="skill-name" placeholder="e.g. deploy-runbook" spellcheck="false">
       </label>
-      <label>Definition (SKILL.md — markdown + YAML frontmatter)
+      <label class="editor-grow">Definition (SKILL.md — markdown + YAML frontmatter)
         <textarea id="skill-content" rows="16" spellcheck="false"></textarea>
       </label>
       <span class="hint-text">Frontmatter needs a <code>description</code> (when the model should use the skill); the body is the instructions. <code>name</code> is forced to the Name field above. Injected skills ride every turn, so keep them lean.</span>
@@ -249,11 +256,15 @@
           <button id="btn-browse" class="secondary" type="button">Browse</button>
         </div>
       </label>
-      <label id="system-prompt-row">System Prompt
+      <label id="system-prompt-row">System prompt
         <select id="input-system-prompt">
-          <option value="">(none)</option>
+          <option value="">(CLI default)</option>
         </select>
-        <span class="hint-text">Applied at create only — Claude: --append-system-prompt · Codex: model_instructions_file</span>
+        <span class="hint-text">Replaces the CLI's default system prompt. Authored in the Prompts library.</span>
+      </label>
+      <label id="append-prompts-row">Append prompts
+        <div id="input-append-list" class="agent-checklist"></div>
+        <span class="hint-text">Appended (non-system) on every spawn, in filename order — the clodex IPC protocol is always included first. Prefix a name (00-, 50-) to control order.</span>
       </label>
       <details id="tools-section" class="dialog-section" style="display:none;">
         <summary>Tools</summary>
@@ -326,25 +337,11 @@
     <div id="args-dialog">
       <h3>Edit Session</h3>
       <p class="hint-text" id="args-target"></p>
-      <label>Extra CLI args
-        <input type="text" id="args-input" placeholder="(none)">
-      </label>
-      <label id="args-prompt-row">System prompt (appended)
-        <select id="args-prompt-select">
-          <option value="">Load from library…</option>
+      <label id="args-prompt-row">System prompt
+        <select id="args-system-prompt">
+          <option value="">(CLI default)</option>
         </select>
-        <textarea id="args-prompt-body" rows="6" spellcheck="false" placeholder="(none) — appended to the CLI's system prompt on every spawn, including resume"></textarea>
-      </label>
-      <label id="args-agents-row">Custom subagents
-        <div id="args-agents-list" class="agent-checklist"></div>
-        <div class="popover-subhead">Built-in agents</div>
-        <div id="args-builtins-list" class="agent-checklist"></div>
-        <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op. Applies on a fresh restart.</span>
-      </label>
-      <label id="args-tools-row">Tools
-        <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
-        <div id="args-tools-list" class="agent-checklist"></div>
-        <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>).</span>
+        <span class="hint-text">Replaces the CLI's default system prompt. Applies on every spawn, including resume.</span>
       </label>
       <label id="args-proxy-row">API Proxy
         <select id="args-proxy-mode">
@@ -354,7 +351,34 @@
         </select>
         <input type="text" id="args-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" style="display:none;">
       </label>
-      <label style="display: flex; align-items: center; gap: 8px;">
+      <label class="dialog-wide">Extra CLI args
+        <input type="text" id="args-input" placeholder="(none)">
+      </label>
+      <details id="args-append-section" class="dialog-section">
+        <summary>Append prompts</summary>
+        <label id="args-append-row">
+          <div id="args-append-list" class="agent-checklist"></div>
+          <span class="hint-text">Appended (non-system) on every spawn, in filename order. The clodex IPC protocol is always included first.</span>
+        </label>
+      </details>
+      <details id="args-tools-section" class="dialog-section">
+        <summary>Tools</summary>
+        <label id="args-tools-row">
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div id="args-tools-list" class="agent-checklist"></div>
+          <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>).</span>
+        </label>
+      </details>
+      <details id="args-other-section" class="dialog-section">
+        <summary>Custom subagents</summary>
+        <label id="args-agents-row">
+          <div id="args-agents-list" class="agent-checklist"></div>
+          <div class="popover-subhead">Built-in agents</div>
+          <div id="args-builtins-list" class="agent-checklist"></div>
+          <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op. Applies on a fresh restart.</span>
+        </label>
+      </details>
+      <label class="dialog-wide" style="display: flex; align-items: center; gap: 8px;">
         <input type="checkbox" id="args-restart" style="margin: 0;">
         <span>Restart session now (kills running process, respawns with new settings)</span>
       </label>

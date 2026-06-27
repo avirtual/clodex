@@ -106,6 +106,8 @@ const inputTemplate = document.getElementById('input-template');
 const templateRow = document.getElementById('template-row');
 const inputSystemPrompt = document.getElementById('input-system-prompt');
 const systemPromptRow = document.getElementById('system-prompt-row');
+const appendPromptsRow = document.getElementById('append-prompts-row');
+const inputAppendList = document.getElementById('input-append-list');
 const inputResume = document.getElementById('input-resume');
 const inputFork = document.getElementById('input-fork');
 const resumeRow = document.getElementById('resume-row');
@@ -344,30 +346,41 @@ function addSessionToSidebar(name, type, cwd, label) {
 }
 
 // Handle context menu actions from main process
+// Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
+// metadata first because the kill+respawn wipes the tab via session-exit (same
+// dance as the Edit Session save path).
+function restartSessionWithReattach(name) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.querySelector('.session-type')?.textContent : null;
+  const snapCwd = item ? item.dataset.cwd : null;
+  return window.api.restartSession(name).then((res) => {
+    if (!res || !res.ok) {
+      alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
+      return;
+    }
+    if (snapType) {
+      createTerminal(name);
+      addSessionToSidebar(name, snapType, snapCwd, null);
+      switchSession(name);
+    }
+  });
+}
+
 window.api.onSessionContextAction(({ action, name }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
       break;
-    case 'restart': {
-      // Snapshot sidebar metadata before the kill+respawn wipes the tab
-      // via session-exit, same dance as the Edit Session save path.
-      const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-      const snapType = item ? item.querySelector('.session-type')?.textContent : null;
-      const snapCwd = item ? item.dataset.cwd : null;
-      window.api.restartSession(name).then((res) => {
-        if (!res || !res.ok) {
-          alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
-          return;
-        }
-        if (snapType) {
-          createTerminal(name);
-          addSessionToSidebar(name, snapType, snapCwd, null);
-          switchSession(name);
-        }
-      });
+    case 'restart':
+      restartSessionWithReattach(name);
       break;
-    }
+    case 'promptsChanged':
+      // The quick-picker persisted new prompt refs; they only take effect on a
+      // (re)start, so offer one now. Declining leaves them to apply next spawn.
+      if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
+        restartSessionWithReattach(name);
+      }
+      break;
     case 'rename': {
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (item) {
@@ -575,6 +588,7 @@ function applyTypeDefaults() {
   argsHint.textContent = ARGS_HINTS[type] || '';
   const supportsSystemPrompt = type === 'claude' || type === 'codex';
   systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
+  if (appendPromptsRow) appendPromptsRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (!supportsSystemPrompt) inputSystemPrompt.value = '';
   // Custom subagents and per-session tool/skill/strip gating are Claude-only.
   // These live in collapsible accordion sections (Tools / Skills / Other) so the
@@ -598,16 +612,60 @@ function applyTypeDefaults() {
   }
 }
 
-async function refreshSystemPromptDropdown() {
-  const list = await window.api.listPrompts();
-  while (inputSystemPrompt.options.length > 1) inputSystemPrompt.remove(1);
-  for (const p of list) {
+// Prompt library — shared by the new-session + edit dialogs. `system` prompts
+// fill a <select> (one replaces the CLI default); `append` prompts fill a
+// checklist (0+ compose, applied in filename order). Cached per dialog open.
+let promptLibCache = { system: [], append: [] };
+
+async function loadPromptLib() {
+  const all = await window.api.listPrompts();
+  promptLibCache = {
+    system: all.filter(p => p.kind === 'system'),
+    append: all.filter(p => p.kind === 'append'),
+  };
+}
+
+function fillSystemPromptSelect(selectEl, current) {
+  while (selectEl.options.length > 1) selectEl.remove(1);
+  for (const p of promptLibCache.system) {
     const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.title;
-    opt.dataset.body = p.body;
-    inputSystemPrompt.appendChild(opt);
+    opt.value = p.name;
+    opt.textContent = p.name;
+    selectEl.appendChild(opt);
   }
+  // A persisted ref whose file was deleted falls back to (CLI default).
+  selectEl.value = current && promptLibCache.system.some(p => p.name === current) ? current : '';
+}
+
+function renderAppendChecklist(container, enabledSet) {
+  container.innerHTML = '';
+  if (!promptLibCache.append.length) {
+    container.innerHTML = '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>';
+    return;
+  }
+  for (const p of promptLibCache.append) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = p.name;
+    cb.checked = enabledSet.has(p.name);
+    const preview = (p.body.split('\n')[0] || '').slice(0, 60);
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(p.name)}</strong>${preview ? ' — ' + esc(preview) : ''}`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+function collectAppendChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+async function refreshSystemPromptDropdown() {
+  await loadPromptLib();
+  fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value);
+  renderAppendChecklist(inputAppendList, new Set());
 }
 
 async function refreshTemplatesDropdown() {
@@ -987,11 +1045,12 @@ async function doCreate() {
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const extraArgs = parseArgs(inputArgs.value || '');
 
-  let systemPromptBody = null;
-  if ((type === 'claude' || type === 'codex') && inputSystemPrompt.value) {
-    const opt = inputSystemPrompt.options[inputSystemPrompt.selectedIndex];
-    systemPromptBody = (opt && opt.dataset.body) || null;
-  }
+  // Prompts are referenced by library file now (system replaces, appends
+  // compose); the legacy inline body is no longer authored at create.
+  const supportsPrompts = type === 'claude' || type === 'codex';
+  const systemPromptBody = null;
+  const systemPromptFile = supportsPrompts ? (inputSystemPrompt.value || null) : null;
+  const appendPromptFiles = supportsPrompts ? collectAppendChecklist(inputAppendList) : [];
 
   if (!name) return;
   if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
@@ -1013,7 +1072,7 @@ async function doCreate() {
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel);
+  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);
@@ -3530,27 +3589,23 @@ const argsProxyRow = document.getElementById('args-proxy-row');
 const argsProxyMode = document.getElementById('args-proxy-mode');
 const argsProxyUrl = document.getElementById('args-proxy-url');
 const argsPromptRow = document.getElementById('args-prompt-row');
-const argsPromptSelect = document.getElementById('args-prompt-select');
-const argsPromptBody = document.getElementById('args-prompt-body');
+const argsSystemPrompt = document.getElementById('args-system-prompt');
+const argsAppendRow = document.getElementById('args-append-row');
+const argsAppendList = document.getElementById('args-append-list');
+const argsAppendSection = document.getElementById('args-append-section');
 const argsAgentsRow = document.getElementById('args-agents-row');
 const argsAgentsList = document.getElementById('args-agents-list');
 const argsBuiltinsList = document.getElementById('args-builtins-list');
 const argsToolsRow = document.getElementById('args-tools-row');
 const argsToolsList = document.getElementById('args-tools-list');
+const argsToolsSection = document.getElementById('args-tools-section');
+const argsOtherSection = document.getElementById('args-other-section');
 wireBulkToggles(argsToolsRow, argsToolsList);
 let argsEditingName = null;
 
 argsProxyMode.addEventListener('change', () => {
   argsProxyUrl.style.display = argsProxyMode.value === 'custom' ? '' : 'none';
   if (argsProxyMode.value === 'custom') argsProxyUrl.focus();
-});
-
-// Picking a library prompt fills the textarea; the textarea is what gets
-// saved, so library edits stay local to this session.
-argsPromptSelect.addEventListener('change', () => {
-  const opt = argsPromptSelect.selectedOptions[0];
-  if (opt && opt.dataset.body !== undefined) argsPromptBody.value = opt.dataset.body;
-  argsPromptSelect.value = '';
 });
 
 async function openArgsDialog(name) {
@@ -3562,6 +3617,10 @@ async function openArgsDialog(name) {
   ]);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
   agentLibCache = agentLib || [];
+  promptLibCache = {
+    system: (promptLib || []).filter(p => p.kind === 'system'),
+    append: (promptLib || []).filter(p => p.kind === 'append'),
+  };
   argsEditingName = name;
   argsTarget.textContent = `${name} (${res.type}) — new settings apply on next spawn.`;
   argsInput.value = (res.extraArgs || []).map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
@@ -3569,24 +3628,25 @@ async function openArgsDialog(name) {
   argsProxyRow.style.display = isAgent ? '' : 'none';
   setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.proxyUrl);
   labelProxyDefault(argsProxyMode, settings);
+  // Prompt rows drive the save-time collect logic via their display; the
+  // accordion sections that wrap them are toggled per type so inapplicable
+  // sections don't show as empty boxes. Sections start collapsed each open.
   argsPromptRow.style.display = isAgent ? '' : 'none';
-  argsPromptBody.value = res.systemPrompt || '';
-  while (argsPromptSelect.options.length > 1) argsPromptSelect.remove(1);
-  for (const p of promptLib || []) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.title;
-    opt.dataset.body = p.body;
-    argsPromptSelect.appendChild(opt);
-  }
-  // Custom subagents — Claude-only.
+  argsAppendRow.style.display = isAgent ? '' : 'none';
+  argsAppendSection.style.display = isAgent ? '' : 'none';
+  fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '');
+  renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []));
+  // Custom subagents + tools — Claude-only.
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
+  argsOtherSection.style.display = isClaude ? '' : 'none';
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []));
   renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = isClaude ? '' : 'none';
+  argsToolsSection.style.display = isClaude ? '' : 'none';
   claudeToolsCache = settings?.claudeTools || [];
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+  for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection]) sec.open = false;
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);
@@ -3604,8 +3664,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const restart = argsRestart.checked;
   const proxy = argsProxyRow.style.display === 'none'
     ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
-  const systemPrompt = argsPromptRow.style.display === 'none'
-    ? null : (argsPromptBody.value.trim() || null);
+  const promptsHidden = argsPromptRow.style.display === 'none';
+  const systemPromptFile = promptsHidden ? null : (argsSystemPrompt.value || null);
+  const appendPromptFiles = promptsHidden ? [] : collectAppendChecklist(argsAppendList);
   const agents = argsAgentsRow.style.display === 'none' ? [] : collectAgentChecklist(argsAgentsList);
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
@@ -3617,7 +3678,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const snapType = existing ? existing.querySelector('.session-type')?.textContent : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
   closeArgsDialog();
-  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools);
+  // systemPrompt (legacy inline) passes undefined so a pre-library inline body
+  // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
+  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles);
   if (!res || !res.ok) {
     alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
@@ -3638,7 +3701,8 @@ const promptsList = document.getElementById('prompts-list');
 const promptsEmpty = document.getElementById('prompts-empty');
 const promptEditor = document.getElementById('prompt-editor');
 const promptEditorTitle = document.getElementById('prompt-editor-title');
-const promptTitle = document.getElementById('prompt-title');
+const promptKind = document.getElementById('prompt-kind');
+const promptName = document.getElementById('prompt-name');
 const promptBody = document.getElementById('prompt-body');
 const promptSave = document.getElementById('prompt-save');
 const promptCancel = document.getElementById('prompt-cancel');
@@ -3646,7 +3710,9 @@ const promptDelete = document.getElementById('prompt-delete');
 const promptsNew = document.getElementById('prompts-new');
 const promptsClose = document.getElementById('prompts-close');
 
-let editingPromptId = null;
+// {kind, name} of the prompt being edited (its filename identity is locked while
+// editing — rename = delete + new), or null when authoring a new one.
+let editingPrompt = null;
 
 async function refreshPromptsList() {
   const items = await window.api.listPrompts();
@@ -3661,7 +3727,7 @@ async function refreshPromptsList() {
     el.className = 'prompt-item';
     const preview = p.body.split('\n')[0].slice(0, 80) + (p.body.length > 80 ? '…' : '');
     el.innerHTML = `
-      <div class="prompt-item-title">${esc(p.title)}</div>
+      <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
       <div class="prompt-item-preview">${esc(preview)}</div>
       <div class="prompt-item-actions">
         <button class="primary" data-action="inject">Inject</button>
@@ -3700,51 +3766,63 @@ function closePromptsDrawer() {
 
 function openPromptEditor(prompt = null) {
   if (prompt) {
-    editingPromptId = prompt.id;
+    editingPrompt = { kind: prompt.kind, name: prompt.name };
     promptEditorTitle.textContent = 'Edit Prompt';
-    promptTitle.value = prompt.title;
+    promptKind.value = prompt.kind;
+    promptKind.disabled = true; // kind+name = the file identity; locked while editing
+    promptName.value = prompt.name;
+    promptName.readOnly = true;
     promptBody.value = prompt.body;
     promptDelete.style.display = '';
   } else {
-    editingPromptId = null;
+    editingPrompt = null;
     promptEditorTitle.textContent = 'New Prompt';
-    promptTitle.value = '';
+    promptKind.value = 'append';
+    promptKind.disabled = false;
+    promptName.value = '';
+    promptName.readOnly = false;
     promptBody.value = '';
     promptDelete.style.display = 'none';
   }
   promptEditor.classList.remove('hidden');
-  setTimeout(() => promptTitle.focus(), 50);
+  setTimeout(() => (editingPrompt ? promptBody : promptName).focus(), 50);
 }
 
 function closePromptEditor() {
   promptEditor.classList.add('hidden');
-  editingPromptId = null;
+  editingPrompt = null;
 }
 
 promptsClose.addEventListener('click', closePromptsDrawer);
 promptsNew.addEventListener('click', () => openPromptEditor(null));
 
 promptSave.addEventListener('click', async () => {
-  const title = promptTitle.value.trim();
+  const kind = promptKind.value;
+  const name = promptName.value.trim();
   const body = promptBody.value;
-  if (!title || !body.trim()) return;
-  const id = editingPromptId || `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await window.api.savePrompt({ id, title, body });
+  if (!name || !body.trim()) return;
+  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+    promptName.style.borderColor = '#e94560';
+    return;
+  }
+  promptName.style.borderColor = '';
+  const res = await window.api.savePrompt(kind, name, body);
+  if (res && res.ok === false) { alert(`Failed: ${res.error || 'unknown error'}`); return; }
   closePromptEditor();
   refreshPromptsList();
 });
 
 promptCancel.addEventListener('click', closePromptEditor);
 promptDelete.addEventListener('click', async () => {
-  if (!editingPromptId) return;
-  if (!confirm('Delete this prompt?')) return;
-  await window.api.removePrompt(editingPromptId);
+  if (!editingPrompt) return;
+  if (!confirm(`Delete prompt "${editingPrompt.name}"?`)) return;
+  await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
   closePromptEditor();
   refreshPromptsList();
 });
 
 // Prevent keyboard shortcuts from firing inside the editor
-promptTitle.addEventListener('keydown', (e) => e.stopPropagation());
+promptName.addEventListener('keydown', (e) => e.stopPropagation());
 promptBody.addEventListener('keydown', (e) => e.stopPropagation());
 
 // ---------------------------------------------------------------------------

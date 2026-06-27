@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
@@ -25,12 +25,12 @@ window.api = {
     ipcRenderer.invoke('templates:save', template),
   removeTemplate: (id) =>
     ipcRenderer.invoke('templates:remove', id),
-  listPrompts: () =>
-    ipcRenderer.invoke('prompts:list'),
-  savePrompt: (prompt) =>
-    ipcRenderer.invoke('prompts:save', prompt),
-  removePrompt: (id) =>
-    ipcRenderer.invoke('prompts:remove', id),
+  listPrompts: (kind) =>
+    ipcRenderer.invoke('prompts:list', kind),
+  savePrompt: (kind, name, body) =>
+    ipcRenderer.invoke('prompts:save', kind, name, body),
+  removePrompt: (kind, name) =>
+    ipcRenderer.invoke('prompts:remove', kind, name),
   injectPrompt: (name, body) =>
     ipcRenderer.invoke('prompts:inject', name, body),
   listAgents: () =>
@@ -135,7 +135,7 @@ window.api = {
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
   getSessionHistory: (name) => ipcRenderer.invoke('session:history', name),
-  setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills),
+  setSessionArgs: (name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles) => ipcRenderer.invoke('session:setArgs', name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles),
   restartSession: (name, opts) => ipcRenderer.invoke('session:restart', name, opts),
   setSessionTools: (name, disabledTools) => ipcRenderer.invoke('session:setTools', name, disabledTools),
   setSessionSkills: (name, disabledSkills, injectSkills) => ipcRenderer.invoke('session:setSkills', name, disabledSkills, injectSkills),

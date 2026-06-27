@@ -328,6 +328,15 @@ const persistence = {
       this._save(all);
     }
   },
+  setPromptRefs(name, systemPromptFile, appendPromptFiles) {
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (entry) {
+      entry.systemPromptFile = systemPromptFile || null;
+      entry.appendPromptFiles = Array.isArray(appendPromptFiles) ? appendPromptFiles : [];
+      this._save(all);
+    }
+  },
   setAgents(name, agents, denyBuiltins) {
     const all = this._load();
     const entry = all.find(s => s.name === name);
@@ -492,31 +501,114 @@ const workspaces = {
 };
 
 // ---------------------------------------------------------------------------
-// Prompts library
+// Prompts library — user-authored prompts as plain .md files under
+// ~/.clodex/library/prompts/{system,append}/*.md. On-disk (not a JSON blob) so
+// they're human-inspectable, portable, and — crucially — REFERENCEABLE: a
+// session points at a prompt by its filename stem, so one shared prompt (e.g.
+// the clodex syntax) can be reused across many sessions and edited once.
+//
+//   kind = subfolder, not frontmatter — so a `system` prompt file can be handed
+//   to the CLI verbatim via --system-prompt-file with nothing to strip.
+//     system — REPLACES the CLI's default system prompt (a full base persona)
+//     append — a composable fragment appended (non-system) on every spawn
+//
+// Spawn ordering for appends = filename sort, so prefix a stem (00-, 50-) to
+// control order; shared/stable appends first keeps the cache prefix aligned
+// across sessions. The IPC protocol is always prepended ahead of all of them.
 // ---------------------------------------------------------------------------
 
-let PROMPTS_FILE = null;
+let PROMPTS_FILE = null; // legacy prompts.json — read once for migration only
 
-const prompts = {
-  _load() {
-    try { return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf-8')); }
-    catch { return []; }
+const PROMPTS_DIR = path.join(REGISTRY_DIR, 'library', 'prompts');
+const PROMPT_KINDS = ['system', 'append'];
+const PROMPT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
+
+const promptLibrary = {
+  _dir(kind) { return path.join(PROMPTS_DIR, kind); },
+  _file(kind, stem) { return path.join(this._dir(kind), `${stem}.md`); },
+  // Every *.md across both kinds (or one kind if given). Identity is the
+  // filename stem; save() keys by it so the file and the ref stay in sync.
+  list(kind) {
+    const kinds = kind ? [kind] : PROMPT_KINDS;
+    const out = [];
+    for (const k of kinds) {
+      let files;
+      try { files = fs.readdirSync(this._dir(k)); }
+      catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.md')) continue;
+        const stem = f.replace(/\.md$/, '');
+        let body = '';
+        try { body = fs.readFileSync(path.join(this._dir(k), f), 'utf-8'); }
+        catch { continue; }
+        out.push({ name: stem, kind: k, body, file: f });
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
   },
-  _save(entries) {
-    try {
-      atomicWriteFileSync(PROMPTS_FILE, JSON.stringify(entries, null, 2));
-    } catch (e) { console.error('prompts save failed:', e); }
+  raw(kind, stem) {
+    try { return fs.readFileSync(this._file(kind, stem), 'utf-8'); }
+    catch { return null; }
   },
-  list() { return this._load(); },
-  save(prompt) {
-    const all = this._load();
-    const idx = all.findIndex(p => p.id === prompt.id);
-    if (idx >= 0) all[idx] = prompt;
-    else all.push(prompt);
-    this._save(all);
+  save(kind, stem, content) {
+    if (!PROMPT_KINDS.includes(kind)) throw new Error(`invalid prompt kind: ${kind}`);
+    if (!PROMPT_NAME_RE.test(stem)) throw new Error(`invalid prompt name: ${stem}`);
+    ensureDir(this._dir(kind));
+    fs.writeFileSync(this._file(kind, stem), String(content ?? ''), { mode: 0o600 });
+    return this.list();
   },
-  remove(id) { this._save(this._load().filter(p => p.id !== id)); },
+  remove(kind, stem) {
+    try { fs.unlinkSync(this._file(kind, stem)); } catch {}
+    return this.list();
+  },
 };
+
+// Slugify a legacy prompt title into a valid filename stem for migration.
+function slugifyPromptName(s) {
+  const slug = String(s || '').trim().toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return slug || `prompt-${Date.now()}`;
+}
+
+// One-shot migration: the pre-library prompts.json held {id,title,body} entries,
+// all append-kind by nature (they were --append-system-prompt material). Write
+// each out as append/<slug>.md, then rename the JSON aside so this never re-runs.
+// Non-destructive: never clobbers a file that already exists.
+function migratePromptsJson() {
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf-8')); }
+  catch { return; }
+  if (!Array.isArray(entries) || !entries.length) return;
+  ensureDir(promptLibrary._dir('append'));
+  for (const p of entries) {
+    const stem = slugifyPromptName(p.title || p.id);
+    const dest = promptLibrary._file('append', stem);
+    if (fs.existsSync(dest)) continue;
+    try { fs.writeFileSync(dest, String(p.body ?? ''), { mode: 0o600 }); } catch {}
+  }
+  try { fs.renameSync(PROMPTS_FILE, `${PROMPTS_FILE}.migrated`); } catch {}
+}
+
+// Resolve a session's system-prompt ref to an absolute, readable file path (for
+// --system-prompt-file), or null to fall back to the CLI default. A deleted/
+// renamed ref degrades to default rather than blocking the spawn.
+function resolveSystemPromptFile(stem) {
+  if (!stem) return null;
+  const p = promptLibrary._file('system', stem);
+  try { fs.accessSync(p, fs.constants.R_OK); return p; }
+  catch { return null; }
+}
+
+// Resolve a session's ordered append refs to their bodies. Missing/empty stems
+// are skipped silently (a deleted shared prompt must never break a spawn).
+function readAppendBodies(stems) {
+  const out = [];
+  for (const stem of stems || []) {
+    const body = promptLibrary.raw('append', stem);
+    if (body != null && body.trim()) out.push(body);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Per-agent defaults — standing preferences keyed by agent NAME that outlive
@@ -1090,12 +1182,20 @@ RULES:
 - The body of a dm runs from its intent line until the next [agent:...] line at column 1, or the end of your reply — whichever comes first. You may emit several intents in one reply (each on its own line, in order); a dm body stops where the next intent begins instead of swallowing it. Put anything meant for your user ABOVE the intents.
 - Messages are plain text, max 64KB.`;
 
-// Merge IPC prompt + optional library prompt + any user-supplied
-// --append-system-prompt(-file) from extraArgs into one blob. Returns the
-// cleaned argv (user flags stripped) plus the merged body.
-function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, libraryBody) {
-  const parts = [ipcPrompt];
-  if (libraryBody) parts.push(libraryBody);
+// Build Claude's two prompt channels. The APPEND channel (returned as `append`,
+// written to a generated file → --append-system-prompt-file) always leads with
+// the IPC protocol, then the session's ordered library appends, then a legacy
+// inline body, then any user --append-system-prompt(-file) from extraArgs. The
+// SYSTEM channel (a replacement base persona) is a session-referenced library
+// file pointed at DIRECTLY via --system-prompt-file by the caller — not merged
+// here; when a session carries one, a conflicting user --system-prompt(-file)
+// in extraArgs is dropped so the CLI never sees two. Returns cleaned argv +
+// the append blob.
+//   opts: { appendBodies: string[], inlineBody: string|null, hasSystemFile: bool }
+function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, opts = {}) {
+  const { appendBodies = [], inlineBody = null, hasSystemFile = false } = opts;
+  const parts = [ipcPrompt, ...appendBodies];
+  if (inlineBody) parts.push(inlineBody);
   const cleaned = [];
   for (let i = 0; i < extraArgs.length; i++) {
     const a = extraArgs[i];
@@ -1107,16 +1207,28 @@ function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, libraryBody) {
       try { parts.push(fs.readFileSync(extraArgs[++i], 'utf-8')); } catch { i++; }
       continue;
     }
+    if (hasSystemFile && (a === '--system-prompt' || a === '--system-prompt-file')
+        && i + 1 < extraArgs.length) {
+      i++; // session's system ref wins — drop the user's conflicting flag
+      continue;
+    }
     cleaned.push(a);
   }
-  return { cleaned, merged: parts.filter(Boolean).join('\n\n') };
+  return { cleaned, append: parts.filter(Boolean).join('\n\n') };
 }
 
-// Same idea for Codex: inline any user-supplied model_instructions_file
-// so we can bundle everything into our own single file.
-function mergeCodexInstructions(extraArgs, ipcPrompt, libraryBody) {
-  const parts = [ipcPrompt];
-  if (libraryBody) parts.push(libraryBody);
+// Codex has a single instructions channel, so system + IPC + appends collapse
+// into one model_instructions_file (in that order): the system base persona
+// (which itself replaces Codex's default), then the IPC protocol, then the
+// ordered library appends, then a legacy inline body, then any user-supplied
+// model_instructions_file inlined from extraArgs.
+//   opts: { systemBody: string|null, appendBodies: string[], inlineBody: string|null }
+function mergeCodexInstructions(extraArgs, ipcPrompt, opts = {}) {
+  const { systemBody = null, appendBodies = [], inlineBody = null } = opts;
+  const parts = [];
+  if (systemBody) parts.push(systemBody);
+  parts.push(ipcPrompt, ...appendBodies);
+  if (inlineBody) parts.push(inlineBody);
   const cleaned = [];
   for (let i = 0; i < extraArgs.length; i++) {
     const a = extraArgs[i];
@@ -2401,7 +2513,7 @@ class SessionManager {
     }
   }
 
-  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = []) {
+  async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = []) {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
@@ -2430,7 +2542,14 @@ class SessionManager {
         // IPC protocol always goes in; the posture prompt is a persistent
         // session property — applied on resume/restart too, editable via
         // the Edit Session dialog.
-        const { cleaned, merged } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), systemPromptBody || null);
+        // Prompt channels: a session-referenced library file replaces the base
+        // system prompt (pointed at directly below), while the IPC protocol +
+        // ordered library appends + any legacy inline body form the append blob.
+        const sysFile = resolveSystemPromptFile(systemPromptFile);
+        const appendBodies = readAppendBodies(appendPromptFiles);
+        const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, IPC_PROMPT(name), {
+          appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
+        });
         args = cleaned;
         // Drop a stale user-persisted --settings that points into the old
         // /tmp/wb-wrap dir — keeping it would skip hook generation entirely
@@ -2500,14 +2619,26 @@ class SessionManager {
           args.push('--resume', resumeId);
           if (fork && !args.includes('--fork-session')) args.push('--fork-session');
         }
+        // Point --system-prompt-file directly at the library file (no copy) so
+        // editing the shared prompt takes effect on the next spawn; skipped when
+        // the ref is missing → the CLI keeps its default system prompt.
+        if (sysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
+          args.push('--system-prompt-file', sysFile);
+        }
         const promptPath = path.join(REGISTRY_DIR, `${name}-append-prompt.md`);
-        fs.writeFileSync(promptPath, merged, { mode: 0o600 });
+        fs.writeFileSync(promptPath, append, { mode: 0o600 });
         args.push('--append-system-prompt-file', promptPath);
         break;
       }
       case 'codex': {
         cmd = 'codex';
-        const { cleaned, merged } = mergeCodexInstructions(extraArgs, IPC_PROMPT(name), systemPromptBody || null);
+        // Codex has one instructions channel: fold the system base + ordered
+        // appends + legacy inline body into it alongside the IPC protocol.
+        const codexSystemBody = systemPromptFile ? promptLibrary.raw('system', systemPromptFile) : null;
+        const codexAppendBodies = readAppendBodies(appendPromptFiles);
+        const { cleaned, merged } = mergeCodexInstructions(extraArgs, IPC_PROMPT(name), {
+          systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
+        });
         // Build top-level flags first, then the optional `resume <uuid>`
         // subcommand — clap expects subcommands AFTER top-level args.
         args = [...cleaned];
@@ -2630,6 +2761,8 @@ class SessionManager {
       sessionId: resumeId || null,
       workspaceId,
       systemPrompt: systemPromptBody || null,
+      systemPromptFile: systemPromptFile || null,
+      appendPromptFiles: Array.isArray(appendPromptFiles) ? appendPromptFiles : [],
       // Tri-state, NOT the resolved base: inheriting sessions must keep
       // following the Clodex-level preference across restarts.
       proxy: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
@@ -3671,6 +3804,7 @@ app.whenReady().then(() => {
   proxyPoller.start();
   TEMPLATES_FILE = path.join(app.getPath('userData'), 'templates.json');
   PROMPTS_FILE = path.join(app.getPath('userData'), 'prompts.json');
+  migratePromptsJson(); // one-shot: prompts.json → library/prompts/append/*.md
   WORKSPACES_FILE = path.join(app.getPath('userData'), 'workspaces.json');
   UI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ui-settings.json');
   AGENT_DEFAULTS_FILE = path.join(app.getPath('userData'), 'agent-defaults.json');
@@ -3687,7 +3821,7 @@ app.whenReady().then(() => {
 
   initTray();
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles) => {
     try {
       const workspaceId = workspaceOfSender(e);
       // Seed tool denies from the global "*" default when the caller passed none.
@@ -3696,7 +3830,7 @@ app.whenReady().then(() => {
       // fires for non-dialog callers — keeping new sessions on the shared, lean
       // tools segment. An explicit array always wins (undefined === "untouched").
       const seedTools = (disabledTools === undefined) ? agentDefaults.getDefaultDeny() : disabledTools;
-      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || []);
+      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || []);
       // Strip level isn't a spawn arg (it's a proxy-side override the poller
       // asserts once the session links), so persist it onto the entry after
       // create() rather than threading it through the 15-param spawn path.
@@ -3743,9 +3877,16 @@ app.whenReady().then(() => {
   ipcMain.handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   ipcMain.handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
 
-  ipcMain.handle('prompts:list', () => prompts.list());
-  ipcMain.handle('prompts:save', (_e, prompt) => { prompts.save(prompt); return prompts.list(); });
-  ipcMain.handle('prompts:remove', (_e, id) => { prompts.remove(id); return prompts.list(); });
+  // Prompts library (~/.clodex/library/prompts/{system,append}/*.md). Both
+  // Claude and Codex; referenced by session (system replaces, append composes).
+  ipcMain.handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
+  ipcMain.handle('prompts:save', (_e, kind, name, body) => {
+    try { return { ok: true, prompts: promptLibrary.save(kind, name, body) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle('prompts:remove', (_e, kind, name) => {
+    return { ok: true, prompts: promptLibrary.remove(kind, name) };
+  });
 
   // Custom subagent library (~/.clodex/agents/*.md). Claude-only.
   ipcMain.handle('agents:list', () => agentLibrary.list());
@@ -3956,6 +4097,8 @@ app.whenReady().then(() => {
       type: entry.type,
       proxy: entry.proxy ?? null,
       systemPrompt: entry.systemPrompt || null,
+      systemPromptFile: entry.systemPromptFile || null,
+      appendPromptFiles: entry.appendPromptFiles || [],
       agents: entry.agents || [],
       denyBuiltins: entry.denyBuiltins || [],
       disabledTools: entry.disabledTools || [],
@@ -4116,16 +4259,23 @@ app.whenReady().then(() => {
     return !manager.sessions.has(name);
   }
 
-  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills) => {
+  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles) => {
     const beforeKill = persistence.get(name);
     const nextAgents = agents !== undefined ? (agents || []) : (beforeKill?.agents || []);
     const nextDeny = denyBuiltins !== undefined ? (denyBuiltins || []) : (beforeKill?.denyBuiltins || []);
     const nextTools = disabledTools !== undefined ? (disabledTools || []) : (beforeKill?.disabledTools || []);
     const nextSkills = disabledSkills !== undefined ? (disabledSkills || []) : (beforeKill?.disabledSkills || []);
     const nextInject = injectSkills !== undefined ? (injectSkills || []) : (beforeKill?.injectSkills || []);
+    // undefined = "untouched": keep the persisted value. The edit dialog no
+    // longer surfaces the legacy inline body, so it passes systemPrompt
+    // undefined and a legacy inline prompt survives editing other settings.
+    const nextInline = systemPrompt !== undefined ? (systemPrompt || null) : (beforeKill?.systemPrompt || null);
+    const nextSysFile = systemPromptFile !== undefined ? (systemPromptFile || null) : (beforeKill?.systemPromptFile || null);
+    const nextAppend = appendPromptFiles !== undefined ? (appendPromptFiles || []) : (beforeKill?.appendPromptFiles || []);
     persistence.setExtraArgs(name, extraArgs);
     persistence.setProxy(name, proxy ?? null);
-    persistence.setSystemPrompt(name, systemPrompt ?? null);
+    persistence.setSystemPrompt(name, nextInline);
+    persistence.setPromptRefs(name, nextSysFile, nextAppend);
     persistence.setAgents(name, nextAgents, nextDeny);
     persistence.setDisabledTools(name, nextTools);
     persistence.setDisabledSkills(name, nextSkills);
@@ -4138,7 +4288,7 @@ app.whenReady().then(() => {
         await manager.kill(name);
         if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
       }
-      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, systemPrompt ?? null, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject);
+      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend);
       // kill() dropped the entry's stripLevel; re-assert the session's own level
       // (see session:restart) so editing args doesn't reset stripping.
       const argsLvl = stripLevelOf(beforeKill);
@@ -4149,7 +4299,7 @@ app.whenReady().then(() => {
       // kill() dropped the persistence entry and create() failed before
       // re-adding it. Put it back (with the edited settings) so the session
       // survives as a restorable entry instead of vanishing.
-      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: systemPrompt ?? null, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject });
+      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject });
       return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
     }
   });
@@ -4179,7 +4329,7 @@ app.whenReady().then(() => {
         await manager.kill(name);
         if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
       }
-      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || []);
+      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || []);
       // kill() removed the persistence entry (incl. stripLevel) and create()
       // re-wrote it from spawn args only — re-assert the session's OWN level so
       // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
@@ -4268,6 +4418,39 @@ app.whenReady().then(() => {
 
   ipcMain.on('session:context-menu', (e, { name, cwd }) => {
     const win = BrowserWindow.fromWebContents(e.sender);
+    // Quick prompt picker — set the session's system/append prompt refs without
+    // opening the Edit Session dialog. Persists immediately + applies on next
+    // (re)start; the renderer is told so it can offer to restart now.
+    const entry = persistence.get(name) || {};
+    const isAgent = entry.type === 'claude' || entry.type === 'codex';
+    const sysPrompts = promptLibrary.list('system');
+    const appendPrompts = promptLibrary.list('append');
+    const curSys = entry.systemPromptFile || null;
+    const curAppend = entry.appendPromptFiles || [];
+    const notifyPromptsChanged = () =>
+      e.sender.send('session:context-action', { action: 'promptsChanged', name });
+    const promptsSubmenu = [
+      { label: 'System prompt', enabled: false },
+      {
+        label: '(CLI default)', type: 'radio', checked: !curSys,
+        click: () => { persistence.setPromptRefs(name, null, curAppend); notifyPromptsChanged(); },
+      },
+      ...sysPrompts.map(p => ({
+        label: p.name, type: 'radio', checked: curSys === p.name,
+        click: () => { persistence.setPromptRefs(name, p.name, curAppend); notifyPromptsChanged(); },
+      })),
+      { type: 'separator' },
+      { label: 'Append prompts', enabled: false },
+      ...(appendPrompts.length ? appendPrompts.map(p => ({
+        label: p.name, type: 'checkbox', checked: curAppend.includes(p.name),
+        click: () => {
+          const next = curAppend.includes(p.name)
+            ? curAppend.filter(x => x !== p.name) : [...curAppend, p.name];
+          persistence.setPromptRefs(name, curSys, next);
+          notifyPromptsChanged();
+        },
+      })) : [{ label: '(no append prompts in library)', enabled: false }]),
+    ];
     const menu = Menu.buildFromTemplate([
       {
         label: 'Rename…',
@@ -4277,6 +4460,7 @@ app.whenReady().then(() => {
         label: 'Edit Session…',
         click: () => e.sender.send('session:context-action', { action: 'editArgs', name }),
       },
+      ...(isAgent ? [{ label: 'Prompts', submenu: promptsSubmenu }] : []),
       {
         label: 'Restart Session',
         click: () => e.sender.send('session:context-action', { action: 'restart', name }),
@@ -4382,6 +4566,8 @@ app.whenReady().then(() => {
           entry.disabledTools || [],
           entry.disabledSkills || [],
           entry.injectSkills || [],
+          entry.systemPromptFile || null,
+          entry.appendPromptFiles || [],
         );
         restored.push({
           name: entry.name,
@@ -4430,6 +4616,8 @@ app.whenReady().then(() => {
         entry.disabledTools || [],
         entry.disabledSkills || [],
         entry.injectSkills || [],
+        entry.systemPromptFile || null,
+        entry.appendPromptFiles || [],
       );
       return { ok: true };
     } catch (err) {

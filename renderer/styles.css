@@ -1077,10 +1077,28 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
-  width: 420px;
+  /* Two-column form, mirroring the new-session dialog: wide-and-short instead
+     of one tall narrow column that gets clipped top/bottom. Short fields pair
+     up; the header, hint, accordions, restart row, and actions span both. */
+  width: 680px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 20px;
+  align-content: start;
+}
+#args-dialog h3,
+#args-dialog #args-target,
+#args-dialog .dialog-actions,
+#args-dialog .dialog-section,
+#args-dialog .dialog-wide {
+  grid-column: 1 / -1;
 }
 #args-dialog h3 { margin-bottom: 8px; font-size: 16px; }
-#args-dialog label { display: block; margin: 12px 0; }
+#args-dialog #args-target { margin-bottom: 4px; }
+#args-dialog > label { display: block; margin: 12px 0; }
 #args-dialog label span { font-size: 13px; }
 #args-dialog input[type="text"] {
   width: 100%; margin-top: 4px; padding: 6px 8px;
@@ -1473,6 +1491,18 @@ html, body {
   margin-bottom: 2px;
 }
 
+.prompt-kind-badge {
+  font-weight: 500;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .prompt-item-preview {
   font-size: 11px;
   color: var(--text-dim);
@@ -1531,8 +1561,13 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
-  width: 460px;
-  max-width: 90vw;
+  width: 860px;
+  max-width: calc(100vw - 48px);
+  /* Flex column so the body textarea can grow to fill the available height —
+     serious prompts need real editing room, not a 120px box. */
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
 }
 
 .prompt-editor-box h3 {
@@ -1545,6 +1580,14 @@ html, body {
   margin-bottom: 12px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* The body label is the flex child that grows; its textarea fills it. */
+.prompt-editor-box label.editor-grow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .prompt-editor-box input,
@@ -1566,6 +1609,11 @@ html, body {
 .prompt-editor-box textarea {
   font-family: 'SF Mono', 'Menlo', monospace;
   min-height: 120px;
+}
+
+.prompt-editor-box label.editor-grow textarea {
+  flex: 1;
+  min-height: 240px;
 }
 
 .prompt-editor-box input:focus,
