@@ -1123,6 +1123,25 @@ function parseIntent(rawLine) {
   const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
 
+  // `spawn` = mint a NEW persistent top-level peer session (own socket / DM /
+  // memory / registry) from inside a running agent. `name` + `cwd` are the only
+  // required args; type/workspace/proxy inherit the spawner and everything else
+  // takes clodex defaults (see _handleSpawnIntent). New noun (a persistent peer)
+  // = a genuinely new category, so it earns its own top-level verb. Structural
+  // creation (sessions.json / sockets / registry) is clodex's job; prompt CONTENT
+  // deliberately stays out of the grammar (deferred, see spec Piece 2).
+  const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
+  if (spawnMatch) {
+    const argstr = spawnMatch[1];
+    const nameM = argstr.match(/\bname:(\S+)/);
+    const cwdM = argstr.match(/\bcwd:(\S+)/);
+    return {
+      type: 'spawn',
+      name: nameM ? nameM[1] : null,
+      cwd: cwdM ? cwdM[1] : null,
+    };
+  }
+
   return null;
 }
 
@@ -1272,6 +1291,7 @@ Write an intent line in your response text. Intents are the ONLY channel that re
   [agent:memory list]                  List your own saved memories
   [agent:memory remember] <text>       Save a memory unit (text after the bracket; optional leading scope=<tag>); persists across sessions
   [agent:memory recall] <id|query>     Surface a saved memory back into your input (by id, or a text match)
+  [agent:spawn name:X cwd:Y]           Mint a new persistent peer session named X rooted at Y (creates the dir if absent); it joins your workspace and is DM-able. The result lands back in your input as an [agent:spawn] line.
 
 Replies arrive later as separate labeled "[agent:from SENDER]" messages in your input.
 
@@ -3140,6 +3160,13 @@ class SessionManager {
         this._handleMemoryIntent(session, intent.sub, intent.body || '');
         break;
       }
+      case 'spawn': {
+        // Agent minting a new persistent peer session (spec Piece 2). Agent
+        // sessions only — bash can't process intents and shouldn't spawn peers.
+        if (!session || !session.agentType) break;
+        this._handleSpawnIntent(session, intent);
+        break;
+      }
     }
   }
 
@@ -3185,6 +3212,73 @@ class SessionManager {
       return;
     }
     this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall)`);
+  }
+
+  // Spawn a NEW persistent peer session from inside a running agent (spec
+  // Piece 2). `name` + `cwd` are the only required inputs; everything structural
+  // is clodex's job. type / workspace / proxy inherit the spawner; prompts and
+  // tool-gating take clodex defaults. The IPC protocol does NOT need an append
+  // ref — IPC_PROMPT(name) is prepended unconditionally for every agent session
+  // (see mergeClaudeSystemPrompt / mergeCodexSystemPrompt), so a child spawned
+  // with appendPromptFiles=[] still speaks dm/who/context. Replies (ok + every
+  // error) inject straight back into the spawner's input as an [agent:spawn] line.
+  _handleSpawnIntent(spawner, intent) {
+    const reply = (msg) => this._injectText(spawner, `[agent:spawn] ${msg}`);
+    const name = (intent.name || '').trim();
+    const rawCwd = (intent.cwd || '').trim();
+    if (!name || !rawCwd) { reply('error: usage [agent:spawn name:X cwd:Y]'); return; }
+    // Validate-hard BEFORE touching disk (same discipline as the rename inventory).
+    if (!AGENT_NAME_RE.test(name)) {
+      reply(`error: invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
+      return;
+    }
+    // Sessions are globally keyed; a taken name would fight the registry. Refuse
+    // up front and tell the spawner, rather than throwing into the void.
+    if (this.sessions.has(name) || persistence.get(name)) {
+      reply(`error: name taken "${name}"`);
+      return;
+    }
+    // Expand a leading ~ and resolve to absolute so ensureDir/create get a real path.
+    const cwd = path.resolve(rawCwd.replace(/^~(?=$|\/)/, os.homedir()));
+    const type = spawner.type || 'claude';
+    const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
+    const proxy = spawner.proxy ?? null;
+    // Inherit the spawner's PERMISSION POSTURE, not its full extraArgs: a headless
+    // peer that blocks on a permission prompt defeats operator-independence, but
+    // force-yolo would be surprising — so the child carries
+    // --dangerously-skip-permissions iff the spawner has it (sandboxed parent →
+    // sandboxed child). Only that one flag is inherited; all other tool-gating
+    // stays at clodex defaults (the session object doesn't carry extraArgs, so
+    // read the spawner's persisted entry).
+    const spawnerArgs = (persistence.get(spawner.name)?.extraArgs) || [];
+    const childArgs = spawnerArgs.includes('--dangerously-skip-permissions')
+      ? ['--dangerously-skip-permissions'] : [];
+
+    // Defer off the JsonlWatcher scan callback that triggered us (same discipline
+    // as reload): don't drive a full PTY spawn synchronously from inside a watcher
+    // emit. setImmediate lets the scan unwind first.
+    setImmediate(async () => {
+      try {
+        ensureDir(cwd); // self-contained: mkdir the cwd if absent — no external tool
+        await this.create(
+          name, type, cwd, childArgs, null, workspaceId,
+          null, false, proxy, [], [], [], [], [], null, [],
+        );
+        // The intent path bypasses the renderer's create flow, so tell the owning
+        // window to draw the sidebar tab + terminal (reused verbatim from reload).
+        // Dropped harmlessly if the window is detached — the session still spawned
+        // and the UI recomputes on reattach.
+        this._sendToSession(name, 'session:context-action', {
+          action: 'reattach', name, type, cwd,
+        });
+        this._broadcast('ipc-message', {
+          type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}`,
+        });
+        reply(`ok: spawned "${name}" (${type}) @ ${cwd}`);
+      } catch (err) {
+        reply(`error: ${err.message}`);
+      }
+    });
   }
 
   // The CLI slash command each context sub-command maps to, per session type.
