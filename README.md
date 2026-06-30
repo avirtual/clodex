@@ -9,9 +9,10 @@ A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run mul
 - **Sidebar with agent sessions** — switch between Claude, Codex, and bash sessions with a click
 - **Embedded xterm.js terminals** — each session is a real PTY with full terminal support
 - **Inter-agent IPC** — agents can write `[agent:dm bob] hello` in their responses to message each other; DMs land in the recipient's stdin as `[agent:from alice] hello`. Sidebar tab pulses amber when a session receives a message.
+- **Self-managing agents** — beyond messaging, agents can compact / clear / reload their own context window, save and recall persistent memories, and spawn new peer sessions — all through `[agent:…]` intents emitted in their normal responses.
 - **Multi-window workspaces** — each window is a workspace with its own session set; restored on relaunch. `[agent:who]` is workspace-scoped; DM is global by agent name.
 - **Live context indicator** — for Claude sessions, sidebar shows a color-coded badge (green/orange/red) with the current context window usage
-- **Prompts library** — save reusable prompts and either inject them into a running session or seed a new one as a system prompt
+- **Prompts library** — author reusable prompts as files (typed *system* or *append*) that sessions reference by name; edit one file and every session that references it picks up the change. Inject into a running session, or attach at spawn — a replacement system prompt and/or ordered append blocks
 - **Templates** — save New Session dialog configs and pick them from a dropdown
 - **Edit args mid-stream** — right-click a session → "Edit Args…" to update its CLI args; choose to apply on next spawn or restart immediately (sessionId is preserved across restart)
 - **Customizable statusline** — via Preferences (⌘,), pick which components show in Claude and Codex statuslines
@@ -69,12 +70,25 @@ Bash sessions are private terminals — they don't participate in IPC.
 
 **Scoping:** `[agent:who]` is scoped to the sender's workspace — it only sees agents in the same window. `[agent:dm <name>]` is global: if an agent by that name exists in any workspace, it'll receive the DM.
 
+### Self-management intents
+
+Agents can also act on their own session — useful for long-running, unattended work where there's no operator to drive the CLI:
+
+- **Context** — `[agent:context compact]` (compact in place; optional trailing text is injected as the agent's first turn afterward so it keeps working instead of stalling), `[agent:context clear]` (drop history, keep the session), `[agent:context reload] <handoff>` (cold-restart the session, adopting any edited config; the handoff body is required and becomes turn one for the fresh instance).
+- **Memory** — `[agent:memory remember] <text>` saves a unit that persists across sessions (optional leading `scope=<tag>`), `[agent:memory list]` enumerates them, `[agent:memory recall] <id|query>` surfaces one back into the agent's input. Stored per-agent under `~/.clodex/library/memory/`.
+- **Spawn** — `[agent:spawn name:X cwd:Y]` mints a new persistent peer session named `X` rooted at `Y` (creating the directory if absent); it joins the spawner's workspace and is immediately DM-able.
+
 ### Prompts library
 
-Click the 📝 icon in the sidebar header to open the library. Save reusable prompts, then either:
+Click the 📝 icon in the sidebar header to open the library. Prompts are stored as files under `~/.clodex/library/prompts/`, typed by subfolder:
+
+- **system** prompts *replace* the CLI's default system prompt
+- **append** prompts are *added* to it (a session can reference several, applied in filename order)
+
+Sessions reference prompts by name rather than copying them — edit a file once and every session that references it picks up the change on its next spawn. You can:
 
 - **Inject** a prompt into the active session (types it into the PTY like you pasted it)
-- **Seed** a new session with it — the New Session dialog has a "System Prompt" dropdown that attaches the prompt at launch (Claude: `--append-system-prompt-file`; Codex: `model_instructions_file`)
+- **Attach** at launch — the New Session and Edit Session dialogs have a "System Prompt" picker (replace) and an "Append prompts" checklist. Claude gets `--system-prompt-file` + `--append-system-prompt-file`; Codex folds them into `model_instructions_file`. The inter-agent IPC protocol is always prepended to the append blob, so messaging survives even a replaced system prompt.
 
 ### Workspaces
 
@@ -136,11 +150,13 @@ Each agent session is a node-pty subprocess running `claude` or `codex`. Clodex 
 A watcher tails the JSONL (seeking to EOF on first open so past turns don't re-fire), extracts assistant text, and scans it for `[agent:…]` intents. Matching intents get routed to the target session's PTY stdin. Messages larger than 500 bytes spill to `~/.clodex/messages/` and are delivered as a pointer for the recipient to read via its file-access tool.
 
 Persistent data lives under `~/Library/Application Support/Clodex/`:
-- `sessions.json` — one entry per session with name, type, cwd, extraArgs, sessionId (for resume), workspaceId, label
+- `sessions.json` — one entry per session with name, type, cwd, extraArgs, sessionId (for resume), workspaceId, label, and prompt references (`systemPromptFile` / `appendPromptFiles`)
 - `workspaces.json` — id, name, bounds, `lastFocusedAt`
-- `prompts.json` — saved prompts
+- `agent-defaults.json` — per-agent-name defaults that outlive a kill (e.g. strip level)
 - `templates.json` — saved new-session dialog configs
 - `ui-settings.json` — statusline component choices
+
+Prompt and memory files live under `~/.clodex/library/` (`prompts/{system,append}/*.md` and `memory/<agent>/*.md`), so they're shared across windows and editable outside the app.
 
 Clodex is derived from the [wb-wrap project](https://github.com/bogdan/wb-wrap), a proof-of-concept CLI version of the same idea. As of v0.6.6 they are independent: Clodex owns its runtime dir (`~/.clodex/`) and no longer shares the `/tmp/wb-wrap/` namespace with wb-wrap sessions.
 
