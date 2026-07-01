@@ -98,9 +98,23 @@ function machoArch(file) {
 function expectedArch() { return process.arch === 'x64' ? 'x86_64' : process.arch; }
 
 // Mirror node-pty's helperPath resolution (incl. the asar.unpacked rewrites).
-function spawnHelperPath() {
-  let p = path.join(path.dirname(require.resolve('node-pty')), '..', 'build', 'Release', 'spawn-helper');
+// node-pty (lib/utils.js loadNativeModule) loads pty.node from the first of
+// build/Release, build/Debug, prebuilds/<platform>-<arch> that exists, and
+// resolves spawn-helper as a sibling of that. When no electron-rebuild has run,
+// build/Release is empty and it falls back to the shipped prebuild — so we must
+// check the same set, else the diagnostic points at a build/Release helper that
+// isn't the one actually being spawned (false "missing", wrong fix suggested).
+function unpackAsar(p) {
   return p.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked');
+}
+function spawnHelperPath() {
+  const root = path.join(path.dirname(require.resolve('node-pty')), '..');
+  const candidates = [
+    path.join(root, 'build', 'Release', 'spawn-helper'),
+    path.join(root, 'build', 'Debug', 'spawn-helper'),
+    path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+  ].map(unpackAsar);
+  return candidates.find(fs.existsSync) || candidates[0];
 }
 
 function detectRosetta() {
@@ -140,7 +154,7 @@ function diagWarning(d = collectSystemDiagnostics()) {
     return 'node-pty spawn-helper is missing — sessions can\'t start. Fix: npx electron-rebuild';
   }
   if (!d.helperExecutable) {
-    return 'node-pty spawn-helper is not executable — sessions can\'t start. Fix: npx electron-rebuild';
+    return `node-pty spawn-helper is not executable — sessions can't start. Fix: chmod +x "${d.helperPath}"`;
   }
   if (!['universal', '32-bit'].includes(d.helperArch) && d.helperArch !== expectedArch()) {
     return `spawn-helper arch (${d.helperArch}) != app arch (${expectedArch()}) — `

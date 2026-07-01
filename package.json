@@ -7,7 +7,7 @@
   "scripts": {
     "start": "ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
     "test": "node --test",
-    "postinstall": "node build/dev-rename-electron.js",
+    "postinstall": "node build/dev-rename-electron.js && node build/fix-pty-helper.js",
     "rebuild": "electron-rebuild",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac --arm64",
@@ -21,8 +21,8 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
-    "electron": "^35.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.bogdan.clodex",
