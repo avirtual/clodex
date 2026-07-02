@@ -14,10 +14,16 @@ class Decompressor {
     this.passthrough = enc !== 'gzip' && enc !== 'deflate';
     this._onData = onData;
     this._dead = false;
+    this._pendingDone = null;
     if (!this.passthrough) {
       this._z = enc === 'gzip' ? zlib.createGunzip() : zlib.createInflate();
       this._z.on('data', (d) => this._onData(d));
-      this._z.on('error', () => { this._dead = true; });
+      // A zlib error means end()'s own callback will never fire — release
+      // any caller already waiting in end(), or stream-end would be lost.
+      this._z.on('error', () => {
+        this._dead = true;
+        this._release();
+      });
     }
   }
 
@@ -30,7 +36,14 @@ class Decompressor {
   // Flush remaining bytes, then call done (always called, even when dead).
   end(done) {
     if (this.passthrough || this._dead) { if (done) done(); return; }
-    this._z.end(() => { if (done) done(); });
+    this._pendingDone = done || null;
+    this._z.end(() => this._release());
+  }
+
+  _release() {
+    const d = this._pendingDone;
+    this._pendingDone = null;
+    if (d) d();
   }
 }
 

@@ -35,6 +35,12 @@
 //                    and only from main-line non-side-call turns.
 //   'usage'          { agent, reqId, usage }           → cost/ctx telemetry
 //   'proxy-error'    { agent, reqId, error }
+//   'tee-failure'    { agent, reqId, error }
+//                    the OBSERVER died for this stream; the client keeps
+//                    receiving raw bytes untouched. Contract (reviewer
+//                    condition, CLODEUX-PLAN.md): when the app makes wire
+//                    events load-bearing (W3), a tee-failure must disable
+//                    ALL wire-fed controls visibly — never a partial set.
 
 const http = require('http');
 const https = require('https');
@@ -364,11 +370,30 @@ class WireProxy extends EventEmitter {
       const sse = detectSse(upRes.headers['content-type'], chatgptMode, req.method, ctx.upstreamPath);
       this.emit('response', { agent, reqId, status: upRes.statusCode, sse });
 
+      // Second guard level (the first is inside _buildTee): even a tee
+      // whose construction or entry points are broken cannot touch the
+      // client path. On the first throw the tee is dropped for this
+      // stream and 'tee-failure' fires; stream-end still pairs with
+      // stream-start so activity state can't wedge.
       let tee = null;
+      let streamEnded = false;
+      const teeFail = (e) => {
+        tee = null;
+        this.emit('tee-failure', { agent, reqId, error: (e && e.message) || String(e) });
+        if (!streamEnded) { streamEnded = true; this.emit('stream-end', { agent, reqId }); }
+      };
       if (sse) {
         this.emit('stream-start', { agent, reqId });
-        tee = this._buildTee({ agent, provider, reqId, sessionId, role, sideCall },
-          upRes.headers['content-encoding']);
+        const onEnd = (ev) => {
+          if (ev.reqId !== reqId) return;
+          streamEnded = true;
+          this.removeListener('stream-end', onEnd);
+        };
+        this.on('stream-end', onEnd);
+        try {
+          tee = this._buildTee({ agent, provider, reqId, sessionId, role, sideCall },
+            upRes.headers['content-encoding']);
+        } catch (e) { teeFail(e); }
       }
 
       res.writeHead(upRes.statusCode, respHeaders);
@@ -376,23 +401,33 @@ class WireProxy extends EventEmitter {
         // Client first — the tee must never delay client-bound bytes.
         res.write(chunk);
         this.stats.bytesForwarded += chunk.length;
-        if (tee) tee.feed(chunk);
+        if (tee) { try { tee.feed(chunk); } catch (e) { teeFail(e); } }
       });
       upRes.on('end', () => {
         res.end();
-        if (tee) tee.close();
+        if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
       });
       upRes.on('error', (e) => {
         this.stats.requestsErrored += 1;
         this.emit('proxy-error', { agent, reqId, error: `upstream read: ${e.message}` });
         res.destroy();
-        if (tee) tee.close();
+        if (tee) { try { tee.close(); } catch (err) { teeFail(err); } }
+      });
+      // Some premature-termination paths emit only 'close' (no 'end', no
+      // 'error'). Without this backstop the client response would hang
+      // open forever — the one unbounded failure mode.
+      upRes.on('close', () => {
+        if (!res.writableEnded) {
+          this.emit('proxy-error', { agent, reqId, error: 'upstream closed mid-stream' });
+          res.destroy();
+          if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
+        }
       });
       // Client gave up mid-stream — stop pulling from upstream, flush tee.
       res.on('close', () => {
         if (!res.writableEnded) {
           upRes.destroy();
-          if (tee) tee.close();
+          if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
         }
       });
     });
@@ -420,31 +455,47 @@ class WireProxy extends EventEmitter {
     const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
     let text = '';
     let truncated = false;
+    // First guard level: zlib delivers on its own ticks, so an exception
+    // in the framer/extractor path can't be caught by the forwarding
+    // handlers — it must be contained here or it takes down the process.
+    let dead = false;
+    const fail = (e) => {
+      if (dead) return;
+      dead = true;
+      this.emit('tee-failure', { agent, reqId, error: (e && e.message) || String(e) });
+    };
     const framer = new SSEFramer((event, data) => {
-      if (usage) usage.onEvent(event, data);
-      const t = extract(event, data);
-      if (t && !truncated) {
-        if (text.length + t.length > TURN_TEXT_CAP) truncated = true;
-        else text += t;
-      }
+      try {
+        if (usage) usage.onEvent(event, data);
+        const t = extract(event, data);
+        if (t && !truncated) {
+          if (text.length + t.length > TURN_TEXT_CAP) truncated = true;
+          else text += t;
+        }
+      } catch (e) { fail(e); }
     });
-    const decomp = new Decompressor(contentEncoding, (d) => framer.feed(d));
+    const decomp = new Decompressor(contentEncoding, (d) => {
+      if (dead) return;
+      try { framer.feed(d); } catch (e) { fail(e); }
+    });
     let closed = false;
     return {
-      feed: (chunk) => decomp.feed(chunk),
+      feed: (chunk) => { if (!dead) decomp.feed(chunk); },
       close: () => {
         if (closed) return;
         closed = true;
         decomp.end(() => {
-          const usageRecord = usage && usage.record ? usage.record : null;
-          if (usageRecord) this.emit('usage', { agent, reqId, usage: usageRecord });
-          if (text || usageRecord) {
-            this.stats.turnsCompleted += 1;
-            this.emit('turn.completed', {
-              agent, provider, reqId, sessionId, role, sideCall, text,
-              usage: usageRecord, truncated,
-            });
-          }
+          try {
+            const usageRecord = !dead && usage && usage.record ? usage.record : null;
+            if (usageRecord) this.emit('usage', { agent, reqId, usage: usageRecord });
+            if (!dead && (text || usageRecord)) {
+              this.stats.turnsCompleted += 1;
+              this.emit('turn.completed', {
+                agent, provider, reqId, sessionId, role, sideCall, text,
+                usage: usageRecord, truncated,
+              });
+            }
+          } catch (e) { fail(e); }
           this.emit('stream-end', { agent, reqId });
         });
       },
@@ -462,7 +513,7 @@ module.exports = { WireProxy, extractSessionId, detectSse };
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });
-  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error']) {
+  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure']) {
     proxy.on(ev, (payload) => console.log(`[${ev}]`, JSON.stringify(payload)));
   }
   proxy.listen().then((port) => {

@@ -2675,6 +2675,10 @@ class SessionManager {
     });
     wire.on('session', (ev) => this._shadowLog({ type: 'wire-session', ...ev }));
     wire.on('proxy-error', (ev) => this._shadowLog({ type: 'wire-error', ...ev }));
+    // W3 cutover contract attaches here: when wire events become the live
+    // intent path, a tee-failure must disable ALL wire-fed controls
+    // visibly (never a partial set). In shadow mode it is log-only.
+    wire.on('tee-failure', (ev) => this._shadowLog({ type: 'wire-tee-failure', ...ev }));
     this._shadowLog({ type: 'wire-up', port: wire.port });
     this._wire = wire;
     return wire;
