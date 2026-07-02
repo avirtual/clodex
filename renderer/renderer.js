@@ -3422,17 +3422,13 @@ const prefsClaudeBox = document.getElementById('prefs-claude-components');
 const prefsClaudeCmd = document.getElementById('prefs-claude-sl-cmd');
 const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
-const prefsProxyUrl = document.getElementById('prefs-proxy-url');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
-const prefsWsDir = document.getElementById('prefs-ws-dir');
-const prefsWsPort = document.getElementById('prefs-ws-port');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
 const wsDot = document.getElementById('ws-dot');
 const wsStatusText = document.getElementById('ws-status-text');
-const wsToggleBtn = document.getElementById('btn-ws-toggle');
 const CLAUDE_LABELS = {
   'model': 'Model name',
   'context': 'Context usage (estimated)',
@@ -3469,7 +3465,11 @@ function renderPrefsCheckboxes(container, all, enabled, labels) {
   }
 }
 
-// wirescope status dot — colors + label per supervisor state.
+// Read-only proxy health line under the Traffic optimization toggle. The
+// proxy lifecycle is fully Clodex-managed (autostart on launch/settings-save,
+// vendored source, managed venv) so there is deliberately NO start/stop/port/
+// dir UI — status is the only surface. Power users: wirescopeDir/wirescopePort
+// in ui-settings.json still override the bundled copy (no UI on purpose).
 const WS_DOT = { managed: '#3fb950', external: '#58a6ff', starting: '#d29922', installing: '#d29922', stopped: '#888', error: '#f85149' };
 
 function renderWsStatus(st) {
@@ -3477,30 +3477,21 @@ function renderWsStatus(st) {
   let color = WS_DOT[st ? st.state : 'stopped'] || '#888';
   let text;
   if (st && st.state === 'managed') {
-    const src = st.origin === 'vendored' ? 'bundled copy' : 'your checkout';
-    text = `Running (managed, ${src})${st.version ? ' — wirescope ' + st.version : ''}`;
+    text = `Active${st.version ? ' — ' + st.version : ''}`;
   } else if (st && st.state === 'external') {
-    text = `Adopted a wirescope already running on this port${st.version ? ' — ' + st.version : ''} · managed externally`;
+    text = `Active — using the proxy already running on this machine${st.version ? ' (' + st.version + ')' : ''}`;
   } else if (st && st.state === 'installing') {
     text = 'Setting up — installing the Python environment (first run only)…';
   } else if (st && st.state === 'starting') {
     text = 'Starting…';
+  } else if (err) {
+    text = err;
+    color = WS_DOT.error;
   } else {
-    text = err ? err : 'Stopped';
-    if (err) color = WS_DOT.error;
+    text = prefsProxyEnabled.checked ? 'Not running' : 'Off';
   }
   wsDot.style.background = color;
   wsStatusText.textContent = text;
-  // The toggle only makes sense for a Clodex-managed lifecycle: Start when
-  // nothing's running, Stop when it's ours. When a wirescope is already running
-  // (adopted/external) neither applies, so hide the button rather than show a
-  // dead greyed-out "Start". 'starting' keeps a disabled button for feedback.
-  const state = st ? st.state : 'stopped';
-  const managed = state === 'managed';
-  const inFlight = state === 'starting' || state === 'installing';
-  wsToggleBtn.style.display = state === 'external' ? 'none' : '';
-  wsToggleBtn.textContent = managed ? 'Stop' : 'Start';
-  wsToggleBtn.disabled = inFlight;
 }
 
 let wsPollTimer = null;
@@ -3514,11 +3505,8 @@ async function openPrefs() {
   prefsClaudeCmd.value = s.statusline.claudeCommand || '';
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
   prefsProxyEnabled.checked = !!s.proxyEnabled;
-  prefsProxyUrl.value = s.proxyUrl || 'http://127.0.0.1:7800';
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   prefsCompactOnResume.checked = !!s.compactOnResume;
-  prefsWsDir.value = s.wirescopeDir || '';
-  prefsWsPort.value = s.wirescopePort || 7800;
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
   // Unchecked = denied by default for new sessions.
   claudeToolsCache = s.claudeTools || [];
@@ -3534,45 +3522,6 @@ function closePrefs() {
   if (wsPollTimer) { clearInterval(wsPollTimer); wsPollTimer = null; }
 }
 
-// Persist the live wirescope dir/port so the supervisor (which reads settings)
-// acts on what's in the fields right now.
-async function saveWsFields() {
-  const port = parseInt(prefsWsPort.value, 10);
-  await window.api.setSettings({
-    wirescopeDir: prefsWsDir.value.trim(),
-    wirescopePort: Number.isInteger(port) && port > 0 ? port : 7800,
-  });
-}
-
-document.getElementById('btn-ws-browse').addEventListener('click', async () => {
-  const dir = await window.api.selectDirectory();
-  if (dir) { prefsWsDir.value = dir; await saveWsFields(); refreshWsStatus(); }
-});
-
-// The supervisor probes the SAVED port/dir, so persist edits live — otherwise
-// changing the port to a free one wouldn't flip "adopted" back to a startable
-// "stopped". (These two operational fields intentionally save on edit, not just
-// on the Save button.)
-for (const el of [prefsWsDir, prefsWsPort]) {
-  el.addEventListener('change', async () => { await saveWsFields(); refreshWsStatus(); });
-}
-
-wsToggleBtn.addEventListener('click', async () => {
-  const st = await window.api.wirescopeStatus();
-  if (st && st.state === 'managed') {
-    await window.api.wirescopeStop();
-  } else {
-    await saveWsFields();
-    await window.api.wirescopeStart();
-  }
-  refreshWsStatus();
-});
-
-document.getElementById('ws-repo-link').addEventListener('click', (e) => {
-  e.preventDefault();
-  window.api.openExternal('https://github.com/avirtual/wirescope');
-});
-
 function collectChecked(container) {
   return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.value);
 }
@@ -3586,11 +3535,8 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       codex: collectChecked(prefsCodexBox),
     },
     proxyEnabled: prefsProxyEnabled.checked,
-    proxyUrl: prefsProxyUrl.value.trim() || 'http://127.0.0.1:7800',
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     compactOnResume: prefsCompactOnResume.checked,
-    wirescopeDir: prefsWsDir.value.trim(),
-    wirescopePort: (() => { const p = parseInt(prefsWsPort.value, 10); return Number.isInteger(p) && p > 0 ? p : 7800; })(),
   });
   // Default tool denies live in a separate store (the "*" agent-default), so
   // persist them via their own setter. collectToolChecklist returns the

@@ -5369,9 +5369,11 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:set', (_e, partial) => {
     const next = uiSettings.set(partial);
     rebuildAllStatusScripts(manager);
-    // Enabling the proxy (or repointing it at the managed port) from prefs
-    // should bring the managed wirescope up without a separate Start click.
+    // The Traffic optimization toggle is the proxy's single control: on brings
+    // the managed wirescope up, off tears it down. stop() only ever kills OUR
+    // child — an adopted external instance is never touched either way.
     if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
+    else wirescope.stop();
     return next;
   });
 
