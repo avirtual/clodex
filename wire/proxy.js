@@ -25,7 +25,7 @@
 //   'response'       { agent, reqId, status, sse }
 //   'stream-start'   { agent, reqId }                  → activity: thinking
 //   'turn.completed' { agent, provider, reqId, sessionId, role, sideCall,
-//                      text, usage, truncated, model, billing, stop,
+//                      text, usage, truncated, model, status, billing, stop,
 //                      sessionTotals, warmth }
 //                    role: parent/unknown = main line; Plan/verification/
 //                    general-purpose/subagent = Task subs (see wire/role.js).
@@ -36,10 +36,13 @@
 //                    a snapshot of the session's running totals. Python twin:
 //                    proxylab/receipts.py; the tee close is the one
 //                    turn-finalize convergence point in-process.
-//                    NOTE: non-SSE responses (count_tokens, JSON error
-//                    bodies) are not teed and so not billed yet — proxylab
-//                    counts those as 0-token billed/count_tokens requests;
-//                    request counts may differ until W2 step 4 wires them.
+//                    Fires for EVERY anthropic messages response — error
+//                    streams and non-SSE JSON error bodies too (empty text,
+//                    all-null usage, is_turn false), matching proxylab's
+//                    per-response receipt. count_tokens responses are
+//                    billed + accumulated (0-token, request-rate-limit
+//                    spend) but do NOT emit turn.completed, matching the
+//                    subscriber contract. status = upstream HTTP status.
 //                    warmth (W2 step 2): the prefix-ledger stamp record
 //                    (wire/warmth.js) when opts.warmth is set and the
 //                    response confirmed a cache event; null otherwise.
@@ -186,6 +189,10 @@ class WireProxy extends EventEmitter {
   //   warmth      a wire/warmth WarmthStore; when set, every cache-confirmed
   //               anthropic response stamps the prefix ledger and
   //               turn.completed carries the warmth record. null = off.
+  //   hold        a wire/hold HoldKeeper; when set, every MAIN-LINE
+  //               anthropic messages request is cached as the session's
+  //               replayable last request (keep-warm ping source) and
+  //               re-anchors any armed hold. null = off.
   constructor(opts = {}) {
     super();
     this.host = opts.host || '127.0.0.1';
@@ -193,6 +200,7 @@ class WireProxy extends EventEmitter {
     this.upstreams = { ...DEFAULT_UPSTREAMS, ...(opts.upstreams || {}) };
     this.requireTokens = !!opts.requireTokens;
     this.warmth = opts.warmth || null;
+    this.hold = opts.hold || null;
     this._tokens = new Map(); // agent name → token
     this._agentSessions = new Map(); // agent name → last main-line sessionId
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
@@ -385,6 +393,20 @@ class WireProxy extends EventEmitter {
       return this._json(res, 502, { error: `bad upstream url: ${e.message}` });
     }
 
+    // Replayable last request + hold re-anchor (wire/hold.js): only the
+    // MAIN LINE of a messages call is the session's durable, pingable
+    // request — a subagent, title side-call, or quota probe shares the
+    // session_id but is transient, and must not replace what a ping
+    // replays nor re-anchor the keep-warm hold (else we'd keep a finished
+    // subagent's context warm, or pin a one-token probe as the body).
+    if (this.hold && provider === 'anthropic' && req.method === 'POST'
+        && bodyObj && sessionId && !sideCall && !isSubagentRole(role)
+        && ctx.upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages')) {
+      try {
+        this.hold.noteRequest(sessionId, bodyObj, fwdHeaders, upstreamUrl.href);
+      } catch { /* keep-warm cache is observer-grade — never the client path */ }
+    }
+
     const lib = upstreamUrl.protocol === 'https:' ? https : http;
     const upReq = lib.request(upstreamUrl, { method: req.method, headers: fwdHeaders }, (upRes) => {
       const respHeaders = {};
@@ -400,7 +422,7 @@ class WireProxy extends EventEmitter {
       // stream and 'tee-failure' fires; stream-end still pairs with
       // stream-start so activity state can't wedge.
       let tee = null;
-      let streamEnded = false;
+      let streamEnded = !sse; // stream-start/-end pair exists only for SSE
       const teeFail = (e) => {
         tee = null;
         this.emit('tee-failure', { agent, reqId, error: (e && e.message) || String(e) });
@@ -417,9 +439,25 @@ class WireProxy extends EventEmitter {
         try {
           tee = this._buildTee(
             { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj,
-              requestId: upRes.headers['request-id'] || null },
+              requestId: upRes.headers['request-id'] || null,
+              status: upRes.statusCode },
             upRes.headers['content-encoding']);
         } catch (e) { teeFail(e); }
+      } else if (provider === 'anthropic' && req.method === 'POST') {
+        // Non-SSE anthropic replies (W2 step 4): count_tokens results and
+        // JSON messages bodies (error responses, stream:false) still get a
+        // receipt, so request counts match proxylab's.
+        const base = ctx.upstreamPath.replace(/\/+$/, '');
+        const isCount = base.endsWith('/count_tokens');
+        if (isCount || base.endsWith('/v1/messages')) {
+          try {
+            tee = this._buildJsonTee(
+              { agent, provider, reqId, sessionId, role, sideCall, model,
+                requestId: upRes.headers['request-id'] || null,
+                status: upRes.statusCode },
+              upRes.headers['content-encoding'], isCount);
+          } catch (e) { teeFail(e); }
+        }
       }
 
       res.writeHead(upRes.statusCode, respHeaders);
@@ -476,7 +514,7 @@ class WireProxy extends EventEmitter {
   // after the client's final byte. Consumers wanting main-line turns only
   // (intent scanning) filter role parent/unknown + sideCall false.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, requestId } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
     let text = '';
@@ -521,23 +559,24 @@ class WireProxy extends EventEmitter {
             if (!dead) {
               if (provider === 'anthropic') {
                 usageRecord = usage.record;
-                if (usageRecord || text) {
-                  bill = billing('messages', {
-                    modelResolved: usage.resolvedModel || model,
-                    usageFinal: usage.usageFinal,
-                    usageStart: usage.usageStart,
-                  });
-                  stop = {
-                    stop_reason: usage.stopReason,
-                    stop_details: usage.stopDetails,
-                    request_id: requestId,
-                    // one terminal response = one completed user turn
-                    // (refusal/max_tokens still END a turn; tool_use is a
-                    // mid-turn hop). Side-calls + subagents don't count.
-                    is_turn: !sideCall && (role === 'parent' || role === 'unknown')
-                      && usage.stopReason != null && usage.stopReason !== 'tool_use',
-                  };
-                }
+                // proxylab finalizes EVERY messages response — an error
+                // stream with no usage still bills (all-null tokens, $0)
+                // and counts a request, so totals never under-count.
+                bill = billing('messages', {
+                  modelResolved: usage.resolvedModel || model,
+                  usageFinal: usage.usageFinal,
+                  usageStart: usage.usageStart,
+                });
+                stop = {
+                  stop_reason: usage.stopReason,
+                  stop_details: usage.stopDetails,
+                  request_id: requestId,
+                  // one terminal response = one completed user turn
+                  // (refusal/max_tokens still END a turn; tool_use is a
+                  // mid-turn hop). Side-calls + subagents don't count.
+                  is_turn: !sideCall && (role === 'parent' || role === 'unknown')
+                    && usage.stopReason != null && usage.stopReason !== 'tool_use',
+                };
               } else {
                 const rec = usage.meta;
                 usageRecord = rec.usage;
@@ -551,7 +590,12 @@ class WireProxy extends EventEmitter {
               }
             }
             if (usageRecord) this.emit('usage', { agent, reqId, usage: usageRecord });
-            if (!dead && (text || usageRecord)) {
+            // Anthropic emits a receipt for EVERY messages response — but
+            // only from a healthy observer: a quietly-dead decompressor saw
+            // an unknown truncation, and an empty receipt synthesized from
+            // that would be a confident lie. Partial data (text/usage seen
+            // before death) still emits, as it always did.
+            if (!dead && ((provider === 'anthropic' && !decomp.dead) || text || usageRecord)) {
               this.stats.turnsCompleted += 1;
               let sessionTotals = null;
               if (bill) {
@@ -576,12 +620,74 @@ class WireProxy extends EventEmitter {
               }
               this.emit('turn.completed', {
                 agent, provider, reqId, sessionId, role, sideCall, text,
-                usage: usageRecord, truncated, model, billing: bill, stop,
-                sessionTotals, warmth: warmthRec,
+                usage: usageRecord, truncated, model, status, billing: bill,
+                stop, sessionTotals, warmth: warmthRec,
               });
             }
           } catch (e) { fail(e); }
           this.emit('stream-end', { agent, reqId });
+        });
+      },
+    };
+  }
+
+  // Non-SSE observer (W2 step 4): anthropic messages/count_tokens replies
+  // that come back as plain JSON — count_tokens results, error bodies,
+  // stream:false messages. proxylab finalizes these through the same
+  // receipts convergence, so the wire does too: count_tokens bills a
+  // 0-token request-rate-limit spend (no turn.completed — matches the
+  // subscriber contract); a JSON messages body bills as an all-null-usage
+  // request (proxylab's SSE usage parse over a JSON body yields nulls —
+  // parity over cleverness) and emits turn.completed with empty text.
+  // Body buffered observer-side only, capped; the client stream is
+  // untouched either way.
+  _buildJsonTee(turnCtx, contentEncoding, isCount) {
+    const { agent, provider, reqId, sessionId, role, sideCall, model, requestId, status } = turnCtx;
+    const chunks = [];
+    let size = 0;
+    let dead = false;
+    const fail = (e) => {
+      if (dead) return;
+      dead = true;
+      this.emit('tee-failure', { agent, reqId, error: (e && e.message) || String(e) });
+    };
+    const decomp = new Decompressor(contentEncoding, (d) => {
+      if (dead || size > TURN_TEXT_CAP) return;
+      chunks.push(d);
+      size += d.length;
+    });
+    let closed = false;
+    return {
+      feed: (chunk) => { if (!dead) decomp.feed(chunk); },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        decomp.end(() => {
+          if (dead || decomp.dead) return; // no receipt off a truncated view
+          try {
+            let parsed = null;
+            try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+            const sessionKey = sessionId || `agent:${agent}`;
+            if (isCount) {
+              const bill = billing('count_tokens', {
+                modelResolved: model,
+                countTokens: (parsed && typeof parsed === 'object') ? parsed : {},
+              });
+              this.billing.accumulate(bill, sessionKey, null);
+            } else {
+              const bill = billing('messages', { modelResolved: model });
+              const stop = { stop_reason: null, stop_details: null,
+                request_id: requestId, is_turn: false };
+              this.billing.accumulate(bill, sessionKey, stop);
+              this.stats.turnsCompleted += 1;
+              this.emit('turn.completed', {
+                agent, provider, reqId, sessionId, role, sideCall, text: '',
+                usage: null, truncated: false, model, status, billing: bill,
+                stop, sessionTotals: { ...this.billing.session(sessionKey) },
+                warmth: null,
+              });
+            }
+          } catch (e) { fail(e); }
         });
       },
     };

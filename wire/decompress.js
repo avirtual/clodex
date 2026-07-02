@@ -27,6 +27,13 @@ class Decompressor {
     }
   }
 
+  // True once the zlib stream errored: the observer's view of this body is
+  // truncated at an unknown point — consumers must not publish receipts
+  // synthesized from it (partial data already delivered stays delivered).
+  get dead() {
+    return this._dead;
+  }
+
   feed(chunk) {
     if (!chunk || !chunk.length) return;
     if (this.passthrough) { this._onData(chunk); return; }

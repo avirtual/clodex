@@ -310,9 +310,10 @@ test('per-agent upstream override chains through an external proxy base', async 
   up.server.close();
 });
 
-test('malformed SSE degrades to no turn, session unbroken', async () => {
+test('malformed SSE degrades to an empty receipt, session unbroken', async () => {
   // Upstream streams garbage that is not valid SSE JSON — the client must
-  // still receive the exact bytes; the observer just sees nothing.
+  // still receive the exact bytes; the observer sees no usage/text but
+  // still finalizes a receipt (proxylab bills every messages response).
   const GARBAGE = 'event: content_block_delta\ndata: {not json!!\n\nplain trash without framing';
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -328,7 +329,11 @@ test('malformed SSE degrades to no turn, session unbroken', async () => {
   assert.equal(res.body.toString('utf8'), GARBAGE);
 
   await new Promise((r) => setTimeout(r, 50));
-  assert.equal(events['turn.completed'].length, 0);
+  assert.equal(events['turn.completed'].length, 1);
+  const t = events['turn.completed'][0];
+  assert.equal(t.text, '');
+  assert.equal(t.usage, null);
+  assert.equal(t.stop.is_turn, false);
   assert.equal(events['stream-end'].length, 1);
   assert.equal(events['proxy-error'].length, 0);
 

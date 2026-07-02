@@ -46,7 +46,7 @@ function serveOnce(handler) {
   });
 }
 
-test('upstream 5xx passes through verbatim, no turn emitted', async () => {
+test('upstream 5xx passes through verbatim; error receipt, not a turn', async () => {
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(529, { 'content-type': 'application/json' });
     res.end('{"error":{"type":"overloaded_error"}}');
@@ -59,7 +59,17 @@ test('upstream 5xx passes through verbatim, no turn emitted', async () => {
   assert.equal(res.status, 529);
   assert.equal(res.body.toString('utf8'), '{"error":{"type":"overloaded_error"}}');
   await new Promise((r) => setTimeout(r, 30));
-  assert.equal(events['turn.completed'].length, 0);
+  // proxylab finalizes every messages response: the error body still gets
+  // a receipt (request counted, $0, not a user turn) — W2 step 4.
+  assert.equal(events['turn.completed'].length, 1);
+  const t = events['turn.completed'][0];
+  assert.equal(t.status, 529);
+  assert.equal(t.text, '');
+  assert.equal(t.usage, null);
+  assert.equal(t.stop.is_turn, false);
+  assert.equal(t.billing.est_usd, null); // '{}' body: no model → nothing priced
+  assert.equal(t.sessionTotals.requests, 1);
+  assert.equal(t.sessionTotals.turns, 0);
   assert.equal(events['tee-failure'].length, 0);
 
   await proxy.close();

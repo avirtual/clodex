@@ -2696,7 +2696,24 @@ class SessionManager {
     } catch (e) {
       this._shadowLog({ type: 'wire-warmth-unavailable', error: e.message });
     }
-    const wire = new WireProxy({ requireTokens: true, warmth });
+    // Keep-warm driver (W2 step 5): replayable last-request cache + hold
+    // auto-pinger, warm-only gated against the warmth store. Passive until
+    // something arms a hold (app-side arm/disarm lands with the W2 renderer
+    // cutover); its tick loop is unref'd and costs nothing while idle.
+    let hold = null;
+    if (warmth) {
+      try {
+        const { HoldKeeper } = require('./wire/hold');
+        hold = new HoldKeeper({ warmth });
+        hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
+        hold.start();
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-unavailable', error: e.message });
+        hold = null;
+      }
+    }
+    this._holdKeeper = hold;
+    const wire = new WireProxy({ requireTokens: true, warmth, hold });
     await wire.listen();
     this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
     wire.on('turn.completed', (t) => {
