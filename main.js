@@ -2213,6 +2213,20 @@ class WirescopeSupervisor {
           ...process.env,
           PORT: String(port), LOG_DIR: logDir, WARMTH_DB: warmthDb,
           PYTHONDONTWRITEBYTECODE: '1',
+          // Canonical start_proxy.sh defaults (verified against the script,
+          // 2026-07-03) — bare uvicorn leaves them OFF, which silently drops
+          // deployment behavior the fleet has always run with. Most load-
+          // bearing: WARMTH_BLOCK_COLD_PING (a ping/hold against an expired
+          // prefix must DECLINE, not re-write the full prefix at premium)
+          // and WS_OMIT_DEFAULT (subagent spawns don't inherit the userEmail
+          // block; main lines carry it unless the agent omits explicitly).
+          // Explicit user env overrides win (`?? '…'` mirrors the script's
+          // ${VAR-default}: an exported 0 sticks).
+          STRIP_COMPACT_CACHE: process.env.STRIP_COMPACT_CACHE ?? '1',
+          WARMTH_BLOCK_COLD_PING: process.env.WARMTH_BLOCK_COLD_PING ?? '1',
+          WARMTH_LOG_FILE: process.env.WARMTH_LOG_FILE ?? '1',
+          WS_SPAWNER_HINT: process.env.WS_SPAWNER_HINT ?? '1',
+          WS_OMIT_DEFAULT: process.env.WS_OMIT_DEFAULT ?? 'useremail',
         },
         detached: true,
         stdio: ['ignore', logFd, logFd],
