@@ -25,16 +25,32 @@ const path = require('path');
 
 const { WireProxy } = require('./proxy');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall } = require('./role');
+const { WarmthStore } = require('./warmth');
 
 function parseArgs(argv) {
-  const opts = { chunkSize: 0, fuzzSeed: 0, dirs: [] };
+  const opts = { chunkSize: 0, fuzzSeed: 0, warmth: false, dirs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--chunk-size') opts.chunkSize = Number(argv[++i]) || 0;
     else if (a === '--fuzz-seed') opts.fuzzSeed = Number(argv[++i]) || 0;
+    else if (a === '--warmth') opts.warmth = true;
     else opts.dirs.push(a);
   }
   return opts;
+}
+
+// Warmth replay clock: stamps and expiry reads run on CAPTURE time (the
+// request.json ts, local ISO — same wall-clock base the Python driver
+// uses via time.mktime), not on replay wall-clock, or every TTL in the
+// corpus would read as lapsed-decades or never-lapsed. One shared store
+// across all dirs: the ledger is content-addressed and cross-session
+// sharing (sibling sessions warming each other's tools/system segments)
+// is exactly what the state-for-state gate must exercise.
+const replayClock = { t: 0 };
+
+function parseTs(ts) {
+  const ms = Date.parse(ts); // local time — matches Python's time.mktime(strptime(...))
+  return Number.isFinite(ms) ? ms / 1000 : null;
 }
 
 // Deterministic PRNG (mulberry32) — reproducible adversarial boundaries.
@@ -100,9 +116,13 @@ function replayPair(proxy, classifier, stem, reqPath, ssePath, opts) {
     ? observeRequest(classifier, obj, req.request_headers)
     : { sessionId: null, role: null, sideCall: false };
 
+  const ts = parseTs(req.ts);
+  if (ts != null) replayClock.t = ts;
+
   const out = {
     stem, agent: req.agent || null, provider, sessionId, role, sideCall,
-    turn: null, usage: null, billing: null, stop: null, teeFailure: null,
+    turn: null, usage: null, billing: null, stop: null, warmth: null,
+    teeFailure: null,
   };
   if (!fs.existsSync(ssePath)) {
     out.note = 'no sse capture';
@@ -113,6 +133,7 @@ function replayPair(proxy, classifier, stem, reqPath, ssePath, opts) {
     out.turn = { text: t.text, truncated: t.truncated };
     out.billing = t.billing || null;
     out.stop = t.stop || null;
+    out.warmth = t.warmth || null;
   };
   const onUsage = (u) => { out.usage = u.usage; };
   const onFail = (f) => { out.teeFailure = f.error; };
@@ -122,7 +143,8 @@ function replayPair(proxy, classifier, stem, reqPath, ssePath, opts) {
   try {
     const tee = proxy._buildTee(
       { agent: out.agent, provider, reqId: stem, sessionId, role, sideCall,
-        model: typeof obj.model === 'string' ? obj.model : null, requestId: null },
+        model: typeof obj.model === 'string' ? obj.model : null,
+        bodyObj: obj, requestId: null },
       null, // .response.sse is stored decoded
     );
     const sse = fs.readFileSync(ssePath);
@@ -145,11 +167,14 @@ function stemSeed(stem) {
   return h >>> 0;
 }
 
-function replayDir(dir, opts) {
+function replayDir(dir, opts, warmth) {
   const reqs = fs.readdirSync(dir)
     .filter((f) => f.endsWith('.request.json'))
-    .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
-  const proxy = new WireProxy({}); // never listens — tee pipeline only
+    // total order: leading seq, then full name — duplicate seq numbers
+    // exist in real captures and the warmth ledger is order-sensitive
+    .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
+      || (a < b ? -1 : a > b ? 1 : 0));
+  const proxy = new WireProxy({ warmth: warmth || null }); // never listens — tee pipeline only
   const classifier = new RoleClassifier();
   for (const f of reqs) {
     const stem = f.replace(/\.request\.json$/, '');
@@ -167,10 +192,13 @@ function replayDir(dir, opts) {
 if (require.main === module) {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.dirs.length) {
-    console.error('usage: node wire/replay.js [--chunk-size N | --fuzz-seed N] <capture-session-dir>...');
+    console.error('usage: node wire/replay.js [--chunk-size N | --fuzz-seed N] [--warmth] <capture-session-dir>...');
     process.exit(2);
   }
-  for (const d of opts.dirs) replayDir(d, opts);
+  const warmth = opts.warmth
+    ? new WarmthStore({ now: () => replayClock.t }) // in-memory, capture-clocked
+    : null;
+  for (const d of opts.dirs) replayDir(d, opts, warmth);
 }
 
-module.exports = { observeRequest, replayDir, chunksOf, mulberry32 };
+module.exports = { observeRequest, replayDir, chunksOf, mulberry32, replayClock };

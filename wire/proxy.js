@@ -26,7 +26,7 @@
 //   'stream-start'   { agent, reqId }                  → activity: thinking
 //   'turn.completed' { agent, provider, reqId, sessionId, role, sideCall,
 //                      text, usage, truncated, model, billing, stop,
-//                      sessionTotals }
+//                      sessionTotals, warmth }
 //                    role: parent/unknown = main line; Plan/verification/
 //                    general-purpose/subagent = Task subs (see wire/role.js).
 //                    sideCall: title-generator / health-probe request.
@@ -40,6 +40,9 @@
 //                    bodies) are not teed and so not billed yet — proxylab
 //                    counts those as 0-token billed/count_tokens requests;
 //                    request counts may differ until W2 step 4 wires them.
+//                    warmth (W2 step 2): the prefix-ledger stamp record
+//                    (wire/warmth.js) when opts.warmth is set and the
+//                    response confirmed a cache event; null otherwise.
 //   'stream-end'     { agent, reqId }                  → activity: idle
 //   'session'        { agent, sessionId, previous }    → persistence/--resume
 //                    fires on CHANGE only (first sight or /clear rotation),
@@ -180,12 +183,16 @@ class WireProxy extends EventEmitter {
   //   requireTokens  when true, every registered agent needs a token and
   //                  requests must carry it as the first path segment after
   //                  the agent name: /agent/<name>/<token>/v1/...
+  //   warmth      a wire/warmth WarmthStore; when set, every cache-confirmed
+  //               anthropic response stamps the prefix ledger and
+  //               turn.completed carries the warmth record. null = off.
   constructor(opts = {}) {
     super();
     this.host = opts.host || '127.0.0.1';
     this.port = opts.port ?? 0;
     this.upstreams = { ...DEFAULT_UPSTREAMS, ...(opts.upstreams || {}) };
     this.requireTokens = !!opts.requireTokens;
+    this.warmth = opts.warmth || null;
     this._tokens = new Map(); // agent name → token
     this._agentSessions = new Map(); // agent name → last main-line sessionId
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
@@ -341,9 +348,11 @@ class WireProxy extends EventEmitter {
     let role = null;
     let sideCall = false;
     let model = null;
+    let bodyObj = null; // held for the warmth stamp at tee close
     if (body && req.method === 'POST') {
       try {
         const obj = JSON.parse(body.toString('utf8'));
+        bodyObj = obj;
         sessionId = sessionIdFrom(obj);
         if (typeof obj.model === 'string') model = obj.model;
         if (provider === 'anthropic') {
@@ -407,7 +416,7 @@ class WireProxy extends EventEmitter {
         this.on('stream-end', onEnd);
         try {
           tee = this._buildTee(
-            { agent, provider, reqId, sessionId, role, sideCall, model,
+            { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj,
               requestId: upRes.headers['request-id'] || null },
             upRes.headers['content-encoding']);
         } catch (e) { teeFail(e); }
@@ -467,7 +476,7 @@ class WireProxy extends EventEmitter {
   // after the client's final byte. Consumers wanting main-line turns only
   // (intent scanning) filter role parent/unknown + sideCall false.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, requestId } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, requestId } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
     let text = '';
@@ -550,10 +559,25 @@ class WireProxy extends EventEmitter {
                 this.billing.accumulate(bill, sessionKey, stop);
                 sessionTotals = { ...this.billing.session(sessionKey) };
               }
+              // Prefix-warmth stamp (response-confirmed; wire/warmth.js).
+              // Parity detail: the stamping decision reads the cache fields
+              // from message_start ONLY (proxylab's flat usage parse) — the
+              // merged record could flip a 0→nonzero across iterations.
+              // All anthropic turns stamp, side-calls and subagents too
+              // (content-addressed; matches receipts.py, which never role-
+              // gates the ledger).
+              let warmthRec = null;
+              if (this.warmth && provider === 'anthropic' && bodyObj) {
+                const us = usage.usageStart || {};
+                warmthRec = this.warmth.record(bodyObj, {
+                  cache_creation_input_tokens: us.cache_creation_input_tokens,
+                  cache_read_input_tokens: us.cache_read_input_tokens,
+                }, sessionId);
+              }
               this.emit('turn.completed', {
                 agent, provider, reqId, sessionId, role, sideCall, text,
                 usage: usageRecord, truncated, model, billing: bill, stop,
-                sessionTotals,
+                sessionTotals, warmth: warmthRec,
               });
             }
           } catch (e) { fail(e); }

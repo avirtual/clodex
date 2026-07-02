@@ -2651,7 +2651,17 @@ class SessionManager {
     const { WireProxy } = require('./wire/proxy');
     const { isSubagentRole } = require('./wire/role');
     const { ShadowDiff } = require('./wire/shadow');
-    const wire = new WireProxy({ requireTokens: true });
+    // Prefix-warmth ledger (W2): durable, same schema as proxylab but its
+    // own file (hashes differ by construction — wire/warmth.js header).
+    // Store failure never blocks the wire: warmth is telemetry-only.
+    let warmth = null;
+    try {
+      const { WarmthStore } = require('./wire/warmth');
+      warmth = new WarmthStore({ path: path.join(app.getPath('userData'), 'wire-warmth.sqlite') });
+    } catch (e) {
+      this._shadowLog({ type: 'wire-warmth-unavailable', error: e.message });
+    }
+    const wire = new WireProxy({ requireTokens: true, warmth });
     await wire.listen();
     this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
     wire.on('turn.completed', (t) => {
