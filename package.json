@@ -50,6 +50,12 @@
       "build/tray-iconTemplate@2x.png",
       "node_modules/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "vendor/wirescope",
+        "to": "wirescope"
+      }
+    ],
     "extraMetadata": {
       "main": "main.js"
     }

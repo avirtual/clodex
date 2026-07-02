@@ -24,6 +24,11 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 git -C "$SRC" archive "$COMMIT" -- "${PAYLOAD[@]}" | tar -x -C "$DEST"
 
+# RELEASE stamp: wirescope's _detect_version() returns this verbatim, else it
+# falls back to `git describe` — which, from inside OUR repo, would report
+# Clodex's version as wirescope's. Written before the digest so it's covered.
+printf '%s (vendored)\n' "$REF" > "$DEST/RELEASE"
+
 # Deterministic payload digest: file-relative sha256 lines, sorted, hashed.
 DIGEST=$(cd "$DEST" && find . -type f | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)
 

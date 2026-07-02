@@ -413,7 +413,7 @@
       </section>
       <section>
         <h4>API proxy</h4>
-        <p class="hint-text">Default for all agent sessions; override per session at create or via Edit Session Args. Applied at spawn — running sessions pick it up on restart.</p>
+        <p class="hint-text">Cache-warming, cost telemetry and wire optimizations. Routes each agent session's API traffic through a local proxy process on this machine — Clodex starts and manages it for you (see the wirescope section below). Default for all agent sessions; override per session at create or via Edit Session Args. Applied at spawn — running sessions pick it up on restart.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-proxy-enabled" style="margin: 0;">
           <span>Route agent sessions through an API proxy</span>
@@ -430,10 +430,10 @@
       </section>
       <section>
         <h4>wirescope</h4>
-        <p class="hint-text">Cost, context &amp; cache-warming telemetry. Point Clodex at a local <a href="#" id="ws-repo-link">wirescope</a> checkout and start it here. If one is already running on the port, Clodex adopts it instead of starting a second.</p>
-        <p class="hint-text" style="margin-bottom: 2px;">Source directory</p>
+        <p class="hint-text">The proxy behind the API-proxy toggle above. Clodex ships its own copy of <a href="#" id="ws-repo-link">wirescope</a> and starts it automatically when the proxy is enabled — nothing to set up (first run creates a private Python environment; needs a system <code>python3</code>). If one is already running on the port, Clodex adopts it instead of starting a second.</p>
+        <p class="hint-text" style="margin-bottom: 2px;">Source directory (optional — leave empty to use the bundled copy)</p>
         <div style="display: flex; gap: 8px;">
-          <input type="text" id="prefs-ws-dir" placeholder="/path/to/wirescope" spellcheck="false" style="flex: 1;">
+          <input type="text" id="prefs-ws-dir" placeholder="bundled copy" spellcheck="false" style="flex: 1;">
           <button id="btn-ws-browse" class="secondary" type="button">Browse…</button>
         </div>
         <p class="hint-text" style="margin: 8px 0 2px;">Port</p>

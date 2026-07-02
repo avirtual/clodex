@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const net = require('net');
 const { execSync, spawn } = require('child_process');
+const crypto = require('crypto');
 const pty = require('node-pty');
 
 // Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
@@ -1939,14 +1940,22 @@ class ProxyPoller {
 }
 
 // ---------------------------------------------------------------------------
-// WirescopeSupervisor (phase-0): start/stop a user-pointed wirescope checkout
+// WirescopeSupervisor (phase-1): run the vendored wirescope, zero setup
 // ---------------------------------------------------------------------------
 // Detect-first: if a wirescope is already answering on the configured port we
 // ADOPT it (never spawn a second — that's how the user's shared :7800 stays the
-// single ledger). Otherwise spawn `uvicorn logproxy:app` from the source dir
-// with the PORT + LOG_DIR + WARMTH_DB triple so a managed instance is fully
-// owner-scoped and coexists with anything else. SIGTERM is a clean shutdown
-// (uvicorn graceful + atexit writer drain). We only ever stop OUR child.
+// single ledger). Otherwise spawn `uvicorn logproxy:app` with the PORT +
+// LOG_DIR + WARMTH_DB triple so a managed instance is fully owner-scoped and
+// coexists with anything else. SIGTERM is a clean shutdown (uvicorn graceful +
+// atexit writer drain). We only ever stop OUR child.
+//
+// Phase-1: the source defaults to the vendored snapshot shipped with Clodex
+// (scripts/vendor-wirescope.sh → vendor/wirescope, pinned by VENDOR.json); an
+// explicit wirescopeDir setting still wins for users tracking their own tree.
+// Dependencies live in a Clodex-managed venv under userData, created on first
+// start and re-installed when the source's requirements.txt changes. Requires
+// a system python3 (macOS: xcode-select --install); everything degrades
+// gracefully without one — sessions fall back to wire → Anthropic direct.
 // See https://github.com/avirtual/wirescope and .claude/memory.md.
 class WirescopeSupervisor {
   constructor() {
@@ -1954,6 +1963,8 @@ class WirescopeSupervisor {
     this.startedPort = null; // port we spawned on
     this.lastError = null;   // surfaced to the prefs UI
     this._stderr = '';       // tail of child stderr for diagnostics
+    this.installing = false; // venv create / pip install in flight
+    this._startChain = null; // in-flight async start (venv → spawn) guard
   }
 
   _base(port) { return `http://127.0.0.1:${port}`; }
@@ -1968,22 +1979,131 @@ class WirescopeSupervisor {
     try { return !!dir && fs.existsSync(path.join(dir, 'logproxy.py')); } catch { return false; }
   }
 
+  // Vendored snapshot. Dev runs straight from the repo's vendor/ dir; packaged
+  // runs from Contents/Resources (extraResources — python can't execute from
+  // inside the asar archive).
+  _vendorDir() {
+    const dir = app.isPackaged
+      ? path.join(process.resourcesPath, 'wirescope')
+      : path.join(__dirname, 'vendor', 'wirescope');
+    return this._looksValid(dir) ? dir : null;
+  }
+
+  // Source resolution: an explicit user checkout wins; otherwise the vendored
+  // snapshot. A set-but-invalid user dir is an error, not a silent fallback —
+  // the user pointed somewhere on purpose.
+  _source() {
+    const s = uiSettings.get();
+    const dir = s.wirescopeDir || '';
+    if (dir) {
+      return this._looksValid(dir)
+        ? { dir, origin: 'user' }
+        : { dir: null, origin: 'user', error: `Not a wirescope checkout (no logproxy.py in ${dir})` };
+    }
+    const vend = this._vendorDir();
+    return vend
+      ? { dir: vend, origin: 'vendored' }
+      : { dir: null, origin: null, error: 'No wirescope source (no vendored copy in this build; set a source directory)' };
+  }
+
+  _venvDir() { return path.join(app.getPath('userData'), 'wirescope', 'venv'); }
+  _venvPython() { return path.join(this._venvDir(), 'bin', 'python3'); }
+
+  // GUI apps inherit launchd's minimal PATH. Startup merges the login shell's
+  // PATH, but the hard fallbacks keep this working when that merge hasn't run
+  // (dev) or the shell profile is broken.
+  _findPython3() {
+    const cands = (process.env.PATH || '').split(':').filter(Boolean)
+      .map((d) => path.join(d, 'python3'))
+      .concat(['/usr/bin/python3', '/opt/homebrew/bin/python3', '/usr/local/bin/python3']);
+    for (const p of cands) {
+      try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+    }
+    return null;
+  }
+
+  _run(cmd, args, opts = {}) {
+    return new Promise((resolve, reject) => {
+      let child;
+      try {
+        child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], ...opts });
+      } catch (e) { reject(e); return; }
+      let tail = '';
+      if (child.stderr) child.stderr.on('data', (d) => { tail = (tail + d.toString()).slice(-2000); });
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, opts.timeoutMs || 300000);
+      child.on('error', (e) => { clearTimeout(timer); reject(e); });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`${path.basename(cmd)} ${args[1] || args[0]} exited ${code}${
+          tail ? ': ' + tail.trim().split('\n').slice(-3).join(' ').slice(-300) : ''}`));
+      });
+    });
+  }
+
+  // Managed venv under userData, stamped with the source's requirements hash
+  // so a vendored upgrade (or a user checkout's dep bump) re-installs once and
+  // an unchanged one is a two-stat no-op.
+  async _ensureVenv(srcDir) {
+    const reqPath = path.join(srcDir, 'requirements.txt');
+    let reqHash = '';
+    try { reqHash = crypto.createHash('sha256').update(fs.readFileSync(reqPath)).digest('hex'); } catch {}
+    const venv = this._venvDir();
+    const py = this._venvPython();
+    const stamp = path.join(venv, '.clodex-venv-stamp');
+    try {
+      if (fs.existsSync(py) && fs.readFileSync(stamp, 'utf8').trim() === reqHash) return py;
+    } catch {}
+    const sysPy = this._findPython3();
+    if (!sysPy) throw new Error('python3 not found — install Python 3.9+ (macOS: xcode-select --install)');
+    this.installing = true;
+    try {
+      fs.mkdirSync(path.dirname(venv), { recursive: true });
+      if (!fs.existsSync(py)) await this._run(sysPy, ['-m', 'venv', venv], { timeoutMs: 120000 });
+      if (reqHash) {
+        await this._run(py, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', reqPath],
+          { timeoutMs: 600000 });
+      }
+      fs.writeFileSync(stamp, reqHash);
+      return py;
+    } finally {
+      this.installing = false;
+    }
+  }
+
+  // Autostart is wanted only when sessions would actually route through the
+  // managed instance: proxy enabled AND proxyUrl pointing at the managed local
+  // port. A remote/custom proxyUrl means the user runs their own thing.
+  autoStartWanted() {
+    const s = uiSettings.get();
+    if (!s.proxyEnabled) return false;
+    try {
+      const u = new URL(s.proxyUrl);
+      const port = parseInt(u.port || (u.protocol === 'https:' ? '443' : '80'), 10);
+      return (u.hostname === '127.0.0.1' || u.hostname === 'localhost')
+        && port === (s.wirescopePort || 7800);
+    } catch { return false; }
+  }
+
   async status() {
     const s = uiSettings.get();
     const port = s.wirescopePort || 7800;
     const base = this._base(port);
-    const dir = s.wirescopeDir || '';
-    const dirValid = this._looksValid(dir);
+    const src = this._source();
     const probe = await ProxyClient.probe(base).catch(() => null);
     const alive = !!(this.child && this.child.exitCode === null && !this.child.killed);
 
     let state;
     if (probe) state = alive ? 'managed' : 'external';
-    else if (alive) state = 'starting';
+    else if (this.installing) state = 'installing';
+    else if (alive || this._startChain) state = 'starting';
     else state = 'stopped';
 
     return {
-      state, port, base, dir, dirValid,
+      state, port, base,
+      dir: s.wirescopeDir || '',
+      dirValid: src.origin === 'user' ? !!src.dir : this._looksValid(s.wirescopeDir),
+      origin: src.dir ? src.origin : null, // 'user' | 'vendored' | null
       product: probe ? probe.product : null,
       version: probe ? probe.version : null,
       managed: alive,
@@ -1991,12 +2111,14 @@ class WirescopeSupervisor {
     };
   }
 
+  // Fully async start chain: (venv ensure →) spawn. Returns immediately —
+  // first run installs the venv (python3 -m venv + pip install), which can
+  // take tens of seconds; the prefs dialog polls progress via status().
   // Returns { ok, state, error? }. Adopts an existing wirescope rather than
   // spawning a duplicate. Spawn errors surface asynchronously via status().
   async start() {
     const s = uiSettings.get();
     const port = s.wirescopePort || 7800;
-    const dir = s.wirescopeDir || '';
     const base = this._base(port);
 
     // Detect-first: already serving here? adopt, don't spawn.
@@ -2008,31 +2130,46 @@ class WirescopeSupervisor {
     if (this.child && this.child.exitCode === null) {
       return { ok: true, state: 'starting' };
     }
-    if (!this._looksValid(dir)) {
-      this.lastError = dir
-        ? `Not a wirescope checkout (no logproxy.py in ${dir})`
-        : 'No wirescope source directory set';
+    if (this._startChain) {
+      return { ok: true, state: this.installing ? 'installing' : 'starting' };
+    }
+    const src = this._source();
+    if (!src.dir) {
+      this.lastError = src.error;
       return { ok: false, error: this.lastError };
     }
 
+    this.lastError = null;
+    const chain = (async () => {
+      const py = await this._ensureVenv(src.dir);
+      this._spawn(py, src.dir, port);
+    })();
+    this._startChain = chain;
+    chain
+      .catch((e) => { this.lastError = e.message; })
+      .finally(() => { if (this._startChain === chain) this._startChain = null; });
+    return { ok: true, state: 'installing' };
+  }
+
+  // Spawn uvicorn from the resolved source with the venv's python.
+  // PYTHONDONTWRITEBYTECODE: a packaged vendored copy lives inside the signed
+  // .app bundle — __pycache__ writes there would invalidate the code signature.
+  _spawn(python, dir, port) {
     const { logDir, warmthDb } = this._dirs();
     try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
 
-    this.lastError = null;
     this._stderr = '';
-    let child;
-    try {
-      child = spawn('python3',
-        ['-m', 'uvicorn', 'logproxy:app', '--host', '127.0.0.1', '--port', String(port)],
-        {
-          cwd: dir,
-          env: { ...process.env, PORT: String(port), LOG_DIR: logDir, WARMTH_DB: warmthDb },
-          stdio: ['ignore', 'ignore', 'pipe'],
-        });
-    } catch (e) {
-      this.lastError = `Failed to launch python3: ${e.message}`;
-      return { ok: false, error: this.lastError };
-    }
+    const child = spawn(python,
+      ['-m', 'uvicorn', 'logproxy:app', '--host', '127.0.0.1', '--port', String(port)],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          PORT: String(port), LOG_DIR: logDir, WARMTH_DB: warmthDb,
+          PYTHONDONTWRITEBYTECODE: '1',
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
 
     this.child = child;
     this.startedPort = port;
@@ -2042,9 +2179,7 @@ class WirescopeSupervisor {
       });
     }
     child.on('error', (e) => {
-      this.lastError = e.code === 'ENOENT'
-        ? 'python3 not found on PATH — install Python 3.9+ or check your PATH'
-        : `wirescope failed to start: ${e.message}`;
+      this.lastError = `wirescope failed to start: ${e.message}`;
       if (this.child === child) { this.child = null; this.startedPort = null; }
     });
     child.on('exit', (code, signal) => {
@@ -2056,8 +2191,6 @@ class WirescopeSupervisor {
         this.lastError = `wirescope terminated (${signal})`;
       }
     });
-
-    return { ok: true, state: 'starting' };
   }
 
   // Stop ONLY a Clodex-managed child — never an adopted/external instance.
@@ -4653,6 +4786,13 @@ app.whenReady().then(() => {
 
   logStartupDiagnostics();
 
+  // Zero-setup proxy: when sessions are configured to route through the
+  // managed local port, bring wirescope up ourselves (detect-first inside
+  // start() adopts an already-running instance instead of double-spawning).
+  // Fire-and-forget: a first-run venv install can take tens of seconds and
+  // sessions degrade gracefully (wire → Anthropic direct) until it's up.
+  if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
+
   cleanupOldMessages();
   setInterval(cleanupOldMessages, MSG_CLEANUP_INTERVAL);
   registry.cleanup();
@@ -5229,6 +5369,9 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:set', (_e, partial) => {
     const next = uiSettings.set(partial);
     rebuildAllStatusScripts(manager);
+    // Enabling the proxy (or repointing it at the managed port) from prefs
+    // should bring the managed wirescope up without a separate Start click.
+    if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
     return next;
   });
 

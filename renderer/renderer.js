@@ -3470,16 +3470,19 @@ function renderPrefsCheckboxes(container, all, enabled, labels) {
 }
 
 // wirescope status dot — colors + label per supervisor state.
-const WS_DOT = { managed: '#3fb950', external: '#58a6ff', starting: '#d29922', stopped: '#888', error: '#f85149' };
+const WS_DOT = { managed: '#3fb950', external: '#58a6ff', starting: '#d29922', installing: '#d29922', stopped: '#888', error: '#f85149' };
 
 function renderWsStatus(st) {
   const err = st && st.error;
   let color = WS_DOT[st ? st.state : 'stopped'] || '#888';
   let text;
   if (st && st.state === 'managed') {
-    text = `Running (managed)${st.version ? ' — wirescope ' + st.version : ''}`;
+    const src = st.origin === 'vendored' ? 'bundled copy' : 'your checkout';
+    text = `Running (managed, ${src})${st.version ? ' — wirescope ' + st.version : ''}`;
   } else if (st && st.state === 'external') {
     text = `Adopted a wirescope already running on this port${st.version ? ' — ' + st.version : ''} · managed externally`;
+  } else if (st && st.state === 'installing') {
+    text = 'Setting up — installing the Python environment (first run only)…';
   } else if (st && st.state === 'starting') {
     text = 'Starting…';
   } else {
@@ -3494,10 +3497,10 @@ function renderWsStatus(st) {
   // dead greyed-out "Start". 'starting' keeps a disabled button for feedback.
   const state = st ? st.state : 'stopped';
   const managed = state === 'managed';
-  const starting = state === 'starting';
+  const inFlight = state === 'starting' || state === 'installing';
   wsToggleBtn.style.display = state === 'external' ? 'none' : '';
   wsToggleBtn.textContent = managed ? 'Stop' : 'Start';
-  wsToggleBtn.disabled = starting;
+  wsToggleBtn.disabled = inFlight;
 }
 
 let wsPollTimer = null;
