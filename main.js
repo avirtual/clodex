@@ -202,6 +202,13 @@ const TURN_COMPLETE_TIMEOUT = 1000; // ms
 // its role via per-agent upstream chaining. Default OFF: zero behavior
 // change without the env flag.
 const WIRE_SHADOW = process.env.CLODEX_WIRE_SHADOW === '1';
+// W2 cutover preview: overlay the wire-carried telemetry fields (cost/turns/
+// refusals/inputTokens/warmth + hold ownership) onto each poll payload before
+// it reaches the renderer (WireTelemetry.overlay). Requires WIRE_SHADOW (the
+// wire must be up). The shadow diff keeps comparing the RAW poll record, so
+// validation evidence stays honest while the overlay is live. Default OFF
+// until the live-shadow readout passes the reviewer gate (CLODEUX-PLAN.md).
+const WIRE_TELEMETRY_LIVE = process.env.CLODEX_WIRE_TELEMETRY === '1';
 const LONG_TEXT_THRESHOLD = 200;
 const LONG_TEXT_DELAY = 1000;
 const SHORT_TEXT_DELAY = 50;
@@ -1852,11 +1859,21 @@ class ProxyPoller {
               continue; // transient miss — leave last-good in place, don't re-emit
             }
           }
-          this.last.set(s.name, payload);
-          this.manager._sendToSession(s.name, 'session-proxy', s.name, payload);
+          // W2 cutover preview: with CLODEX_WIRE_TELEMETRY=1 the wire-carried
+          // fields overwrite the poll's before emission (per-agent, all-or-
+          // nothing — see WireTelemetry.overlay). The snapshot map stores the
+          // emitted shape so attach/switch renders match the live bar.
+          let emitted = payload;
+          if (WIRE_TELEMETRY_LIVE && this.manager._wireTelemetry) {
+            emitted = this.manager._wireTelemetry.overlay(s.name, payload);
+          }
+          this.last.set(s.name, emitted);
+          this.manager._sendToSession(s.name, 'session-proxy', s.name, emitted);
           // W2 step-4 dark bridge: diff this live emission against the wire's
           // shaped payload into the shadow log (validation evidence for the
-          // cutover). No-op unless CLODEX_WIRE_SHADOW brought the wire up.
+          // cutover). Always diffs the RAW poll record — the overlay must not
+          // contaminate its own evidence. No-op unless CLODEX_WIRE_SHADOW
+          // brought the wire up.
           if (this.manager._wireTelemetry) this.manager._wireTelemetry.diffPoll(s.name, payload);
           // Reconcile the wire strip state against proxy TRUTH every tick rather
           // than fire-once asserting. The old latch recorded "asserted" the moment
@@ -2749,7 +2766,7 @@ class SessionManager {
     // WireTelemetry method swallows its own errors.
     try {
       const { WireTelemetry } = require('./wire-telemetry');
-      this._wireTelemetry = new WireTelemetry({ warmth, log: (rec) => this._shadowLog(rec) });
+      this._wireTelemetry = new WireTelemetry({ warmth, hold, log: (rec) => this._shadowLog(rec) });
       wire.on('turn.completed', (t) => this._wireTelemetry.noteTurn(t));
     } catch (e) {
       this._shadowLog({ type: 'wire-telemetry-unavailable', error: e.message });
@@ -4704,6 +4721,30 @@ app.whenReady().then(() => {
       // Distinguish armed from declined (skipped) — a 200 can mean "I chose
       // not to act". Surface the reason so the UI never reads a no-op as success.
       return { ok: true, status: r.status, armed: !!j.armed, skipped: j.skipped || null, body: j };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // In-process twin of proxy:hold — arm/disarm the wire HoldKeeper (wire/hold.js)
+  // for the session's wire-observed session_id. Same return contract as
+  // proxy:hold so the renderer's doWarmHold works unchanged; which channel the
+  // fire button uses is decided by the payload's holdSource (set by
+  // WireTelemetry.overlay under CLODEX_WIRE_TELEMETRY). hours<=0 disarms;
+  // arming is warm-gated like the proxy's (force is the only override).
+  ipcMain.handle('wire:hold', (_e, name, hours, force) => {
+    if (!manager._holdKeeper || !manager._wireTelemetry) {
+      return { ok: false, error: 'In-process wire keep-warm is not running' };
+    }
+    const w = manager._wireTelemetry.payload(name);
+    if (!w || !w.sessionId) {
+      return { ok: false, error: 'The wire has not seen a turn for this session yet' };
+    }
+    try {
+      const j = (hours > 0)
+        ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force })
+        : manager._holdKeeper.disarm(w.sessionId);
+      return { ok: true, status: 200, armed: !!j.armed, skipped: j.skipped || null, body: j };
     } catch (e) {
       return { ok: false, error: e.message };
     }

@@ -172,6 +172,74 @@ test('never-throws contract: garbage inputs and a broken warmth store degrade si
   assert.strictEqual(wt.payload('alice'), null); // pruned
 });
 
+// Minimal HoldKeeper stand-in: one armed hold + one replayable entry.
+const holdStub = (sid, hold) => ({
+  entry: (s) => (s === sid ? { obj: {} } : null),
+  holds: () => (hold ? { [sid]: hold } : {}),
+});
+
+test('payload: hold/pingable are shaped off the HoldKeeper, poll-parity field names', () => {
+  const armed = { until: 1000, armedAt: 900, hours: 4, pings: 2, failures: 0, lastPingTs: 990, lastResult: 'warmed' };
+  const wt = new WireTelemetry({ hold: holdStub('sid-1', armed) });
+  wt.noteTurn(mainTurn());
+  const p = wt.payload('alice');
+  assert.strictEqual(p.pingable, true);
+  assert.deepStrictEqual(p.hold, { until: 1000, hours: 4, pings: 2, last_result: 'warmed' });
+  // Broken keeper degrades hold alone — cost keeps flowing.
+  const broken = new WireTelemetry({ hold: { entry: () => { throw new Error('dead'); }, holds: () => { throw new Error('dead'); } } });
+  broken.noteTurn(mainTurn());
+  const q = broken.payload('alice');
+  assert.strictEqual(q.hold, null);
+  assert.strictEqual(q.pingable, false);
+  assert.strictEqual(q.cost.usd, 0.1234);
+});
+
+test('overlay: wire-carried fields overwrite the poll payload, poll-only fields survive', () => {
+  const wt = new WireTelemetry({
+    warmth: warmthStub({ 'sid-1': { found: true, warm: true, remaining_s: 100, ttl_s: 300 } }),
+    hold: holdStub('sid-1', null),
+  });
+  wt.noteTurn(mainTurn());
+  const poll = {
+    linked: true, sessionId: 'sid-1', model: 'claude-sonnet-5', base: 'http://x',
+    cost: { usd: 113.98, requests: 392 }, turns: 50, refusals: 3,
+    context: { turns: 12, messages: 80, inputTokens: 999 },
+    warmth: { state: 'cold', remaining_s: null, ttl_s: 300 },
+    strip: { configuredLevel: 2 }, capabilities: { stats: true, hold: false },
+    subagents: [{ key: 'k' }], stripLevel: 2,
+  };
+  const out = wt.overlay('alice', poll);
+  assert.strictEqual(out.telemetrySource, 'wire');
+  assert.deepStrictEqual(out.cost, { usd: 0.1234, requests: 8 });   // wire ledger wins
+  assert.strictEqual(out.turns, 2);
+  assert.strictEqual(out.refusals, 0);
+  assert.strictEqual(out.context.inputTokens, 40600);
+  assert.strictEqual(out.context.messages, 80);                     // poll-only: kept
+  assert.strictEqual(out.warmth.state, 'warm');
+  assert.strictEqual(out.holdSource, 'wire');
+  assert.strictEqual(out.capabilities.hold, true);                  // wire hold unlocks the button
+  assert.strictEqual(out.capabilities.stats, true);
+  assert.deepStrictEqual(out.subagents, [{ key: 'k' }]);            // poll-only: kept
+  assert.strictEqual(out.strip.configuredLevel, 2);                 // poll-only: kept
+  assert.strictEqual(out.sessionId, 'sid-1');                       // poll ids stay (poll-backed IPC)
+  assert.strictEqual(poll.cost.usd, 113.98);                        // input not mutated
+});
+
+test('overlay: no wire identity / unlinked poll → poll returned untouched; never throws', () => {
+  const wt = new WireTelemetry({});
+  const poll = { linked: true, sessionId: 's', cost: { usd: 1 } };
+  assert.strictEqual(wt.overlay('unseen', poll), poll);              // wire never saw the agent
+  wt.noteTurn(mainTurn({ sideCall: true }));                         // totals but no main-line id
+  assert.strictEqual(wt.overlay('alice', poll), poll);
+  const unlinked = { linked: false };
+  assert.strictEqual(wt.overlay('alice', unlinked), unlinked);
+  assert.strictEqual(wt.overlay('alice', null), null);
+  // A payload() blow-up degrades to the raw poll, not an exception.
+  const broken = new WireTelemetry({});
+  broken.payload = () => { throw new Error('dead'); };
+  assert.strictEqual(broken.overlay('alice', poll), poll);
+});
+
 test('prune drops agents not in the live set', () => {
   const wt = new WireTelemetry({});
   wt.noteTurn(mainTurn());

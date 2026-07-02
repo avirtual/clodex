@@ -1896,18 +1896,28 @@ function openWarmMenu(anchorBtn, held) {
 
 // off:true disarms; otherwise arms/extends for opts.hours. Mirrors the prior
 // inline handler (confirm, force-on-not-warm, armed/pending feedback).
+// The hold owner is the payload's choice, not the renderer's: holdSource
+// 'wire' (in-process HoldKeeper, W2 cutover) routes to wire:hold, anything
+// else to the external proxy's /_hold. Same return contract on both.
+function holdApiFor(name) {
+  const st = proxyState.get(name);
+  return (st && st.payload && st.payload.holdSource === 'wire')
+    ? window.api.wireHold : window.api.proxyHold;
+}
+
 async function doWarmHold(name, opts) {
+  const holdApi = holdApiFor(name);
   if (opts.off) {
-    const r = await window.api.proxyHold(name, 0, false);
+    const r = await holdApi(name, 0, false);
     if (!r.ok) alert('Could not disarm hold: ' + r.error);
     return;
   }
   const hours = opts.hours;
   if (!confirm(`Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`)) return;
-  let r = await window.api.proxyHold(name, hours, false);
+  let r = await holdApi(name, hours, false);
   if (r.ok && !r.armed && r.skipped) {
     if (confirm(`Proxy declined (${r.skipped}): the cache prefix isn't warm yet, so there's nothing to keep warm. Force the hold anyway?`)) {
-      r = await window.api.proxyHold(name, hours, true);
+      r = await holdApi(name, hours, true);
     } else return;
   }
   if (!r.ok) alert('Hold failed: ' + r.error);

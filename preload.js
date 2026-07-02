@@ -94,6 +94,8 @@ window.api = {
     ipcRenderer.invoke('proxy:report', name, opts),
   proxyHold: (name, hours, force) =>
     ipcRenderer.invoke('proxy:hold', name, hours, force),
+  wireHold: (name, hours, force) =>
+    ipcRenderer.invoke('wire:hold', name, hours, force),
   setStripLevel: (name, level) =>
     ipcRenderer.invoke('proxy:setStripLevel', name, level),
   getProxySubagentDetail: (name, child, maxlen) =>

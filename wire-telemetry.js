@@ -53,8 +53,9 @@ function inc(now, base) {
 }
 
 class WireTelemetry {
-  constructor({ warmth = null, log = () => {} } = {}) {
+  constructor({ warmth = null, hold = null, log = () => {} } = {}) {
     this._warmth = warmth;
+    this._hold = hold; // wire/hold HoldKeeper — hold/pingable payload fields + overlay ownership
     this._log = log;
     this._agents = new Map();   // name -> { sessionId, model, totals, inputTokens, ts }
     this._lastDiff = new Map(); // name -> JSON of last logged diff (dedupe)
@@ -105,6 +106,19 @@ class WireTelemetry {
           }
         } catch { /* warmth degrades alone */ }
       }
+      // Keep-warm state off the in-process HoldKeeper, shaped like the poll's
+      // r.hold / r.pingable (renderer contract: hold.until in epoch seconds).
+      // Own try, same reasoning as warmth: a hold bug costs the fire button,
+      // not the cost samples.
+      let hold = null;
+      let pingable = false;
+      if (this._hold && a.sessionId) {
+        try {
+          pingable = !!this._hold.entry(a.sessionId);
+          const h = this._hold.holds()[a.sessionId];
+          if (h) hold = { until: h.until, hours: h.hours, pings: h.pings, last_result: h.lastResult ?? null };
+        } catch { /* hold degrades alone */ }
+      }
       return {
         linked: true,
         sessionId: a.sessionId,
@@ -114,8 +128,48 @@ class WireTelemetry {
         refusals: t.refusals || 0,
         context: { inputTokens: a.inputTokens },
         warmth,
+        pingable,
+        hold,
       };
     } catch { return null; }
+  }
+
+  // Cutover preview (CLODEX_WIRE_TELEMETRY=1 in main.js): overwrite the
+  // wire-carried fields on a live poll payload before it is emitted to the
+  // renderer, leaving every field the wire does not carry yet (strip,
+  // capabilities, subagents, sessionId for the poll-backed IPC endpoints,
+  // context messages/turns, base) on the poll's value. This IS the W2
+  // renderer cutover, previewed per-field: at guard-deletion time the poll
+  // side of the merge disappears rather than the renderer changing again.
+  //
+  // Known semantic change, deliberate: wire cost/requests/turns totals are
+  // per-app-launch (in-process ledger), not wirescope's persisted session-
+  // lifetime totals. Recorded in CLODEUX-PLAN.md with the validation readout.
+  //
+  // Returns the poll payload untouched when the wire has no main-line
+  // identity for the agent yet (Codex sessions, pre-first-turn) — degradation
+  // is per-agent, never partial within an agent tick. Never throws.
+  overlay(name, poll) {
+    try {
+      if (!poll || !poll.linked) return poll;
+      const wire = this.payload(name);
+      if (!wire || !wire.sessionId) return poll;
+      const out = { ...poll, telemetrySource: 'wire' };
+      out.cost = wire.cost;
+      out.turns = wire.turns;
+      out.refusals = wire.refusals;
+      out.context = { ...(poll.context || { turns: null, messages: null }), inputTokens: wire.context.inputTokens };
+      out.warmth = wire.warmth;
+      if (this._hold) {
+        // The in-process HoldKeeper owns keep-warm for this session: surface
+        // its state and route the renderer's fire button to wire:hold.
+        out.holdSource = 'wire';
+        out.hold = wire.hold;
+        out.pingable = wire.pingable;
+        out.capabilities = { ...(poll.capabilities || {}), hold: true };
+      }
+      return out;
+    } catch { return poll; }
   }
 
   // Called by ProxyPoller right after it emits the live payload. Logs one
