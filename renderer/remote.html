@@ -203,7 +203,9 @@
   function appendBubble(role, text) {
     const d = document.createElement('div');
     d.className = 'msg ' + role;
-    d.textContent = text;
+    // server-side strip of the delivery label ships with the app process;
+    // duplicate it here so a page reload suffices before a GUI restart
+    d.textContent = role === 'user' ? text.replace(/^\[agent:from user\]\s*/, '') : text;
     chatEl.appendChild(d);
   }
 
