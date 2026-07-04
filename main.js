@@ -4389,6 +4389,33 @@ async function checkForUpdate(silent = true) {
   }
 }
 
+// Full app relaunch — the one code path shared by the phone endpoint, the
+// File menu, and the tray. Normal quit lifecycle: sessions --resume on the
+// way back, the managed wirescope survives detached, and the fresh launch's
+// version check applies any pending vendor bump. Boot-time env sanitize
+// keeps the relaunched process clean even when the trigger came from inside
+// an agent session.
+function restartClodex() {
+  setTimeout(() => { app.relaunch(); app.quit(); }, 500);
+}
+
+// Menu/tray front door: confirm with the live session count first (the
+// remote page fronts its own confirm; direct callers skip none).
+async function confirmRestartClodex() {
+  const n = Array.from(manager.sessions.values()).filter(s => !s._dead).length;
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Restart', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Restart Clodex?',
+    detail: n
+      ? `${n} running session${n === 1 ? '' : 's'} will be interrupted and resumed after the restart.`
+      : 'The app will quit and reopen.',
+  });
+  if (response === 0) restartClodex();
+}
+
 // ---------------------------------------------------------------------------
 // Menu bar (tray) icon
 // ---------------------------------------------------------------------------
@@ -4545,6 +4572,7 @@ function buildTrayMenu() {
 
   template.push({ type: 'separator' });
   template.push({ label: 'Check for Updates', click: () => checkForUpdate(false) });
+  template.push({ label: 'Restart Clodex', click: () => { confirmRestartClodex(); } });
   template.push({ label: 'Quit Clodex', role: 'quit' });
   return Menu.buildFromTemplate(template);
 }
@@ -4689,6 +4717,7 @@ function buildAppMenu() {
           },
         },
         { label: 'Check for Updates…', click: () => checkForUpdate(false) },
+        { label: 'Restart Clodex', click: () => { confirmRestartClodex(); } },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -4965,9 +4994,7 @@ function syncRemoteServer() {
       // wirescope survives (detached) and the new launch's version check
       // picks up any pending vendor bump. Delay lets the HTTP response and
       // the ingress hop flush before the server dies under them.
-      restartApp: () => {
-        setTimeout(() => { app.relaunch(); app.quit(); }, 500);
-      },
+      restartApp: () => restartClodex(),
     });
   }
   remoteError = null;
