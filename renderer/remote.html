@@ -106,6 +106,8 @@
   let sessions = [];
   let open = null;           // name of the open session, or null
   let fetching = false;
+  let pending = [];          // sent texts not yet visible in the transcript
+  let burstTimers = [];
 
   // --- data ---
 
@@ -128,6 +130,19 @@
     fetching = false;
   }
 
+  // The turn events fire from the session manager the moment a turn starts or
+  // ends, but the CLI flushes the matching transcript entry to disk a beat
+  // later — a single immediate refetch reliably misses the very message the
+  // event announced. Fetch now and again shortly after; the last fetch wins.
+  function burstFetch() {
+    for (const t of burstTimers) clearTimeout(t);
+    burstTimers = [
+      setTimeout(loadTranscript, 700),
+      setTimeout(loadTranscript, 2500),
+    ];
+    loadTranscript();
+  }
+
   async function send() {
     const text = input.value.trim();
     if (!text || !open) return;
@@ -142,8 +157,10 @@
       if (j.ok) {
         input.value = '';
         input.style.height = 'auto';
+        pending.push(text);
         appendBubble('user', text);
         scrollDown();
+        burstFetch();
       } else {
         alert(j.error || 'send failed');
       }
@@ -193,7 +210,13 @@
   function renderChat(messages) {
     const atBottom = mainEl.scrollHeight - mainEl.scrollTop - mainEl.clientHeight < 60;
     chatEl.innerHTML = '';
+    // A sent message takes a moment to land in the transcript; keep showing
+    // it optimistically until the transcript contains it, so a refetch in
+    // that window doesn't make it vanish.
+    const recent = messages.slice(-20).filter(m => m.role === 'user').map(m => m.text);
+    pending = pending.filter(t => !recent.some(r => r === t || r.includes(t)));
     for (const m of messages) appendBubble(m.role, m.text);
+    for (const t of pending) appendBubble('user', t);
     if (atBottom) scrollDown();
   }
 
@@ -255,9 +278,10 @@
       if (dot) dot.className = 'session-dot' + (d.state === 'thinking' ? ' thinking' : '');
       if (open === d.name) {
         thinkingEl.className = d.state === 'thinking' ? 'on' : '';
-        // refetch once per real turn end; also on thinking-start so the
-        // user's own injected message shows up promptly
-        if (d.turnEnd || d.state === 'thinking') loadTranscript();
+        // refetch on turn end (my reply) and on thinking-start (a message
+        // injected from elsewhere) — as a burst, since the transcript entry
+        // lands on disk after the event fires
+        if (d.turnEnd || d.state === 'thinking') burstFetch();
       }
     });
     es.addEventListener('sessions', () => loadSessions());

@@ -2753,6 +2753,9 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       // local slash-command echoes and injected context aren't conversation
       text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
       if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
+      // panel/phone sends carry the delivery label; the phone view is the
+      // sender's own chat, so render them clean (peer labels stay visible)
+      text = text.replace(/^\[agent:from user\]\s*/, '');
     } else if (type === 'assistant') {
       role = 'assistant';
       const content = (obj.message || {}).content;
