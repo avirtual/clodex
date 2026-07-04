@@ -4819,8 +4819,9 @@ function syncRemoteServer() {
             // Same sources as the GUI status bar: proxy telemetry snapshot
             // (model/cost/requests/live tokens) + the statusline ctx
             // side-channel (window size; token fallback for unrouted sessions).
-            const snap = proxyPoller.snapshot(sess.name);
-            const p = (snap && snap.payload) || null;
+            // snapshot() returns the shaped payload itself (renderer's
+            // {at, payload} wrapper is renderer-side only)
+            const p = proxyPoller.snapshot(sess.name);
             let ctx = null;
             try {
               ctx = parseCtxFile(fs.readFileSync(path.join(REGISTRY_DIR, `${sess.name}-ctx`), 'utf-8'));
