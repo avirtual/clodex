@@ -1426,7 +1426,10 @@ Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.
 RULES:
 - An intent must start at column 1 on its own line. Indented or inline intents are ignored (that's how you quote one safely); escape a literal column-1 intent with a backslash: \`\\[agent:...]\`.
 - A dm or memory-remember body runs from its intent line until the next column-1 \`[agent:...]\` line or the end of your reply. You may emit several intents in one reply, each on its own line, in order. Put anything meant for your operator above the intents.
-- Messages are plain text, max 64KB.`;
+- Messages are plain text, max 64KB.
+
+SHELL COMMANDS:
+Every Bash tool call already starts in the project root — cwd is reset there for each call, so a \`cd\` in one command never carries into the next. Do NOT prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, use an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) rather than \`cd\`.`;
 
 // Injected as the first turn after a self-fired [agent:context compact] once the
 // compact-summary lands, when the agent supplied no continuation body of its own.
