@@ -100,7 +100,7 @@ class RemoteServer {
     const url = new URL(req.url, 'http://localhost');
     let p = url.pathname;
 
-    // Optional mount prefix for path-based ingress routing (m.dinzona.ro/c →
+    // Optional mount prefix for path-based ingress routing (example.com/c →
     // this server). The page uses relative URLs, so it works at / and under
     // /c/ alike; the redirect makes bare /c resolve those correctly.
     if (p === '/c') {
