@@ -92,6 +92,8 @@ window.api = {
     ipcRenderer.invoke('proxy:context', name, opts),
   getProxyReport: (name, opts) =>
     ipcRenderer.invoke('proxy:report', name, opts),
+  getProxyBust: (name) =>
+    ipcRenderer.invoke('proxy:bust', name),
   proxyHold: (name, hours, force) =>
     ipcRenderer.invoke('proxy:hold', name, hours, force),
   wireHold: (name, hours, force) =>

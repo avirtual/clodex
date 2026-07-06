@@ -1328,6 +1328,25 @@ function renderProxyBar() {
     }
   }
   if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">⚠ ${p.refusals}</span>`);
+  // Cache-bust chip: how many prefix re-writes this session took, and — the
+  // point — whether any were a REAL injected-prefix change worth investigating.
+  // wirescope classifies each bust's fault; we render loud ONLY on `content`
+  // (model swap, midnight date rollover, a CLAUDE.md edit) and stay calm for
+  // `environment` (expected cold) / `self` (designed strip cost). Clickable into
+  // the per-turn inspector when we can reach /_bust (base + live sessionId).
+  if (p.busts && p.busts.total > 0) {
+    const b = p.busts;
+    const classes = Array.isArray(b.classes) ? b.classes : [];
+    const contentCls = classes.filter((c) => c && c.fault === 'content');
+    const loud = contentCls.length > 0;
+    const clickable = !!(p.base && p.sessionId);
+    const cls = `px-seg px-bust${loud ? ' px-bust-loud' : ''}${clickable ? ' px-ctx-btn' : ''}`;
+    const tip = loud
+      ? `${contentCls.reduce((n, c) => n + (c.count || 0), 0)} cache-bust${b.total === 1 ? '' : 's'} from a real prefix change — ${esc((contentCls[0] && contentCls[0].fix_hint) || 'inspect what changed')}.${clickable ? ' Click to inspect.' : ''}`
+      : `${b.total} cache-bust event${b.total === 1 ? '' : 's'} — all expected (cold cache or designed strip cost), nothing to fix.${clickable ? ' Click to inspect.' : ''}`;
+    const attrs = clickable ? ' data-act="bust"' : '';
+    segs.push(`<span class="${cls}"${attrs} title="${tip}">💥 ${b.total}</span>`);
+  }
   if (p.base && p.sessionId) {
     const url = `${p.base}/_session?session=${encodeURIComponent(p.sessionId)}`;
     segs.push(`<a class="px-seg px-link" data-url="${esc(url)}" title="Open this session's wirescope page in a clodex window (⌘-click for browser)">🔍 wirescope</a>`);
@@ -1840,6 +1859,8 @@ setInterval(() => {
     if (ctxSeg && activeSession) { openContextPopover(activeSession, ctxSeg); return; }
     const costSeg = e.target.closest('[data-act="cost"]');
     if (costSeg && activeSession) { openCostPopover(activeSession, costSeg); return; }
+    const bustSeg = e.target.closest('[data-act="bust"]');
+    if (bustSeg && activeSession) { openBustPopover(activeSession, bustSeg); return; }
     const action = e.target.closest('.px-action');
     if (action && activeSession) {
       if (action.dataset.act === 'edit') openArgsDialog(activeSession);
@@ -2795,6 +2816,126 @@ document.getElementById('tools-popover-close').addEventListener('click', closeTo
 document.getElementById('skills-popover-close').addEventListener('click', closeSkillsPopover);
 document.getElementById('ctx-popover-close').addEventListener('click', closeContextPopover);
 document.getElementById('cost-popover-close').addEventListener('click', closeCostPopover);
+
+// ── Cache-bust inspector (wirescope /_bust) ───────────────────────────
+// Turn-by-turn cache-divergence forensics: WHEN the prefix broke, HOW big the
+// re-write was, and WHAT changed (the locus). Opened from the 💥 bar chip.
+// wirescope classifies; we render. `fault`/`fix_hint` per transition arrive in
+// v0.6.20+ — rendered when present, gracefully absent on v0.6.19 (locus.label
+// alone still answers "what changed on this turn").
+const bustPopover = document.getElementById('bust-popover');
+const bustPopoverName = document.getElementById('bust-popover-name');
+const bustPopoverBody = document.getElementById('bust-popover-body');
+
+function closeBustPopover() { bustPopover.classList.add('hidden'); bustPopover.dataset.name = ''; }
+
+// Fault → how the row reads. `content` is the actionable class (a real prefix
+// change); `environment`/`self` are expected and render calm. Unknown/absent
+// faults fall back to neutral so a pre-v0.6.20 proxy still renders cleanly.
+const BUST_FAULT = {
+  content:     { cls: 'bust-fault-content', label: 'prefix changed' },
+  environment: { cls: 'bust-fault-env',     label: 'cache went cold' },
+  self:        { cls: 'bust-fault-self',    label: 'designed strip cost' },
+};
+
+function fmtBustTokens(n) {
+  if (!n) return '0';
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+// One transition row. Everything except fault/fix_hint is v0.6.19-present.
+function bustRow(t, base, sid) {
+  const sev = t.severity || (t.bust ? 'bust' : 'append');
+  const loc = t.locus || {};
+  // locus.label is wirescope's human string ("system[2] … +SHELL COMMANDS:",
+  // "messages[0] claudeMd bundle changed"). Fall back to segment+index.
+  const what = loc.label
+    || (loc.segment ? `${loc.segment}${loc.index != null ? `[${loc.index}]` : ''} changed` : 'divergence');
+  // A content-fault bust that straddles a proxy restart (restart_between) is the
+  // benign deploy/upgrade tax — it self-heals next turn. Render it calm (env
+  // treatment) + a heal badge, so a GUI-restart-to-upgrade doesn't read as a
+  // real leak. A content bust WITHOUT restart_between is the actionable one.
+  const deployTax = !!(t.restart_between && t.fault === 'content');
+  const fault = t.fault && BUST_FAULT[deployTax ? 'environment' : t.fault];
+  const faultBadge = fault ? `<span class="bust-badge ${fault.cls}">${esc(fault.label)}</span>` : '';
+  const healBadge = deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax · self-heals</span>' : '';
+  // fix_hint is wirescope's prose (v0.6.20+); suppress it for the deploy tax
+  // (nothing to fix) — the heal badge already says all there is to say.
+  const hint = (t.fix_hint && !deployTax) ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : '';
+  const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` · ${Math.round(t.write_frac * 100)}%` : ''}</span>`;
+  // Deep-link into wirescope's per-turn navigator (v0.6.20 adds bust-jump nav).
+  const turnLink = (base && sid && t.i != null)
+    ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (⌘-click for browser)">turn ${t.i} →</span>`
+    : `<span class="bust-turn-static">turn ${t.i != null ? t.i : '?'}</span>`;
+  return `<div class="bust-row bust-sev-${esc(sev)}">`
+    + `<div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div>`
+    + `<div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${turnLink}</div>`
+    + hint
+    + `</div>`;
+}
+
+function renderBustSeries(d, base, sid) {
+  const busts = Array.isArray(d && d.busts) ? d.busts : [];
+  const nT = d && d.count != null ? d.count : null;
+  const link = (base && sid)
+    ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}`)}" title="Open the session in the wirescope navigator (⌘-click for browser)">Open navigator →</span>`
+    : '';
+  if (!busts.length) {
+    return `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? '' : 's'}` : ''} — the prefix stayed warm.</div>${link}`;
+  }
+  const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
+  const head = `<div class="cost-head"><b>${busts.length}</b> cache-bust${busts.length === 1 ? '' : 's'}`
+    + (nT != null ? ` over <b>${nT}</b> transitions` : '')
+    + (nStatic ? ` · <b>${nStatic}</b> touched the static prefix` : '')
+    + `</div>`;
+  // Newest first — the operator usually cares about what just broke.
+  const rows = busts.slice().reverse().map((t) => bustRow(t, base, sid)).join('');
+  const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (idle cold cache or designed strip cost).</div>';
+  return head + `<div class="bust-list">${rows}</div>` + note + link;
+}
+
+async function openBustPopover(name, anchor) {
+  const p = (proxyState.get(name) || {}).payload;
+  const base = p && p.base, sid = p && p.sessionId;
+  bustPopoverName.textContent = name;
+  bustPopover.dataset.name = name;
+  bustPopoverBody.innerHTML = '<div class="cost-note">Loading cache-bust forensics…</div>';
+  bustPopover.classList.remove('hidden');
+  const r = anchor.getBoundingClientRect();
+  const w = bustPopover.offsetWidth;
+  bustPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  bustPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+  const res = await window.api.getProxyBust(name);
+  if (bustPopover.dataset.name !== name || bustPopover.classList.contains('hidden')) return;
+  if (!res || !res.ok) {
+    bustPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cache-bust forensics unavailable')}</div>`;
+    return;
+  }
+  try { bustPopoverBody.innerHTML = renderBustSeries(res.data, base, sid); }
+  catch (e) { bustPopoverBody.innerHTML = `<div class="cost-note">Could not render: ${esc(String((e && e.message) || e))}</div>`; }
+}
+
+bustPopoverBody.addEventListener('click', (e) => {
+  const ext = e.target.closest('[data-url]');
+  if (!ext || !ext.dataset.url) return;
+  if (e.metaKey || e.ctrlKey) {
+    window.api.openExternal(ext.dataset.url);
+  } else {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg');
+    window.api.openWirescope(ext.dataset.url, bg);
+  }
+});
+document.addEventListener('mousedown', (e) => {
+  if (bustPopover.classList.contains('hidden')) return;
+  if (bustPopover.contains(e.target)) return;
+  if (e.target.closest('[data-act="bust"]')) return; // toggle handled by the bar
+  closeBustPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !bustPopover.classList.contains('hidden')) closeBustPopover();
+});
+document.getElementById('bust-popover-close').addEventListener('click', closeBustPopover);
 
 // ── Session report (wirescope /_report, report_version 1) ─────────────
 // wirescope owns every number (pricing, cache math, thresholds, verdict

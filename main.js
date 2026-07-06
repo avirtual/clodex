@@ -1803,6 +1803,14 @@ const ProxyClient = {
     if (maxlen) qs.set('maxlen', String(maxlen));
     return this._getJson(base, `/_subagents?${qs.toString()}`);
   },
+
+  // On-demand cache-bust forensics for one session (the bust-inspector popover).
+  // Reads /_bust — per-transition divergence: severity, magnitude, locus (what
+  // changed), and (v0.6.20+) per-transition class/fault/fix_hint. DISK-based +
+  // heavy like the report; NOT in the 5s poll. Same timeout budget as /_report.
+  async bustSeries(base, sessionId) {
+    return this._getJson(base, `/_bust?session=${encodeURIComponent(sessionId)}`, PROXY_REPORT_TIMEOUT);
+  },
 };
 
 // App-global poller (one per process, shared across windows): a single
@@ -5365,6 +5373,27 @@ app.whenReady().then(() => {
       let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
       if (opts && opts.detail) q += '&detail=1';
       const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
+      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+      return { ok: true, data: r.json };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  // On-demand cache-bust forensics for one session (the bust-inspector
+  // popover). Resolves the live session_id from the poller snapshot (never a
+  // stale persisted one), then fetches /_bust — the per-transition divergence
+  // series. Heavy disk read, called only when the popover opens (same profile
+  // as proxy:report), never in the 5s poll.
+  ipcMain.handle('proxy:bust', async (_e, name) => {
+    const s = manager.sessions.get(name);
+    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+    const snap = proxyPoller.snapshot(name);
+    if (!snap || !snap.linked || !snap.sessionId) {
+      return { ok: false, error: 'No live proxy session (unlinked)' };
+    }
+    try {
+      const r = await ProxyClient.bustSeries(s.proxyBase, snap.sessionId);
       if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
       return { ok: true, data: r.json };
     } catch (e) {

@@ -624,6 +624,10 @@ html, body {
 #proxy-bar .px-warm { color: #e0a030; }
 #proxy-bar .px-cost { color: #4caa6e; }
 #proxy-bar .px-refusal { color: var(--accent); }
+/* Cache-bust chip: dim by default (busts happen, most are expected); goes
+   amber-warn only when a real injected-prefix change (fault:content) is present. */
+#proxy-bar .px-bust { color: var(--text-dim); }
+#proxy-bar .px-bust-loud { color: var(--warn); }
 #proxy-bar .px-link { color: var(--text-dim); cursor: pointer; text-decoration: none; }
 #proxy-bar .px-link:hover { color: var(--text); text-decoration: underline; }
 /* Cost-as-timeline-link: keep the green, just make it clickable. */
@@ -895,6 +899,52 @@ html, body {
 .cost-chart svg { display: block; width: 100%; height: auto; }
 #cost-popover .px-link-ext { display: inline-block; margin-top: 12px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: none; }
 #cost-popover .px-link-ext:hover { text-decoration: underline; }
+
+/* Cache-bust inspector popover — same shell as the cost popover, narrower. */
+#bust-popover {
+  position: fixed;
+  z-index: 50;
+  width: 460px;
+  max-width: calc(100vw - 16px);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#bust-popover.hidden { display: none; }
+#bust-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.bust-list { display: flex; flex-direction: column; gap: 8px; }
+.bust-row {
+  padding: 7px 9px; border-radius: 5px;
+  background: var(--active-bg);
+  border-left: 3px solid var(--text-dim);
+}
+/* A static-prefix / full-rewrite bust reads as the significant one. */
+.bust-row.bust-sev-full-rewrite { border-left-color: var(--warn); }
+.bust-row.bust-sev-partial { border-left-color: var(--text-dim); }
+.bust-row-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bust-what { font-size: 12px; color: var(--text); font-weight: 600; }
+.bust-row-meta { display: flex; align-items: baseline; gap: 10px; margin-top: 3px; font-size: 10px; color: var(--text-dim); }
+.bust-sev { text-transform: uppercase; letter-spacing: 0.04em; font-size: 9px; }
+.bust-mag { color: var(--text-dim); }
+.bust-hint { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+.bust-badge {
+  font-size: 9px; padding: 1px 6px; border-radius: 8px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+  background: var(--active-bg); color: var(--text-dim);
+  border: 1px solid var(--text-dim);
+}
+.bust-badge.bust-fault-content { color: var(--warn); border-color: var(--warn); }
+.bust-badge.bust-fault-env { color: var(--text-dim); border-color: var(--text-dim); }
+.bust-badge.bust-fault-self { color: #61afef; border-color: #61afef; }
+.bust-badge.bust-badge-heal { color: #4caa6e; border-color: #4caa6e; }
+.bust-turn-static { color: var(--text-dim); }
+#bust-popover .px-link-ext { font-size: 10px; color: var(--accent); cursor: pointer; text-decoration: none; }
+#bust-popover .px-link-ext:hover { text-decoration: underline; }
+#bust-popover .bust-list + .cost-note { margin-top: 10px; }
 .ctx-line-head {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 11px; color: var(--text-dim); margin: 8px 0 6px;

@@ -129,6 +129,14 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
       ridersAvailable: r.strip.riders_available === true,
     } : null,
     hold: r.hold || null,
+    // Cache-bust forensics summary (wirescope v0.6.19+ `bust_summary`). Passed
+    // through verbatim — clodex RENDERS, wirescope CLASSIFIES (fault/fix_hint are
+    // its call, never re-derived here). Shape: {total, actionable, by_class,
+    // classes:[{class,count,fault,fix_hint}], last_bust}. `fault` ∈ {environment
+    // (expected cold), content (a real injected-prefix change — model swap, date
+    // rollover, CLAUDE.md edit), self (designed strip cost)}. The chip goes loud
+    // only on a `content` fault. null on pre-v0.6.19 proxies.
+    busts: (r.busts && typeof r.busts === 'object') ? r.busts : null,
     // Task/background subagents nested under this session (share its session_id
     // on the wire). Empty until a real subagent makes a wire turn. Sorted
     // newest-active first to match wirescope's emission order.
