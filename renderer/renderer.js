@@ -1328,23 +1328,32 @@ function renderProxyBar() {
     }
   }
   if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">⚠ ${p.refusals}</span>`);
-  // Cache-bust chip: report GENUINE busts only. The per-turn thinking-strip
-  // microbusts (fault:self — a settled turn's cached thinking falling behind the
-  // last-user boundary each turn) are a DESIGN DECISION, not a cache problem, so
-  // they're excluded from the count entirely (settled 07-06) — not merely calm.
+  // Cache-bust chip: report GENUINE busts only. Two classes of noise are
+  // subtracted, per settled policy (07-06), so the number the operator sees is
+  // exactly "cache breaks worth a look":
+  //   1. fault:self — the per-turn thinking-strip microbusts (a settled turn's
+  //      cached thinking falling behind the last-user boundary each turn). A
+  //      DESIGN DECISION, every active session makes them by construction —
+  //      excluded entirely, not merely calmed.
+  //   2. restart_between — busts that straddled a proxy restart = the one-time
+  //      deploy/upgrade re-cache tax (wirescope v0.6.21+ attributes these per
+  //      class). Self-inflicted and self-healing, so subtracted per class:
+  //      real = count − restart_between.
   // What remains is genuine: `content` (a real injected-prefix change — model
-  // swap, midnight date rollover, a CLAUDE.md edit) and `environment` (idle-cold
-  // cache). Amber only on content; environment stays calm. No chip at all when
-  // the only busts are self, which is every active session by design. wirescope
-  // classifies the fault; we just filter + render. Clickable into the per-turn
-  // inspector when we can reach /_bust (base + live sessionId).
+  // swap, midnight date rollover, a CLAUDE.md edit → amber) and `environment`
+  // (idle-cold cache → calm, a real cache event but nothing changed). No chip at
+  // all when nothing genuine remains, which is every steady session by design.
+  // wirescope classifies + attributes; we just subtract + render. Clickable into
+  // the per-turn inspector when we can reach /_bust (base + live sessionId).
   const bsum = p.busts;
   if (bsum && Array.isArray(bsum.classes)) {
+    // real busts per class, deploy-tax removed; drop the designed self microbusts.
+    const real = (c) => Math.max(0, (c.count || 0) - (c.restart_between || 0));
     const genuine = bsum.classes.filter((c) => c && c.fault && c.fault !== 'self');
-    const genuineCount = genuine.reduce((n, c) => n + (c.count || 0), 0);
+    const genuineCount = genuine.reduce((n, c) => n + real(c), 0);
     if (genuineCount > 0) {
-      const contentCls = genuine.filter((c) => c.fault === 'content');
-      const contentCount = contentCls.reduce((n, c) => n + (c.count || 0), 0);
+      const contentCls = genuine.filter((c) => c.fault === 'content' && real(c) > 0);
+      const contentCount = contentCls.reduce((n, c) => n + real(c), 0);
       const loud = contentCount > 0;
       const clickable = !!(p.base && p.sessionId);
       const cls = `px-seg px-bust${loud ? ' px-bust-loud' : ''}${clickable ? ' px-ctx-btn' : ''}`;

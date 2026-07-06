@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
+from proxylab import core as core_mod
 from proxylab import store as store_mod
 from proxylab import writer as writer_mod
 
@@ -121,7 +122,24 @@ store_mod.register_schema(
     "conversation INTEGER NOT NULL DEFAULT 0, "
     "lapse INTEGER NOT NULL DEFAULT 0, "
     "last_class TEXT, last_ts REAL, last_write_tokens INTEGER)",
-    "ALTER TABLE session_bust ADD COLUMN compact INTEGER NOT NULL DEFAULT 0")
+    "ALTER TABLE session_bust ADD COLUMN compact INTEGER NOT NULL DEFAULT 0",
+    # restart-attributed sub-count (2026-07-06): of the busts in each class, how
+    # many STRADDLED A PROXY RESTART — i.e. the first main-line turn after this
+    # process booted, classified against a head written by the PREVIOUS process
+    # (prior head.updated_at < core._START_TS). This is the DEPLOY-TAX case: a
+    # forwarded-prefix change from a code/vendor bump busts every warm session
+    # once on resume, then self-heals. It's a permanent on-disk fact, so without
+    # this attribution a content bust amber-flags the session for life on every
+    # upgrade. The consumer excludes it: a class is a REAL (actionable) content
+    # bust iff count > restart_between. Mirror columns, one per _BUST_CLASSES,
+    # incremented ALONGSIDE the class counter only when the bust straddled a
+    # restart. Additive migration; old rows -> 0.
+    "ALTER TABLE session_bust ADD COLUMN tools_restart INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE session_bust ADD COLUMN system_restart INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE session_bust ADD COLUMN preamble_restart INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE session_bust ADD COLUMN conversation_restart INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE session_bust ADD COLUMN compact_restart INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE session_bust ADD COLUMN lapse_restart INTEGER NOT NULL DEFAULT 0")
 
 
 def _warmth_rows(hashes):
@@ -539,24 +557,31 @@ def bust_summary(session):
     if not session:
         return None
     cols = ", ".join(_BUST_CLASSES)          # class counters, in canonical order
+    rcols = ", ".join(f"{c}_restart" for c in _BUST_CLASSES)   # deploy-tax subs
     try:
         con = store_mod.db()
         with store_mod.LOCK:
             r = con.execute(
-                f"SELECT {cols}, last_class, last_ts, last_write_tokens "
+                f"SELECT {cols}, {rcols}, last_class, last_ts, last_write_tokens "
                 "FROM session_bust WHERE session_id=?", (session,)).fetchone()
     except Exception:
         return None
     if not r:
         return None
+    n = len(_BUST_CLASSES)
     by_class = {c: int(r[i] or 0) for i, c in enumerate(_BUST_CLASSES)}
+    # per-class deploy-tax sub-count: busts that straddled a proxy restart.
+    by_restart = {c: int(r[n + i] or 0) for i, c in enumerate(_BUST_CLASSES)}
     total = sum(by_class.values())
     if total <= 0:
         return None
-    lc, lt, lw = r[len(_BUST_CLASSES)], r[len(_BUST_CLASSES) + 1], r[len(_BUST_CLASSES) + 2]
+    lc, lt, lw = r[2 * n], r[2 * n + 1], r[2 * n + 2]
     # non-zero classes, biggest-first, each carrying its own fault + fix_hint so
     # the consumer renders severity/colour from the data, not a hardcoded map.
-    classes = [{"class": c, "count": by_class[c],
+    # restart_between = how many of this class's busts were the one-time deploy tax
+    # (straddled a restart, self-heals): a REAL content bust exists iff
+    # count > restart_between, so the chip can stay calm on a pure upgrade bust.
+    classes = [{"class": c, "count": by_class[c], "restart_between": by_restart[c],
                 "fault": _BUST_FAULT[c][0], "fix_hint": _BUST_FAULT[c][1]}
                for c in sorted(by_class, key=lambda c: -by_class[c]) if by_class[c]]
     last = None
@@ -567,8 +592,16 @@ def bust_summary(session):
     # or a content divergence). The two fault=environment classes are NOT
     # actionable: `lapse` (keep-warm territory) and `compact` (expected contraction).
     actionable = total - by_class["lapse"] - by_class["compact"]
-    return {"total": total, "by_class": by_class, "classes": classes,
-            "actionable": actionable, "last_bust": last}
+    # ...and the deploy tax isn't actionable EITHER (a restart-straddling bust is a
+    # one-time upgrade re-cache, not a fixable regression). actionable_excl_restart
+    # is what a glance-level "needs attention?" chip should gate on — it excludes
+    # environment classes AND every restart-straddling bust across all classes.
+    restart_total = sum(by_restart.values())
+    actionable_excl_restart = actionable - (
+        restart_total - by_restart["lapse"] - by_restart["compact"])
+    return {"total": total, "by_class": by_class, "by_restart": by_restart,
+            "classes": classes, "actionable": actionable,
+            "actionable_excl_restart": actionable_excl_restart, "last_bust": last}
 
 
 def _cold_ping_decision(obj):
@@ -662,11 +695,12 @@ def _record_warmth(obj, usage, is_main=True):
             # which is non-reentrant.)
             new_resumes = 0
             prior_seg = None
+            restart_straddle = False
             if head_advance:
                 prev = con.execute(
                     "SELECT hash, cold_resumes, tools_hash, sys_hash, msg0_hash, "
-                    "sysfull_hash, msg_count FROM session_head WHERE session_id=?",
-                    (sid,)).fetchone()
+                    "sysfull_hash, msg_count, updated_at FROM session_head "
+                    "WHERE session_id=?", (sid,)).fetchone()
                 if prev:
                     pe = con.execute("SELECT expires_at FROM warmth WHERE hash=?",
                                      (prev[0],)).fetchone()
@@ -675,6 +709,15 @@ def _record_warmth(obj, usage, is_main=True):
                     # (tools_hash, sys_hash, sysfull_hash, msg0_hash, msg_count) —
                     # the order _classify_bust unpacks its `prior` tuple in.
                     prior_seg = (prev[2], prev[3], prev[5], prev[4], prev[6])
+                    # DEPLOY-TAX detection: the prior head was written by a process
+                    # that booted before this one (its updated_at predates our
+                    # _START_TS) => the proxy restarted between the prior turn and
+                    # now, so any bust on THIS turn is a one-time deploy/vendor-bump
+                    # re-cache, not an in-session regression. Fires at most once per
+                    # session per restart (we stamp updated_at=now below, so the
+                    # next turn's prior head is in-process). See session_bust
+                    # *_restart columns.
+                    restart_straddle = (prev[7] or 0) < core_mod._START_TS
             con.executemany("INSERT INTO warmth(hash, stamped_at, ttl, expires_at) "
                             "VALUES(?,?,?,?) ON CONFLICT(hash) DO UPDATE SET "
                             "stamped_at=excluded.stamped_at, ttl=excluded.ttl, "
@@ -694,14 +737,18 @@ def _record_warmth(obj, usage, is_main=True):
                     cur_sysfull=cur_sysfull,
                     cur_msg0=cur_msg0, cur_msgs=cur_msgs, lapsed=resumed)
                 if bust_class:
+                    # increment the class counter, and — iff this bust straddled a
+                    # restart — its deploy-tax sub-counter too, in the same upsert.
+                    rcol = f"{bust_class}_restart"
+                    rinc = 1 if restart_straddle else 0
                     con.execute(
-                        f"INSERT INTO session_bust(session_id, {bust_class}, "
-                        "last_class, last_ts, last_write_tokens) VALUES(?,1,?,?,?) "
+                        f"INSERT INTO session_bust(session_id, {bust_class}, {rcol}, "
+                        "last_class, last_ts, last_write_tokens) VALUES(?,1,?,?,?,?) "
                         "ON CONFLICT(session_id) DO UPDATE SET "
-                        f"{bust_class}={bust_class}+1, last_class=excluded.last_class, "
-                        "last_ts=excluded.last_ts, "
+                        f"{bust_class}={bust_class}+1, {rcol}={rcol}+{rinc}, "
+                        "last_class=excluded.last_class, last_ts=excluded.last_ts, "
                         "last_write_tokens=excluded.last_write_tokens",
-                        (sid, bust_class, now, created))
+                        (sid, rinc, bust_class, now, created))
                 con.execute("INSERT INTO session_head(session_id, hash, updated_at, "
                             "tools_hash, sys_hash, msg0_hash, sysfull_hash, "
                             "msg_count, cold_resumes) VALUES(?,?,?,?,?,?,?,?,?) "
