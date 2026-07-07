@@ -128,6 +128,29 @@ const AUTO_COMPACT = {
   COOLDOWN_MS: 600_000,
 };
 
+// Human-vs-terminal-chatter classifier for PTY-bound data. xterm doesn't only
+// forward keystrokes: when the CLI enables focus reporting (DECSET 1004 — the
+// Claude CLI does) every pane focus/blur emits \x1b[I / \x1b[O through the same
+// onData path, and terminal query replies (cursor position, device attributes,
+// OSC color reports) arrive with no human at the keyboard at all. Treating
+// those as "a human touched this pane" killed the atPrompt latch whenever the
+// user merely LOOKED at a session — an idle agent never turns again, so the
+// latch stayed dead and auto-compact could never fire (live miss 2026-07-08).
+// Only data that isn't purely auto-replies counts as human. Unknown sequences
+// count as human — that fails toward a missed compact, never a bad injection.
+const PTY_AUTO_REPLY_RE = new RegExp(
+  '\\x1b\\[[IO]' // focus in / focus out (mode 1004)
+  + '|\\x1b\\[\\d+;\\d+R' // cursor position report (DSR 6 reply)
+  + '|\\x1b\\[0n' // status report ok (DSR 5 reply)
+  + '|\\x1b\\[[?>]\\d+(;\\d+)*c' // device attributes reply (DA1/DA2)
+  + '|\\x1b\\]\\d+;[^\\x07\\x1b]*(\\x07|\\x1b\\\\)', // OSC query reply (color etc.)
+  'g');
+
+function isHumanPtyInput(data) {
+  if (!data) return false;
+  return String(data).replace(PTY_AUTO_REPLY_RE, '').length > 0;
+}
+
 function shouldAutoCompact({ payload, enabled, atPrompt, lastInputTs = 0, lastFiredTs = 0, now = Date.now() }) {
   if (!enabled || !atPrompt) return false;
   if (!payload || !payload.linked || payload.hold) return false;
@@ -174,8 +197,12 @@ function fmtIdle(ms) {
 }
 
 // One peer's [agent:who] status suffix: 'working' | 'idle 5h, cache cold' |
-// 'idle 12m, warm' | 'idle 3m'. Warmth only shown when known.
-function peerStatusLabel({ state, idleMs, payload, now = Date.now() }) {
+// 'idle 12m, warm' | 'idle 3m'. Warmth only shown when known. A session
+// blocked on a permission dialog trumps everything — it is neither working
+// nor reachable, and peers should know a reply isn't coming until the human
+// answers the dialog.
+function peerStatusLabel({ state, idleMs, payload, attention = null, now = Date.now() }) {
+  if (attention === 'permission') return 'blocked on a permission dialog';
   if (state === 'thinking') return 'working';
   const w = warmthNow(payload, now);
   let label = `idle ${fmtIdle(idleMs)}`;
@@ -184,12 +211,23 @@ function peerStatusLabel({ state, idleMs, payload, now = Date.now() }) {
   return label;
 }
 
-// Hold a DM? Only when ALL of: not urgent, target not mid-turn, idle past the
-// threshold, and not verifiably warm (a kept-warm peer is cheap no matter how
-// long it's been idle — that's what keep-warm is FOR). Unknown warmth on a
-// long-idle peer holds: 5h idle is cold in every realistic TTL regime, and
-// urgent is a one-line retry if the sender disagrees.
-function shouldHoldDm({ urgent, state, idleMs, payload, now = Date.now() }) {
+// Hold a DM? Two independent gates:
+//   DIALOG gate — target is blocked on a permission dialog. Holds even
+//   URGENT: message injection ends with Enter, which would ANSWER the open
+//   dialog. This is a safety hold, not a cost hold — there is no override.
+//   COST gate — holds only when ALL of: not urgent, target not mid-turn, idle
+//   past the threshold, and not verifiably warm (a kept-warm peer is cheap no
+//   matter how long it's been idle — that's what keep-warm is FOR). Unknown
+//   warmth on a long-idle peer holds: 5h idle is cold in every realistic TTL
+//   regime, and urgent is a one-line retry if the sender disagrees.
+function shouldHoldDm({ urgent, state, idleMs, payload, attention = null, now = Date.now() }) {
+  if (attention === 'permission') {
+    return {
+      hold: true,
+      noUrgent: true,
+      reason: 'blocked on a permission dialog — injecting now would answer the dialog',
+    };
+  }
   if (urgent || state === 'thinking' || idleMs < DM_HOLD_IDLE_MS) return { hold: false };
   if (warmthNow(payload, now) === 'warm') return { hold: false };
   const w = warmthNow(payload, now);
@@ -271,6 +309,6 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  AUTO_COMPACT, shouldAutoCompact,
+  AUTO_COMPACT, shouldAutoCompact, isHumanPtyInput,
   DM_HOLD_IDLE_MS, peerStatusLabel, shouldHoldDm,
 };

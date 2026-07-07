@@ -173,7 +173,36 @@ test('shapeSubagent label: no agent_id, no display_name → role, then key', () 
 // Policy gate for injecting /compact into a session whose prompt cache is about
 // to expire. Every clause is a safety guard (permission dialogs, half-typed
 // drafts, keep-warm holds) — each one must independently veto.
-const { shouldAutoCompact, AUTO_COMPACT } = require('../proxy-util');
+const { shouldAutoCompact, AUTO_COMPACT, isHumanPtyInput } = require('../proxy-util');
+
+test('isHumanPtyInput: terminal auto-replies are not human', () => {
+  // Focus reporting (mode 1004) — fires on every pane focus/blur; the live
+  // 2026-07-08 auto-compact miss was a focus event killing the atPrompt latch.
+  assert.strictEqual(isHumanPtyInput('\x1b[I'), false);
+  assert.strictEqual(isHumanPtyInput('\x1b[O'), false);
+  assert.strictEqual(isHumanPtyInput('\x1b[I\x1b[O'), false);
+  // Terminal query replies — no human involved.
+  assert.strictEqual(isHumanPtyInput('\x1b[24;80R'), false); // cursor position (DSR 6)
+  assert.strictEqual(isHumanPtyInput('\x1b[0n'), false); // status ok (DSR 5)
+  assert.strictEqual(isHumanPtyInput('\x1b[?1;2c'), false); // DA1
+  assert.strictEqual(isHumanPtyInput('\x1b[>0;276;0c'), false); // DA2
+  assert.strictEqual(isHumanPtyInput('\x1b]11;rgb:1e1e/1e1e/1e1e\x07'), false); // OSC color reply (BEL)
+  assert.strictEqual(isHumanPtyInput('\x1b]10;rgb:ffff/ffff/ffff\x1b\\'), false); // OSC reply (ST)
+  assert.strictEqual(isHumanPtyInput(''), false);
+  assert.strictEqual(isHumanPtyInput(null), false);
+});
+
+test('isHumanPtyInput: keystrokes are human, unknown sequences fail toward human', () => {
+  assert.strictEqual(isHumanPtyInput('a'), true);
+  assert.strictEqual(isHumanPtyInput('\r'), true);
+  assert.strictEqual(isHumanPtyInput('\x15'), true); // Ctrl-U
+  assert.strictEqual(isHumanPtyInput('\x1b[A'), true); // arrow key
+  assert.strictEqual(isHumanPtyInput('\x1b[<0;12;4M'), true); // mouse press — human-ish, keep
+  // Chatter mixed with a real keystroke is human.
+  assert.strictEqual(isHumanPtyInput('\x1b[Ihello'), true);
+  // Unknown escape → human (fails toward a missed compact, never a bad injection).
+  assert.strictEqual(isHumanPtyInput('\x1b[?999z'), true);
+});
 
 const AC_NOW = 10_000_000;
 function acArgs(over = {}, payloadOver = {}) {
@@ -286,4 +315,30 @@ test('shouldHoldDm: long-idle + cold or UNKNOWN warmth holds, with reason', () =
   const unknown = shouldHoldDm({ urgent: false, state: 'idle', idleMs: 5 * 3600_000, payload: null, now: PV_NOW });
   assert.strictEqual(unknown.hold, true);
   assert.doesNotMatch(unknown.reason, /cold cache/); // don't claim what we can't see
+});
+
+test('shouldHoldDm: permission dialog holds EVERYTHING, urgent included', () => {
+  // The hazard is the injection itself (Enter answers the dialog), so there is
+  // no urgent override — noUrgent tells the bounce not to advertise one.
+  const v = shouldHoldDm({
+    urgent: true, state: 'idle', idleMs: 0,
+    payload: warmPayload(3000), attention: 'permission', now: PV_NOW,
+  });
+  assert.strictEqual(v.hold, true);
+  assert.strictEqual(v.noUrgent, true);
+  assert.match(v.reason, /permission dialog/);
+  // 'other' notifications do NOT gate delivery — no evidence a dialog is up.
+  assert.strictEqual(
+    shouldHoldDm({ urgent: false, state: 'idle', idleMs: 0, payload: warmPayload(3000), attention: 'other', now: PV_NOW }).hold,
+    false);
+});
+
+test('peerStatusLabel: permission dialog outranks working and idle', () => {
+  assert.strictEqual(
+    peerStatusLabel({ state: 'thinking', idleMs: 0, payload: null, attention: 'permission', now: PV_NOW }),
+    'blocked on a permission dialog');
+  // 'other' notifications don't relabel — the peer is still reachable.
+  assert.strictEqual(
+    peerStatusLabel({ state: 'idle', idleMs: 3 * 60_000, payload: null, attention: 'other', now: PV_NOW }),
+    'idle 3m');
 });

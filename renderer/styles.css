@@ -202,6 +202,22 @@ html, body {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* Needs attention (permission dialog / notification): red-orange pulsing dot,
+   outranks the thinking state — the CLI is blocked on the human, not working.
+   Cleared by main on keystroke or turn resume. */
+.session-item[data-attention] .session-dot {
+  background: #f97316;
+  animation: pulse 0.6s ease-in-out infinite;
+}
+.session-item[data-attention]::before {
+  content: '!';
+  position: absolute;
+  right: 10px;
+  color: #f97316;
+  font-weight: 700;
+  font-size: 13px;
+}
+
 /* Failed restore: red dot, muted name, click to retry */
 .session-item.failed .session-dot {
   background: var(--accent);

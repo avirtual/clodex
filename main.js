@@ -471,6 +471,21 @@ const persistence = {
       this._save(all);
     }
   },
+  // Boot-digest ledger: conversation ids that have received the memory digest
+  // (via the SessionStart hook at birth, or the append-once path). Durable so
+  // GUI restarts — which --resume the same conversation — never re-deliver.
+  // Capped like a ring: an evicted ancient id would at worst earn a harmless
+  // duplicate digest if that conversation is ever resumed again.
+  markDigested(name, sessionId) {
+    if (!sessionId) return;
+    const all = this._load();
+    const entry = all.find(s => s.name === name);
+    if (!entry) return;
+    const d = (Array.isArray(entry.digested) ? entry.digested : []).filter((id) => id !== sessionId);
+    d.push(sessionId);
+    entry.digested = d.slice(-50);
+    this._save(all);
+  },
   get(name) {
     return this._load().find(s => s.name === name) || null;
   },
@@ -490,6 +505,11 @@ function stripLevelOf(entry) {
 // every pre-existing entry — and a missing one — is on).
 function autoCompactOf(entry) {
   return !(entry && entry.autoCompact === false);
+}
+
+// Has this conversation already received the memory boot digest?
+function isDigested(entry, sessionId) {
+  return !!(entry && sessionId && Array.isArray(entry.digested) && entry.digested.includes(sessionId));
 }
 
 // ---------------------------------------------------------------------------
@@ -703,83 +723,19 @@ function readAppendBodies(stems) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent memory store (spec §10 — the intent-driven MANAGEMENT layer). Each agent
-// has its own memories: discrete units as flat per-id files under
-// ~/.clodex/library/memory/<agent>/<id>.md (DB overkill at this scale; same
-// human-inspectable on-disk idiom as the prompt/agent/skill libraries). A unit
-// is YAML-ish frontmatter (id, scope, learned_at, source) + the unit text body.
-//
-// This is the MANAGEMENT path (list/remember/recall via intent), distinct from
-// the priced in-turn RETRIEVAL path (memory-as-tool-call, Part 2 — gated on
-// wirescope). Mechanism-only per settled-position #1: empty until an agent or
-// the user authors units. `last_referenced_at` is deliberately NOT written here
-// — that's wirescope's decay clock (W1), and an intent-recall is UX, not a
-// priced reference, so writing it would corrupt the decay signal.
+// Agent memory store (spec §10) — store + boot-digest composer live in
+// memory-store.js (extracted for Electron-free tests; the design rationale
+// moved with the code). What stays HERE is the delivery plumbing: the
+// SessionStart hook ships the digest to NEW conversations (source
+// startup/clear — see setupClaudeHook), and the digest ledger in
+// sessions.json (`digested: [sessionIds]`) makes sure a conversation gets it
+// exactly ONCE across GUI restarts — resumed conversations that predate the
+// feature receive a single tail append instead (_maybeDeliverDigest).
 // ---------------------------------------------------------------------------
 
 const MEMORY_DIR = path.join(REGISTRY_DIR, 'library', 'memory');
-const MEMORY_AGENT_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
-
-function serializeMemoryUnit(meta, body) {
-  const lines = ['---'];
-  for (const k of ['id', 'scope', 'learned_at', 'source']) {
-    lines.push(`${k}: ${meta[k] != null ? String(meta[k]) : ''}`);
-  }
-  lines.push('---', '', String(body ?? '').trim(), '');
-  return lines.join('\n');
-}
-
-function parseMemoryUnit(raw) {
-  const m = String(raw).match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) return { meta: {}, body: String(raw).trim() };
-  const meta = {};
-  for (const line of m[1].split('\n')) {
-    const kv = line.match(/^(\w+):\s?(.*)$/);
-    if (kv) meta[kv[1]] = kv[2];
-  }
-  return { meta, body: (m[2] || '').trim() };
-}
-
-const memoryStore = {
-  _dir(agent) { return path.join(MEMORY_DIR, agent); },
-  _file(agent, id) { return path.join(this._dir(agent), `${id}.md`); },
-  list(agent) {
-    if (!MEMORY_AGENT_RE.test(agent || '')) return [];
-    let files;
-    try { files = fs.readdirSync(this._dir(agent)); }
-    catch { return []; }
-    const out = [];
-    for (const f of files) {
-      if (!f.endsWith('.md')) continue;
-      try {
-        const { meta, body } = parseMemoryUnit(fs.readFileSync(path.join(this._dir(agent), f), 'utf-8'));
-        out.push({ id: meta.id || f.replace(/\.md$/, ''), scope: meta.scope || '', learned_at: meta.learned_at || '', source: meta.source || '', body });
-      } catch { /* skip garbled */ }
-    }
-    return out.sort((a, b) => String(a.learned_at).localeCompare(String(b.learned_at)));
-  },
-  remember(agent, { scope = '', text, source = '' }) {
-    if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
-    const body = String(text ?? '').trim();
-    if (!body) throw new Error('empty memory text');
-    ensureDir(this._dir(agent));
-    const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const meta = { id, scope: String(scope || '').trim(), learned_at: new Date().toISOString(), source: source || agent };
-    fs.writeFileSync(this._file(agent, id), serializeMemoryUnit(meta, body), { mode: 0o600 });
-    return { id, ...meta, body };
-  },
-  // Resolve a recall arg: exact id first, else a case-insensitive substring
-  // match against scope+body (first by learned_at). Returns the unit or null.
-  recall(agent, arg) {
-    const units = this.list(agent);
-    const q = String(arg || '').trim();
-    if (!q) return null;
-    const exact = units.find(u => u.id === q);
-    if (exact) return exact;
-    const ql = q.toLowerCase();
-    return units.find(u => (u.scope + '\n' + u.body).toLowerCase().includes(ql)) || null;
-  },
-};
+const { createMemoryStore, composeDigest } = require('./memory-store');
+const memoryStore = createMemoryStore(MEMORY_DIR);
 
 // ---------------------------------------------------------------------------
 // Per-agent defaults — standing preferences keyed by agent NAME that outlive
@@ -1443,19 +1399,23 @@ HOW TO COMMUNICATE:
 You reply to your operator the normal way — your ordinary response text reaches them as it always does. Inside clodex you additionally can message the other agents and manage your own session. Both work through the intent lines below: include the matching line in your response to trigger it. To reach another agent, write the intent line rather than a plain sentence (a normal "ask bob to …" just goes to your operator; the intent line is what hands it to bob). Write it yourself — no echo/printf or shell wrapper needed.
 
   [agent:dm TARGET] message body   Direct message to TARGET
-  [agent:dm TARGET urgent] body    Deliver even to a long-idle peer. A plain dm to a peer that's been idle a long time without a warm cache bounces back as an [agent:dm] error instead of delivering — waking such a peer re-bills its whole context, so only resend with urgent if it genuinely can't wait for that peer's next turn.
-  [agent:who]                      List online peers with reachability: (working), (idle 12m, warm), (idle 5h, cache cold). Prefer warm/working peers for non-urgent traffic.
+  [agent:dm TARGET urgent] body    Deliver even to a long-idle peer. A plain dm to a peer that's been idle a long time without a warm cache bounces back as an [agent:dm] error instead of delivering — waking such a peer re-bills its whole context, so only resend with urgent if it genuinely can't wait for that peer's next turn. A peer blocked on a permission dialog bounces even urgent dms (delivery would answer its dialog) — wait for it to unblock.
+  [agent:who]                      List online peers with reachability: (working), (idle 12m, warm), (idle 5h, cache cold), (blocked on a permission dialog). Prefer warm/working peers for non-urgent traffic; blocked peers can't respond until their human answers.
   [agent:name]                     Your own wrapper name
   [agent:context compact]          Compact your own context window when it's getting long. Optionally follow with text on the same or following lines — it's injected as your first turn after the compact so you keep working; omit it for a generic continue nudge.
   [agent:context clear]            Clear your own history, keeping the session (drops the conversation)
   [agent:memory list]              List your own saved memories
-  [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag>); persists across sessions
+  [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag> and/or pinned=true); persists across sessions
   [agent:memory recall] <id|query> Surface a saved memory back into your input
+  [agent:memory pin] <id>          Pin an existing unit; [agent:memory unpin] <id> reverses. [agent:memory forget] <id> deletes.
   [agent:spawn name:X cwd:Y]       Mint a new peer session named X rooted at Y; it joins your workspace and is DM-able. Result returns in your input as an [agent:spawn] line.
   [agent:file view PATH]           Show a file on your operator's screen in Clodex's viewer (contents + git diff). Relative paths resolve against your cwd.
   [agent:file open PATH]           Open a file with the operator's default app for that type (reports, docs, images). Launchable/executable files are refused — use view for those. Use these when your operator asks to see or open a file; errors come back as an [agent:file] line, success is silent.
 
 Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.
+
+MEMORY:
+Your saved memories reach every NEW conversation of yours automatically — pinned units in full, the rest as an index you can recall by id. So when you learn something durable (a project fact, a hard-won gotcha, an operator preference), save it with [agent:memory remember], and pin the ones every future session must know (pinned=true saves and pins in one intent). Saves, pins and deletes succeed silently: the confirmation (with the unit id) arrives attached to your NEXT turn's context rather than waking you, so don't wait for it — only failures come back immediately.
 
 RULES:
 - An intent must start at column 1 on its own line. Indented or inline intents are ignored (that's how you quote one safely); escape a literal column-1 intent with a backslash: \`\\[agent:...]\`.
@@ -1685,9 +1645,10 @@ function resolveProxyBase(proxy) {
 // streaming/refusals, a clodex2 concern).
 // See https://github.com/avirtual/wirescope (INTEGRATION.md).
 
-const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shouldAutoCompact, peerStatusLabel, shouldHoldDm } = require('./proxy-util');
+const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shouldAutoCompact, isHumanPtyInput, peerStatusLabel, shouldHoldDm } = require('./proxy-util');
 const { parseAgentFrontmatter, buildAgentsArg, denyAgentRules } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
+const { classifyNotification } = require('./attention');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
@@ -2090,8 +2051,10 @@ class ProxyPoller {
         // Wire-stamped: terminal main-line stop = CLI parked at its prompt.
         // No wire (legacy jsonl path) → never stamped → never fires. That's
         // deliberate: without it we can't rule out a pending permission
-        // dialog, where the injected Enter would answer the dialog.
-        atPrompt: !!(s.lastMainStop && s.lastMainStop.isTurn),
+        // dialog, where the injected Enter would answer the dialog. The
+        // Notification-hook fact is the direct veto for the same hazard —
+        // belt over the wire-inference suspenders.
+        atPrompt: !!(s.lastMainStop && s.lastMainStop.isTurn) && !s.needsAttention,
         lastInputTs: s.lastUserInputTs || 0,
         lastFiredTs: this.autoCompacted.get(s.name) || 0,
       });
@@ -2701,12 +2664,31 @@ function readSessionMeta(file) {
   return { title, first, last, turns };
 }
 
+// Digest-bearing SessionStart output: agent name + the memory boot digest
+// (memory-store.js composeDigest). Rewritten on every store mutation for the
+// agent so a later /clear cats a CURRENT digest, not the spawn-time one.
+// Returns whether a digest is present (main.js's birth-marking needs to know
+// if the hook actually had anything to deliver — an empty store must leave
+// the conversation unmarked so units saved later still reach it).
+function writeClaudeDigestFile(name) {
+  ensureDir(REGISTRY_DIR);
+  const digest = composeDigest(memoryStore.list(name));
+  const ctx = `You are the clodex agent named '${name}'.` + (digest ? `\n\n${digest}` : '');
+  // Atomic: a mid-session store mutation rewrites this file while a /clear
+  // could be cat-ing it from the hook at the same instant.
+  atomicWriteFileSync(path.join(REGISTRY_DIR, `${name}-hook-digest.json`), JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }
+  }) + '\n');
+  return !!digest;
+}
+
 function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null) {
   ensureDir(REGISTRY_DIR);
   const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
   const scriptPath = path.join(REGISTRY_DIR, `${name}-hook.sh`);
   const settingsPath = path.join(REGISTRY_DIR, `${name}-hook.json`);
   const outputPath = path.join(REGISTRY_DIR, `${name}-hook-output.json`);
+  const digestPath = path.join(REGISTRY_DIR, `${name}-hook-digest.json`);
   const statusPath = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
   const msgDir = path.join(REGISTRY_DIR, 'messages');
 
@@ -2723,9 +2705,15 @@ function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins
     }
   });
   fs.writeFileSync(outputPath, hookOutput + '\n');
+  writeClaudeDigestFile(name);
 
-  // Hook script: repoint the transcript symlink, then emit the name-only
-  // additionalContext above.
+  // Hook script: repoint the transcript symlink, then emit additionalContext.
+  // The digest-bearing output goes ONLY to conversations being BORN (source
+  // startup/clear) — a resume already carries the digest in its history (and
+  // additionalContext survives /compact verbatim, settled position #2), so
+  // re-emitting it would duplicate KBs into context on every GUI restart.
+  // Unknown/missing source falls to name-only: fails toward a missed digest
+  // (the append-once ledger path rescues), never a duplicated one.
   const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
@@ -2734,11 +2722,50 @@ TPATH="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)
 TMPLINK="${linkPath}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "${linkPath}"
-cat "${outputPath}"
+SRC="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('source',''))" 2>/dev/null || true)"
+if [ "$SRC" = "startup" ] || [ "$SRC" = "clear" ]; then
+  cat "${digestPath}"
+else
+  cat "${outputPath}"
+fi
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
 
   fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase), { mode: 0o700 });
+
+  // Needs-attention channel: the CLI's Notification hook fires when a
+  // permission dialog opens (or the CLI otherwise wants the human). The script
+  // just appends the raw hook JSON to a per-session file; classification and
+  // policy live in JS (attention.js / SessionManager). Truncated at setup so
+  // a resume never replays last run's stale dialogs.
+  const attnPath = path.join(REGISTRY_DIR, `${name}-attn.jsonl`);
+  const attnScriptPath = path.join(REGISTRY_DIR, `${name}-attn.sh`);
+  fs.writeFileSync(attnPath, '');
+  fs.writeFileSync(attnScriptPath, `#!/bin/bash
+IN="$(cat)"
+printf '%s\\n' "$IN" >> "${attnPath}"
+`, { mode: 0o700 });
+
+  // Deferred memory-mutation acks (_memoryAck): drain {name}-acks into the
+  // next turn's context via UserPromptSubmit additionalContext. Read+truncate
+  // isn't atomic against a concurrent append — an ack landing in that window
+  // is lost, which the channel tolerates (success acks are bookkeeping).
+  // The file is left alone at setup: acks queued just before a quit are still
+  // valid on resume (the mutations they confirm persisted).
+  const ackPath = path.join(REGISTRY_DIR, `${name}-acks`);
+  const ackScriptPath = path.join(REGISTRY_DIR, `${name}-acks.sh`);
+  fs.writeFileSync(ackScriptPath, `#!/bin/bash
+[ -s "${ackPath}" ] || exit 0
+python3 - "${ackPath}" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], 'r+') as f:
+    body = f.read().strip()
+    f.seek(0); f.truncate()
+if body:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit", "additionalContext": body}}))
+PYEOF
+`, { mode: 0o700 });
 
   // Settings JSON
   const settings = {
@@ -2748,6 +2775,14 @@ cat "${outputPath}"
       SessionStart: [{
         matcher: '',
         hooks: [{ type: 'command', command: scriptPath }]
+      }],
+      Notification: [{
+        matcher: '',
+        hooks: [{ type: 'command', command: attnScriptPath }]
+      }],
+      UserPromptSubmit: [{
+        matcher: '',
+        hooks: [{ type: 'command', command: ackScriptPath }]
       }]
     }
   };
@@ -2851,7 +2886,7 @@ OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
 }
 
 function cleanupClaudeHook(name) {
-  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-statusline.sh', '-append-prompt.md', '-ctx', '.jsonl']) {
+  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-hook-digest.json', '-statusline.sh', '-append-prompt.md', '-ctx', '-attn.sh', '-attn.jsonl', '-acks.sh', '-acks', '.jsonl']) {
     try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
   }
 }
@@ -3309,6 +3344,12 @@ class SessionManager {
         // a permission dialog, where an injected Enter would answer the
         // dialog. shouldAutoCompact requires this latch to be terminal.
         if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
+        // Boot-digest append-once: a conversation missing from the digest
+        // ledger (resumed from before the feature, or born with an empty
+        // store that has units now) gets the digest right after a terminal
+        // turn — the cache is hot (append rides at cache-read prices) and
+        // the CLI is parked at its prompt.
+        if (s && t.stop && t.stop.is_turn) this._maybeDeliverDigest(s, t.sessionId || s.sessionId);
         if (s && s.intentSource === 'wire') {
           // W3 LIVE path: dispatch off the wire receipt. A healthy main-line
           // turn also ends any tee-failure recovery window (the sentinel's
@@ -3327,6 +3368,7 @@ class SessionManager {
           if (t.sessionId && s.sessionId !== t.sessionId) {
             s.sessionId = t.sessionId;
             persistence.setSessionId(t.agent, t.sessionId);
+            this._noteConversationForDigest(s, t.sessionId);
           }
         } else if (s && s.agentType === 'claude') {
           // Shadow-compare mode (CLODEX_WIRE_INTENTS=0): record wire
@@ -3756,6 +3798,10 @@ class SessionManager {
       // and letting DMs to them past the hold gate for 30 minutes.
       activityState: 'idle',
       activityTs: lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(),
+      // Needs-attention fact from the Notification hook (attention.js):
+      // { kind: 'permission'|'other', message, ts } while the CLI is blocked
+      // on the human, null otherwise. Cleared on keystroke / turn start.
+      needsAttention: null,
       // Auto-compact atPrompt seed. A freshly spawned or resumed CLI is by
       // definition parked at its input prompt — permission dialogs don't
       // survive PTY death. Without this seed, a GUI restart wipes the
@@ -3766,6 +3812,16 @@ class SessionManager {
       // the prompt after that. Unproxied sessions are still blocked by the
       // payload.linked guard, so seeding unconditionally is safe.
       lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
+      // Boot-digest bookkeeping (memory-store.js): the id we resumed with
+      // (any OTHER id observed later means a conversation born under this
+      // session — its SessionStart hook fired with source startup/clear and
+      // delivered the digest) and whether the digest file has content (an
+      // empty store delivers nothing, so birth must not mark the ledger).
+      bootResumeId: resumeId || null,
+      // Recompute rather than re-write: setupClaudeHook already wrote the
+      // digest file pre-spawn, and rewriting here would race the CLI's
+      // SessionStart hook cat-ing it (writeFileSync isn't atomic).
+      digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
     };
     this.sessions.set(name, session);
 
@@ -3805,6 +3861,7 @@ class SessionManager {
     const onSessionId = (sessionId) => {
       session.sessionId = sessionId;
       persistence.setSessionId(name, sessionId);
+      this._noteConversationForDigest(session, sessionId);
     };
     if (agentType && session.intentSource === 'wire') {
       const { TranscriptSentinel } = require('./wire-intents');
@@ -3844,9 +3901,32 @@ class SessionManager {
           if (c.pct != null) this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size);
         } catch {}
       };
+      // Needs-attention tail: the Notification hook appends raw event JSON to
+      // {name}-attn.jsonl (truncated at setup — offset 0 is always fresh).
+      // Rides the same directory watch as the ctx sidechannel.
+      const attnPath = path.join(REGISTRY_DIR, `${name}-attn.jsonl`);
+      let attnOffset = 0;
+      const readAttn = () => {
+        try {
+          const st = fs.statSync(attnPath);
+          if (st.size <= attnOffset) return;
+          const fd = fs.openSync(attnPath, 'r');
+          const buf = Buffer.alloc(st.size - attnOffset);
+          fs.readSync(fd, buf, 0, buf.length, attnOffset);
+          fs.closeSync(fd);
+          attnOffset = st.size;
+          for (const line of buf.toString('utf-8').split('\n')) {
+            if (!line.trim()) continue;
+            let entry = null;
+            try { entry = JSON.parse(line); } catch {}
+            this._onAttention(session, entry || {});
+          }
+        } catch { /* observer-grade */ }
+      };
       try {
         session.ctxWatcher = fs.watch(REGISTRY_DIR, (_event, fname) => {
           if (fname === `${name}-ctx`) readCtx();
+          else if (fname === `${name}-attn.jsonl`) readAttn();
         });
       } catch {}
       readCtx();
@@ -3890,14 +3970,25 @@ class SessionManager {
   write(name, data) {
     const s = this.sessions.get(name);
     if (!s || s._dead) return;
-    // A human touched this pane — auto-compact's quiet-window fact (injecting
-    // /compact starts with Ctrl-U, which would eat a half-typed draft).
-    s.lastUserInputTs = Date.now();
-    // And drop the atPrompt latch: a user at the keyboard can open dialog UIs
-    // WITHOUT an API turn (/permissions et al.) — the quiet window only covers
-    // 2 minutes, a dialog can sit until warmth expiry. Only the next terminal
-    // wire receipt re-proves the prompt. Fails toward a missed compact.
-    s.lastMainStop = null;
+    // Only HUMAN input carries meaning below — focus reports and terminal
+    // query replies ride the same onData path with nobody at the keyboard
+    // (isHumanPtyInput). Stamping on those killed the atPrompt latch every
+    // time the user merely looked at a pane, which starved auto-compact of
+    // its window on any session the user ever viewed.
+    if (isHumanPtyInput(data)) {
+      // A human touched this pane — auto-compact's quiet-window fact (injecting
+      // /compact starts with Ctrl-U, which would eat a half-typed draft).
+      s.lastUserInputTs = Date.now();
+      // And drop the atPrompt latch: a user at the keyboard can open dialog UIs
+      // WITHOUT an API turn (/permissions et al.) — the quiet window only covers
+      // 2 minutes, a dialog can sit until warmth expiry. Only the next terminal
+      // wire receipt re-proves the prompt. Fails toward a missed compact.
+      s.lastMainStop = null;
+      // A keystroke in the pane means the human is handling whatever the CLI
+      // asked for — clear the needs-attention badge (and the dm dialog gate;
+      // this same keystroke is what answers the dialog).
+      if (s.needsAttention) this._setAttention(s, null);
+    }
     // node-pty throws Napi::Error from C++ if the fd closed under us; never
     // let it escape — an unhandled native throw aborts the app.
     try { s.pty.write(data); } catch {}
@@ -4010,6 +4101,11 @@ class SessionManager {
     // turn's terminal wire receipt re-stamps it. Invariant: atPrompt holds
     // iff a turn completed more recently than anything else happened.
     if (s && state !== 'idle') s.lastMainStop = null;
+    // A turn resuming also means any dialog was answered (the CLI can't run
+    // and ask at the same time) — clear the needs-attention badge. Never
+    // cleared on 'idle': the dialog notification often lands AFTER the
+    // activity tracker's quiet-fallback flips to idle.
+    if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
     this._sendToSession(name, 'session-activity', name, state);
     // notify is only ever true on a real end-of-turn idle, so it doubles as
     // the remote client's "refetch the transcript now" signal.
@@ -4028,6 +4124,42 @@ class SessionManager {
         }
       } catch {}
     }
+  }
+
+  // A Notification-hook event landed for this session (attention tail in
+  // create()). 'idle' chatter is dropped; 'permission'/'other' set the
+  // needs-attention fact — badge, OS notification when the owning window
+  // isn't focused, and (for 'permission') the dm dialog gate.
+  _onAttention(session, entry) {
+    const kind = classifyNotification(entry);
+    if (kind === 'idle') return;
+    this._setAttention(session, {
+      kind, ts: Date.now(),
+      message: (entry && typeof entry.message === 'string') ? entry.message : '',
+    });
+    this._broadcast('ipc-message', {
+      type: 'attention', from: session.name, to: '',
+      body: `${kind}: ${session.needsAttention.message || '(no message)'}`,
+    });
+    const owningWin = this.windowForSession(session.name);
+    if (!owningWin || !owningWin.isFocused()) {
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: `${session.name} needs you`,
+            body: session.needsAttention.message || 'Waiting on a dialog.',
+            silent: false,
+          }).show();
+        }
+      } catch {}
+    }
+  }
+
+  // Single set/clear funnel for the needs-attention fact so the renderer badge
+  // can never drift from the dm gate's view of it.
+  _setAttention(session, attn) {
+    session.needsAttention = attn;
+    this._sendToSession(session.name, 'session-attention', session.name, attn);
   }
 
   // Compact summary landed. If this compact was self-fired via
@@ -4134,10 +4266,17 @@ class SessionManager {
             state: localTarget.activityState || 'idle',
             idleMs: Date.now() - (localTarget.activityTs || Date.now()),
             payload: this._proxyPoller ? this._proxyPoller.snapshot(intent.target) : null,
+            attention: localTarget.needsAttention ? localTarget.needsAttention.kind : null,
           });
           if (verdict.hold) {
             if (session) {
-              this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${verdict.reason}. If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`);
+              // Dialog holds have no urgent override — the injection itself is
+              // the hazard, not the cost. Don't advertise a resend that would
+              // bounce identically.
+              const retry = verdict.noUrgent
+                ? `Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
+                : `If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`;
+              this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${verdict.reason}. ${retry}`);
             }
             this._broadcast('ipc-message', {
               type: 'dm', from: senderName, to: intent.target,
@@ -4171,6 +4310,7 @@ class SessionManager {
             state: s.activityState || 'idle',
             idleMs: Date.now() - (s.activityTs || Date.now()),
             payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
+            attention: s.needsAttention ? s.needsAttention.kind : null,
           }) }));
         const externalNames = registry.listPeers()
           .map(p => p.name)
@@ -4256,30 +4396,96 @@ class SessionManager {
     win.webContents.send('session-file-view', session.name, vet.path);
   }
 
-  // Memory MANAGEMENT intents (spec §10): list / remember / recall, keyed by the
-  // agent's own name. Replies/recalls land back in the agent's own input — list
-  // and confirmations via _injectText (a short [agent:memory] line), recall via
-  // _deliverMessage so a large unit rides the spill channel and never busts msg0
-  // (snapshot, costs a turn — same semantics as any tail push, §2.2).
+  // Digest-ledger birth marking: any conversation id OTHER than the one this
+  // session resumed with was born under it — its SessionStart hook fired with
+  // source startup/clear and cat'd the digest file. Mark iff that file had
+  // content: an empty-store birth stays unmarked so units saved later still
+  // reach the conversation via _maybeDeliverDigest.
+  _noteConversationForDigest(s, sid) {
+    if (!sid || sid === s.bootResumeId) return;
+    if (s.digestNonEmpty) persistence.markDigested(s.name, sid);
+  }
+
+  // Boot-digest append-once (the resume path). The hook only delivers to
+  // conversations being born; one resumed from before the ledger existed —
+  // or born when the store was empty — never got a digest. Deliver it ONCE
+  // as a tail append (prefix cache untouched; only system-prompt bytes bust)
+  // and mark the ledger first, so a delivery failure costs a missed digest,
+  // never a repeat loop. Wire-turn-completion is the call site: cache hot,
+  // CLI at its prompt.
+  _maybeDeliverDigest(s, sid) {
+    try {
+      if (!sid || s._dead || s.agentType !== 'claude') return;
+      if (s.needsAttention) return; // injection would answer the dialog
+      if (isDigested(persistence.get(s.name), sid)) return;
+      const digest = composeDigest(memoryStore.list(s.name));
+      if (!digest) return; // empty store — stay unmarked, try again when units exist
+      persistence.markDigested(s.name, sid);
+      this._deliverMessage(s.name, 'memory',
+        `boot digest (this conversation started before it could ride the first turn)\n\n${digest}`, 'memory');
+    } catch { /* observer-grade — never break the turn handler */ }
+  }
+
+  // Mutation SUCCESS acks (remember/pin/unpin/forget) don't wake the agent:
+  // injecting a turn just to say "saved" bills a whole request for pure
+  // bookkeeping. For Claude the line is queued to {name}-acks and the
+  // UserPromptSubmit hook (setupClaudeHook) attaches it to the agent's NEXT
+  // turn as additionalContext — informative bytes, not user-voice input (which
+  // also keeps the deletion ack away from Fable's refusal classifier). Codex
+  // has no equivalent hook, so it keeps the immediate injected line. Failures
+  // always inject — an agent that believes a failed write succeeded acts on a
+  // store it doesn't have. Best-effort by design: an ack queued after the
+  // conversation's final turn is simply never read.
+  _memoryAck(session, line) {
+    if (session.agentType === 'claude') {
+      try {
+        fs.appendFileSync(path.join(REGISTRY_DIR, `${session.name}-acks`), line + '\n');
+        return;
+      } catch { /* fall through to the injected line */ }
+    }
+    this._injectText(session, line);
+  }
+
+  // Memory MANAGEMENT intents (spec §10): list / remember / recall / pin /
+  // unpin / forget, keyed by the agent's own name. Replies/recalls land back
+  // in the agent's own input — list via _injectText (a short [agent:memory]
+  // line: it's a question, the agent is waiting), mutation acks via
+  // _memoryAck (deferred, see above), recall via _deliverMessage so a large
+  // unit rides the spill channel and never busts msg0 (snapshot, costs a turn
+  // — same semantics as any tail push, §2.2). Mutations rewrite the hook
+  // digest file so a later /clear (or the next fresh conversation) boots with
+  // the current store, not the spawn-time snapshot.
   _handleMemoryIntent(session, sub, body) {
     const agent = session.name;
+    const refreshDigest = () => {
+      if (session.agentType === 'claude') session.digestNonEmpty = writeClaudeDigestFile(agent);
+    };
     if (sub === 'list') {
       const units = memoryStore.list(agent);
       const summary = units.length
-        ? units.map(u => `• ${u.id}${u.scope ? ` [${u.scope}]` : ''}: ${u.body.split('\n')[0].slice(0, 60)}`).join('\n')
+        ? units.map(u => `• ${u.id}${u.scope ? ` [${u.scope}]` : ''}${u.pinned ? ' (pinned)' : ''}: ${u.body.split('\n')[0].slice(0, 60)}`).join('\n')
         : '(no memories yet)';
       this._injectText(session, `[agent:memory] ${units.length} unit(s):\n${summary}`);
       return;
     }
     if (sub === 'remember') {
-      // Optional leading `scope=<token>`; the rest is the unit text.
+      // Optional leading `scope=<token>` / `pinned=true` (any order); the rest
+      // is the unit text. pinned rides remember so save-and-pin is one intent —
+      // the standalone pin sub only flips EXISTING units.
       let scope = '';
+      let pinned = false;
       let text = body.trim();
-      const sm = text.match(/^scope=(\S+)\s+([\s\S]+)$/);
-      if (sm) { scope = sm[1]; text = sm[2]; }
+      for (let m; (m = text.match(/^(scope|pinned)=(\S+)\s+([\s\S]+)$/));) {
+        if (m[1] === 'scope') scope = m[2]; else pinned = m[2] === 'true';
+        text = m[3];
+      }
       try {
-        const unit = memoryStore.remember(agent, { scope, text, source: agent });
-        this._injectText(session, `[agent:memory] remembered ${unit.id}${scope ? ` [${scope}]` : ''}`);
+        const unit = memoryStore.remember(agent, { scope, text, source: agent, pinned });
+        refreshDigest();
+        // A conversation that WRITES a unit knows its store — mark it so the
+        // append-once path doesn't echo the agent's own words back next turn.
+        persistence.markDigested(agent, session.sessionId);
+        this._memoryAck(session, `[agent:memory] remembered ${unit.id}${scope ? ` [${scope}]` : ''}${pinned ? ' (pinned)' : ''}`);
       } catch (e) {
         this._injectText(session, `[agent:memory] could not remember: ${e.message}`);
       }
@@ -4297,7 +4503,29 @@ class SessionManager {
       this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}`, 'memory');
       return;
     }
-    this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall)`);
+    if (sub === 'pin' || sub === 'unpin') {
+      try {
+        memoryStore.setPinned(agent, body.trim(), sub === 'pin');
+        refreshDigest();
+        this._memoryAck(session, `[agent:memory] ${sub}ned ${body.trim()}`);
+      } catch (e) {
+        this._injectText(session, `[agent:memory] could not ${sub}: ${e.message}`);
+      }
+      return;
+    }
+    if (sub === 'forget') {
+      try {
+        memoryStore.forget(agent, body.trim());
+        refreshDigest();
+        // Neutral wording on purpose: "forgot <id>" in the injected turn has
+        // tripped Fable's refusal classifier (memory-tampering pattern match).
+        this._memoryAck(session, `[agent:memory] removed ${body.trim()} from the store`);
+      } catch (e) {
+        this._injectText(session, `[agent:memory] could not remove: ${e.message}`);
+      }
+      return;
+    }
+    this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall|pin|unpin|forget)`);
   }
 
   // Spawn a NEW persistent peer session from inside a running agent (spec

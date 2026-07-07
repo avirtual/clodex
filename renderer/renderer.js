@@ -1130,6 +1130,21 @@ window.api.onSessionActivity((name, state) => {
   if (el) el.dataset.activity = state;
 });
 
+// Needs-attention badge: the session's CLI is blocked on the human (permission
+// dialog / unknown notification). attn is {kind, message, ts} or null; main
+// owns set/clear (keystroke or turn resume clears it there).
+window.api.onSessionAttention((name, attn) => {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  if (attn) {
+    el.dataset.attention = attn.kind;
+    el.title = attn.message || 'Needs your attention';
+  } else {
+    delete el.dataset.attention;
+    el.removeAttribute('title');
+  }
+});
+
 // Context-window usage per session, from Claude's statusline side-channel (the
 // real figures — the proxy only reports message/turn counts, not % or absolute
 // tokens of the window). Cached so the proxy bar can show them too.
