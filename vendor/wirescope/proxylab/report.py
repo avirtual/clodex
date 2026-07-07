@@ -822,8 +822,15 @@ def _scope(pairs):
         e = lines.setdefault(k, {"line": "main" if k == "main" else "subagent",
                                  "role": summ.get("role"),
                                  "agent_id": summ.get("agent_id"),
-                                 "model": p["model"], "requests": 0})
+                                 "model": p["model"], "requests": 0,
+                                 "est_usd": 0.0})
         e["requests"] += 1
+        # per-line cost share (exact: summed per-request billing blocks), so a
+        # COLD session's "where did the money go" split survives on disk — the
+        # offline twin of the live by_line bucket /_status carries.
+        e["est_usd"] += p["billing"].get("est_usd") or 0
+    for e in lines.values():
+        e["est_usd"] = round(e["est_usd"], 6)
     return {"requests": reqs,             # wire requests (the carriage multiplier)
             "billed_requests": billed,
             "turns": _user_turns(pairs),  # user prompts = conversation turns (human)

@@ -354,13 +354,34 @@ def _bump(totals, bill, stop=None):
                 models.append(m)
 
 
-def _accumulate(bill, session_key, stop=None):
+def _accumulate(bill, session_key, stop=None, line=None):
     """Update the global + per-session running totals (the API never returns
     one) and enqueue both snapshots. Math runs on the event loop (cheap dict
-    ops); the disk writes are handed to the background writer."""
+    ops); the disk writes are handed to the background writer.
+
+    `line` = the agent-line key (same vocabulary as report._line_key: "main"
+    for the routed parent line, else the subagent instance's agent-id, role as
+    fallback). When present, the same bill ALSO bumps a per-line sub-bucket
+    under the session totals ("by_line"), so /_status / /_admin can answer
+    "where did this session's money go" per subagent without a disk scan.
+    The bucket rides INSIDE _SESSION_TOTALS -> persists in _session.json and
+    restores through the existing restore path for free. Whole-session totals
+    stay the top-level numbers; by_line is a decomposition, never a second
+    count."""
     _bump(_TOTALS, bill, stop)
-    _bump(_SESSION_TOTALS[session_key], bill, stop)
+    sess = _SESSION_TOTALS[session_key]
+    _bump(sess, bill, stop)
+    if line:
+        by = sess.setdefault("by_line", {})
+        b = by.get(line)
+        if b is None:
+            b = by[line] = _new_totals()
+        _bump(b, bill, stop)
     snap = dict(_TOTALS)
     writer_mod._enqueue_json(core_mod.LOG_DIR / "_totals.json", snap)
-    writer_mod._enqueue_json(core_mod.LOG_DIR / session_key / "_session.json", dict(_SESSION_TOTALS[session_key]))
+    # deep-copy the session snapshot: by_line nests dicts, and the writer
+    # thread serializes AFTER we return — a shallow dict() would let the next
+    # turn's bump race the json.dumps (dict-changed-during-iteration).
+    writer_mod._enqueue_json(core_mod.LOG_DIR / session_key / "_session.json",
+                             json.loads(json.dumps(sess)))
     return snap

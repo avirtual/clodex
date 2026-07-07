@@ -81,6 +81,10 @@ def _identity():
             "context_report": True,       # /_report?session= cost/efficiency report
             "context_timeline": True,     # /_report?...&detail=1 series + /_timeline HTML
             "bust_locator": True,         # /_bust?session= cache-divergence forensics
+            "prune": True,                # /_prune capture-dir retention (GET readout
+                                          # + POST two-tier prune; see INTEGRATION.md)
+            "cost_by_line": True,         # per-agent-line cost split: cost.main_est_usd
+                                          # + sub_agents[].est_usd (+ /_report scope.agents)
             # prior-turn thinking strip: per-session consumer opt-in via /_strip
             # or [wirescope:strip-thinking on]. `default` = the global flag (what
             # `effective` is when no per-session override is set). When the proxy
@@ -146,6 +150,7 @@ def _identity():
             "timeline": "/_timeline",
             "bust": "/_bust",
             "strip": "/_strip",
+            "prune": "/_prune",
         },
         "docs": "INTEGRATION.md",         # front-door contract; push deep-dive = SUBSCRIBERS.md
     }
@@ -273,8 +278,15 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
             # busts.by_class.lapse. None when the session never had a real bust.
             "busts": warmth_mod.bust_summary(sid),
             "hold": hold,
+            # est_usd/requests = the WHOLE tree (subagents share the parent's
+            # session_id, so every line under it rolls in); main_est_usd = the
+            # main line's own share (by_line decomposition; sub shares ride
+            # sub_agents[].est_usd). None for pre-feature sessions.
             "cost": ({"est_usd": tot["est_usd"], "requests": tot["requests"],
-                      "unpriced_requests": tot["unpriced_requests"]}
+                      "unpriced_requests": tot["unpriced_requests"],
+                      "main_est_usd": (round(tot["by_line"]["main"]["est_usd"], 6)
+                                       if (tot.get("by_line") or {}).get("main")
+                                       else None)}
                      if tot else None),
             "refusals": (tot or {}).get("refusals", 0),
             # last ≤20 classifier hits, wire-truth detail (full stop_details);
@@ -368,15 +380,21 @@ def _strip_state(sid):
 def _subagents_with_active(sid, now):
     """The session's `sub_agents[]` for /_status, each augmented with the one
     server-computed FACT a consumer can't compute skew-free on its own:
-    `last_active_s` = now - last_seen (float secs). Policy (running/idle/done)
-    and aging stay the consumer's — we emit no `status`. Snapshot entries are
-    fresh dict copies (meta clones them), so mutating is safe. None passthrough."""
+    `last_active_s` = now - last_seen (float secs) — plus the instance's own
+    cost share (`est_usd`, from billing's per-line by_line bucket, keyed by
+    the same instance key; None for pre-feature traffic). Policy (running/
+    idle/done) and aging stay the consumer's — we emit no `status`. Snapshot
+    entries are fresh dict copies (meta clones them), so mutating is safe.
+    None passthrough."""
     subs = meta_mod._subagents_snapshot(sid)
     if not subs:
         return subs
+    by_line = (billing_mod._SESSION_TOTALS.get(sid) or {}).get("by_line") or {}
     for s in subs:
         ls = s.get("last_seen")
         s["last_active_s"] = round(now - ls, 1) if ls else None
+        b = by_line.get(s.get("key"))
+        s["est_usd"] = round(b["est_usd"], 6) if b else None
     return subs
 
 

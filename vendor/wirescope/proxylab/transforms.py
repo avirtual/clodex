@@ -1046,6 +1046,136 @@ def _strip_mcp_tools(obj, agent_id=None):
     return log
 
 
+# ---- SIDE-CALL MODEL DOWNSHIFT (WebFetch/WebSearch utility calls) ----------
+# The CLI dispatches two kinds of one-shot UTILITY side-calls on the SESSION'S
+# MAIN MODEL, ignoring both the invoking subagent's model and WebFetch's own
+# "small fast model" contract (wire-proven 2026-07-07: sonnet+haiku subagents'
+# WebFetch summarize calls both arrived as fable-5; a fable research session's
+# 75 side-calls = $13.92 of a $19.93 run — repriced at haiku: $1.39):
+#   - WebFetch summarize: 0 tools, 1 user msg starting "Web page content:",
+#     SDK preamble system block. The full fetched page rides as UNCACHED input.
+#   - WebSearch: exactly 1 server tool (web_search), 1 user msg starting
+#     "Perform a web search for the query:", dedicated system marker block.
+# Both are single-shot and carry ZERO cache_control -> rewriting `model` is
+# cache-safe (no prefix lineage) and history-safe (the CLI consumes only the
+# response text; nothing re-enters the transcript under the wrong model).
+# DEFAULT ON -> claude-sonnet-5 (operator decision 2026-07-07: sonnet keeps
+# digest quality for research-critical searches at 1/3 fable input price;
+# a fable-capability digester is never warranted for page summarization).
+# Only fires when the incoming model is MORE expensive than everything cheap —
+# i.e. it never UPSHIFTS: a session already on haiku/sonnet is left alone
+# (model == target short-circuits; _MODEL_RANK guards the haiku case).
+# Override with SIDECALL_MODEL=<model-id>; kill with SIDECALL_MODEL=off.
+# `output_config` (fable-only effort key) is dropped alongside; the server
+# strips `context-1m-2025-08-07` from the forwarded anthropic-beta header
+# (SIDECALL_BETA_STRIP) since the target model may not support the 1M beta.
+# Decline-on-doubt: any thinking key, >1 message, any cache_control, or an
+# unrecognized shape -> untouched.
+SIDECALL_MODEL = os.environ.get("SIDECALL_MODEL", "claude-sonnet-5").strip()
+if SIDECALL_MODEL.lower() in ("0", "no", "off", "false"):
+    SIDECALL_MODEL = ""
+# Cheaper-than ordering so the downshift never upshifts a cheap session's
+# side-call (haiku session + sonnet target would be a price INCREASE).
+# Unlisted models (incl. dated variants) rank as expensive -> eligible;
+# matching is by substring on the family name.
+_SIDECALL_RANK = ("haiku", "sonnet", "opus", "fable")
+# beta tokens to drop from the forwarded header when the downshift fired
+SIDECALL_BETA_STRIP = frozenset(
+    t for t in re.split(r"[,\s]+", os.environ.get(
+        "SIDECALL_BETA_STRIP", "context-1m-2025-08-07").strip())
+    if t and t not in ("0", "no", "off", "false"))
+_SIDECALL_WEBSEARCH_SYS = "You are an assistant for performing a web search tool use"
+_SIDECALL_WEBFETCH_SYS = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+_SIDECALL_WEBFETCH_MSG = "Web page content:"
+_SIDECALL_WEBSEARCH_MSG = "Perform a web search for the query:"
+
+
+def _sidecall_first_text(obj):
+    """First text-block string of messages[0] iff it is the ONLY message and a
+    user turn; else None."""
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or len(msgs) != 1:
+        return None
+    m0 = msgs[0]
+    if not isinstance(m0, dict) or m0.get("role") != "user":
+        return None
+    c = m0.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "text":
+                return b.get("text") or ""
+    return None
+
+
+def _sidecall_sys_texts(obj):
+    sysl = obj.get("system")
+    if isinstance(sysl, str):
+        return [sysl]
+    if isinstance(sysl, list):
+        return [b.get("text") or "" for b in sysl if isinstance(b, dict)]
+    return []
+
+
+def _sidecall_kind(obj):
+    """'webfetch' | 'websearch' | None — strict shape match on the two known
+    utility-call families (see block comment above)."""
+    if "thinking" in obj or "cache_control" in json.dumps(obj):
+        return None
+    first = _sidecall_first_text(obj)
+    if first is None:
+        return None
+    tools = obj.get("tools") or []
+    sys_texts = _sidecall_sys_texts(obj)
+    if (not tools
+            and first.lstrip().startswith(_SIDECALL_WEBFETCH_MSG)
+            and any(t.strip() == _SIDECALL_WEBFETCH_SYS for t in sys_texts)):
+        return "webfetch"
+    if (len(tools) == 1 and isinstance(tools[0], dict)
+            and (tools[0].get("name") == "web_search"
+                 or str(tools[0].get("type", "")).startswith("web_search"))
+            and first.lstrip().startswith(_SIDECALL_WEBSEARCH_MSG)
+            and any(t.strip().startswith(_SIDECALL_WEBSEARCH_SYS)
+                    for t in sys_texts)):
+        return "websearch"
+    return None
+
+
+def _sidecall_rank(model):
+    """Price-family rank of a model id (higher = pricier); unknown families
+    rank above everything listed so they stay downshift-eligible."""
+    low = (model or "").lower()
+    for i, fam in enumerate(_SIDECALL_RANK):
+        if fam in low:
+            return i
+    return len(_SIDECALL_RANK)
+
+
+def _sidecall_downshift(obj):
+    """Rewrite the model of a recognized WebFetch/WebSearch utility side-call
+    to SIDECALL_MODEL. Returns a log dict {kind, from_model, to_model,
+    dropped} or None (gate off / not a side-call / already at target /
+    would not be a downshift)."""
+    if not SIDECALL_MODEL or not isinstance(obj, dict):
+        return None
+    model = obj.get("model")
+    if not model or model == SIDECALL_MODEL:
+        return None
+    if _sidecall_rank(model) <= _sidecall_rank(SIDECALL_MODEL):
+        return None                     # never upshift (e.g. haiku session)
+    kind = _sidecall_kind(obj)
+    if kind is None:
+        return None
+    obj["model"] = SIDECALL_MODEL
+    dropped = []
+    if "output_config" in obj:          # fable-only effort key; target model
+        del obj["output_config"]        # may reject it -> drop, never remap
+        dropped.append("output_config")
+    return {"kind": kind, "from_model": model, "to_model": SIDECALL_MODEL,
+            "dropped": dropped}
+
+
 def _ws_reminder_is_empty(text):
     """True if `text` is a <system-reminder> whose every `# Section` was stripped,
     leaving only the wrapper + the "you can use the following context:" intro with

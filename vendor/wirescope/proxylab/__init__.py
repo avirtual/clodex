@@ -25,7 +25,8 @@ import importlib
 
 _MODULES = ("core", "store", "codex", "transforms", "canary", "writer",
             "warmth", "subs", "meta", "pinger", "hold", "billing",
-            "receipts", "restore", "status", "views", "server")
+            "receipts", "report", "prune", "restore", "status", "views",
+            "server")
 
 
 def __getattr__(name):

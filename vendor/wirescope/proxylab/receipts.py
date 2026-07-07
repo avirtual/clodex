@@ -43,7 +43,7 @@ def _stash_view_state(session_id, *, text, truncated, stop_reason, bill):
 def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
               obj, title_call, is_messages, routed, out_dir, stem,
               status_code, resp_headers, tee_text=None, response_injection=None,
-              side_call=None):
+              side_call=None, agent_header_id=None):
     """Finalize an anthropic-wire response (messages OR count_tokens).
     `routed` = /agent/<name>/ traffic (the only kind subscribers receive);
     `tee_text` = the subscriber tee's full reassembled turn text, when one ran
@@ -51,7 +51,10 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
     (lowercased keys), never the request's. `side_call` = title OR probe (the
     transient non-agent class); `title_call` is the title generator alone (its
     answer is the session title). side_call gates view-state/turn-count; only
-    title_call harvests a title — a probe's 1-token answer must never become one."""
+    title_call harvests a title — a probe's 1-token answer must never become one.
+    `agent_header_id` = the request's x-claude-code-agent-id (present iff a
+    subagent instance); with `role` it derives the per-line cost bucket key
+    (same vocabulary as report._line_key)."""
     # back-compat: callers that pass only title_call get the old behavior
     side_call = title_call if side_call is None else side_call
     if is_messages:
@@ -98,7 +101,13 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
                 is_messages and not side_call
                 and role in ("parent", "unknown")
                 and meta.get("stop_reason") not in (None, "tool_use"))}
-    cum = billing_mod._accumulate(bill, session_key, stop)
+    # per-line cost decomposition key — mirror report._line_key so the live
+    # by_line buckets and the disk report agree: main line (parent/unknown)
+    # collapses to "main" (title/probe side-calls ride the main line too),
+    # a subagent buckets by its instance agent-id (role as fallback).
+    line = ("main" if role in ("parent", "unknown", None)
+            else (agent_header_id or role))
+    cum = billing_mod._accumulate(bill, session_key, stop, line=line)
     writer_mod._enqueue_json(out_dir / f"{stem}.response.json",
         {"seq": n, "agent": agent, "role": role, "model": model,
          "session_id": session_id,

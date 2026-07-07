@@ -30,6 +30,7 @@ from proxylab import fold as fold_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
+from proxylab import prune as prune_mod
 from proxylab import receipts as receipts_mod
 from proxylab import report as report_mod
 from proxylab import restore as restore_mod
@@ -632,6 +633,44 @@ async def handler(request: Request) -> Response:
         res = report_mod.bust_series(sess)
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
+    # ---- capture-dir retention -------------------------------------------------
+    # GET /_prune — free size readout: where the disk went + what the default
+    # cutoffs would reclaim (one fs walk, nothing deleted). POST /_prune?
+    # older_than=30d[&tier=receipts|full][&scope=sessions|no-session|all]
+    # [&dry_run=1] — execute a prune pass. older_than is REQUIRED (destructive
+    # endpoint, no implicit default) and floored at 1h; warm/held sessions and
+    # anything with recent activity are never touched (proxylab/prune.py).
+    # Action-endpoint convention: 400 only for malformed input; outcome in body.
+    if request.url.path.rstrip("/") == "/_prune":
+        if request.method == "GET":
+            return Response(json.dumps(prune_mod.prune_scan(), indent=2),
+                            media_type="application/json")
+        if request.method == "POST":
+            q = request.query_params
+            age = prune_mod._parse_age(q.get("older_than"))
+            if age is None or age < prune_mod._MIN_AGE_S:
+                return Response(json.dumps(
+                    {"error": "older_than required (e.g. 30d / 12h), min 1h"}),
+                    status_code=400, media_type="application/json")
+            tier = q.get("tier") or "receipts"
+            scope = q.get("scope") or "all"
+            if tier not in ("receipts", "full") or scope not in (
+                    "sessions", "no-session", "all"):
+                return Response(json.dumps(
+                    {"error": "tier in {receipts,full}; "
+                              "scope in {sessions,no-session,all}"}),
+                    status_code=400, media_type="application/json")
+            dry = q.get("dry_run") in ("1", "yes", "true")
+            res = prune_mod.prune(age, tier=tier, scope=scope, dry_run=dry)
+            if not dry:
+                print(f"[prune] tier={tier} scope={scope} "
+                      f"older_than={q.get('older_than')} -> "
+                      f"{res['files_deleted']} files / "
+                      f"{res['bytes_reclaimed'] / 1e6:.1f} MB reclaimed "
+                      f"({res['sessions_pruned']} sessions)", flush=True)
+            return Response(json.dumps(res, indent=2),
+                            media_type="application/json")
+
     # ---- timeline page: per-request cost evolution, for humans -----------------
     # GET /_timeline?session=<id> — read-only HTML render of the cost-over-time
     # dashboard (the visual companion to /_report?detail=1). DISK-based, heavy,
@@ -967,6 +1006,18 @@ async def handler(request: Request) -> Response:
         # still run (they only read obj). One guard instead of N per-feature 0s.
         if obj and not transforms_mod.PASSTHROUGH:
             changed = False
+            # SIDE-CALL MODEL DOWNSHIFT: rewrite the model of one-shot
+            # WebFetch-summarize / WebSearch utility calls (the CLI ships them
+            # on the session's MAIN model — a fetched page as uncached input at
+            # fable rates). Cache-safe: these bodies carry no cache_control.
+            # First in the chain so the rewrite is visible to capture/billing
+            # and to the beta-header strip at forward time below.
+            scd = transforms_mod._sidecall_downshift(obj)
+            if scd:
+                record["sidecall_downshift"] = scd
+                changed = True
+                print(f"[sidecall] #{n} {agent} {scd['kind']} downshift "
+                      f"{scd['from_model']} -> {scd['to_model']}", flush=True)
             appended, reason = transforms_mod._decide_injection(obj)
             if appended:
                 orig = transforms_mod._inject_into_last_user(obj, appended, transforms_mod.INJECT_SEP)
@@ -1267,6 +1318,17 @@ async def handler(request: Request) -> Response:
     # ---- forward upstream; tee the response stream to a .sse file ----
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in core_mod._HOP}
     fwd_headers["accept-encoding"] = "identity"  # force uncompressed so we can read the SSE
+    # Downshifted side-call: drop beta tokens the target model may not support
+    # (defensive — context-1m is unsupported on haiku; the body rewrite happened
+    # up in the transform chain, this is its header half. SIDECALL_BETA_STRIP).
+    if "sidecall_downshift" in record and transforms_mod.SIDECALL_BETA_STRIP:
+        _beta = fwd_headers.get("anthropic-beta")
+        if _beta:
+            _kept = [t.strip() for t in _beta.split(",")
+                     if t.strip() and t.strip() not in transforms_mod.SIDECALL_BETA_STRIP]
+            fwd_headers["anthropic-beta"] = ",".join(_kept)
+            record["sidecall_downshift"]["beta_stripped"] = sorted(
+                set(t.strip() for t in _beta.split(",")) - set(_kept))
     # Stash this (post-transform) request so POST /_ping?session= can replay it.
     # Only the MAIN LINE (parent agent) is the session's durable, pingable
     # request: a subagent, title side-call, or quota probe shares the session_id
@@ -1336,6 +1398,7 @@ async def handler(request: Request) -> Response:
                 receipts_mod.anthropic(
                     blob, n=n, ts=ts, agent=agent, role=role, model=model,
                     session_id=session_id, session_key=session_key, obj=obj,
+                    agent_header_id=agent_id,
                     title_call=title_call, side_call=side_call, is_messages=is_messages,
                     routed=(m is not None), out_dir=out_dir, stem=stem,
                     status_code=up.status_code, resp_headers=dict(up.headers),

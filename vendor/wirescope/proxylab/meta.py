@@ -260,6 +260,21 @@ _SUBAGENTS = {}
 # shape is the subset of pinger._LAST_REQUEST that _render_session_html reads.
 _SUBAGENT_LAST_REQ = {}
 
+# matches the pre-@ part of an ANONYMOUS spawn's agent-id: a bare UUID/hex blob
+# (with or without dashes) — those carry no human-given name to surface
+_AGENT_ID_BLOB = re.compile(r"^[0-9a-fA-F-]{8,}$")
+
+
+def _agent_id_label(agent_id):
+    """Human-given name from an agent-id header (`name@session-…`), or None
+    when the name part is a UUID/hex blob (anonymous spawn) or absent."""
+    if not agent_id or not isinstance(agent_id, str):
+        return None
+    part = agent_id.split("@", 1)[0].strip()
+    if not part or _AGENT_ID_BLOB.match(part):
+        return None
+    return part
+
 
 def _note_subagent(session_id, role, model, now=None, obj=None, agent_id=None,
                    display_name=None):
@@ -280,6 +295,13 @@ def _note_subagent(session_id, role, model, now=None, obj=None, agent_id=None,
     # sees obj); fall back to parsing obj directly for callers that don't (tests).
     name = display_name if display_name is not None else (
         writer_mod._subagent_marker_name(obj) if isinstance(obj, dict) else None)
+    # Named spawns (Agent tool `name:`) carry the given name as the pre-@ part
+    # of the agent-id header; surface it as display_name so consumers need no
+    # client-side derivation (clodex request 2026-07-07). Anonymous/built-in
+    # spawns use a UUID/hex blob there — skipped, so their role label stands.
+    # The directive name (above) still wins when both are present.
+    if name is None:
+        name = _agent_id_label(agent_id)
     roles = _SUBAGENTS.setdefault(session_id, {})
     e = roles.get(key)
     if e is None:

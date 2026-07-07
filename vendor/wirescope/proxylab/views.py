@@ -179,8 +179,13 @@ def _render_admin_html(snap, host="", show=60):
         else:
             ping = '<span class="dim">no</span>'
         c = s.get("cost")
+        # whole-tree total; when subagents ran AND the by_line split is known,
+        # show the main line's own share so the sub-row costs visibly sum up.
+        cmain = (f'<br><span class="dim">main ${c["main_est_usd"]:.4f}</span>'
+                 if c and c.get("main_est_usd") is not None
+                 and s.get("sub_agents") else "")
         cost = (f'${c["est_usd"]:.4f}<br><span class="dim">{c["requests"]} req'
-                f'</span>') if c else '<span class="dim">—</span>'
+                f'</span>{cmain}') if c else '<span class="dim">—</span>'
         sref = s.get("refusals") or 0
         sid = s["session_id"]
         kindb = (f' <span class="badge off">&#129302; {e(s["kind"])}</span>'
@@ -222,7 +227,8 @@ def _render_admin_html(snap, host="", show=60):
                if sa.get("agent_id") else "")
             + f' <span class="dim">{e(writer_mod._short_model(sa.get("model")))}'
             f' · {sa.get("requests", 0)} req · {e(_fmt_ago(sa.get("last_seen"), now))}'
-            f'</span></span>' for sa in subs)
+            + (f' · ${sa["est_usd"]:.4f}' if sa.get("est_usd") is not None else "")
+            + f'</span></span>' for sa in subs)
         return (
             f'<tr><td class="nowrap">{timeleft}</td>'
             f'<td class="nowrap">{ttlc}</td>'
