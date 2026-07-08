@@ -112,8 +112,8 @@ function shapeSubagent(s, now) {
 // preemptively. Policy (clodex-side; wirescope only supplies the warmth/context
 // FACTS in the poll payload):
 //   - enabled: per-session, default ON (opt-out persisted as autoCompact:false)
-//   - warm and expiring within WARMTH_HEADROOM_S, no hold (keep-warm owns that
-//     moment — the two are alternatives for the same event)
+//   - warm and expiring within the headroom band (see headroomBand), no hold
+//     (keep-warm owns that moment — the two are alternatives for the same event)
 //   - context >= MIN_INPUT_TOKENS (small contexts aren't worth a lossy compact)
 //   - atPrompt: the last main-line stop was terminal (stop.is_turn). A paused
 //     turn that went quiet is usually a PERMISSION DIALOG — an injected Enter
@@ -121,12 +121,34 @@ function shapeSubagent(s, now) {
 //   - INPUT_QUIET_MS since the user's last keystroke in that pane (the Ctrl-U
 //     in _injectText would eat a half-typed draft)
 //   - COOLDOWN_MS between fires (the 5s poll must not machine-gun /compact)
+//
+// Headroom band history: WARMTH_HEADROOM_S was a FIXED 60s, tuned when the proxy
+// served a ~300s TTL (60s = the last 20% = a sane "about to expire, act now"
+// band). Production wirescope moved to ttl_s=3600 (1h) and the constant never
+// followed — 60s became the last 1.6% of a warm lifetime, a band the 5s poll
+// essentially never sampled (6552 telemetry samples: zero warm-with-low-remaining
+// hits; sessions read warm-at-~full then snapped to cold-at-0.0). Auto-compact
+// had therefore NEVER fired in production. Fix: a TTL-RELATIVE band — a fraction
+// of the actual ttl_s, clamped to [floor, max] — so it scales with whatever TTL
+// the proxy serves. The 60s floor preserves the exact old semantics at the old
+// ~300s TTL (0.15*300 = 45 → clamps up to 60).
 const AUTO_COMPACT = {
   MIN_INPUT_TOKENS: 100_000,
-  WARMTH_HEADROOM_S: 60,
+  WARMTH_HEADROOM_S: 60,      // floor (and fallback when ttl_s is unknown)
+  HEADROOM_FRAC: 0.15,        // fire in the last 15% of the warm TTL
+  HEADROOM_MAX_S: 900,        // cap so a multi-hour TTL can't create an absurd band
   INPUT_QUIET_MS: 120_000,
   COOLDOWN_MS: 600_000,
 };
+
+// The remaining_s threshold at/under which a warm session is "about to cool".
+// TTL-relative (HEADROOM_FRAC of ttl_s), clamped to [floor, max]. A missing or
+// non-numeric ttl_s degrades to the flat floor — never NaN the comparison.
+function headroomBand(ttl_s) {
+  if (typeof ttl_s !== 'number' || !(ttl_s > 0)) return AUTO_COMPACT.WARMTH_HEADROOM_S;
+  const frac = AUTO_COMPACT.HEADROOM_FRAC * ttl_s;
+  return Math.min(Math.max(frac, AUTO_COMPACT.WARMTH_HEADROOM_S), AUTO_COMPACT.HEADROOM_MAX_S);
+}
 
 // Human-vs-terminal-chatter classifier for PTY-bound data. xterm doesn't only
 // forward keystrokes: when the CLI enables focus reporting (DECSET 1004 — the
@@ -151,17 +173,33 @@ function isHumanPtyInput(data) {
   return String(data).replace(PTY_AUTO_REPLY_RE, '').length > 0;
 }
 
-function shouldAutoCompact({ payload, enabled, atPrompt, lastInputTs = 0, lastFiredTs = 0, now = Date.now() }) {
-  if (!enabled || !atPrompt) return false;
-  if (!payload || !payload.linked || payload.hold) return false;
+// Decision + the reason it went that way — the reason drives the ops-log
+// observability ("autocompact suppressed: cache-not-warm") that surfaced the
+// silent-never-fired class. shouldAutoCompact stays a thin boolean wrapper so
+// existing callers and tests keep their contract. `fire` true ⇒ reason 'fire'.
+function autoCompactDecision({ payload, enabled, atPrompt, lastInputTs = 0, lastFiredTs = 0, now = Date.now() }) {
+  if (!enabled) return { fire: false, reason: 'disabled' };
+  if (!atPrompt) return { fire: false, reason: 'not-at-prompt' };
+  if (!payload) return { fire: false, reason: 'no-payload' };
+  if (!payload.linked) return { fire: false, reason: 'unlinked' };
+  if (payload.hold) return { fire: false, reason: 'keep-warm-hold' };
   const w = payload.warmth;
-  if (!w || w.state !== 'warm' || typeof w.remaining_s !== 'number') return false;
-  if (w.remaining_s > AUTO_COMPACT.WARMTH_HEADROOM_S) return false;
+  if (!w || w.state !== 'warm' || typeof w.remaining_s !== 'number') return { fire: false, reason: 'cache-not-warm' };
+  // TTL-relative headroom (see headroomBand): the band scales with the proxy's
+  // actual ttl_s so a 1h TTL doesn't make the fire window unreachable. `band` is
+  // returned either way so the caller can log "remaining Ns / band Ms".
+  const band = headroomBand(w.ttl_s);
+  if (w.remaining_s > band) return { fire: false, reason: `warmth-headroom(${w.remaining_s}s/band ${band}s)`, band };
   const ctx = payload.context;
-  if (!ctx || typeof ctx.inputTokens !== 'number' || ctx.inputTokens < AUTO_COMPACT.MIN_INPUT_TOKENS) return false;
-  if (now - lastInputTs < AUTO_COMPACT.INPUT_QUIET_MS) return false;
-  if (now - lastFiredTs < AUTO_COMPACT.COOLDOWN_MS) return false;
-  return true;
+  if (!ctx || typeof ctx.inputTokens !== 'number') return { fire: false, reason: 'no-context-tokens', band };
+  if (ctx.inputTokens < AUTO_COMPACT.MIN_INPUT_TOKENS) return { fire: false, reason: `below-min-tokens(${ctx.inputTokens})`, band };
+  if (now - lastInputTs < AUTO_COMPACT.INPUT_QUIET_MS) return { fire: false, reason: 'recent-user-input', band };
+  if (now - lastFiredTs < AUTO_COMPACT.COOLDOWN_MS) return { fire: false, reason: 'cooldown', band };
+  return { fire: true, reason: 'fire', band, remaining_s: w.remaining_s };
+}
+
+function shouldAutoCompact(args) {
+  return autoCompactDecision(args).fire;
 }
 
 // --- Peer visibility ([agent:who] labels + dm hold gate) ----------------------
@@ -309,6 +347,6 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  AUTO_COMPACT, shouldAutoCompact, isHumanPtyInput,
+  AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   DM_HOLD_IDLE_MS, peerStatusLabel, shouldHoldDm,
 };

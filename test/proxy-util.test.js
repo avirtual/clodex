@@ -261,6 +261,79 @@ test('shouldAutoCompact: cooldown latch — one fire per window, not per poll ti
   assert.strictEqual(shouldAutoCompact(acArgs({ lastFiredTs: AC_NOW - AUTO_COMPACT.COOLDOWN_MS - 1 })), true);
 });
 
+// autoCompactDecision exposes the REASON behind a non-fire — the ops-log line
+// that makes a silent never-fired case diagnosable. shouldAutoCompact is just
+// its .fire, so these lock the reason strings each gate emits.
+const { autoCompactDecision } = require('../proxy-util');
+
+test('autoCompactDecision: fire path reports reason "fire"', () => {
+  // Return shape gained band/remaining_s (fed into the fired log line), so assert
+  // the fields rather than exact object equality. Default acArgs = ttl_s 300 →
+  // band clamps to the 60s floor; remaining_s 45 <= 60 → fires (old semantics).
+  const d = autoCompactDecision(acArgs());
+  assert.strictEqual(d.fire, true);
+  assert.strictEqual(d.reason, 'fire');
+  assert.strictEqual(d.band, 60);
+});
+
+test('autoCompactDecision: each gate names why it blocked', () => {
+  assert.strictEqual(autoCompactDecision(acArgs({ enabled: false })).reason, 'disabled');
+  assert.strictEqual(autoCompactDecision(acArgs({ atPrompt: false })).reason, 'not-at-prompt');
+  assert.strictEqual(autoCompactDecision(acArgs({}, { linked: false })).reason, 'unlinked');
+  assert.strictEqual(autoCompactDecision(acArgs({}, { hold: { until: 1, hours: 4 } })).reason, 'keep-warm-hold');
+  assert.strictEqual(autoCompactDecision(acArgs({}, { warmth: { state: 'cold', remaining_s: null } })).reason, 'cache-not-warm');
+  assert.match(autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: AUTO_COMPACT.WARMTH_HEADROOM_S + 1, ttl_s: 300 } })).reason, /^warmth-headroom/);
+  assert.match(autoCompactDecision(acArgs({}, { context: { inputTokens: 50_000 } })).reason, /^below-min-tokens/);
+  assert.strictEqual(autoCompactDecision(acArgs({}, { context: { turns: 1 } })).reason, 'no-context-tokens');
+  assert.strictEqual(autoCompactDecision(acArgs({ lastInputTs: AC_NOW })).reason, 'recent-user-input');
+  assert.strictEqual(autoCompactDecision(acArgs({ lastFiredTs: AC_NOW })).reason, 'cooldown');
+});
+
+test('autoCompactDecision: no-payload short-circuits before warmth deref', () => {
+  assert.deepStrictEqual(autoCompactDecision(acArgs({}, {})).fire !== undefined, true);
+  assert.strictEqual(autoCompactDecision({ ...acArgs(), payload: null }).reason, 'no-payload');
+});
+
+// TTL-relative headroom band (the fix for the never-fired-in-production bug: a
+// fixed 60s band was unreachable under the production 3600s TTL). The band is
+// HEADROOM_FRAC (0.15) of ttl_s, clamped to [WARMTH_HEADROOM_S floor, HEADROOM_MAX_S].
+const { headroomBand } = require('../proxy-util');
+
+test('headroomBand: fraction of ttl_s, clamped to [floor, max]', () => {
+  // 0.15*3600 = 540, inside [60, 900]
+  assert.strictEqual(headroomBand(3600), 540);
+  // 0.15*300 = 45 → clamps UP to the 60s floor (preserves old ~300s semantics)
+  assert.strictEqual(headroomBand(300), 60);
+  // 0.15*10000 = 1500 → clamps DOWN to the 900s max
+  assert.strictEqual(headroomBand(10000), 900);
+  // missing / non-numeric / non-positive ttl_s → flat floor, never NaN
+  assert.strictEqual(headroomBand(undefined), 60);
+  assert.strictEqual(headroomBand(null), 60);
+  assert.strictEqual(headroomBand(0), 60);
+  assert.strictEqual(headroomBand(-5), 60);
+});
+
+test('autoCompactDecision: at ttl_s 3600 the band is 540 — fires under it, suppressed over it', () => {
+  // remaining 500 <= 540 → fires (this is what NEVER happened under the old fixed 60)
+  const fires = autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: 500, ttl_s: 3600 } }));
+  assert.strictEqual(fires.fire, true);
+  assert.strictEqual(fires.band, 540);
+  // remaining 600 > 540 → suppressed, reason carries both numbers for the wild-data log
+  const supp = autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: 600, ttl_s: 3600 } }));
+  assert.strictEqual(supp.fire, false);
+  assert.strictEqual(supp.band, 540);
+  assert.match(supp.reason, /^warmth-headroom\(600s\/band 540s\)$/);
+});
+
+test('autoCompactDecision: missing ttl_s falls back to the flat 60s floor', () => {
+  // remaining 50 <= 60 floor → fires even with no ttl_s (guarded, not NaN)
+  assert.strictEqual(autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: 50 } })).fire, true);
+  // remaining 70 > 60 floor → suppressed
+  const supp = autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: 70 } }));
+  assert.strictEqual(supp.fire, false);
+  assert.strictEqual(supp.band, 60);
+});
+
 // --- peer visibility: [agent:who] labels + dm hold gate ------------------------
 // A dm injection into a long-idle, not-warm peer re-bills that peer's whole
 // context; the gate bounces those unless the sender says urgent. Warmth must be

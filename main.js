@@ -66,9 +66,17 @@ process.on('uncaughtException', (err) => {
   const isPtyTeardown = /Napi|pty|ioctl|EBADF|read of closed|file descriptor/i.test(msg || '');
   if (appQuitting && isPtyTeardown) {
     console.error('Suppressed PTY teardown error during quit:', msg);
+    try { log.warn('crash', `suppressed PTY teardown during quit: ${msg}`); } catch {}
     return;
   }
+  try { log.error('crash', `uncaughtException: ${(err && err.stack) || msg}`); } catch {}
   throw err;
+});
+
+// Rejections that reach here are unhandled — record them, but keep Node's
+// default behaviour (don't swallow) so nothing is masked.
+process.on('unhandledRejection', (reason) => {
+  try { log.error('crash', `unhandledRejection: ${(reason && reason.stack) || String(reason)}`); } catch {}
 });
 
 // ── Spawn diagnostics ───────────────────────────────────────────────────────
@@ -212,6 +220,47 @@ const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
 const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
+
+// ---------------------------------------------------------------------------
+// Persistent ops/error log — Clodex mostly runs headless (tray, no console),
+// so errors and lifecycle events otherwise vanish. One rolling plain-text file
+// in the (already 0700) runtime dir: `ISO  LEVEL  [tag]  message`. Append-only,
+// no dependency, no framework. Rotation is deliberately trivial: one generation
+// kept, rotated once at startup when the file passes the cap. Only coarse,
+// low-frequency events log here (lifecycle, state-mutating intents, autocompact
+// decisions, peer transitions, uncaught errors) — never per-keystroke or
+// per-telemetry-frame. `initLog()` runs once at startup (rotation + a header);
+// every write self-heals the dir so a call before init still lands.
+// ---------------------------------------------------------------------------
+const LOG_FILE = path.join(REGISTRY_DIR, 'clodex.log');
+const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
+
+function initLog() {
+  try {
+    ensureDir(REGISTRY_DIR);
+    const st = fs.statSync(LOG_FILE);
+    if (st.size > LOG_ROTATE_BYTES) {
+      try { fs.renameSync(LOG_FILE, `${LOG_FILE}.1`); } catch {}
+    }
+  } catch { /* file absent (first run) or unrotatable — writes create it */ }
+}
+
+function writeLog(level, tag, message) {
+  try {
+    const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`;
+    fs.appendFileSync(LOG_FILE, line);
+  } catch {
+    // Self-heal a missing dir once, then give up — logging must never throw
+    // into a caller (it wraps lifecycle paths, the PTY, and the crash net).
+    try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`); } catch {}
+  }
+}
+
+const log = {
+  info: (tag, message) => writeLog('INFO', tag, message),
+  warn: (tag, message) => writeLog('WARN', tag, message),
+  error: (tag, message) => writeLog('ERROR', tag, message),
+};
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
 // Phase W1 shadow mode (CLODEUX-PLAN.md): route claude sessions through the
@@ -266,11 +315,30 @@ const RELOAD_CONTINUATION_DELAY = 2500;
 // legitimately longer turn just degrades to today's behavior — the flush
 // lands mid-turn and becomes the next turn, exactly as an unheld inject would.
 const INJECT_HOLD_TIMEOUT = 5 * 60 * 1000;
+// Release valve for a self-fired /compact whose summary never lands (the CLI
+// errored, the app restarted mid-compaction, the transcript rendezvous missed).
+// Without it, _compactGuard + _compactContinuation stay set forever and the
+// in-flight guard silently suppresses every future self-compact. 5 min sits
+// comfortably past worst-case legitimate big-context compaction time, so it
+// only ever fires on a genuinely stuck compact — half the 10-min sentinel arm
+// timeout. On fire it clears the stuck state and does NOT auto-retry (a silent
+// re-compact minutes later is a worse surprise than the agent re-issuing the
+// intent).
+const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
 // Flushing starts with Ctrl-U, which would eat a half-typed operator draft.
 // If a human touched the pane this recently, defer the flush and retry — the
 // hold gave US the timing decision, so the draft hazard is ours to avoid
 // (immediate injects keep today's behavior; their timing is the sender's).
-const INJECT_DRAFT_QUIET = 10 * 1000;
+// Every injection now drains through a per-session InjectQueue (atomicity: one
+// Ctrl-U→Enter at a time, no interleave) whose quiet-gate defers the start of an
+// item while a human touched the pane within INJECT_QUIET_MS — the leading
+// Ctrl-U would eat an un-submitted operator/controller draft. Capped by
+// INJECT_QUIET_MAXWAIT so a walked-away draft can't starve deliveries (the cap
+// falls back to inject-anyway, never worse than pre-queue behavior). The window
+// is short (2s) because it applies to EVERY inject including plain idle
+// deliveries; the old 10s value only ever gated post-hold batch flushes.
+const INJECT_QUIET_MS = 2 * 1000;
+const INJECT_QUIET_MAXWAIT = 30 * 1000;
 
 // Crash-safe file write: same-dir temp → fsync contents → atomic rename →
 // fsync the parent dir. A power loss or interrupted write leaves the previous
@@ -1730,10 +1798,11 @@ function resolveProxyBase(proxy) {
 // streaming/refusals, a clodex2 concern).
 // See https://github.com/avirtual/wirescope (INTEGRATION.md).
 
-const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shouldAutoCompact, isHumanPtyInput, peerStatusLabel, shouldHoldDm } = require('./proxy-util');
+const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, peerStatusLabel, shouldHoldDm } = require('./proxy-util');
 const { parseAgentFrontmatter, buildAgentsArg, denyAgentRules } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
+const { InjectQueue, isInjectInFlight } = require('./inject-queue');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
@@ -2135,7 +2204,7 @@ class ProxyPoller {
   _maybeAutoCompact(s, payload, entry) {
     try {
       if (s.agentType !== 'claude' || s._dead) return;
-      const fire = shouldAutoCompact({
+      const decision = autoCompactDecision({
         payload,
         enabled: autoCompactOf(entry),
         // Wire-stamped: terminal main-line stop = CLI parked at its prompt.
@@ -2148,10 +2217,41 @@ class ProxyPoller {
         lastInputTs: s.lastUserInputTs || 0,
         lastFiredTs: this.autoCompacted.get(s.name) || 0,
       });
-      if (!fire) return;
+      if (!decision.fire) {
+        // Observability for the silent-never-fired class: log a suppression
+        // ONLY for a heavy-context near-miss (a session light on context isn't
+        // a candidate, so its reason is noise), and only when the reason CHANGES
+        // — this runs on the 5s poll, so per-poll logging would flood. That
+        // yields exactly "crossed the threshold but didn't fire, and here's why"
+        // once per reason transition per session.
+        try {
+          const heavy = payload && payload.context && typeof payload.context.inputTokens === 'number'
+            && payload.context.inputTokens >= AUTO_COMPACT.MIN_INPUT_TOKENS;
+          if (heavy) {
+            // Suspect-A distinguisher (laptop2 silent-never-fire): a session
+            // that isn't wire-routed NEVER stamps lastMainStop, so atPrompt is
+            // permanently false and auto-compact is structurally dead — but the
+            // reason-transition log would only ever show 'not-at-prompt', which
+            // can't tell "structural-never" from "transient mid-turn". A
+            // distinct once-per-session WARN kills that ambiguity.
+            if (s.intentSource !== 'wire' && !s._acNotWiredLogged) {
+              s._acNotWiredLogged = true;
+              log.warn('autocompact', `unavailable for ${s.name}: not wire-routed (lastMainStop never stamped → can't fire) (~${Math.round(payload.context.inputTokens / 1000)}k ctx)`);
+            }
+            if (s._lastAcSuppressReason !== decision.reason) {
+              s._lastAcSuppressReason = decision.reason;
+              log.info('autocompact', `${s.name} suppressed: ${decision.reason} (~${Math.round(payload.context.inputTokens / 1000)}k ctx)`);
+            }
+          }
+        } catch { /* logging must never break the poll */ }
+        return;
+      }
       const cmd = (SessionManager.CONTEXT_COMMANDS[s.type] || {}).compact;
       if (!cmd) return;
       this.autoCompacted.set(s.name, Date.now());
+      s._lastAcSuppressReason = null;   // fired — reset so the next near-miss logs
+      // Include the computed band so the wild data confirms the threshold choice.
+      log.info('autocompact', `${s.name} fired → ${cmd} (~${Math.round(payload.context.inputTokens / 1000)}k ctx, warmth ${decision.remaining_s}s/band ${decision.band}s)`);
       // bypassHold: shouldAutoCompact already proved the prompt is parked and
       // dialog-free, and a bare slash command must never queue (a '\n'-joined
       // flush batch would corrupt it).
@@ -4054,6 +4154,7 @@ class SessionManager {
       // write/resize/kill into node-pty throws an uncaught Napi::Error that
       // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
       session._dead = true;
+      log.info('session', `exit ${name} code=${exitCode}`);
       // Send the exit event BEFORE cleanup so the renderer can still resolve
       // the session → workspace → window mapping. Otherwise the sidebar
       // tab sticks around as a "dead" entry.
@@ -4073,6 +4174,7 @@ class SessionManager {
     if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
     if (typeof refreshAppMenu === 'function') refreshAppMenu();
     if (remoteServer) { try { remoteServer.notifySessions(); } catch {} }
+    log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
     return { name, type, pid: ptyProc.pid };
   }
 
@@ -4120,6 +4222,7 @@ class SessionManager {
   async kill(name) {
     const s = this.sessions.get(name);
     if (!s) return;
+    log.info('session', `kill ${name} (user-initiated) pid=${s.pty.pid}`);
     // User-initiated kill — forget this session so it doesn't resume on relaunch
     s._userKilled = true;
     persistence.remove(name);
@@ -4171,6 +4274,7 @@ class SessionManager {
     if (!s) return;
     clearTimeout(s._injectHoldTimer);
     clearTimeout(s._injectFlushRetry);
+    clearTimeout(s._compactValveTimer);
     if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
     if (s.watcher) s.watcher.stop();
     if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
@@ -4311,6 +4415,9 @@ class SessionManager {
   // never replays it. Defer so the inject lands after the summary write
   // fully settles in the PTY.
   _fireCompactContinuation(session) {
+    // Summary landed = compact completed normally: cancel the in-flight valve
+    // so it can't later clear state / log a false "never landed".
+    this._clearCompactValve(session);
     const cont = session._compactContinuation;
     if (cont) {
       session._compactContinuation = null;
@@ -4377,9 +4484,45 @@ class SessionManager {
   }
 
   _releaseCompactGuard(session) {
+    this._clearCompactValve(session);
     if (!session._compactGuard) return;
     session._compactGuard = false;
     this._maybeFlushInjectQueue(session);
+  }
+
+  // In-flight release valve (see COMPACT_INFLIGHT_TIMEOUT): a self-compact whose
+  // summary never lands would otherwise leave _compactGuard + _compactContinuation
+  // stuck, silently suppressing every future self-compact via the in-flight
+  // guard. On timeout, clear BOTH and flush anything queued, logging + mirroring
+  // to the IPC drawer. No auto-retry — and the stashed continuation text is
+  // dropped (the agent's post-compact follow-up is lost, logged not retried;
+  // re-issuing is the agent's call). Cleared on the normal completion path
+  // (_fireCompactContinuation / _releaseCompactGuard).
+  //
+  // Accepted trade-off: a LEGITIMATE compaction that streams longer than 5 min
+  // trips the valve too, freeing the queue so injections can land mid-compaction
+  // — exactly the pre-guard status quo. Deliberately accepted: a bounded chance
+  // of the old behavior beats a permanent wedge on the common failure case.
+  _armCompactValve(session) {
+    this._clearCompactValve(session);
+    session._compactValveTimer = setTimeout(() => {
+      session._compactValveTimer = null;
+      const wasStuck = session._compactGuard || session._compactContinuation;
+      session._compactGuard = false;
+      session._compactContinuation = null;
+      if (wasStuck) {
+        log.warn('intent', `compact ${session.name} release valve fired — summary never landed, cleared stuck in-flight state (no retry)`);
+        this._broadcast('ipc-message', {
+          type: 'context', from: session.name, to: session.name,
+          body: 'context compact → in-flight valve released (summary never landed)',
+        });
+      }
+      this._maybeFlushInjectQueue(session);
+    }, COMPACT_INFLIGHT_TIMEOUT);
+  }
+
+  _clearCompactValve(session) {
+    if (session._compactValveTimer) { clearTimeout(session._compactValveTimer); session._compactValveTimer = null; }
   }
 
   // Flush the queue as a single '\n'-joined inject — the \n→\r PTY path
@@ -4399,16 +4542,11 @@ class SessionManager {
       }
       return;
     }
-    if (!force) {
-      if (this._injectHoldReason(session)) return;
-      const sinceHuman = Date.now() - (session.lastUserInputTs || 0);
-      if (sinceHuman < INJECT_DRAFT_QUIET) {
-        session._injectFlushRetry = setTimeout(
-          () => this._maybeFlushInjectQueue(session),
-          INJECT_DRAFT_QUIET - sinceHuman + 250);
-        return;
-      }
-    }
+    // Hold-reason still standing: keep batching, the release event re-attempts.
+    // The typing quiet-gate is NOT re-checked here anymore — the InjectQueue the
+    // flushed turn drains through owns it now (single source of truth), so it
+    // applies uniformly to batch flushes, direct injects, and self-intents.
+    if (!force && this._injectHoldReason(session)) return;
     clearTimeout(session._injectHoldTimer);
     session._injectHoldTimer = null;
     session._injectQueue = [];
@@ -4832,8 +4970,10 @@ class SessionManager {
         this._broadcast('ipc-message', {
           type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}`,
         });
+        log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${cwd}`);
         reply(`ok: spawned "${name}" (${type}) @ ${cwd}`);
       } catch (err) {
+        log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
         reply(`error: ${err.message}`);
       }
     });
@@ -4876,6 +5016,21 @@ class SessionManager {
           + 'this session is untouched.');
         return;
       }
+      // In-flight guard: a reload is a kill + cold respawn. A duplicate intent
+      // (e.g. the same turn re-dispatched via a recovery replay) landing before
+      // the respawn completes would double-kill/respawn — strictly worse than a
+      // double compact. Drop the dup; the flag self-clears when the fresh
+      // process replaces this session object (or on the failure path, where the
+      // session is dead anyway).
+      if (session._reloadInFlight) {
+        this._broadcast('ipc-message', {
+          type: 'context', from: name, to: name, body: 'context reload → dropped (already in flight)',
+        });
+        log.warn('intent', `reload ${name} dropped — already in flight`);
+        return;
+      }
+      session._reloadInFlight = true;
+      log.info('intent', `reload ${name} → cold respawn`);
       this._broadcast('ipc-message', {
         type: 'context', from: name, to: name, body: 'context reload → fresh restart',
       });
@@ -4936,6 +5091,21 @@ class SessionManager {
       console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
       return;
     }
+    // In-flight guard: while a self-compact is pending (guard set or continuation
+    // stashed, awaiting the summary), a SECOND /compact injection would land
+    // mid-compaction and collide with the first (observed as "Connection closed
+    // mid-response"). Drop the duplicate rather than inject a colliding command.
+    // Path-independent — catches a re-dispatched intent from any source. The
+    // release valve below bounds how long this can suppress: a failed/abandoned
+    // compact whose summary never lands must not wedge self-compact forever.
+    if (sub === 'compact' && isInjectInFlight({ guard: session._compactGuard, continuation: session._compactContinuation })) {
+      this._broadcast('ipc-message', {
+        type: 'context', from: session.name, to: session.name,
+        body: 'context compact → dropped (already in flight)',
+      });
+      log.warn('intent', `compact ${session.name} dropped — already in flight`);
+      return;
+    }
     // Native /compact compacts then PARKS waiting for input (verified from the
     // transcript: nothing fires between the compact-summary entry and the next
     // injected turn). So for a SELF-FIRED compact, stash a continuation to inject
@@ -4959,8 +5129,11 @@ class SessionManager {
     // (the command line would swallow the rest as garbage).
     this._injectText(session, cmd, { bypassHold: true });
     // Guard AFTER the /compact write itself is on the wire: from here until
-    // the continuation fires, injections queue instead of racing it.
-    if (sub === 'compact') this._armCompactGuard(session);
+    // the continuation fires, injections queue instead of racing it. The valve
+    // bounds the in-flight window so a compact that errors/never lands its
+    // summary can't leave the guard + continuation stuck forever.
+    if (sub === 'compact') { this._armCompactGuard(session); this._armCompactValve(session); }
+    log.info('intent', `${sub} ${session.name} → ${cmd}`);
     this._broadcast('ipc-message', {
       type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${cmd}`,
     });
@@ -5043,23 +5216,40 @@ class SessionManager {
     // Hold gate (see _injectHoldReason): while the session is compacting,
     // dialog-blocked, or mid-turn, queue instead of writing — the matching
     // release event (or the safety valve) flushes the batch as one turn.
-    // Only the compact continuation and the flush itself bypass.
+    // Only the compact continuation and the flush itself bypass. (This is the
+    // TURN-batching layer — a separate concern from the byte-atomicity layer
+    // below, which every injection ultimately drains through.)
     if (!opts.bypassHold && this._injectHoldReason(session)) {
       (session._injectQueue = session._injectQueue || []).push(text);
       this._armInjectValve(session);
       return;
     }
-    // Ctrl-U to clear line, send text, then Enter
-    const payload = '\x15' + text.replace(/\n/g, '\r');
-    try { session.pty.write(payload); } catch { return; }
-    const delay = text.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY;
-    // The Enter fires on a timer (50ms–1s out). If the PTY dies in that
-    // window — most commonly an app quit — writing '\r' into the closed fd
-    // throws an uncaught Napi::Error and SIGABRTs the app. Bail if dead.
-    setTimeout(() => {
-      if (session._dead) return;
-      try { session.pty.write('\r'); } catch {}
-    }, delay);
+    // Byte-atomicity layer: hand the write to this session's serialized
+    // InjectQueue. It performs Ctrl-U + text + settle + Enter as one atomic
+    // unit (no interleave with a concurrent injection) and applies the typing
+    // quiet-gate before starting. The queue self-drains; callers stay
+    // fire-and-forget. Enter fires inside the queue's critical section (bailing
+    // if the PTY died) — same death-window guard as before, just serialized.
+    this._injectQueueFor(session).enqueue(text);
+  }
+
+  // Lazily build (and memoize on the session) the per-session InjectQueue. The
+  // seams read live session state each call: lastUserInputTs is stamped at the
+  // keystroke choke point in write() for BOTH local keystrokes AND peer-
+  // controller remote input, so the quiet-gate protects a remote controller's
+  // draft too, for free (no separate timestamp needed).
+  _injectQueueFor(session) {
+    if (!session._injectPtyQueue) {
+      session._injectPtyQueue = new InjectQueue({
+        write: (bytes) => { try { session.pty.write(bytes); } catch {} },
+        settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
+        quietMs: INJECT_QUIET_MS,
+        maxWaitMs: INJECT_QUIET_MAXWAIT,
+        lastHumanInputAt: () => session.lastUserInputTs || 0,
+        isDead: () => !!session._dead,
+      });
+    }
+    return session._injectPtyQueue;
   }
 
   // --- Incoming from external peers ---
@@ -6051,6 +6241,7 @@ function syncRemoteServer() {
           kind: holder ? 'peer-control' : 'peer-release',
           body: holder ? `${holder} took control of ${name}` : `remote control of ${name} released`,
         });
+        log.info('peer', holder ? `${holder} took control of ${name}` : `control of ${name} released`);
       },
     });
   }
@@ -6068,6 +6259,9 @@ function syncRemoteServer() {
 
 let peerManager = null;
 let tunnelManager = null;
+// Last-logged online state per peer id — the ops log records online/offline
+// TRANSITIONS, not every (bursty) peer-state event.
+const peerOnlineLog = new Map();
 
 // Drop a persisted peer-tab attachment (explicit detach, or a name the peer
 // no longer has). No-op if it wasn't persisted, so callers can fire freely.
@@ -6088,6 +6282,24 @@ function syncPeerManager() {
         try { manager._broadcast(channel, ...args); } catch {}
         // Keep the Window > Peers menu's indicators + session lists fresh.
         if (channel === 'peer-state' || channel === 'peer-removed') scheduleAppMenuRefresh();
+        // Ops log: peer online/offline TRANSITIONS only (peer-state fires in
+        // bursts — hello wake + session refresh — so log on change, not per
+        // event), plus removals. Control changes on OUR sessions log at their
+        // own site (session-peer-control below).
+        try {
+          if (channel === 'peer-state') {
+            const [id, status] = args;
+            const online = !!(status && status.online);
+            if (peerOnlineLog.get(id) !== online) {
+              peerOnlineLog.set(id, online);
+              log.info('peer', `${(status && status.label) || id} ${online ? 'online' : 'offline'}`);
+            }
+          } else if (channel === 'peer-removed') {
+            const [id] = args;
+            peerOnlineLog.delete(id);
+            log.info('peer', `removed ${id}`);
+          }
+        } catch { /* logging never breaks the emit fan-out */ }
       },
     });
   }
@@ -6287,6 +6499,9 @@ app.whenReady().then(() => {
   WORKSPACES_FILE = path.join(app.getPath('userData'), 'workspaces.json');
   UI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ui-settings.json');
   AGENT_DEFAULTS_FILE = path.join(app.getPath('userData'), 'agent-defaults.json');
+
+  initLog();
+  log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
 
   logStartupDiagnostics();
 
@@ -7280,6 +7495,7 @@ app.whenReady().then(() => {
         // so the user can retry or delete. Silently wiping was the cause
         // of the "agents vanish after upgrade" bug.
         console.error(`Failed to restore session ${entry.name}:`, err.message);
+        log.error('session', `restore failed ${entry.name}: ${err.message}`);
         restored.push({
           name: entry.name,
           type: entry.type,
@@ -7375,6 +7591,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  try { log.info('app', 'shutdown — before-quit, killing all sessions'); } catch {}
   if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
   if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
   if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
