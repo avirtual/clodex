@@ -4209,6 +4209,16 @@ class SessionManager {
         cwd: session.cwd, ts: Date.now(), sub, resolve: path.resolve,
       });
       this._sendToSession(session.name, 'session-files', session.name, session.fileTouches);
+      // Mirror the count (not the list) to attached peer viewers so their 📄N
+      // badge ticks live — the full list stays pull-on-demand via the query
+      // endpoint. Deduped on unchanged count: a hot re-edit of the same file
+      // grows f.count but not the distinct-file count, and must not spam the
+      // wire (same discipline as the resize debounce).
+      const count = session.fileTouches.length;
+      if (session._peerFileCount !== count) {
+        session._peerFileCount = count;
+        try { remoteServer && remoteServer.pushTelemetry(session.name, { files: { count } }); } catch {}
+      }
     } catch { /* observer-grade — never near the PTY/intent path */ }
   }
 
@@ -4996,6 +5006,20 @@ class SessionManager {
 
     const prefix = `[agent:from ${senderName}]`;
 
+    // Reply-syntax nudge, appended as the LAST thing the recipient reads before
+    // composing: after a long analytical stretch an agent's register drifts to
+    // "report to operator" and it can write a full reply without ever emitting
+    // the intent line, leaving the sender blocked. Agent-to-agent DMs only —
+    // operator-panel messages (sender 'user') are replied to as normal output,
+    // not via [agent:dm user], and memory/system injections aren't
+    // conversational (mtype gates them out). Parenthesized and never at column
+    // 1, so IntentScanner (which only fires on a cleaned line STARTING with
+    // [agent:) can't mistake it for a real intent. Empty when not applicable,
+    // so the pointer line's load-bearing trailing space is preserved.
+    const trailer = (mtype === 'dm' && senderName !== 'user')
+      ? `(reply: start a line with [agent:dm ${senderName}])`
+      : '';
+
     if (body.length > MSG_SPILL_THRESHOLD) {
       const filePath = spillToFile(senderName, body, targetName);
       // @-mention makes Claude Code attach the file inline instead of
@@ -5003,11 +5027,13 @@ class SessionManager {
       // trailing space after the path closes the @-autocomplete popup —
       // without it the deferred Enter can land on the popup and select a
       // DIFFERENT file (observed live: pointer said msg-2, body was msg-3).
+      // The trailer rides the pointer line (not the spilled file, which may be
+      // read after the register has already drifted).
       this._injectText(target, target.agentType === 'claude'
-        ? `${prefix} Message (${body.length} bytes) attached: @${filePath} `
-        : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.`);
+        ? `${prefix} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
+        : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`);
     } else {
-      this._injectText(target, `${prefix} ${body}`);
+      this._injectText(target, `${prefix} ${body}${trailer ? '\n' + trailer : ''}`);
     }
     this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
   }
@@ -5972,10 +5998,13 @@ function syncRemoteServer() {
           scrollback: Buffer.from(sess.scrollback || '', 'utf8'),
           cols: sess.pty.cols, rows: sess.pty.rows,
           // Status-bar seed so the viewer's bar fills with the replay
-          // instead of waiting out the first poll tick.
+          // instead of waiting out the first poll tick. The files count seeds
+          // the 📄N badge baseline (the viewer treats a seed as baseline, not a
+          // change, so it doesn't light the unseen highlight on attach).
           telemetry: {
             proxy: peerProxyView(proxyPoller.snapshot(name)),
             ctx: sess.ctxInfo || null,
+            files: { count: (sess.fileTouches || []).length },
           },
         };
       },

@@ -574,6 +574,21 @@ function switchSession(name) {
       if (entry.peer.controlled) {
         fitAddon.fit();
         window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
+      } else {
+        // Read-only peer: the replay/output can have been written while this
+        // wrapper was visibility:hidden (auto-restore attaches without ever
+        // switching here), so xterm holds stale char metrics and paints
+        // garbled. A fit() forces a re-measure against the now-visible pane
+        // (same mechanism that fixes local restores), then we immediately
+        // resize back to the canonical owner geometry — geometry authority is
+        // never the viewer's, and read-only tabs have no onResize→peerResize
+        // wiring, so this pushes nothing upstream. Runs on every switch
+        // (idempotent) to cover a pane resized while the tab was hidden.
+        fitAddon.fit();
+        if (entry.peer.cols && entry.peer.rows) {
+          terminal.resize(entry.peer.cols, entry.peer.rows);
+        }
+        terminal.refresh(0, terminal.rows - 1);
       }
       terminal.focus();
       return;
@@ -599,6 +614,7 @@ function removeSession(name) {
   ctxTokens.delete(name);
   filesState.delete(name);
   filesUnseen.delete(name);
+  peerFilesCount.delete(name);
 
   if (activeSession === name) {
     const remaining = Array.from(sessions.keys());
@@ -1607,7 +1623,30 @@ window.api.onPeerTelemetry((id, name, tele) => {
     }
     applyCtxBadge(key, tele.ctx.pct);
   }
-  if (key === activeSession) renderProxyBar();
+  // Touched-files count: owner pushes this only when the count changes (and
+  // seeds it once on attach). Latch the unseen highlight only on an INCREASE
+  // over a known prior count — the attach seed sets the baseline silently, a
+  // later bump lights the badge. Suppressed while its popover is open (that's
+  // "seeing" it). Mirrors the local session-files path.
+  let filesGrew = false;
+  if (tele.files && typeof tele.files.count === 'number') {
+    const prev = peerFilesCount.get(key);
+    peerFilesCount.set(key, tele.files.count);
+    const watching = !filesPopover.classList.contains('hidden') && filesPopover.dataset.name === key;
+    if (prev !== undefined && tele.files.count > prev && !watching) {
+      filesUnseen.add(key);
+      filesGrew = true;
+    }
+  }
+  if (key === activeSession) {
+    renderProxyBar();
+    // One-shot pulse on the freshly-rebuilt button (imperative, dies with the
+    // node) — same treatment as an arriving local file touch.
+    if (filesGrew) {
+      const btn = document.querySelector('#proxy-actions [data-act="files"]');
+      if (btn) btn.classList.add('px-files-flash');
+    }
+  }
 });
 
 window.api.onPeerControlChange((id, name, holder) => {
@@ -1718,6 +1757,13 @@ window.api.onSessionCtx((name, pct, tok, size) => {
   if (name === activeSession) renderProxyBar();
 });
 
+// Peer touched-files count shadow: peer key -> count. Fed by the owner's
+// telemetry frames (count-only; the full list stays pull-on-demand via the
+// query endpoint). Lets a remote tab's 📄N badge tick live instead of only
+// updating when the popover is opened. Local sessions read the count off
+// filesState directly; peer tabs prefer this shadow.
+const peerFilesCount = new Map();
+
 // --- Proxy telemetry status bar (wirescope pull) --------------------------
 // The main process polls the proxy and pushes a per-session payload. We show
 // the ACTIVE session's line in a strip under the terminal, ticking the cache
@@ -1794,9 +1840,16 @@ function renderSessionActions(holdHtml = '') {
   // works across the link — served by the owner's query endpoint. Everything
   // else on this bar is owner-local machinery.
   if (activePeerQueryable()) {
-    const nFiles = (filesState.get(activeSession) || []).length;
+    // Prefer the live count-shadow (fed by the owner's telemetry frames) over
+    // filesState, which is only populated when the popover pulls the full list.
+    const nFiles = peerFilesCount.has(activeSession)
+      ? peerFilesCount.get(activeSession)
+      : (filesState.get(activeSession) || []).length;
     const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
-    btns.push(`<button class="px-action" data-act="files" title="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
+    // Same unseen latch as local sessions: a count silently ticking on a
+    // remote agent is exactly what Bogdan couldn't see without clicking.
+    const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
+    btns.push(`<button class="px-action${unseen}" data-act="files" title="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
   }
   el.innerHTML = btns.join('') + (holdHtml || '');
 }
@@ -3860,6 +3913,9 @@ async function openFilesPopover(name, anchor) {
   }
   filesPopover.dataset.cwd = res.cwd || '';
   filesState.set(name, res.files || []);
+  // Reconcile the peer count-shadow to the authoritative list length so the
+  // badge and the rows can't drift after an open (no-op for local sessions).
+  if (peerFilesCount.has(name)) peerFilesCount.set(name, (res.files || []).length);
   renderFilesRows(name);
 }
 
