@@ -18,6 +18,7 @@ A visual multi-agent PTY manager for **Cl**aude Code and C**odex** CLIs. Run mul
 - **Customizable statusline** — via Preferences (⌘,), pick which components show in Claude and Codex statuslines
 - **[wirescope](https://github.com/avirtual/wirescope) integration** — route sessions through a wirescope proxy to get a live telemetry bar (context tokens, cache warmth, turn count, cost) and a one-click "keep warm" cache hold
 - **Persistence** — sessions resume across app restarts via `claude --resume` / `codex resume`
+- **Clodex-to-Clodex peering** — attach to sessions running on another machine's Clodex over an SSH tunnel: view live, take control, mirrored popups, remote restart. Also runs **headless on a Linux server** as a peer node — see [`peering/`](peering/)
 - **Self-contained runtime** — registry, sockets, and message files live under `~/.clodex/`, owned entirely by Clodex
 
 ## Install

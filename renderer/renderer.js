@@ -366,6 +366,38 @@ function restartSessionWithReattach(name) {
   });
 }
 
+// Restart a PEER session in place and keep our attached tab live on the fresh
+// process — the peer analogue of restartSessionWithReattach. The owner kills the
+// old PTY (which sends an SSE `exit` that tears our tab down via onPeerExit, also
+// fully detaching the peer-client attachment) and respawns the SAME name, so we
+// re-open the attach afterward. The exit event and the restart ack race across
+// two transports; the ack resolves only after the owner's respawn completes, and
+// the exit (sent at kill time) normally lands first, so by the time we're here
+// the tab is already gone. We still poll briefly for the teardown to settle
+// before re-opening, so we never attach onto a tab the exit is about to remove.
+// (If the exit is somehow missed, the stream-close reconnect in peer-client
+// heals it instead — belt and suspenders.)
+async function restartPeerSessionWithReattach(id, name, fresh) {
+  const key = peerKey(id, name);
+  const st = peerStatuses.get(id);
+  const label = peerDisplayHost(st);
+  const wasAttached = sessions.has(key);
+  const res = await window.api.peerRestartSession(id, name, { fresh: !!fresh });
+  if (!res || !res.ok) {
+    showToast(`${fresh ? 'Reload' : 'Restart'} failed for "${name}" on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+    return;
+  }
+  showToast(`${fresh ? 'Reloaded' : 'Restarted'} "${name}" on ${label}.`, { kind: 'peer-ui' });
+  if (!wasAttached) return;   // wasn't showing it — nothing to reattach
+  let tries = 20;             // ~2s at 100ms — the exit-driven teardown window
+  const reattach = () => {
+    if (!sessions.has(key)) { openPeerSession(id, name); return; }
+    if (tries-- <= 0) return; // teardown never came; auto-reconnect covers it
+    setTimeout(reattach, 100);
+  };
+  reattach();
+}
+
 window.api.onSessionContextAction(({ action, name, type, cwd }) => {
   switch (action) {
     case 'editArgs':
@@ -533,6 +565,24 @@ function createTerminal(name, peer = null) {
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
 
+// Read-only peer re-measure: xterm can hold stale char metrics when its pane
+// was visibility:hidden (auto-restore attaches without switching) or when the
+// pane geometry shifted while a reconnect replayed into an already-active tab.
+// A fit() forces a re-measure against the now-visible pane, then we resize back
+// to the canonical owner letterbox and repaint. INVARIANT: this pushes nothing
+// upstream — read-only tabs have no onResize→peerResize wiring, so the fit()'s
+// dims never leave the viewer; geometry authority stays with the owner. Shared
+// by switchSession (on activate) and onPeerReplay (reconnect on the active tab)
+// so the exact sequence can't drift between the two.
+function remeasureReadonlyPeer(entry) {
+  const { fitAddon, terminal } = entry;
+  fitAddon.fit();
+  if (entry.peer && entry.peer.cols && entry.peer.rows) {
+    terminal.resize(entry.peer.cols, entry.peer.rows);
+  }
+  terminal.refresh(0, terminal.rows - 1);
+}
+
 function switchSession(name) {
   if (!sessions.has(name)) return;
 
@@ -575,20 +625,12 @@ function switchSession(name) {
         fitAddon.fit();
         window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
       } else {
-        // Read-only peer: the replay/output can have been written while this
+        // Read-only peer: replay/output can have been written while this
         // wrapper was visibility:hidden (auto-restore attaches without ever
         // switching here), so xterm holds stale char metrics and paints
-        // garbled. A fit() forces a re-measure against the now-visible pane
-        // (same mechanism that fixes local restores), then we immediately
-        // resize back to the canonical owner geometry — geometry authority is
-        // never the viewer's, and read-only tabs have no onResize→peerResize
-        // wiring, so this pushes nothing upstream. Runs on every switch
+        // garbled. Re-measure against the now-visible pane. Runs on every switch
         // (idempotent) to cover a pane resized while the tab was hidden.
-        fitAddon.fit();
-        if (entry.peer.cols && entry.peer.rows) {
-          terminal.resize(entry.peer.cols, entry.peer.rows);
-        }
-        terminal.refresh(0, terminal.rows - 1);
+        remeasureReadonlyPeer(entry);
       }
       terminal.focus();
       return;
@@ -1236,6 +1278,15 @@ function renderPeers() {
       e.stopPropagation();
       openPeerSelectPopover(id, e.currentTarget);
     });
+    // Right-click the peer header: host-level actions (today just remote
+    // restart). Restart is host-scoped, so it lives here, not on a session row.
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      window.api.showPeerHeaderMenu({
+        id, label: peerDisplayHost(st), online: !!st.online,
+        canCreate: peerSupportsCreate(st),
+      });
+    });
     sessionList.appendChild(header);
 
     // Online: the peer's live session list. Offline: only tabs we already
@@ -1291,6 +1342,9 @@ function renderPeers() {
           attached: sessions.has(key),
           controlled: !!(entry && entry.peer && entry.peer.controlled),
           holder: (entry && entry.peer && entry.peer.holder) || null,
+          canCreate: peerSupportsCreate(st),
+          hostLabel: peerDisplayHost(st),
+          type: s.type || null,   // gates the bash-meaningless fresh-reload item
         });
       });
       const closeBtn = item.querySelector('.session-close');
@@ -1472,7 +1526,117 @@ window.api.onPeerContextAction(async ({ action, id, name }) => {
     case 'hide':
       await peerHideFromList(id, name);
       break;
+    case 'restart': {
+      // Host-level remote restart. `name` carries the peer's display label here
+      // (the header menu has no session). Confirm, then fire; the peer drops
+      // offline and the existing reconnect/auto-reattach brings it back — no
+      // special reconnect logic. Failures (connection/timeout) surface as a
+      // calm toast, never a retry. Authority is the tunnel (settled model); the
+      // confirm is the intentionality gate.
+      const label = name || 'peer';
+      const okToGo = await window.api.confirmPeerRestart(label);
+      if (!okToGo) break;
+      const res = await window.api.peerRestart(id);
+      if (res && res.ok) {
+        showToast(`Restarting Clodex on ${label} — it will reconnect shortly.`, { kind: 'peer-ui' });
+      } else {
+        showToast(`Restart failed on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+      }
+      break;
+    }
+    case 'newSession':
+      // `name` carries the peer's display label here (header menu, no session).
+      openPeerSessionDialog(id, name || 'peer');
+      break;
+    case 'restartRemote':
+      // Plain host-level restart of a peer SESSION (--resume, keeps history).
+      // No confirm — parity with the local plain restart.
+      await restartPeerSessionWithReattach(id, name, false);
+      break;
+    case 'reloadRemote': {
+      // Fresh reload of a peer session (new conversation, re-reads skills). Native
+      // confirm mirroring doHardRestart — this drops the live conversation.
+      const st = peerStatuses.get(id);
+      const label = peerDisplayHost(st);
+      if (!await window.api.confirmPeerReload(name, label)) break;
+      await restartPeerSessionWithReattach(id, name, true);
+      break;
+    }
+    case 'killRemote': {
+      // Destructive host-level kill on the peer. Native confirm (intentionality),
+      // then the endpoint; the owner's notifySessions fan-out refreshes the list,
+      // so no local list surgery — just report the ack. Detach our local tab if
+      // we had one open (the session it mirrored is gone).
+      const st = peerStatuses.get(id);
+      const label = peerDisplayHost(st);
+      const okToGo = await window.api.confirmPeerKill(name, label);
+      if (!okToGo) break;
+      const res = await window.api.peerKillSession(id, name);
+      if (res && res.ok) {
+        const key = peerKey(id, name);
+        if (sessions.has(key)) removeSession(key);
+        showToast(`Killed "${name}" on ${label}.`, { kind: 'peer-ui' });
+      } else {
+        showToast(`Kill failed for "${name}" on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+      }
+      break;
+    }
   }
+});
+
+// New-session-on-a-peer dialog. Minimal (name/type/cwd) — the full new-session
+// dialog's fields (prompts/skills/tools/agents/dir-picker) are local-only and
+// don't travel to a remote fs. Errors surface INLINE (the owner's create ack is
+// the only signal — the viewer can't see the box's dialogs). On success the
+// owner's notifySessions refreshes the peer's session list; we just close.
+let peerSessionDialogTarget = null; // { id, label }
+function openPeerSessionDialog(id, label) {
+  peerSessionDialogTarget = { id, label };
+  const overlay = document.getElementById('peer-session-overlay');
+  document.getElementById('peer-session-title').textContent = `New Session on ${label}`;
+  document.getElementById('peer-input-name').value = '';
+  document.getElementById('peer-input-type').value = 'claude';
+  document.getElementById('peer-input-cwd').value = '';
+  const err = document.getElementById('peer-session-error');
+  err.style.display = 'none';
+  err.textContent = '';
+  overlay.classList.remove('hidden');
+  document.getElementById('peer-input-name').focus();
+}
+function closePeerSessionDialog() {
+  peerSessionDialogTarget = null;
+  document.getElementById('peer-session-overlay').classList.add('hidden');
+}
+async function submitPeerSessionDialog() {
+  if (!peerSessionDialogTarget) return;
+  const { id, label } = peerSessionDialogTarget;
+  const err = document.getElementById('peer-session-error');
+  const showErr = (m) => { err.textContent = m; err.style.display = 'block'; };
+  const name = document.getElementById('peer-input-name').value.trim();
+  const type = document.getElementById('peer-input-type').value;
+  const cwd = document.getElementById('peer-input-cwd').value.trim();
+  if (!name) return showErr('Name is required.');
+  if (!cwd) return showErr('Working directory is required.');
+  const btn = document.getElementById('peer-session-create');
+  btn.disabled = true;
+  const res = await window.api.peerCreateSession(id, { name, type, cwd });
+  btn.disabled = false;
+  if (res && res.ok) {
+    closePeerSessionDialog();
+    showToast(`Created "${res.name}" (${res.type}) on ${label}.`, { kind: 'peer-ui' });
+    // The owner's notifySessions fan-out refreshes the list; no local surgery.
+  } else {
+    showErr((res && res.error) || 'create failed — no response');
+  }
+}
+document.getElementById('peer-session-cancel').addEventListener('click', closePeerSessionDialog);
+document.getElementById('peer-session-create').addEventListener('click', submitPeerSessionDialog);
+document.getElementById('peer-session-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'peer-session-overlay') closePeerSessionDialog();
+});
+document.getElementById('peer-session-dialog').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); submitPeerSessionDialog(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closePeerSessionDialog(); }
 });
 
 // Remove one session from the peer's visible selection (context-menu "Hide from
@@ -1542,6 +1706,14 @@ window.api.onPeerReplay((id, name, info) => {
   if (info.cols && info.rows) entry.terminal.resize(info.cols, info.rows);
   if (info.data && info.data.length) entry.terminal.write(info.data);
   renderPeerBar();
+  // Reconnect replay into the ALREADY-active tab fires no switchSession, so the
+  // one place that re-measures a read-only peer never runs — a pane whose
+  // geometry shifted during the offline window keeps a stale letterbox until
+  // the next manual switch heals it. Re-measure here too when this is the
+  // active tab (inactive tabs are covered by the switch-on-activate path).
+  if (peerKey(id, name) === activeSession && !entry.peer.controlled) {
+    remeasureReadonlyPeer(entry);
+  }
 });
 
 window.api.onPeerData((id, name, data) => {
@@ -1800,6 +1972,12 @@ function activePeerQueryable() {
   if (!entry || !entry.peer) return false;
   const st = peerStatuses.get(entry.peer.id);
   return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('query'));
+}
+
+// Peer advertises remote session create/kill (the 'create' cap covers both).
+// Older peers 501 the endpoints, so the viewer hides the affordances.
+function peerSupportsCreate(st) {
+  return !!(st && Array.isArray(st.caps) && st.caps.includes('create'));
 }
 
 // Per-session quick-access icons on the left of the status bar. Claude gets a

@@ -1,0 +1,22 @@
+[Unit]
+Description=Clodex (headless, Xvfb) — visual multi-agent PTY manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/wb-wrap-ui
+# claude CLI lives in the user-global npm prefix; put it on PATH for spawns.
+Environment=PATH=%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=ELECTRON_DISABLE_SECURITY_WARNINGS=true
+# xvfb-run -a auto-picks a free display number, so a stale lock from a crashed
+# run never blocks the restart. npm start = electron . (see package.json).
+ExecStart=/usr/bin/xvfb-run -a /usr/bin/npm start
+Restart=always
+RestartSec=5
+# Give the app time to release its single-instance lock + unix sockets on stop
+# before systemd would consider a restart, mirroring the seed script's sleep.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

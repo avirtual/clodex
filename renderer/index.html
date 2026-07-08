@@ -364,6 +364,35 @@
     </div>
   </div>
 
+  <!-- New session on a PEER (remote box) — reduced field set that travels the
+       wire: name, type, cwd as free text (no local dir picker for a remote fs).
+       The owner routes to its live create(); errors surface inline here. -->
+  <div id="peer-session-overlay" class="hidden">
+    <div id="peer-session-dialog">
+      <h3 id="peer-session-title">New Session on peer</h3>
+      <label>Name
+        <input type="text" id="peer-input-name" placeholder="e.g. worker" spellcheck="false">
+      </label>
+      <label>Type
+        <select id="peer-input-type">
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+          <option value="bash">bash</option>
+        </select>
+      </label>
+      <label>Working Directory
+        <input type="text" id="peer-input-cwd" placeholder="~ or /absolute/path (on the remote box)" spellcheck="false">
+        <span class="hint-text">Path on the remote machine. Created if it doesn't exist.</span>
+      </label>
+      <div id="peer-session-error" class="peer-bar-error" style="display:none;"></div>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="peer-session-cancel" class="secondary">Cancel</button>
+        <button id="peer-session-create">Create</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Edit Args dialog -->
   <div id="args-overlay" class="hidden">
     <div id="args-dialog">

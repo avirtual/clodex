@@ -17,6 +17,10 @@ const { PeerConnection } = require('../peer-client');
 const inputs = [];
 const resizes = [];
 const controlChanges = [];
+const restarts = [];
+const created = [];
+const killed = [];
+const restartedSessions = [];
 const fakeSessions = [{ name: 'alpha', type: 'claude', cwd: '/tmp/x', workspace: 'w', stats: {} }];
 
 let server;
@@ -73,6 +77,30 @@ before(async () => {
     sendInput: (name, data) => { inputs.push([name, data]); return { ok: true }; },
     resizePty: (name, cols, rows) => { resizes.push([name, cols, rows]); return { ok: true }; },
     onControlChange: (name, holder) => controlChanges.push([name, holder]),
+    restartApp: () => { restarts.push(Date.now()); },
+    // Fake owner-side create/kill, mirroring main.js's distinguishable-error
+    // contract: bad name/type, name taken, spawn ack {ok,name,type,pid}.
+    createSession: ({ name, type, cwd }) => {
+      if (!/^[a-zA-Z0-9._-]{1,64}$/.test(String(name || ''))) return { ok: false, error: `invalid name "${name}"` };
+      if (type !== 'claude' && type !== 'codex' && type !== 'bash') return { ok: false, error: `invalid type "${type}"` };
+      if (created.some((c) => c.name === name) || name === 'alpha') return { ok: false, error: `name taken "${name}"` };
+      created.push({ name, type, cwd });
+      return { ok: true, name, type, pid: 4242 };
+    },
+    killSession: (name) => {
+      if (name !== 'alpha' && !created.some((c) => c.name === name)) return { ok: false, error: `no such session "${name}"` };
+      killed.push(name);
+      return { ok: true, name };
+    },
+    // Fake owner-side restart, mirroring main.js's restartSession(): not-found
+    // in persistence is a distinguishable error; the {fresh} flag reaches here.
+    restartSession: (name, opts) => {
+      if (name !== 'alpha' && !created.some((c) => c.name === name)) {
+        return { ok: false, error: 'Session not found in persistence' };
+      }
+      restartedSessions.push({ name, fresh: !!(opts && opts.fresh) });
+      return { ok: true, restarted: true };
+    },
     query: (name, kind, args) => {
       if (name !== 'alpha') return { ok: false, error: 'no such session' };
       if (kind === 'files') return { ok: true, cwd: '/tmp/x', files: [{ path: '/tmp/x/a.js', tool: 'Edit' }] };
@@ -105,6 +133,7 @@ test('hello: identity and caps reach the peer, connection goes online', async ()
   assert.ok(st.caps.includes('attach'));
   assert.ok(st.caps.includes('control'));
   assert.ok(st.caps.includes('query'));
+  assert.ok(st.caps.includes('create'));
   assert.equal(st.sessions[0].name, 'alpha');
 });
 
@@ -268,6 +297,182 @@ test('query: unknown kinds and throwing sources answer as errors, never hang', a
 
   const gone = await new Promise((r) => conn.query('beta', 'files', null, r));
   assert.equal(gone.ok, false);
+});
+
+test('restart: peer restart acks and triggers the owner relaunch', async () => {
+  const before = restarts.length;
+  const res = await new Promise((r) => conn.restart(r));
+  assert.ok(res.ok, 'restart acked ok');
+  // Owner acks BEFORE quitting, so the relaunch callback fires; wait for it.
+  await waitFor(() => restarts.length > before, 'owner restart callback fired');
+});
+
+test('restart: 501 when the owner exposes no restart callback', async () => {
+  // A RemoteServer built without restartApp must refuse cleanly (not 500/hang):
+  // the endpoint is capability-gated on the callback's presence, same as the
+  // other optional endpoints.
+  const bare = new RemoteServer({
+    port: 0, pagePath: '/nonexistent',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }),
+    send: () => ({ ok: true }), hostLabel: 'bare', version: '0.0.0-test',
+  });
+  await bare.start();
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const body = '{}';
+      const req = http.request({
+        hostname: '127.0.0.1', port: bare.port, path: '/api/restart', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let buf = '';
+        res.on('data', (c) => (buf += c));
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf) }));
+      });
+      req.on('error', reject);
+      req.write(body); req.end();
+    });
+    assert.equal(out.status, 501);
+    assert.equal(out.body.ok, false);
+  } finally {
+    bare.stop();
+  }
+});
+
+test('create: valid spec spawns and the ack carries name/type/pid', async () => {
+  const res = await new Promise((r) => conn.createSession({ name: 'worker', type: 'claude', cwd: '/tmp/w' }, r));
+  assert.ok(res.ok, 'create acked ok');
+  assert.equal(res.name, 'worker');
+  assert.equal(res.type, 'claude');
+  assert.equal(res.pid, 4242);
+  assert.ok(created.some((c) => c.name === 'worker' && c.cwd === '/tmp/w'), 'owner create() called');
+});
+
+test('create: distinguishable errors (collision, bad name, bad type)', async () => {
+  const taken = await new Promise((r) => conn.createSession({ name: 'alpha', type: 'claude', cwd: '/tmp/x' }, r));
+  assert.equal(taken.ok, false);
+  assert.match(taken.error, /name taken/);
+
+  const badName = await new Promise((r) => conn.createSession({ name: 'bad name!', type: 'claude', cwd: '/tmp/x' }, r));
+  assert.equal(badName.ok, false);
+  assert.match(badName.error, /invalid name/);
+
+  const badType = await new Promise((r) => conn.createSession({ name: 'ok2', type: 'python', cwd: '/tmp/x' }, r));
+  assert.equal(badType.ok, false);
+  assert.match(badType.error, /invalid type/);
+});
+
+test('kill: existing session acks ok; missing session is a distinguishable error', async () => {
+  const ok = await new Promise((r) => conn.killSession('alpha', r));
+  assert.ok(ok.ok, 'kill acked ok');
+  assert.equal(ok.name, 'alpha');
+  assert.ok(killed.includes('alpha'), 'owner kill() called');
+
+  const gone = await new Promise((r) => conn.killSession('nope', r));
+  assert.equal(gone.ok, false);
+  assert.match(gone.error, /no such session/);
+});
+
+test('restart-session: plain and fresh flags reach the owner callback', async () => {
+  const plain = await new Promise((r) => conn.restartSession('alpha', { fresh: false }, r));
+  assert.ok(plain.ok, 'plain restart acked ok');
+  assert.ok(plain.restarted, 'restarted flag echoed');
+  assert.deepStrictEqual(restartedSessions.at(-1), { name: 'alpha', fresh: false });
+
+  const fresh = await new Promise((r) => conn.restartSession('alpha', { fresh: true }, r));
+  assert.ok(fresh.ok, 'fresh reload acked ok');
+  assert.deepStrictEqual(restartedSessions.at(-1), { name: 'alpha', fresh: true });
+});
+
+test('restart-session: missing session is a distinguishable error', async () => {
+  const gone = await new Promise((r) => conn.restartSession('nope', { fresh: false }, r));
+  assert.equal(gone.ok, false);
+  assert.match(gone.error, /not found in persistence/i);
+});
+
+// ---- bash-type remote sessions (peer-visible, IPC-private on the owner) ----
+
+test('create: bash type is accepted and the ack carries type:bash', async () => {
+  const res = await new Promise((r) => conn.createSession({ name: 'shell', type: 'bash', cwd: '/tmp/s' }, r));
+  assert.ok(res.ok, 'bash create acked ok');
+  assert.equal(res.type, 'bash');
+  assert.ok(created.some((c) => c.name === 'shell' && c.cwd === '/tmp/s'), 'owner create() called for bash');
+});
+
+test('kill: a bash session kills like any other (no agentType gate)', async () => {
+  const res = await new Promise((r) => conn.killSession('shell', r));
+  assert.ok(res.ok, 'bash kill acked ok');
+  assert.ok(killed.includes('shell'), 'owner kill() called for bash');
+});
+
+test('sessions: a bash (non-agent) session is exposed over the wire with its type', async () => {
+  // The owner's getSessions filter is lifted to include bash; the wire carries
+  // sess.type so the viewer buckets it like a local bash row. remote.js passes
+  // the type through unchanged — assert that here (the filter itself lives in
+  // main.js, not requireable under plain node).
+  const bashy = new RemoteServer({
+    port: 0, pagePath: '/nonexistent',
+    getSessions: () => [{ name: 'sh1', type: 'bash', cwd: '/tmp', workspace: 'w', stats: {} }],
+    getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    hostLabel: 'bh', version: '0.0.0-test',
+  });
+  await bashy.start();
+  try {
+    const out = await new Promise((resolve, reject) => {
+      http.get({ hostname: '127.0.0.1', port: bashy.port, path: '/api/sessions' }, (res) => {
+        let buf = ''; res.on('data', (c) => (buf += c));
+        res.on('end', () => resolve(JSON.parse(buf)));
+      }).on('error', reject);
+    });
+    assert.ok(out.ok);
+    const s = out.sessions.find((x) => x.name === 'sh1');
+    assert.ok(s, 'bash session listed over the wire');
+    assert.equal(s.type, 'bash', 'type carried on the wire');
+  } finally {
+    bashy.stop();
+  }
+});
+
+test('create/kill/restart: 501 when the owner exposes no lifecycle callbacks', async () => {
+  const bare = new RemoteServer({
+    port: 0, pagePath: '/nonexistent',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }),
+    send: () => ({ ok: true }), hostLabel: 'bare', version: '0.0.0-test',
+  });
+  await bare.start();
+  const hit = (path, body) => new Promise((resolve, reject) => {
+    const b = JSON.stringify(body || {});
+    const req = http.request({
+      hostname: '127.0.0.1', port: bare.port, path, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(b) },
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => (buf += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf) }));
+    });
+    req.on('error', reject);
+    req.write(b); req.end();
+  });
+  try {
+    const c = await hit('/api/sessions', { name: 'x', type: 'claude', cwd: '/tmp/x' });
+    assert.equal(c.status, 501);
+    assert.equal(c.body.ok, false);
+    const k = await hit('/api/kill/x', {});
+    assert.equal(k.status, 501);
+    assert.equal(k.body.ok, false);
+    const rs = await hit('/api/restart-session/x', {});
+    assert.equal(rs.status, 501);
+    assert.equal(rs.body.ok, false);
+    // And the bare server must not advertise the capability.
+    const hello = await new Promise((resolve, reject) => {
+      http.get({ hostname: '127.0.0.1', port: bare.port, path: '/api/peer/hello' }, (res) => {
+        let buf = ''; res.on('data', (c) => (buf += c));
+        res.on('end', () => resolve(JSON.parse(buf)));
+      }).on('error', reject);
+    });
+    assert.ok(!hello.caps.includes('create'), 'no create cap without the callback');
+  } finally {
+    bare.stop();
+  }
 });
 
 test('attach fan-out does not starve control/input (separate socket pools)', async () => {

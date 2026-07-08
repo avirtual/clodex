@@ -31,7 +31,7 @@ const RESIZE_DEBOUNCE_MS = 80;
 class RemoteServer {
   constructor({ port, pagePath, getSessions, getTranscript, send, restartApp,
                 hostLabel, version, getAttachInfo, sendInput, resizePty, onControlChange,
-                query }) {
+                query, createSession, killSession, restartSession }) {
     this._port = port;
     this._pagePath = pagePath;
     this._getSessions = getSessions;
@@ -49,6 +49,13 @@ class RemoteServer {
     // bust/files/file peek). One endpoint, kind-dispatched — popups are
     // open-time snapshots, so they need a query RPC, not a stream.
     this._query = query || null;
+    // Remote session lifecycle (create/kill/restart on the peer). Optional like
+    // the rest; absent → the endpoints 501 and the 'create' capability isn't
+    // advertised, so viewers hide the "New Session on <peer>" affordance. The
+    // three ship together under the one 'create' cap (see /api/peer/hello).
+    this._createSession = createSession || null;
+    this._killSession = killSession || null;
+    this._restartSession = restartSession || null;
     this._server = null;
     this._clients = new Set();       // live SSE responses (events feed)
     this._attach = new Map();        // name -> Set of SSE responses (attach feeds)
@@ -312,6 +319,7 @@ class RemoteServer {
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
+      if (this._createSession) caps.push('create'); // covers create + kill + restart (ship together)
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
@@ -453,6 +461,51 @@ class RemoteServer {
       this._json(res, 200, { ok: true });
       this._restartApp();
       return;
+    }
+    // Remote session create — {name, type, cwd}. The owner routes to the live
+    // create() path; the ack carries the whole outcome (viewer sees no dialogs
+    // on this box), with distinguishable errors: bad name/type, name taken, bad
+    // cwd, spawn failure. Trust is the tunnel, same as every peer RPC — no token.
+    if (req.method === 'POST' && p === '/api/sessions') {
+      if (!this._createSession) return this._json(res, 501, { ok: false, error: 'create not available' });
+      return this._readBody(req, res, (body) => {
+        let msg;
+        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        Promise.resolve()
+          .then(() => this._createSession({ name: msg.name, type: msg.type, cwd: msg.cwd }))
+          .then((out) => this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'create failed' }))
+          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+      });
+    }
+    // Remote session kill — user-initiated semantics on the owner (removes from
+    // persistence, no resume). Path-scoped like input/control/resize.
+    if (req.method === 'POST' && p.startsWith('/api/kill/')) {
+      if (!this._killSession) return this._json(res, 501, { ok: false, error: 'kill not available' });
+      const name = decodeURIComponent(p.slice('/api/kill/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return Promise.resolve()
+        .then(() => this._killSession(name))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'kill failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    }
+    // Remote session restart — kill + respawn from the persisted entry. Body
+    // {fresh} picks plain restart (--resume, keeps history) vs fresh reload
+    // (new conversation, re-reads skills). Path-scoped like kill; gated on the
+    // same 'create' capability (create/kill/restart ship together). The ack is
+    // distinguishable: not-found in persistence (404) vs a respawn failure whose
+    // message says the entry was kept (still 404, distinct text).
+    if (req.method === 'POST' && p.startsWith('/api/restart-session/')) {
+      if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
+      const name = decodeURIComponent(p.slice('/api/restart-session/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return this._readBody(req, res, (body) => {
+        let msg = {};
+        if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
+        Promise.resolve()
+          .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
+          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'restart failed' }))
+          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+      });
     }
     this._json(res, 404, { ok: false, error: 'not found' });
   }

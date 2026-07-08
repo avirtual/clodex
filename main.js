@@ -216,6 +216,10 @@ function logStartupDiagnostics() {
 // Moving here (v0.6.6) ended /tmp/wb-wrap interop with the Python wb-wrap.
 const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
 const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
+// Layer-3 delivery parking store (Claude): pending/<name>/ per agent. Deliveries
+// that arrive while the operator is composing are parked here and drained as
+// UserPromptSubmit additionalContext on the next submit (see pending-store.js).
+const PENDING_DIR = path.join(REGISTRY_DIR, 'pending');
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
@@ -337,8 +341,13 @@ const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
 // falls back to inject-anyway, never worse than pre-queue behavior). The window
 // is short (2s) because it applies to EVERY inject including plain idle
 // deliveries; the old 10s value only ever gated post-hold batch flushes.
+// MAXWAIT is for the WALKED-AWAY-DRAFT case only. The original 30s misfired
+// through LIVE composition — an operator writing a long draft while agents
+// report in got spliced mid-word twice (confirmed actively typing). 5min matches
+// what layer-3 prompt-parking will set; once parking lands (deliveries park to a
+// file instead of injecting while typing), cap-fires should drop to ~zero.
 const INJECT_QUIET_MS = 2 * 1000;
-const INJECT_QUIET_MAXWAIT = 30 * 1000;
+const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 
 // Crash-safe file write: same-dir temp → fsync contents → atomic rename →
 // fsync the parent dir. A power loss or interrupted write leaves the previous
@@ -1803,6 +1812,8 @@ const { parseAgentFrontmatter, buildAgentsArg, denyAgentRules } = require('./age
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight } = require('./inject-queue');
+const { parkDelivery, drainPending, hasPending } = require('./pending-store');
+const { ctxReminderFor } = require('./ctx-reminder');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
@@ -2960,6 +2971,63 @@ if body:
 PYEOF
 `, { mode: 0o700 });
 
+  // Layer-3 delivery parking drain (see pending-store.js). Deliveries parked
+  // while the operator was composing land here as UserPromptSubmit
+  // additionalContext, so they arrive WITH the prompt instead of splicing the
+  // draft. Unlike the ack channel this must NOT lose messages, so the drain is
+  // an atomic whole-dir rename-claim (mirrors pending-store.drainPending
+  // exactly, keeping the hook and the Node cap-fire drain single-source-of-
+  // truth): whoever renames the dir first owns every message then present; a
+  // delivery parked after the claim lands in a fresh dir and drains next turn.
+  const pendingDir = path.join(REGISTRY_DIR, 'pending', name);
+  const pendingScriptPath = path.join(REGISTRY_DIR, `${name}-pending.sh`);
+  fs.writeFileSync(pendingScriptPath, `#!/bin/bash
+[ -d "${pendingDir}" ] || exit 0
+python3 - "${pendingDir}" <<'PYEOF'
+import json, os, sys, glob, shutil
+d = sys.argv[1]
+claim = d + '.draining.hook.' + str(os.getpid())
+try:
+    os.rename(d, claim)          # atomic claim; ENOENT => nothing to drain / lost the race
+except OSError:
+    sys.exit(0)
+texts = []
+for fp in sorted(glob.glob(os.path.join(claim, '*.json'))):
+    try:
+        with open(fp) as f:
+            obj = json.load(f)
+        if isinstance(obj.get('text'), str):
+            texts.append(obj['text'])
+    except Exception:
+        pass                      # skip a corrupt entry, never abort the drain
+shutil.rmtree(claim, ignore_errors=True)
+if texts:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": "\\n\\n".join(texts)}}))
+PYEOF
+`, { mode: 0o700 });
+
+  // High-context reminder drain (see ctx-reminder.js). main.js writes a
+  // {name}-ctxwarn file (the reminder text) while the session's absolute token
+  // count is over threshold, removes it once it drops back. Unlike acks/pending
+  // this hook only READS — it never consumes the file, so the reminder recurs on
+  // every submit while over (deliberate; the escalation wording counters
+  // habituation). Silent when the file is absent.
+  const ctxwarnPath = path.join(REGISTRY_DIR, `${name}-ctxwarn`);
+  const ctxwarnScriptPath = path.join(REGISTRY_DIR, `${name}-ctxwarn.sh`);
+  fs.writeFileSync(ctxwarnScriptPath, `#!/bin/bash
+[ -s "${ctxwarnPath}" ] || exit 0
+python3 - "${ctxwarnPath}" <<'PYEOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    body = f.read().strip()
+if body:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit", "additionalContext": body}}))
+PYEOF
+`, { mode: 0o700 });
+
   // Settings JSON
   const settings = {
     trustedDirectories: [msgDir],
@@ -2975,7 +3043,13 @@ PYEOF
       }],
       UserPromptSubmit: [{
         matcher: '',
-        hooks: [{ type: 'command', command: ackScriptPath }]
+        // Both drains run on submit; Claude concatenates their additionalContext.
+        // acks = bookkeeping (lossy-tolerant), pending = parked DMs (zero-loss).
+        hooks: [
+          { type: 'command', command: ackScriptPath },
+          { type: 'command', command: pendingScriptPath },
+          { type: 'command', command: ctxwarnScriptPath },
+        ]
       }]
     }
   };
@@ -3079,7 +3153,7 @@ OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
 }
 
 function cleanupClaudeHook(name) {
-  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-hook-digest.json', '-statusline.sh', '-append-prompt.md', '-ctx', '-attn.sh', '-attn.jsonl', '-acks.sh', '-acks', '.jsonl']) {
+  for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-hook-digest.json', '-statusline.sh', '-append-prompt.md', '-ctx', '-ctxwarn', '-ctxwarn.sh', '-attn.sh', '-attn.jsonl', '-acks.sh', '-acks', '-pending.sh', '.jsonl']) {
     try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
   }
 }
@@ -4099,6 +4173,18 @@ class SessionManager {
             if (remoteServer) {
               try { remoteServer.pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
             }
+            // High-context reminder side-channel: when the absolute token count
+            // crosses a threshold, drop a {name}-ctxwarn file whose contents the
+            // UserPromptSubmit hook cats into additionalContext (nudging the agent
+            // to self-compact on its next turn — no PTY interruption). Removed
+            // when it drops back under threshold (post-compact). Idempotent: the
+            // file content is stable, so re-writing it on every ctx tick is fine.
+            const warnPath = path.join(REGISTRY_DIR, `${name}-ctxwarn`);
+            const warn = ctxReminderFor(c.tok);
+            try {
+              if (warn) fs.writeFileSync(warnPath, warn);
+              else fs.rmSync(warnPath, { force: true });
+            } catch {}
           }
         } catch {}
       };
@@ -4205,10 +4291,21 @@ class SessionManager {
     try { s.pty.write(data); } catch {}
   }
 
-  resize(name, cols, rows) {
+  resize(name, cols, rows, requester = 'owner') {
     const s = this.sessions.get(name);
     if (!s || s._dead) return;
     try { s.pty.resize(cols, rows); } catch {}
+    // Observability: this is the sole owner-side PTY-mutation path in the peer
+    // surface, so log who reflowed the terminal and to what. Dedup on settled
+    // dims per session — resize bursts during window drags, and only a real
+    // geometry change (or a change of requester) is worth a line. This is what
+    // arbitrates the "does a read-only viewer ever perturb the owner" question:
+    // every legitimate perturbation must carry requester='peer-control'.
+    const key = `${s.pty.cols}x${s.pty.rows}:${requester}`;
+    if (s._lastLoggedResize !== key) {
+      s._lastLoggedResize = key;
+      log.info('resize', `${name} ${s.pty.cols}x${s.pty.rows} by ${requester}`);
+    }
     // Mirror the new geometry to any read-only peer viewers so their letterbox
     // follows the owner's. This is the single resize choke point — both the
     // owner's own refit (session:resize IPC) and a controlling viewer's resize
@@ -4275,6 +4372,17 @@ class SessionManager {
     clearTimeout(s._injectHoldTimer);
     clearTimeout(s._injectFlushRetry);
     clearTimeout(s._compactValveTimer);
+    clearTimeout(s._parkCapTimer);
+    // Drop any parked deliveries ONLY for a session going away for good — i.e. a
+    // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
+    // restart's kill, quit's killAll), so an unconditional rm would eat parked
+    // DMs on a restart or app-quit inside the cap window (zero-loss violation).
+    // Every other exit path respawns or restores the same name, whose pending
+    // store — keyed by name, stable hook path — drains on the next submit. A
+    // dir left by a never-recreated session is harmless residue. Best-effort.
+    if (s._userKilled) {
+      try { fs.rmSync(path.join(PENDING_DIR, name), { recursive: true, force: true }); } catch {}
+    }
     if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
     if (s.watcher) s.watcher.stop();
     if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
@@ -5193,6 +5301,7 @@ class SessionManager {
       ? `(reply: start a line with [agent:dm ${senderName}])`
       : '';
 
+    let finalText;
     if (body.length > MSG_SPILL_THRESHOLD) {
       const filePath = spillToFile(senderName, body, targetName);
       // @-mention makes Claude Code attach the file inline instead of
@@ -5202,13 +5311,72 @@ class SessionManager {
       // DIFFERENT file (observed live: pointer said msg-2, body was msg-3).
       // The trailer rides the pointer line (not the spilled file, which may be
       // read after the register has already drifted).
-      this._injectText(target, target.agentType === 'claude'
+      finalText = target.agentType === 'claude'
         ? `${prefix} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
-        : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`);
+        : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
     } else {
-      this._injectText(target, `${prefix} ${body}${trailer ? '\n' + trailer : ''}`);
+      finalText = `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
+    }
+    // Layer-3 parking: if the operator is mid-composition, park this delivery to
+    // drain in with their next prompt (see _maybeParkDelivery) instead of typing
+    // it into the pane and splicing the draft. Falls through to a normal inject
+    // otherwise, or if parking isn't applicable / fails.
+    if (!this._maybeParkDelivery(target, finalText)) {
+      this._injectText(target, finalText);
     }
     this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
+  }
+
+  // Park a delivery for the operator's next submit instead of injecting it now,
+  // WHEN the operator is actively composing. Returns true if parked (caller must
+  // not inject), false to fall through to a normal inject. Claude only — the
+  // drain rides a UserPromptSubmit hook, which Codex's hook surface doesn't
+  // provide the same way; Codex keeps the quiet-gate queue. Self-intents and
+  // memory/system lines route through _injectText directly (not here), so they
+  // never park — they're for the CLI/bookkeeping, not conversational deliveries.
+  _maybeParkDelivery(target, finalText) {
+    if (!target || target.agentType !== 'claude' || target._dead) return false;
+    // "Composing" = a human touched the pane within the quiet window. Same
+    // signal the inject quiet-gate uses (covers local keystrokes AND a peer
+    // controller's input, both stamped at the write() choke point).
+    const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
+    if (!typing) return false;
+    // Monotonic, lexically-sortable seq so the drain reads in arrival order,
+    // stable across restarts (timestamp dominates; counter breaks within-ms ties).
+    const seq = `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
+    try {
+      parkDelivery(PENDING_DIR, target.name, finalText, seq);
+    } catch (e) {
+      // Parking is best-effort; never drop a DM. Fall back to a normal inject.
+      log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
+      return false;
+    }
+    this._armParkCap(target);
+    return true;
+  }
+
+  // Non-destructive starvation cap: if the operator never submits (walked-away
+  // draft), parked deliveries would sit forever, since only a submit drains the
+  // hook. After INJECT_QUIET_MAXWAIT, drain them through the normal inject queue
+  // instead. The cap is now long (parking is non-destructive to a live draft, so
+  // there's no rush) — its only job is the abandoned-draft case. Self-checking
+  // against the hook: whoever wins the atomic dir-claim delivers; if the hook
+  // already drained on a submit, the cap-fire claim comes back empty and no-ops.
+  _armParkCap(target) {
+    if (target._parkCapTimer) return;         // earliest-parked deadline governs
+    target._parkCapTimer = setTimeout(() => {
+      target._parkCapTimer = null;
+      if (target._dead) return;
+      let texts = [];
+      try { texts = drainPending(PENDING_DIR, target.name, `cap.${process.pid}`); } catch {}
+      if (!texts.length) return;              // hook already drained on a submit
+      log.warn('inject', `park cap fired for ${target.name} — draining ${texts.length} parked deliver${texts.length === 1 ? 'y' : 'ies'} via queue (no submit in ${INJECT_QUIET_MAXWAIT / 1000}s)`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: target.name, kind: 'park-cap',
+        body: `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${texts.length} parked deliver${texts.length === 1 ? 'y' : 'ies'}`,
+      });
+      for (const t of texts) this._injectText(target, t);
+    }, INJECT_QUIET_MAXWAIT);
   }
 
   _injectText(session, text, opts = {}) {
@@ -5247,6 +5415,16 @@ class SessionManager {
         maxWaitMs: INJECT_QUIET_MAXWAIT,
         lastHumanInputAt: () => session.lastUserInputTs || 0,
         isDead: () => !!session._dead,
+        // Observability: the quiet-gate cap forced an inject through active
+        // typing (splice risk). Should drop to ~zero once parking handles DMs
+        // during composition — this line validates that.
+        onCapFire: () => {
+          log.warn('inject', `quiet-gate cap fired for ${session.name} — injected through active typing (${INJECT_QUIET_MAXWAIT / 1000}s cap)`);
+          this._broadcast('ipc-message', {
+            ts: Date.now(), from: 'clodex', to: session.name, kind: 'inject-cap',
+            body: `inject quiet-gate cap fired (${INJECT_QUIET_MAXWAIT / 1000}s) — possible splice through a live draft`,
+          });
+        },
       });
     }
     return session._injectPtyQueue;
@@ -6106,6 +6284,63 @@ function peerProxyView(p) {
   };
 }
 
+// kill() only sends the signal — removal from manager.sessions happens in the
+// PTY's onExit, which can land well after a fixed sleep (kill() falls back to
+// SIGKILL at 5s). Spinning until the slot is actually free is the only safe
+// pre-respawn wait; a fixed 300ms caused "session already exists" on respawn,
+// which lost the session entirely.
+async function waitForSessionExit(name, timeoutMs = 8000) {
+  const start = Date.now();
+  while (manager.sessions.has(name) && Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return !manager.sessions.has(name);
+}
+
+// Restart a session in place: kill the PTY and respawn from the persisted
+// entry. Shared by the local IPC handler (session:restart) and the peer
+// restart-session endpoint so the strip-level re-assert and the failed-respawn
+// safety net stay single-source. `wsId` is the workspace the respawn lands in
+// (IPC derives it from the sender window; the peer path passes the entry's own
+// workspaceId). Returns a distinguishable-error ack — not-found in persistence
+// vs a respawn failure whose message says the entry was kept.
+async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
+  const entry = persistence.get(name);
+  if (!entry) return { ok: false, error: 'Session not found in persistence' };
+  // A "fresh" restart starts a NEW conversation (no --resume). Required to apply
+  // a skill change: the skill roster is evaluated when a conversation is
+  // created, so --resume replays the roster frozen before the change (proven
+  // live — skillOverrides never lands on a resumed session). Costs the
+  // conversation history; the caller is responsible for warning the user.
+  // opts.resumeId switches to a chosen PAST conversation (the session picker):
+  // respawn with --resume <that id> and make it the active id so subsequent
+  // restarts continue from there (setSessionId also moves it to the head of
+  // the history chain). Falls back to the current id for a plain restart.
+  if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
+    persistence.setSessionId(name, opts.resumeId);
+  }
+  const resumeId = opts && opts.fresh ? null : ((opts && opts.resumeId) || entry.sessionId || null);
+  try {
+    if (manager.sessions.has(name)) {
+      await manager.kill(name);
+      if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
+    }
+    await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || []);
+    // kill() removed the persistence entry (incl. stripLevel) and create()
+    // re-wrote it from spawn args only — re-assert the session's OWN level so
+    // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
+    // seeding lives in session:create; this preserves the actual level.)
+    const restartLvl = stripLevelOf(entry);
+    if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
+    if (entry.label) persistence.setLabel(name, entry.label);
+    return { ok: true, restarted: true };
+  } catch (err) {
+    // Same safety net as setArgs: never let a failed respawn eat the entry.
+    persistence.upsert(entry);
+    return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
+  }
+}
+
 function syncRemoteServer() {
   const s = uiSettings.get();
   if (!s.remoteEnabled) {
@@ -6123,8 +6358,13 @@ function syncRemoteServer() {
       port: s.remotePort,
       pagePath: path.join(__dirname, 'renderer', 'remote.html'),
       getSessions: () =>
+        // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
+        // but ARE exposed on the peer surface for visibility/attach/control. The
+        // wire payload carries sess.type so the viewer buckets bash like a local
+        // bash row (no ctx badge/telemetry — the stats below come back null for
+        // an unrouted bash session, which the viewer already tolerates).
         Array.from(manager.sessions.values())
-          .filter(sess => sess.agentType && !sess._dead)
+          .filter(sess => !sess._dead)
           .map(sess => {
             // Same sources as the GUI status bar: proxy telemetry snapshot
             // (model/cost/requests/live tokens) + the statusline ctx
@@ -6176,13 +6416,84 @@ function syncRemoteServer() {
       // wirescope survives (detached) and the new launch's version check
       // picks up any pending vendor bump. Delay lets the HTTP response and
       // the ingress hop flush before the server dies under them.
-      restartApp: () => restartClodex(),
+      restartApp: () => { log.info('app', 'restart requested remotely'); restartClodex(); },
+      // Remote session create — routes to the LIVE create() path (auto-persists,
+      // exactly like [agent:spawn]), so a peer becomes a cockpit for the headless
+      // box: no ssh + seed-script + restart. Trust is the tunnel (settled); no
+      // token. The viewer can't see this box's dialogs, so the ack IS the whole
+      // story — every failure mode returns a DISTINGUISHABLE error string.
+      // Defaults mirror the spawn intent: workspace 'default' (no requesting
+      // session here to inherit from), cwd created if absent (ensureDir).
+      createSession: async ({ name, type, cwd } = {}) => {
+        name = String(name || '').trim();
+        const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
+        const rawCwd = String(cwd || '').trim();
+        if (!AGENT_NAME_RE.test(name)) {
+          return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
+        }
+        // bash rides the peer surface for visibility/attach/control, but stays
+        // IPC-private (no registry/socket/who) exactly like a local bash session.
+        if (!t) return { ok: false, error: `invalid type "${type}" — must be claude, codex, or bash` };
+        if (manager.sessions.has(name) || persistence.get(name)) {
+          return { ok: false, error: `name taken "${name}"` };
+        }
+        if (!rawCwd) return { ok: false, error: 'cwd required' };
+        const dir = path.resolve(rawCwd.replace(/^~(?=$|\/)/, os.homedir()));
+        try {
+          ensureDir(dir); // create the cwd if absent — mirrors [agent:spawn]
+        } catch (e) {
+          return { ok: false, error: `cannot create cwd "${dir}": ${e.message}` };
+        }
+        try {
+          const out = await manager.create(
+            name, t, dir, [], null, DEFAULT_WORKSPACE_ID,
+            null, false, null, [], [], [], [], [], null, [],
+          );
+          if (remoteServer) { try { remoteServer.notifySessions(); } catch {} }
+          log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
+          return { ok: true, name: out.name, type: out.type, pid: out.pid };
+        } catch (e) {
+          log.error('session', `create ${name} via peer failed: ${e.message}`);
+          return { ok: false, error: `spawn failed: ${e.message}` };
+        }
+      },
+      // Remote session kill — user-initiated semantics (removes from persistence,
+      // no resume), same as the UI's kill. Ack distinguishes not-found from done.
+      killSession: async (name) => {
+        name = String(name || '').trim();
+        const sess = manager.sessions.get(name);
+        // Bash included (peer-visible) — gate on existence only, not agentType.
+        if (!sess) return { ok: false, error: `no such session "${name}"` };
+        await manager.kill(name);
+        if (remoteServer) { try { remoteServer.notifySessions(); } catch {} }
+        log.info('session', `kill ${name} via peer`);
+        return { ok: true, name };
+      },
+      // Remote session restart — routes to the SHARED restartSession() so the
+      // strip-level re-assert + failed-respawn safety net match the local path
+      // exactly. Respawn lands in the entry's own workspace (no requesting
+      // window here to inherit from). {fresh} picks the two affordances the
+      // viewer offers: plain restart (--resume, keeps history) vs fresh reload
+      // (new conversation, re-reads skills/agents). Ack is distinguishable
+      // (not-found vs respawn-failure-with-"session kept"), same as create/kill.
+      restartSession: async (name, opts = {}) => {
+        name = String(name || '').trim();
+        const entry = persistence.get(name);
+        const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
+        const out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId);
+        if (out && out.ok && remoteServer) { try { remoteServer.notifySessions(); } catch {} }
+        log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
+        return out;
+      },
       // ---- peer-attach surface (Clodex-to-Clodex) ----
       hostLabel: os.hostname().replace(/\.local$/, ''),
       version: app.getVersion(),
       getAttachInfo: (name) => {
         const sess = manager.sessions.get(name);
-        if (!sess || !sess.agentType || sess._dead) return { ok: false };
+        // Bash included: attach mirrors the raw PTY (scrollback + geometry),
+        // which every session type maintains. The telemetry seed below is
+        // agent-shaped but degrades to nulls for bash (no proxy/ctx), harmless.
+        if (!sess || sess._dead) return { ok: false };
         return {
           ok: true,
           scrollback: Buffer.from(sess.scrollback || '', 'utf8'),
@@ -6207,7 +6518,10 @@ function syncRemoteServer() {
       resizePty: (name, cols, rows) => {
         const sess = manager.sessions.get(name);
         if (!sess || sess._dead) return { ok: false, error: 'Session not found' };
-        manager.resize(name, cols, rows);
+        // Tag the requester: this callback is only ever reached by a token-gated
+        // control-holder, so a resize logged as 'peer-control' is the by-design
+        // authority path — the arbiter for owner-side perturbation reports.
+        manager.resize(name, cols, rows, 'peer-control');
         return { ok: true };
       },
       // Popover data pull (viewer's ctx/cost/bust/files/file-peek popups).
@@ -6993,19 +7307,6 @@ app.whenReady().then(() => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  // kill() only sends the signal — removal from manager.sessions happens in
-  // the PTY's onExit, which can land well after a fixed sleep (kill() falls
-  // back to SIGKILL at 5s). Spinning until the slot is actually free is the
-  // only safe pre-respawn wait; a fixed 300ms caused "session already
-  // exists" on respawn, which lost the session entirely.
-  async function waitForSessionExit(name, timeoutMs = 8000) {
-    const start = Date.now();
-    while (manager.sessions.has(name) && Date.now() - start < timeoutMs) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return !manager.sessions.has(name);
-  }
-
   ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles) => {
     const beforeKill = persistence.get(name);
     const nextAgents = agents !== undefined ? (agents || []) : (beforeKill?.agents || []);
@@ -7053,44 +7354,13 @@ app.whenReady().then(() => {
 
   // Restart in place: kill the PTY and respawn with the persisted settings,
   // resuming the same conversation. Useful after a CLI upgrade, a global
-  // preference change, or a wedged TUI.
-  ipcMain.handle('session:restart', async (e, name, opts = {}) => {
-    const entry = persistence.get(name);
-    if (!entry) return { ok: false, error: 'Session not found in persistence' };
-    const wsId = workspaceOfSender(e);
-    // A "fresh" restart starts a NEW conversation (no --resume). Required to apply
-    // a skill change: the skill roster is evaluated when a conversation is
-    // created, so --resume replays the roster frozen before the change (proven
-    // live — skillOverrides never lands on a resumed session). Costs the
-    // conversation history; the caller is responsible for warning the user.
-    // opts.resumeId switches to a chosen PAST conversation (the session picker):
-    // respawn with --resume <that id> and make it the active id so subsequent
-    // restarts continue from there (setSessionId also moves it to the head of
-    // the history chain). Falls back to the current id for a plain restart.
-    if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
-      persistence.setSessionId(name, opts.resumeId);
-    }
-    const resumeId = opts && opts.fresh ? null : ((opts && opts.resumeId) || entry.sessionId || null);
-    try {
-      if (manager.sessions.has(name)) {
-        await manager.kill(name);
-        if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
-      }
-      await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || []);
-      // kill() removed the persistence entry (incl. stripLevel) and create()
-      // re-wrote it from spawn args only — re-assert the session's OWN level so
-      // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
-      // seeding lives in session:create; this preserves the actual level.)
-      const restartLvl = stripLevelOf(entry);
-      if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
-      if (entry.label) persistence.setLabel(name, entry.label);
-      return { ok: true, restarted: true };
-    } catch (err) {
-      // Same safety net as setArgs: never let a failed respawn eat the entry.
-      persistence.upsert(entry);
-      return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
-    }
-  });
+  // preference change, or a wedged TUI. The core lives in restartSession()
+  // (module scope) so the peer restart-session endpoint shares the exact
+  // strip-level re-assert + failed-respawn safety net rather than duplicating
+  // (and drifting from) it. The IPC handler only supplies the sender's
+  // workspace as the respawn target.
+  ipcMain.handle('session:restart', async (e, name, opts = {}) =>
+    restartSession(name, opts, workspaceOfSender(e)));
 
   ipcMain.handle('settings:get', () => {
     const s = uiSettings.get();
@@ -7198,6 +7468,37 @@ app.whenReady().then(() => {
     const conn = peerManager && peerManager.get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.resize(name, cols, rows, resolve);
+  }));
+  // Host-level remote restart of a peer's Clodex (restart-only, no self-update:
+  // the operator git-pulls on the peer host, then triggers this to pick up the
+  // new code). Authority is the tunnel, same as every other peer RPC; the
+  // viewer fronts a confirm dialog for intentionality. The peer acks, then
+  // quits + relaunches; its offline/online blip rides the existing reconnect.
+  ipcMain.handle('peer:restart', (_e, id) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.restart(resolve);
+  }));
+  // Remote session create/kill on a peer — makes the Mac the cockpit for a
+  // headless box. Trust is the tunnel (settled); the viewer fronts a dialog
+  // (create) / confirm (kill) for intentionality. The ack carries the outcome.
+  ipcMain.handle('peer:createSession', (_e, id, spec) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.createSession(spec || {}, resolve);
+  }));
+  ipcMain.handle('peer:killSession', (_e, id, name) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.killSession(String(name || ''), resolve);
+  }));
+  // Remote session restart on a peer — plain restart (keeps history) or a
+  // fresh reload (new conversation, re-reads skills). The viewer fronts a
+  // confirm only for the fresh variant, mirroring the local hard-restart.
+  ipcMain.handle('peer:restartSession', (_e, id, name, opts) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.restartSession(String(name || ''), opts || {}, resolve);
   }));
   // Popover data for a peer session — one kind-dispatched pull, answered by
   // the owner from the same sources its own popups use.
@@ -7379,7 +7680,7 @@ app.whenReady().then(() => {
   // truth for attach/control lives there, not in persistence); we only render.
   ipcMain.on('peer:context-menu', (e, st) => {
     const win = BrowserWindow.fromWebContents(e.sender);
-    const { id, name, online, attached, controlled, holder } = st || {};
+    const { id, name, online, attached, controlled, holder, canCreate, hostLabel, type } = st || {};
     const act = (action) => () => e.sender.send('peer:context-action', { action, id, name });
     const template = [];
     // Who holds it, when it's not us — informational, like the peer bar. Take
@@ -7400,7 +7701,110 @@ app.whenReady().then(() => {
     }
     template.push({ type: 'separator' });
     template.push({ label: 'Hide from list', click: act('hide') });
+    // Host-level lifecycle on the peer — restart/reload/kill. All gated on the
+    // create capability (they ship together) + peer online. Restart mirrors the
+    // local pair: a plain restart (--resume, keeps history, no confirm) and a
+    // fresh reload (new conversation, re-reads skills, confirmed in the renderer
+    // like doHardRestart). Kill is the destructive removal (no resume).
+    if (canCreate) {
+      template.push({ type: 'separator' });
+      template.push({
+        label: `Restart "${name}" on ${hostLabel || 'peer'}`,
+        enabled: !!online,
+        click: act('restartRemote'),
+      });
+      // Fresh reload = new conversation + skill re-read: meaningless for bash
+      // (no conversation/roster), so it's offered for agents only.
+      if (type !== 'bash') {
+        template.push({
+          label: `Reload "${name}" on ${hostLabel || 'peer'} (fresh)…`,
+          enabled: !!online,
+          click: act('reloadRemote'),
+        });
+      }
+      template.push({ type: 'separator' });
+      template.push({
+        label: `Kill "${name}" on ${hostLabel || 'peer'}`,
+        enabled: !!online,
+        click: act('killRemote'),
+      });
+    }
     Menu.buildFromTemplate(template).popup({ window: win });
+  });
+
+  // Peer HEADER right-click: host-level actions (remote restart today). Distinct
+  // from the per-session menu above — restart is host-scoped. The label rides
+  // through as `name` so the renderer's confirm/toast can address the peer; the
+  // action reuses the same peer:context-action channel. Restart needs the peer
+  // online (a down peer has nothing to restart — the process-gone case is out
+  // of scope).
+  ipcMain.on('peer:header-menu', (e, st) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const { id, label, online, canCreate } = st || {};
+    const template = [];
+    // Create is gated on the peer advertising the 'create' capability (older
+    // peers 501 the endpoint); the renderer passes canCreate from st.caps.
+    if (canCreate) {
+      template.push({
+        label: `New Session on ${label || 'peer'}…`,
+        enabled: !!online,
+        click: () => e.sender.send('peer:context-action', { action: 'newSession', id, name: label }),
+      });
+      template.push({ type: 'separator' });
+    }
+    template.push({
+      label: `Restart Clodex on ${label || 'peer'}`,
+      enabled: !!online,
+      click: () => e.sender.send('peer:context-action', { action: 'restart', id, name: label }),
+    });
+    Menu.buildFromTemplate(template).popup({ window: win });
+  });
+
+  // Native confirm for remote restart — mirrors dialog:confirmKill. The peer's
+  // sessions resume via the normal quit/restore lifecycle, so the copy says so.
+  ipcMain.handle('dialog:confirmPeerRestart', async (_e, label) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'question',
+      buttons: ['Restart', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Restart Clodex on ${label || 'this peer'}?`,
+      detail: 'The remote app will quit and reopen. Its sessions will resume after the restart.',
+    });
+    return result.response === 0;
+  });
+
+  // Native confirm for killing a session ON a peer — destructive (removes it on
+  // the remote box, no resume), distinct from local Detach/Hide. Mirrors
+  // confirmKill's copy but names the host so it's unmistakably the remote one.
+  ipcMain.handle('dialog:confirmPeerKill', async (_e, name, label) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'warning',
+      buttons: ['Kill', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Kill session "${name}" on ${label || 'the peer'}?`,
+      detail: 'This ends the agent process on the remote box and removes it — it will not resume.',
+    });
+    return result.response === 0;
+  });
+
+  // Native confirm for a fresh peer reload — mirrors doHardRestart's copy
+  // (new conversation, CLI re-reads skills/tools/settings; old convo stays in
+  // 🕘 history). Plain peer restart has NO confirm, parity with the local plain
+  // restart; only the fresh variant (which drops the live conversation) asks.
+  ipcMain.handle('dialog:confirmPeerReload', async (_e, name, label) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'question',
+      buttons: ['Reload', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Reload "${name}" on ${label || 'the peer'} with a fresh conversation?`,
+      detail: 'Starts a new conversation so the CLI reloads tools, skills, and settings from disk '
+        + '(a plain restart keeps the old roster). The current conversation isn\'t lost — it stays '
+        + 'available under 🕘 history on the remote box.',
+    });
+    return result.response === 0;
   });
 
   ipcMain.handle('dialog:confirmKill', async (_e, name) => {

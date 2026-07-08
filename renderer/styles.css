@@ -1226,7 +1226,7 @@ html, body {
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -1236,8 +1236,32 @@ html, body {
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden {
   display: none;
+}
+
+/* New-session-on-a-peer dialog: a simple single-column form (name/type/cwd),
+   not the two-column grid of the full new-session dialog. */
+#peer-session-dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#peer-session-dialog h3 { margin: 0 0 4px; }
+#peer-session-dialog #peer-session-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(220, 80, 80, 0.12);
+  color: var(--error);
 }
 
 #args-dialog {

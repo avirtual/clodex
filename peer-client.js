@@ -275,6 +275,41 @@ class PeerConnection {
     });
   }
 
+  // Host-level full relaunch of the peer's Clodex. Not tied to any attachment
+  // or control token — restart rides the host trust boundary (tunnel = auth),
+  // same as query/transcript. The owner acks BEFORE it quits, so a successful
+  // reply means "restart accepted, going down now"; the peer then drops offline
+  // and the normal reconnect/auto-reattach machinery brings it back.
+  restart(cb) {
+    this._request('POST', '/api/restart', {}, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+  // Host-level session lifecycle on the peer. Like restart/query, not tied to
+  // an attachment or token — trust is the tunnel. The owner routes to its live
+  // create()/kill() paths; the ack is the whole outcome (distinguishable errors).
+  createSession({ name, type, cwd }, cb) {
+    this._request('POST', '/api/sessions', { name, type, cwd }, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+  killSession(name, cb) {
+    this._request('POST', `/api/kill/${encodeURIComponent(name)}`, {}, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+  // Restart a peer session in place. opts.fresh picks a new-conversation reload
+  // (re-reads skills) over a plain --resume restart. The owner respawns the same
+  // name, so an attached viewer's auto-reattach brings the pane back live.
+  restartSession(name, opts, cb) {
+    this._request('POST', `/api/restart-session/${encodeURIComponent(name)}`, { fresh: !!(opts && opts.fresh) }, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
   // ---- plumbing ----
 
   _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS) {

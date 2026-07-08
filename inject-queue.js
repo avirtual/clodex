@@ -47,7 +47,10 @@ class InjectQueue {
   //   isDead()              session gone — abandon the item (no write into a
   //                         closed fd, which throws Napi::Error natively)
   //   now / sleep           test seams (default Date.now / real setTimeout)
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep }) {
+  //   onCapFire(text)       optional: the max-wait cap forced this item through
+  //                         while a human was STILL typing (the splice-risk case)
+  //                         — surfaced for observability, never changes behavior
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire }) {
     this._write = write;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
@@ -56,6 +59,7 @@ class InjectQueue {
     this._isDead = isDead || (() => false);
     this._now = now || Date.now;
     this._sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this._onCapFire = onCapFire || null;
     this._chain = Promise.resolve();
     this._length = 0;
   }
@@ -73,6 +77,7 @@ class InjectQueue {
 
   async _drain(text) {
     const waitingSince = this._now();
+    let deferred = false;
     // Quiet-gate: poll in short slices so a keystroke landing mid-wait extends
     // it, without busy-spinning. Bounded by maxWaitMs via shouldDeferInject.
     while (!this._isDead()
@@ -81,9 +86,19 @@ class InjectQueue {
         lastHumanInputAt: this._lastHumanInputAt(),
         waitingSince, quietMs: this._quietMs, maxWaitMs: this._maxWaitMs,
       })) {
+      deferred = true;
       await this._sleep(Math.min(this._quietMs, 500));
     }
     if (this._isDead()) return;
+    // Cap-fire: we waited, and we're proceeding while a human is STILL inside
+    // the typing window — the max-wait cap forced us through an active draft
+    // (the splice-risk case). Surface it (never suppress the inject). Once
+    // parking lands these should drop to ~zero: DMs park instead of queueing
+    // while the operator types, so nothing reaches this gate mid-composition.
+    if (deferred && this._onCapFire
+      && this._now() - (this._lastHumanInputAt() || 0) < this._quietMs) {
+      try { this._onCapFire(text); } catch {}
+    }
     this._write('\x15' + text.replace(/\n/g, '\r'));   // Ctrl-U + text (\n→\r)
     await this._sleep(this._settleMsFor(text));
     if (this._isDead()) return;
