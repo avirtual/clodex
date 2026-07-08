@@ -2221,17 +2221,24 @@ html, body {
 
 /* --- Peered Clodexes ------------------------------------------------------ */
 
+/* The peer header is a host GROUPING, not a session tab: a subtle tinted band
+   with top/bottom rules and a bolded small-caps label sets it apart from the
+   clickable session rows below it. */
 .peer-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px 3px;
+  padding: 6px 6px 6px 12px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
+  background: var(--sidebar-hover);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   user-select: none;
 }
+.peer-label { font-weight: 600; }
 .peer-dot {
   width: 7px;
   height: 7px;
@@ -2241,24 +2248,29 @@ html, body {
   flex: none;
 }
 .peer-dot.online { background: var(--ok); opacity: 1; }
+/* peer-state carries the sole margin-left:auto, so it (and the action strip that
+   follows it) hug the right edge; when there's no state text the empty span
+   still consumes the free space and pushes the icons right. */
 .peer-state { margin-left: auto; font-style: italic; text-transform: none; }
-/* "Choose which sessions to show" opener on the peer header. Unobtrusive chrome
-   that brightens on hover, matching the sidebar's other icon affordances. When
-   a state label is present it sits to the right of it; margin-left:auto keeps it
-   right-aligned when there's no state text. */
+/* Right-aligned host action strip: ＋ new session · ↻ restart Clodex · ◎ choose
+   visible sessions. */
+.peer-actions { display: flex; align-items: center; gap: 1px; flex: none; margin-left: 4px; }
+/* Icon buttons on the peer header. Unobtrusive chrome that brightens on hover,
+   matching the sidebar's other icon affordances; dimmed + inert when disabled
+   (offline). */
 .peer-select {
-  margin-left: auto;
   flex: none;
   background: none;
   border: none;
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 0 3px;
   cursor: pointer;
 }
-.peer-state + .peer-select { margin-left: 4px; }
 .peer-select:hover { color: var(--text); }
+.peer-select:disabled { opacity: 0.35; cursor: default; }
+.peer-select:disabled:hover { color: var(--text-dim); }
 /* A selected session the peer no longer lists (asleep / gone): shown so it
    isn't silently dropped from the selection, but visibly de-emphasized. */
 .agent-check.peer-select-gone { opacity: 0.55; }

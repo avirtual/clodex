@@ -1270,13 +1270,33 @@ function renderPeers() {
       stateText = 'tunnel down';
       if (tun.error) header.title = tun.error;
     }
+    // Right-aligned host action strip mirrors the header context menu: ＋ new
+    // session (create-capable peers only), ↻ restart Clodex, ◎ choose visible
+    // sessions (the old ⋯ opener). The first two need the peer online; the eye
+    // works offline too (you can still curate which open tabs show).
+    const hostLabel = peerDisplayHost(st);
+    const canCreate = peerSupportsCreate(st);
+    const off = st.online ? '' : 'disabled';
     header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
-      `<span class="peer-label">${esc(peerDisplayHost(st))}</span>` +
+      `<span class="peer-label">${esc(hostLabel)}</span>` +
       `<span class="peer-state">${esc(stateText)}</span>` +
-      `<button class="peer-select" title="Choose which sessions to show" aria-label="Choose which sessions to show">&#8943;</button>`;
-    header.querySelector('.peer-select').addEventListener('click', (e) => {
+      `<span class="peer-actions">` +
+        (canCreate ? `<button class="peer-select peer-new" title="New Session on ${esc(hostLabel)}…" aria-label="New Session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
+        `<button class="peer-select peer-restart" title="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button>` +
+        `<button class="peer-select peer-eye" title="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` +
+      `</span>`;
+    header.querySelector('.peer-eye').addEventListener('click', (e) => {
       e.stopPropagation();
       openPeerSelectPopover(id, e.currentTarget);
+    });
+    const newBtn = header.querySelector('.peer-new');
+    if (newBtn) newBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPeerSessionDialog(id, hostLabel);
+    });
+    header.querySelector('.peer-restart').addEventListener('click', (e) => {
+      e.stopPropagation();
+      restartPeerHost(id, hostLabel);
     });
     // Right-click the peer header: host-level actions (today just remote
     // restart). Restart is host-scoped, so it lives here, not on a session row.
@@ -1503,6 +1523,24 @@ async function applyPeerControl(entry, on) {
 // Row context-menu actions from main. Verbs mirror the peer-bar's state
 // transitions plus attach/detach/hide; taking control from an unattached row
 // attaches first so it's one gesture.
+// Host-level remote restart of the whole Clodex on a peer box. Shared by the
+// header ↻ icon and the right-click header menu's 'restart' action so the
+// confirm → fire → toast flow can't drift. `label` is the peer's display host.
+// The peer drops offline and the existing reconnect/auto-reattach brings it
+// back — no special reconnect logic. Failures (connection/timeout) surface as a
+// calm toast, never a retry. Authority is the tunnel (settled model); the
+// confirm is the intentionality gate.
+async function restartPeerHost(id, label) {
+  const okToGo = await window.api.confirmPeerRestart(label);
+  if (!okToGo) return;
+  const res = await window.api.peerRestart(id);
+  if (res && res.ok) {
+    showToast(`Restarting Clodex on ${label} — it will reconnect shortly.`, { kind: 'peer-ui' });
+  } else {
+    showToast(`Restart failed on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+  }
+}
+
 window.api.onPeerContextAction(async ({ action, id, name }) => {
   const key = peerKey(id, name);
   switch (action) {
@@ -1526,24 +1564,11 @@ window.api.onPeerContextAction(async ({ action, id, name }) => {
     case 'hide':
       await peerHideFromList(id, name);
       break;
-    case 'restart': {
+    case 'restart':
       // Host-level remote restart. `name` carries the peer's display label here
-      // (the header menu has no session). Confirm, then fire; the peer drops
-      // offline and the existing reconnect/auto-reattach brings it back — no
-      // special reconnect logic. Failures (connection/timeout) surface as a
-      // calm toast, never a retry. Authority is the tunnel (settled model); the
-      // confirm is the intentionality gate.
-      const label = name || 'peer';
-      const okToGo = await window.api.confirmPeerRestart(label);
-      if (!okToGo) break;
-      const res = await window.api.peerRestart(id);
-      if (res && res.ok) {
-        showToast(`Restarting Clodex on ${label} — it will reconnect shortly.`, { kind: 'peer-ui' });
-      } else {
-        showToast(`Restart failed on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
-      }
+      // (the header menu has no session). Shared with the header ↻ icon.
+      await restartPeerHost(id, name || 'peer');
       break;
-    }
     case 'newSession':
       // `name` carries the peer's display label here (header menu, no session).
       openPeerSessionDialog(id, name || 'peer');
@@ -3163,7 +3188,7 @@ document.getElementById('peer-select-popover-apply').addEventListener('click', a
 document.addEventListener('mousedown', (e) => {
   if (peerSelectPopover.classList.contains('hidden')) return;
   if (peerSelectPopover.contains(e.target)) return;
-  if (e.target.closest('.peer-select')) return; // the opener handles itself
+  if (e.target.closest('.peer-eye')) return; // the opener handles itself
   closePeerSelectPopover();
 });
 document.addEventListener('keydown', (e) => {
