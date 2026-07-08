@@ -154,6 +154,39 @@ window.api = {
   // Remote access (phone web UI)
   remoteStatus: () => ipcRenderer.invoke('remote:status'),
 
+  // Peered Clodexes (attach to sessions on another machine)
+  peerList: () => ipcRenderer.invoke('peer:list'),
+  peerAttach: (id, name) => ipcRenderer.invoke('peer:attach', id, name),
+  peerDetach: (id, name) => ipcRenderer.invoke('peer:detach', id, name),
+  peerAttachedNames: () => ipcRenderer.invoke('peer:attachedNames'),
+  peerForgetAttached: (id, name) => ipcRenderer.invoke('peer:forgetAttached', id, name),
+  peerVisible: () => ipcRenderer.invoke('peer:visible'),
+  peerSetVisible: (id, names) => ipcRenderer.invoke('peer:setVisible', id, names),
+  peerControl: (id, name, on) => ipcRenderer.invoke('peer:control', id, name, on),
+  peerResize: (id, name, cols, rows) => ipcRenderer.invoke('peer:resize', id, name, cols, rows),
+  peerInput: (id, name, data) => ipcRenderer.send('peer:input', id, name, data),
+  peerQuery: (id, name, kind, args) => ipcRenderer.invoke('peer:query', id, name, kind, args),
+  onPeerState: (callback) =>
+    ipcRenderer.on('peer-state', (_e, id, status) => callback(id, status)),
+  onPeerActivity: (callback) =>
+    ipcRenderer.on('peer-activity', (_e, id, name, state) => callback(id, name, state)),
+  onPeerReplay: (callback) =>
+    ipcRenderer.on('peer-replay', (_e, id, name, info) => callback(id, name, info)),
+  onPeerData: (callback) =>
+    ipcRenderer.on('peer-data', (_e, id, name, data) => callback(id, name, data)),
+  onPeerTelemetry: (callback) =>
+    ipcRenderer.on('peer-telemetry', (_e, id, name, tele) => callback(id, name, tele)),
+  onPeerControlChange: (callback) =>
+    ipcRenderer.on('peer-control', (_e, id, name, holder) => callback(id, name, holder)),
+  onPeerExit: (callback) =>
+    ipcRenderer.on('peer-exit', (_e, id, name, exitCode) => callback(id, name, exitCode)),
+  onPeerRemoved: (callback) =>
+    ipcRenderer.on('peer-removed', (_e, id) => callback(id)),
+  onPeerTunnel: (callback) =>
+    ipcRenderer.on('peer-tunnel', (_e, id, status) => callback(id, status)),
+  onSessionPeerControl: (callback) =>
+    ipcRenderer.on('session-peer-control', (_e, name, holder) => callback(name, holder)),
+
   // Session args
   getSessionArgs: (name) => ipcRenderer.invoke('session:getArgs', name),
   getSessionHistory: (name) => ipcRenderer.invoke('session:history', name),

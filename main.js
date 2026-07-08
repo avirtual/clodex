@@ -1108,8 +1108,75 @@ const DEFAULT_UI_SETTINGS = {
   // off-machine reach. Port is settings-file-only (no UI), like wirescopePort.
   remoteEnabled: false,
   remotePort: 7900,
+  // Peered Clodexes on other machines: [{ id, label, sshHost?, remotePort?,
+  // url? }]. The friendly path is sshHost — Clodex spawns and supervises the
+  // `ssh -N -L` forward itself (remotePort = peer's phone-access port,
+  // settings-file-only like other ports). url is the manual escape hatch
+  // (tailnet, custom tunnel): a loopback endpoint reaching the peer's
+  // server. sshHost wins when both are set.
+  peers: [],
+  // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
+  // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
+  // array via collectPeers/sanitizePeers and would clobber any extra fields.
+  // Written by the peer:attach / peer:detach handlers, pruned by syncPeerManager.
+  peerAttached: {},
+  // Per-peer session visibility: { [peerId]: [name, ...] }. NO key for a peer =
+  // show all (default, zero behavior change); a key restricts the sidebar to
+  // just those names. Unlike peerAttached an EMPTY array is meaningful here
+  // ("show none") and is kept. Same out-of-band-from-`peers` reasoning as
+  // peerAttached. Written by peer:setVisible, pruned by syncPeerManager.
+  peerVisible: {},
 };
 const THEME_KEYS = ['midnight', 'claude', 'light'];
+
+// Per-session raw-output ring buffer replayed on peer attach.
+const SCROLLBACK_MAX = 256 * 1024;
+
+function sanitizePeers(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const p of raw) {
+    if (!p || typeof p.id !== 'string') continue;
+    const url = typeof p.url === 'string' && /^https?:\/\//.test(p.url) ? p.url : null;
+    // ssh host or user@host — same charset ssh_config aliases allow.
+    const sshHost = typeof p.sshHost === 'string' && /^[a-zA-Z0-9._@-]{1,128}$/.test(p.sshHost) ? p.sshHost : null;
+    if (!url && !sshHost) continue;
+    out.push({
+      id: p.id,
+      label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url),
+      url, sshHost,
+      remotePort: Number.isInteger(p.remotePort) ? p.remotePort : 7900,
+    });
+  }
+  return out;
+}
+
+// Shared shape for the per-peer name maps (peerAttached, peerVisible): a plain
+// object of peerId -> array of session names held to the same regex sessions
+// use elsewhere. `keepEmpty` distinguishes the two callers: peerAttached drops
+// empty arrays (an empty attach set is just noise), peerVisible keeps them (an
+// empty array means "show none", which is meaningful). A non-object returns
+// null so the caller can fall back to {}.
+function sanitizePeerNameMap(raw, { keepEmpty }) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [id, names] of Object.entries(raw)) {
+    if (!Array.isArray(names)) continue;
+    const clean = names.filter((n) => typeof n === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(n));
+    if (clean.length || keepEmpty) out[id] = clean;
+  }
+  return out;
+}
+
+// Persisted peer-tab attachments: empty arrays dropped (see keepEmpty above).
+function sanitizePeerAttached(raw) {
+  return sanitizePeerNameMap(raw, { keepEmpty: false });
+}
+
+// Persisted per-peer visibility selection: empty arrays kept ("show none").
+function sanitizePeerVisible(raw) {
+  return sanitizePeerNameMap(raw, { keepEmpty: true });
+}
 
 const uiSettings = {
   _load() {
@@ -1130,6 +1197,9 @@ const uiSettings = {
         theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
         remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
         remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
+        peers: sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers,
+        peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
+        peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
       };
     } catch { return DEFAULT_UI_SETTINGS; }
   },
@@ -1151,6 +1221,9 @@ const uiSettings = {
       theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
       remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
       remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
+      peers: sanitizePeers(partial?.peers) ?? cur.peers,
+      peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
+      peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
     };
     try {
       atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
@@ -1996,6 +2069,11 @@ class ProxyPoller {
           }
           this.last.set(s.name, emitted);
           this.manager._sendToSession(s.name, 'session-proxy', s.name, emitted);
+          // Mirror the status-bar payload to attached peers (trimmed to the
+          // info-only view). No-op when nobody is attached.
+          if (remoteServer) {
+            try { remoteServer.pushTelemetry(s.name, { proxy: peerProxyView(emitted) }); } catch {}
+          }
           // W2 step-4 dark bridge: diff this live emission against the wire's
           // shaped payload into the shadow log (validation evidence for the
           // cutover). Always diffs the RAW poll record — the overlay must not
@@ -3913,7 +3991,15 @@ class SessionManager {
           if (raw === lastRaw) return; // push on any field change (pct or tokens)
           lastRaw = raw;
           const c = parseCtxFile(raw);
-          if (c.pct != null) this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size);
+          if (c.pct != null) {
+            this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size);
+            // Kept for peer attach seeding (getAttachInfo) + live-mirrored to
+            // attached peers, so the viewer's ctx chip tracks the owner's.
+            session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size };
+            if (remoteServer) {
+              try { remoteServer.pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
+            }
+          }
         } catch {}
       };
       // Needs-attention tail: the Notification hook appends raw event JSON to
@@ -3948,7 +4034,14 @@ class SessionManager {
     }
 
     ptyProc.onData((data) => {
+      // Always-on scrollback ring: what a peer attach replays. Best-effort
+      // recent output, not terminal state — capped small.
+      session.scrollback = ((session.scrollback || '') + data);
+      if (session.scrollback.length > SCROLLBACK_MAX) {
+        session.scrollback = session.scrollback.slice(-SCROLLBACK_MAX);
+      }
       this._sendToSession(name, 'pty-data', name, data);
+      if (remoteServer) { try { remoteServer.pushOutput(name, data); } catch {} }
 
       // In agent mode, PTY output is pass-through (intents come from JSONL)
       if (!agentType) {
@@ -3965,6 +4058,7 @@ class SessionManager {
       // the session → workspace → window mapping. Otherwise the sidebar
       // tab sticks around as a "dead" entry.
       this._sendToSession(name, 'session-exit', name, exitCode);
+      if (remoteServer) { try { remoteServer.notifyExit(name, exitCode); } catch {} }
       // Agents keep their entry on natural exit (they get --resume'd next
       // launch). A shell exiting naturally (user typed `exit`) is done —
       // don't respawn it forever. Quit-kills keep entries for restore.
@@ -5579,8 +5673,155 @@ manager._proxyPoller = proxyPoller;
 // `let` because SessionManager's activity/lifecycle fan-outs poke it directly.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Popover data sources — shared by the local IPC handlers and the peer query
+// endpoint, so a remote viewer's popup is fed by exactly the code path the
+// owner's own popup uses. All read-only snapshots.
+// ---------------------------------------------------------------------------
+
+async function fetchProxyContext(name, opts) {
+  const s = manager.sessions.get(name);
+  if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+  const snap = proxyPoller.snapshot(name);
+  if (!snap || !snap.linked || !snap.sessionId) {
+    return { ok: false, error: 'No live proxy session (unlinked)' };
+  }
+  try {
+    // utilization=1 opts into wirescope's capture-scan (tool used-counts +
+    // deadweight rollup) — heavier I/O, so only requested when the popover
+    // will render it (gated on the context_utilization capability).
+    let q = `/_context?session=${encodeURIComponent(snap.sessionId)}`;
+    if (opts && opts.utilization) q += '&utilization=1';
+    const r = await ProxyClient._getJson(s.proxyBase, q);
+    if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+    return { ok: true, data: r.json };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+async function fetchProxyReport(name, opts) {
+  const s = manager.sessions.get(name);
+  if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+  const snap = proxyPoller.snapshot(name);
+  if (!snap || !snap.linked || !snap.sessionId) {
+    return { ok: false, error: 'No live proxy session (unlinked)' };
+  }
+  if (snap.capabilities && snap.capabilities.context_report === false) {
+    return { ok: false, error: 'This proxy does not produce session reports' };
+  }
+  try {
+    let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
+    if (opts && opts.detail) q += '&detail=1';
+    const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
+    if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+    return { ok: true, data: r.json };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+async function fetchProxyBust(name) {
+  const s = manager.sessions.get(name);
+  if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
+  const snap = proxyPoller.snapshot(name);
+  if (!snap || !snap.linked || !snap.sessionId) {
+    return { ok: false, error: 'No live proxy session (unlinked)' };
+  }
+  try {
+    const r = await ProxyClient.bustSeries(s.proxyBase, snap.sessionId);
+    if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+    return { ok: true, data: r.json };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+function fetchSessionFiles(name) {
+  const s = manager.sessions.get(name);
+  if (!s) return { ok: false, error: 'Session not running' };
+  return { ok: true, cwd: s.cwd || null, files: s.fileTouches || [] };
+}
+
+function fetchFilePeek(filePath) {
+  const PEEK_MAX_BYTES = 512 * 1024;
+  try {
+    const st = fs.statSync(filePath);
+    if (!st.isFile()) return { ok: false, error: 'Not a regular file' };
+    const fd = fs.openSync(filePath, 'r');
+    let buf;
+    try {
+      const n = Math.min(st.size, PEEK_MAX_BYTES);
+      buf = Buffer.alloc(n);
+      fs.readSync(fd, buf, 0, n, 0);
+    } finally { fs.closeSync(fd); }
+    // NUL in the head = binary; the viewer shows a stub instead of garbage.
+    const binary = buf.subarray(0, 8192).includes(0);
+    return {
+      ok: true, size: st.size, mtime: st.mtimeMs,
+      truncated: st.size > PEEK_MAX_BYTES, binary,
+      content: binary ? null : buf.toString('utf-8'),
+    };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+async function fetchFileDiff(name, filePath) {
+  const s = manager.sessions.get(name);
+  const cwd = (s && s.cwd) || path.dirname(filePath);
+  const git = (args) => new Promise((resolve) => {
+    require('child_process').execFile('git', ['-C', cwd, ...args],
+      { maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+  });
+  const status = await git(['status', '--porcelain', '--', filePath]);
+  if (status == null) return { ok: false, error: 'Not in a git repository (or git unavailable)' };
+  if (status.startsWith('??')) return { ok: true, untracked: true, clean: false, diff: '' };
+  // HEAD-relative catches staged edits too; fresh repos without a HEAD
+  // degrade to worktree-vs-index.
+  let diff = await git(['diff', 'HEAD', '--no-color', '--', filePath]);
+  if (diff == null) diff = await git(['diff', '--no-color', '--', filePath]);
+  if (diff == null) return { ok: false, error: 'git diff failed' };
+  return { ok: true, untracked: false, clean: !status.trim(), diff };
+}
+
 let remoteServer = null;
 let remoteError = null;
+
+// Shape a session's proxy telemetry for the peer wire: the INFO the owner's
+// status bar shows, none of the reach-back. Dropping base/sessionId/
+// capabilities is load-bearing — it's what makes every owner-local control
+// (keep-warm, strip level, wirescope links, ctx/cost/bust popovers) degrade
+// to plain text on the viewer instead of firing requests at endpoints that
+// only exist on the owner's machine.
+function peerProxyView(p) {
+  if (!p) return null;
+  // `queries` advertises which popovers the peer query endpoint can answer
+  // for this session — the viewer lights those chips as clickable without
+  // ever holding base/sessionId/capabilities itself. Computed with the same
+  // gates the owner's own bar uses.
+  const caps = p.capabilities || {};
+  const queries = [];
+  if (caps.context_composition || caps.context_view || caps.context_utilization) queries.push('ctx');
+  if (caps.context_timeline && p.base && p.sessionId) queries.push('cost');
+  if (p.base && p.sessionId) queries.push('bust');
+  if (caps.context_report && p.base && p.sessionId) queries.push('report');
+  return {
+    linked: !!p.linked,
+    model: p.model || null,
+    context: p.context || null,
+    turns: p.turns != null ? p.turns : null,
+    cost: p.cost ? {
+      usd: p.cost.usd != null ? p.cost.usd : null,
+      requests: p.cost.requests != null ? p.cost.requests : null,
+    } : null,
+    warmth: p.warmth || null,
+    refusals: p.refusals || 0,
+    busts: p.busts || null,
+    // Info-only extras the popovers render: the strip level annotates the
+    // composition breakdown; queries is the clickability contract above.
+    stripLevel: typeof p.stripLevel === 'number' ? p.stripLevel : 0,
+    queries,
+  };
+}
 
 function syncRemoteServer() {
   const s = uiSettings.get();
@@ -5653,6 +5894,68 @@ function syncRemoteServer() {
       // picks up any pending vendor bump. Delay lets the HTTP response and
       // the ingress hop flush before the server dies under them.
       restartApp: () => restartClodex(),
+      // ---- peer-attach surface (Clodex-to-Clodex) ----
+      hostLabel: os.hostname().replace(/\.local$/, ''),
+      version: app.getVersion(),
+      getAttachInfo: (name) => {
+        const sess = manager.sessions.get(name);
+        if (!sess || !sess.agentType || sess._dead) return { ok: false };
+        return {
+          ok: true,
+          scrollback: Buffer.from(sess.scrollback || '', 'utf8'),
+          cols: sess.pty.cols, rows: sess.pty.rows,
+          // Status-bar seed so the viewer's bar fills with the replay
+          // instead of waiting out the first poll tick.
+          telemetry: {
+            proxy: peerProxyView(proxyPoller.snapshot(name)),
+            ctx: sess.ctxInfo || null,
+          },
+        };
+      },
+      sendInput: (name, data) => {
+        const sess = manager.sessions.get(name);
+        if (!sess || sess._dead) return { ok: false, error: 'Session not found' };
+        manager.write(name, data);
+        return { ok: true };
+      },
+      resizePty: (name, cols, rows) => {
+        const sess = manager.sessions.get(name);
+        if (!sess || sess._dead) return { ok: false, error: 'Session not found' };
+        manager.resize(name, cols, rows);
+        return { ok: true };
+      },
+      // Popover data pull (viewer's ctx/cost/bust/files/file-peek popups).
+      // Fixed kind whitelist; agent sessions only (bash stays private, same
+      // as the session list). For ctx the owner decides the utilization
+      // opt-in from its own capabilities — the viewer doesn't hold them.
+      query: (name, kind, args) => {
+        const sess = manager.sessions.get(name);
+        if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'no such session' };
+        const a = args || {};
+        switch (kind) {
+          case 'ctx': {
+            const snap = proxyPoller.snapshot(name);
+            const caps = (snap && snap.capabilities) || {};
+            return fetchProxyContext(name, { utilization: !!(caps.context_utilization || caps.context_skills) });
+          }
+          case 'report': return fetchProxyReport(name, { detail: !!a.detail });
+          case 'bust': return fetchProxyBust(name);
+          case 'files': return fetchSessionFiles(name);
+          case 'filePeek': return fetchFilePeek(String(a.path || ''));
+          case 'fileDiff': return fetchFileDiff(name, String(a.path || ''));
+          default: return { ok: false, error: `unknown query kind: ${kind}` };
+        }
+      },
+      // Owner-side visibility: chip on the session tab + a line in the IPC
+      // log, so a controlled session is never silently driven.
+      onControlChange: (name, holder) => {
+        manager._sendToSession(name, 'session-peer-control', name, holder);
+        manager._broadcast('ipc-message', {
+          ts: Date.now(), from: holder || 'peer', to: name,
+          kind: holder ? 'peer-control' : 'peer-release',
+          body: holder ? `${holder} took control of ${name}` : `remote control of ${name} released`,
+        });
+      },
     });
   }
   remoteError = null;
@@ -5660,6 +5963,80 @@ function syncRemoteServer() {
     remoteError = e.message;
     remoteServer = null;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Peer manager (peer-client.js) — outbound connections to other Clodexes.
+// Module-level like remoteServer; reconciled from settings.
+// ---------------------------------------------------------------------------
+
+let peerManager = null;
+let tunnelManager = null;
+
+// Drop a persisted peer-tab attachment (explicit detach, or a name the peer
+// no longer has). No-op if it wasn't persisted, so callers can fire freely.
+function forgetPeerAttached(id, name) {
+  const map = { ...(uiSettings.get().peerAttached || {}) };
+  if (!Array.isArray(map[id]) || !map[id].includes(name)) return;
+  const list = map[id].filter((n) => n !== name);
+  if (list.length) map[id] = list; else delete map[id];
+  uiSettings.set({ peerAttached: map });
+}
+
+function syncPeerManager() {
+  const s = uiSettings.get();
+  if (!peerManager) {
+    const { PeerManager } = require('./peer-client');
+    peerManager = new PeerManager({
+      emit: (channel, ...args) => { try { manager._broadcast(channel, ...args); } catch {} },
+    });
+  }
+  if (!tunnelManager) {
+    const { TunnelManager } = require('./peer-tunnel');
+    tunnelManager = new TunnelManager({
+      // Tunnel came up (fresh local port) or died: repoint/park the peer
+      // connection, and let the renderer show tunnel state next to the peer.
+      onState: (id, status) => {
+        resolvePeerUrls();
+        try { manager._broadcast('peer-tunnel', id, status); } catch {}
+      },
+    });
+  }
+  tunnelManager.sync(s.peers || []);
+  resolvePeerUrls();
+  // Prune persisted attachments + visibility selections for peers that no
+  // longer exist in settings.
+  const ids = new Set((s.peers || []).map((p) => p.id));
+  const patch = {};
+  for (const field of ['peerAttached', 'peerVisible']) {
+    const cur = s[field] || {};
+    const next = {};
+    let changed = false;
+    for (const [id, names] of Object.entries(cur)) {
+      if (ids.has(id)) next[id] = names; else changed = true;
+    }
+    if (changed) patch[field] = next;
+  }
+  if (Object.keys(patch).length) uiSettings.set(patch);
+}
+
+// Managed-tunnel peers ride their tunnel's current local port; while the
+// tunnel is down they keep a dead placeholder URL so the connection object
+// (and its sidebar presence) stays alive, just offline — calm, like a
+// sleeping laptop.
+function resolvePeerUrls() {
+  if (!peerManager) return;
+  const s = uiSettings.get();
+  const resolved = [];
+  for (const p of s.peers || []) {
+    if (p.sshHost) {
+      const url = tunnelManager ? tunnelManager.urlFor(p.id) : null;
+      resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1' });
+    } else {
+      resolved.push({ id: p.id, label: p.label, url: p.url });
+    }
+  }
+  peerManager.sync(resolved);
 }
 
 function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
@@ -5818,6 +6195,9 @@ app.whenReady().then(() => {
 
   // Remote access web UI (phone) — no-op unless remoteEnabled in settings.
   syncRemoteServer();
+
+  // Outbound connections to peered Clodexes — no-op with no peers configured.
+  syncPeerManager();
 
   // Mid-run watchdog. Autostart only fires at launch and on the settings
   // toggle, so a managed wirescope that dies BETWEEN launches (crash, OOM,
@@ -5981,73 +6361,21 @@ app.whenReady().then(() => {
   // (wirescope /_context). Read-only; gated by the caller on the
   // context_view/context_composition capability. Uses the live record's
   // session_id (from the snapshot), never a possibly-stale persisted one.
-  ipcMain.handle('proxy:context', async (_e, name, opts) => {
-    const s = manager.sessions.get(name);
-    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
-    const snap = proxyPoller.snapshot(name);
-    if (!snap || !snap.linked || !snap.sessionId) {
-      return { ok: false, error: 'No live proxy session (unlinked)' };
-    }
-    try {
-      // utilization=1 opts into wirescope's capture-scan (tool used-counts +
-      // deadweight rollup) — heavier I/O, so only requested when the popover
-      // will render it (gated on the context_utilization capability).
-      let q = `/_context?session=${encodeURIComponent(snap.sessionId)}`;
-      if (opts && opts.utilization) q += '&utilization=1';
-      const r = await ProxyClient._getJson(s.proxyBase, q);
-      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
-      return { ok: true, data: r.json };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
-    }
-  });
+  ipcMain.handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));
 
   // Fetch the on-demand per-session cost/efficiency report (wirescope /_report,
   // report_version 1). Disk-based on the proxy side, but we still resolve the
   // session_id from the live record and gate the caller on the
   // capabilities.context_report flag. detail=1 reserves the (v1.1) per-turn
   // series; harmless to pass against a v1 proxy that ignores it.
-  ipcMain.handle('proxy:report', async (_e, name, opts) => {
-    const s = manager.sessions.get(name);
-    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
-    const snap = proxyPoller.snapshot(name);
-    if (!snap || !snap.linked || !snap.sessionId) {
-      return { ok: false, error: 'No live proxy session (unlinked)' };
-    }
-    if (snap.capabilities && snap.capabilities.context_report === false) {
-      return { ok: false, error: 'This proxy does not produce session reports' };
-    }
-    try {
-      let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
-      if (opts && opts.detail) q += '&detail=1';
-      const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
-      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
-      return { ok: true, data: r.json };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
-    }
-  });
+  ipcMain.handle('proxy:report', (_e, name, opts) => fetchProxyReport(name, opts));
 
   // On-demand cache-bust forensics for one session (the bust-inspector
   // popover). Resolves the live session_id from the poller snapshot (never a
   // stale persisted one), then fetches /_bust — the per-transition divergence
   // series. Heavy disk read, called only when the popover opens (same profile
   // as proxy:report), never in the 5s poll.
-  ipcMain.handle('proxy:bust', async (_e, name) => {
-    const s = manager.sessions.get(name);
-    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
-    const snap = proxyPoller.snapshot(name);
-    if (!snap || !snap.linked || !snap.sessionId) {
-      return { ok: false, error: 'No live proxy session (unlinked)' };
-    }
-    try {
-      const r = await ProxyClient.bustSeries(s.proxyBase, snap.sessionId);
-      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
-      return { ok: true, data: r.json };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
-    }
-  });
+  ipcMain.handle('proxy:bust', (_e, name) => fetchProxyBust(name));
 
   // On-demand live-activity detail for one subagent row (the child popover).
   // Resolves the live session_id from the poller snapshot (never a stale
@@ -6248,49 +6576,9 @@ app.whenReady().then(() => {
   // the wire receipts or the legacy jsonl tap). Peek/diff are read-only looks
   // at the CURRENT disk/git state — created-vs-modified truth comes from git
   // here, never from the feed.
-  ipcMain.handle('session:files', (_e, name) => {
-    const s = manager.sessions.get(name);
-    if (!s) return { ok: false, error: 'Session not running' };
-    return { ok: true, cwd: s.cwd || null, files: s.fileTouches || [] };
-  });
-  ipcMain.handle('file:peek', (_e, filePath) => {
-    const PEEK_MAX_BYTES = 512 * 1024;
-    try {
-      const st = fs.statSync(filePath);
-      if (!st.isFile()) return { ok: false, error: 'Not a regular file' };
-      const fd = fs.openSync(filePath, 'r');
-      let buf;
-      try {
-        const n = Math.min(st.size, PEEK_MAX_BYTES);
-        buf = Buffer.alloc(n);
-        fs.readSync(fd, buf, 0, n, 0);
-      } finally { fs.closeSync(fd); }
-      // NUL in the head = binary; the viewer shows a stub instead of garbage.
-      const binary = buf.subarray(0, 8192).includes(0);
-      return {
-        ok: true, size: st.size, mtime: st.mtimeMs,
-        truncated: st.size > PEEK_MAX_BYTES, binary,
-        content: binary ? null : buf.toString('utf-8'),
-      };
-    } catch (e) { return { ok: false, error: e.message }; }
-  });
-  ipcMain.handle('file:diff', async (_e, name, filePath) => {
-    const s = manager.sessions.get(name);
-    const cwd = (s && s.cwd) || path.dirname(filePath);
-    const git = (args) => new Promise((resolve) => {
-      require('child_process').execFile('git', ['-C', cwd, ...args],
-        { maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-    });
-    const status = await git(['status', '--porcelain', '--', filePath]);
-    if (status == null) return { ok: false, error: 'Not in a git repository (or git unavailable)' };
-    if (status.startsWith('??')) return { ok: true, untracked: true, clean: false, diff: '' };
-    // HEAD-relative catches staged edits too; fresh repos without a HEAD
-    // degrade to worktree-vs-index.
-    let diff = await git(['diff', 'HEAD', '--no-color', '--', filePath]);
-    if (diff == null) diff = await git(['diff', '--no-color', '--', filePath]);
-    if (diff == null) return { ok: false, error: 'git diff failed' };
-    return { ok: true, untracked: false, clean: !status.trim(), diff };
-  });
+  ipcMain.handle('session:files', (_e, name) => fetchSessionFiles(name));
+  ipcMain.handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
+  ipcMain.handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   ipcMain.handle('file:open', (_e, filePath) => shell.openPath(filePath));
 
   // Focused per-session tool gating: persist disabledTools only (leaves
@@ -6502,6 +6790,7 @@ app.whenReady().then(() => {
       theme: s.theme,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
+      peers: s.peers,
     };
   });
   ipcMain.handle('settings:set', (_e, partial) => {
@@ -6513,6 +6802,7 @@ app.whenReady().then(() => {
     if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
     else wirescope.stop();
     syncRemoteServer();
+    syncPeerManager();
     return next;
   });
 
@@ -6523,6 +6813,86 @@ app.whenReady().then(() => {
     port: uiSettings.get().remotePort,
     error: remoteError,
   }));
+
+  // ---- Peered Clodexes: renderer-facing thin adapter. All protocol,
+  // reconnect and buffering logic lives in peer-client.js; events reach the
+  // renderer as peer-state / peer-activity / peer-replay / peer-data /
+  // peer-control / peer-exit broadcasts.
+  ipcMain.handle('peer:list', () => {
+    const out = peerManager ? peerManager.statuses() : [];
+    const tunnels = new Map((tunnelManager ? tunnelManager.statuses() : []).map((t) => [t.id, t]));
+    for (const st of out) st.tunnel = tunnels.get(st.id) || null;
+    return out;
+  });
+  ipcMain.handle('peer:attach', (_e, id, name) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return { ok: false, error: 'no such peer' };
+    const res = conn.attach(name);
+    // Persist the attachment so the tab auto-restores on the next app launch.
+    if (res && res.ok) {
+      const map = { ...(uiSettings.get().peerAttached || {}) };
+      const list = Array.isArray(map[id]) ? map[id] : [];
+      if (!list.includes(name)) { map[id] = [...list, name]; uiSettings.set({ peerAttached: map }); }
+    }
+    return res;
+  });
+  ipcMain.handle('peer:detach', (_e, id, name) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return { ok: false, error: 'no such peer' };
+    const res = conn.detach(name);
+    // Explicit detach = user closed the tab: stop persisting it.
+    forgetPeerAttached(id, name);
+    return res;
+  });
+  // Renderer reads this once at startup to seed its one-shot restore map.
+  ipcMain.handle('peer:attachedNames', () => uiSettings.get().peerAttached || {});
+  // Renderer prunes a persisted name that no longer exists on the live peer,
+  // without a live connection to detach from.
+  ipcMain.handle('peer:forgetAttached', (_e, id, name) => {
+    forgetPeerAttached(id, name);
+    return { ok: true };
+  });
+  // Per-peer visibility selection. Renderer reads the whole map at startup and
+  // keeps a local copy fresh from setVisible responses.
+  ipcMain.handle('peer:visible', () => uiSettings.get().peerVisible || {});
+  // names = array ⇒ restrict this peer to those names (empty = show none);
+  // names = null ⇒ delete the key (back to show-all). Sanitized through the
+  // same name regex the persistence layer enforces.
+  ipcMain.handle('peer:setVisible', (_e, id, names) => {
+    const map = { ...(uiSettings.get().peerVisible || {}) };
+    if (names === null || names === undefined) {
+      delete map[id];
+    } else if (Array.isArray(names)) {
+      map[id] = names.filter((n) => typeof n === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(n));
+    } else {
+      return { ok: false, error: 'names must be an array or null' };
+    }
+    uiSettings.set({ peerVisible: map });
+    return { ok: true, peerVisible: map };
+  });
+  ipcMain.handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.control(name, !!on, resolve);
+  }));
+  ipcMain.handle('peer:resize', (_e, id, name, cols, rows) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.resize(name, cols, rows, resolve);
+  }));
+  // Popover data for a peer session — one kind-dispatched pull, answered by
+  // the owner from the same sources its own popups use.
+  ipcMain.handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
+    const conn = peerManager && peerManager.get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.query(name, String(kind || ''), args, resolve);
+  }));
+  // Keystrokes: fire-and-forget like local pty-input; a failed send surfaces
+  // as the terminal simply not echoing.
+  ipcMain.on('peer:input', (_e, id, name, data) => {
+    const conn = peerManager && peerManager.get(id);
+    if (conn) conn.input(name, String(data ?? ''), () => {});
+  });
 
   // Global default tool-deny set new sessions inherit (the "*" agent-default).
   // An explicit [] is honored (deny nothing); separate store from uiSettings, so
@@ -6872,5 +7242,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   appQuitting = true;
   if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
+  if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
+  if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
   manager.killAll();
 });

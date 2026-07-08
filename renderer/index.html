@@ -140,6 +140,7 @@
       <button id="search-close" title="Close (Esc)" type="button">×</button>
     </div>
     <div id="terminal-container"></div>
+    <div id="peer-bar" class="hidden"></div>
     <div id="proxy-bar" style="display:none;">
       <span id="proxy-telemetry"></span>
       <span id="proxy-actions"></span>
@@ -155,6 +156,15 @@
       <div class="popover-actions">
         <button id="tools-popover-cancel" class="secondary" type="button">Cancel</button>
         <button id="tools-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
+    <div id="peer-select-popover" class="hidden">
+      <div class="popover-title"><span>Show sessions — <span id="peer-select-popover-name"></span></span><button type="button" class="popover-close" id="peer-select-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div id="peer-select-list" class="agent-checklist"></div>
+      <div class="popover-actions">
+        <button id="peer-select-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="peer-select-popover-apply" type="button">Apply</button>
       </div>
     </div>
     <div id="skills-popover" class="hidden">
@@ -480,6 +490,12 @@
           <span id="remote-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
+      </section>
+      <section>
+        <h4>Peered Clodexes</h4>
+        <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
+        <div id="prefs-peers"></div>
+        <button id="prefs-peer-add" class="secondary" type="button" style="margin-top: 6px;">Add peer</button>
       </section>
       <section>
         <h4>Claude MCP</h4>

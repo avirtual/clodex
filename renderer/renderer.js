@@ -487,7 +487,10 @@ function updateWindowTitle() {
 // Terminal management
 // ---------------------------------------------------------------------------
 
-function createTerminal(name) {
+// peer (optional): { id, name, controlled } marks a terminal attached to a
+// session on a peered Clodex — keystrokes go to the peer (only in control
+// mode) and geometry follows the owner unless we hold control.
+function createTerminal(name, peer = null) {
   const terminal = new Terminal({
     fontSize: 13,
     fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
@@ -516,12 +519,16 @@ function createTerminal(name) {
 
   terminal.open(wrapperEl);
 
-  // Send keystrokes to PTY
+  // Send keystrokes to PTY (peer terminals: only while holding control)
   terminal.onData((data) => {
+    if (peer) {
+      if (peer.controlled) window.api.peerInput(peer.id, peer.name, data);
+      return;
+    }
     window.api.writeToSession(name, data);
   });
 
-  sessions.set(name, { terminal, fitAddon, searchAddon, wrapperEl });
+  sessions.set(name, { terminal, fitAddon, searchAddon, wrapperEl, peer });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
@@ -555,9 +562,22 @@ function switchSession(name) {
     }).catch(() => {});
   }
 
-  // Fit and focus after becoming visible
-  const { fitAddon, terminal } = sessions.get(name);
+  renderPeerBar();
+
+  // Fit and focus after becoming visible. Peer terminals in read-only mode
+  // keep the owner's geometry (letterbox) — fitting would be a resize we
+  // have no authority to send.
+  const entry = sessions.get(name);
+  const { fitAddon, terminal } = entry;
   requestAnimationFrame(() => {
+    if (entry.peer) {
+      if (entry.peer.controlled) {
+        fitAddon.fit();
+        window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
+      }
+      terminal.focus();
+      return;
+    }
     fitAddon.fit();
     window.api.resizeSession(name, terminal.cols, terminal.rows);
     terminal.focus();
@@ -567,6 +587,7 @@ function switchSession(name) {
 function removeSession(name) {
   const s = sessions.get(name);
   if (s) {
+    if (s.peer) window.api.peerDetach(s.peer.id, s.peer.name);
     s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);
@@ -574,6 +595,8 @@ function removeSession(name) {
   removeSessionFromSidebar(name);
   updateWindowTitle();
   proxyState.delete(name);
+  ctxPct.delete(name);
+  ctxTokens.delete(name);
   filesState.delete(name);
   filesUnseen.delete(name);
 
@@ -1145,6 +1168,362 @@ window.api.onSessionAttention((name, attn) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Peered Clodexes — sessions running on another machine's Clodex, reached
+// through its remote server (loopback + SSH tunnel/tailnet). This side is a
+// thin adapter: all protocol/reconnect logic lives in main's peer-client.js.
+// A peer being offline is normal (laptops sleep) — render calm, never error.
+// ---------------------------------------------------------------------------
+
+const peerStatuses = new Map(); // peerId -> status from peer-state events
+const peerTunnels = new Map();  // peerId -> managed-tunnel status (may lag peerStatuses)
+const peerBar = document.getElementById('peer-bar');
+// Per-peer visibility selection mirrored from main (peer:visible). No entry for
+// a peer ⇒ show all its sessions; an array (possibly empty) restricts to those
+// names. Kept authoritative-enough for rendering by updating from setVisible
+// responses; seeded once at startup.
+let peerVisibleMap = {};
+
+// Whether a peer session should be listed under the current selection. No map
+// entry ⇒ everything shows; otherwise only names in the array. Attachment
+// overrides this at the call site (an open tab always renders).
+function peerNameVisible(id, name) {
+  const sel = peerVisibleMap[id];
+  return !Array.isArray(sel) || sel.includes(name);
+}
+
+// '@' can't appear in local session names, so keys never collide with them.
+function peerKey(id, name) { return `${name}@${id}`; }
+
+function peerDisplayHost(st) { return (st && (st.host || st.label)) || 'peer'; }
+
+function renderPeers() {
+  sessionList.querySelectorAll('[data-peer-ui]').forEach((el) => el.remove());
+  for (const [id, st] of peerStatuses) {
+    const header = document.createElement('div');
+    header.className = 'peer-header';
+    header.dataset.peerUi = '1';
+    // Offline + a managed tunnel that is itself down usually just means the
+    // other laptop is asleep; ssh's last stderr line rides the tooltip so a
+    // real misconfig (rejected key, unknown host) is diagnosable.
+    const tun = peerTunnels.get(id);
+    let stateText = st.online ? '' : 'offline';
+    if (!st.online && tun && tun.state === 'down') {
+      stateText = 'tunnel down';
+      if (tun.error) header.title = tun.error;
+    }
+    header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
+      `<span class="peer-label">${esc(peerDisplayHost(st))}</span>` +
+      `<span class="peer-state">${esc(stateText)}</span>` +
+      `<button class="peer-select" title="Choose which sessions to show" aria-label="Choose which sessions to show">&#8943;</button>`;
+    header.querySelector('.peer-select').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPeerSelectPopover(id, e.currentTarget);
+    });
+    sessionList.appendChild(header);
+
+    // Online: the peer's live session list. Offline: only tabs we already
+    // have open (so they stay reachable), dimmed.
+    // Visibility filter: hide names the user deselected — but an ATTACHED tab
+    // always renders (never an invisible open terminal). Offline rows are all
+    // attached, so attached-wins covers them; we still run peerNameVisible for
+    // uniform shape.
+    const rows = (st.online
+      ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats }))
+      : [...sessions.entries()]
+          .filter(([, e]) => e.peer && e.peer.id === id)
+          .map(([, e]) => ({ name: e.peer.name, cwd: '', activity: 'idle' })))
+      .filter((s) => peerNameVisible(id, s.name) || sessions.has(peerKey(id, s.name)));
+    for (const s of rows) {
+      const key = peerKey(id, s.name);
+      const item = document.createElement('div');
+      item.className = 'session-item peer-item' + (st.online ? '' : ' peer-offline');
+      item.dataset.peerUi = '1';
+      item.dataset.name = key;
+      item.dataset.activity = s.activity || 'idle';
+      if (sessions.has(key)) item.classList.add('attached');
+      const shortCwd = s.cwd ? s.cwd.replace(/^\/Users\/[^/]+/, '~') : '';
+      item.innerHTML = `
+        <span class="session-dot"></span>
+        <div class="session-info">
+          <div class="session-name" title="${esc(s.name)} on ${esc(peerDisplayHost(st))}">${esc(s.name)}<span class="peer-suffix">@${esc(peerDisplayHost(st))}</span></div>
+          <div class="session-meta">
+            <span class="session-type">remote</span>
+            ${shortCwd ? `<span class="session-cwd" title="${esc(s.cwd)}">${esc(shortCwd)}</span>` : ''}
+            <span class="session-badges">
+              <span class="session-warm" title="Prompt-cache warmth (time to expiry)"></span>
+              <span class="session-ctx" title="Context used"></span>
+            </span>
+          </div>
+        </div>` +
+        // Close (detach) only makes sense for an attached tab; unattached rows
+        // get no X (it was a dead affordance before).
+        (sessions.has(key) ? '<button class="session-close" title="Detach">&times;</button>' : '');
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('session-close')) return;
+        openPeerSession(id, s.name);
+      });
+      const closeBtn = item.querySelector('.session-close');
+      if (closeBtn) closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (sessions.has(key)) { removeSession(key); renderPeers(); }
+      });
+      sessionList.appendChild(item);
+      // Badges survive the row rebuild: attached rows are owned by the live
+      // telemetry stream (peer-telemetry keeps the maps fresh), unattached
+      // ones by the coarser stats riding the peer's session list.
+      if (!sessions.has(key) && s.stats && typeof s.stats.ctxPct === 'number') {
+        ctxPct.set(key, s.stats.ctxPct);
+      }
+      const pct = ctxPct.get(key);
+      if (typeof pct === 'number') applyCtxBadge(key, pct);
+      applyWarmBadge(key);
+    }
+  }
+  updateSidebarActive();
+}
+
+// Create the terminal + attach the peer stream, without stealing focus. Used
+// both by openPeerSession (user click) and the startup auto-restore.
+function attachPeerSession(id, name) {
+  const key = peerKey(id, name);
+  if (sessions.has(key)) return;
+  createTerminal(key, { id, name, controlled: false, cols: null, rows: null, holder: null });
+  window.api.peerAttach(id, name);
+  renderPeers();
+}
+
+function openPeerSession(id, name) {
+  attachPeerSession(id, name);
+  switchSession(peerKey(id, name));
+}
+
+// One-shot auto-reattach of peer tabs persisted from the previous app run.
+// Seeded once at startup (peer:attachedNames); each peer's names are consumed
+// as its live session list arrives. Present names attach and drop from the
+// pending set; a name still missing once the peer has settled online is
+// genuinely gone and gets forgotten from persistence. Consuming per-name is
+// the "one shot": an attached-then-closed tab leaves the pending set, so a
+// later offline/online blip can't resurrect it.
+const peerRestorePending = new Map(); // peerId -> Set<name> awaiting restore
+const peerRestoreSweep = new Set();   // peerId -> settle sweep already scheduled
+// The first online peer-state fires before the peer's session list is fetched
+// (peer-client sets online, then refreshes), so a name missing on that event
+// may just be un-fetched. Give the refresh a beat before declaring it dead.
+const PEER_RESTORE_SETTLE_MS = 6000;
+
+function maybeRestorePeer(id) {
+  const pending = peerRestorePending.get(id);
+  if (!pending || !pending.size) { peerRestorePending.delete(id); return; }
+  const st = peerStatuses.get(id);
+  if (!st || !st.online) return;       // wait for the peer to wake
+  const live = new Set((st.sessions || []).map((s) => s.name));
+  for (const name of [...pending]) {
+    if (live.has(name)) { attachPeerSession(id, name); pending.delete(name); }
+  }
+  if (!pending.size) { peerRestorePending.delete(id); return; }
+  // Names still missing: schedule one settle sweep. Live sessions that land in
+  // the interim get attached on the next peer-state; whatever's still missing
+  // while the peer is online after the sweep is forgotten.
+  if (peerRestoreSweep.has(id)) return;
+  peerRestoreSweep.add(id);
+  setTimeout(() => {
+    peerRestoreSweep.delete(id);
+    const left = peerRestorePending.get(id);
+    if (!left || !left.size) { peerRestorePending.delete(id); return; }
+    const cur = peerStatuses.get(id);
+    if (!cur || !cur.online) return;   // can't verify while offline — retry on next wake
+    peerRestorePending.delete(id);
+    const liveNow = new Set((cur.sessions || []).map((s) => s.name));
+    for (const name of left) {
+      if (liveNow.has(name)) attachPeerSession(id, name);
+      else window.api.peerForgetAttached(id, name);
+    }
+  }, PEER_RESTORE_SETTLE_MS);
+}
+
+// Control-mode strip above the terminal for the active peer session:
+// read-only by default, explicit Take control to type (and gain resize
+// authority); never both hidden and a peer tab active.
+function renderPeerBar() {
+  if (!peerBar) return;
+  const main = document.getElementById('main');
+  const entry = activeSession ? sessions.get(activeSession) : null;
+  if (!entry || !entry.peer) {
+    peerBar.classList.add('hidden');
+    if (main) main.classList.remove('has-peer-bar');
+    return;
+  }
+  if (main) main.classList.add('has-peer-bar');
+  const st = peerStatuses.get(entry.peer.id);
+  const online = !!(st && st.online);
+  const host = peerDisplayHost(st);
+  let stateText, btn = '';
+  if (!online) {
+    stateText = 'peer offline — reconnecting when it wakes';
+  } else if (entry.peer.controlled) {
+    stateText = 'you are in control';
+    btn = '<button id="peer-control-btn" class="controlling">Release control</button>';
+  } else if (entry.peer.holder) {
+    stateText = `controlled by ${esc(entry.peer.holder)}`;
+    btn = '<button id="peer-control-btn">Take control</button>';
+  } else {
+    stateText = 'read-only';
+    btn = '<button id="peer-control-btn">Take control</button>';
+  }
+  peerBar.innerHTML =
+    `<span class="peer-bar-name">${esc(entry.peer.name)}@${esc(host)}</span>` +
+    `<span class="peer-bar-state">${stateText}</span>${btn}`;
+  peerBar.classList.remove('hidden');
+  const b = document.getElementById('peer-control-btn');
+  if (b) b.addEventListener('click', togglePeerControl);
+}
+
+async function togglePeerControl() {
+  const entry = activeSession ? sessions.get(activeSession) : null;
+  if (!entry || !entry.peer) return;
+  const on = !entry.peer.controlled;
+  const res = await window.api.peerControl(entry.peer.id, entry.peer.name, on);
+  if (on && res && res.ok) {
+    entry.peer.controlled = true;
+    // Control mode carries resize authority: fit to our pane and push it.
+    entry.fitAddon.fit();
+    window.api.peerResize(entry.peer.id, entry.peer.name, entry.terminal.cols, entry.terminal.rows);
+    entry.terminal.focus();
+  } else if (!on) {
+    entry.peer.controlled = false;
+  }
+  renderPeerBar();
+}
+
+window.api.onPeerState((id, status) => {
+  peerStatuses.set(id, status);
+  renderPeers();
+  renderPeerBar();
+  maybeRestorePeer(id);
+});
+
+window.api.onPeerActivity((id, name, state) => {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(peerKey(id, name))}"]`);
+  if (el) el.dataset.activity = state;
+});
+
+// Fresh replay = fresh terminal: raw-byte history is not exact terminal
+// state, so reset before applying (also runs after every reconnect).
+window.api.onPeerReplay((id, name, info) => {
+  const entry = sessions.get(peerKey(id, name));
+  if (!entry) return;
+  entry.peer.cols = info.cols; entry.peer.rows = info.rows;
+  entry.peer.holder = info.holder || null;
+  entry.peer.controlled = false;   // control never survives a (re)attach
+  entry.terminal.reset();
+  if (info.cols && info.rows) entry.terminal.resize(info.cols, info.rows);
+  if (info.data && info.data.length) entry.terminal.write(info.data);
+  renderPeerBar();
+});
+
+window.api.onPeerData((id, name, data) => {
+  const entry = sessions.get(peerKey(id, name));
+  if (entry) entry.terminal.write(data);
+});
+
+// Status-bar telemetry for an attached peer session, streamed from the
+// owner's poll (plus a seed frame right behind the replay). Feeding it into
+// proxyState / the ctx maps under the peer key makes renderProxyBar, the
+// warmth badge, and the 1s countdown tick render it natively. The owner
+// ships an info-only view (no base/capabilities/sessionId), so every
+// owner-local control (keep-warm, strip, popovers, wirescope link) degrades
+// to plain text here instead of firing at endpoints that only exist on the
+// owner's machine. Partial frames: {proxy} rides the poll, {ctx} the
+// statusline side-channel — merge, don't replace.
+window.api.onPeerTelemetry((id, name, tele) => {
+  const key = peerKey(id, name);
+  if (!sessions.has(key)) return;
+  if (tele.proxy) {
+    proxyState.set(key, { payload: tele.proxy, at: Date.now() });
+    applyWarmBadge(key);
+  }
+  if (tele.ctx && typeof tele.ctx.pct === 'number') {
+    ctxPct.set(key, tele.ctx.pct);
+    if (tele.ctx.tok > 0 && tele.ctx.size > 0) {
+      ctxTokens.set(key, { used: tele.ctx.tok, size: tele.ctx.size });
+    }
+    applyCtxBadge(key, tele.ctx.pct);
+  }
+  if (key === activeSession) renderProxyBar();
+});
+
+window.api.onPeerControlChange((id, name, holder) => {
+  const entry = sessions.get(peerKey(id, name));
+  if (!entry) return;
+  const st = peerStatuses.get(id);
+  entry.peer.holder = holder;
+  // Our client label on that peer is `peer:<label>` (peer-client.js).
+  const mine = !!(holder && st && holder === `peer:${st.label}`);
+  entry.peer.controlled = mine;
+  renderPeerBar();
+});
+
+window.api.onPeerExit((id, name) => {
+  removeSession(peerKey(id, name));
+  renderPeers();
+});
+
+window.api.onPeerTunnel((id, status) => {
+  peerTunnels.set(id, status);
+  renderPeers();
+});
+
+window.api.onPeerRemoved((id) => {
+  peerStatuses.delete(id);
+  peerTunnels.delete(id);
+  for (const [key, entry] of [...sessions.entries()]) {
+    if (entry.peer && entry.peer.id === id) removeSession(key);
+  }
+  renderPeers();
+});
+
+// Owner side: one of OUR sessions is being viewed/driven from a peer —
+// flag its tab so remote control is never silent.
+window.api.onSessionPeerControl((name, holder) => {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  if (holder) {
+    el.dataset.remoteControl = holder;
+    el.title = `Remote control: ${holder}`;
+  } else {
+    delete el.dataset.remoteControl;
+    el.removeAttribute('title');
+  }
+});
+
+// Seed peer list on startup (peer-state events keep it fresh afterwards).
+window.api.peerList().then((statuses) => {
+  for (const st of statuses || []) {
+    peerStatuses.set(st.id, st);
+    if (st.tunnel) peerTunnels.set(st.id, st.tunnel);
+  }
+  if (peerStatuses.size) renderPeers();
+}).catch(() => {});
+
+// Seed the one-shot restore map from persisted attachments. peer-state events
+// may land before or after this resolves: if before, the peer is already in
+// peerStatuses and we kick its restore here; if after, its peer-state handler
+// finds the seeded pending entry. Either order restores exactly once.
+window.api.peerAttachedNames().then((map) => {
+  for (const [id, names] of Object.entries(map || {})) {
+    if (Array.isArray(names) && names.length) peerRestorePending.set(id, new Set(names));
+  }
+  for (const id of [...peerRestorePending.keys()]) maybeRestorePeer(id);
+}).catch(() => {});
+
+// Seed the per-peer visibility selection; peer-state events after this just
+// re-render against the local copy (kept fresh from peerSetVisible responses).
+window.api.peerVisible().then((map) => {
+  peerVisibleMap = map || {};
+  if (peerStatuses.size) renderPeers();
+}).catch(() => {});
+
 // Context-window usage per session, from Claude's statusline side-channel (the
 // real figures — the proxy only reports message/turn counts, not % or absolute
 // tokens of the window). Cached so the proxy bar can show them too.
@@ -1211,6 +1590,14 @@ function activeIsAgent() {
   const t = activeSession ? sessionTypeOf(activeSession) : null;
   return t === 'claude' || t === 'codex';
 }
+// Attached peer tab whose owner serves the popover query endpoint — such a
+// tab gets the status bar (for the files button) even with no telemetry.
+function activePeerQueryable() {
+  const entry = activeSession ? sessions.get(activeSession) : null;
+  if (!entry || !entry.peer) return false;
+  const st = peerStatuses.get(entry.peer.id);
+  return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('query'));
+}
 
 // Per-session quick-access icons on the left of the status bar. Claude gets a
 // Tools button (tool gating is Claude-only); both agent types get an Edit
@@ -1246,6 +1633,14 @@ function renderSessionActions(holdHtml = '') {
     btns.push('<button class="px-action" data-act="reload" title="Hard restart: reload tools/skills/settings from disk in a fresh conversation (the CLI only reads them at launch — /clear and --resume don\'t). The current conversation stays in 🕘 history.">🔄 reload</button>');
     btns.push('<button class="px-action" data-act="edit" title="Edit session settings">⚙ edit</button>');
   }
+  // Peer tabs (type "remote"): the touched-files popup is the one action that
+  // works across the link — served by the owner's query endpoint. Everything
+  // else on this bar is owner-local machinery.
+  if (activePeerQueryable()) {
+    const nFiles = (filesState.get(activeSession) || []).length;
+    const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
+    btns.push(`<button class="px-action" data-act="files" title="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
+  }
   el.innerHTML = btns.join('') + (holdHtml || '');
 }
 
@@ -1260,7 +1655,7 @@ function renderProxyBar() {
   // always reachable), or whenever there's telemetry to show. Hide it only for
   // non-agent sessions with nothing to display.
   if (!st || !st.payload) {
-    if (activeIsAgent()) {
+    if (activeIsAgent() || activePeerQueryable()) {
       bar.style.display = '';
       if (main) main.classList.add('has-proxy-bar');
       tele.className = '';
@@ -1306,8 +1701,13 @@ function renderProxyBar() {
   // When wirescope exposes the breakdown, the ctx seg becomes a button that
   // opens the composition popover. Standalone (no cap) → plain text.
   const ctxUtil = !!(p.capabilities && p.capabilities.context_utilization);
+  // Peer payloads carry no capabilities/base/sessionId (deliberate — no
+  // reach-back); `queries` is the owner's advertisement of which popovers
+  // its query endpoint can answer, so those chips stay clickable remotely.
+  const peerQueries = Array.isArray(p.queries) ? p.queries : [];
   const ctxClickable = !!(p.linked && p.capabilities &&
-    (p.capabilities.context_composition || p.capabilities.context_view || ctxUtil));
+    (p.capabilities.context_composition || p.capabilities.context_view || ctxUtil))
+    || peerQueries.includes('ctx');
   const ctxCls = ctxClickable ? ' px-ctx-btn' : '';
   const ctxAttr = ctxClickable ? ' data-act="ctx"' : '';
   const ctxTip = ctxClickable
@@ -1354,7 +1754,8 @@ function renderProxyBar() {
     // opens a native breakdown popover (read-carriage vs output, cumulative),
     // which itself links out to the full /_timeline dashboard. Stays plain text
     // otherwise, so a pre-deploy/standalone session just shows the estimate.
-    const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId);
+    const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId)
+      || peerQueries.includes('cost');
     if (timeline) {
       segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" title="Cost over time — click for the breakdown">~$${costTxt}</span>`);
     } else {
@@ -1389,7 +1790,7 @@ function renderProxyBar() {
       const contentCls = genuine.filter((c) => c.fault === 'content' && real(c) > 0);
       const contentCount = contentCls.reduce((n, c) => n + real(c), 0);
       const loud = contentCount > 0;
-      const clickable = !!(p.base && p.sessionId);
+      const clickable = !!(p.base && p.sessionId) || peerQueries.includes('bust');
       const cls = `px-seg px-bust${loud ? ' px-bust-loud' : ''}${clickable ? ' px-ctx-btn' : ''}`;
       const tip = loud
         ? `${contentCount} genuine cache-bust${contentCount === 1 ? '' : 's'} from a real prefix change — ${esc((contentCls[0] && contentCls[0].fix_hint) || 'inspect what changed')}.${clickable ? ' Click to inspect.' : ''}`
@@ -1881,7 +2282,13 @@ function checkWarmthCooldown(name) {
   if (!warmWarned.has(name)) {
     warmWarned.add(name);
     const mins = Math.max(1, Math.round(remaining / 60));
-    showToast(`${name}: cache going cold in ~${mins} min`, { kind: 'warm', name });
+    // Peer keys are name@<uuid> — show name@host instead (the key still
+    // rides the toast payload for click-to-switch).
+    const entry = sessions.get(name);
+    const disp = entry && entry.peer
+      ? `${entry.peer.name}@${peerDisplayHost(peerStatuses.get(entry.peer.id))}`
+      : name;
+    showToast(`${disp}: cache going cold in ~${mins} min`, { kind: 'warm', name });
   }
 }
 
@@ -2267,6 +2674,98 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !toolsPopover.classList.contains('hidden')) closeToolsPopover();
 });
 
+// --- Per-peer session visibility popover ---------------------------------
+// Clones the tools-popover idiom: a checklist of the peer's sessions, checked =
+// currently shown. No map entry ⇒ every session shown (all checked). Applying
+// with every LIVE name checked and no known-but-gone name unchecked collapses
+// back to show-all (peerSetVisible null); otherwise the checked set is stored.
+// Gone names (in the map but not currently live) are listed dimmed so a
+// temporarily-down session isn't silently dropped just by opening + applying.
+const peerSelectPopover = document.getElementById('peer-select-popover');
+const peerSelectPopoverName = document.getElementById('peer-select-popover-name');
+const peerSelectList = document.getElementById('peer-select-list');
+wireBulkToggles(peerSelectPopover, peerSelectList);
+
+function closePeerSelectPopover() {
+  peerSelectPopover.classList.add('hidden');
+  peerSelectPopover.dataset.peerId = '';
+}
+
+function openPeerSelectPopover(id, anchorBtn) {
+  const st = peerStatuses.get(id);
+  const sel = peerVisibleMap[id]; // undefined ⇒ show all
+  const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
+  // Known-but-not-live names to preserve: selection entries + our attached tabs
+  // for this peer that aren't in the live list. Offline peers have no live list,
+  // so everything we know rides this path.
+  const known = new Set(liveNames);
+  const gone = [];
+  const fromSel = Array.isArray(sel) ? sel : [];
+  const fromAttached = [...sessions.entries()]
+    .filter(([, e]) => e.peer && e.peer.id === id)
+    .map(([, e]) => e.peer.name);
+  for (const name of [...fromSel, ...fromAttached]) {
+    if (!known.has(name)) { known.add(name); gone.push(name); }
+  }
+  peerSelectList.innerHTML = '';
+  const rows = [
+    ...liveNames.map((name) => ({ name, gone: false })),
+    ...gone.map((name) => ({ name, gone: true })),
+  ];
+  if (!rows.length) {
+    peerSelectList.innerHTML = '<span class="hint-text">No sessions known for this peer yet.</span>';
+  }
+  for (const r of rows) {
+    const row = document.createElement('label');
+    row.className = 'agent-check' + (r.gone ? ' peer-select-gone' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = r.name;
+    cb.checked = peerNameVisible(id, r.name);
+    cb.dataset.gone = r.gone ? '1' : '';
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(r.name)}</strong>${r.gone ? ' <span class="skill-src">(gone)</span>' : ''}`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    peerSelectList.appendChild(row);
+  }
+  peerSelectPopoverName.textContent = peerDisplayHost(st);
+  peerSelectPopover.dataset.peerId = id;
+  peerSelectPopover.classList.remove('hidden');
+  // Anchor above the button, clamped to the viewport (mirrors tools popover).
+  const rect = anchorBtn.getBoundingClientRect();
+  const w = peerSelectPopover.offsetWidth;
+  peerSelectPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
+  peerSelectPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
+}
+
+document.getElementById('peer-select-popover-close').addEventListener('click', closePeerSelectPopover);
+document.getElementById('peer-select-popover-cancel').addEventListener('click', closePeerSelectPopover);
+document.getElementById('peer-select-popover-apply').addEventListener('click', async () => {
+  const id = peerSelectPopover.dataset.peerId;
+  if (!id) return closePeerSelectPopover();
+  const boxes = [...peerSelectList.querySelectorAll('input[type="checkbox"]')];
+  const checked = boxes.filter((cb) => cb.checked).map((cb) => cb.value);
+  // Collapse to show-all only when nothing is excluded: every box checked AND
+  // no gone-name was unchecked (an unchecked gone-name is a real exclusion).
+  const allChecked = boxes.every((cb) => cb.checked);
+  closePeerSelectPopover();
+  const res = await window.api.peerSetVisible(id, allChecked ? null : checked);
+  if (res && res.ok) peerVisibleMap = res.peerVisible || {};
+  else peerVisibleMap = (await window.api.peerVisible().catch(() => peerVisibleMap)) || peerVisibleMap;
+  renderPeers();
+});
+// Dismiss on outside click / Escape.
+document.addEventListener('mousedown', (e) => {
+  if (peerSelectPopover.classList.contains('hidden')) return;
+  if (peerSelectPopover.contains(e.target)) return;
+  if (e.target.closest('.peer-select')) return; // the opener handles itself
+  closePeerSelectPopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !peerSelectPopover.classList.contains('hidden')) closePeerSelectPopover();
+});
+
 // --- Per-session Skills popover ------------------------------------------
 // Mirrors the tools popover, but writes skillOverrides:{name:"off"} (which
 // reclaims the per-turn roster tokens) instead of permissions.deny. The
@@ -2626,6 +3125,35 @@ function renderSkillUtilization(a) {
   return renderUtilBlock(a.skills_utilization, a.skills && a.skills.per_skill, 'Skill utilization');
 }
 
+// Popover data router: local sessions fetch through their own IPC handlers,
+// peer sessions through the owner's query endpoint (peer:query → one
+// kind-dispatched RPC). Same response shapes either way, so every popover's
+// render code is shared — only this fetch seam knows the difference.
+function popoverApi(name) {
+  const entry = sessions.get(name);
+  if (entry && entry.peer) {
+    const q = (kind, args) => window.api.peerQuery(entry.peer.id, entry.peer.name, kind, args);
+    return {
+      remote: true,
+      ctx: () => q('ctx'),               // utilization opt-in is the owner's call
+      report: (opts) => q('report', opts),
+      bust: () => q('bust'),
+      files: () => q('files'),
+      peek: (p) => q('filePeek', { path: p }),
+      diff: (p) => q('fileDiff', { path: p }),
+    };
+  }
+  return {
+    remote: false,
+    ctx: (opts) => window.api.getProxyContext(name, opts),
+    report: (opts) => window.api.getProxyReport(name, opts),
+    bust: () => window.api.getProxyBust(name),
+    files: () => window.api.sessionFiles(name),
+    peek: (p) => window.api.filePeek(p),
+    diff: (p) => window.api.fileDiff(name, p),
+  };
+}
+
 async function openContextPopover(name, anchor) {
   ctxPopoverName.textContent = name;
   ctxPopover.dataset.name = name;
@@ -2636,9 +3164,11 @@ async function openContextPopover(name, anchor) {
   // advertises it — otherwise this is byte-identical to the composition fetch.
   // Skill usage rides the same &utilization=1 flag, so fetch it when either
   // tool-utilization or the v0.4.14 skills roster is available.
-  const caps = proxyState.get(name)?.payload?.capabilities || {};
+  const pl = proxyState.get(name)?.payload || {};
+  const caps = pl.capabilities || {};
+  const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
   const wantUtil = !!(caps.context_utilization || caps.context_skills);
-  const res = await window.api.getProxyContext(name, { utilization: wantUtil });
+  const res = await popoverApi(name).ctx({ utilization: wantUtil });
   // Bail if the popover was closed or retargeted while the fetch was in flight.
   if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
   if (!res || !res.ok) {
@@ -2720,7 +3250,7 @@ async function openContextPopover(name, anchor) {
   }
   // Full report → the deep, ground-truth cost/efficiency analysis (wirescope
   // /_report, report_version 1). Capability-gated; opens the report modal.
-  if (caps.context_report) {
+  if (caps.context_report || peerQueries.includes('report')) {
     html += `<span class="ctx-tools-link" data-act="report">Full cost &amp; efficiency report →</span>`;
   }
   ctxPopoverBody.innerHTML = html;
@@ -2886,7 +3416,7 @@ async function openCostPopover(name, anchor) {
   const w = costPopover.offsetWidth;
   costPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
   costPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-  const res = await window.api.getProxyReport(name, { detail: true });
+  const res = await popoverApi(name).report({ detail: true });
   if (costPopover.dataset.name !== name || costPopover.classList.contains('hidden')) return;
   if (!res || !res.ok) {
     costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cost timeline unavailable')}</div>`;
@@ -3030,7 +3560,7 @@ async function openBustPopover(name, anchor) {
   const w = bustPopover.offsetWidth;
   bustPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
   bustPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-  const res = await window.api.getProxyBust(name);
+  const res = await popoverApi(name).bust();
   if (bustPopover.dataset.name !== name || bustPopover.classList.contains('hidden')) return;
   if (!res || !res.ok) {
     bustPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cache-bust forensics unavailable')}</div>`;
@@ -3149,7 +3679,7 @@ async function openFilesPopover(name, anchor) {
   const w = filesPopover.offsetWidth;
   filesPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
   filesPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-  const res = await window.api.sessionFiles(name).catch(() => null);
+  const res = await popoverApi(name).files().catch(() => null);
   if (filesPopover.dataset.name !== name || filesPopover.classList.contains('hidden')) return;
   if (!res || !res.ok) {
     filesPopoverBody.innerHTML = `<div class="cost-note">${esc((res && res.error) || 'Session not running')}</div>`;
@@ -3234,14 +3764,17 @@ function renderFilePeek() {
 }
 
 async function openFilePeek(name, filePath) {
+  const api = popoverApi(name);
   filePeek = { path: filePath, tab: 'diff', diffRes: null, peekRes: null };
   filePeekPath.textContent = filePath;
   filePeekPath.title = filePath;
+  // A remote file has no local path to hand to an editor — Open is owner-only.
+  document.getElementById('file-peek-open').style.display = api.remote ? 'none' : '';
   filePeekBody.innerHTML = '<div class="cost-note">Loading…</div>';
   filePeekOverlay.classList.remove('hidden');
   const [diffRes, peekRes] = await Promise.all([
-    window.api.fileDiff(name, filePath).catch((e) => ({ ok: false, error: String(e) })),
-    window.api.filePeek(filePath).catch((e) => ({ ok: false, error: String(e) })),
+    api.diff(filePath).catch((e) => ({ ok: false, error: String(e) })),
+    api.peek(filePath).catch((e) => ({ ok: false, error: String(e) })),
   ]);
   if (!filePeek || filePeek.path !== filePath) return; // closed / retargeted mid-fetch
   filePeek.diffRes = diffRes;
@@ -3317,7 +3850,7 @@ async function openReportPanel(name) {
   reportOverlay.dataset.name = name;
   reportBody.innerHTML = '<div class="rep-note">Analyzing session capture…</div>';
   reportOverlay.classList.remove('hidden');
-  const res = await window.api.getProxyReport(name);
+  const res = await popoverApi(name).report();
   // Bail if the modal was closed/retargeted while the scan was in flight.
   if (reportOverlay.dataset.name !== name || reportOverlay.classList.contains('hidden')) return;
   if (!res || !res.ok) {
@@ -3739,10 +4272,17 @@ searchClose.addEventListener('click', closeSearch);
 const resizeObserver = new ResizeObserver(() => {
   if (!activeSession) return;
   const s = sessions.get(activeSession);
-  if (s) {
-    s.fitAddon.fit();
-    window.api.resizeSession(activeSession, s.terminal.cols, s.terminal.rows);
+  if (!s) return;
+  if (s.peer) {
+    // Read-only peer view: owner geometry is canonical, never fit.
+    if (s.peer.controlled) {
+      s.fitAddon.fit();
+      window.api.peerResize(s.peer.id, s.peer.name, s.terminal.cols, s.terminal.rows);
+    }
+    return;
   }
+  s.fitAddon.fit();
+  window.api.resizeSession(activeSession, s.terminal.cols, s.terminal.rows);
 });
 
 resizeObserver.observe(terminalContainer);
@@ -3771,9 +4311,16 @@ document.addEventListener('keydown', (e) => {
       closeDialog();
     } else if (activeSession) {
       const target = activeSession;
-      window.api.confirmKill(target).then((ok) => {
-        if (ok) window.api.killSession(target);
-      });
+      const entry = sessions.get(target);
+      if (entry && entry.peer) {
+        // Peer tabs detach locally; the session keeps running on its owner.
+        removeSession(target);
+        renderPeers();
+      } else {
+        window.api.confirmKill(target).then((ok) => {
+          if (ok) window.api.killSession(target);
+        });
+      }
     }
     return;
   }
@@ -4115,8 +4662,48 @@ function renderRemoteStatus(st) {
   }
 }
 
+// Peers editor rows: label + url + remove. IDs stay stable across edits so
+// main can reconcile connections instead of restarting them all.
+const prefsPeersBox = document.getElementById('prefs-peers');
+
+function addPeerRow(peer) {
+  const row = document.createElement('div');
+  row.className = 'peer-row';
+  row.dataset.peerId = peer.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
+  if (Number.isInteger(peer.remotePort)) row.dataset.remotePort = String(peer.remotePort);
+  row.innerHTML = `
+    <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || '')}">
+    <input type="text" class="peer-row-ssh" placeholder="ssh host (user@laptop2)" value="${esc(peer.sshHost || '')}">
+    <input type="text" class="peer-row-url" placeholder="or URL (advanced)" value="${esc(peer.url || '')}">
+    <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>`;
+  row.querySelector('.peer-row-remove').addEventListener('click', () => row.remove());
+  prefsPeersBox.appendChild(row);
+}
+
+function collectPeers() {
+  const out = [];
+  for (const row of prefsPeersBox.querySelectorAll('.peer-row')) {
+    const sshHost = row.querySelector('.peer-row-ssh').value.trim();
+    const url = row.querySelector('.peer-row-url').value.trim();
+    if (!sshHost && !url) continue;
+    const label = row.querySelector('.peer-row-label').value.trim();
+    const peer = { id: row.dataset.peerId, label: label || sshHost || url };
+    if (sshHost) peer.sshHost = sshHost;
+    if (url) peer.url = url;
+    // remotePort is settings-file-only (like wirescopePort) — carry the
+    // loaded value through the save instead of resetting it to default.
+    if (row.dataset.remotePort) peer.remotePort = parseInt(row.dataset.remotePort, 10);
+    out.push(peer);
+  }
+  return out;
+}
+
+document.getElementById('prefs-peer-add').addEventListener('click', () => addPeerRow({}));
+
 async function openPrefs() {
   const s = await window.api.getSettings();
+  prefsPeersBox.innerHTML = '';
+  for (const p of s.peers || []) addPeerRow(p);
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
   prefsClaudeCmd.value = s.statusline.claudeCommand || '';
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
@@ -4156,6 +4743,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     compactOnResume: prefsCompactOnResume.checked,
     remoteEnabled: prefsRemoteEnabled.checked,
+    peers: collectPeers(),
   });
   // Default tool denies live in a separate store (the "*" agent-default), so
   // persist them via their own setter. collectToolChecklist returns the

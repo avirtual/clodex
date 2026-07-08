@@ -675,7 +675,8 @@ html, body {
 /* Per-session Tools / Skills quick-access popovers (anchored above the bar). */
 #tools-popover,
 #skills-popover,
-#agents-popover {
+#agents-popover,
+#peer-select-popover {
   position: fixed;
   z-index: 50;
   width: 520px;
@@ -689,13 +690,15 @@ html, body {
   padding: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
-#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden { display: none; }
+#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden, #peer-select-popover.hidden { display: none; }
 #tools-popover .popover-title,
 #skills-popover .popover-title,
-#agents-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+#agents-popover .popover-title,
+#peer-select-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #tools-popover #popover-tools-list,
 #skills-popover #popover-skills-list,
-#agents-popover #popover-agents-list { overflow-y: auto; flex: 1; }
+#agents-popover #popover-agents-list,
+#peer-select-popover #peer-select-list { overflow-y: auto; flex: 1; }
 
 /* Lay the (short, single-word) tool/skill checklists out in two columns so the
    popover stays wide-and-short instead of a tall scroll. */
@@ -763,7 +766,8 @@ html, body {
 }
 #tools-popover .popover-actions,
 #skills-popover .popover-actions,
-#agents-popover .popover-actions {
+#agents-popover .popover-actions,
+#peer-select-popover .popover-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
 }
 
@@ -2146,3 +2150,108 @@ html, body {
   min-width: 260px;
   min-height: 60px;
 }
+
+/* --- Peered Clodexes ------------------------------------------------------ */
+
+.peer-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  user-select: none;
+}
+.peer-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  opacity: 0.5;
+  flex: none;
+}
+.peer-dot.online { background: var(--ok); opacity: 1; }
+.peer-state { margin-left: auto; font-style: italic; text-transform: none; }
+/* "Choose which sessions to show" opener on the peer header. Unobtrusive chrome
+   that brightens on hover, matching the sidebar's other icon affordances. When
+   a state label is present it sits to the right of it; margin-left:auto keeps it
+   right-aligned when there's no state text. */
+.peer-select {
+  margin-left: auto;
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.peer-state + .peer-select { margin-left: 4px; }
+.peer-select:hover { color: var(--text); }
+/* A selected session the peer no longer lists (asleep / gone): shown so it
+   isn't silently dropped from the selection, but visibly de-emphasized. */
+.agent-check.peer-select-gone { opacity: 0.55; }
+
+.session-item.peer-offline { opacity: 0.5; }
+.session-name .peer-suffix { color: var(--text-dim); font-size: 11px; }
+
+/* Owner-side flag: this local session is being driven from a peer. */
+.session-item[data-remote-control] .session-name::after {
+  content: " [remote]";
+  color: var(--accent);
+  font-size: 10px;
+}
+
+/* Control strip above the terminal for the active peer session. */
+#peer-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 26px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
+}
+#peer-bar.hidden { display: none; }
+#peer-bar .peer-bar-name { color: var(--text); }
+#peer-bar .peer-bar-state { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+#peer-bar button {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text);
+  background: var(--active-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  cursor: pointer;
+  flex: none;
+}
+#peer-bar button:hover { border-color: var(--accent); }
+#peer-bar button.controlling { border-color: var(--accent); color: var(--accent); }
+
+/* Prefs: peer rows (label + url + remove). */
+#prefs-peers .peer-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+#prefs-peers .peer-row-label { flex: 0 0 110px; }
+#prefs-peers .peer-row-ssh { flex: 1; }
+#prefs-peers .peer-row-url { flex: 1; }
+#prefs-peers .peer-row-remove { flex: none; padding: 2px 8px; }
+
+/* Peer bar reserves the terminal's top edge the same way the proxy bar
+   reserves the bottom — never overlay terminal rows. */
+#main.has-peer-bar #terminal-container { top: 26px; }
