@@ -4672,6 +4672,17 @@ window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
     }
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
+    // Seed the dot from the reattach snapshot — activity/attention events
+    // fired while this window was detached were dropped, and the next live
+    // event may be a turn away.
+    const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
+    if (item) {
+      if (entry.activity) item.dataset.activity = entry.activity;
+      if (entry.attention) {
+        item.dataset.attention = entry.attention.kind;
+        item.title = entry.attention.message || 'Needs your attention';
+      }
+    }
     if (entry.replay) terminal.write(entry.replay);
     if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
     if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {

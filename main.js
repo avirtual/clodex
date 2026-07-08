@@ -259,6 +259,18 @@ const COMPACT_CONTINUATION_DELAY = 1500;
 // before injecting the handoff — a cold boot's input loop settles slower than a
 // post-compact redraw, so give it more room than COMPACT_CONTINUATION_DELAY.
 const RELOAD_CONTINUATION_DELAY = 2500;
+// Safety valve for the inject-hold queue: if the release event never comes
+// (compact summary never lands, activity tracker wedged at thinking), force
+// the flush rather than holding messages hostage forever. Native /compact on
+// a heavy context runs a couple of minutes; this sits well past it. A
+// legitimately longer turn just degrades to today's behavior — the flush
+// lands mid-turn and becomes the next turn, exactly as an unheld inject would.
+const INJECT_HOLD_TIMEOUT = 5 * 60 * 1000;
+// Flushing starts with Ctrl-U, which would eat a half-typed operator draft.
+// If a human touched the pane this recently, defer the flush and retry — the
+// hold gave US the timing decision, so the draft hazard is ours to avoid
+// (immediate injects keep today's behavior; their timing is the sender's).
+const INJECT_DRAFT_QUIET = 10 * 1000;
 
 // Crash-safe file write: same-dir temp → fsync contents → atomic rename →
 // fsync the parent dir. A power loss or interrupted write leaves the previous
@@ -2062,7 +2074,10 @@ class ProxyPoller {
       const cmd = (SessionManager.CONTEXT_COMMANDS[s.type] || {}).compact;
       if (!cmd) return;
       this.autoCompacted.set(s.name, Date.now());
-      this.manager._injectText(s, cmd);
+      // bypassHold: shouldAutoCompact already proved the prompt is parked and
+      // dialog-free, and a bare slash command must never queue (a '\n'-joined
+      // flush batch would corrupt it).
+      this.manager._injectText(s, cmd, { bypassHold: true });
       this.manager._broadcast('ipc-message', {
         type: 'context', from: s.name, to: s.name,
         body: `auto-compact → ${cmd} (cache expiring, ~${Math.round(payload.context.inputTokens / 1000)}k context, no keep-warm)`,
@@ -4019,6 +4034,10 @@ class SessionManager {
       pid: s.pty.pid,
       cwd: s.cwd,
       workspaceId: s.workspaceId,
+      // Live turn state + dialog fact, so list() consumers (tray menu,
+      // reattach seeding) don't start stale until the next activity event.
+      activity: s.activityState || 'idle',
+      attention: s.needsAttention ? s.needsAttention.kind : null,
     }));
   }
 
@@ -4048,6 +4067,8 @@ class SessionManager {
   _cleanup(name) {
     const s = this.sessions.get(name);
     if (!s) return;
+    clearTimeout(s._injectHoldTimer);
+    clearTimeout(s._injectFlushRetry);
     if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
     if (s.watcher) s.watcher.stop();
     if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
@@ -4095,7 +4116,10 @@ class SessionManager {
   _emitActivity(name, state, notify) {
     // Stamp peer-visibility facts (both intent paths funnel through here).
     const s = this.sessions.get(name);
-    if (s && s.activityState !== state) { s.activityState = state; s.activityTs = Date.now(); }
+    if (s && s.activityState !== state) {
+      s.activityState = state; s.activityTs = Date.now();
+      if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
+    }
     // A turn starting means the CLI is NOT parked at its prompt — drop the
     // atPrompt latch (covers injected turns too, which bypass write()); the
     // turn's terminal wire receipt re-stamps it. Invariant: atPrompt holds
@@ -4106,6 +4130,8 @@ class SessionManager {
     // cleared on 'idle': the dialog notification often lands AFTER the
     // activity tracker's quiet-fallback flips to idle.
     if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
+    // The idle transition is the busy-hold's release event.
+    if (s && state === 'idle') this._maybeFlushInjectQueue(s);
     this._sendToSession(name, 'session-activity', name, state);
     // notify is only ever true on a real end-of-turn idle, so it doubles as
     // the remote client's "refetch the transcript now" signal.
@@ -4160,6 +4186,10 @@ class SessionManager {
   _setAttention(session, attn) {
     session.needsAttention = attn;
     this._sendToSession(session.name, 'session-attention', session.name, attn);
+    if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
+    // Clearing a dialog fact is the dialog-hold's release event. (The flush
+    // re-checks all holds, so a clear that rode a turn-start is a no-op.)
+    if (!attn) this._maybeFlushInjectQueue(session);
   }
 
   // Compact summary landed. If this compact was self-fired via
@@ -4173,9 +4203,104 @@ class SessionManager {
     if (cont) {
       session._compactContinuation = null;
       setTimeout(() => {
-        if (!session._dead) this._injectText(session, cont);
+        if (session._dead) return;
+        this._injectText(session, cont, { bypassHold: true });
+        // Release the guard only after the continuation's deferred Enter has
+        // fired, so anything queued flushes as a strictly LATER turn.
+        const delay = cont.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY;
+        setTimeout(() => this._releaseCompactGuard(session), delay + 200);
       }, COMPACT_CONTINUATION_DELAY);
+    } else {
+      // Summary landed with nothing stashed (manual /compact, or the stash
+      // already fired). No continuation to order against — release now.
+      this._releaseCompactGuard(session);
     }
+  }
+
+  // Inject-hold queue: while the session can't usefully receive a turn,
+  // programmatic injections queue in clodex instead of stacking up in the
+  // CLI's stdin, then flush as ONE concatenated turn. Holding costs no
+  // latency in turn-terms — a mid-turn inject only becomes the next turn
+  // anyway — and batching N held messages saves N-1 full-context billings
+  // and lets the agent see them together (message 2 may supersede message 1).
+  // Three hold reasons, three release events:
+  //   'compact-window'  self-fired /compact ran, continuation hasn't fired —
+  //                     an inject here would steal the first post-compact
+  //                     turn. Released by _fireCompactContinuation.
+  //   'dialog'          a permission dialog is OPEN (attention.js) — the
+  //                     inject's Enter would answer it. Released when the
+  //                     attention fact clears. Only 'permission' holds:
+  //                     'other' has no evidence of a dialog (settled in
+  //                     attention.js) and must not gate delivery.
+  //   'busy'            mid-turn ('thinking' from either observation path).
+  //                     Released on the idle transition.
+  // Human keystrokes ride write(), not _injectText — never held.
+  _injectHoldReason(session) {
+    if (session._compactGuard) return 'compact-window';
+    if (session.needsAttention && session.needsAttention.kind === 'permission') return 'dialog';
+    if (session.activityState === 'thinking') return 'busy';
+    return null;
+  }
+
+  // Arm the safety valve if it isn't already running. One timer per session,
+  // shared by all hold reasons: 5 min after the FIRST cause (guard armed or
+  // first message queued), force the flush past whatever hold is stuck.
+  _armInjectValve(session) {
+    if (session._injectHoldTimer) return;
+    session._injectHoldTimer = setTimeout(() => {
+      session._injectHoldTimer = null;
+      console.warn(`inject hold ${session.name}: release never came (${this._injectHoldReason(session) || 'none'}) — forcing flush after timeout`);
+      // A wedged compact window must not survive the valve — future injects
+      // would immediately re-queue against it.
+      session._compactGuard = false;
+      this._maybeFlushInjectQueue(session, true);
+    }, INJECT_HOLD_TIMEOUT);
+  }
+
+  // Armed on the [agent:context compact] intent path only — a human's manual
+  // /compact and auto-compact-before-cold never queue anything.
+  _armCompactGuard(session) {
+    session._compactGuard = true;
+    this._armInjectValve(session);
+  }
+
+  _releaseCompactGuard(session) {
+    if (!session._compactGuard) return;
+    session._compactGuard = false;
+    this._maybeFlushInjectQueue(session);
+  }
+
+  // Flush the queue as a single '\n'-joined inject — the \n→\r PTY path
+  // already carries multi-line dm bodies as one message, so the batch lands
+  // as ONE turn in arrival order. No-op while a hold reason stands (the
+  // matching release event re-attempts) unless forced by the valve.
+  _maybeFlushInjectQueue(session, force = false) {
+    clearTimeout(session._injectFlushRetry);
+    session._injectFlushRetry = null;
+    if (session._dead) return;
+    const queue = session._injectQueue;
+    if (!queue || !queue.length) {
+      // Nothing held; drop the valve unless a compact window still needs it.
+      if (!session._compactGuard) {
+        clearTimeout(session._injectHoldTimer);
+        session._injectHoldTimer = null;
+      }
+      return;
+    }
+    if (!force) {
+      if (this._injectHoldReason(session)) return;
+      const sinceHuman = Date.now() - (session.lastUserInputTs || 0);
+      if (sinceHuman < INJECT_DRAFT_QUIET) {
+        session._injectFlushRetry = setTimeout(
+          () => this._maybeFlushInjectQueue(session),
+          INJECT_DRAFT_QUIET - sinceHuman + 250);
+        return;
+      }
+    }
+    clearTimeout(session._injectHoldTimer);
+    session._injectHoldTimer = null;
+    session._injectQueue = [];
+    this._injectText(session, queue.join('\n'), { bypassHold: true });
   }
 
   // --- JSONL text scanning (agent mode) ---
@@ -4710,7 +4835,13 @@ class SessionManager {
     }
     // Inject the literal slash command as a turn — same PTY-write path as any
     // other injection (_injectText defers the Enter off the death window).
-    this._injectText(session, cmd);
+    // bypassHold: the intent often lands before the sender's own idle event,
+    // and a queued bare slash command must never '\n'-join into a flush batch
+    // (the command line would swallow the rest as garbage).
+    this._injectText(session, cmd, { bypassHold: true });
+    // Guard AFTER the /compact write itself is on the wire: from here until
+    // the continuation fires, injections queue instead of racing it.
+    if (sub === 'compact') this._armCompactGuard(session);
     this._broadcast('ipc-message', {
       type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${cmd}`,
     });
@@ -4772,8 +4903,17 @@ class SessionManager {
     this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
   }
 
-  _injectText(session, text) {
+  _injectText(session, text, opts = {}) {
     if (session._dead) return;
+    // Hold gate (see _injectHoldReason): while the session is compacting,
+    // dialog-blocked, or mid-turn, queue instead of writing — the matching
+    // release event (or the safety valve) flushes the batch as one turn.
+    // Only the compact continuation and the flush itself bypass.
+    if (!opts.bypassHold && this._injectHoldReason(session)) {
+      (session._injectQueue = session._injectQueue || []).push(text);
+      this._armInjectValve(session);
+      return;
+    }
     // Ctrl-U to clear line, send text, then Enter
     const payload = '\x15' + text.replace(/\n/g, '\r');
     try { session.pty.write(payload); } catch { return; }
@@ -4956,7 +5096,12 @@ function buildTrayMenu() {
       const wsName = ws ? (ws.name || 'Workspace') : 'Workspace';
       template.push({ label: wsName, enabled: false });
       for (const s of list) {
-        const indicator = s.type === 'bash' ? '•' : '●';
+        // Native menus can't color text without per-item images, so the
+        // state rides the glyph: ! blocked on the human · ● mid-turn ·
+        // ○ parked at its prompt. Bash sessions have no turn concept.
+        const indicator = s.type === 'bash' ? '•'
+          : s.attention ? '!'
+          : s.activity === 'thinking' ? '●' : '○';
         template.push({
           label: `  ${indicator} ${s.name} (${s.type})`,
           click: () => {
@@ -5084,6 +5229,19 @@ function initTray() {
 
 function refreshTrayMenu() {
   if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+// Activity/attention transitions want the tray's state glyphs fresh, but they
+// fire on every turn boundary — trailing-edge debounce so a burst of
+// transitions costs one rebuild. (macOS snapshots an already-open tray menu,
+// so a rebuild never yanks it out from under the user.)
+let trayRefreshTimer = null;
+function scheduleTrayRefresh() {
+  if (trayRefreshTimer || !tray) return;
+  trayRefreshTimer = setTimeout(() => {
+    trayRefreshTimer = null;
+    refreshTrayMenu();
+  }, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -6570,6 +6728,11 @@ app.whenReady().then(() => {
           cwd: entry.cwd,
           label: entry.label || null,
           replay,
+          // Seed the sidebar dot with the CURRENT state — activity events
+          // while detached were dropped, so without this a busy or blocked
+          // session reattaches showing idle grey until its next transition.
+          activity: session.activityState || 'idle',
+          attention: session.needsAttention || null,
           ...readCtxFor(entry.name),
           proxy: proxyPoller.snapshot(entry.name),
         });
