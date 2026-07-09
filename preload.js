@@ -162,6 +162,8 @@ window.api = {
   // ::marker lines back via onPeerDeployLine).
   peerProbe: (sshHost, port) => ipcRenderer.invoke('peer:probe', sshHost, port),
   peerDeploy: (sshHost, opts) => ipcRenderer.invoke('peer:deploy', sshHost, opts),
+  peerDeployFix: (sshHost, port, label, logText) =>
+    ipcRenderer.invoke('peer:deployFix', sshHost, port, label, logText),
   onPeerDeployLine: (callback) =>
     ipcRenderer.on('peer-deploy-line', (_e, sshHost, line) => callback(sshHost, line)),
 
@@ -196,6 +198,8 @@ window.api = {
   showPeerContextMenu: (state) => ipcRenderer.send('peer:context-menu', state),
   showPeerHeaderMenu: (state) => ipcRenderer.send('peer:header-menu', state),
   confirmPeerRestart: (label) => ipcRenderer.invoke('dialog:confirmPeerRestart', label),
+  confirmPeerUpdate: (label) => ipcRenderer.invoke('dialog:confirmPeerUpdate', label),
+  confirmDeployFix: (sshHost) => ipcRenderer.invoke('dialog:confirmDeployFix', sshHost),
   confirmPeerKill: (name, label) => ipcRenderer.invoke('dialog:confirmPeerKill', name, label),
   confirmPeerReload: (name, label) => ipcRenderer.invoke('dialog:confirmPeerReload', name, label),
   onPeerContextAction: (callback) =>

@@ -2359,8 +2359,9 @@ html, body {
 .peer-status-err  { color: var(--error); }
 .peer-status-dim  { color: var(--text-dim); }
 .peer-status-note { color: var(--text-dim); margin-top: 4px; }
-.peer-status-actions { margin-top: 8px; }
+.peer-status-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
 .peer-install-btn { padding: 3px 12px; }
+.peer-fix-btn, .peer-retest-btn { padding: 3px 12px; }
 .peer-status-pre {
   margin: 6px 0 0;
   padding: 6px 8px;

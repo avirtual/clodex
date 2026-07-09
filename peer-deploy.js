@@ -111,7 +111,67 @@ function parseDeployLine(rawLine) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Agent-fallback helpers: when a deploy ends in a real failure the wizard can
+// spin up an ad-hoc Claude session to untangle it. Both are pure so they unit-
+// test without Electron; main.js owns the manager.create + spill injection.
+// ---------------------------------------------------------------------------
+
+const FIX_NAME_MAX = 64; // mirrors the session-name regex ceiling [a-zA-Z0-9._-]{1,64}
+
+// Name the ad-hoc fix session: sanitize the peer label to a NAME_RE-safe stem,
+// prefix `fix-`, and suffix `-2`, `-3`… on collision with an existing session.
+// `taken` is a Set (or array) of names already in use.
+function fixSessionName(label, taken = new Set()) {
+  const has = (n) => (taken instanceof Set ? taken.has(n) : Array.isArray(taken) && taken.includes(n));
+  let stem = String(label || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  if (!stem) stem = 'peer';
+  const base = `fix-${stem}`.slice(0, FIX_NAME_MAX);
+  if (!has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const suffix = `-${i}`;
+    const cand = `fix-${stem}`.slice(0, FIX_NAME_MAX - suffix.length) + suffix;
+    if (!has(cand)) return cand;
+  }
+  return `fix-${Date.now().toString(36)}`.slice(0, FIX_NAME_MAX);
+}
+
+// Build the briefing the fix session reads (delivered via the spill channel, so
+// its size is fine — it @-attaches). Names the box, the exact success check, the
+// captured deploy log, and points at the playbook + idempotent installer.
+//
+// The fix session's cwd is the operator's HOMEDIR, not the repo, so relative
+// `peering/…` pointers would be dead. When `docsDir` is given (main passes the
+// on-disk peering/ dir) we render absolute paths; we ALWAYS also name the GitHub
+// repo as the honest backstop — in a packaged app those files live inside
+// app.asar, which an external claude CLI can't read.
+function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {}) {
+  const host = String(sshHost || 'the box');
+  const p = Number.isInteger(port) ? port : 7900;
+  const who = label ? ` (peer "${label}")` : '';
+  const join = (f) => (docsDir ? `${String(docsDir).replace(/\/+$/, '')}/${f}` : `peering/${f}`);
+  const readme = join('README.md');
+  const script = join('clodex-deploy.sh');
+  const repo = 'https://github.com/avirtual/clodex';
+  return [
+    `You're an ad-hoc troubleshooting session. A Clodex headless deploy to ${host}${who} just failed and I need you to get it running.`,
+    ``,
+    `GOAL: Clodex should answer the peer protocol on http://127.0.0.1:${p}/ of ${host}, running as a systemd --user service. Verify with:`,
+    `  ssh ${host} 'curl -fsS http://127.0.0.1:${p}/api/peer/hello'`,
+    `Success = JSON containing "app":"clodex".`,
+    ``,
+    `WHAT HAPPENED: the deploy script (${script}) ran over ssh and did not finish. Its progress + error tail:`,
+    ``,
+    (logText && String(logText).trim()) || '(no log captured)',
+    ``,
+    `HOW TO FIX: read ${readme} (the full manual playbook) and ${script} (the idempotent installer — env params REPO_URL, BRANCH, PORT, CLODEX_SRC). If those paths aren't readable, both live in the peering/ folder of ${repo}. Re-running the script is SAFE and idempotent (re-run = update); it emits ::step/::ok/::fail markers, and when it needs root it can't get, it prints the exact sudo commands and stops. You can ssh ${host} directly to inspect and run steps by hand. Common snags: apt packages needing sudo, Node < 20, the Chromium chrome-sandbox SUID bits, or XDG_RUNTIME_DIR missing for systemctl --user.`,
+    ``,
+    `When the hello curl returns "app":"clodex", you're done — report back.`,
+  ].join('\n');
+}
+
 module.exports = {
   probePeer, buildProbeScript, parseDeployLine,
+  fixSessionName, buildDeployFixBriefing,
   PROBE_NOLISTEN, PROBE_BODY,
 };

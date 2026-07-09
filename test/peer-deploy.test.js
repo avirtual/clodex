@@ -9,7 +9,11 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const {
   probePeer, parseDeployLine, buildProbeScript, PROBE_NOLISTEN,
+  fixSessionName, buildDeployFixBriefing,
 } = require('../peer-deploy');
+
+// A session name must satisfy the same regex sessions/agents use elsewhere.
+const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 
 const fakeRun = (result) => async () => result;
 
@@ -77,6 +81,65 @@ test('parseDeployLine parses every marker + falls back to log', () => {
   assert.deepStrictEqual(parseDeployLine('::done'), { type: 'done' });
   assert.deepStrictEqual(parseDeployLine('cloning into ...'), { type: 'log', text: 'cloning into ...' });
   assert.deepStrictEqual(parseDeployLine(''), { type: 'log', text: '' });
+});
+
+test('fixSessionName sanitizes the label and always yields a NAME_RE-valid stem', () => {
+  const n = fixSessionName('user@laptop2');
+  assert.equal(n, 'fix-user-laptop2');
+  assert.match(n, NAME_RE);
+  // Spaces / punctuation collapse to hyphens; leading/trailing separators trimmed.
+  assert.equal(fixSessionName('  My Box!! '), 'fix-my-box');
+  // Empty / all-junk label falls back to a generic stem, still valid.
+  assert.equal(fixSessionName(''), 'fix-peer');
+  assert.match(fixSessionName('@@@'), NAME_RE);
+  assert.equal(fixSessionName('@@@'), 'fix-peer');
+});
+
+test('fixSessionName suffixes on collision (Set or array), staying under 64 chars', () => {
+  const taken = new Set(['fix-box', 'fix-box-2']);
+  assert.equal(fixSessionName('box', taken), 'fix-box-3');
+  // Array form of `taken` works too.
+  assert.equal(fixSessionName('box', ['fix-box']), 'fix-box-2');
+  // A maximal label plus a suffix never exceeds the 64-char ceiling.
+  const long = 'x'.repeat(200);
+  const takenLong = new Set([`fix-${'x'.repeat(60)}`]);
+  const got = fixSessionName(long, takenLong);
+  assert.ok(got.length <= 64, `got ${got.length} chars`);
+  assert.match(got, NAME_RE);
+});
+
+test('buildDeployFixBriefing names the box, the hello check, the log, and the playbook', () => {
+  const b = buildDeployFixBriefing({
+    sshHost: 'user@box', port: 7911, label: 'box',
+    logText: '::fail service enable-now-failed',
+  });
+  assert.match(b, /user@box/);
+  assert.match(b, /127\.0\.0\.1:7911\/api\/peer\/hello/);
+  assert.match(b, /"app":"clodex"/);
+  assert.match(b, /::fail service enable-now-failed/);
+  assert.match(b, /peering\/README\.md/);
+  assert.match(b, /peering\/clodex-deploy\.sh/);
+  // The GitHub repo is ALWAYS named as the backstop (packaged app.asar isn't
+  // readable by an external CLI, so absolute on-disk paths can be dead).
+  assert.match(b, /github\.com\/avirtual\/clodex/);
+  // Missing log + port degrade gracefully (default port, placeholder log).
+  const d = buildDeployFixBriefing({ sshHost: 'h' });
+  assert.match(d, /127\.0\.0\.1:7900\//);
+  assert.match(d, /no log captured/);
+});
+
+test('buildDeployFixBriefing renders ABSOLUTE playbook paths when docsDir is given', () => {
+  const b = buildDeployFixBriefing({
+    sshHost: 'h', docsDir: '/opt/clodex/peering',
+  });
+  assert.match(b, /\/opt\/clodex\/peering\/README\.md/);
+  assert.match(b, /\/opt\/clodex\/peering\/clodex-deploy\.sh/);
+  // A trailing slash on docsDir doesn't double up.
+  const t = buildDeployFixBriefing({ sshHost: 'h', docsDir: '/opt/clodex/peering/' });
+  assert.match(t, /\/opt\/clodex\/peering\/README\.md/);
+  assert.doesNotMatch(t, /peering\/\/README/);
+  // Repo backstop still present alongside the absolute paths.
+  assert.match(b, /github\.com\/avirtual\/clodex/);
 });
 
 test('clodex-deploy.sh passes a bash -n syntax check', () => {

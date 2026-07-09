@@ -224,6 +224,10 @@ const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
 const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
+// Grace period after creating an ad-hoc deploy-fix session before injecting its
+// briefing — lets the fresh Claude CLI reach its input prompt so the keystrokes
+// aren't typed into a still-booting TUI.
+const DEPLOY_FIX_INJECT_DELAY_MS = 4000;
 
 // ---------------------------------------------------------------------------
 // Persistent ops/error log — Clodex mostly runs headless (tray, no console),
@@ -1832,7 +1836,7 @@ function randBase36(len) {
 const { ctxReminderFor } = require('./ctx-reminder');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
 const { sshRun } = require('./ssh-run');
-const { probePeer } = require('./peer-deploy');
+const { probePeer, fixSessionName, buildDeployFixBriefing } = require('./peer-deploy');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
 // Reports disk-scan the whole session on the proxy side, so they can take much
@@ -7581,6 +7585,36 @@ app.whenReady().then(() => {
     }
   });
 
+  // Agent fallback for a failed deploy: spin up a local ad-hoc Claude session
+  // (cwd = homedir, focused window's workspace) and hand it the deploy log +
+  // playbook pointers so it can untangle the box. The briefing rides the spill
+  // channel via _deliverMessage (>500B → file + @-attach). Injection is deferred
+  // a beat so the fresh CLI has reached its input prompt before we type.
+  ipcMain.handle('peer:deployFix', async (e, sshHost, port, label, logText) => {
+    const host = typeof sshHost === 'string' ? sshHost : '';
+    const p = Number.isInteger(port) ? port : (uiSettings.get().remotePort || 7900);
+    const name = fixSessionName(label || host || 'peer', new Set(manager.sessions.keys()));
+    const wsId = workspaceOfSender(e);
+    const dir = os.homedir();
+    try {
+      const out = await manager.create(
+        name, 'claude', dir, [], null, wsId,
+        null, false, null, [], [], [], [], [], null, [],
+      );
+      const briefing = buildDeployFixBriefing({
+        sshHost: host, port: p, label, logText,
+        docsDir: path.join(__dirname, 'peering'),
+      });
+      setTimeout(() => {
+        try { manager._deliverMessage(name, 'user', briefing, 'dm'); } catch {}
+      }, DEPLOY_FIX_INJECT_DELAY_MS);
+      log.info('session', `deploy-fix session ${name} for ${host}`);
+      return { ok: true, name: out.name };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : 'could not create fix session' };
+    }
+  });
+
   // ---- Peered Clodexes: renderer-facing thin adapter. All protocol,
   // reconnect and buffering logic lives in peer-client.js; events reach the
   // renderer as peer-state / peer-activity / peer-replay / peer-data /
@@ -7935,6 +7969,21 @@ app.whenReady().then(() => {
       enabled: !!online,
       click: () => e.sender.send('peer:context-action', { action: 'restart', id, name: label }),
     });
+    // "Update Clodex on <box>…" re-runs the idempotent deploy script over ssh.
+    // Only offered for peers reached via an ssh host (a url-only peer has no ssh
+    // route) and only when online (nothing to update on an unreachable box).
+    const cfg = (uiSettings.get().peers || []).find((p) => p && p.id === id);
+    if (online && cfg && cfg.sshHost) {
+      template.push({ type: 'separator' });
+      template.push({
+        label: `Update Clodex on ${label || 'peer'}…`,
+        click: () => e.sender.send('peer:context-action', {
+          action: 'update', id, name: label,
+          sshHost: cfg.sshHost,
+          port: Number.isInteger(cfg.remotePort) ? cfg.remotePort : 7900,
+        }),
+      });
+    }
     Menu.buildFromTemplate(template).popup({ window: win });
   });
 
@@ -7948,6 +7997,34 @@ app.whenReady().then(() => {
       cancelId: 1,
       message: `Restart Clodex on ${label || 'this peer'}?`,
       detail: 'The remote app will quit and reopen. Its sessions will resume after the restart.',
+    });
+    return result.response === 0;
+  });
+
+  // Native confirm for the in-place update (re-run the deploy script over ssh).
+  // Cancel default; the box's app restarts on success, so the copy says so.
+  ipcMain.handle('dialog:confirmPeerUpdate', async (_e, label) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'question',
+      buttons: ['Update', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Update Clodex on ${label || 'this peer'}?`,
+      detail: 'Re-runs the deploy script over ssh (git pull → build → restart). Safe and idempotent; it can take a few minutes. The box restarts on success and its sessions resume.',
+    });
+    return result.response === 0;
+  });
+
+  // Native confirm for the agent fallback after a failed deploy — opens a local
+  // ad-hoc Claude session to untangle the box. Cancel default.
+  ipcMain.handle('dialog:confirmDeployFix', async (_e, sshHost) => {
+    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+      type: 'question',
+      buttons: ['Open agent session', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'Open an agent session to fix this?',
+      detail: `Creates a local Claude session briefed with the deploy log and the playbook for ${sshHost || 'the box'}, so it can ssh in and finish the install.`,
     });
     return result.response === 0;
   });

@@ -1545,6 +1545,13 @@ async function applyPeerControl(entry, on) {
 async function restartPeerHost(id, label) {
   const okToGo = await window.api.confirmPeerRestart(label);
   if (!okToGo) return;
+  await doPeerRestart(id, label);
+}
+
+// Restart core minus its own confirm — shared by the header ↻ (which confirms)
+// and the update-in-place flow (which already confirmed the whole update, so a
+// second dialog on success would be redundant).
+async function doPeerRestart(id, label) {
   const res = await window.api.peerRestart(id);
   if (res && res.ok) {
     showToast(`Restarting Clodex on ${label} — it will reconnect shortly.`, { kind: 'peer-ui' });
@@ -1553,7 +1560,42 @@ async function restartPeerHost(id, label) {
   }
 }
 
-window.api.onPeerContextAction(async ({ action, id, name }) => {
+// "Update Clodex on <box>…": re-run the idempotent deploy script over ssh, then
+// restart the box on ::done so it picks up the new build. Progress surface is
+// deliberately small: a start toast, a completion/failure toast, and the stderr
+// tail in the ipc-log on failure (the peers dialog's live step-list is for the
+// install-from-scratch wizard; a header-menu update has no row to stream into).
+async function updatePeerHost(id, label, sshHost, port) {
+  const go = await window.api.confirmPeerUpdate(label);
+  if (!go) return;
+  showToast(`Updating Clodex on ${label} — this can take a few minutes.`, { kind: 'peer-ui' });
+  let sawDone = false;
+  const failReasons = [];
+  deployLineHandlers.set(sshHost, (line) => {
+    const ev = parseDeployLine(line);
+    if (ev.type === 'done') sawDone = true;
+    else if (ev.type === 'fail') failReasons.push(ev.reason ? `${ev.name} — ${ev.reason}` : ev.name);
+  });
+  let res;
+  try { res = await window.api.peerDeploy(sshHost, { port }); }
+  catch (e) { res = { ok: false, error: (e && e.message) || 'deploy failed' }; }
+  deployLineHandlers.delete(sshHost);
+  if (res && res.ok && sawDone) {
+    showToast(`Clodex updated on ${label} — restarting to apply.`, { kind: 'peer-ui' });
+    await doPeerRestart(id, label);
+    return;
+  }
+  const why = res && res.needSudo ? 'needs sudo on the box'
+    : res && res.timedOut ? 'timed out'
+    : failReasons.length ? failReasons.join('; ')
+    : (res && res.error) ? res.error
+    : `exit ${res ? res.code : '?'}`;
+  showToast(`Update failed on ${label}: ${why}`, { kind: 'warm' });
+  const detail = (res && res.stderr) ? res.stderr : (res && res.error) || 'no detail';
+  appendIpcEntry({ from: 'deploy', to: label, body: `update failed (${why})\n${detail}` });
+}
+
+window.api.onPeerContextAction(async ({ action, id, name, sshHost, port }) => {
   const key = peerKey(id, name);
   switch (action) {
     case 'attach':
@@ -1584,6 +1626,12 @@ window.api.onPeerContextAction(async ({ action, id, name }) => {
     case 'newSession':
       // `name` carries the peer's display label here (header menu, no session).
       openPeerSessionDialog(id, name || 'peer');
+      break;
+    case 'update':
+      // Host-level in-place update — re-run the deploy script over ssh, restart
+      // on success. `name` is the display label; sshHost/port ride the message
+      // (main resolved them from the peer config, url-only peers never get here).
+      await updatePeerHost(id, name || 'peer', sshHost, port);
       break;
     case 'restartRemote':
       // Plain host-level restart of a peer SESSION (--resume, keeps history).
@@ -5210,6 +5258,7 @@ async function peerTestAndSetUp(row, status) {
 async function peerRunDeploy(row, status, sshHost, port) {
   const steps = new Map();   // name -> { el, state }
   const sudoCmds = [];
+  const logLines = [];       // raw ::marker stream, replayed to a fix agent on failure
   let sawDone = false;
   renderPeerStatus(status,
     `<div class="peer-status-dim">Installing Clodex on ${esc(sshHost)} — this can take a few minutes on first run.</div>` +
@@ -5230,6 +5279,7 @@ async function peerRunDeploy(row, status, sshHost, port) {
     return s;
   };
   deployLineHandlers.set(sshHost, (line) => {
+    logLines.push(line);
     const ev = parseDeployLine(line);
     if (ev.type === 'step') { stepEl(ev.name); }
     else if (ev.type === 'ok') { const s = stepEl(ev.name); s.state = 'ok'; s.el.querySelector('.peer-deploy-mark').textContent = '✓'; s.el.classList.add('ok'); }
@@ -5257,11 +5307,49 @@ async function peerRunDeploy(row, status, sshHost, port) {
   } else if (res && res.needSudo) {
     // The sudo commands are already shown from the ::sudo-cmd lines; just anchor the retry.
     if (!sudoCmds.length) tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo on the box — see the box's terminal, then Test &amp; Set Up again.</div>`;
+    appendDeployActions(tailBox, row, status, sshHost, port, null);
   } else {
     const why = res && res.timedOut ? 'timed out' : (res && res.error) ? res.error : `exit ${res ? res.code : '?'}`;
     const tail = res && res.stderr ? `<pre class="peer-status-pre">${esc(res.stderr)}</pre>` : '';
     tailBox.innerHTML = `<div class="peer-status-err">Install did not finish (${esc(String(why))}).</div>${tail}`;
+    // Real failure (not need-sudo): offer an agent to untangle it, plus Re-test.
+    // The agent gets the full ::marker stream + the stderr tail as its briefing.
+    const logText = logLines.join('\n') + (res && res.stderr ? `\n\n[stderr]\n${res.stderr}` : '');
+    appendDeployActions(tailBox, row, status, sshHost, port, logText);
   }
+}
+
+// Terminal-state action row for the deploy wizard: always a Re-test (re-runs the
+// probe, same as Test & Set Up), and — when a real failure gives us a log — a
+// "Fix with an agent" offer that spins up a briefed local Claude session.
+function appendDeployActions(tailBox, row, status, sshHost, port, logText) {
+  const actions = document.createElement('div');
+  actions.className = 'peer-status-actions';
+  if (logText != null) {
+    const fix = document.createElement('button');
+    fix.type = 'button';
+    fix.className = 'peer-fix-btn';
+    fix.textContent = 'Fix with an agent…';
+    fix.addEventListener('click', async () => {
+      const label = row.querySelector('.peer-row-label').value.trim() || sshHost;
+      const go = await window.api.confirmDeployFix(sshHost);
+      if (!go) return;
+      const res = await window.api.peerDeployFix(sshHost, port, label, logText);
+      if (res && res.ok) {
+        showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: 'peer-ui' });
+      } else {
+        showToast(`Could not open a fix session: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+      }
+    });
+    actions.appendChild(fix);
+  }
+  const retest = document.createElement('button');
+  retest.type = 'button';
+  retest.className = 'secondary peer-retest-btn';
+  retest.textContent = 'Re-test';
+  retest.addEventListener('click', () => peerTestAndSetUp(row, status));
+  actions.appendChild(retest);
+  tailBox.appendChild(actions);
 }
 
 function renderPeerStatus(status, html) {
