@@ -3,9 +3,16 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-util');
-const { THEMES, STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
+const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, fmtTokens, fmtCountdown, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { createIpcLog } = require('./ipc-log');
+const { createTermSearch } = require('./term-search');
+const { initBanners } = require('./banners');
+const { initThemes } = require('./themes');
+const { initLibraryDrawers } = require('./library-drawers');
+const { initSubagentPopover } = require('./subagent-popover');
 
 // ---------------------------------------------------------------------------
 // State
@@ -19,45 +26,10 @@ let activeSession = null;
 // xterm color object (incl. the 16-color ANSI palette) since the terminal's
 // palette lives in JS, not CSS. 'midnight' is the default (matches :root).
 // ---------------------------------------------------------------------------
-const THEME_DEFAULT = 'midnight';
-function themeName() {
-  const t = localStorage.getItem('clodex-theme');
-  return THEMES[t] ? t : THEME_DEFAULT;
-}
-function currentXtermTheme() { return THEMES[themeName()].xterm; }
-// Apply a theme: retint chrome (data-theme), persist, and live-swap every
-// open terminal's palette. Midnight clears the attr so :root wins.
-function applyTheme(name) {
-  if (!THEMES[name]) name = THEME_DEFAULT;
-  localStorage.setItem('clodex-theme', name);
-  if (name === THEME_DEFAULT) delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = name;
-  for (const s of sessions.values()) {
-    if (s.terminal) s.terminal.options.theme = THEMES[name].xterm;
-  }
-  const sel = document.getElementById('prefs-theme');
-  if (sel && sel.value !== name) sel.value = name; // keep the picker in sync
-}
-// Set the chrome attr before first paint (terminals read currentXtermTheme()
-// at creation, so they're correct without a re-swap).
-(function initTheme() {
-  const n = themeName();
-  if (n !== THEME_DEFAULT) document.documentElement.dataset.theme = n;
-})();
-// Populate the Preferences theme picker once; apply live on change.
-(function setupThemePicker() {
-  const sel = document.getElementById('prefs-theme');
-  if (!sel) return;
-  sel.innerHTML = Object.entries(THEMES)
-    .map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('');
-  sel.value = themeName();
-  sel.addEventListener('change', () => { applyTheme(sel.value); window.api.setTheme(sel.value); });
-})();
-// Apply theme changes pushed from the View menu / other windows, and report
-// our persisted theme up to main so the menu radio + canonical settings match
-// the value we applied pre-paint (covers first run on this machine).
-window.api.onSetTheme((name) => applyTheme(name));
-try { window.api.setTheme(themeName()); } catch {}
+// FLAG: applyTheme live-swaps every open terminal's palette, so the island
+// takes the sessions Map as a factory param. currentXtermTheme is destructured
+// out for createSession to read at terminal creation.
+const { currentXtermTheme } = initThemes({ sessions });
 
 // DOM refs
 const sessionList = document.getElementById('session-list');
@@ -450,7 +422,7 @@ function removeSessionFromSidebar(name) {
   if (el) el.remove();
   // Child subagent rows are siblings, not descendants — sweep them too.
   sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
-  if (subagentPopover && subagentPopover.dataset.name === name) closeSubagentPopover();
+  if (isSubagentPopoverForParent(name)) closeSubagentPopover();
 }
 
 function updateSidebarActive() {
@@ -494,8 +466,8 @@ function createTerminal(name, peer = null) {
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
     // Only update UI if this is the active session
     if (activeSession === name) {
-      if (resultCount === 0) searchInfo.textContent = 'no matches';
-      else searchInfo.textContent = `${resultIndex + 1}/${resultCount}`;
+      if (resultCount === 0) setSearchInfo('no matches');
+      else setSearchInfo(`${resultIndex + 1}/${resultCount}`);
     }
   });
 
@@ -556,8 +528,8 @@ function switchSession(name) {
   if (!sessions.has(name)) return;
 
   // Close search if open — decorations are per-terminal
-  if (!searchBar.classList.contains('hidden')) closeSearch();
-  if (subagentPopover && !subagentPopover.classList.contains('hidden')) closeSubagentPopover();
+  if (isSearchOpen()) closeSearch();
+  if (isSubagentPopoverOpen()) closeSubagentPopover();
 
   activeSession = name;
 
@@ -680,54 +652,24 @@ function applyTypeDefaults() {
   }
 }
 
-// Prompt library — shared by the new-session + edit dialogs. `system` prompts
-// fill a <select> (one replaces the CLI default); `append` prompts fill a
-// checklist (0+ compose, applied in filename order). Cached per dialog open.
-let promptLibCache = { system: [], append: [] };
-
 async function loadPromptLib() {
   const all = await window.api.listPrompts();
-  promptLibCache = {
+  setPromptLibCache({
     system: all.filter(p => p.kind === 'system'),
     append: all.filter(p => p.kind === 'append'),
-  };
+  });
 }
 
 function fillSystemPromptSelect(selectEl, current) {
   while (selectEl.options.length > 1) selectEl.remove(1);
-  for (const p of promptLibCache.system) {
+  for (const p of getPromptLibCache().system) {
     const opt = document.createElement('option');
     opt.value = p.name;
     opt.textContent = p.name;
     selectEl.appendChild(opt);
   }
   // A persisted ref whose file was deleted falls back to (CLI default).
-  selectEl.value = current && promptLibCache.system.some(p => p.name === current) ? current : '';
-}
-
-function renderAppendChecklist(container, enabledSet) {
-  container.innerHTML = '';
-  if (!promptLibCache.append.length) {
-    container.innerHTML = '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>';
-    return;
-  }
-  for (const p of promptLibCache.append) {
-    const row = document.createElement('label');
-    row.className = 'agent-check';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = p.name;
-    cb.checked = enabledSet.has(p.name);
-    const preview = (p.body.split('\n')[0] || '').slice(0, 60);
-    const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(p.name)}</strong>${preview ? ' — ' + esc(preview) : ''}`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-function collectAppendChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  selectEl.value = current && getPromptLibCache().system.some(p => p.name === current) ? current : '';
 }
 
 async function refreshSystemPromptDropdown() {
@@ -755,77 +697,6 @@ async function refreshTemplatesDropdown() {
 const agentsRow = document.getElementById('agents-row');
 const inputAgentsList = document.getElementById('input-agents-list');
 const inputBuiltinsList = document.getElementById('input-builtins-list');
-let agentLibCache = [];
-
-function renderAgentChecklist(container, enabledSet) {
-  container.innerHTML = '';
-  if (!agentLibCache.length) {
-    container.innerHTML = '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>';
-    return;
-  }
-  for (const a of agentLibCache) {
-    const row = document.createElement('label');
-    row.className = 'agent-check';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = a.name;
-    cb.checked = enabledSet.has(a.name);
-    const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(a.name)}</strong>${a.description ? ' — ' + esc(a.description) : ''}`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-function collectAgentChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
-}
-
-// The built-in subagents the CLI injects into the roster (each costs its
-// description line every turn). Denying one via permissions.deny Agent(name)
-// filters it out of the injected listing — a real roster trim (traced through
-// the listing builder; confirmed on the wire) AND stops delegation to it.
-// Names are case-sensitive — exactly the agentType strings, verified present
-// across live transcripts. Not every session injects all six (a session
-// launched with --agents/append-prompt can drop claude-code-guide/statusline-
-// setup), so denying an absent one is a harmless no-op.
-const BUILTIN_AGENTS = ['Explore', 'Plan', 'general-purpose', 'claude', 'claude-code-guide', 'statusline-setup'];
-
-// Checklist polarity matches tools/skills: checked = available, unchecked =
-// denied. `deniedSet` is the persisted denyBuiltins list; collect returns the
-// unchecked (denied) names.
-function renderBuiltinChecklist(container, deniedSet) {
-  container.innerHTML = '';
-  for (const name of BUILTIN_AGENTS) {
-    const row = document.createElement('label');
-    row.className = 'agent-check';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = name;
-    cb.checked = !deniedSet.has(name);
-    const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(name)}</strong>`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-function collectBuiltinChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
-}
-
-// Bulk check/uncheck for a popover checklist. Skips :disabled rows (e.g. skills
-// locked by a lower settings layer) so "Check all" never tries to re-enable
-// something clodex can't actually toggle. `wireBulkToggles` hooks the
-// data-bulk="all"/"none" buttons sitting above `listEl` to it.
-function setChecklistAll(listEl, checked) {
-  listEl.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach(cb => { cb.checked = checked; });
-}
-function wireBulkToggles(popoverEl, listEl) {
-  popoverEl.querySelectorAll('.popover-bulk [data-bulk]').forEach(btn => {
-    btn.addEventListener('click', () => setChecklistAll(listEl, btn.dataset.bulk === 'all'));
-  });
-}
 
 // --- Per-session tool gating (Claude only). The catalog is a curated static
 // list supplied by main via getSettings().claudeTools. Checkboxes default to
@@ -851,36 +722,9 @@ const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
 
-// Custom-skill injection checklist (opt-in: unchecked by default). Mirrors the
-// subagent checklist — checked names are scaffolded into a --plugin-dir at
-// spawn. The library is authored in the Skill Library drawer.
-let skillLibCache = [];
-function renderInjectChecklist(container, enabledSet) {
-  container.innerHTML = '';
-  if (!skillLibCache.length) {
-    container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skill Library (Skills menu).</span>';
-    return;
-  }
-  for (const s of skillLibCache) {
-    const row = document.createElement('label');
-    row.className = 'agent-check';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = s.name;
-    cb.checked = enabledSet.has(s.name);
-    const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(s.name)}</strong>${s.description ? ' — ' + esc(s.description) : ''}`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-function collectInjectChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
-}
 async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
   if (inputType.value !== 'claude') return;
-  skillLibCache = (await window.api.listSkillLib()) || [];
+  setSkillLibCache((await window.api.listSkillLib()) || []);
   renderInjectChecklist(inputInjectSkillsList, enabledSet);
 }
 
@@ -904,103 +748,7 @@ async function refreshNewSessionTools() {
   const res = await window.api.getToolCatalogFor(cwd);
   // Pre-uncheck the global default deny set so a fresh session inherits the
   // shared, lean tools loadout out of the box (still editable here per session).
-  renderToolChecklist(inputToolsList, new Set(defaultToolDenyCache), (res && res.ok && res.effective) || {});
-}
-let claudeToolsCache = [];
-// Global default tool-deny set (the "*" agent-default), seeded from getSettings
-// in openDialog; new sessions start with these tools unchecked.
-let defaultToolDenyCache = [];
-
-// Mirror of renderSkillChecklist for tools. `disabledSet` is clodex's own
-// layer-4 off list; `effective` (tool -> {value:'off', source, locked}) is the
-// lower-layer permissions.deny state. A tool denied in a layer clodex doesn't
-// own renders unchecked + read-only + labeled with provenance — and because
-// permissions.deny is union (no allow overrides a deny), it is ALWAYS read-only
-// here, never re-enableable from clodex's settings (unlike skills' canReenable).
-function renderToolChecklist(container, disabledSet, effective) {
-  effective = effective || {};
-  container.innerHTML = '';
-  // Catalog is authoritative: render only known tools. A stale name in
-  // disabledSet (removed from the catalog, or persisted before our time) is
-  // intentionally NOT shown — it falls out of the deny on the next Apply.
-  const names = [...claudeToolsCache];
-  if (!names.length) {
-    container.innerHTML = '<span class="hint-text">No tool catalog available.</span>';
-    return;
-  }
-  for (const name of names) {
-    const eff = effective[name];
-    const lowerOff = !!(eff && eff.value === 'off');
-    const clodexOff = disabledSet.has(name);
-    const row = document.createElement('label');
-    row.className = 'agent-check' + (lowerOff ? ' skill-readonly' : '');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = name;
-    cb.checked = !clodexOff && !lowerOff;
-    if (lowerOff) cb.disabled = true; // external deny is unrevokable from here
-    const txt = document.createElement('span');
-    let note = '';
-    if (lowerOff) note = eff.locked
-      ? ' <span class="skill-src">denied by policy</span>'
-      : ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
-    txt.innerHTML = `<strong>${esc(name)}</strong>${note}`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-// Returns the UNCHECKED, toggleable tools (clodex's off list). A read-only row
-// is owned by a lower settings layer / policy, not clodex, so it's excluded.
-function collectToolChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked):not(:disabled)')).map(cb => cb.value);
-}
-
-// Skills mirror tools. The catalog combines a static seed (CLAUDE_SKILLS), the
-// live transcript roster, clodex's own off list, and any skill a LOWER settings
-// layer mentions. A skill that's off in a lower layer (global/project/local
-// settings) or locked by managed policy is rendered unchecked + disabled +
-// labeled with provenance: clodex can't change it from its layer-4 file (a
-// lower-layer off can only be re-enabled if SKILL_REENABLE_CONFIRMED, a managed
-// lock never), so we show it honestly rather than as a silently-inert toggle.
-function renderSkillChecklist(container, names, disabledSet, effective, opts) {
-  effective = effective || {};
-  opts = opts || {};
-  const canReenable = !!opts.canReenable;
-  const skillsLocked = !!opts.skillsLocked;
-  container.innerHTML = '';
-  if (!names || !names.length) {
-    container.innerHTML = '<span class="hint-text">No skills detected yet — they appear once the session has run a turn.</span>';
-    return;
-  }
-  for (const name of names) {
-    const eff = effective[name];
-    const lowerOff = !!(eff && eff.value === 'off');
-    const clodexOff = disabledSet.has(name);
-    // Read-only when clodex's layer-4 write can't actually change it: a lower-
-    // layer off we can't re-enable yet, or a managed-policy lock.
-    const readonly = skillsLocked || (lowerOff && !canReenable);
-    const row = document.createElement('label');
-    row.className = 'agent-check' + (readonly ? ' skill-readonly' : '');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = name;
-    cb.checked = !clodexOff && !lowerOff;
-    if (readonly) cb.disabled = true;
-    const txt = document.createElement('span');
-    let note = '';
-    if (skillsLocked) note = ' <span class="skill-src">locked by policy</span>';
-    else if (lowerOff) note = ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
-    txt.innerHTML = `<strong>${esc(name)}</strong>${note}`;
-    row.appendChild(cb);
-    row.appendChild(txt);
-    container.appendChild(row);
-  }
-}
-// Only collect toggleable rows: a disabled (read-only) checkbox is owned by a
-// lower layer / policy, not by clodex, so it never enters clodex's off list.
-function collectSkillChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked):not(:disabled)')).map(cb => cb.value);
+  renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()), (res && res.ok && res.effective) || {});
 }
 
 async function openDialog() {
@@ -1025,12 +773,12 @@ async function openDialog() {
     window.api.getSettings(),
     window.api.listAgents(),
   ]);
-  agentLibCache = agentLib || [];
+  setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
-  claudeToolsCache = settings?.claudeTools || [];
-  defaultToolDenyCache = settings?.defaultToolDeny || [];
-  renderToolChecklist(inputToolsList, new Set(defaultToolDenyCache));
+  setClaudeToolsCache(settings?.claudeTools || []);
+  setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+  renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
   refreshNewSessionTools();
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
@@ -2564,220 +2312,19 @@ function applySubagents(name) {
   existing.forEach((el) => { if (!seen.has(el.dataset.key)) el.remove(); });
 
   // If a popover is open for this parent and its row aged out, close it.
-  if (subagentPopover && subagentPopover.dataset.name === name
-      && subagentPopover.dataset.key && !seen.has(subagentPopover.dataset.key)) {
+  const openKey = subagentPopoverKeyForParent(name);
+  if (openKey && !seen.has(openKey)) {
     closeSubagentPopover();
   }
 }
 
 // --- Subagent live-activity popover ------------------------------------------
-// On-demand detail for one child row. Polls /_subagents (via main) every
-// SUBAGENT_DETAIL_MS while open — NEVER folded into the 5s session poll, the
-// request body it reads is heavy. Shows at most one-turn-stale activity (the
-// in-flight token stream isn't on the wire as a request body until the next
-// turn); `turn_ts` lets us label it honestly as "as of Ns ago".
-const subagentPopover = document.getElementById('subagent-popover');
-const subagentPopoverName = document.getElementById('subagent-popover-name');
-const subagentPopoverBody = document.getElementById('subagent-popover-body');
-const SUBAGENT_DETAIL_MS = 1500;
-let subagentPollTimer = null;
-
-// Accumulating live feed. The detail endpoint only ever returns the latest
-// COMPLETED turn (keyed by turn_ts), so instead of replacing the body each poll
-// we dedup by turn_ts and APPEND each newly-seen turn as an entry — the popover
-// reads as a running log of what the sub did, not a slideshow. Honest caveat:
-// we only observe the latest completed turn per poll, so a sub that finishes
-// several turns faster than our 1.5s cadence will skip the in-between ones — the
-// feed is "the turns we caught", not a guaranteed-complete transcript.
-let subagentFeed = [];           // [{ ts, tool, toolInput, truncated, text }]
-let subagentFeedSeen = new Set(); // turn signatures already appended
-let subagentFeedMeta = null;      // { role, model } captured once
-let subagentFeedEnded = false;    // session went cold — stop, but keep history
-
-function resetSubagentFeed() {
-  subagentFeed = [];
-  subagentFeedSeen = new Set();
-  subagentFeedMeta = null;
-  subagentFeedEnded = false;
-}
-
-function closeSubagentPopover() {
-  if (subagentPollTimer) { clearInterval(subagentPollTimer); subagentPollTimer = null; }
-  subagentPopover.classList.add('hidden');
-  subagentPopover.dataset.name = '';
-  subagentPopover.dataset.key = '';
-  resetSubagentFeed();
-}
-
-function openSubagentPopover(name, key, anchorRow) {
-  // Toggle off if re-clicking the same row.
-  if (!subagentPopover.classList.contains('hidden')
-      && subagentPopover.dataset.name === name && subagentPopover.dataset.key === key) {
-    return closeSubagentPopover();
-  }
-  if (subagentPollTimer) { clearInterval(subagentPollTimer); subagentPollTimer = null; }
-  subagentPopover.dataset.name = name;
-  subagentPopover.dataset.key = key;
-  resetSubagentFeed();
-  const label = anchorRow.querySelector('.child-label')?.textContent || key;
-  subagentPopoverName.textContent = label;
-  subagentPopoverBody.innerHTML = '<div class="subagent-detail-empty">Loading…</div>';
-  subagentPopover.classList.remove('hidden');
-  // Anchor to the row, clamped to the viewport (mirrors the other popovers).
-  // The box can be tall (content-driven, up to 78vh), so clamp top by the box's
-  // actual height — not a fixed 60px — or a popover opened from a low row would
-  // spill off the bottom edge.
-  const r = anchorRow.getBoundingClientRect();
-  const w = subagentPopover.offsetWidth || 760;
-  // Reserve the box's MAX possible height (CSS max-height is 78vh): offsetHeight
-  // here is just the "Loading…" stub, and the box grows downward as content
-  // arrives anchored at this top, so clamping by the stub height would let a
-  // fully-loaded popover spill off the bottom. Budget the worst case so even a
-  // full-height box fits; a short popover just sits a little higher (harmless).
-  const hMax = window.innerHeight * 0.78;
-  subagentPopover.style.left = `${Math.max(8, Math.min(r.right + 6, window.innerWidth - w - 8))}px`;
-  subagentPopover.style.top = `${Math.max(8, Math.min(r.top, window.innerHeight - hMax - 8))}px`;
-  subagentPopover.style.bottom = 'auto';
-  const poll = () => fetchSubagentDetail(name, key);
-  poll();
-  subagentPollTimer = setInterval(poll, SUBAGENT_DETAIL_MS);
-}
-
-async function fetchSubagentDetail(name, key) {
-  // Bail if the popover was closed / retargeted while a fetch was in flight.
-  const stillOpen = () => subagentPopover.dataset.name === name && subagentPopover.dataset.key === key
-    && !subagentPopover.classList.contains('hidden');
-  if (!stillOpen()) return;
-  let res;
-  try { res = await window.api.getProxySubagentDetail(name, key, 800); }
-  catch (e) { res = { ok: false, error: String(e) }; }
-  if (!stillOpen()) return;
-  if (!res || !res.ok) {
-    // Transient fetch error — only show it if we have no history to preserve.
-    if (!subagentFeed.length) {
-      subagentPopoverBody.innerHTML = `<div class="subagent-detail-empty">${esc(res && res.error ? res.error : 'unavailable')}</div>`;
-    }
-    return;
-  }
-  const d = res.data || {};
-  if (d.found === false) {
-    // A missing child mid-stream: once we've accumulated history, keep showing
-    // it rather than wiping the feed. session_cold means the in-memory bodies are
-    // gone, so stop polling — but leave the captured log on screen with an end
-    // note. With no history yet, fall back to the plain reason message.
-    if (subagentFeed.length) {
-      if (d.reason === 'session_cold' && !subagentFeedEnded) {
-        subagentFeedEnded = true;
-        if (subagentPollTimer) { clearInterval(subagentPollTimer); subagentPollTimer = null; }
-        renderSubagentFeed();
-      }
-      return;
-    }
-    const reason = d.reason === 'session_cold' ? 'Session ended — no live activity.'
-      : d.reason === 'no_request_body' ? 'No activity captured yet.'
-      : 'Subagent is no longer tracked.';
-    subagentPopoverBody.innerHTML = `<div class="subagent-detail-empty">${esc(reason)}</div>`;
-    if (d.reason === 'session_cold') closeSubagentPopover();
-    return;
-  }
-  // Append this turn if it's new, then re-render. Keep the view pinned to the
-  // bottom when a fresh turn lands or the user is already there; otherwise leave
-  // their scroll position alone so they can read back through earlier turns.
-  const appended = ingestSubagentTurn(d);
-  const sc = subagentPopoverBody;
-  const nearBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-  renderSubagentFeed();
-  if (appended || nearBottom) sc.scrollTop = sc.scrollHeight;
-}
-
-// Fold one detail response into the feed. Dedup by turn_ts (the per-turn key);
-// without one, fall back to a content signature so identical repeats don't pile
-// up. Returns true iff a new entry was appended.
-function ingestSubagentTurn(d) {
-  if (!subagentFeedMeta && (d.role || d.model)) {
-    subagentFeedMeta = { role: d.role || null, model: d.model || null };
-  }
-  if (!d.last_tool && !d.last_text) return false; // nothing to show this turn
-  const sig = (typeof d.turn_ts === 'number')
-    ? `t:${d.turn_ts}`
-    : `c:${d.last_tool || ''}|${(d.last_text || '').slice(0, 80)}`;
-  if (subagentFeedSeen.has(sig)) return false;
-  subagentFeedSeen.add(sig);
-  subagentFeed.push({
-    ts: typeof d.turn_ts === 'number' ? d.turn_ts : null,
-    tool: d.last_tool || null,
-    toolInput: d.last_tool_input || null,
-    truncated: !!d.truncated,
-    text: d.last_text || null,
-  });
-  return true;
-}
-
-// Pull a compact one-line preview out of a tool_use input object. The keys are
-// whatever the model emitted (wirescope forwards it verbatim) so we probe the
-// common primaries and fall back to compact JSON — always truncating on render
-// since an unexpected key could be large even past the server-side maxlen clamp.
-function subagentToolPreview(input) {
-  if (!input || typeof input !== 'object') return '';
-  for (const k of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt', 'description']) {
-    if (typeof input[k] === 'string' && input[k]) return input[k];
-  }
-  try { return JSON.stringify(input); } catch { return ''; }
-}
-
-function renderSubagentFeed() {
-  const parts = [];
-  if (subagentFeedMeta) {
-    const meta = [];
-    if (subagentFeedMeta.role) meta.push(esc(subagentFeedMeta.role));
-    if (subagentFeedMeta.model) meta.push(esc(subagentFeedMeta.model));
-    if (meta.length) parts.push(`<div class="subagent-detail-meta">${meta.join(' · ')}</div>`);
-  }
-  if (!subagentFeed.length) {
-    parts.push('<div class="subagent-detail-empty">No activity captured yet.</div>');
-    subagentPopoverBody.innerHTML = parts.join('');
-    return;
-  }
-  subagentFeed.forEach((e) => {
-    const entry = [];
-    if (e.tool) {
-      const preview = subagentToolPreview(e.toolInput);
-      const clamped = preview.length > 600 ? preview.slice(0, 600) + '…' : preview;
-      // Tool name is the colored first word, args flow inline after it: "Read: …".
-      const nameTxt = clamped ? `${esc(e.tool)}:` : esc(e.tool);
-      entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${nameTxt}</span>` +
-        (clamped ? ` <span class="subagent-tool-arg">${esc(clamped)}</span>` : '') + '</div>');
-      if (e.truncated) entry.push('<div class="subagent-detail-note">(arguments truncated)</div>');
-    }
-    if (e.text) {
-      const t = e.text.length > 1200 ? e.text.slice(0, 1200) + '…' : e.text;
-      entry.push(`<div class="subagent-detail-text">${esc(t)}</div>`);
-    }
-    parts.push(`<div class="subagent-feed-entry">${entry.join('')}</div>`);
-  });
-  // One timestamp for the whole feed, on the latest turn — reads as a live
-  // conversation rather than a stack of separately-stamped segments.
-  const latest = subagentFeed[subagentFeed.length - 1];
-  if (latest && latest.ts != null) {
-    const agoS = Math.max(0, Math.round(Date.now() / 1000 - latest.ts));
-    parts.push(`<div class="subagent-detail-asof">${fmtCountdown(agoS)} ago</div>`);
-  }
-  if (subagentFeedEnded) {
-    parts.push('<div class="subagent-detail-note">Session ended — no further activity.</div>');
-  }
-  subagentPopoverBody.innerHTML = parts.join('');
-}
-
-document.getElementById('subagent-popover-close').addEventListener('click', closeSubagentPopover);
-document.addEventListener('click', (e) => {
-  if (subagentPopover.classList.contains('hidden')) return;
-  if (subagentPopover.contains(e.target)) return;
-  if (e.target.closest('.session-child')) return; // row clicks toggle themselves
-  closeSubagentPopover();
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !subagentPopover.classList.contains('hidden')) closeSubagentPopover();
-});
+// Self-contained island (subagent-popover.js). applySubagents/subagentRows
+// above stay here — core tab rendering — and reach it via these handles.
+const {
+  openSubagentPopover, closeSubagentPopover,
+  isSubagentPopoverForParent, isSubagentPopoverOpen, subagentPopoverKeyForParent,
+} = initSubagentPopover();
 
 // --- Toast bubbles -----------------------------------------------------------
 // Transient bottom-right notifications. Returns nothing; auto-dismisses unless
@@ -3184,7 +2731,7 @@ async function openToolsPopover(name, anchorBtn) {
     window.api.getSessionArgs(name),
   ]);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-  claudeToolsCache = settings?.claudeTools || [];
+  setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   toolsPopoverRestart.checked = false;
   toolsPopoverName.textContent = name;
@@ -3438,8 +2985,8 @@ async function openSkillsPopover(name, anchorBtn) {
   renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
     res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
   // Library-injection section: only shown when the library is non-empty.
-  skillLibCache = res.skillLib || [];
-  if (skillLibCache.length) {
+  setSkillLibCache(res.skillLib || []);
+  if (getSkillLibCache().length) {
     renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []));
     popoverInjectSkillsSection.style.display = '';
   } else {
@@ -3519,7 +3066,7 @@ function closeAgentsPopover() {
 async function openAgentsPopover(name, anchorBtn) {
   const res = await window.api.getAgentCatalog(name);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-  agentLibCache = res.agents || [];
+  setAgentLibCache(res.agents || []);
   renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []));
   renderBuiltinChecklist(popoverBuiltinsList, new Set(res.denyBuiltins || []));
   agentsPopoverRestart.checked = false;
@@ -4615,151 +4162,25 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 // IPC log panel
 // ---------------------------------------------------------------------------
 
-const ipcLog = document.getElementById('ipc-log');
-const ipcLogHeader = document.getElementById('ipc-log-header');
-const ipcLogBody = document.getElementById('ipc-log-body');
-const ipcEmpty = document.getElementById('ipc-empty');
-const ipcCount = document.getElementById('ipc-count');
-const ipcClearBtn = document.getElementById('ipc-clear');
-const ipcToggleBtn = document.getElementById('ipc-toggle');
-
-let ipcMessageCount = 0;
-let unreadIpcCount = 0;
-
-function updateIpcCount() {
-  ipcCount.textContent = String(unreadIpcCount);
-  ipcCount.classList.toggle('zero', unreadIpcCount === 0);
-}
-updateIpcCount();
-
-function toggleIpcLog() {
-  ipcLog.classList.toggle('collapsed');
-  const expanded = !ipcLog.classList.contains('collapsed');
-  document.getElementById('main').classList.toggle('ipc-expanded', expanded);
-  if (expanded) {
-    unreadIpcCount = 0;
-    updateIpcCount();
-    ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-  }
-  // Refit the terminal after layout shift
-  if (activeSession) {
-    const s = sessions.get(activeSession);
-    if (s) {
-      requestAnimationFrame(() => {
-        s.fitAddon.fit();
-        window.api.resizeSession(activeSession, s.terminal.cols, s.terminal.rows);
-      });
-    }
-  }
-}
-
-function clearIpcLog() {
-  ipcLogBody.innerHTML = '';
-  ipcLogBody.appendChild(ipcEmpty);
-  ipcMessageCount = 0;
-  unreadIpcCount = 0;
-  updateIpcCount();
-}
-
-ipcLogHeader.addEventListener('click', (e) => {
-  if (e.target.closest('button')) return;
-  toggleIpcLog();
-});
-ipcToggleBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleIpcLog(); });
-ipcClearBtn.addEventListener('click', (e) => { e.stopPropagation(); clearIpcLog(); });
-
-function appendIpcEntry(msg) {
-  if (ipcMessageCount === 0 && ipcEmpty.parentNode === ipcLogBody) ipcEmpty.remove();
-  ipcMessageCount++;
-
-  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const entry = document.createElement('div');
-  entry.className = 'ipc-entry';
-
-  const fromBadge = `<span class="ipc-from">${esc(msg.from)}</span>`;
-  const arrow = `<span class="ipc-arrow">→</span>`;
-  const targetBadge = `<span class="ipc-to">${esc(msg.to)}</span>`;
-  const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
-
-  entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
-  ipcLogBody.appendChild(entry);
-
-  // Auto-scroll if already near the bottom
-  const nearBottom = ipcLogBody.scrollHeight - ipcLogBody.scrollTop - ipcLogBody.clientHeight < 40;
-  if (nearBottom) ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-
-  // Update unread counter if panel is collapsed
-  if (ipcLog.classList.contains('collapsed')) {
-    unreadIpcCount++;
-    updateIpcCount();
-  }
-}
-
-window.api.onIpcMessage((msg) => {
-  appendIpcEntry(msg);
-});
+// Owns its DOM, counters, and IPC subscription (incl. onRequestOpenIpcLog).
+// FLAG: toggleIpcLog refits the active terminal, so the island takes core state
+// — `sessions` (the live Map) and getActiveSession (activeSession is a
+// reassignable let) — as factory params. `appendIpcEntry` is the only handle
+// renderer.js keeps (for the synthetic deploy-failure line).
+const { appendIpcEntry } = createIpcLog({ sessions, getActiveSession: () => activeSession });
 
 // ---------------------------------------------------------------------------
 // Terminal search (Cmd+F)
 // ---------------------------------------------------------------------------
 
-const searchBar = document.getElementById('search-bar');
-const searchInput = document.getElementById('search-input');
-const searchInfo = document.getElementById('search-info');
-const searchPrev = document.getElementById('search-prev');
-const searchNext = document.getElementById('search-next');
-const searchClose = document.getElementById('search-close');
-
-const SEARCH_OPTS = {
-  decorations: {
-    matchBackground: '#e94560',
-    matchBorder: '#e94560',
-    matchOverviewRuler: '#e94560',
-    activeMatchBackground: '#fbbf24',
-    activeMatchBorder: '#fbbf24',
-    activeMatchColorOverviewRuler: '#fbbf24',
-  },
-};
-
-function openSearch() {
-  searchBar.classList.remove('hidden');
-  searchInput.focus();
-  searchInput.select();
-}
-
-function closeSearch() {
-  searchBar.classList.add('hidden');
-  searchInfo.textContent = '';
-  if (activeSession) {
-    const s = sessions.get(activeSession);
-    if (s && s.searchAddon) s.searchAddon.clearDecorations();
-    if (s) s.terminal.focus();
-  }
-}
-
-function findInTerminal(direction = 'next') {
-  if (!activeSession) return;
-  const s = sessions.get(activeSession);
-  if (!s || !s.searchAddon) return;
-  const term = searchInput.value;
-  if (!term) {
-    s.searchAddon.clearDecorations();
-    searchInfo.textContent = '';
-    return;
-  }
-  const method = direction === 'prev' ? 'findPrevious' : 'findNext';
-  s.searchAddon[method](term, SEARCH_OPTS);
-}
-
-searchInput.addEventListener('input', () => findInTerminal('next'));
-searchInput.addEventListener('keydown', (e) => {
-  e.stopPropagation();
-  if (e.key === 'Enter') findInTerminal(e.shiftKey ? 'prev' : 'next');
-  if (e.key === 'Escape') closeSearch();
-});
-searchPrev.addEventListener('click', () => findInTerminal('prev'));
-searchNext.addEventListener('click', () => findInTerminal('next'));
-searchClose.addEventListener('click', closeSearch);
+// FLAG: search drives the active terminal, so the island takes core state —
+// `sessions` + getActiveSession (activeSession is a reassignable let) — as
+// factory params. openSearch/closeSearch are destructured out so their call
+// sites stay identical; isSearchOpen/setSearchInfo front the two spots that
+// reached the island's DOM directly (switch-session teardown + createSession's
+// result callback).
+const { openSearch, closeSearch, isSearchOpen, setSearchInfo } =
+  createTermSearch({ sessions, getActiveSession: () => activeSession });
 
 // ---------------------------------------------------------------------------
 // Resize handling
@@ -4862,70 +4283,16 @@ document.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Update banner
+// Banners (update + spawn diagnostics)
 // ---------------------------------------------------------------------------
 
-const updateBanner = document.getElementById('update-banner');
-const updateText = document.getElementById('update-text');
+// Self-contained (window.api / navigator only). refreshDiagBanner is
+// destructured out for createSession's spawn-error path to re-run.
+const { refreshDiagBanner } = initBanners();
 
-function showUpdateBanner(info) {
-  updateText.textContent = `Update available: v${info.version}`;
-  updateBanner.classList.remove('hidden');
-}
-
-updateBanner.addEventListener('click', () => {
-  window.api.openUpdate();
-});
-
-// Check if an update was already detected before the renderer loaded
-window.api.getUpdateInfo().then((info) => { if (info) showUpdateBanner(info); });
-
-// Listen for updates detected while running
-window.api.onUpdateAvailable((info) => showUpdateBanner(info));
-
-// ---------------------------------------------------------------------------
-// Spawn diagnostics banner — surfaces a broken-install warning (the usual
-// cause of "posix_spawnp failed.") so Finder-launched users who never see
-// stdout still get a pointer to `npx electron-rebuild`.
-// ---------------------------------------------------------------------------
-
-const diagBanner = document.getElementById('diag-banner');
-const diagText = document.getElementById('diag-text');
-let diagDetails = '';
-
-async function refreshDiagBanner() {
-  try {
-    const d = await window.api.getDiagnostics();
-    if (d && d.warning) {
-      diagText.textContent = d.warning;
-      diagDetails = `${d.warning}\n${d.summary}\nhelper=${d.helperPath}`;
-      diagBanner.classList.remove('hidden');
-    } else {
-      diagBanner.classList.add('hidden');
-    }
-  } catch { /* diagnostics are best-effort */ }
-}
-
-// Clicking copies the full details so users can paste them into a bug report.
-diagBanner.addEventListener('click', () => {
-  if (!diagDetails) return;
-  navigator.clipboard.writeText(diagDetails).then(() => {
-    const prev = diagText.textContent;
-    diagText.textContent = 'Copied diagnostics to clipboard';
-    setTimeout(() => { diagText.textContent = prev; }, 1500);
-  }).catch(() => {});
-});
-
-refreshDiagBanner();
-
-// Tray-triggered actions
+// Tray-triggered actions (the drawer-open handlers live in library-drawers.js)
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
-window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
-window.api.onRequestOpenPromptsDrawer(() => openPromptsDrawer());
-window.api.onRequestOpenIpcLog(() => {
-  if (ipcLog.classList.contains('collapsed')) toggleIpcLog();
-});
 
 // ---------------------------------------------------------------------------
 // Preferences dialog
@@ -5530,7 +4897,7 @@ async function openPrefs() {
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
   // Unchecked = denied by default for new sessions.
-  claudeToolsCache = s.claudeTools || [];
+  setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
@@ -5609,11 +4976,11 @@ async function openArgsDialog(name) {
     window.api.listAgents(),
   ]);
   if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-  agentLibCache = agentLib || [];
-  promptLibCache = {
+  setAgentLibCache(agentLib || []);
+  setPromptLibCache({
     system: (promptLib || []).filter(p => p.kind === 'system'),
     append: (promptLib || []).filter(p => p.kind === 'append'),
-  };
+  });
   argsEditingName = name;
   argsTarget.textContent = `${name} (${res.type}) — new settings apply on next spawn.`;
   argsInput.value = (res.extraArgs || []).map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
@@ -5637,7 +5004,7 @@ async function openArgsDialog(name) {
   renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = isClaude ? '' : 'none';
   argsToolsSection.style.display = isClaude ? '' : 'none';
-  claudeToolsCache = settings?.claudeTools || [];
+  setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection]) sec.open = false;
   argsRestart.checked = false;
@@ -5686,377 +5053,15 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Prompts library
+// Library drawers (prompts / agents / skills)
 // ---------------------------------------------------------------------------
 
-const promptsDrawer = document.getElementById('prompts-drawer');
-const promptsList = document.getElementById('prompts-list');
-const promptsEmpty = document.getElementById('prompts-empty');
-const promptEditor = document.getElementById('prompt-editor');
-const promptEditorTitle = document.getElementById('prompt-editor-title');
-const promptKind = document.getElementById('prompt-kind');
-const promptName = document.getElementById('prompt-name');
-const promptBody = document.getElementById('prompt-body');
-const promptSave = document.getElementById('prompt-save');
-const promptCancel = document.getElementById('prompt-cancel');
-const promptDelete = document.getElementById('prompt-delete');
-const promptsNew = document.getElementById('prompts-new');
-const promptsClose = document.getElementById('prompts-close');
-
-// {kind, name} of the prompt being edited (its filename identity is locked while
-// editing — rename = delete + new), or null when authoring a new one.
-let editingPrompt = null;
-
-async function refreshPromptsList() {
-  const items = await window.api.listPrompts();
-  promptsList.innerHTML = '';
-  if (items.length === 0) {
-    promptsEmpty.style.display = '';
-    return;
-  }
-  promptsEmpty.style.display = 'none';
-  for (const p of items) {
-    const el = document.createElement('div');
-    el.className = 'prompt-item';
-    const preview = p.body.split('\n')[0].slice(0, 80) + (p.body.length > 80 ? '…' : '');
-    el.innerHTML = `
-      <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
-      <div class="prompt-item-preview">${esc(preview)}</div>
-      <div class="prompt-item-actions">
-        <button class="primary" data-action="inject">Inject</button>
-        <button data-action="edit">Edit</button>
-      </div>
-    `;
-    el.querySelector('[data-action="inject"]').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!activeSession) {
-        alert('No active session. Select one first.');
-        return;
-      }
-      await window.api.injectPrompt(activeSession, p.body);
-    });
-    el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openPromptEditor(p);
-    });
-    // Clicking the body (not a button) = inject
-    el.addEventListener('click', async () => {
-      if (!activeSession) { alert('No active session. Select one first.'); return; }
-      await window.api.injectPrompt(activeSession, p.body);
-    });
-    promptsList.appendChild(el);
-  }
-}
-
-function openPromptsDrawer() {
-  promptsDrawer.classList.remove('hidden');
-  refreshPromptsList();
-}
-
-function closePromptsDrawer() {
-  promptsDrawer.classList.add('hidden');
-}
-
-function openPromptEditor(prompt = null) {
-  if (prompt) {
-    editingPrompt = { kind: prompt.kind, name: prompt.name };
-    promptEditorTitle.textContent = 'Edit Prompt';
-    promptKind.value = prompt.kind;
-    promptKind.disabled = true; // kind+name = the file identity; locked while editing
-    promptName.value = prompt.name;
-    promptName.readOnly = true;
-    promptBody.value = prompt.body;
-    promptDelete.style.display = '';
-  } else {
-    editingPrompt = null;
-    promptEditorTitle.textContent = 'New Prompt';
-    promptKind.value = 'append';
-    promptKind.disabled = false;
-    promptName.value = '';
-    promptName.readOnly = false;
-    promptBody.value = '';
-    promptDelete.style.display = 'none';
-  }
-  promptEditor.classList.remove('hidden');
-  setTimeout(() => (editingPrompt ? promptBody : promptName).focus(), 50);
-}
-
-function closePromptEditor() {
-  promptEditor.classList.add('hidden');
-  editingPrompt = null;
-}
-
-promptsClose.addEventListener('click', closePromptsDrawer);
-promptsNew.addEventListener('click', () => openPromptEditor(null));
-
-promptSave.addEventListener('click', async () => {
-  const kind = promptKind.value;
-  const name = promptName.value.trim();
-  const body = promptBody.value;
-  if (!name || !body.trim()) return;
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    promptName.style.borderColor = '#e94560';
-    return;
-  }
-  promptName.style.borderColor = '';
-  const res = await window.api.savePrompt(kind, name, body);
-  if (res && res.ok === false) { alert(`Failed: ${res.error || 'unknown error'}`); return; }
-  closePromptEditor();
-  refreshPromptsList();
+// Moved to library-drawers.js AS-IS (not de-duped — see that file's header).
+// FLAG: takes getActiveSession (prompt inject) + the checklists cache setters.
+initLibraryDrawers({
+  getActiveSession: () => activeSession,
+  setAgentLibCache, setSkillLibCache,
 });
-
-promptCancel.addEventListener('click', closePromptEditor);
-promptDelete.addEventListener('click', async () => {
-  if (!editingPrompt) return;
-  if (!confirm(`Delete prompt "${editingPrompt.name}"?`)) return;
-  await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
-  closePromptEditor();
-  refreshPromptsList();
-});
-
-// Prevent keyboard shortcuts from firing inside the editor
-promptName.addEventListener('keydown', (e) => e.stopPropagation());
-promptBody.addEventListener('keydown', (e) => e.stopPropagation());
-
-// ---------------------------------------------------------------------------
-// Agents library — custom subagents stored as ~/.clodex/agents/*.md
-// ---------------------------------------------------------------------------
-
-const agentsDrawer = document.getElementById('agents-drawer');
-const agentsListEl = document.getElementById('agents-list');
-const agentsEmpty = document.getElementById('agents-empty');
-const agentEditor = document.getElementById('agent-editor');
-const agentEditorTitle = document.getElementById('agent-editor-title');
-const agentNameInput = document.getElementById('agent-name');
-const agentContent = document.getElementById('agent-content');
-const agentSave = document.getElementById('agent-save');
-const agentCancel = document.getElementById('agent-cancel');
-const agentDelete = document.getElementById('agent-delete');
-const agentsNew = document.getElementById('agents-new');
-const agentsClose = document.getElementById('agents-close');
-
-let editingAgentName = null;
-
-async function refreshAgentsList() {
-  const items = await window.api.listAgents();
-  agentLibCache = items || [];
-  agentsListEl.innerHTML = '';
-  if (!items || items.length === 0) {
-    agentsEmpty.style.display = '';
-    return;
-  }
-  agentsEmpty.style.display = 'none';
-  for (const a of items) {
-    const meta = [a.model && `model: ${a.model}`, a.tools && `tools: ${a.tools}`].filter(Boolean).join(' · ');
-    const preview = a.description || meta || '(no description)';
-    const el = document.createElement('div');
-    el.className = 'prompt-item';
-    el.innerHTML = `
-      <div class="prompt-item-title">${esc(a.name)}</div>
-      <div class="prompt-item-preview">${esc(preview)}</div>
-      <div class="prompt-item-actions">
-        <button data-action="edit">Edit</button>
-      </div>
-    `;
-    el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openAgentEditor(a);
-    });
-    el.addEventListener('click', () => openAgentEditor(a));
-    agentsListEl.appendChild(el);
-  }
-}
-
-function openAgentsDrawer(name) {
-  agentsDrawer.classList.remove('hidden');
-  refreshAgentsList();
-  // Deep-link from the Agents menu: ':new' opens a blank editor, any other
-  // name jumps straight into that type's editor.
-  if (name === ':new') openAgentEditor(null);
-  else if (name) openAgentEditor({ name });
-}
-function closeAgentsDrawer() {
-  agentsDrawer.classList.add('hidden');
-}
-
-async function openAgentEditor(agent = null) {
-  if (agent) {
-    editingAgentName = agent.name;
-    agentEditorTitle.textContent = 'Edit Agent';
-    agentNameInput.value = agent.name;
-    agentContent.value = (await window.api.getAgent(agent.name)) || '';
-    agentDelete.style.display = '';
-  } else {
-    editingAgentName = null;
-    agentEditorTitle.textContent = 'New Agent';
-    agentNameInput.value = '';
-    agentContent.value = '---\ndescription: Fast read-only repo search.\ntools: Read, Grep, Glob\nmodel: haiku\n---\nYou are a focused explorer. Return conclusions, not file dumps.';
-    agentDelete.style.display = 'none';
-  }
-  agentNameInput.style.borderColor = '';
-  agentEditor.classList.remove('hidden');
-  setTimeout(() => agentNameInput.focus(), 50);
-}
-function closeAgentEditor() {
-  agentEditor.classList.add('hidden');
-  editingAgentName = null;
-}
-
-agentsClose.addEventListener('click', closeAgentsDrawer);
-agentsNew.addEventListener('click', () => openAgentEditor(null));
-
-agentSave.addEventListener('click', async () => {
-  const name = agentNameInput.value.trim();
-  const content = agentContent.value;
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    agentNameInput.style.borderColor = '#e94560';
-    return;
-  }
-  const res = await window.api.saveAgent(name, content);
-  if (!res || !res.ok) {
-    alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
-    return;
-  }
-  // Rename: a changed Name field writes a new file — drop the old one.
-  if (editingAgentName && editingAgentName !== name) {
-    await window.api.removeAgent(editingAgentName);
-  }
-  closeAgentEditor();
-  refreshAgentsList();
-});
-
-agentCancel.addEventListener('click', closeAgentEditor);
-agentDelete.addEventListener('click', async () => {
-  if (!editingAgentName) return;
-  if (!confirm(`Delete agent "${editingAgentName}"?`)) return;
-  await window.api.removeAgent(editingAgentName);
-  closeAgentEditor();
-  refreshAgentsList();
-});
-
-// Keep keyboard shortcuts from firing inside the editor fields
-agentNameInput.addEventListener('keydown', (e) => e.stopPropagation());
-agentContent.addEventListener('keydown', (e) => e.stopPropagation());
-agentNameInput.addEventListener('input', () => { agentNameInput.style.borderColor = ''; });
-
-// ---------------------------------------------------------------------------
-// Skill library — custom skills stored as ~/.clodex/skills/*.md, injected per
-// session via --plugin-dir. Mirrors the agents drawer.
-// ---------------------------------------------------------------------------
-
-const skillsDrawer = document.getElementById('skills-drawer');
-const skillsListEl = document.getElementById('skills-list');
-const skillsEmpty = document.getElementById('skills-empty');
-const skillEditor = document.getElementById('skill-editor');
-const skillEditorTitle = document.getElementById('skill-editor-title');
-const skillNameInput = document.getElementById('skill-name');
-const skillContent = document.getElementById('skill-content');
-const skillSave = document.getElementById('skill-save');
-const skillCancel = document.getElementById('skill-cancel');
-const skillDelete = document.getElementById('skill-delete');
-const skillsNew = document.getElementById('skills-new');
-const skillsClose = document.getElementById('skills-close');
-
-let editingSkillName = null;
-
-async function refreshSkillsLibList() {
-  const items = await window.api.listSkillLib();
-  skillLibCache = items || [];
-  skillsListEl.innerHTML = '';
-  if (!items || items.length === 0) {
-    skillsEmpty.style.display = '';
-    return;
-  }
-  skillsEmpty.style.display = 'none';
-  for (const s of items) {
-    const el = document.createElement('div');
-    el.className = 'prompt-item';
-    el.innerHTML = `
-      <div class="prompt-item-title">${esc(s.name)}</div>
-      <div class="prompt-item-preview">${esc(s.description || '(no description)')}</div>
-      <div class="prompt-item-actions">
-        <button data-action="edit">Edit</button>
-      </div>
-    `;
-    el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openSkillEditor(s);
-    });
-    el.addEventListener('click', () => openSkillEditor(s));
-    skillsListEl.appendChild(el);
-  }
-}
-
-function openSkillsDrawer(name) {
-  skillsDrawer.classList.remove('hidden');
-  refreshSkillsLibList();
-  if (name === ':new') openSkillEditor(null);
-  else if (name) openSkillEditor({ name });
-}
-function closeSkillsDrawer() {
-  skillsDrawer.classList.add('hidden');
-}
-
-async function openSkillEditor(skill = null) {
-  if (skill) {
-    editingSkillName = skill.name;
-    skillEditorTitle.textContent = 'Edit Skill';
-    skillNameInput.value = skill.name;
-    skillContent.value = (await window.api.getSkillLib(skill.name)) || '';
-    skillDelete.style.display = '';
-  } else {
-    editingSkillName = null;
-    skillEditorTitle.textContent = 'New Skill';
-    skillNameInput.value = '';
-    skillContent.value = '---\ndescription: When to use this skill — be specific so the model picks it at the right moment.\n---\nStep-by-step instructions for the model.';
-    skillDelete.style.display = 'none';
-  }
-  skillNameInput.style.borderColor = '';
-  skillEditor.classList.remove('hidden');
-  setTimeout(() => skillNameInput.focus(), 50);
-}
-function closeSkillEditor() {
-  skillEditor.classList.add('hidden');
-  editingSkillName = null;
-}
-
-skillsClose.addEventListener('click', closeSkillsDrawer);
-skillsNew.addEventListener('click', () => openSkillEditor(null));
-
-skillSave.addEventListener('click', async () => {
-  const name = skillNameInput.value.trim();
-  const content = skillContent.value;
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    skillNameInput.style.borderColor = '#e94560';
-    return;
-  }
-  const res = await window.api.saveSkillLib(name, content);
-  if (!res || !res.ok) {
-    alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
-    return;
-  }
-  // Rename: a changed Name field writes a new file — drop the old one.
-  if (editingSkillName && editingSkillName !== name) {
-    await window.api.removeSkillLib(editingSkillName);
-  }
-  closeSkillEditor();
-  refreshSkillsLibList();
-});
-
-skillCancel.addEventListener('click', closeSkillEditor);
-skillDelete.addEventListener('click', async () => {
-  if (!editingSkillName) return;
-  if (!confirm(`Delete skill "${editingSkillName}"?`)) return;
-  await window.api.removeSkillLib(editingSkillName);
-  closeSkillEditor();
-  refreshSkillsLibList();
-});
-
-skillNameInput.addEventListener('keydown', (e) => e.stopPropagation());
-skillContent.addEventListener('keydown', (e) => e.stopPropagation());
-skillNameInput.addEventListener('input', () => { skillNameInput.style.borderColor = ''; });
-
-window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
 
 // ---------------------------------------------------------------------------
 // Restore sessions on startup
