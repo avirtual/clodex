@@ -379,6 +379,22 @@ class PeerConnection {
     });
   }
 
+  // Skills over the wire (Phase 2, same 'args' cap). skillCatalog reads the box's
+  // skill catalog for the Skills popover; setSessionSkills persists the disabled/
+  // inject sets (persist-only — the popover makes a separate restart-session call
+  // to apply now). Host-level like sessionArgs; plain request-pool traffic.
+  skillCatalog(name, cb) {
+    this._request('GET', `/api/skill-catalog/${encodeURIComponent(name)}`, null, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+    });
+  }
+
+  setSessionSkills(name, disabledSkills, injectSkills, cb) {
+    this._request('POST', `/api/session-skills/${encodeURIComponent(name)}`, { disabledSkills, injectSkills }, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+    });
+  }
+
   // ---- DM federation ----
   // Send a DM to an agent on this peer. `origin` is OUR label (how the box keys
   // its reply outbox for us); passed once from selfLabel, never recomputed. The

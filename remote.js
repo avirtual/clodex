@@ -33,6 +33,7 @@ class RemoteServer {
                 hostLabel, version, srcDir, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession,
                 getSessionArgs, setSessionArgs,
+                getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins }) {
     this._port = port;
     this._pagePath = pagePath;
@@ -71,6 +72,14 @@ class RemoteServer {
     // editing", and both pairs ship together in one release, so no second cap.
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
+    // Phase 2 of remote session config editing: per-session skills. getSkillCatalog
+    // reads the box's skill catalog (roster parsed box-side, box's skill library);
+    // setSessionSkills persists the disabled/inject sets (restart is a separate
+    // /api/session-restart call the popover already makes). Both ride the SAME
+    // 'args' cap as the session-args pair — see /api/peer/hello — and each endpoint
+    // 501s independently on its own absent callback.
+    this._getSkillCatalog = getSkillCatalog || null;
+    this._setSessionSkills = setSessionSkills || null;
     // DM federation (Clodex-to-Clodex agent messaging). deliverDm gates the 'dm'
     // cap and the inbound POST; claimDms drains a consumer's outbox; listDmOrigins
     // advertises which origins have mail waiting (so a consumer only claims when
@@ -350,7 +359,7 @@ class RemoteServer {
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
       if (this._createSession) caps.push('create'); // covers create + kill + restart (ship together)
-      if (this._getSessionArgs) caps.push('args');   // remote session config editing (args now; skills in phase 2, same cap)
+      if (this._getSessionArgs) caps.push('args');   // remote session config editing — args + skills pairs, ship together under one cap
       if (this._deliverDm) caps.push('dm'); // inbound DM + outbox claim (federation)
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
@@ -578,6 +587,38 @@ class RemoteServer {
         Promise.resolve()
           .then(() => this._setSessionArgs(name, msg))
           .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setArgs failed' }))
+          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+      });
+    }
+    // Remote skill catalog — the Skills popover's data over the wire. Owner returns
+    // EXACTLY what session:skillCatalog returns (names union, disabledSkills,
+    // effective lower-layer state, skillsLocked, canReenable, skillLib, injectSkills),
+    // all resolved BOX-side: the transcript roster and the skill library are the
+    // box's, which is correct because inject-skills materialize at spawn on the box.
+    // Rides the 'args' cap; path-scoped; ok:false (unknown name) → 404.
+    if (req.method === 'GET' && p.startsWith('/api/skill-catalog/')) {
+      if (!this._getSkillCatalog) return this._json(res, 501, { ok: false, error: 'skills not available' });
+      const name = decodeURIComponent(p.slice('/api/skill-catalog/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return Promise.resolve()
+        .then(() => this._getSkillCatalog(name))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    }
+    // Remote skill gating apply — {disabledSkills, injectSkills}. Owner shares
+    // session:setSkills's core (persist-only; injectSkills optional; restart is a
+    // separate /api/session-restart the popover makes when the user asks). Same
+    // 'args' cap as the GET.
+    if (req.method === 'POST' && p.startsWith('/api/session-skills/')) {
+      if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
+      const name = decodeURIComponent(p.slice('/api/session-skills/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return this._readBody(req, res, (body) => {
+        let msg;
+        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        Promise.resolve()
+          .then(() => this._setSessionSkills(name, msg.disabledSkills, msg.injectSkills))
+          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setSkills failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }

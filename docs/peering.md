@@ -40,7 +40,13 @@ popover data; kind whitelist lives in the injected callback),
 `POST /api/send` (operator message), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
 `/api/kill/:name`, `/api/restart-session/:name` (remote create/kill/restart
-— all under the `create` cap, shipped together), `POST /api/dm` +
+— all under the `create` cap, shipped together),
+`GET /api/session-args/:name` + `POST /api/session-args/:name` (Edit Session
+over the wire: read editable args + the box's dialog catalogs, apply an edited
+patch with kill+respawn on `restart:true`) and `GET /api/skill-catalog/:name` +
+`POST /api/session-skills/:name` (Edit Skills over the wire: read the box's skill
+catalog, persist the disabled/inject sets — a separate `/api/restart-session`
+applies) — all four under the `args` cap, shipped together — and `POST /api/dm` +
 `/api/dm/claim` (federation, `dm` cap).
 
 Fan-out from the session manager (cheap no-ops when unattached):

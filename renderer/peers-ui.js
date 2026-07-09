@@ -45,7 +45,7 @@ function initPeersUi({
   remeasureReadonlyPeer, peerStatuses, peerTunnels, getOurAppVersion,
   getDeployLineHandlers, proxyState, ctxPct, ctxTokens, peerFilesCount,
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
-  isFilesPopoverForKey, openArgsDialog,
+  isFilesPopoverForKey, openArgsDialog, openSkillsPopover,
 }) {
   // Cached GitHub release list ([{tag, published_at}] newest-first) for the peer
   // identity popover's best-effort age/behind line. Seeded once and refreshed
@@ -600,6 +600,15 @@ function initPeersUi({
         openArgsDialog(name, peerArgsSource(id, name, peerDisplayHost(st)));
         break;
       }
+      case 'editSkills': {
+        // Edit Skills on a peer — reuse the local Skills popover with a peer source
+        // (fetch the box's catalog, persist the disabled/inject sets, fresh-restart
+        // + reattach to apply now). Anchored to the sidebar ROW (no ⚙ button here).
+        const st = peerStatuses.get(id);
+        const anchor = sessionList.querySelector(`[data-name="${CSS.escape(key)}"]`) || sessionList;
+        openSkillsPopover(name, anchor, peerSkillsSource(id, name, peerDisplayHost(st)));
+        break;
+      }
       case 'restartRemote':
         // Plain host-level restart of a peer SESSION (--resume, keeps history).
         // No confirm — parity with the local plain restart.
@@ -1069,6 +1078,24 @@ function initPeersUi({
         return window.api.peerSetSessionArgs(id, name, patch);
       },
       onRestarted: () => { if (wasAttached) reattachPeerSession(id, name); },
+    };
+  }
+
+  // Data source for editing a PEER session in the shared Skills popover: read the
+  // box's skill catalog, persist the disabled/inject sets, and (when the user asks
+  // to apply now) do the box's FRESH restart + reattach via the existing helper —
+  // which already toasts and reattaches, so no tail duplication here. The catalog
+  // shape (names/effective/skillLib/injectSkills) is identical to the local one, so
+  // the popover's render/collect code is unchanged.
+  function peerSkillsSource(id, name, label) {
+    return {
+      fetch: async () => {
+        const r = await window.api.peerSkillCatalog(id, name);
+        return (r && r.ok) ? r : (r || { ok: false, error: `Session "${name}" not found on ${label}.` });
+      },
+      save: ({ disabledSkills, injectSkills }) =>
+        window.api.peerSetSessionSkills(id, name, disabledSkills, injectSkills),
+      restartFresh: () => restartPeerSessionWithReattach(id, name, true),
     };
   }
 

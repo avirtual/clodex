@@ -30,6 +30,7 @@ function createRemoteWiring(deps) {
     // hoisted helpers (shared with ipc-handlers; stay in main.js, injected)
     restartClodex, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
+    readSkillCatalog, applySessionSkills,
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     // Edit Session catalogs: CLAUDE_TOOLS is a load-time const (value); the
@@ -219,6 +220,23 @@ function createRemoteWiring(deps) {
           const out = await applySessionArgs(name, patch || {}, wsId);
           if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
+          return out;
+        },
+        // Remote skill catalog read — the Skills popover's source of truth for a peer
+        // session (Phase 2, same 'args' cap). Returns EXACTLY what session:skillCatalog
+        // returns via the shared readSkillCatalog: the roster is parsed BOX-side and
+        // skillLib is the BOX's library, both correct because inject-skills materialize
+        // at spawn time on the box. No extra catalogs needed — the shape is self-
+        // contained. Unknown name → { ok:false } (endpoint maps to 404).
+        getSkillCatalog: (name) => readSkillCatalog(name),
+        // Remote skill gating apply — routes to the SHARED applySessionSkills (persist-
+        // only; injectSkills optional). No restart here — the popover makes a separate
+        // /api/session-restart call when the user asks to apply now; the roster is
+        // frozen at conversation creation.
+        setSessionSkills: (name, disabledSkills, injectSkills) => {
+          name = String(name || '').trim();
+          const out = applySessionSkills(name, disabledSkills, injectSkills);
+          log.info('session', `setSkills ${name} via peer${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
         },
         // ---- DM federation (Clodex-to-Clodex agent messaging) ----

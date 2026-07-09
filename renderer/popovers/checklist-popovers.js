@@ -4,12 +4,17 @@
 // with a hard restart + terminal re-attach). Self-contained island: DOM handles,
 // dismiss wiring, and bulk-toggle wiring live here; the openers are returned.
 //
-// NOTE these are LOCAL editors — no popoverApi and no peer variant (the bar
-// suppresses them for peer tabs). They read/write settings and restart via
-// window.api directly (getSettings/getSessionArgs/setSession{Tools,Skills,Agents}/
-// restartSession); that is outside the popoverApi read-only data seam by design.
-// The restart re-attach dance needs core sessionList/createTerminal/
-// addSessionToSidebar/switchSession, injected by reference.
+// NOTE these read/write settings and restart via window.api directly
+// (getSettings/getSessionArgs/setSession{Tools,Skills,Agents}/restartSession);
+// that is outside the popoverApi read-only data seam by design. The restart
+// re-attach dance needs core sessionList/createTerminal/addSessionToSidebar/
+// switchSession, injected by reference.
+//   Tools/Agents are LOCAL-only (no peer variant — the bar suppresses them for
+// peer tabs; they're covered remotely via the Edit Session args dialog). SKILLS
+// takes an optional peer `source` ({fetch, save, restartFresh}) so the same
+// popover edits a peer session's skills over the wire (peers-ui builds the
+// source; the box's catalog/library is the truth). Local path: source omitted,
+// byte-equivalent to before.
 //
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
@@ -99,15 +104,20 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const popoverInjectSkillsSection = document.getElementById('popover-inject-skills-section');
   const popoverInjectSkillsList = document.getElementById('popover-inject-skills-list');
   const skillsPopoverRestart = document.getElementById('skills-popover-restart');
+  // Non-null while editing a PEER session's skills: swaps the fetch/save/restart
+  // data layer (the box's catalog + wire persist) while the DOM stays identical.
+  let skillsEditingSource = null;
 
   function closeSkillsPopover() {
     skillsPopover.classList.add('hidden');
     skillsPopover.dataset.name = '';
+    skillsEditingSource = null;
   }
 
-  async function openSkillsPopover(name, anchorBtn) {
-    const res = await window.api.getSkillCatalog(name);
-    if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+  async function openSkillsPopover(name, anchorBtn, source = null) {
+    const res = source ? await source.fetch() : await window.api.getSkillCatalog(name);
+    if (!res || !res.ok) { alert(source ? `Could not read skills on peer: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
+    skillsEditingSource = source;
     renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
       res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
     // Library-injection section: only shown when the library is non-empty.
@@ -125,7 +135,13 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const r = anchorBtn.getBoundingClientRect();
     const w = skillsPopover.offsetWidth;
     skillsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    skillsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    // Bottom-anchored; clamp so the top stays on-screen. The local ⚙ anchor sits
+    // in the bottom bar where the clamp is a no-op; a peer sidebar ROW anchor can
+    // sit high enough that the unclamped bottom would push the popover past the
+    // viewport top.
+    const wantBottom = Math.max(8, window.innerHeight - r.top + 6);
+    const maxBottom = Math.max(8, window.innerHeight - skillsPopover.offsetHeight - 8);
+    skillsPopover.style.bottom = `${Math.min(wantBottom, maxBottom)}px`;
   }
 
   document.getElementById('skills-popover-cancel').addEventListener('click', closeSkillsPopover);
@@ -138,16 +154,22 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const injectSkills = popoverInjectSkillsSection.style.display === 'none'
       ? undefined : collectInjectChecklist(popoverInjectSkillsList);
     const restart = skillsPopoverRestart.checked;
+    // Capture the peer source (if any) before close() nulls it.
+    const source = skillsEditingSource;
     // Skill changes (trim or inject) only land in a NEW conversation (the roster
     // is fixed at creation; --resume replays the old one), so confirm the
-    // history-clearing fresh restart before doing it.
+    // history-clearing fresh restart before doing it. SHARED across local + peer —
+    // it's the semantic warning (a peer fresh restart clears the box's history too).
     if (restart && !confirm(`Apply skill changes to "${name}" now?\n\nThis starts a NEW conversation — the current session's history will be cleared. (Leave "Restart fresh" unchecked to apply on the next fresh start instead.)`)) return;
     closeSkillsPopover();
-    const r = await window.api.setSessionSkills(name, disabledSkills, injectSkills);
+    const r = source
+      ? await source.save({ disabledSkills, injectSkills })
+      : await window.api.setSessionSkills(name, disabledSkills, injectSkills);
     if (!r || !r.ok) { alert(`Failed to update skills: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Fresh (non-resume) restart — the only way a skill change takes effect.
-    // Same re-attach dance as the tools popover restart path.
+    if (source) { source.restartFresh(); return; }
+    // Local: same re-attach dance as the tools popover restart path.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     const snapType = item ? item.querySelector('.session-type')?.textContent : null;
     const snapCwd = item ? item.dataset.cwd : null;

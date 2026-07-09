@@ -1586,10 +1586,11 @@ const {
   createTerminal, addSessionToSidebar, switchSession,
 });
 
-// --- Quick config-editor popovers: Tools / Skills / Agents (local only) ---
+// --- Quick config-editor popovers: Tools / Skills / Agents ---
 // Self-contained island (popovers/checklist-popovers.js). No popoverApi — these
 // edit local session config via window.api; the ctx popover's manage links and
-// the bar's ⚙ actions call the returned openers.
+// the bar's ⚙ actions call the returned openers. Tools/Agents are local-only;
+// Skills also accepts a peer source (used by peers-ui for Edit Skills on a row).
 const { openToolsPopover, openSkillsPopover, openAgentsPopover } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession,
 });
@@ -1712,6 +1713,8 @@ const {
   // Edit Session on a peer row reuses the local dialog with a peer data source
   // (hoisted function decl, so referenced above its definition).
   openArgsDialog,
+  // Edit Skills on a peer row reuses the local Skills popover with a peer source.
+  openSkillsPopover,
 });
 
 // ---------------------------------------------------------------------------

@@ -1342,6 +1342,47 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
+// Build the Skills-popover catalog for a session (Phase 2 shared reader).
+// Extracted verbatim from the session:skillCatalog IPC closure so the peer
+// skill-catalog GET endpoint returns EXACTLY the same shape — the transcript
+// roster is parsed BOX-side (parseSkillRoster reads the box's own ~/.clodex
+// transcript) and skillLib is the box's library, both semantically correct for a
+// peer edit because inject-skills materialize at spawn time on the box. Never
+// empty for Claude (the static seed floors it).
+function readSkillCatalog(name) {
+  const entry = persistence.get(name);
+  const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
+  const eff = readEffectiveSkillState(entry ? entry.cwd : null);
+  const names = [...new Set([
+    ...CLAUDE_SKILLS,
+    ...parseSkillRoster(name),
+    ...disabled,
+    ...Object.keys(eff.overrides),
+  ])].sort();
+  return {
+    ok: true,
+    names,
+    disabledSkills: disabled,        // the session's own layer-4 off list
+    effective: eff.overrides,        // lower-layer state, per skill (value+source)
+    skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
+    canReenable: SKILL_REENABLE_CONFIRMED,
+    skillLib: skillLibrary.list(),   // library skills available to inject
+    injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
+  };
+}
+
+// Persist a session's skill gating (persist-only — restart is a SEPARATE call the
+// popover makes when the user asks; the roster is frozen at conversation
+// creation). Extracted verbatim from the session:setSkills IPC closure so the
+// peer session-skills POST endpoint shares the exact semantics: injectSkills is
+// optional (only the library section sends it) and left untouched when absent.
+function applySessionSkills(name, disabledSkills, injectSkills) {
+  if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
+  persistence.setDisabledSkills(name, Array.isArray(disabledSkills) ? disabledSkills : []);
+  if (injectSkills !== undefined) persistence.setInjectSkills(name, Array.isArray(injectSkills) ? injectSkills : []);
+  return { ok: true };
+}
+
 // syncRemoteServer — extracted to remote-wiring.js (M5). createRemoteWiring
 // returns { syncRemoteServer }; the callback object it builds shares the
 // fetch*/restartSession/peerProxyView helpers (kept in main.js, injected).
@@ -1362,6 +1403,10 @@ const { syncRemoteServer } = createRemoteWiring({
   // catalogs the dialog's checklists need (agents/prompts via getters — stores
   // assigned in whenReady; CLAUDE_TOOLS is a load-time const).
   readSessionArgs, applySessionArgs, CLAUDE_TOOLS,
+  // Skills over the wire (Phase 2, same 'args' cap): the shared skill-catalog
+  // reader + persist helper. readSkillCatalog parses the roster BOX-side and
+  // exposes the box's own skillLibrary — both correct for a remote edit.
+  readSkillCatalog, applySessionSkills,
   getPromptLibrary: () => promptLibrary,
   getAgentLibrary: () => agentLibrary,
   getPersistence: () => persistence,
@@ -1617,11 +1662,12 @@ app.whenReady().then(() => {
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager, maybeCompactBeforeResume,
-    openWirescopeWindow, os, parseCtxFile, parseSkillRoster,
+    openWirescopeWindow, os, parseCtxFile,
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs, setUiTheme, sshRun,
+    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs,
+    readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
     templates, workspaces, promptLibrary, agentDefaults,

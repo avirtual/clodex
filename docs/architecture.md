@@ -138,7 +138,9 @@ Conventions the refactor established:
   `bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +
   `isFilesPopoverForKey` for the peer subsystem), plus two that are NOT on
   the data seam by design: `checklist-popovers.js` (tools/skills/agents —
-  local config editors, direct `window.api`, suppressed for peers) and
+  local config editors, direct `window.api`; tools/agents suppressed for
+  peers, but **skills takes an optional peer `source`** so the same popover
+  edits a peer session's skills over the wire under the `args` cap) and
   `session-menus.js` (warm/strip/history dropdowns — local action menus).
 - **renderer/peers-ui.js** — the peer runtime: sidebar peer rows, peer bar,
   control + type-to-take, the 13 peer event subscriptions, restore sweep,

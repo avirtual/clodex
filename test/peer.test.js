@@ -22,6 +22,7 @@ const created = [];
 const killed = [];
 const restartedSessions = [];
 const setArgsCalls = [];
+const setSkillsCalls = [];
 // DM federation fakes: deliverDm records inbound calls + returns a verdict keyed
 // by target; the outbox is a plain per-origin queue claimDms/listDmOrigins read.
 const dmCalls = [];
@@ -118,6 +119,17 @@ before(async () => {
       if (name !== 'alpha') return { ok: false, error: 'Session not found in persistence' };
       setArgsCalls.push({ name, patch });
       return { ok: true, restarted: !!patch.restart };
+    },
+    // Fake owner-side Edit Skills (Phase 2, same 'args' cap): getSkillCatalog
+    // returns the skill-catalog shape; setSessionSkills records + echoes ok.
+    getSkillCatalog: (name) => (name === 'alpha'
+      ? { ok: true, names: ['pdf', 'xlsx'], disabledSkills: ['xlsx'], effective: {},
+          skillsLocked: false, canReenable: true, skillLib: [], injectSkills: [] }
+      : { ok: false }),
+    setSessionSkills: (name, disabledSkills, injectSkills) => {
+      if (name !== 'alpha') return { ok: false, error: 'Session not found in persistence' };
+      setSkillsCalls.push({ name, disabledSkills, injectSkills });
+      return { ok: true };
     },
     query: (name, kind, args) => {
       if (name !== 'alpha') return { ok: false, error: 'no such session' };
@@ -575,6 +587,32 @@ test('session-args: POST forwards the patch; restart flag drives restarted', asy
   assert.equal(restarted.restarted, true, 'restart:true → respawn acked');
 });
 
+// ---- Edit Skills over the wire (same 'args' cap, Phase 2) ----
+
+test('skill-catalog: GET returns the box skill catalog for the popover', async () => {
+  const got = await new Promise((r) => conn.skillCatalog('alpha', r));
+  assert.ok(got.ok);
+  // Names + disabled set come from the BOX (roster parsed box-side, box's library).
+  assert.deepStrictEqual(got.names, ['pdf', 'xlsx']);
+  assert.deepStrictEqual(got.disabledSkills, ['xlsx']);
+  assert.equal(got.canReenable, true);
+});
+
+test('skill-catalog: GET on a missing session is a distinguishable error', async () => {
+  const gone = await new Promise((r) => conn.skillCatalog('nope', r));
+  assert.equal(gone.ok, false);
+});
+
+test('session-skills: POST forwards the disabled + inject sets to the owner', async () => {
+  const res = await new Promise((r) => conn.setSessionSkills('alpha', ['xlsx'], ['my-skill'], r));
+  assert.ok(res.ok);
+  assert.deepStrictEqual(setSkillsCalls.at(-1).disabledSkills, ['xlsx'], 'disabled set reached the owner');
+  assert.deepStrictEqual(setSkillsCalls.at(-1).injectSkills, ['my-skill'], 'inject set reached the owner');
+
+  const gone = await new Promise((r) => conn.setSessionSkills('nope', [], undefined, r));
+  assert.equal(gone.ok, false, 'unknown session → distinguishable error');
+});
+
 // ---- bash-type remote sessions (peer-visible, IPC-private on the owner) ----
 
 test('create: bash type is accepted and the ack carries type:bash', async () => {
@@ -648,6 +686,14 @@ test('create/kill/restart: 501 when the owner exposes no lifecycle callbacks', a
     const rs = await hit('/api/restart-session/x', {});
     assert.equal(rs.status, 501);
     assert.equal(rs.body.ok, false);
+    // The session-config-editing endpoints ('args' cap) 501 on their own absent
+    // callbacks too — each independently.
+    const sk = await hit('/api/session-skills/x', {});
+    assert.equal(sk.status, 501);
+    assert.equal(sk.body.ok, false);
+    const sa = await hit('/api/session-args/x', {});
+    assert.equal(sa.status, 501);
+    assert.equal(sa.body.ok, false);
     // And the bare server must not advertise the capability.
     const hello = await new Promise((resolve, reject) => {
       http.get({ hostname: '127.0.0.1', port: bare.port, path: '/api/peer/hello' }, (res) => {
@@ -656,6 +702,7 @@ test('create/kill/restart: 501 when the owner exposes no lifecycle callbacks', a
       }).on('error', reject);
     });
     assert.ok(!hello.caps.includes('create'), 'no create cap without the callback');
+    assert.ok(!hello.caps.includes('args'), 'no args cap without the config-editing callbacks');
   } finally {
     bare.stop();
   }

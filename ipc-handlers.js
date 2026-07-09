@@ -29,11 +29,12 @@ function registerIpcHandlers(deps) {
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager, maybeCompactBeforeResume,
-    openWirescopeWindow, os, parseCtxFile, parseSkillRoster,
+    openWirescopeWindow, os, parseCtxFile,
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs, setUiTheme, sshRun,
+    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs,
+    readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
     // stores (siblings of persistence above, declared in main.js's multi-line
@@ -380,14 +381,11 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
   // Focused per-session skill gating (mirror of setTools): persist disabledSkills
-  // only. Takes effect on next spawn via skillOverrides in the generated settings.
-  ipcMain.handle('session:setSkills', (_e, name, disabledSkills, injectSkills) => {
-    if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
-    persistence.setDisabledSkills(name, Array.isArray(disabledSkills) ? disabledSkills : []);
-    // injectSkills is optional — only the popover's library section sends it.
-    if (injectSkills !== undefined) persistence.setInjectSkills(name, Array.isArray(injectSkills) ? injectSkills : []);
-    return { ok: true };
-  });
+  // (+ optional injectSkills), applied on next spawn via skillOverrides. Thin
+  // adapter over the shared main.js applySessionSkills — the peer session-skills
+  // POST endpoint calls the same helper, keeping local + remote in lockstep.
+  ipcMain.handle('session:setSkills', (_e, name, disabledSkills, injectSkills) =>
+    applySessionSkills(name, disabledSkills, injectSkills));
   // Focused per-session agent composition (mirror of setSkills/setTools):
   // persist the enabled custom-subagent list + denyBuiltins only, leaving
   // extraArgs/proxy/posture/tools/skills untouched. Takes effect on the next
@@ -415,36 +413,11 @@ function registerIpcHandlers(deps) {
       denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
     };
   });
-  // Skill catalog for the Skills popover. Three sources unioned: the static
-  // CLAUDE_SKILLS seed (known built-ins — visible even when disabled in another
-  // settings source so they never hit the roster), the live roster parsed from
-  // the transcript (skill_listing attachments — catches plugin/cortex skills
-  // not in the seed), and the persisted disabled set (so an off skill stays
-  // re-enable-able even after it drops off the wire). Never empty for Claude.
-  ipcMain.handle('session:skillCatalog', (_e, name) => {
-    const entry = persistence.get(name);
-    const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
-    const eff = readEffectiveSkillState(entry ? entry.cwd : null);
-    // Catalog unions the static seed, the live roster, clodex's own off list, and
-    // any name a lower layer mentions — so a skill that's off below (and thus
-    // absent from the roster) is still listed, just rendered disabled+labeled.
-    const names = [...new Set([
-      ...CLAUDE_SKILLS,
-      ...parseSkillRoster(name),
-      ...disabled,
-      ...Object.keys(eff.overrides),
-    ])].sort();
-    return {
-      ok: true,
-      names,
-      disabledSkills: disabled,        // clodex's own layer-4 off list
-      effective: eff.overrides,        // lower-layer state, per skill (value+source)
-      skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
-      canReenable: SKILL_REENABLE_CONFIRMED,
-      skillLib: skillLibrary.list(),   // library skills available to inject
-      injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
-    };
-  });
+  // Skill catalog for the Skills popover (the static CLAUDE_SKILLS seed ∪ the live
+  // transcript roster ∪ the persisted disabled set ∪ lower-layer overrides; never
+  // empty for Claude). Thin adapter over the shared main.js readSkillCatalog — the
+  // union logic lives there so the peer skill-catalog GET returns an identical shape.
+  ipcMain.handle('session:skillCatalog', (_e, name) => readSkillCatalog(name));
   // Skill catalog for the NEW-SESSION dialog (no session/transcript yet, just a
   // chosen cwd). Static seed + whatever a lower settings layer for that cwd
   // already disables, with the same effective-state + provenance so a globally-
@@ -763,6 +736,19 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.setSessionArgs(String(name || ''), patch || {}, resolve);
   }));
+  // Edit Skills on a peer — read the box's skill catalog, then persist an edited
+  // disabled/inject set. Same 'args' cap + online gate as Edit Session; thin
+  // adapters over the peer-client skill request pair.
+  ipcMain.handle('peer:skillCatalog', (_e, id, name) => new Promise((resolve) => {
+    const conn = getPeerManager() && getPeerManager().get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.skillCatalog(String(name || ''), resolve);
+  }));
+  ipcMain.handle('peer:setSessionSkills', (_e, id, name, disabledSkills, injectSkills) => new Promise((resolve) => {
+    const conn = getPeerManager() && getPeerManager().get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.setSessionSkills(String(name || ''), disabledSkills, injectSkills, resolve);
+  }));
   // Popover data for a peer session — one kind-dispatched pull, answered by
   // the owner from the same sources its own popups use.
   ipcMain.handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
@@ -978,6 +964,15 @@ function registerIpcHandlers(deps) {
         enabled: !!online,
         click: act('editArgs'),
       });
+      // Edit Skills rides the SAME 'args' cap. Skills are Claude-only (the local
+      // popover is gated on type==='claude'), so offer it for claude sessions only.
+      if (type === 'claude') {
+        template.push({
+          label: `Edit Skills "${name}" on ${hostLabel || 'peer'}…`,
+          enabled: !!online,
+          click: act('editSkills'),
+        });
+      }
     }
     if (canCreate) {
       template.push({ type: 'separator' });
