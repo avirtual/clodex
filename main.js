@@ -1207,6 +1207,13 @@ const DEFAULT_UI_SETTINGS = {
   // ("show none") and is kept. Same out-of-band-from-`peers` reasoning as
   // peerAttached. Written by peer:setVisible, pruned by syncPeerManager.
   peerVisible: {},
+  // Auto-re-take control of peer tabs across restarts (yours OR the box's via
+  // remote restart/update): { [peerId]: [name, ...] }. Same out-of-band-from-
+  // `peers` reasoning as peerAttached (empty arrays dropped). Written by the
+  // peer:control / peer:detach / peer:forgetControlled handlers, pruned by
+  // syncPeerManager. Controlled implies attached, so a name here is always a
+  // subset of peerAttached.
+  peerControlled: {},
 };
 const THEME_KEYS = ['midnight', 'claude', 'light'];
 
@@ -1259,6 +1266,11 @@ function sanitizePeerVisible(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: true });
 }
 
+// Persisted control claims: empty arrays dropped, like peerAttached.
+function sanitizePeerControlled(raw) {
+  return sanitizePeerNameMap(raw, { keepEmpty: false });
+}
+
 const uiSettings = {
   _load() {
     try {
@@ -1281,6 +1293,7 @@ const uiSettings = {
         peers: sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers,
         peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
         peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
+        peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
       };
     } catch { return DEFAULT_UI_SETTINGS; }
   },
@@ -1305,6 +1318,7 @@ const uiSettings = {
       peers: sanitizePeers(partial?.peers) ?? cur.peers,
       peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
       peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
+      peerControlled: sanitizePeerControlled(partial?.peerControlled) ?? cur.peerControlled,
     };
     try {
       atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
@@ -6717,6 +6731,27 @@ function forgetPeerAttached(id, name) {
   uiSettings.set({ peerAttached: map });
 }
 
+// Same for a persisted control claim. Fired on explicit release, on detach/hide
+// (controlled implies attached, so a gone tab drops both), and on a stale-claim
+// drop when a restore re-acquire finds someone else holds it.
+function forgetPeerControlled(id, name) {
+  const map = { ...(uiSettings.get().peerControlled || {}) };
+  if (!Array.isArray(map[id]) || !map[id].includes(name)) return;
+  const list = map[id].filter((n) => n !== name);
+  if (list.length) map[id] = list; else delete map[id];
+  uiSettings.set({ peerControlled: map });
+}
+
+// Add a persisted control claim (idempotent). Fired on a successful take —
+// explicit or type-to-take.
+function rememberPeerControlled(id, name) {
+  const map = { ...(uiSettings.get().peerControlled || {}) };
+  const list = Array.isArray(map[id]) ? map[id] : [];
+  if (list.includes(name)) return;
+  map[id] = [...list, name];
+  uiSettings.set({ peerControlled: map });
+}
+
 function syncPeerManager() {
   const s = uiSettings.get();
   if (!peerManager) {
@@ -6764,7 +6799,7 @@ function syncPeerManager() {
   // longer exist in settings.
   const ids = new Set((s.peers || []).map((p) => p.id));
   const patch = {};
-  for (const field of ['peerAttached', 'peerVisible']) {
+  for (const field of ['peerAttached', 'peerVisible', 'peerControlled']) {
     const cur = s[field] || {};
     const next = {};
     let changed = false;
@@ -7641,8 +7676,10 @@ app.whenReady().then(() => {
     const conn = peerManager && peerManager.get(id);
     if (!conn) return { ok: false, error: 'no such peer' };
     const res = conn.detach(name);
-    // Explicit detach = user closed the tab: stop persisting it.
+    // Explicit detach = user closed the tab: stop persisting it. Control implies
+    // attachment, so a gone tab drops its control claim too.
     forgetPeerAttached(id, name);
+    forgetPeerControlled(id, name);
     return res;
   });
   // Renderer reads this once at startup to seed its one-shot restore map.
@@ -7674,8 +7711,24 @@ app.whenReady().then(() => {
   ipcMain.handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
     const conn = peerManager && peerManager.get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
-    conn.control(name, !!on, resolve);
+    conn.control(name, !!on, (res) => {
+      // Persist the control claim on a successful take, drop it on a successful
+      // release — so it auto-re-takes across a restart of this app OR the box.
+      // (Mirrors peer:attach's inline persist.) A failed take never persists.
+      if (res && res.ok) {
+        if (on) rememberPeerControlled(id, name); else forgetPeerControlled(id, name);
+      }
+      resolve(res);
+    });
   }));
+  // Renderer reads this once at startup to seed its control-restore mirror.
+  ipcMain.handle('peer:controlledNames', () => uiSettings.get().peerControlled || {});
+  // Explicit drop of a persisted control claim — used when a restore re-acquire
+  // finds the session is held by someone else (stale claim, don't retry-loop).
+  ipcMain.handle('peer:forgetControlled', (_e, id, name) => {
+    forgetPeerControlled(id, name);
+    return { ok: true };
+  });
   ipcMain.handle('peer:resize', (_e, id, name, cols, rows) => new Promise((resolve) => {
     const conn = peerManager && peerManager.get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });

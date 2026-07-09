@@ -1,6 +1,7 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
+const { PendingInput } = require('../peer-input-queue');
 
 // ---------------------------------------------------------------------------
 // State
@@ -551,10 +552,24 @@ function createTerminal(name, peer = null) {
 
   terminal.open(wrapperEl);
 
-  // Send keystrokes to PTY (peer terminals: only while holding control)
+  // Send keystrokes to PTY. Peer terminals: pass through while holding control;
+  // otherwise the first data-producing key auto-takes control (buffering what
+  // you type during the acquire). onData only fires for actual input, so plain
+  // clicks / scroll / copy never trigger it — passive browsing stays passive.
   terminal.onData((data) => {
     if (peer) {
-      if (peer.controlled) window.api.peerInput(peer.id, peer.name, data);
+      if (peer.controlled) {
+        // If control landed via the owner's control-change broadcast before our
+        // acquire promise resolved, the pending buffer may not have drained yet.
+        // Flush it first so keystrokes never reorder around the flip.
+        if (peer.pendingInput && peer.pendingInput.size) {
+          const buffered = peer.pendingInput.drain();
+          if (buffered) window.api.peerInput(peer.id, peer.name, buffered);
+        }
+        window.api.peerInput(peer.id, peer.name, data);
+        return;
+      }
+      typeToTakeControl(name, data);
       return;
     }
     window.api.writeToSession(name, data);
@@ -644,7 +659,12 @@ function switchSession(name) {
 function removeSession(name) {
   const s = sessions.get(name);
   if (s) {
-    if (s.peer) window.api.peerDetach(s.peer.id, s.peer.name);
+    if (s.peer) {
+      // Detach (main forgets both peerAttached + peerControlled durably); keep
+      // the local control mirror in step so a re-added tab starts read-only.
+      window.api.peerDetach(s.peer.id, s.peer.name);
+      forgetControlMirror(s.peer.id, s.peer.name);
+    }
     s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);
@@ -1431,6 +1451,31 @@ const peerRestoreSweep = new Set();   // peerId -> settle sweep already schedule
 // may just be un-fetched. Give the refresh a beat before declaring it dead.
 const PEER_RESTORE_SETTLE_MS = 6000;
 
+// Local mirror of ui-settings.peerControlled, seeded at startup and kept in
+// lockstep with the durable store (which main writes inside peer:control /
+// peer:detach). Read on every reattach replay to decide whether to auto-re-take
+// control — covers both an app restart and a box restart/update, since both
+// funnel a fresh replay through onPeerReplay.
+let peerControlledMap = {};
+function peerControlledHas(id, name) {
+  return Array.isArray(peerControlledMap[id]) && peerControlledMap[id].includes(name);
+}
+function rememberControlMirror(id, name) {
+  const list = Array.isArray(peerControlledMap[id]) ? peerControlledMap[id] : [];
+  if (!list.includes(name)) peerControlledMap[id] = [...list, name];
+}
+function forgetControlMirror(id, name) {
+  if (!Array.isArray(peerControlledMap[id])) return;
+  const list = peerControlledMap[id].filter((n) => n !== name);
+  if (list.length) peerControlledMap[id] = list; else delete peerControlledMap[id];
+}
+// A restore re-acquire found the session held by someone else: drop the mirror
+// AND tell main to forget the durable claim, so the stale claim never re-fires.
+function dropPersistedControl(id, name) {
+  forgetControlMirror(id, name);
+  window.api.peerForgetControlled(id, name);
+}
+
 function maybeRestorePeer(id) {
   const pending = peerRestorePending.get(id);
   if (!pending || !pending.size) { peerRestorePending.delete(id); return; }
@@ -1506,13 +1551,48 @@ function togglePeerControl() {
   applyPeerControl(entry, !entry.peer.controlled);
 }
 
+// First data-producing keystroke in a read-only peer tab = intent to type.
+// Buffer the keystroke and, if no acquire is already in flight, kick one; the
+// buffered keys flush in order once control is granted. onData while the acquire
+// is pending appends to the same queue (no second acquire) via the in-flight
+// guard inside PendingInput.
+function typeToTakeControl(key, data) {
+  const entry = sessions.get(key);
+  if (!entry || !entry.peer || entry.peer.controlled) return;
+  // Offline peer: nothing to acquire (the bar already says "reconnecting"); a
+  // peerControl would just fail. Drop the keystroke silently.
+  const st = peerStatuses.get(entry.peer.id);
+  if (!st || !st.online) return;
+  if (!entry.peer.pendingInput) entry.peer.pendingInput = new PendingInput();
+  const kick = entry.peer.pendingInput.offer(data);
+  if (kick) applyPeerControl(entry, true, { flush: true });
+}
+
 // Acquire/release control on a specific peer entry — shared by the peer-bar
-// button and the row context menu, so both drive the same state transition.
-async function applyPeerControl(entry, on) {
+// button, the row context menu, type-to-take, and the restore re-acquire, so
+// all drive the same state transition. `flush` (type-to-take only) flushes the
+// pending-input queue on success and drops it on failure.
+async function applyPeerControl(entry, on, { flush = false, dropOnFail = false } = {}) {
   const { id: peerId, name: peerName } = entry.peer;
+  // Coalesce concurrent takes on the same entry (type-to-take vs a reattach
+  // re-acquire firing together): the in-flight one owns the outcome.
+  if (on && entry.peer._acquiring) return;
   // Any fresh attempt clears a stale error banner.
   clearPeerControlError(entry.peer);
-  const res = await window.api.peerControl(peerId, peerName, on);
+  if (on) entry.peer._acquiring = true;
+  let res;
+  // try/catch/finally: an invoke rejection must land in the normal failure
+  // branch below (banner + pendingInput.reset) — letting it propagate would
+  // skip the reset and wedge pendingInput.acquiring true, the same silent
+  // type-to-take deadlock the unconditional reset exists to prevent. The
+  // finally keeps the coalesce guard from wedging either way.
+  try {
+    res = await window.api.peerControl(peerId, peerName, on);
+  } catch (e) {
+    res = { ok: false, error: (e && e.message) || 'control request failed' };
+  } finally {
+    if (on) entry.peer._acquiring = false;
+  }
   if (on) {
     if (res && res.ok) {
       entry.peer.controlled = true;
@@ -1520,14 +1600,31 @@ async function applyPeerControl(entry, on) {
       entry.fitAddon.fit();
       window.api.peerResize(peerId, peerName, entry.terminal.cols, entry.terminal.rows);
       entry.terminal.focus();
+      // Flush anything typed during the acquire, in order.
+      if (entry.peer.pendingInput) {
+        const buffered = entry.peer.pendingInput.drain();
+        if (buffered) window.api.peerInput(peerId, peerName, buffered);
+      }
+      rememberControlMirror(peerId, peerName);   // main persisted via peer:control
     } else {
       // Acquire failed or (with the pre-fix socket-starvation bug) timed out.
       // Never silent: show a transient banner instead of snapping back to a
       // "Take control" button that looks like nothing happened.
       setPeerControlError(entry.peer, (res && res.error) || 'could not take control');
+      // Reset UNCONDITIONALLY (not just on flush): a keystroke can land during a
+      // restore re-acquire (flush:false) via the coalesce guard, setting
+      // pendingInput.acquiring=true. If THIS failing call doesn't clear it,
+      // acquiring stays true forever and every later keystroke buffers with
+      // kick=false, silently killing type-to-take on the tab. Mirrors the
+      // success path's unconditional drain.
+      if (entry.peer.pendingInput) entry.peer.pendingInput.reset(); // drop buffer
+      // Restore re-acquire that lost to another holder: drop the stale claim so
+      // it doesn't retry-loop on every future reconnect.
+      if (dropOnFail) dropPersistedControl(peerId, peerName);
     }
   } else {
     entry.peer.controlled = false;
+    forgetControlMirror(peerId, peerName);       // main forgot via peer:control
   }
   renderPeerBar();
 }
@@ -1799,6 +1896,15 @@ window.api.onPeerReplay((id, name, info) => {
   if (peerKey(id, name) === activeSession && !entry.peer.controlled) {
     remeasureReadonlyPeer(entry);
   }
+  // Control persistence: this reattach replay just reset us to read-only. If the
+  // tab is persisted as controlled, re-take control now that the replay has
+  // settled — covers an app restart (restored attach → first replay) AND a box
+  // restart/update (reconnect replay on an already-open tab). On failure
+  // (held by someone else) applyPeerControl shows the banner and dropOnFail
+  // sheds the stale claim so it never retry-loops.
+  if (peerControlledHas(id, name) && !entry.peer.controlled) {
+    applyPeerControl(entry, true, { dropOnFail: true });
+  }
 });
 
 window.api.onPeerData((id, name, data) => {
@@ -1975,6 +2081,12 @@ window.api.peerAttachedNames().then((map) => {
 window.api.peerVisible().then((map) => {
   peerVisibleMap = map || {};
   if (peerStatuses.size) renderPeers();
+}).catch(() => {});
+
+// Seed the control-restore mirror. Kept fresh locally from applyPeerControl /
+// removeSession; on each reattach replay a persisted entry auto-re-takes.
+window.api.peerControlledNames().then((map) => {
+  peerControlledMap = map || {};
 }).catch(() => {});
 
 // Context-window usage per session, from Claude's statusline side-channel (the
