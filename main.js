@@ -8,6 +8,7 @@ const net = require('net');
 const { execSync, spawn } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
+const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 
 // Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
 // (/usr/bin:/bin:/usr/sbin:/sbin), so `claude`/`codex` from ~/.local/bin or
@@ -358,39 +359,6 @@ const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
 // file instead of injecting while typing), cap-fires should drop to ~zero.
 const INJECT_QUIET_MS = 2 * 1000;
 const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
-
-// Crash-safe file write: same-dir temp → fsync contents → atomic rename →
-// fsync the parent dir. A power loss or interrupted write leaves the previous
-// file fully intact (rename is atomic on one volume); the fsyncs make the
-// bytes — and the rename itself — durable, not just the name swap. All JSON
-// stores route through this so a torn write can never truncate a whole store.
-function atomicWriteFileSync(filePath, data) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}`);
-  let fd;
-  try {
-    fd = fs.openSync(tmp, 'w', 0o600);
-    fs.writeSync(fd, data);
-    fs.fsyncSync(fd);
-  } finally {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
-  }
-  try {
-    fs.renameSync(tmp, filePath);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch {}
-    throw e;
-  }
-  // fsync the directory so the rename survives a crash, not just the contents.
-  let dfd;
-  try {
-    dfd = fs.openSync(dir, 'r');
-    fs.fsyncSync(dfd);
-  } catch {} finally {
-    if (dfd !== undefined) { try { fs.closeSync(dfd); } catch {} }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Persistence — remember sessions across app restarts
@@ -1344,115 +1312,9 @@ const uiSettings = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ensureDir(dir, mode = 0o700) {
-  fs.mkdirSync(dir, { recursive: true, mode });
-}
-
 function isAlive(pid) {
   try { process.kill(pid, 0); return true; }
   catch (e) { return e.code === 'EPERM'; }
-}
-
-// ---------------------------------------------------------------------------
-// Intent Scanner (port of scanner.py)
-// ---------------------------------------------------------------------------
-
-const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
-const PREFIX_CHARS = new Set(' \t\u2B24\u25CF\u2022\u25B6\u25B7\u25BA\u25B9\u25CB\u25CF\u25C9\u25CE\u25C6\u25C7\u25A0\u25A1\u25AA\u25AB\u2605\u2606\u2192\u27F6\u2500\u2501\u00B7\u2023\u2219\u226B\u00BB');
-
-function cleanLine(line) {
-  line = line.replace(ANSI_RE, '');
-  let i = 0;
-  while (i < line.length && PREFIX_CHARS.has(line[i])) i++;
-  return line.slice(i);
-}
-
-function parseIntent(rawLine) {
-  const cleaned = cleanLine(rawLine).trim();
-  if (!cleaned) return null;
-
-  // Escaped intent
-  const escMatch = cleaned.match(/^\\(\[agent:.*)/);
-  if (escMatch) return { type: 'escape', text: escMatch[1] };
-
-  // Optional `urgent` flag bypasses the idle/cold-cache dm hold (see
-  // shouldHoldDm). Old grammar `[agent:dm target]` is untouched — the flag
-  // only matches as a separate word before the bracket.
-  const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
-  if (dmMatch) return { type: 'dm', target: dmMatch[1], urgent: !!dmMatch[2], body: dmMatch[3] };
-
-  // Escalate a parked-on-hold dm: deliver the parked COPY now, without the
-  // sender re-emitting the body. Protocol-invisible (not in IPC_PROMPT) — the
-  // id only exists once a park happens, and the park notice hands the sender the
-  // exact `[agent:resend <id>]` incantation. Id is the short base36 handle minted
-  // at park time (see _mintParkId).
-  const resendMatch = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
-  if (resendMatch) return { type: 'resend', id: resendMatch[1].toLowerCase() };
-
-  if (/^\[agent:who\]\s*$/.test(cleaned)) return { type: 'who' };
-
-  if (/^\[agent:name\]\s*$/.test(cleaned)) return { type: 'name' };
-
-  // Grouped-grammar self/system intents (spec §12): one top-level verb per
-  // CATEGORY, dispatched on a sub-command — keeps the namespace small and the
-  // IPC_PROMPT lean (one documented line per category, not per operation).
-  // `context` = the context-lifecycle set (compact|clear|reload). compact (and,
-  // later, reload) may carry an OPTIONAL continuation/handoff body after the
-  // bracket — native /compact parks waiting for input, so a self-fired compact
-  // injects this body afterwards to keep working (clear ignores any body). The
-  // col-1 `^` anchor still rejects backticked/inline mentions; only a genuinely
-  // bare emission reaches here, so allowing trailing text doesn't weaken the
-  // guardrail. Body capture (incl. multi-line) is in _scanJsonlText, like dm.
-  const ctxMatch = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
-  if (ctxMatch) return { type: 'context', sub: ctxMatch[1].toLowerCase(), body: ctxMatch[2] };
-
-  // `memory` = the memory-management set (list|remember|recall). Carries a body
-  // (the unit text for remember; the id/query for recall; empty for list) —
-  // captured like dm, including multi-line bodies (see _scanJsonlText).
-  const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
-  if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
-
-  // `spawn` = mint a NEW persistent top-level peer session (own socket / DM /
-  // memory / registry) from inside a running agent. `name` + `cwd` are the only
-  // required args; type/workspace/proxy inherit the spawner and everything else
-  // takes clodex defaults (see _handleSpawnIntent). New noun (a persistent peer)
-  // = a genuinely new category, so it earns its own top-level verb. Structural
-  // creation (sessions.json / sockets / registry) is clodex's job; prompt CONTENT
-  // deliberately stays out of the grammar (deferred, see spec Piece 2).
-  // `file` = surface a file on the operator's SCREEN (view = Clodex's peek
-  // modal over the session's workspace window, open = the default local app
-  // via shell.openPath). Path may contain spaces — everything between the
-  // sub-command and the closing bracket. Vetting (cwd-anchored realpath,
-  // regular-file, no-launchables for open) lives in vetFileIntent; the
-  // scanner only parses.
-  const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
-  if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
-
-  const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
-  if (spawnMatch) {
-    const argstr = spawnMatch[1];
-    const nameM = argstr.match(/\bname:(\S+)/);
-    const cwdM = argstr.match(/\bcwd:(\S+)/);
-    return {
-      type: 'spawn',
-      name: nameM ? nameM[1] : null,
-      cwd: cwdM ? cwdM[1] : null,
-    };
-  }
-
-  return null;
-}
-
-// Stable identity of one intent occurrence for the wire-vs-jsonl shadow
-// differ (both paths see the same assistant text, so the same intent hashes
-// to the same key on both sides). Body capped so a huge dm doesn't bloat
-// the shadow log's keys.
-function shadowIntentKey(agent, intent) {
-  // urgent is part of the identity: a held dm RESENT with the flag inside the
-  // dedupe TTL must dispatch, not be swallowed as a duplicate of the bounce.
-  const head = (intent.sub || intent.target || intent.name || intent.id || '') + (intent.urgent ? '+urgent' : '');
-  const body = (intent.body || intent.path || '').trim().slice(0, 200);
-  return `${agent}|${intent.type}|${head}|${body}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1633,172 +1495,6 @@ Your Bash tool starts in the session's working directory (the project root) and 
 const DEFAULT_COMPACT_CONTINUATION =
   'Your context was just compacted. Review the summary above and continue with your current task.';
 
-// Build Claude's two prompt channels. The APPEND channel (returned as `append`,
-// written to a generated file → --append-system-prompt-file) always leads with
-// the IPC protocol, then the session's ordered library appends, then a legacy
-// inline body, then any user --append-system-prompt(-file) from extraArgs. The
-// SYSTEM channel (a replacement base persona) is a session-referenced library
-// file pointed at DIRECTLY via --system-prompt-file by the caller — not merged
-// here; when a session carries one, a conflicting user --system-prompt(-file)
-// in extraArgs is dropped so the CLI never sees two. Returns cleaned argv +
-// the append blob.
-//   opts: { appendBodies: string[], inlineBody: string|null, hasSystemFile: bool }
-function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, opts = {}) {
-  const { appendBodies = [], inlineBody = null, hasSystemFile = false } = opts;
-  const parts = [ipcPrompt, ...appendBodies];
-  if (inlineBody) parts.push(inlineBody);
-  const cleaned = [];
-  for (let i = 0; i < extraArgs.length; i++) {
-    const a = extraArgs[i];
-    if (a === '--append-system-prompt' && i + 1 < extraArgs.length) {
-      parts.push(extraArgs[++i]);
-      continue;
-    }
-    if (a === '--append-system-prompt-file' && i + 1 < extraArgs.length) {
-      try { parts.push(fs.readFileSync(extraArgs[++i], 'utf-8')); } catch { i++; }
-      continue;
-    }
-    if (hasSystemFile && (a === '--system-prompt' || a === '--system-prompt-file')
-        && i + 1 < extraArgs.length) {
-      i++; // session's system ref wins — drop the user's conflicting flag
-      continue;
-    }
-    cleaned.push(a);
-  }
-  return { cleaned, append: parts.filter(Boolean).join('\n\n') };
-}
-
-// Codex has a single instructions channel, so system + IPC + appends collapse
-// into one model_instructions_file (in that order): the system base persona
-// (which itself replaces Codex's default), then the IPC protocol, then the
-// ordered library appends, then a legacy inline body, then any user-supplied
-// model_instructions_file inlined from extraArgs.
-//   opts: { systemBody: string|null, appendBodies: string[], inlineBody: string|null }
-function mergeCodexInstructions(extraArgs, ipcPrompt, opts = {}) {
-  const { systemBody = null, appendBodies = [], inlineBody = null } = opts;
-  const parts = [];
-  if (systemBody) parts.push(systemBody);
-  parts.push(ipcPrompt, ...appendBodies);
-  if (inlineBody) parts.push(inlineBody);
-  const cleaned = [];
-  for (let i = 0; i < extraArgs.length; i++) {
-    const a = extraArgs[i];
-    if (a === '-c' && i + 1 < extraArgs.length && /^model_instructions_file=/.test(extraArgs[i + 1])) {
-      const raw = extraArgs[++i].replace(/^model_instructions_file=/, '').replace(/^~/, os.homedir());
-      try { parts.push(fs.readFileSync(raw, 'utf-8')); } catch {}
-      continue;
-    }
-    cleaned.push(a);
-  }
-  return { cleaned, merged: parts.filter(Boolean).join('\n\n') };
-}
-
-// Context-window sizes the CLI statusline under-reports. The bar's denominator
-// comes solely from statusline JSON `.context_window.context_window_size`, and
-// for 1M-window models the CLI still reports 200k (observed: claude-fable-5
-// showing "20% of 200k" on a 1M window). First matching rule wins; the override
-// never SHRINKS a reported size, so a CLI that starts reporting correctly (or a
-// future >1M window) passes through untouched.
-const MODEL_WINDOWS = [
-  [/\[1m\]$/, 1_000_000],        // CLI marks 1M-mode ids with a [1m] suffix
-  [/^claude-fable-5/, 1_000_000], // 1M natively
-];
-
-function effectiveWindowSize(modelId, reported) {
-  if (modelId) {
-    for (const [re, size] of MODEL_WINDOWS) {
-      if (re.test(modelId)) return Math.max(size, reported || 0);
-    }
-  }
-  return reported;
-}
-
-// Parse the statusline ctx side-channel "<pct>\t<used_tokens>\t<window_size>
-// \t<model_id>". pct is the first whitespace-delimited field, so callers that
-// still parseInt the whole file keep working; tok/size/model are null on legacy
-// shorter files. Applies the MODEL_WINDOWS denominator override here — the one
-// choke point both the live fs.watch path and restore's readCtxFor go through —
-// and recomputes pct against the corrected size (the CLI's used_percentage is
-// computed off the same wrong denominator).
-function parseCtxFile(raw) {
-  const parts = String(raw).trim().split('\t');
-  const num = (s) => { const n = parseInt(s, 10); return isNaN(n) ? null : n; };
-  let pct = num(parts[0]);
-  const tok = num(parts[1]);
-  const reported = num(parts[2]);
-  const model = (parts[3] || '').trim() || null;
-  const size = effectiveWindowSize(model, reported);
-  if (size !== reported && tok != null && size > 0) {
-    pct = Math.round((tok / size) * 100);
-  }
-  return { pct, tok, size };
-}
-
-// Render Claude's statusline bash script based on user-selected components.
-// Session name prefix is always shown. Components: model, context, cost,
-// cwd, git-branch. Context % is a byte-count estimate (bytes/5 ≈ tokens
-// vs 200k budget) — cheap and monotonic enough for a status indicator.
-//
-// If the user configured a custom statusline command (Preferences), the
-// generated script becomes a wrapper: it still writes the ctx side-channel
-// (the sidebar badge depends on it), exports CLODEX_AGENT_NAME for the
-// custom script, pipes the statusline JSON through the command, and falls
-// back to the built-in component line when the command fails or prints
-// nothing (e.g. a $CLAUDE_PROJECT_DIR-relative script missing in this repo).
-// `headless` (set for proxy-routed sessions): suppress the visible component
-// line — wirescope's status bar already renders model/ctx/turn/cache/cost live,
-// so the in-terminal statusline would just double it. The script still RUNS to
-// write the -ctx side-channel: the context-window SIZE is off-wire (the proxy
-// only has the token count), so the CLI is the sole source of the bar's
-// denominator. A WORKING custom command still prints (the user opted in); only
-// the default-component-line fallback is suppressed under headless, so a
-// missing/failing custom command goes blank rather than resurrecting the line.
-function renderClaudeStatusScript(name, headless = false) {
-  const sl = uiSettings.get().statusline;
-  const enabled = new Set(sl.claude);
-  const customCmd = (sl.claudeCommand || '').trim();
-  const pieces = [`\\033[36m[clodex:${name}]\\033[0m`];
-  const fmt = [];
-  const vars = [];
-  if (enabled.has('model')) { pieces.push('\\033[33m%s\\033[0m'); fmt.push('$MODEL'); vars.push('MODEL'); }
-  if (enabled.has('context')) { pieces.push('\\033[90mctx %s\\033[0m'); fmt.push('$CTX_PCT'); vars.push('CTX_PCT'); }
-  if (enabled.has('cost')) { pieces.push('\\033[35m%s\\033[0m'); fmt.push('$COST'); vars.push('COST'); }
-  if (enabled.has('git-branch')) { pieces.push('\\033[34m%s\\033[0m'); fmt.push('$BRANCH'); vars.push('BRANCH'); }
-  if (enabled.has('cwd')) { pieces.push('\\033[32m%s\\033[0m'); fmt.push('$SHORT_CWD'); vars.push('SHORT_CWD'); }
-  const format = pieces.join(' ');
-  const branchSh = enabled.has('git-branch')
-    ? `BRANCH="$(cd "$CWD" 2>/dev/null && git symbolic-ref --short HEAD 2>/dev/null || echo "")"`
-    : '';
-  return `#!/bin/bash
-INPUT="$(cat)"
-IFS=$'\\t' read -r MODEL CTX_NUM CTX_PCT COST CWD CTX_TOK CTX_SIZE MODEL_ID <<<"$(echo "$INPUT" | jq -r '[
-  (.model.display_name // "?"),
-  ((.context_window.used_percentage // 0) | floor | tostring),
-  (((.context_window.used_percentage // 0) | floor | tostring) + "%"),
-  ("$" + (((.cost.total_cost_usd // 0) * 100 | floor) / 100 | tostring)),
-  (.workspace.current_dir // .cwd // ""),
-  ((.context_window.total_input_tokens // 0) | floor | tostring),
-  ((.context_window.context_window_size // 0) | floor | tostring),
-  (.model.id // "")
-] | @tsv' 2>/dev/null)"
-SHORT_CWD="\${CWD##*/}"
-${branchSh}
-# Side-channel for Clodex: "<pct>\\t<used_tokens>\\t<window_size>\\t<model_id>".
-# pct stays the first field so legacy parseInt readers (sidebar badge) are
-# unaffected; the token counts feed the proxy bar's absolute "used/size"
-# display; model_id lets the app correct the window size the CLI under-reports
-# for 1M models (MODEL_WINDOWS in main.js).
-printf '%s\\t%s\\t%s\\t%s' "\${CTX_NUM}" "\${CTX_TOK}" "\${CTX_SIZE}" "\${MODEL_ID}" > "${REGISTRY_DIR}/${name}-ctx" 2>/dev/null || true
-${customCmd ? `export CLODEX_AGENT_NAME="${name}"
-OUT="$(printf '%s' "$INPUT" | ( ${customCmd} ) 2>/dev/null)"
-if [ -n "$OUT" ]; then
-  printf '%s\\n' "$OUT"
-  exit 0
-fi
-` : ''}${headless ? ': # headless: side-channel only, wirescope bar shows the line' : `printf '${format}'${fmt.length ? ' ' + fmt.map(v => `"${v}"`).join(' ') : ''}`}
-`;
-}
-
 // Re-render statusline scripts for all running Claude sessions. Called when
 // the user updates preferences — Claude re-reads the script on each status
 // update, so changes show up within a tick.
@@ -1806,32 +1502,8 @@ function rebuildAllStatusScripts(manager) {
   for (const [name, s] of manager.sessions) {
     if (s.agentType !== 'claude') continue;
     const p = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
-    try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!s.proxyBase), { mode: 0o700 }); } catch {}
+    try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!s.proxyBase, uiSettings, REGISTRY_DIR), { mode: 0o700 }); } catch {}
   }
-}
-
-function codexStatusLineArg() {
-  const list = uiSettings.get().statusline.codex;
-  const quoted = list.map(c => `"${c}"`).join(',');
-  return `tui.status_line=[${quoted}]`;
-}
-
-// Normalize a proxy base URL: trim + drop trailing slashes. Returns null for
-// blank input so callers can treat "field left empty" as proxy-off.
-function normalizeProxyBase(url) {
-  const u = (url || '').trim().replace(/\/+$/, '');
-  return u || null;
-}
-
-// Resolve a session's tri-state proxy setting to a base URL (or null = no
-// proxy). null/undefined = follow the Clodex-level preference; false =
-// explicitly off; string = explicit base URL. Resolved at spawn time, so a
-// changed global preference applies to inheriting sessions on next respawn.
-function resolveProxyBase(proxy) {
-  if (proxy === false) return null;
-  if (typeof proxy === 'string') return normalizeProxyBase(proxy);
-  const s = uiSettings.get();
-  return s.proxyEnabled ? normalizeProxyBase(s.proxyUrl) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1853,6 +1525,10 @@ const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
+const { parseIntent, shadowIntentKey } = require('./intent-scanner');
+const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = require('./argv-merge');
+const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
+const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
 
 // Short lowercase base36 token (park/resend handles). Concatenates random
 // draws so trailing-zero truncation can't shorten the result below `len`.
@@ -2746,10 +2422,6 @@ function parseSkillRoster(name) {
   } catch { return []; }
 }
 
-function readJsonSafe(p) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
-}
-
 // Read the EFFECTIVE lower-layer skill state for a session's cwd by merging the
 // three editable settings layers the CLI loads BELOW our generated --settings
 // (layer 4), per-key later-wins: user (~/.claude/settings.json) < project
@@ -2864,7 +2536,7 @@ async function maybeCompactBeforeResume(entry) {
   try {
     if (!uiSettings.get().compactOnResume) return;     // opt-in — off by default
     if (!entry || entry.type !== 'claude' || !entry.sessionId) return;
-    const base = resolveProxyBase(entry.proxy);        // null when proxy disabled → skip
+    const base = resolveProxyBase(entry.proxy, uiSettings);        // null when proxy disabled → skip
     if (!base) return;
     // Fire only once the proxy actually answers /_identity — robust against the
     // launch race (proxy not up yet at restore → skip → resume original), rather
@@ -2985,7 +2657,7 @@ fi
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
 
-  fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase), { mode: 0o700 });
+  fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase, uiSettings, REGISTRY_DIR), { mode: 0o700 });
 
   // Needs-attention channel: the CLI's Notification hook fires when a
   // permission dialog opens (or the CLI otherwise wants the human). The script
@@ -3221,162 +2893,6 @@ function cleanupCodexHook(name, cwd) {
     try { fs.unlinkSync(hooksPath); } catch {}
     try { fs.rmdirSync(codexDir); } catch {}
   }
-}
-
-// Convert a Claude/Codex JSONL transcript into a clean Markdown document
-function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
-  const raw = fs.readFileSync(jsonlPath, 'utf-8');
-  const lines = raw.split('\n').filter(l => l.trim());
-
-  const parts = [];
-  parts.push(`# ${sessionName} — conversation transcript`);
-  parts.push(`*Agent: ${agentType} · Exported: ${new Date().toISOString()}*`);
-  parts.push(`*Source: \`${jsonlPath}\`*`);
-  parts.push('---');
-
-  let lastRole = null;
-
-  for (const line of lines) {
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
-    const type = obj.type || '';
-
-    // --- Claude format ---
-    if (type === 'user') {
-      const content = (obj.message || {}).content;
-      const text = typeof content === 'string' ? content : extractClaudeBlocks(content);
-      if (text && text.trim()) {
-        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
-        parts.push(text.trim());
-        lastRole = 'user';
-      }
-    } else if (type === 'assistant') {
-      const content = (obj.message || {}).content;
-      const text = extractClaudeBlocks(content);
-      if (text && text.trim()) {
-        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
-        parts.push(text.trim());
-        lastRole = 'assistant';
-      }
-    }
-    // --- Codex format ---
-    else if (type === 'event_msg') {
-      const payload = obj.payload || {};
-      if (payload.type === 'agent_message' && payload.message) {
-        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
-        parts.push(String(payload.message).trim());
-        lastRole = 'assistant';
-      } else if (payload.type === 'user_message' && payload.message) {
-        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
-        parts.push(String(payload.message).trim());
-        lastRole = 'user';
-      }
-    }
-  }
-
-  return parts.join('\n') + '\n';
-}
-
-function extractClaudeBlocks(content) {
-  if (!Array.isArray(content)) return typeof content === 'string' ? content : '';
-  const out = [];
-  for (const block of content) {
-    if (!block) continue;
-    if (block.type === 'text' && block.text) {
-      out.push(block.text);
-    } else if (block.type === 'tool_use') {
-      out.push(`\n\n> 🔧 *Used tool: \`${block.name}\`*`);
-    } else if (block.type === 'tool_result') {
-      const txt = typeof block.content === 'string'
-        ? block.content
-        : Array.isArray(block.content)
-          ? block.content.filter(c => c?.type === 'text').map(c => c.text).join('\n')
-          : '';
-      if (txt.trim()) {
-        const truncated = txt.length > 500 ? txt.slice(0, 500) + '\n…[truncated]' : txt;
-        out.push(`\n\n> 📥 *Tool result:*\n> \`\`\`\n> ${truncated.split('\n').join('\n> ')}\n> \`\`\``);
-      }
-    }
-  }
-  return out.join('\n');
-}
-
-// Transcript → chat messages for the remote (phone) view: user/assistant text
-// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
-// regardless of which observation path (wire vs JsonlWatcher) is live — so the
-// remote view never depends on the intent machinery.
-function jsonlToMessages(jsonlPath, limit = 100) {
-  const raw = fs.readFileSync(jsonlPath, 'utf-8');
-  const messages = [];
-
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
-    if (obj.isSidechain || obj.isMeta) continue;
-    const type = obj.type || '';
-    let role = null, text = '';
-
-    if (type === 'user') {
-      const content = (obj.message || {}).content;
-      role = 'user';
-      if (typeof content === 'string') text = content;
-      else if (Array.isArray(content)) {
-        // text blocks only — a tool_result-carrying user entry is tool
-        // traffic, not something the operator typed
-        text = content.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n');
-      }
-      // local slash-command echoes and injected context aren't conversation
-      text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
-      if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
-      // panel/phone sends carry the delivery label; the phone view is the
-      // sender's own chat, so render them clean (peer labels stay visible).
-      // Injected input can be recorded with the leading Ctrl-U (\x15) that
-      // _injectText uses to clear the line — drop control chars first.
-      text = text.replace(/^[\x00-\x1f]+/, '').replace(/^\[agent:from user\]\s*/, '');
-    } else if (type === 'assistant') {
-      role = 'assistant';
-      const content = (obj.message || {}).content;
-      if (Array.isArray(content)) {
-        text = content.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n');
-      }
-    } else if (type === 'event_msg') {
-      const payload = obj.payload || {};
-      if (payload.type === 'agent_message' && payload.message) { role = 'assistant'; text = String(payload.message); }
-      else if (payload.type === 'user_message' && payload.message) { role = 'user'; text = String(payload.message); }
-    }
-
-    if (!role || !text.trim()) continue;
-    const prev = messages[messages.length - 1];
-    // Consecutive same-role entries (multi-block turns interleaved with tool
-    // calls) render as one bubble
-    if (prev && prev.role === role) prev.text += '\n\n' + text.trim();
-    else messages.push({ role, text: text.trim(), ts: obj.timestamp || null });
-  }
-
-  return messages.slice(-limit);
-}
-
-function extractText(obj) {
-  const type = obj.type || '';
-  // Claude format
-  if (type === 'assistant') {
-    const content = (obj.message || {}).content || [];
-    if (!Array.isArray(content)) return '';
-    return content
-      .filter(b => b && b.type === 'text' && b.text)
-      .map(b => b.text)
-      .join('\n');
-  }
-  // Codex format
-  const payload = obj.payload || {};
-  if (type === 'event_msg' && payload.type === 'agent_message') {
-    return String(payload.message || '');
-  }
-  if (type === 'response_item' && payload.type === 'function_call_output') {
-    return String(payload.output || '');
-  }
-  return '';
 }
 
 class JsonlWatcher {
@@ -3845,7 +3361,7 @@ class SessionManager {
     if (this.sessions.has(name)) {
       throw new Error(`Session "${name}" already exists`);
     }
-    const proxyBase = resolveProxyBase(proxy);
+    const proxyBase = resolveProxyBase(proxy, uiSettings);
 
     let cmd, args;
     const shell = process.env.SHELL || '/bin/bash';
@@ -4007,7 +3523,7 @@ class SessionManager {
         if (!args.includes('hooks') && !args.includes('codex_hooks')) args.push('--enable', 'hooks');
         if (!args.includes('--no-alt-screen')) args.push('--no-alt-screen');
         if (!args.some(a => a.startsWith('tui.status_line'))) {
-          args.push('-c', codexStatusLineArg());
+          args.push('-c', codexStatusLineArg(uiSettings));
         }
         ensureDir(MSG_DIR);
         if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
