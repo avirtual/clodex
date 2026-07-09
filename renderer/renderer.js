@@ -925,10 +925,12 @@ window.api.onSessionAttention((name, attn) => {
 });
 
 // ---------------------------------------------------------------------------
-// Peered Clodexes — sessions running on another machine's Clodex, reached
-// through its remote server (loopback + SSH tunnel/tailnet). This side is a
-// thin adapter: all protocol/reconnect logic lives in main's peer-client.js.
-// A peer being offline is normal (laptops sleep) — render calm, never error.
+// Peered Clodexes — core-side anchor only. The peer RUNTIME (sidebar rows,
+// peer bar, control, event subscriptions, peer popovers) lives in peers-ui.js;
+// what stays here is the shared state below (injected into the module by
+// reference) plus the peers-SETUP dialog further down — connection config,
+// which reads these Maps directly. Protocol/reconnect logic is main-process
+// (peer-client.js). A peer being offline is normal — render calm, never error.
 // ---------------------------------------------------------------------------
 
 const peerStatuses = new Map(); // peerId -> status from peer-state events
