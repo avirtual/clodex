@@ -11,10 +11,13 @@ it's stock Clodex plus the two helpers in this folder:
 
 | File | Role |
 |---|---|
+| [`clodex-deploy.sh`](clodex-deploy.sh) | Idempotent one-shot install/update: clone → build → sandbox fix → enable the peer server → systemd unit. Re-run = update. |
 | [`clodex-seed.sh`](clodex-seed.sh) | Create/remove headless sessions + (re)start the app |
 | [`clodex.service`](clodex.service) | systemd **user** unit: run at boot, auto-restart, survive logout |
 
-Copy both to the box during setup (steps below).
+The fastest path is the Mac wizard (**Peers → Add peer → Test &amp; Set Up**),
+which runs `clodex-deploy.sh` on the box for you over SSH. The manual steps below
+are the reference/fallback; copy the helpers to the box during setup.
 
 ---
 
@@ -35,6 +38,16 @@ Neither is macOS-specific; both are stock apt packages.
 ---
 
 ## One-time setup
+
+> **Automated path.** Steps 3–7 below (clone, build, sandbox fix, enable the
+> peer server, install + start the systemd unit) are exactly what
+> [`clodex-deploy.sh`](clodex-deploy.sh) does — idempotently, so a re-run is the
+> update path. Run it directly on the box (`PORT=7900 bash clodex-deploy.sh`) or,
+> from your Mac, let **Peers → Add peer → Test &amp; Set Up** run it over SSH. It
+> emits `::step`/`::ok`/`::fail` markers and, if it needs root without a
+> passwordless `sudo`, prints the exact commands and stops (never prompts). You
+> still do steps 1–2 (toolchain + the Claude CLI login) by hand — the OAuth is
+> interactive.
 
 ### 1. Toolchain (as the app user)
 Node ≥ 20, npm, git, and a C/C++ toolchain (make/g++/python3) for node-pty.
@@ -69,7 +82,10 @@ sudo apt-get install -y \
 ```
 (Package names are Ubuntu 24.04 "noble"; the `t64` suffix is the time_t
 transition. On other releases, `ldd node_modules/electron/dist/electron | grep
-"not found"` tells you exactly what's missing.)
+"not found"` tells you exactly what's missing.) `clodex-deploy.sh` checks for
+these with the unsuffixed names *and* their `t64` aliases (`dpkg -s libasound2
+|| dpkg -s libasound2t64`), so an already-satisfied box isn't re-flagged as
+missing on every re-run — keep the two lists in sync.
 
 ### 5. Fix Chromium's SUID sandbox (needs root, one-time)
 ```bash
@@ -121,11 +137,14 @@ journalctl   --user -u   clodex -f        # live app logs
 
 ## Creating & removing sessions (`clodex-seed.sh`)
 
-Clodex reads `~/.config/clodex/sessions.json` **only at launch** — there is no
-live reload, and no over-the-wire "create session" endpoint (peers can attach /
-control / restart existing sessions, not spawn new ones). So a headless session
-is created by writing the entry and restarting the service. `clodex-seed.sh`
-does exactly that, mirroring the entry shape `manager.create()` persists.
+Since v2.10.0 a peer **can** create / kill / restart sessions over the wire (the
+`create` capability — that's what the Mac wizard's new-session dialog and the
+per-row restart/kill use), so day-to-day you rarely touch this script anymore.
+It still earns its keep for **bulk/scripted** seeding and for editing entries
+while the app is down: Clodex reads `~/.config/clodex/sessions.json` **only at
+launch** (no live reload), so a seeded session needs a restart to spawn.
+`clodex-seed.sh` writes the entry (mirroring the shape `manager.create()`
+persists) and restarts.
 
 ```bash
 # add / update a session, then restart (existing agents --resume untouched)

@@ -1235,6 +1235,10 @@ window.api.onSessionAttention((name, attn) => {
 
 const peerStatuses = new Map(); // peerId -> status from peer-state events
 const peerTunnels = new Map();  // peerId -> managed-tunnel status (may lag peerStatuses)
+// Our own app version, cached once for the peer identity "outdated" hint (a peer
+// reporting a different version in its hello). null until fetched / if it fails.
+let ourAppVersion = null;
+window.api.getVersion().then((v) => { ourAppVersion = v || null; }).catch(() => {});
 const peerBar = document.getElementById('peer-bar');
 // Per-peer visibility selection mirrored from main (peer:visible). No entry for
 // a peer ⇒ show all its sessions; an array (possibly empty) restricts to those
@@ -1269,6 +1273,14 @@ function renderPeers() {
     if (!st.online && tun && tun.state === 'down') {
       stateText = 'tunnel down';
       if (tun.error) header.title = tun.error;
+    }
+    // Identity surfacing: an online peer's hello carries version + caps (+ os).
+    // Show them in the header tooltip, and flag a version mismatch subtly in the
+    // state text (feeds Batch B's "Update Clodex on <box>").
+    if (st.online && st.version) {
+      const capList = (st.caps || []).join(', ') || 'none';
+      header.title = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}`;
+      if (ourAppVersion && st.version !== ourAppVersion) stateText = 'outdated';
     }
     // Right-aligned host action strip mirrors the header context menu: ＋ new
     // session (create-capable peers only), ↻ restart Clodex, ◎ choose visible
@@ -5101,7 +5113,19 @@ function renderRemoteStatus(st) {
 const peersListBox = document.getElementById('peers-list');
 const peersOverlay = document.getElementById('peers-overlay');
 
+// Deploy-line router: main streams `peer-deploy-line` (sshHost, line) globally
+// as the deploy script runs; each in-flight wizard registers a handler keyed by
+// its ssh host so concurrent deploys never cross wires.
+const { parseDeployLine } = require('../peer-deploy');
+const deployLineHandlers = new Map(); // sshHost -> (line) => void
+window.api.onPeerDeployLine((sshHost, line) => {
+  const h = deployLineHandlers.get(sshHost);
+  if (h) h(line);
+});
+
 function addPeerRow(peer) {
+  const wrap = document.createElement('div');
+  wrap.className = 'peer-row-wrap';
   const row = document.createElement('div');
   row.className = 'peer-row';
   row.dataset.peerId = peer.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
@@ -5110,9 +5134,139 @@ function addPeerRow(peer) {
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || '')}">
     <input type="text" class="peer-row-ssh" placeholder="ssh host (user@laptop2)" value="${esc(peer.sshHost || '')}">
     <input type="text" class="peer-row-url" placeholder="or URL (advanced)" value="${esc(peer.url || '')}">
+    <button type="button" class="secondary peer-row-test" title="Test the ssh host and check for Clodex; offer to install if absent">Test &amp; Set Up</button>
     <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>`;
-  row.querySelector('.peer-row-remove').addEventListener('click', () => row.remove());
-  peersListBox.appendChild(row);
+  // Status/progress area (probe result → install offer → deploy step list).
+  // Below the inputs so it can grow without reflowing the row.
+  const status = document.createElement('div');
+  status.className = 'peer-row-status hidden';
+  row.querySelector('.peer-row-remove').addEventListener('click', () => wrap.remove());
+  row.querySelector('.peer-row-test').addEventListener('click', () => peerTestAndSetUp(row, status));
+  wrap.appendChild(row);
+  wrap.appendChild(status);
+  peersListBox.appendChild(wrap);
+  // If this peer is already connected, show its live identity passively (version
+  // + caps from the hello we already have) — the same facts Test would surface,
+  // without a round-trip, and with an "outdated" nudge on a version mismatch.
+  const st = peer.id && peerStatuses.get(peer.id);
+  if (st && st.online && st.version) {
+    const capList = (st.caps || []).join(', ') || 'none';
+    const outdated = ourAppVersion && st.version !== ourAppVersion
+      ? `<span class="peer-status-warn"> · outdated (you run v${esc(ourAppVersion)})</span>` : '';
+    renderPeerStatus(status,
+      `<span class="peer-status-ok">✓ Clodex v${esc(st.version)}</span>` +
+      `<span class="peer-status-dim"> · caps: ${esc(capList)}${st.platform ? ` · ${esc(st.platform)}` : ''}</span>${outdated}`);
+  }
+}
+
+// Per-peer remote port (settings-file-only; carried through on the row dataset).
+function peerRowPort(row) {
+  return row.dataset.remotePort ? parseInt(row.dataset.remotePort, 10) : 7900;
+}
+
+// "Test & Set Up": probe the box (ssh + curl hello on the box, no tunnel), then
+// render one of four outcomes. hello-ok = ready to save; no-listener = offer an
+// install; not-clodex / ssh-fail = diagnostics. The wizard is an OFFER — Save
+// still works whether or not you ever click Test.
+async function peerTestAndSetUp(row, status) {
+  const sshHost = row.querySelector('.peer-row-ssh').value.trim();
+  const port = peerRowPort(row);
+  if (!sshHost) { renderPeerStatus(status, `<span class="peer-status-warn">Enter an ssh host first (e.g. user@laptop2).</span>`); return; }
+  const testBtn = row.querySelector('.peer-row-test');
+  testBtn.disabled = true;
+  renderPeerStatus(status, `<span class="peer-status-dim">ssh <span class="peer-spin">…</span> connecting to ${esc(sshHost)}</span>`);
+  let res;
+  try { res = await window.api.peerProbe(sshHost, port); }
+  catch (e) { res = { kind: 'ssh-fail', stderr: (e && e.message) || 'probe failed' }; }
+  testBtn.disabled = false;
+  if (!res) { renderPeerStatus(status, `<span class="peer-status-warn">No response from probe.</span>`); return; }
+  if (res.kind === 'hello-ok') {
+    const caps = (res.caps || []).join(', ') || 'none';
+    const plat = res.platform ? ` · ${esc(res.platform)}` : '';
+    renderPeerStatus(status,
+      `<span class="peer-status-ok">✓ ssh · Clodex v${esc(res.version || '?')}</span>` +
+      `<span class="peer-status-dim"> · caps: ${esc(caps)}${plat}</span>` +
+      `<div class="peer-status-note">Ready — click Save to add this peer.</div>`);
+  } else if (res.kind === 'no-listener') {
+    renderPeerStatus(status,
+      `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-dim"> · no Clodex answering on 127.0.0.1:${port}</span>` +
+      `<div class="peer-status-actions"><button type="button" class="peer-install-btn">Install Clodex on this box</button></div>`);
+    status.querySelector('.peer-install-btn').addEventListener('click', () => peerRunDeploy(row, status, sshHost, port));
+  } else if (res.kind === 'not-clodex') {
+    renderPeerStatus(status,
+      `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · something is answering on 127.0.0.1:${port}, but it isn't Clodex.</span>` +
+      `<div class="peer-status-note">Pick a different port, or free that one on the box.</div>`);
+  } else { // ssh-fail
+    renderPeerStatus(status,
+      `<span class="peer-status-err">✗ ssh could not connect.</span>` +
+      (res.stderr ? `<pre class="peer-status-pre">${esc(res.stderr)}</pre>` : '') +
+      `<div class="peer-status-note">Check key-based ssh works from a terminal (<code>ssh ${esc(sshHost)}</code>), and that Remote Login is enabled on the box.</div>`);
+  }
+}
+
+// Install/update Clodex on the box: stream the deploy script's ::marker lines
+// into a live step list. Terminal states: ::done (success → save hint),
+// ::need-sudo (copyable commands + re-run), or a ::fail / non-zero exit.
+async function peerRunDeploy(row, status, sshHost, port) {
+  const steps = new Map();   // name -> { el, state }
+  const sudoCmds = [];
+  let sawDone = false;
+  renderPeerStatus(status,
+    `<div class="peer-status-dim">Installing Clodex on ${esc(sshHost)} — this can take a few minutes on first run.</div>` +
+    `<div class="peer-deploy-steps"></div>` +
+    `<div class="peer-deploy-tail"></div>`);
+  const stepsBox = status.querySelector('.peer-deploy-steps');
+  const tailBox = status.querySelector('.peer-deploy-tail');
+  const stepEl = (name) => {
+    let s = steps.get(name);
+    if (!s) {
+      const el = document.createElement('div');
+      el.className = 'peer-deploy-step';
+      el.innerHTML = `<span class="peer-deploy-mark">…</span> <span class="peer-deploy-name">${esc(name)}</span> <span class="peer-deploy-reason"></span>`;
+      stepsBox.appendChild(el);
+      s = { el, state: 'run' };
+      steps.set(name, s);
+    }
+    return s;
+  };
+  deployLineHandlers.set(sshHost, (line) => {
+    const ev = parseDeployLine(line);
+    if (ev.type === 'step') { stepEl(ev.name); }
+    else if (ev.type === 'ok') { const s = stepEl(ev.name); s.state = 'ok'; s.el.querySelector('.peer-deploy-mark').textContent = '✓'; s.el.classList.add('ok'); }
+    else if (ev.type === 'fail') {
+      const s = stepEl(ev.name); s.state = 'fail';
+      s.el.querySelector('.peer-deploy-mark').textContent = '✗';
+      s.el.querySelector('.peer-deploy-reason').textContent = ev.reason ? `— ${ev.reason}` : '';
+      s.el.classList.add('fail');
+    }
+    else if (ev.type === 'need-sudo') { tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo: ${esc(ev.what)}</div>`; }
+    else if (ev.type === 'sudo-cmd') {
+      sudoCmds.push(ev.command);
+      tailBox.innerHTML =
+        `<div class="peer-status-warn">Run these on the box, then click Test &amp; Set Up again:</div>` +
+        `<pre class="peer-status-pre peer-sudo-cmds">${esc(sudoCmds.join('\n'))}</pre>`;
+    }
+    else if (ev.type === 'done') { sawDone = true; }
+  });
+  let res;
+  try { res = await window.api.peerDeploy(sshHost, { port }); }
+  catch (e) { res = { ok: false, error: (e && e.message) || 'deploy failed' }; }
+  deployLineHandlers.delete(sshHost);
+  if (res && res.ok && sawDone) {
+    tailBox.innerHTML = `<div class="peer-status-ok">✓ Clodex is running on ${esc(sshHost)}. Click Save to add the peer — the tunnel connects automatically.</div>`;
+  } else if (res && res.needSudo) {
+    // The sudo commands are already shown from the ::sudo-cmd lines; just anchor the retry.
+    if (!sudoCmds.length) tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo on the box — see the box's terminal, then Test &amp; Set Up again.</div>`;
+  } else {
+    const why = res && res.timedOut ? 'timed out' : (res && res.error) ? res.error : `exit ${res ? res.code : '?'}`;
+    const tail = res && res.stderr ? `<pre class="peer-status-pre">${esc(res.stderr)}</pre>` : '';
+    tailBox.innerHTML = `<div class="peer-status-err">Install did not finish (${esc(String(why))}).</div>${tail}`;
+  }
+}
+
+function renderPeerStatus(status, html) {
+  status.innerHTML = html;
+  status.classList.remove('hidden');
 }
 
 function collectPeers() {

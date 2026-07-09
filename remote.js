@@ -323,6 +323,9 @@ class RemoteServer {
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
+        // Deploy/identity surfacing: which OS the box runs (the deploy wizard
+        // and header tooltip show it; harmless to older viewers that ignore it).
+        platform: process.platform,
       });
     }
     // Read side: raw PTY stream with best-effort scrollback replay. The

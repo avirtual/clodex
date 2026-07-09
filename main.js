@@ -1831,6 +1831,8 @@ function randBase36(len) {
 }
 const { ctxReminderFor } = require('./ctx-reminder');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
+const { sshRun } = require('./ssh-run');
+const { probePeer } = require('./peer-deploy');
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
 // Reports disk-scan the whole session on the proxy side, so they can take much
@@ -7526,6 +7528,58 @@ app.whenReady().then(() => {
     port: uiSettings.get().remotePort,
     error: remoteError,
   }));
+
+  // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
+  // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
+  // ssh-run.js). Classification + the deploy script live off-electron so they're
+  // unit-tested; these handlers are the thin electron adapter.
+  ipcMain.handle('peer:probe', async (_e, sshHost, port) => {
+    if (!sshHost || typeof sshHost !== 'string') return { kind: 'ssh-fail', stderr: 'no ssh host given' };
+    try {
+      return await probePeer(sshHost, port || uiSettings.get().remotePort || 7900);
+    } catch (e) {
+      return { kind: 'ssh-fail', stderr: e && e.message ? e.message : 'probe failed' };
+    }
+  });
+
+  // Run the idempotent deploy script on the box, streaming each stdout line to
+  // the caller window as a `peer-deploy-line` event (the wizard parses ::markers
+  // via peer-deploy.parseDeployLine). Resolves with { code, timedOut, stderr }:
+  // code 0 = success, 42 = needs sudo (script emitted the exact commands as
+  // ::need-sudo/::sudo-cmd lines), anything else = failure.
+  ipcMain.handle('peer:deploy', async (e, sshHost, opts = {}) => {
+    if (!sshHost || typeof sshHost !== 'string') return { ok: false, error: 'no ssh host given' };
+    let script;
+    try {
+      script = fs.readFileSync(path.join(__dirname, 'peering', 'clodex-deploy.sh'), 'utf8');
+    } catch (err) {
+      return { ok: false, error: `deploy script unreadable: ${err.message}` };
+    }
+    // Params ride the environment the remote bash inherits — prepend exports so
+    // the script's ${VAR:-default} reads them without changing its shebang line.
+    const port = Number.isInteger(opts.port) ? opts.port : (uiSettings.get().remotePort || 7900);
+    const repoUrl = typeof opts.repoUrl === 'string' && opts.repoUrl ? opts.repoUrl : `https://github.com/${UPDATE_REPO}`;
+    const branch = typeof opts.branch === 'string' && opts.branch ? opts.branch : 'master';
+    const shellEsc = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+    const preamble =
+      `export PORT=${shellEsc(port)} REPO_URL=${shellEsc(repoUrl)} BRANCH=${shellEsc(branch)}\n`;
+    const wc = e.sender;
+    try {
+      const res = await sshRun(sshHost, preamble + script, {
+        timeoutMs: 15 * 60 * 1000,       // a cold clone+install+rebuild can be minutes
+        onLine: (line) => { try { if (!wc.isDestroyed()) wc.send('peer-deploy-line', sshHost, line); } catch {} },
+      });
+      return {
+        ok: res.code === 0,
+        code: res.timedOut ? null : res.code,
+        timedOut: !!res.timedOut,
+        needSudo: res.code === 42,
+        stderr: (res.stderr || '').trim().split('\n').slice(-20).join('\n'),
+      };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : 'ssh failed to start' };
+    }
+  });
 
   // ---- Peered Clodexes: renderer-facing thin adapter. All protocol,
   // reconnect and buffering logic lives in peer-client.js; events reach the

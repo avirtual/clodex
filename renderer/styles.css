@@ -2337,7 +2337,50 @@ html, body {
 #peers-list .peer-row-label { flex: 0 0 110px; }
 #peers-list .peer-row-ssh { flex: 1; }
 #peers-list .peer-row-url { flex: 1; }
+#peers-list .peer-row-test { flex: none; padding: 2px 10px; white-space: nowrap; }
 #peers-list .peer-row-remove { flex: none; padding: 2px 8px; }
+
+/* Wizard status / deploy-progress panel under a peer row. Indented to the
+   inputs, muted chrome, grows without reflowing the row above it. */
+#peers-list .peer-row-wrap { margin-top: 6px; }
+#peers-list .peer-row-wrap .peer-row { margin-top: 0; }
+.peer-row-status {
+  margin: 6px 0 10px 116px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.peer-row-status.hidden { display: none; }
+.peer-status-ok   { color: var(--ok); }
+.peer-status-warn { color: var(--warn); }
+.peer-status-err  { color: var(--error); }
+.peer-status-dim  { color: var(--text-dim); }
+.peer-status-note { color: var(--text-dim); margin-top: 4px; }
+.peer-status-actions { margin-top: 8px; }
+.peer-install-btn { padding: 3px 12px; }
+.peer-status-pre {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+  user-select: text;
+}
+.peer-deploy-steps { margin-top: 6px; }
+.peer-deploy-step { display: flex; gap: 6px; align-items: baseline; color: var(--text-dim); }
+.peer-deploy-step.ok { color: var(--ok); }
+.peer-deploy-step.fail { color: var(--error); }
+.peer-deploy-mark { flex: none; width: 1em; text-align: center; }
+.peer-deploy-reason { color: var(--error); }
+.peer-deploy-tail { margin-top: 6px; }
 
 /* Peer bar reserves the terminal's top edge the same way the proxy bar
    reserves the bottom — never overlay terminal rows. */

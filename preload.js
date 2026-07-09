@@ -158,6 +158,13 @@ window.api = {
   // Remote access (phone web UI)
   remoteStatus: () => ipcRenderer.invoke('remote:status'),
 
+  // Peer deploy wizard: probe a box, install/update Clodex on it (streams
+  // ::marker lines back via onPeerDeployLine).
+  peerProbe: (sshHost, port) => ipcRenderer.invoke('peer:probe', sshHost, port),
+  peerDeploy: (sshHost, opts) => ipcRenderer.invoke('peer:deploy', sshHost, opts),
+  onPeerDeployLine: (callback) =>
+    ipcRenderer.on('peer-deploy-line', (_e, sshHost, line) => callback(sshHost, line)),
+
   // Peered Clodexes (attach to sessions on another machine)
   peerList: () => ipcRenderer.invoke('peer:list'),
   peerAttach: (id, name) => ipcRenderer.invoke('peer:attach', id, name),
