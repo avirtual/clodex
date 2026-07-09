@@ -1350,6 +1350,14 @@ function parseIntent(rawLine) {
   const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
   if (dmMatch) return { type: 'dm', target: dmMatch[1], urgent: !!dmMatch[2], body: dmMatch[3] };
 
+  // Escalate a parked-on-hold dm: deliver the parked COPY now, without the
+  // sender re-emitting the body. Protocol-invisible (not in IPC_PROMPT) — the
+  // id only exists once a park happens, and the park notice hands the sender the
+  // exact `[agent:resend <id>]` incantation. Id is the short base36 handle minted
+  // at park time (see _mintParkId).
+  const resendMatch = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
+  if (resendMatch) return { type: 'resend', id: resendMatch[1].toLowerCase() };
+
   if (/^\[agent:who\]\s*$/.test(cleaned)) return { type: 'who' };
 
   if (/^\[agent:name\]\s*$/.test(cleaned)) return { type: 'name' };
@@ -1411,7 +1419,7 @@ function parseIntent(rawLine) {
 function shadowIntentKey(agent, intent) {
   // urgent is part of the identity: a held dm RESENT with the flag inside the
   // dedupe TTL must dispatch, not be swallowed as a duplicate of the bounce.
-  const head = (intent.sub || intent.target || intent.name || '') + (intent.urgent ? '+urgent' : '');
+  const head = (intent.sub || intent.target || intent.name || intent.id || '') + (intent.urgent ? '+urgent' : '');
   const body = (intent.body || intent.path || '').trim().slice(0, 200);
   return `${agent}|${intent.type}|${head}|${body}`;
 }
@@ -1561,7 +1569,7 @@ HOW TO COMMUNICATE:
 You reply to your operator the normal way — your ordinary response text reaches them as it always does. Inside clodex you additionally can message the other agents and manage your own session. Both work through the intent lines below: include the matching line in your response to trigger it. To reach another agent, write the intent line rather than a plain sentence (a normal "ask bob to …" just goes to your operator; the intent line is what hands it to bob). Write it yourself — no echo/printf or shell wrapper needed.
 
   [agent:dm TARGET] message body   Direct message to TARGET
-  [agent:dm TARGET urgent] body    Deliver even to a long-idle peer. A plain dm to a peer that's been idle a long time without a warm cache bounces back as an [agent:dm] error instead of delivering — waking such a peer re-bills its whole context, so only resend with urgent if it genuinely can't wait for that peer's next turn. A peer blocked on a permission dialog bounces even urgent dms (delivery would answer its dialog) — wait for it to unblock.
+  [agent:dm TARGET urgent] body    Deliver even to a long-idle peer. A plain dm to a Claude peer that's been idle a long time without a warm cache isn't injected immediately — it's PARKED and delivered with that peer's next turn (nothing is lost), because waking a cold peer re-bills its whole context. The bounce notice you get back carries a short one-shot handle to escalate if it genuinely can't wait — you emit that handle, never the message again. Use \`urgent\` proactively when you already know before sending that it can't wait. A peer blocked on a permission dialog holds even urgent dms (delivery would answer its dialog) — it's parked until the human answers.
   [agent:who]                      List online peers with reachability: (working), (idle 12m, warm), (idle 5h, cache cold), (blocked on a permission dialog). Prefer warm/working peers for non-urgent traffic; blocked peers can't respond until their human answers.
   [agent:name]                     Your own wrapper name
   [agent:context compact]          Compact your own context window when it's getting long. Optionally follow with text on the same or following lines — it's injected as your first turn after the compact so you keep working; omit it for a generic continue nudge.
@@ -1812,7 +1820,15 @@ const { parseAgentFrontmatter, buildAgentsArg, denyAgentRules } = require('./age
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
+
+// Short lowercase base36 token (park/resend handles). Concatenates random
+// draws so trailing-zero truncation can't shorten the result below `len`.
+function randBase36(len) {
+  let s = '';
+  while (s.length < len) s += Math.random().toString(36).slice(2);
+  return s.slice(0, len);
+}
 const { ctxReminderFor } = require('./ctx-reminder');
 const { parseSkillFrontmatter, buildSkillPlugin } = require('./skills-util');
 const PROXY_POLL_INTERVAL = 5000; // ms
@@ -4742,8 +4758,11 @@ class SessionManager {
         const localTarget = this.sessions.get(intent.target);
         if (localTarget && localTarget.agentType) {
           // Cost gate: a dm injection into a long-idle, not-warm peer re-bills
-          // that peer's whole context. Bounce with resend-as-urgent
-          // instructions — the SENDER judges whether it's worth the wake-up.
+          // that peer's whole context. Instead of dropping the message, PARK it
+          // (Claude targets): it drains as additionalContext on the target's next
+          // UserPromptSubmit via the existing pending hook, so nothing is lost and
+          // the sender never re-emits the body — the notice hands them a short
+          // [agent:resend <id>] to escalate if it can't wait for that next turn.
           const verdict = shouldHoldDm({
             urgent: intent.urgent === true,
             state: localTarget.activityState || 'idle',
@@ -4752,18 +4771,39 @@ class SessionManager {
             attention: localTarget.needsAttention ? localTarget.needsAttention.kind : null,
           });
           if (verdict.hold) {
+            // Park only for Claude targets — the drain rides a UserPromptSubmit
+            // hook Codex doesn't provide. A Codex (or park-failed) target falls
+            // back to the legacy bounce. Build the delivery text ONLY when we can
+            // actually park: _buildDeliveryText spills a >500-byte body to a file,
+            // so building it for the bounce path would orphan a spill file that's
+            // then discarded (and every retype would orphan another).
+            const canPark = localTarget.agentType === 'claude' && !localTarget._dead;
+            const parkId = canPark
+              ? this._parkHeldDelivery(localTarget, this._buildDeliveryText(localTarget, senderName, intent.body, 'dm'))
+              : null;
             if (session) {
-              // Dialog holds have no urgent override — the injection itself is
-              // the hazard, not the cost. Don't advertise a resend that would
-              // bounce identically.
-              const retry = verdict.noUrgent
-                ? `Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
-                : `If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`;
-              this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${verdict.reason}. ${retry}`);
+              let notice;
+              if (parkId) {
+                // Dialog holds keep the no-urgent stance: parked (drains after the
+                // human answers the dialog), but NO resend advertised — a resend
+                // would refuse identically (injecting answers the dialog).
+                notice = verdict.noUrgent
+                  ? `[agent:dm] parked for ${intent.target} (${verdict.reason}) as ${parkId} — it'll be delivered after the human answers the dialog.`
+                  : `[agent:dm] parked for ${intent.target} (${verdict.reason}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
+              } else {
+                // Legacy bounce (non-Claude target, or parking failed).
+                const retry = verdict.noUrgent
+                  ? `Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
+                  : `If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`;
+                notice = `[agent:dm] NOT delivered to ${intent.target}: ${verdict.reason}. ${retry}`;
+              }
+              this._injectText(session, notice);
             }
             this._broadcast('ipc-message', {
               type: 'dm', from: senderName, to: intent.target,
-              body: `HELD (${verdict.reason}): ${intent.body}`,
+              body: parkId
+                ? `PARKED (${verdict.reason}, ${parkId}): ${intent.body}`
+                : `HELD (${verdict.reason}): ${intent.body}`,
             });
             break;
           }
@@ -4778,6 +4818,53 @@ class SessionManager {
         }
         this._broadcast('ipc-message', {
           type: 'dm', from: senderName, to: intent.target, body: intent.body,
+        });
+        break;
+      }
+      case 'resend': {
+        // Escalate a parked-on-hold dm: claim the parked COPY by id and deliver
+        // it NOW, bypassing the cost gate — the sender never re-emits the body.
+        // Anyone may resend (same trust domain). Claim + drain race safely: an
+        // ENOENT (or no match) means the target's next-turn drain already took
+        // it, which is a success, so we report "delivered" not an error.
+        const reply = (msg) => { if (session) this._injectText(session, `[agent:resend] ${msg}`); };
+        const claimed = claimParkedById(PENDING_DIR, intent.id);
+        if (!claimed) {
+          reply(`nothing parked under "${intent.id}" — it may already have been delivered on the target's next turn.`);
+          break;
+        }
+        const target = this.sessions.get(claimed.name);
+        if (!target || target._dead) {
+          reply(`can't deliver "${intent.id}": ${claimed.name} is gone.`);
+          break;
+        }
+        // Re-check the DIALOG hold only (urgent bypasses the cost gate). If the
+        // target is now dialog-blocked, injecting would answer the dialog — re-park
+        // under the SAME id (a later resend still resolves it) and say so.
+        const verdict = shouldHoldDm({
+          urgent: true,
+          state: target.activityState || 'idle',
+          idleMs: Date.now() - (target.activityTs || Date.now()),
+          payload: this._proxyPoller ? this._proxyPoller.snapshot(target.name) : null,
+          attention: target.needsAttention ? target.needsAttention.kind : null,
+        });
+        if (verdict.hold) {
+          let reparked = false;
+          try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id); reparked = true; } catch {}
+          reply(reparked
+            ? `${target.name} is ${verdict.reason}; re-parked as ${intent.id} — it'll deliver after the dialog is answered.`
+            : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
+          break;
+        }
+        // Deliver the parked copy. Not bypassHold: a mid-turn/compacting target
+        // still queues-and-flushes correctly; only the cost hold is bypassed.
+        this._injectText(target, claimed.text);
+        const origin = (claimed.text.match(/^\[agent:from (\S+)\]/) || [])[1] || senderName;
+        this._sendToSession(target.name, 'session-mention', target.name, 'dm', origin);
+        reply(`delivered the parked message to ${claimed.name}.`);
+        this._broadcast('ipc-message', {
+          type: 'dm', from: origin, to: claimed.name,
+          body: `RESENT (${intent.id}): ${claimed.text}`,
         });
         break;
       }
@@ -5281,10 +5368,11 @@ class SessionManager {
 
   // --- Message delivery ---
 
-  _deliverMessage(targetName, senderName, body, mtype) {
-    const target = this.sessions.get(targetName);
-    if (!target) return;
-
+  // Build the FINAL delivery text (prefix + spill-pointer/inline body + reply
+  // trailer) a recipient reads — the exact bytes _deliverMessage would inject.
+  // Factored out so the hold-park path parks byte-identical text (same
+  // formatting, spill, trailer) rather than duplicating the shaping.
+  _buildDeliveryText(target, senderName, body, mtype) {
     const prefix = `[agent:from ${senderName}]`;
 
     // Reply-syntax nudge, appended as the LAST thing the recipient reads before
@@ -5301,9 +5389,8 @@ class SessionManager {
       ? `(reply: start a line with [agent:dm ${senderName}])`
       : '';
 
-    let finalText;
     if (body.length > MSG_SPILL_THRESHOLD) {
-      const filePath = spillToFile(senderName, body, targetName);
+      const filePath = spillToFile(senderName, body, target.name);
       // @-mention makes Claude Code attach the file inline instead of
       // spending a turn on a Read call; Codex has no equivalent. The
       // trailing space after the path closes the @-autocomplete popup —
@@ -5311,12 +5398,17 @@ class SessionManager {
       // DIFFERENT file (observed live: pointer said msg-2, body was msg-3).
       // The trailer rides the pointer line (not the spilled file, which may be
       // read after the register has already drifted).
-      finalText = target.agentType === 'claude'
+      return target.agentType === 'claude'
         ? `${prefix} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
         : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
-    } else {
-      finalText = `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
     }
+    return `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
+  }
+
+  _deliverMessage(targetName, senderName, body, mtype) {
+    const target = this.sessions.get(targetName);
+    if (!target) return;
+    const finalText = this._buildDeliveryText(target, senderName, body, mtype);
     // Layer-3 parking: if the operator is mid-composition, park this delivery to
     // drain in with their next prompt (see _maybeParkDelivery) instead of typing
     // it into the pane and splicing the draft. Falls through to a normal inject
@@ -5325,6 +5417,41 @@ class SessionManager {
       this._injectText(target, finalText);
     }
     this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
+  }
+
+  // Monotonic, lexically-sortable park seq so a drain reads in arrival order,
+  // stable across restarts (timestamp dominates; a counter breaks within-ms ties).
+  _nextParkSeq() {
+    return `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
+  }
+
+  // Mint a short, collision-free resend handle. Ids must be unique across ALL
+  // pending stores (resend carries only the id, not the target), so we retry
+  // against parkIdInUse; the 5-char base36 space (~60M) makes a collision rare
+  // even before the check.
+  _mintParkId() {
+    for (let i = 0; i < 50; i++) {
+      const id = randBase36(5);
+      if (!parkIdInUse(PENDING_DIR, id)) return id;
+    }
+    return randBase36(10); // vanishingly unlikely fallback
+  }
+
+  // Park a HELD dm (cost/dialog hold) so it drains on the target's next
+  // UserPromptSubmit. Unlike _maybeParkDelivery this does NOT arm the park cap:
+  // the cap drains through the inject queue after a timeout, which would defeat
+  // the hold by injecting into the cold/blocked target anyway. A held delivery
+  // waits for the target's OWN next turn (or an explicit [agent:resend]).
+  // Returns the resend id, or null if parking failed (caller falls back to a bounce).
+  _parkHeldDelivery(target, finalText) {
+    const id = this._mintParkId();
+    try {
+      parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id);
+    } catch (e) {
+      log.error('inject', `park-on-hold failed for ${target.name}: ${e.message}`);
+      return null;
+    }
+    return id;
   }
 
   // Park a delivery for the operator's next submit instead of injecting it now,
@@ -5341,11 +5468,8 @@ class SessionManager {
     // controller's input, both stamped at the write() choke point).
     const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
     if (!typing) return false;
-    // Monotonic, lexically-sortable seq so the drain reads in arrival order,
-    // stable across restarts (timestamp dominates; counter breaks within-ms ties).
-    const seq = `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
     try {
-      parkDelivery(PENDING_DIR, target.name, finalText, seq);
+      parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq());
     } catch (e) {
       // Parking is best-effort; never drop a DM. Fall back to a normal inject.
       log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
