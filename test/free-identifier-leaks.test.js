@@ -72,6 +72,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/popovers/checklist-popovers.js',
   'renderer/popovers/context-popover.js',
   'renderer/popovers/session-menus.js',
+  'renderer/peers-ui.js',
 ];
 
 // Justified survivors of imperfect stripping. Format: module -> Set of names.
