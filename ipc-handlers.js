@@ -33,7 +33,7 @@ function registerIpcHandlers(deps) {
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, setUiTheme, sshRun,
+    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
     // stores (siblings of persistence above, declared in main.js's multi-line
@@ -312,25 +312,10 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  ipcMain.handle('session:getArgs', (_e, name) => {
-    const entry = persistence.get(name);
-    return entry ? {
-      ok: true,
-      extraArgs: entry.extraArgs || [],
-      type: entry.type,
-      proxy: entry.proxy ?? null,
-      systemPrompt: entry.systemPrompt || null,
-      systemPromptFile: entry.systemPromptFile || null,
-      appendPromptFiles: entry.appendPromptFiles || [],
-      agents: entry.agents || [],
-      denyBuiltins: entry.denyBuiltins || [],
-      disabledTools: entry.disabledTools || [],
-      effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
-      disabledSkills: entry.disabledSkills || [],
-      injectSkills: entry.injectSkills || [],
-      stripLevel: stripLevelOf(entry),
-    } : { ok: false };
-  });
+  // Editable args for the Edit Session dialog. The shape lives in main.js's
+  // readSessionArgs (shared with the peer session-args GET endpoint so local +
+  // remote reads can't drift); this handler is the thin local adapter.
+  ipcMain.handle('session:getArgs', (_e, name) => readSessionArgs(name));
 
   // Past conversations for the session picker. Two tiers:
   //  - tracked: ids clodex observed live (persisted sessionIds ∪ current active
@@ -479,50 +464,16 @@ function registerIpcHandlers(deps) {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles) => {
-    const beforeKill = persistence.get(name);
-    const nextAgents = agents !== undefined ? (agents || []) : (beforeKill?.agents || []);
-    const nextDeny = denyBuiltins !== undefined ? (denyBuiltins || []) : (beforeKill?.denyBuiltins || []);
-    const nextTools = disabledTools !== undefined ? (disabledTools || []) : (beforeKill?.disabledTools || []);
-    const nextSkills = disabledSkills !== undefined ? (disabledSkills || []) : (beforeKill?.disabledSkills || []);
-    const nextInject = injectSkills !== undefined ? (injectSkills || []) : (beforeKill?.injectSkills || []);
-    // undefined = "untouched": keep the persisted value. The edit dialog no
-    // longer surfaces the legacy inline body, so it passes systemPrompt
-    // undefined and a legacy inline prompt survives editing other settings.
-    const nextInline = systemPrompt !== undefined ? (systemPrompt || null) : (beforeKill?.systemPrompt || null);
-    const nextSysFile = systemPromptFile !== undefined ? (systemPromptFile || null) : (beforeKill?.systemPromptFile || null);
-    const nextAppend = appendPromptFiles !== undefined ? (appendPromptFiles || []) : (beforeKill?.appendPromptFiles || []);
-    persistence.setExtraArgs(name, extraArgs);
-    persistence.setProxy(name, proxy ?? null);
-    persistence.setSystemPrompt(name, nextInline);
-    persistence.setPromptRefs(name, nextSysFile, nextAppend);
-    persistence.setAgents(name, nextAgents, nextDeny);
-    persistence.setDisabledTools(name, nextTools);
-    persistence.setDisabledSkills(name, nextSkills);
-    persistence.setInjectSkills(name, nextInject);
-    if (!restart) return { ok: true, restarted: false };
-    if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
-    const wsId = workspaceOfSender(e);
-    try {
-      if (manager.sessions.has(name)) {
-        await manager.kill(name);
-        if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
-      }
-      await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend);
-      // kill() dropped the entry's stripLevel; re-assert the session's own level
-      // (see session:restart) so editing args doesn't reset stripping.
-      const argsLvl = stripLevelOf(beforeKill);
-      if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
-      if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
-      return { ok: true, restarted: true };
-    } catch (err) {
-      // kill() dropped the persistence entry and create() failed before
-      // re-adding it. Put it back (with the edited settings) so the session
-      // survives as a restorable entry instead of vanishing.
-      persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject });
-      return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
-    }
-  });
+  // Apply edited args. The core (undefined-untouched semantics, stripLevel/label
+  // re-assert, catch-and-upsert recovery) lives in main.js's applySessionArgs,
+  // shared with the peer session-args POST endpoint. This handler maps the
+  // positional IPC args to the patch object and supplies the sender's workspace
+  // as the respawn target (the peer path passes the entry's own workspaceId).
+  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles) =>
+    applySessionArgs(name, {
+      extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
+      disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
+    }, workspaceOfSender(e)));
 
   // Restart in place: kill the PTY and respawn with the persisted settings,
   // resuming the same conversation. Useful after a CLI upgrade, a global
@@ -799,6 +750,19 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.restartSession(String(name || ''), opts || {}, resolve);
   }));
+  // Edit Session on a peer — read the box's editable args + catalogs, then apply
+  // an edited patch. Gated in the UI on the 'args' cap (+ online); old boxes 501
+  // and the affordance is hidden. Thin adapters over the peer-client request pair.
+  ipcMain.handle('peer:sessionArgs', (_e, id, name) => new Promise((resolve) => {
+    const conn = getPeerManager() && getPeerManager().get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.sessionArgs(String(name || ''), resolve);
+  }));
+  ipcMain.handle('peer:setSessionArgs', (_e, id, name, patch) => new Promise((resolve) => {
+    const conn = getPeerManager() && getPeerManager().get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.setSessionArgs(String(name || ''), patch || {}, resolve);
+  }));
   // Popover data for a peer session — one kind-dispatched pull, answered by
   // the owner from the same sources its own popups use.
   ipcMain.handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
@@ -979,7 +943,7 @@ function registerIpcHandlers(deps) {
   // truth for attach/control lives there, not in persistence); we only render.
   ipcMain.on('peer:context-menu', (e, st) => {
     const win = BrowserWindow.fromWebContents(e.sender);
-    const { id, name, online, attached, controlled, holder, canCreate, hostLabel, type } = st || {};
+    const { id, name, online, attached, controlled, holder, canCreate, canArgs, hostLabel, type } = st || {};
     const act = (action) => () => e.sender.send('peer:context-action', { action, id, name });
     const template = [];
     // Who holds it, when it's not us — informational, like the peer bar. Take
@@ -1005,6 +969,16 @@ function registerIpcHandlers(deps) {
     // local pair: a plain restart (--resume, keeps history, no confirm) and a
     // fresh reload (new conversation, re-reads skills, confirmed in the renderer
     // like doHardRestart). Kill is the destructive removal (no resume).
+    // Edit Session — remote args editing (the 'args' cap). Opens the shared dialog
+    // populated from the box's catalogs; online-gated (needs a live read/respawn).
+    if (canArgs) {
+      template.push({ type: 'separator' });
+      template.push({
+        label: `Edit Session "${name}" on ${hostLabel || 'peer'}…`,
+        enabled: !!online,
+        click: act('editArgs'),
+      });
+    }
     if (canCreate) {
       template.push({ type: 'separator' });
       template.push({

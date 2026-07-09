@@ -1709,6 +1709,9 @@ const {
   proxyState, ctxPct, ctxTokens, peerFilesCount, filesUnseen,
   applyCtxBadge, applyWarmBadge, renderProxyBar,
   openFilePeek, isFilesPopoverForKey,
+  // Edit Session on a peer row reuses the local dialog with a peer data source
+  // (hoisted function decl, so referenced above its definition).
+  openArgsDialog,
 });
 
 // ---------------------------------------------------------------------------
@@ -2504,20 +2507,39 @@ const argsToolsSection = document.getElementById('args-tools-section');
 const argsOtherSection = document.getElementById('args-other-section');
 wireBulkToggles(argsToolsRow, argsToolsList);
 let argsEditingName = null;
+// Non-null when the open dialog targets a PEER session: a { fetch, save,
+// onRestarted } source (built by peers-ui) that swaps the data layer while the
+// dialog DOM stays identical. Null = the local session path (default).
+let argsEditingSource = null;
 
 argsProxyMode.addEventListener('change', () => {
   argsProxyUrl.style.display = argsProxyMode.value === 'custom' ? '' : 'none';
   if (argsProxyMode.value === 'custom') argsProxyUrl.focus();
 });
 
-async function openArgsDialog(name) {
-  const [res, settings, promptLib, agentLib] = await Promise.all([
-    window.api.getSessionArgs(name),
-    window.api.getSettings(),
-    window.api.listPrompts(),
-    window.api.listAgents(),
-  ]);
-  if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+// Edit Session dialog. `argsSource` (peers-ui's peer descriptor) swaps the data
+// layer only — fetch the args + catalogs, save the patch, and reattach after a
+// restart. Null = the local session path: fetch the four local sources, save via
+// setSessionArgs, re-home the tab on restart. The dialog DOM is identical either
+// way; a peer edit populates its checklists from the BOX catalogs in the response,
+// never the local libraries (the box's agents/prompts/tools are the truth for its
+// sessions), and rows with no box catalog fall back to empty, not local data.
+async function openArgsDialog(name, argsSource = null) {
+  let res, settings, promptLib, agentLib;
+  if (argsSource) {
+    const r = await argsSource.fetch();
+    if (!r || !r.ok) { alert(r && r.error ? r.error : 'Session not found.'); return; }
+    ({ res, settings, promptLib, agentLib } = r);
+  } else {
+    [res, settings, promptLib, agentLib] = await Promise.all([
+      window.api.getSessionArgs(name),
+      window.api.getSettings(),
+      window.api.listPrompts(),
+      window.api.listAgents(),
+    ]);
+    if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+  }
+  argsEditingSource = argsSource;
   setAgentLibCache(agentLib || []);
   setPromptLibCache({
     system: (promptLib || []).filter(p => p.kind === 'system'),
@@ -2557,6 +2579,7 @@ async function openArgsDialog(name) {
 function closeArgsDialog() {
   argsOverlay.classList.add('hidden');
   argsEditingName = null;
+  argsEditingSource = null;
 }
 
 document.getElementById('btn-args-cancel').addEventListener('click', closeArgsDialog);
@@ -2574,23 +2597,35 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
   const name = argsEditingName;
+  // Capture the peer source before closeArgsDialog() clears it (the save runs
+  // after the dialog closes).
+  const source = argsEditingSource;
   // Snapshot metadata from the current sidebar entry so we can re-render it
-  // after the kill+respawn wipes it via session-exit.
+  // after the kill+respawn wipes it via session-exit. (Local path only — a peer
+  // restart reattaches through its own source.onRestarted.)
   const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = existing ? existing.querySelector('.session-type')?.textContent : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
   // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
-  const res = await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles);
+  const res = source
+    ? await source.save({
+        extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
+        disabledTools, disabledSkills: undefined, injectSkills: undefined, systemPromptFile, appendPromptFiles,
+      })
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles);
   if (!res || !res.ok) {
     alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
   }
-  if (res.restarted && snapType) {
-    createTerminal(name);
-    addSessionToSidebar(name, snapType, snapCwd, null);
-    switchSession(name);
+  if (res.restarted) {
+    if (source) source.onRestarted();
+    else if (snapType) {
+      createTerminal(name);
+      addSessionToSidebar(name, snapType, snapCwd, null);
+      switchSession(name);
+    }
   }
 });
 

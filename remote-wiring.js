@@ -29,8 +29,12 @@ function createRemoteWiring(deps) {
     manager, proxyPoller,
     // hoisted helpers (shared with ipc-handlers; stay in main.js, injected)
     restartClodex, restartSession, peerProxyView,
+    readSessionArgs, applySessionArgs,
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
+    // Edit Session catalogs: CLAUDE_TOOLS is a load-time const (value); the
+    // libraries are whenReady-assigned stores read at request time (getters).
+    CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary,
     // store getters (whenReady-assigned / TDZ at factory call)
     getPersistence, getUiSettings, getWorkspaces,
     // mutable singletons (get+set, M4 pattern)
@@ -179,6 +183,42 @@ function createRemoteWiring(deps) {
           const out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId);
           if (out && out.ok && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
+          return out;
+        },
+        // Remote session args read — the Edit Session dialog's source of truth for
+        // a peer session. Returns EXACTLY what session:getArgs returns (via the
+        // shared readSessionArgs) PLUS the box's catalogs the dialog's checklists
+        // render from: the agent library, the prompt library (system+append), the
+        // static claude-tools list, and the box proxy default. The viewer never
+        // uses its own libraries for a remote edit — the box's are the truth for
+        // its sessions. Unknown name → { ok:false } (endpoint maps to 404).
+        getSessionArgs: (name) => {
+          const base = readSessionArgs(name);
+          if (!base || !base.ok) return base || { ok: false };
+          return {
+            ...base,
+            catalogs: {
+              agents: getAgentLibrary().list(),
+              prompts: getPromptLibrary().list(),
+              claudeTools: CLAUDE_TOOLS,
+              proxyUrl: getUiSettings().get().proxyUrl,
+              proxyEnabled: getUiSettings().get().proxyEnabled,
+            },
+          };
+        },
+        // Remote session args apply — routes to the SHARED applySessionArgs so the
+        // undefined-untouched semantics, stripLevel/label re-assert and catch-upsert
+        // recovery match the local path exactly. Respawn lands in the entry's OWN
+        // workspace (no requesting window here), mirroring the restart callback.
+        // restart:true kills+respawns; the owner's kill emits the SSE exit that the
+        // attached viewer reattaches off, and notifySessions refreshes the list.
+        setSessionArgs: async (name, patch) => {
+          name = String(name || '').trim();
+          const entry = getPersistence().get(name);
+          const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
+          const out = await applySessionArgs(name, patch || {}, wsId);
+          if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
           return out;
         },
         // ---- DM federation (Clodex-to-Clodex agent messaging) ----

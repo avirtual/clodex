@@ -362,6 +362,23 @@ class PeerConnection {
     });
   }
 
+  // Edit Session over the wire. Like restart/query, host-level (not tied to an
+  // attachment or token — trust is the tunnel). sessionArgs reads the box's
+  // editable args + catalogs for the dialog; setSessionArgs applies the patch
+  // (the box kills+respawns on restart:true and the attached viewer reattaches
+  // off the SSE exit). Plain request-pool traffic, not SSE.
+  sessionArgs(name, cb) {
+    this._request('GET', `/api/session-args/${encodeURIComponent(name)}`, null, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+    });
+  }
+
+  setSessionArgs(name, patch, cb) {
+    this._request('POST', `/api/session-args/${encodeURIComponent(name)}`, patch || {}, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+    });
+  }
+
   // ---- DM federation ----
   // Send a DM to an agent on this peer. `origin` is OUR label (how the box keys
   // its reply outbox for us); passed once from selfLabel, never recomputed. The

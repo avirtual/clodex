@@ -544,6 +544,7 @@ const { ctxReminderFor } = require('./ctx-reminder');
 const { buildSkillPlugin } = require('./skills-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
+const { resolveSessionArgsPatch } = require('./session-args');
 // wirescope client/poller live in wirescope-proxy.js and the supervisor in
 // wirescope-supervisor.js (M3). ProxyClient needs no injection; ProxyPoller +
 // the supervisor take log / stripLevelOf / WIRE_TELEMETRY_LIVE / ProxyClient by
@@ -1268,6 +1269,79 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
+// Read a session's editable args (the Edit Session dialog's source of truth).
+// Shared by the session:getArgs IPC handler and the peer session-args GET
+// endpoint (remote-wiring) so the local + over-the-wire reads can't drift — the
+// remote path just appends the box's catalogs. Returns { ok:false } for an
+// unknown name, mirroring the old inline handler.
+function readSessionArgs(name) {
+  const entry = persistence.get(name);
+  return entry ? {
+    ok: true,
+    extraArgs: entry.extraArgs || [],
+    type: entry.type,
+    proxy: entry.proxy ?? null,
+    systemPrompt: entry.systemPrompt || null,
+    systemPromptFile: entry.systemPromptFile || null,
+    appendPromptFiles: entry.appendPromptFiles || [],
+    agents: entry.agents || [],
+    denyBuiltins: entry.denyBuiltins || [],
+    disabledTools: entry.disabledTools || [],
+    effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
+    disabledSkills: entry.disabledSkills || [],
+    injectSkills: entry.injectSkills || [],
+    stripLevel: stripLevelOf(entry),
+  } : { ok: false };
+}
+
+// Apply edited args to a session (persist always; kill+respawn when restart).
+// Extracted verbatim from the session:setArgs IPC closure so the peer session-
+// args POST endpoint shares the exact undefined-means-untouched semantics, the
+// stripLevel/label re-assert, and the catch-and-upsert recovery (restartSession
+// precedent). `patch` carries the twelve fields the dialog sends; wsId is the
+// respawn target — the IPC handler passes the sender's workspace, the remote path
+// passes the entry's own workspaceId (no window to inherit from). Undefined patch
+// fields keep the persisted value; an explicit value (incl. [] / null) overwrites.
+async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
+  const { extraArgs, restart, proxy } = patch;
+  const beforeKill = persistence.get(name);
+  // Undefined-means-untouched resolution lives in the pure (unit-tested) core.
+  const {
+    agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools,
+    disabledSkills: nextSkills, injectSkills: nextInject,
+    systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend,
+  } = resolveSessionArgsPatch(patch, beforeKill);
+  persistence.setExtraArgs(name, extraArgs);
+  persistence.setProxy(name, proxy ?? null);
+  persistence.setSystemPrompt(name, nextInline);
+  persistence.setPromptRefs(name, nextSysFile, nextAppend);
+  persistence.setAgents(name, nextAgents, nextDeny);
+  persistence.setDisabledTools(name, nextTools);
+  persistence.setDisabledSkills(name, nextSkills);
+  persistence.setInjectSkills(name, nextInject);
+  if (!restart) return { ok: true, restarted: false };
+  if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
+  try {
+    if (manager.sessions.has(name)) {
+      await manager.kill(name);
+      if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
+    }
+    await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend);
+    // kill() dropped the entry's stripLevel; re-assert the session's own level
+    // (see session:restart) so editing args doesn't reset stripping.
+    const argsLvl = stripLevelOf(beforeKill);
+    if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
+    if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
+    return { ok: true, restarted: true };
+  } catch (err) {
+    // kill() dropped the persistence entry and create() failed before
+    // re-adding it. Put it back (with the edited settings) so the session
+    // survives as a restorable entry instead of vanishing.
+    persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject });
+    return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
+  }
+}
+
 // syncRemoteServer — extracted to remote-wiring.js (M5). createRemoteWiring
 // returns { syncRemoteServer }; the callback object it builds shares the
 // fetch*/restartSession/peerProxyView helpers (kept in main.js, injected).
@@ -1284,6 +1358,12 @@ const { syncRemoteServer } = createRemoteWiring({
   restartClodex, restartSession, peerProxyView,
   fetchProxyContext, fetchProxyReport, fetchProxyBust,
   fetchSessionFiles, fetchFilePeek, fetchFileDiff,
+  // Edit Session over the wire: the shared read/apply helpers + the box's
+  // catalogs the dialog's checklists need (agents/prompts via getters — stores
+  // assigned in whenReady; CLAUDE_TOOLS is a load-time const).
+  readSessionArgs, applySessionArgs, CLAUDE_TOOLS,
+  getPromptLibrary: () => promptLibrary,
+  getAgentLibrary: () => agentLibrary,
   getPersistence: () => persistence,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
@@ -1541,7 +1621,7 @@ app.whenReady().then(() => {
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, setUiTheme, sshRun,
+    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
     templates, workspaces, promptLibrary, agentDefaults,

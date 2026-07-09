@@ -32,6 +32,7 @@ class RemoteServer {
   constructor({ port, pagePath, getSessions, getTranscript, send, restartApp,
                 hostLabel, version, srcDir, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession,
+                getSessionArgs, setSessionArgs,
                 deliverDm, claimDms, listDmOrigins }) {
     this._port = port;
     this._pagePath = pagePath;
@@ -62,6 +63,14 @@ class RemoteServer {
     this._createSession = createSession || null;
     this._killSession = killSession || null;
     this._restartSession = restartSession || null;
+    // Remote session config editing (the Edit Session dialog over the wire).
+    // getSessionArgs reads the box's editable args + the catalogs the dialog's
+    // checklists need; setSessionArgs applies them (kill+respawn on restart).
+    // Both gate the 'args' cap. Phase 2 (per-session skills editing) will add its
+    // own endpoint pair under this SAME cap — 'args' means "remote session config
+    // editing", and both pairs ship together in one release, so no second cap.
+    this._getSessionArgs = getSessionArgs || null;
+    this._setSessionArgs = setSessionArgs || null;
     // DM federation (Clodex-to-Clodex agent messaging). deliverDm gates the 'dm'
     // cap and the inbound POST; claimDms drains a consumer's outbox; listDmOrigins
     // advertises which origins have mail waiting (so a consumer only claims when
@@ -341,6 +350,7 @@ class RemoteServer {
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
       if (this._createSession) caps.push('create'); // covers create + kill + restart (ship together)
+      if (this._getSessionArgs) caps.push('args');   // remote session config editing (args now; skills in phase 2, same cap)
       if (this._deliverDm) caps.push('dm'); // inbound DM + outbox claim (federation)
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
@@ -536,6 +546,38 @@ class RemoteServer {
         Promise.resolve()
           .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
           .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'restart failed' }))
+          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+      });
+    }
+    // Remote session args read — the Edit Session dialog's source of truth for a
+    // peer session. Returns the box's editable args PLUS the catalogs the dialog's
+    // checklists render from (agents/prompts/claudeTools + proxyUrl), so the viewer
+    // never leaks its OWN libraries into a remote edit. Gated on 'args'; path-scoped
+    // like the other per-session RPCs. ok:false (unknown name) → 404.
+    if (req.method === 'GET' && p.startsWith('/api/session-args/')) {
+      if (!this._getSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
+      const name = decodeURIComponent(p.slice('/api/session-args/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return Promise.resolve()
+        .then(() => this._getSessionArgs(name))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    }
+    // Remote session args apply — {extraArgs, restart, proxy, systemPrompt, agents,
+    // denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile,
+    // appendPromptFiles}. Owner shares session:setArgs's core (undefined-untouched,
+    // stripLevel/label re-assert, catch-upsert); restart:true kills+respawns and the
+    // attached viewer reattaches off the SSE exit. Same 'args' cap as the GET.
+    if (req.method === 'POST' && p.startsWith('/api/session-args/')) {
+      if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
+      const name = decodeURIComponent(p.slice('/api/session-args/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      return this._readBody(req, res, (body) => {
+        let msg;
+        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        Promise.resolve()
+          .then(() => this._setSessionArgs(name, msg))
+          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setArgs failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }

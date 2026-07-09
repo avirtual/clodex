@@ -45,7 +45,7 @@ function initPeersUi({
   remeasureReadonlyPeer, peerStatuses, peerTunnels, getOurAppVersion,
   getDeployLineHandlers, proxyState, ctxPct, ctxTokens, peerFilesCount,
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
-  isFilesPopoverForKey,
+  isFilesPopoverForKey, openArgsDialog,
 }) {
   // Cached GitHub release list ([{tag, published_at}] newest-first) for the peer
   // identity popover's best-effort age/behind line. Seeded once and refreshed
@@ -216,6 +216,7 @@ function initPeersUi({
             controlled: !!(entry && entry.peer && entry.peer.controlled),
             holder: (entry && entry.peer && entry.peer.holder) || null,
             canCreate: peerSupportsCreate(st),
+            canArgs: peerSupportsArgs(st),
             hostLabel: peerDisplayHost(st),
             type: s.type || null,   // gates the bash-meaningless fresh-reload item
           });
@@ -592,6 +593,13 @@ function initPeersUi({
         // get here).
         await updatePeerHost(id, name || 'peer', sshHost, port, folder);
         break;
+      case 'editArgs': {
+        // Edit Session on a peer — reuse the local dialog with a peer data source
+        // (fetch args + box catalogs, save the patch, reattach on restart-to-apply).
+        const st = peerStatuses.get(id);
+        openArgsDialog(name, peerArgsSource(id, name, peerDisplayHost(st)));
+        break;
+      }
       case 'restartRemote':
         // Plain host-level restart of a peer SESSION (--resume, keeps history).
         // No confirm — parity with the local plain restart.
@@ -997,6 +1005,13 @@ function initPeersUi({
     return !!(st && Array.isArray(st.caps) && st.caps.includes('create'));
   }
 
+  // Peer advertises remote session config editing (the 'args' cap — Edit Session).
+  // Phase 2's skills editing will ride the same cap. Old boxes 501 the endpoints,
+  // so the viewer hides the "Edit Session…" affordance.
+  function peerSupportsArgs(st) {
+    return !!(st && Array.isArray(st.caps) && st.caps.includes('args'));
+  }
+
   // Restart a PEER session in place and keep our attached tab live on the fresh
   // process — the peer analogue of restartSessionWithReattach. The owner kills the
   // old PTY (which sends an SSE `exit` that tears our tab down via onPeerExit, also
@@ -1008,6 +1023,55 @@ function initPeersUi({
   // before re-opening, so we never attach onto a tab the exit is about to remove.
   // (If the exit is somehow missed, the stream-close reconnect in peer-client
   // heals it instead — belt and suspenders.)
+  // Re-open our attached tab on a freshly-respawned peer session. The owner's
+  // kill sends an SSE `exit` that tears the tab down (onPeerExit); we poll briefly
+  // for that teardown to settle, then re-attach, so we never re-open onto a tab the
+  // exit is about to remove. Shared by restartPeerSessionWithReattach (remote
+  // restart/reload) and the Edit Session save (restart-to-apply on a peer). If the
+  // exit is somehow missed, peer-client's stream-close reconnect heals it instead.
+  function reattachPeerSession(id, name) {
+    const key = peerKey(id, name);
+    let tries = 20;             // ~2s at 100ms — the exit-driven teardown window
+    const reattach = () => {
+      if (!sessions.has(key)) { openPeerSession(id, name); return; }
+      if (tries-- <= 0) return; // teardown never came; auto-reconnect covers it
+      setTimeout(reattach, 100);
+    };
+    reattach();
+  }
+
+  // Data source for editing a PEER session in the shared Edit Session dialog:
+  // read args + box catalogs, save the patch, reattach after a restart. wasAttached
+  // is captured at save time (the box hasn't killed the PTY yet) so a restart-to-
+  // apply only re-opens a tab that was actually open. onRestarted runs only when
+  // the save reports restarted:true.
+  function peerArgsSource(id, name, label) {
+    const key = peerKey(id, name);
+    let wasAttached = false;
+    return {
+      fetch: async () => {
+        const r = await window.api.peerSessionArgs(id, name);
+        if (!r || !r.ok) return r || { ok: false, error: `Session "${name}" not found on ${label}.` };
+        const cat = r.catalogs || {};
+        // Normalize to openArgsDialog's four data slots. settings mirrors the
+        // getSettings fields the dialog reads (claudeTools + proxy default) from
+        // the BOX, never local.
+        return {
+          ok: true,
+          res: r,
+          settings: { claudeTools: cat.claudeTools || [], proxyUrl: cat.proxyUrl, proxyEnabled: cat.proxyEnabled },
+          promptLib: cat.prompts || [],
+          agentLib: cat.agents || [],
+        };
+      },
+      save: async (patch) => {
+        wasAttached = sessions.has(key);
+        return window.api.peerSetSessionArgs(id, name, patch);
+      },
+      onRestarted: () => { if (wasAttached) reattachPeerSession(id, name); },
+    };
+  }
+
   async function restartPeerSessionWithReattach(id, name, fresh) {
     const key = peerKey(id, name);
     const st = peerStatuses.get(id);
@@ -1020,13 +1084,7 @@ function initPeersUi({
     }
     showToast(`${fresh ? 'Reloaded' : 'Restarted'} "${name}" on ${label}.`, { kind: 'peer-ui' });
     if (!wasAttached) return;   // wasn't showing it — nothing to reattach
-    let tries = 20;             // ~2s at 100ms — the exit-driven teardown window
-    const reattach = () => {
-      if (!sessions.has(key)) { openPeerSession(id, name); return; }
-      if (tries-- <= 0) return; // teardown never came; auto-reconnect covers it
-      setTimeout(reattach, 100);
-    };
-    reattach();
+    reattachPeerSession(id, name);
   }
 
   // --- Per-peer session visibility popover ---------------------------------

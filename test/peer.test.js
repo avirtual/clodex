@@ -21,6 +21,7 @@ const restarts = [];
 const created = [];
 const killed = [];
 const restartedSessions = [];
+const setArgsCalls = [];
 // DM federation fakes: deliverDm records inbound calls + returns a verdict keyed
 // by target; the outbox is a plain per-origin queue claimDms/listDmOrigins read.
 const dmCalls = [];
@@ -106,6 +107,18 @@ before(async () => {
       restartedSessions.push({ name, fresh: !!(opts && opts.fresh) });
       return { ok: true, restarted: true };
     },
+    // Fake owner-side Edit Session, mirroring remote-wiring: getSessionArgs
+    // returns the args shape + box catalogs; setSessionArgs echoes restarted per
+    // the restart flag and records the patch.
+    getSessionArgs: (name) => (name === 'alpha'
+      ? { ok: true, type: 'claude', extraArgs: ['--x'], agents: [], denyBuiltins: [], disabledTools: [],
+          catalogs: { agents: ['a1'], prompts: [], claudeTools: ['Bash'], proxyUrl: null } }
+      : { ok: false }),
+    setSessionArgs: (name, patch) => {
+      if (name !== 'alpha') return { ok: false, error: 'Session not found in persistence' };
+      setArgsCalls.push({ name, patch });
+      return { ok: true, restarted: !!patch.restart };
+    },
     query: (name, kind, args) => {
       if (name !== 'alpha') return { ok: false, error: 'no such session' };
       if (kind === 'files') return { ok: true, cwd: '/tmp/x', files: [{ path: '/tmp/x/a.js', tool: 'Edit' }] };
@@ -148,6 +161,7 @@ test('hello: identity and caps reach the peer, connection goes online', async ()
   assert.ok(st.caps.includes('control'));
   assert.ok(st.caps.includes('query'));
   assert.ok(st.caps.includes('create'));
+  assert.ok(st.caps.includes('args'));   // getSessionArgs callback wired → Edit Session
   // 'dm' is advertised because the server was built with a deliverDm callback —
   // it's what tells a consumer this box can be dm-federated.
   assert.ok(st.caps.includes('dm'));
@@ -529,6 +543,36 @@ test('restart-session: missing session is a distinguishable error', async () => 
   const gone = await new Promise((r) => conn.restartSession('nope', { fresh: false }, r));
   assert.equal(gone.ok, false);
   assert.match(gone.error, /not found in persistence/i);
+});
+
+// ---- Edit Session over the wire (the 'args' cap) ----
+
+test('session-args: GET returns the box args + catalogs for the dialog', async () => {
+  const got = await new Promise((r) => conn.sessionArgs('alpha', r));
+  assert.ok(got.ok);
+  assert.equal(got.type, 'claude');
+  assert.deepStrictEqual(got.extraArgs, ['--x']);
+  // Catalogs come from the BOX (agents/prompts/claudeTools) — the viewer renders
+  // its checklists from these, never its own libraries.
+  assert.deepStrictEqual(got.catalogs.agents, ['a1']);
+  assert.deepStrictEqual(got.catalogs.claudeTools, ['Bash']);
+});
+
+test('session-args: GET on a missing session is a distinguishable error', async () => {
+  const gone = await new Promise((r) => conn.sessionArgs('nope', r));
+  assert.equal(gone.ok, false);
+});
+
+test('session-args: POST forwards the patch; restart flag drives restarted', async () => {
+  const patch = { extraArgs: ['--y'], restart: false, agents: ['a1'] };
+  const res = await new Promise((r) => conn.setSessionArgs('alpha', patch, r));
+  assert.ok(res.ok);
+  assert.equal(res.restarted, false, 'restart:false → no respawn');
+  assert.deepStrictEqual(setArgsCalls.at(-1).patch.extraArgs, ['--y'], 'patch reached the owner');
+
+  const restarted = await new Promise((r) => conn.setSessionArgs('alpha', { restart: true }, r));
+  assert.ok(restarted.ok);
+  assert.equal(restarted.restarted, true, 'restart:true → respawn acked');
 });
 
 // ---- bash-type remote sessions (peer-visible, IPC-private on the owner) ----
