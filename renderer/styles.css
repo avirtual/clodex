@@ -2310,6 +2310,10 @@ html, body {
    isn't silently dropped from the selection, but visibly de-emphasized. */
 .agent-check.peer-select-gone { opacity: 0.55; }
 
+/* Paused peer (disabled): the whole header dims to read as inert, its lone
+   Resume (▶) icon still brightens on hover via .peer-select. */
+.peer-header-disabled { opacity: 0.5; }
+
 .session-item.peer-offline { opacity: 0.5; }
 .session-name .peer-suffix { color: var(--text-dim); font-size: 11px; }
 

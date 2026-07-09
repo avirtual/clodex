@@ -18,6 +18,18 @@
 // ourAppVersion and deployLineHandlers are read through getters (reassignable /
 // defined below the init site).
 //
+// Disable/enable (pause a peer without deleting its config): main flips a
+// `disabled` flag and broadcasts `peer-disabled` to every window BEFORE it re-runs
+// the peer syncs. Each renderer records the id in `disabledPeers` on that event
+// (and the initiator marks it synchronously before the invoke), so when the
+// disable-driven `peer-removed` lands, onPeerRemoved SOFT-sheds the tabs —
+// removeSession(key, {keepPersisted:true}) drops the terminal without the durable
+// detach, so the attachment survives. A disabled peer has no live status, so it
+// renders as a dimmed "paused" header (from config, seeded at startup via
+// getSettings) with an Enable affordance; live peers get Disable in the ⓘ popover.
+// Re-enable re-seeds the one-shot restore set from durable peerAttached so the
+// reconnect's peer-state → maybeRestorePeer reattaches the tabs.
+//
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { PendingInput } = require('../peer-input-queue');
@@ -47,6 +59,12 @@ function initPeersUi({
   // names. Kept authoritative-enough for rendering by updating from setVisible
   // responses; seeded once at startup.
   let peerVisibleMap = {};
+
+  // Peers paused via disable (id -> { label }). Populated from config at startup
+  // and kept in lockstep with main's `disabled` flag through the peer-disabled
+  // broadcast; the disable initiator also sets its entry synchronously before the
+  // invoke so the disable-driven peer-removed can be discriminated as a SOFT shed.
+  const disabledPeers = new Map();
 
   // Whether a peer session should be listed under the current selection. No map
   // entry ⇒ everything shows; otherwise only names in the array. Attachment
@@ -222,7 +240,45 @@ function initPeersUi({
         applyWarmBadge(key);
       }
     }
+    // Paused peers have no live status, so they render from config as a dimmed
+    // header with a single Resume affordance — no session rows, attach or expand
+    // (their tabs were shed on disable). A live status always wins the id, so this
+    // only paints genuinely-disconnected paused peers.
+    for (const [id, cfg] of disabledPeers) {
+      if (peerStatuses.has(id)) continue;
+      const hostLabel = cfg.label || id;
+      const header = document.createElement('div');
+      header.className = 'peer-header peer-header-disabled';
+      header.dataset.peerUi = '1';
+      header.innerHTML = `<span class="peer-dot"></span>` +
+        `<span class="peer-label">${esc(hostLabel)}</span>` +
+        `<span class="peer-state">paused</span>` +
+        `<span class="peer-actions">` +
+          `<button class="peer-select peer-enable" title="Resume ${esc(hostLabel)}" aria-label="Resume ${esc(hostLabel)}">&#9654;</button>` +
+        `</span>`;
+      header.querySelector('.peer-enable').addEventListener('click', (e) => {
+        e.stopPropagation();
+        enablePeer(id);
+      });
+      sessionList.appendChild(header);
+    }
     updateSidebarActive();
+  }
+
+  // Pause a peer without deleting its config. Mark it locally FIRST (guarding the
+  // disable-driven peer-removed's soft-shed discrimination against IPC ordering),
+  // then flip the flag in main — the broadcast + reconnect machinery does the rest.
+  function disablePeer(id, label) {
+    disabledPeers.set(String(id), { label: label || String(id) });
+    renderPeers();
+    window.api.peerSetDisabled(id, true).catch(() => {});
+  }
+
+  // Resume a paused peer. Main re-adds it to the syncs (peer reconnects) and
+  // broadcasts peer-disabled(false); the broadcast handler clears the local mark
+  // and re-seeds the restore set, so nothing else to do here.
+  function enablePeer(id) {
+    window.api.peerSetDisabled(id, false).catch(() => {});
   }
 
   // Create the terminal + attach the peer stream, without stealing focus. Used
@@ -842,8 +898,37 @@ function initPeersUi({
   window.api.onPeerRemoved((id) => {
     peerStatuses.delete(id);
     peerTunnels.delete(id);
+    // A disabled peer's removal is a PAUSE, not a delete: soft-shed its tabs so the
+    // durable attachment survives for re-enable. A genuine removal/URL-edit (not in
+    // disabledPeers) still hard-detaches — that path's durable-forget is correct.
+    const soft = disabledPeers.has(String(id));
     for (const [key, entry] of [...sessions.entries()]) {
-      if (entry.peer && entry.peer.id === id) removeSession(key);
+      if (entry.peer && entry.peer.id === id) removeSession(key, { keepPersisted: soft });
+    }
+    renderPeers();
+  });
+
+  // Peer paused/resumed from any window (main flips `disabled` + broadcasts this
+  // BEFORE re-running the syncs, so it lands ahead of the peer-removed it triggers).
+  window.api.onPeerDisabled((id, on, label) => {
+    id = String(id);
+    if (on) {
+      disabledPeers.set(id, { label: label || id });
+      // Tabs are shed by the peer-removed that follows in main; discrimination
+      // happens there via disabledPeers.has(id).
+    } else {
+      disabledPeers.delete(id);
+      // Re-seed the one-shot restore set from durable truth so the reconnect's
+      // peer-state → maybeRestorePeer reattaches the tabs. Set-union is idempotent
+      // with any names a startup-disabled seed already left pending.
+      window.api.peerAttachedNames().then((map) => {
+        const names = (map && map[id]) || [];
+        if (!Array.isArray(names) || !names.length) return;
+        const pending = peerRestorePending.get(id) || new Set();
+        for (const n of names) pending.add(n);
+        peerRestorePending.set(id, pending);
+        maybeRestorePeer(id);   // in case the peer is already back online
+      }).catch(() => {});
     }
     renderPeers();
   });
@@ -893,6 +978,17 @@ function initPeersUi({
   // removeSession; on each reattach replay a persisted entry auto-re-takes.
   window.api.peerControlledNames().then((map) => {
     peerControlledMap = map || {};
+  }).catch(() => {});
+
+  // Seed the paused-peer set from config so a peer disabled in a previous session
+  // renders as a dimmed "paused" header (it has no live status to arrive) and any
+  // stray peer-removed for it is discriminated as a soft shed. Kept fresh after
+  // this by the peer-disabled broadcast.
+  window.api.getSettings().then((s) => {
+    for (const p of (s && s.peers) || []) {
+      if (p.disabled) disabledPeers.set(String(p.id), { label: p.label || String(p.id) });
+    }
+    if (disabledPeers.size) renderPeers();
   }).catch(() => {});
 
   // Peer advertises remote session create/kill (the 'create' cap covers both).
@@ -1046,12 +1142,14 @@ function initPeersUi({
   const peerInfoPopoverName = document.getElementById('peer-info-popover-name');
   const peerInfoBody = document.getElementById('peer-info-body');
   const peerInfoUpdateBtn = document.getElementById('peer-info-update');
+  const peerInfoDisableBtn = document.getElementById('peer-info-disable');
 
   function closePeerInfoPopover() {
     peerInfoPopover.classList.add('hidden');
     peerInfoPopover.dataset.peerId = '';
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
+    peerInfoDisableBtn.onclick = null;
   }
 
   function openPeerInfoPopover(id, anchorBtn) {
@@ -1088,6 +1186,9 @@ function initPeersUi({
     // against a stale resolve landing after the popover was closed/retargeted.
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
+    // Disable (pause) — always offered here: the ⓘ icon only renders for a live
+    // peer, so anything reaching this popover is disable-able.
+    peerInfoDisableBtn.onclick = () => { closePeerInfoPopover(); disablePeer(id, label); };
     // Hidden when the peer isn't behind us: same-version or ahead has nothing to
     // gain from our deploy (the script pulls latest master). Kept for
     // patch/minor/major and 'unknown' (dev/unparseable — can't rule it out).

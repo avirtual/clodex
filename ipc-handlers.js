@@ -705,6 +705,25 @@ function registerIpcHandlers(deps) {
     forgetPeerAttached(id, name);
     return { ok: true };
   });
+  // Pause/resume a peer WITHOUT deleting its config (disabled:true on the record).
+  // A disabled peer is dropped from both syncs (syncPeerManager), so its tunnel +
+  // connection tear down and a peer-removed sheds the UI tabs — but crucially this
+  // path never calls forgetPeerAttached/forgetPeerControlled, so the persisted
+  // attachments/claims survive for re-enable. The flag is broadcast to every window
+  // BEFORE syncPeerManager runs, so each renderer marks the peer disabled ahead of
+  // the peer-removed it triggers and soft-sheds (keeps the durable record) instead
+  // of treating it as an explicit user detach.
+  ipcMain.handle('peer:setDisabled', (_e, id, on) => {
+    const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
+    const rec = peers.find((p) => String(p.id) === String(id));
+    if (!rec) return { ok: false, error: 'no such peer' };
+    if (on) rec.disabled = true; else delete rec.disabled;
+    uiSettings.set({ peers });
+    manager._broadcast('peer-disabled', String(id), !!on, rec.label || String(id));
+    syncPeerManager();
+    log.info('peer', `${rec.label || id} ${on ? 'disabled' : 'enabled'}`);
+    return { ok: true };
+  });
   // Per-peer visibility selection. Renderer reads the whole map at startup and
   // keeps a local copy fresh from setVisible responses.
   ipcMain.handle('peer:visible', () => uiSettings.get().peerVisible || {});

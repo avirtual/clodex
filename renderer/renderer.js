@@ -558,13 +558,16 @@ function switchSession(name) {
   });
 }
 
-function removeSession(name) {
+function removeSession(name, { keepPersisted = false } = {}) {
   const s = sessions.get(name);
   if (s) {
     if (s.peer) {
       // Detach (main forgets both peerAttached + peerControlled durably); keep
       // the local control mirror in step so a re-added tab starts read-only.
-      window.api.peerDetach(s.peer.id, s.peer.name);
+      // keepPersisted (peers-ui's soft shed on a disable-driven peer-removed)
+      // skips the durable detach so the paused peer's attachment survives for
+      // re-enable — the local mirror is still cleared so it comes back read-only.
+      if (!keepPersisted) window.api.peerDetach(s.peer.id, s.peer.name);
       forgetControlMirror(s.peer.id, s.peer.name);
     }
     s.terminal.dispose();

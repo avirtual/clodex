@@ -105,7 +105,11 @@ function createPeerWiring(deps) {
         },
       }));
     }
-    getTunnelManager().sync(s.peers || []);
+    // Disabled peers are paused, not removed: exclude them from both the tunnel
+    // and peer syncs, so their tunnel/connection is torn down (and the UI soft-
+    // sheds their tabs on the resulting peer-removed) while the record — and its
+    // persisted attachments/claims — stays in s.peers for re-enable.
+    getTunnelManager().sync((s.peers || []).filter((p) => !p.disabled));
     resolvePeerUrls();
     // Prune persisted attachments + visibility selections for peers that no
     // longer exist in settings.
@@ -136,6 +140,7 @@ function createPeerWiring(deps) {
     const s = getUiSettings().get();
     const resolved = [];
     for (const p of s.peers || []) {
+      if (p.disabled) continue;   // paused: PeerManager.sync sheds it (no connection)
       if (p.sshHost) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
         resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1' });
