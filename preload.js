@@ -1,8 +1,8 @@
 const { ipcRenderer } = require('electron');
 
 window.api = {
-  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles) =>
-    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles),
+  createSession: (name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands) =>
+    ipcRenderer.invoke('session:create', name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands),
   listSessions: () =>
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
@@ -54,6 +54,14 @@ window.api = {
     ipcRenderer.invoke('skilllib:save', name, content),
   removeSkillLib: (name) =>
     ipcRenderer.invoke('skilllib:remove', name),
+  listExecCommands: () =>
+    ipcRenderer.invoke('exec:list'),
+  getExecCommand: (name) =>
+    ipcRenderer.invoke('exec:get', name),
+  saveExecCommand: (name, content) =>
+    ipcRenderer.invoke('exec:save', name, content),
+  removeExecCommand: (name) =>
+    ipcRenderer.invoke('exec:remove', name),
   checkForUpdate: () =>
     ipcRenderer.invoke('update:check'),
   getUpdateInfo: () =>
@@ -138,6 +146,8 @@ window.api = {
     ipcRenderer.on('request-open-agents-drawer', (_e, name) => callback(name)),
   onRequestOpenSkillsDrawer: (callback) =>
     ipcRenderer.on('request-open-skills-drawer', (_e, name) => callback(name)),
+  onRequestOpenExecDrawer: (callback) =>
+    ipcRenderer.on('request-open-exec-drawer', (_e, name) => callback(name)),
   onRequestOpenPromptsDrawer: (callback) =>
     ipcRenderer.on('request-open-prompts-drawer', () => callback()),
   onRequestOpenTemplatesDrawer: (callback) =>

@@ -425,8 +425,133 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   skillContent.addEventListener('keydown', (e) => e.stopPropagation());
   skillNameInput.addEventListener('input', () => { skillNameInput.style.borderColor = ''; });
 
+  // ---------------------------------------------------------------------------
+  // Exec-command registry — operator-authored command defs as
+  // ~/.clodex/library/exec/*.json. Mirrors the agents/skills drawer, but the
+  // editor body is raw JSON (validated main-side on save) rather than markdown.
+  // ---------------------------------------------------------------------------
+
+  const execDrawer = document.getElementById('exec-drawer');
+  const execListEl = document.getElementById('exec-list');
+  const execEmpty = document.getElementById('exec-empty');
+  const execEditor = document.getElementById('exec-editor');
+  const execEditorTitle = document.getElementById('exec-editor-title');
+  const execNameInput = document.getElementById('exec-name');
+  const execContent = document.getElementById('exec-content');
+  const execSave = document.getElementById('exec-save');
+  const execCancel = document.getElementById('exec-cancel');
+  const execDelete = document.getElementById('exec-delete');
+  const execNew = document.getElementById('exec-new');
+  const execClose = document.getElementById('exec-close');
+
+  let editingExecName = null;
+
+  async function refreshExecList() {
+    const items = await window.api.listExecCommands();
+    execListEl.innerHTML = '';
+    if (!items || items.length === 0) {
+      execEmpty.style.display = '';
+      return;
+    }
+    execEmpty.style.display = 'none';
+    for (const c of items) {
+      const preview = (c.argv || []).join(' ') || '(no argv)';
+      const el = document.createElement('div');
+      el.className = 'prompt-item';
+      el.innerHTML = `
+        <div class="prompt-item-title">${esc(c.name)}</div>
+        <div class="prompt-item-preview">${esc(preview)}</div>
+        <div class="prompt-item-actions">
+          <button data-action="edit">Edit</button>
+        </div>
+      `;
+      el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openExecEditor(c);
+      });
+      el.addEventListener('click', () => openExecEditor(c));
+      execListEl.appendChild(el);
+    }
+  }
+
+  function openExecDrawer(name) {
+    execDrawer.classList.remove('hidden');
+    refreshExecList();
+    if (name === ':new') openExecEditor(null);
+    else if (name) openExecEditor({ name });
+  }
+  function closeExecDrawer() {
+    execDrawer.classList.add('hidden');
+  }
+
+  async function openExecEditor(cmd = null) {
+    if (cmd) {
+      editingExecName = cmd.name;
+      execEditorTitle.textContent = 'Edit Exec Command';
+      execNameInput.value = cmd.name;
+      execContent.value = (await window.api.getExecCommand(cmd.name)) || '';
+      execDelete.style.display = '';
+    } else {
+      editingExecName = null;
+      execEditorTitle.textContent = 'New Exec Command';
+      execNameInput.value = '';
+      execContent.value = JSON.stringify({
+        argv: ['/usr/bin/true'],
+        cwd: '',
+        timeoutMs: 10000,
+        maxBytes: 65536,
+        schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
+      }, null, 2);
+      execDelete.style.display = 'none';
+    }
+    execNameInput.style.borderColor = '';
+    execEditor.classList.remove('hidden');
+    setTimeout(() => execNameInput.focus(), 50);
+  }
+  function closeExecEditor() {
+    execEditor.classList.add('hidden');
+    editingExecName = null;
+  }
+
+  execClose.addEventListener('click', closeExecDrawer);
+  execNew.addEventListener('click', () => openExecEditor(null));
+
+  execSave.addEventListener('click', async () => {
+    const name = execNameInput.value.trim();
+    const content = execContent.value;
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+      execNameInput.style.borderColor = '#e94560';
+      return;
+    }
+    const res = await window.api.saveExecCommand(name, content);
+    if (!res || !res.ok) {
+      alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+      return;
+    }
+    // Rename: a changed Name field writes a new file — drop the old one.
+    if (editingExecName && editingExecName !== name) {
+      await window.api.removeExecCommand(editingExecName);
+    }
+    closeExecEditor();
+    refreshExecList();
+  });
+
+  execCancel.addEventListener('click', closeExecEditor);
+  execDelete.addEventListener('click', async () => {
+    if (!editingExecName) return;
+    if (!confirm(`Delete exec command "${editingExecName}"?`)) return;
+    await window.api.removeExecCommand(editingExecName);
+    closeExecEditor();
+    refreshExecList();
+  });
+
+  execNameInput.addEventListener('keydown', (e) => e.stopPropagation());
+  execContent.addEventListener('keydown', (e) => e.stopPropagation());
+  execNameInput.addEventListener('input', () => { execNameInput.style.borderColor = ''; });
+
   window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
   window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
+  window.api.onRequestOpenExecDrawer((name) => openExecDrawer(name));
   window.api.onRequestOpenPromptsDrawer(() => openPromptsDrawer());
 
   // ---------------------------------------------------------------------------
@@ -453,6 +578,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const gated = (t.disabledTools || []).length + (t.disabledSkills || []).length + (t.denyBuiltins || []).length;
     if (gated) parts.push(`−${gated} gated`);
     if ((t.injectSkills || []).length) parts.push(`+${t.injectSkills.length} skill${t.injectSkills.length > 1 ? 's' : ''}`);
+    if ((t.execCommands || []).length) parts.push(`⚙${t.execCommands.length} exec`);
     if (t.stripLevel) parts.push(`strip L${t.stripLevel}`);
     if (t.proxy === false) parts.push('proxy off');
     else if (typeof t.proxy === 'string') parts.push('proxy custom');

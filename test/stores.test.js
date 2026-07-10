@@ -501,3 +501,57 @@ test('uiSettings: peer disabled flag round-trips (strict true only)', () => {
     assert.ok(!('disabled' in reread.live), 'absence survives the disk roundtrip');
   } finally { cleanup(); }
 });
+
+// --- execLibrary — the exec-command registry (string twin of agentLibrary) ---
+
+const execFile = (registryDir, name) =>
+  path.join(registryDir, 'library', 'exec', `${name}.json`);
+
+test('execLibrary: missing dir -> [], save/raw/list/remove round-trip', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    assert.deepStrictEqual(stores.execLibrary.list(), []); // dir absent
+    const body = JSON.stringify({ argv: ['python3', 'w.py', '/inbox'], cwd: '/x', schema: { type: 'object' } }, null, 2);
+    stores.execLibrary.save('bridge-reply', body);
+    assert.ok(fs.existsSync(execFile(registryDir, 'bridge-reply')));
+    // raw() returns the exact stored string (format-agnostic I/O).
+    assert.strictEqual(stores.execLibrary.raw('bridge-reply'), body);
+    // list() parses a summary row (name + argv + cwd), sorted by name.
+    const list = stores.execLibrary.list();
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].name, 'bridge-reply');
+    assert.deepStrictEqual(list[0].argv, ['python3', 'w.py', '/inbox']);
+    assert.strictEqual(list[0].cwd, '/x');
+    stores.execLibrary.remove('bridge-reply');
+    assert.strictEqual(fs.existsSync(execFile(registryDir, 'bridge-reply')), false);
+    assert.deepStrictEqual(stores.execLibrary.list(), []);
+  } finally { cleanup(); }
+});
+
+test('execLibrary: list sorts by name and skips a malformed file', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.execLibrary.save('zebra', JSON.stringify({ argv: ['z'], schema: { type: 'object' } }));
+    stores.execLibrary.save('alpha', JSON.stringify({ argv: ['a'], schema: { type: 'object' } }));
+    // A hand-mangled file must not break the drawer — it's silently skipped.
+    fs.writeFileSync(execFile(registryDir, 'broken'), '{ not json ');
+    const names = stores.execLibrary.list().map(c => c.name);
+    assert.deepStrictEqual(names, ['alpha', 'zebra']);
+  } finally { cleanup(); }
+});
+
+test('execLibrary: raw() of an absent command is null; save rejects a bad name', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    assert.strictEqual(stores.execLibrary.raw('nope'), null);
+    assert.throws(() => stores.execLibrary.save('bad/name', '{}'), /invalid exec command name/);
+  } finally { cleanup(); }
+});
+
+test('execLibrary: is exported as a store from initStores', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    assert.strictEqual(typeof stores.execLibrary, 'object');
+    assert.strictEqual(typeof stores.execLibrary.list, 'function');
+  } finally { cleanup(); }
+});

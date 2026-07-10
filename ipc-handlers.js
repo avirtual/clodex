@@ -19,6 +19,7 @@
 
 const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const { pathFor } = require('./clodex-paths');
+const { validateExecDef } = require('./exec-schema');
 
 function registerIpcHandlers(deps) {
   const {
@@ -43,13 +44,13 @@ function registerIpcHandlers(deps) {
     // `let persistence, templates, …` list) — value-injected: initStores runs
     // before this factory in whenReady and the stores are never reassigned.
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, uiSettings,
+    agentLibrary, skillLibrary, execLibrary, uiSettings,
     // read-only mutable singletons (get seams)
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
   } = deps;
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands) => {
     try {
       const workspaceId = workspaceOfSender(e);
       // Seed tool denies from the global "*" default when the caller passed none.
@@ -67,6 +68,14 @@ function registerIpcHandlers(deps) {
       // standing default (set previously from the bottom-bar menu, kill-proof).
       const seedStrip = (stripLevel === 1 || stripLevel === 2) ? stripLevel : agentDefaults.getStrip(name);
       if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(name, seedStrip);
+      // Exec-command grant: like stripLevel, not a spawn arg — the dispatcher
+      // reads the seat's persisted `execCommands` allowlist at invocation. Persist
+      // the dialog's checked grants onto the entry after create (mirrors the
+      // template spawn-seed path in session-manager). Only when explicitly passed
+      // (Claude dialog); undefined = untouched, [] = an explicit "no grants".
+      if (Array.isArray(execCommands)) {
+        persistence.upsert({ name, execCommands: execCommands.map(String) });
+      }
       return { ok: true, session };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -137,6 +146,7 @@ function registerIpcHandlers(deps) {
       extraArgs: Array.isArray(entry.extraArgs) ? entry.extraArgs : [],
       proxy: entry.proxy ?? null,
       agents: Array.isArray(entry.agents) ? entry.agents : [],
+      execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [],
       denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
       disabledTools: Array.isArray(entry.disabledTools) ? entry.disabledTools : [],
       disabledSkills: Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [],
@@ -196,6 +206,37 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return { ok: true, skills };
   });
+  // Exec-command registry (~/.clodex/library/exec/*.json). Operator-only by
+  // construction: registration rides these ipcMain handlers (renderer → main),
+  // and there is deliberately NO exec-write intent verb — an agent can neither
+  // register a command nor grant itself one (the `execCommands` grant rides
+  // operator-authored spawn templates). save() rejects a def the exec dispatcher
+  // would later refuse: the command NAME must be a filename token, and the body
+  // must be a valid def (parseable JSON + non-empty string argv + an object
+  // schema), both checked via the single exec-schema validator — so the drawer
+  // can't author a file the backend can't run. No app-menu listing, so no
+  // refreshAppMenu (unlike agents/skills).
+  ipcMain.handle('exec:list', () => execLibrary.list());
+  ipcMain.handle('exec:get', (_e, name) => execLibrary.raw(name));
+  ipcMain.handle('exec:save', (_e, name, content) => {
+    let def;
+    try {
+      def = JSON.parse(content);
+    } catch (err) {
+      return { ok: false, error: `invalid JSON: ${err.message}` };
+    }
+    const check = validateExecDef(def, name);
+    if (!check.ok) return { ok: false, error: check.error };
+    try {
+      // Persist the re-serialized def (canonical 2-space JSON) so a saved file is
+      // always well-formed regardless of the textarea's whitespace.
+      return { ok: true, commands: execLibrary.save(name, JSON.stringify(def, null, 2)) };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle('exec:remove', (_e, name) => {
+    return { ok: true, commands: execLibrary.remove(name) };
+  });
+
   ipcMain.handle('prompts:inject', (_e, name, body) => {
     const s = manager.sessions.get(name);
     if (!s) return { ok: false, error: 'Session not found' };

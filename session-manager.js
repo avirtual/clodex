@@ -1779,7 +1779,11 @@ function createSessionManager(deps) {
         fail('not granted to this seat');
         return;
       }
-      // 3) Load the registry entry (read-at-invocation, no cache/watch).
+      // 3) Load the registry entry (read-at-invocation, no cache/watch). This
+      // join mirrors stores.js `EXEC_DIR` (the execLibrary authoring surface) —
+      // the two independently derive `library/exec/<cmd>.json` and agree by
+      // construction (like AGENTS_DIR / the --agents key); kept un-shared so the
+      // dispatcher stays free of a store dependency.
       const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
       let entry;
       try {

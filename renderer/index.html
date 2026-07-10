@@ -131,6 +131,39 @@
     </div>
   </div>
 
+  <!-- Exec-command registry drawer -->
+  <div id="exec-drawer" class="hidden">
+    <div id="exec-header">
+      <span class="prompts-title">Exec Commands</span>
+      <button id="exec-new" title="New command" type="button">+ New</button>
+      <button id="exec-close" title="Close" type="button">×</button>
+    </div>
+    <div id="exec-list"></div>
+    <div id="exec-empty" class="hint">
+      No exec commands yet. Click <strong>+ New</strong> to register a command.<br><br>
+      Stored as JSON in <code>~/.clodex/library/exec/</code>. A registered command runs a FIXED <code>argv</code> — an agent's <code>[agent:exec &lt;name&gt;] {json}</code> payload is validated against the def's schema and passed only on stdin, never spliced into the command. Grant a command to a seat in the New / Edit Session dialog (Claude only).
+    </div>
+  </div>
+
+  <!-- Exec-command editor modal (raw-JSON def) -->
+  <div id="exec-editor" class="hidden">
+    <div class="prompt-editor-box">
+      <h3 id="exec-editor-title">New Exec Command</h3>
+      <label>Name
+        <input type="text" id="exec-name" placeholder="e.g. bridge-reply" spellcheck="false">
+      </label>
+      <label class="editor-grow">Definition (JSON)
+        <textarea id="exec-content" rows="16" spellcheck="false"></textarea>
+      </label>
+      <span class="hint-text">A JSON object with <code>argv</code> (non-empty; argv[0] is the executable), an object <code>schema</code> the payload is checked against, and optional <code>cwd</code> / <code>timeoutMs</code> / <code>maxBytes</code>. A field typed <code>"filename"</code> in the schema is guarded against path traversal. Rejected on save if malformed.</span>
+      <div class="dialog-actions">
+        <button id="exec-delete" class="secondary" type="button" style="margin-right: auto;">Delete</button>
+        <button id="exec-cancel" class="secondary" type="button">Cancel</button>
+        <button id="exec-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Templates library drawer. No separate editor modal: New/Edit reuse the New
        Session dialog in template-authoring mode (a template IS that form's config). -->
   <div id="templates-drawer" class="hidden">
@@ -349,6 +382,10 @@
           <div class="popover-subhead">Built-in agents</div>
           <div id="input-builtins-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
+        </label>
+        <label id="exec-row">Exec commands
+          <div id="input-exec-list" class="agent-checklist"></div>
+          <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
         </label>
         <label id="strip-row">Wire stripping
           <select id="input-strip-level">

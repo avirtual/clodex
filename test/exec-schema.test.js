@@ -6,8 +6,63 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   DEFAULT_MAX_BYTES, FILENAME_RE, isFilenameToken,
-  validateAgainstSchema, parseAndValidate,
+  validateAgainstSchema, validateExecDef, parseAndValidate,
 } = require('../exec-schema');
+
+// A minimal well-formed def, cloned per test so mutations don't bleed.
+const goodDef = () => ({
+  argv: ['python3', '/x/writer.py', '/x/inbox'],
+  cwd: '/x',
+  timeoutMs: 10000,
+  maxBytes: 65536,
+  schema: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'filename' } } },
+});
+
+test('validateExecDef: accepts a well-formed def', () => {
+  assert.deepStrictEqual(validateExecDef(goodDef(), 'bridge-reply'), { ok: true });
+  // name is optional (drawer validates it separately) — def-only check passes.
+  assert.deepStrictEqual(validateExecDef(goodDef()), { ok: true });
+});
+
+test('validateExecDef: rejects a bad command name (same filename rule as dispatcher)', () => {
+  assert.strictEqual(validateExecDef(goodDef(), '../evil').ok, false);
+  assert.strictEqual(validateExecDef(goodDef(), '.hidden').ok, false);
+  assert.strictEqual(validateExecDef(goodDef(), 'bad/name').ok, false);
+});
+
+test('validateExecDef: rejects non-object / missing argv / empty argv', () => {
+  assert.strictEqual(validateExecDef(null, 'c').ok, false);
+  assert.strictEqual(validateExecDef([1, 2], 'c').ok, false);
+  const noArgv = goodDef(); delete noArgv.argv;
+  assert.strictEqual(validateExecDef(noArgv, 'c').ok, false);
+  const emptyArgv = goodDef(); emptyArgv.argv = [];
+  assert.strictEqual(validateExecDef(emptyArgv, 'c').ok, false);
+});
+
+test('validateExecDef: rejects non-string / empty argv elements', () => {
+  const d1 = goodDef(); d1.argv = ['python3', 42];
+  assert.strictEqual(validateExecDef(d1, 'c').ok, false);
+  const d2 = goodDef(); d2.argv = ['python3', ''];
+  assert.strictEqual(validateExecDef(d2, 'c').ok, false);
+});
+
+test('validateExecDef: rejects bad optional field types', () => {
+  const badCwd = goodDef(); badCwd.cwd = 5;
+  assert.strictEqual(validateExecDef(badCwd, 'c').ok, false);
+  const badTimeout = goodDef(); badTimeout.timeoutMs = 0;
+  assert.strictEqual(validateExecDef(badTimeout, 'c').ok, false);
+  const negTimeout = goodDef(); negTimeout.timeoutMs = -1;
+  assert.strictEqual(validateExecDef(negTimeout, 'c').ok, false);
+  const badMax = goodDef(); badMax.maxBytes = 'big';
+  assert.strictEqual(validateExecDef(badMax, 'c').ok, false);
+});
+
+test('validateExecDef: requires an object schema (type: object)', () => {
+  const noSchema = goodDef(); delete noSchema.schema;
+  assert.strictEqual(validateExecDef(noSchema, 'c').ok, false);
+  const strSchema = goodDef(); strSchema.schema = { type: 'string' };
+  assert.strictEqual(validateExecDef(strSchema, 'c').ok, false);
+});
 
 test('isFilenameToken: accepts plain names', () => {
   assert.ok(isFilenameToken('reply-42.json'));

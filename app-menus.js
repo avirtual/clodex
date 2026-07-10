@@ -388,6 +388,13 @@ function createAppMenus(deps) {
               if (win) win.webContents.send('request-open-templates-drawer');
             },
           },
+          {
+            label: 'Exec Commands…',
+            click: () => {
+              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+              if (win) win.webContents.send('request-open-exec-drawer');
+            },
+          },
           { type: 'separator' },
           {
             label: 'Rename Workspace…',

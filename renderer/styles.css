@@ -1926,7 +1926,7 @@ html, body {
 
 /* Agents library drawer (mirrors the prompts drawer) */
 
-#agents-drawer, #skills-drawer, #templates-drawer {
+#agents-drawer, #skills-drawer, #templates-drawer, #exec-drawer {
   position: fixed;
   top: 0;
   left: var(--sidebar-width);
@@ -1940,9 +1940,9 @@ html, body {
   box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
 }
 
-#agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden { display: none; }
+#agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden, #exec-drawer.hidden { display: none; }
 
-#agents-header, #skills-header, #templates-header {
+#agents-header, #skills-header, #templates-header, #exec-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1950,7 +1950,7 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-#agents-new, #skills-new, #templates-new {
+#agents-new, #skills-new, #templates-new, #exec-new {
   background: var(--accent);
   color: white;
   border: none;
@@ -1961,9 +1961,9 @@ html, body {
   font-weight: 500;
 }
 
-#agents-new:hover, #skills-new:hover, #templates-new:hover { opacity: 0.85; }
+#agents-new:hover, #skills-new:hover, #templates-new:hover, #exec-new:hover { opacity: 0.85; }
 
-#agents-close, #skills-close, #templates-close {
+#agents-close, #skills-close, #templates-close, #exec-close {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -1975,18 +1975,18 @@ html, body {
   padding: 0;
 }
 
-#agents-close:hover, #skills-close:hover, #templates-close:hover {
+#agents-close:hover, #skills-close:hover, #templates-close:hover, #exec-close:hover {
   background: var(--sidebar-hover);
   color: var(--text);
 }
 
-#agents-list, #skills-list, #templates-list {
+#agents-list, #skills-list, #templates-list, #exec-list {
   flex: 1;
   overflow-y: auto;
   padding: 6px 8px;
 }
 
-#agents-empty, #skills-empty, #templates-empty {
+#agents-empty, #skills-empty, #templates-empty, #exec-empty {
   padding: 20px;
   text-align: center;
   color: var(--text-dim);
@@ -1994,7 +1994,7 @@ html, body {
   line-height: 1.5;
 }
 
-#agent-editor, #skill-editor {
+#agent-editor, #skill-editor, #exec-editor {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -2004,7 +2004,7 @@ html, body {
   z-index: 200;
 }
 
-#agent-editor.hidden, #skill-editor.hidden { display: none; }
+#agent-editor.hidden, #skill-editor.hidden, #exec-editor.hidden { display: none; }
 
 /* Agent enablement checklist in the create/edit dialogs */
 

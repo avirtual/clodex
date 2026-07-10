@@ -27,6 +27,9 @@ let agentLibCache = [];
 // Custom-skill injection library (opt-in checklist; checked names scaffold into
 // a --plugin-dir at spawn).
 let skillLibCache = [];
+// Exec-command registry (opt-in grant checklist; checked names become the
+// session's `execCommands` allowlist — which commands its seat may run).
+let execLibCache = [];
 let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
 // these tools unchecked.
@@ -36,6 +39,7 @@ let defaultToolDenyCache = [];
 function setPromptLibCache(v) { promptLibCache = v; }
 function setAgentLibCache(v) { agentLibCache = v; }
 function setSkillLibCache(v) { skillLibCache = v; }
+function setExecLibCache(v) { execLibCache = v; }
 function setClaudeToolsCache(v) { claudeToolsCache = v; }
 function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
 
@@ -97,6 +101,35 @@ function renderAgentChecklist(container, enabledSet, autoSet = null) {
   }
 }
 function collectAgentChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+// Exec-command grant checklist — checked = this session's seat MAY run that
+// registered command (its persisted `execCommands` allowlist). Plain opt-in
+// checklist over the exec registry; no auto/scope dimension. A command's argv
+// preview is the row hint so the operator sees what a grant actually authorizes.
+function renderExecChecklist(container, enabledSet) {
+  container.innerHTML = '';
+  if (!execLibCache.length) {
+    container.innerHTML = '<span class="hint-text">No exec commands in library — register some via File ▸ Exec Commands….</span>';
+    return;
+  }
+  for (const c of execLibCache) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = c.name;
+    cb.checked = enabledSet.has(c.name);
+    const argv = (c.argv || []).join(' ');
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(c.name)}</strong>${argv ? ' — ' + esc(argv) : ''}`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+function collectExecChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
@@ -269,12 +302,13 @@ function collectSkillChecklist(container) {
 module.exports = {
   renderAppendChecklist, collectAppendChecklist,
   renderAgentChecklist, collectAgentChecklist,
+  renderExecChecklist, collectExecChecklist,
   renderBuiltinChecklist, collectBuiltinChecklist,
   renderInjectChecklist, collectInjectChecklist,
   renderToolChecklist, collectToolChecklist,
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
-  setPromptLibCache, setAgentLibCache, setSkillLibCache,
+  setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
   setClaudeToolsCache, setDefaultToolDenyCache,
   getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache,
 };

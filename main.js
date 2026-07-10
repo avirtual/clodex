@@ -374,7 +374,7 @@ const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 // ---------------------------------------------------------------------------
 
 let persistence, templates, workspaces, promptLibrary,
-  agentDefaults, agentLibrary, skillLibrary, uiSettings;
+  agentDefaults, agentLibrary, skillLibrary, execLibrary, uiSettings;
 // Workspace-rename → library rescope helper (from initStores). Not one of the
 // eight stores — a cross-library maintenance fn used by workspace:setName to
 // keep `workspace:`-scoped skills/agents pointing at the renamed workspace.
@@ -1626,7 +1626,7 @@ if (!singleInstance) {
 
 app.whenReady().then(() => {
   ({ persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, uiSettings, renameWorkspaceScope } =
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, uiSettings, renameWorkspaceScope } =
     initStores(app.getPath('userData'), { log, registryDir: REGISTRY_DIR }));
   proxyPoller.start();
 
@@ -1746,7 +1746,7 @@ app.whenReady().then(() => {
     // and the workspace-rename → library rescope helper.
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, uiSettings,
+    agentLibrary, skillLibrary, execLibrary, uiSettings,
     getRemoteServer: () => remoteServer,
     getRemoteError: () => remoteError,
     getPeerManager: () => peerManager,

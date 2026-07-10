@@ -113,6 +113,49 @@ function validateAgainstSchema(schema, value, at = 'payload') {
 // against the entry's schema. Returns { ok, value } on success or
 // { ok: false, error } on any failure. `entry` is a loaded registry object;
 // only `entry.maxBytes` and `entry.schema` are read here.
+// Validate a whole registry DEF (the operator-authored `library/exec/<cmd>.json`
+// object) at authoring time, so the registration UI can't save a file the exec
+// dispatcher (_handleExecIntent) would later refuse. Returns { ok: true } or
+// { ok: false, error }. Deliberately a STRUCTURAL check, not a full JSON-schema
+// meta-validator: it asserts exactly the shape the dispatcher relies on (a
+// non-empty string argv, a present object `schema`, sane optional caps) and
+// leans on validateAgainstSchema's fail-closed "unknown schema type" to catch a
+// malformed inner schema node loudly at run time. `name` (optional) is checked
+// with the same filename-token rule the dispatcher applies to <cmd>, so a def
+// can't be authored under a name the backend can't path-join safely.
+function validateExecDef(entry, name) {
+  if (name !== undefined && !isFilenameToken(name)) {
+    return { ok: false, error: `name: not a safe command id ([A-Za-z0-9._-]{1,64}, no leading dot)` };
+  }
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return { ok: false, error: 'def: expected a JSON object' };
+  }
+  if (!Array.isArray(entry.argv) || entry.argv.length === 0) {
+    return { ok: false, error: 'argv: required non-empty array' };
+  }
+  for (const a of entry.argv) {
+    if (typeof a !== 'string' || a.length === 0) {
+      return { ok: false, error: 'argv: every element must be a non-empty string' };
+    }
+  }
+  if ('cwd' in entry && typeof entry.cwd !== 'string') {
+    return { ok: false, error: 'cwd: must be a string' };
+  }
+  if ('timeoutMs' in entry && !(typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0)) {
+    return { ok: false, error: 'timeoutMs: must be a positive number' };
+  }
+  if ('maxBytes' in entry && !(typeof entry.maxBytes === 'number' && entry.maxBytes > 0)) {
+    return { ok: false, error: 'maxBytes: must be a positive number' };
+  }
+  // A command with no schema bounces every payload ("command has no schema") at
+  // run time, so require one here. The top node must be an object schema because
+  // the payload is always a JSON object handed to validateAgainstSchema.
+  if (!entry.schema || typeof entry.schema !== 'object' || entry.schema.type !== 'object') {
+    return { ok: false, error: 'schema: required object schema (type: "object")' };
+  }
+  return { ok: true };
+}
+
 function parseAndValidate(entry, raw) {
   const cap = (entry && typeof entry.maxBytes === 'number' && entry.maxBytes > 0)
     ? entry.maxBytes : DEFAULT_MAX_BYTES;
@@ -142,5 +185,6 @@ module.exports = {
   FILENAME_RE,
   isFilenameToken,
   validateAgainstSchema,
+  validateExecDef,
   parseAndValidate,
 };

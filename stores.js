@@ -195,6 +195,12 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
+  // Exec-command registry — operator-authored `[agent:exec <cmd>]` command defs.
+  // The exec DISPATCHER (session-manager `_handleExecIntent`) independently joins
+  // this same `library/exec/<cmd>.json` path to read a def at invocation; the two
+  // agree by construction (like AGENTS_DIR / the --agents key). This store is the
+  // authoring surface only — it never runs a command.
+  const EXEC_DIR = path.join(registryDir, 'library', 'exec');
 
   // ---------------------------------------------------------------------------
   // Persistence — remember sessions across app restarts
@@ -412,9 +418,9 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   // template literally IS a spawn-able file template. The stored file carries NO
   // synthetic id — list() re-injects `id = <filename stem>` on read so the
   // renderer/IPC (which key on `.id`) work unchanged against a name identity.
-  // Config subset: type/cwd/extraArgs/proxy/agents/denyBuiltins/disabledTools/
-  // disabledSkills/injectSkills/systemPromptFile/appendPromptFiles + opt-out
-  // stripLevel/autoCompact. NEVER a per-session identity (proxyAgent) or runtime
+  // Config subset: type/cwd/extraArgs/proxy/agents/execCommands/denyBuiltins/
+  // disabledTools/disabledSkills/injectSkills/systemPromptFile/appendPromptFiles
+  // + opt-out stripLevel/autoCompact. NEVER a per-session identity (proxyAgent) or runtime
   // state (sessionId). Schemaless: unknown fields load verbatim, missing config
   // = clodex defaults at spawn (so pre-config / pre-prompt-refs templates load).
   // ---------------------------------------------------------------------------
@@ -837,6 +843,52 @@ function initStores(userDataPath, { log, registryDir } = {}) {
     },
   };
 
+  // Exec-command library — operator-authored command defs as JSON files under
+  // ~/.clodex/library/exec/*.json. A STRING twin of agentLibrary (raw/save do
+  // format-agnostic string I/O; the JSON validation lives above the store, in
+  // the IPC layer, so the SAME exec-schema guard covers both authoring and a
+  // hand-edited file's next load). Identity is the filename stem — the exact
+  // token the `[agent:exec <cmd>]` dispatcher paths on. list() parses each file
+  // for a summary row (name + argv preview) but skips a malformed one like the
+  // other libraries, so a bad hand-edit never breaks the drawer.
+  const execLibrary = {
+    _file(name) { return path.join(EXEC_DIR, `${name}.json`); },
+    list() {
+      let files;
+      try { files = fs.readdirSync(EXEC_DIR); }
+      catch { return []; }
+      const out = [];
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(EXEC_DIR, f), 'utf-8'));
+          if (!obj || typeof obj !== 'object') continue;
+          const name = f.replace(/\.json$/, '');
+          out.push({
+            name,
+            argv: Array.isArray(obj.argv) ? obj.argv : [],
+            cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
+            file: f,
+          });
+        } catch { /* skip unreadable/garbled file */ }
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    },
+    raw(name) {
+      try { return fs.readFileSync(this._file(name), 'utf-8'); } catch { return null; }
+    },
+    save(name, content) {
+      if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid exec command name: ${name}`);
+      ensureDir(EXEC_DIR);
+      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      return this.list();
+    },
+    remove(name) {
+      try { fs.unlinkSync(this._file(name)); } catch {}
+      return this.list();
+    },
+  };
+
   // ---------------------------------------------------------------------------
   // UI preferences — statusline components per CLI, global
   // ---------------------------------------------------------------------------
@@ -940,7 +992,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
 
   return {
     persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, uiSettings,
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, uiSettings,
     renameWorkspaceScope,
   };
 }
