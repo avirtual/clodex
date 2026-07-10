@@ -299,7 +299,17 @@ function releaseAgeInfo(version, releases, now = Date.now()) {
 // observability ("autocompact suppressed: cache-not-warm") that surfaced the
 // silent-never-fired class. shouldAutoCompact stays a thin boolean wrapper so
 // existing callers and tests keep their contract. `fire` true ⇒ reason 'fire'.
-function autoCompactDecision({ payload, enabled, atPrompt, lastInputTs = 0, lastFiredTs = 0, now = Date.now() }) {
+// `reasonClass` is the reason with any parenthesized live numbers stripped —
+// the caller's once-per-transition log dedup MUST key on it, not on `reason`:
+// warmth-headroom embeds the decaying countdown, so the full string "changes"
+// every poll (this flooded the ops log with one line per 5s tick).
+function reasonClassOf(reason) { return reason.replace(/\(.*\)$/, ''); }
+function autoCompactDecision(args) {
+  const d = _autoCompactDecision(args);
+  d.reasonClass = reasonClassOf(d.reason);
+  return d;
+}
+function _autoCompactDecision({ payload, enabled, atPrompt, lastInputTs = 0, lastFiredTs = 0, now = Date.now() }) {
   if (!enabled) return { fire: false, reason: 'disabled' };
   if (!atPrompt) return { fire: false, reason: 'not-at-prompt' };
   if (!payload) return { fire: false, reason: 'no-payload' };

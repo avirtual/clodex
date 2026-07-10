@@ -463,8 +463,10 @@ function createProxyPoller({
                 s._acNotWiredLogged = true;
                 log.warn('autocompact', `unavailable for ${s.name}: not wire-routed (lastMainStop never stamped → can't fire) (~${Math.round(payload.context.inputTokens / 1000)}k ctx)`);
               }
-              if (s._lastAcSuppressReason !== decision.reason) {
-                s._lastAcSuppressReason = decision.reason;
+              // Dedup on the CLASS, not the full reason — warmth-headroom embeds
+              // the decaying countdown, so the full string differs every poll.
+              if (s._lastAcSuppressReason !== decision.reasonClass) {
+                s._lastAcSuppressReason = decision.reasonClass;
                 log.info('autocompact', `${s.name} suppressed: ${decision.reason} (~${Math.round(payload.context.inputTokens / 1000)}k ctx)`);
               }
             }

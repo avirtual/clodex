@@ -389,6 +389,22 @@ test('autoCompactDecision: at ttl_s 3600 the band is 540 — fires under it, sup
   assert.match(supp.reason, /^warmth-headroom\(600s\/band 540s\)$/);
 });
 
+// The suppression-log dedup keys on reasonClass, which must be STABLE while the
+// live numbers inside the reason decay — the full-string compare logged one
+// line per 5s poll (the warmth-headroom ops-log flood).
+test('autoCompactDecision: reasonClass strips live numbers so poll ticks dedup', () => {
+  const at = (remaining_s) => autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s, ttl_s: 3600 } }));
+  const a = at(2972.6);
+  const b = at(2967.6);
+  assert.notStrictEqual(a.reason, b.reason);              // full reasons differ...
+  assert.strictEqual(a.reasonClass, 'warmth-headroom');   // ...class is stable
+  assert.strictEqual(a.reasonClass, b.reasonClass);
+  // Parenthesis-free reasons pass through unchanged; fire path included.
+  assert.strictEqual(autoCompactDecision(acArgs({ enabled: false })).reasonClass, 'disabled');
+  assert.strictEqual(autoCompactDecision(acArgs()).reasonClass, 'fire');
+  assert.match(autoCompactDecision(acArgs({}, { context: { inputTokens: 50_000 } })).reasonClass, /^below-min-tokens$/);
+});
+
 test('autoCompactDecision: missing ttl_s falls back to the flat 60s floor', () => {
   // remaining 50 <= 60 floor → fires even with no ttl_s (guarded, not NaN)
   assert.strictEqual(autoCompactDecision(acArgs({}, { warmth: { state: 'warm', remaining_s: 50 } })).fire, true);
