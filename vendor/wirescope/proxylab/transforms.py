@@ -642,6 +642,142 @@ def _strip_task_reminders(obj, agent_id=None):
             "chars": chars}
 
 
+# ---- STRIP FILE-MODIFIED DIFF PAYLOADS (part of STRIP LEVEL 2) ---------------
+# When a file in the agent's cwd is changed out-of-band (by the user, a linter,
+# or — the motivating case — ANOTHER agent sharing the cwd), the CLI injects a
+# "Note: <path> was modified ... Here are the relevant changes:" block carrying
+# the file's numbered diff. The CLI already caps it, but the cap is ~8 KB: median
+# 8.2k ch (~2k tok) across the corpus, on 13% of all requests, and once injected
+# it bakes into history and re-ships EVERY turn until the session ends/compacts.
+# The diff is about a file this agent often never touched — pure carriage. We keep
+# the NOTIFICATION (the model is still told the file changed and to take it into
+# account) and excise only the numbered-diff PAYLOAD (from the "Here are the
+# relevant changes" header through the last diff line); the model can Read the
+# file if it ever needs the exact changes.
+#
+# Two wire dialects, same as the task-reminder strip:
+#   1. a `<system-reminder>`-wrapped text block in a user message (classic form)
+#      — the note is the whole block; the payload runs to `</system-reminder>`;
+#   2. the opus-4.8/fable mid-conversation `role:"system"` string, where the note
+#      is CONCATENATED with other ambient context (agent roster, skills roster) —
+#      so we can't drop the message; we surgically excise the payload SUBSTRING,
+#      leaving whatever ambient section follows it intact.
+# One line-walk handles both: after the header, consume the contiguous run of
+# numbered (`^\d+\t`) / truncation-marker lines, tolerating blank lines only
+# BETWEEN diff lines, and stop at the first prose line (a following ambient
+# section, or the closing `</system-reminder>`) — so the run never eats the
+# separator + next section.
+#
+# GATE = the per-session L2 strip level (rides `_strip_l2_enabled`), same as the
+# task-reminder strip and the other content folds — it REMOVES content, so it
+# belongs in the opt-in L2 tier, not always-on. Kill-switch STRIP_FILEMOD_DIFFS
+# (default ON) forces it off even at L2. Size gate STRIP_FILEMOD_MIN_CHARS
+# (default 300): a tiny one-line diff is cheap + occasionally useful, so leave it;
+# only excise payloads at/above the threshold. Like the task-reminder strip it
+# needs NO `busted_from` gate: the note debuts at the tail, so stripping-from-
+# arrival can never ORIGINATE a warm-prefix bust, and the excision is
+# byte-deterministic (same note -> same bytes) + idempotent (the header is gone
+# on a second pass, so re-running is a no-op). tool_result content is never
+# touched (we only walk string content and `type:"text"` blocks) — a tool_result
+# that Reads a file could legitimately quote the phrases, and the anchor is
+# strict enough besides.
+STRIP_FILEMOD_DIFFS = os.environ.get("STRIP_FILEMOD_DIFFS", "1") not in (
+    "0", "no", "off", "false")
+try:
+    STRIP_FILEMOD_MIN_CHARS = int(os.environ.get("STRIP_FILEMOD_MIN_CHARS", "300"))
+except ValueError:
+    STRIP_FILEMOD_MIN_CHARS = 300
+_FILEMOD_NOTE_RE = re.compile(
+    r"Note: .*? was modified, either by the user or by a linter\.")
+_FILEMOD_HDR_RE = re.compile(r"Here are the relevant changes[^\n]*:\n")
+_FILEMOD_DIFF_LINE_RE = re.compile(r"^\d+\t")
+_FILEMOD_TRUNC_RE = re.compile(r"^\.\.\. \[\d+ lines truncated\] \.\.\.[ \t]*$")
+
+
+def _filemod_diff_spans(text):
+    """For each file-modified note in `text`, yield (hdr_start, hdr_end, run_end):
+    the char offsets of the "Here are the relevant changes" header and the end of
+    its numbered-diff run. The excision span is [hdr_start, run_end) (header
+    included, so what's left reads cleanly '...already aware.'); the PAYLOAD size
+    to gate on is run_end - hdr_end. Diff run = contiguous numbered / truncation-
+    marker lines; a blank line is tolerated only when a later diff line extends
+    the run, so the trailing separator + any following ambient section survive."""
+    if not isinstance(text, str):
+        return
+    n = len(text)
+    for hm in _FILEMOD_HDR_RE.finditer(text):
+        # Anchor: require the note preamble immediately before this header, so a
+        # stray "Here are the relevant changes" quoted elsewhere never matches.
+        pre = text[max(0, hm.start() - 400):hm.start()]
+        if not _FILEMOD_NOTE_RE.search(pre):
+            continue
+        i = hm.end()
+        run_end = hm.end()
+        while i < n:
+            j = text.find("\n", i)
+            line = text[i:(j if j != -1 else n)]
+            if _FILEMOD_DIFF_LINE_RE.match(line) or _FILEMOD_TRUNC_RE.match(line):
+                run_end = (j if j != -1 else n)   # extend through this diff line
+            elif line.strip() == "":
+                pass                              # tentative blank — don't extend
+            else:
+                break                             # prose -> end of the note
+            if j == -1:
+                break
+            i = j + 1
+        yield hm.start(), hm.end(), run_end
+
+
+def _excise_filemod_diffs(text, min_chars):
+    """Return (new_text, chars_removed): drop every file-modified diff payload
+    whose size >= `min_chars`, right-to-left so offsets stay valid."""
+    spans = [(hs, re) for hs, he, re in _filemod_diff_spans(text)
+             if (re - he) >= min_chars]
+    if not spans:
+        return text, 0
+    removed = 0
+    out = text
+    for s, e in sorted(spans, reverse=True):
+        removed += e - s
+        out = out[:s] + out[e:]
+    return out, removed
+
+
+def _strip_filemod_diffs(obj, agent_id=None):
+    """Excise the numbered-diff payloads from the CLI's out-of-band file-modified
+    notes wherever they appear (string content + text blocks; never tool_result),
+    keeping the notification. L2-gated + STRIP_FILEMOD_DIFFS kill-switch. Returns
+    a log dict, or None if nothing matched / the gate is closed. Idempotent."""
+    if not (STRIP_FILEMOD_DIFFS and _strip_l2_enabled(obj, agent_id)):
+        return None
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list):
+        return None
+    notes = chars = 0
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            new, rm = _excise_filemod_diffs(c, STRIP_FILEMOD_MIN_CHARS)
+            if rm:
+                m["content"] = new
+                chars += rm
+                notes += 1
+        elif isinstance(c, list):
+            for b in c:
+                if (isinstance(b, dict) and b.get("type") == "text"
+                        and isinstance(b.get("text"), str)):
+                    new, rm = _excise_filemod_diffs(b["text"], STRIP_FILEMOD_MIN_CHARS)
+                    if rm:
+                        b["text"] = new
+                        chars += rm
+                        notes += 1
+    if not chars:
+        return None
+    return {"notes": notes, "chars": chars}
+
+
 # ---- WIRESCOPE `[wirescope:omit ...]` — strip context sections from msgs[0] -
 # Honors `[wirescope:omit claudemd,useremail]` (see WIRESCOPE.md): the proxy
 # strips the named `# <Section>` blocks out of the <system-reminder> in the first

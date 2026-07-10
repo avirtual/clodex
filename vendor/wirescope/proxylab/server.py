@@ -1199,6 +1199,18 @@ async def handler(request: Request) -> Response:
             if trs:
                 record["task_reminder_strip"] = trs
                 changed = True
+            # FILE-MODIFIED DIFF STRIP (part of STRIP LEVEL 2): excise the
+            # numbered-diff payload from the CLI's out-of-band "Note: <path> was
+            # modified ..." blocks (median ~2k tok, 13% of requests, often a file
+            # a SIBLING agent in the shared cwd touched), keeping the
+            # notification. L2-gated inside the transform; kill-switch
+            # STRIP_FILEMOD_DIFFS / size gate STRIP_FILEMOD_MIN_CHARS. No
+            # busted_from — the note debuts at the tail, so stripping it never
+            # originates a bust.
+            fmd = transforms_mod._strip_filemod_diffs(obj, agent_id=agent_id)
+            if fmd:
+                record["filemod_diff_strip"] = fmd
+                changed = True
             # PIN SETTLED BREAKPOINT: anchor a cache_control marker on the last
             # SETTLED user boundary (one real-user turn before the current) so
             # a turn-boundary shed or a resume re-anchors at the still-warm
