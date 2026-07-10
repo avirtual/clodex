@@ -107,6 +107,27 @@ test('parseIntent: file view/open with spaces in path', () => {
     { type: 'file', sub: 'open', path: 'report.pdf' });
 });
 
+test('parseIntent: exec parses cmd + JSON body (single + multi-line)', () => {
+  assert.deepStrictEqual(parseIntent('[agent:exec bridge-reply] {"id":"r1.json"}'),
+    { type: 'exec', cmd: 'bridge-reply', body: '{"id":"r1.json"}' });
+  // Multi-line JSON body survives (s flag) — _extractIntents also captures to the
+  // next col-1 intent; the scanner itself keeps everything after the bracket.
+  const r = parseIntent('[agent:exec bridge-reply] {\n  "id": "r1.json"\n}');
+  assert.strictEqual(r.type, 'exec');
+  assert.strictEqual(r.cmd, 'bridge-reply');
+  assert.strictEqual(r.body, '{\n  "id": "r1.json"\n}');
+});
+
+test('shadowIntentKey: exec keys on cmd + body', () => {
+  const a = parseIntent('[agent:exec bridge-reply] {"id":"r1.json"}');
+  assert.strictEqual(shadowIntentKey('t2', a), 't2|exec|bridge-reply|{"id":"r1.json"}');
+  // Different payloads → different keys; identical → identical (differ stability).
+  const b = parseIntent('[agent:exec bridge-reply] {"id":"r2.json"}');
+  assert.notStrictEqual(shadowIntentKey('t2', a), shadowIntentKey('t2', b));
+  const a2 = parseIntent('[agent:exec bridge-reply] {"id":"r1.json"}');
+  assert.strictEqual(shadowIntentKey('t2', a), shadowIntentKey('t2', a2));
+});
+
 test('parseIntent: non-intent / blank lines return null', () => {
   assert.strictEqual(parseIntent(''), null);
   assert.strictEqual(parseIntent('just some prose'), null);

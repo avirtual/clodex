@@ -42,6 +42,7 @@ const SCANNED_MODULES = [
   'catalogs.js',
   'statusline.js',
   'intent-scanner.js',
+  'exec-schema.js',
   'argv-merge.js',
   'transcript.js',
   'fs-util.js',

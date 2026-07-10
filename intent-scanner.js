@@ -81,6 +81,18 @@ function parseIntent(rawLine) {
   const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
   if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
 
+  // `exec` = fire-and-forget invocation of an OPERATOR-REGISTERED command by id
+  // (registry lives at ~/.clodex/library/exec/<cmd>.json; agents cannot register
+  // one). `cmd` names the command; the body is the JSON DATA payload, captured
+  // to the next col-1 intent exactly like dm/memory (multi-line — see
+  // _extractIntents' allow-set, which exec MUST join or the JSON truncates at the
+  // first newline). The payload is DATA only: it reaches the command via stdin,
+  // NEVER spliced into argv — argv comes wholly from the registry entry, so the
+  // shell-injection class is gone by construction. Registered-only; there is no
+  // arbitrary-shell variant.
+  const execMatch = cleaned.match(/^\[agent:exec\s+(\S+)\]\s*(.*)/s);
+  if (execMatch) return { type: 'exec', cmd: execMatch[1], body: execMatch[2] };
+
   const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
   if (spawnMatch) {
     const argstr = spawnMatch[1];
@@ -108,7 +120,7 @@ function parseIntent(rawLine) {
 function shadowIntentKey(agent, intent) {
   // urgent is part of the identity: a held dm RESENT with the flag inside the
   // dedupe TTL must dispatch, not be swallowed as a duplicate of the bounce.
-  const head = (intent.sub || intent.target || intent.name || intent.id || '') + (intent.urgent ? '+urgent' : '');
+  const head = (intent.sub || intent.target || intent.name || intent.id || intent.cmd || '') + (intent.urgent ? '+urgent' : '');
   const body = (intent.body || intent.path || '').trim().slice(0, 200);
   return `${agent}|${intent.type}|${head}|${body}`;
 }

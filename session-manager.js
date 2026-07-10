@@ -65,6 +65,7 @@ function createSessionManager(deps) {
     WIRE_INTENTS_LIVE,
     WIRE_SHADOW,
     buildAgentsArg,
+    childProcess,
     claimParkedById,
     classifyNotification,
     cleanupClaudeHook,
@@ -84,6 +85,7 @@ function createSessionManager(deps) {
     isAlive,
     isDigested,
     isDraftOpen,
+    isFilenameToken,
     isHumanPtyInput,
     isInjectInFlight,
     canFireCompact,
@@ -98,6 +100,7 @@ function createSessionManager(deps) {
     outboxHasOrigin,
     parkDelivery,
     parkIdInUse,
+    parseAndValidate,
     parseCtxFile,
     parseIntent,
     path,
@@ -251,7 +254,12 @@ function createSessionManager(deps) {
             const fired = new Set();
             for (const intent of intents) {
               const bkey = shadowIntentKey(t.agent, intent);
-              if (fired.has(bkey)) {
+              // exec is EXEMPT from intra-turn dedup: two identical registered-
+              // command calls in one turn are both legitimate emissions (an
+              // idempotent-but-intended retry, or two data packets that serialize
+              // the same), unlike a double-pasted dm. The cross-path claim below
+              // still guards against a tee-failure replay double-running it.
+              if (intent.type !== 'exec' && fired.has(bkey)) {
                 log.warn('intent', `intra-turn dup ${intent.type} ${t.agent} — swallowed`);
                 continue;
               }
@@ -1487,6 +1495,7 @@ function createSessionManager(deps) {
         // `context compact` (and, later, reload) carry an optional continuation
         // body with the same multi-line capture semantics.
         if (intent.type === 'dm'
+          || intent.type === 'exec'
           || (intent.type === 'memory' && intent.sub === 'remember')
           || (intent.type === 'context' && (intent.sub === 'compact' || intent.sub === 'reload'))) {
           const body = [];
@@ -1720,7 +1729,124 @@ function createSessionManager(deps) {
           this._handleFileIntent(session, intent.sub, intent.path);
           break;
         }
+        case 'exec': {
+          // Agent firing an operator-registered command (registered-only; no
+          // arbitrary shell). Agent sessions only — bash can't process intents.
+          if (!session || !session.agentType) break;
+          this._handleExecIntent(session, intent.cmd, intent.body || '');
+          break;
+        }
       }
+    }
+
+    // [agent:exec <cmd>] {json} — fire-and-forget invocation of an OPERATOR-
+    // REGISTERED command. The whole value is that the JSON body is DATA, never
+    // shell-spliced: we validate it against the command's schema, then hand it to
+    // the command via STDIN. argv comes WHOLLY from the registry entry — the
+    // payload NEVER contributes to argv, which is what makes argv-injection
+    // structurally impossible.
+    //
+    // Registry: ~/.clodex/library/exec/<cmd>.json, operator-owned (agents cannot
+    // register), read fresh at invocation (no watcher — dodges the headless
+    // no-live-reload gotcha). Capability: the invoking seat's persisted
+    // `execCommands` allowlist must contain <cmd>, else it's refused — the grant
+    // rides spawn templates, so a seat not granted a command can't run it.
+    //
+    // Result asymmetry: SILENT on clean exit 0 (fire-and-forget, no re-bill);
+    // LOUD on any of the three failure classes — unknown/ungranted cmd, schema-
+    // validation failure, nonzero-exit/timeout — bouncing one terse [agent:exec]
+    // line back to the invoking agent (a lost exec = a lost datum, so failure must
+    // never be silent). Every attempt logs to both the structured log and the IPC
+    // drawer, ok or err.
+    _handleExecIntent(session, cmd, rawBody) {
+      const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
+      const who = session.name;
+      const fail = (msg) => {
+        reply(`${cmd}: ${msg}`);
+        log.warn('intent', `exec ${cmd} by ${who}: err (${msg})`);
+        this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `err: ${msg}` });
+      };
+
+      // 1) cmd id shape — a registry FILENAME token, so a malformed id can't
+      // escape library/exec/ when we build the path below.
+      if (!isFilenameToken(cmd)) {
+        fail('invalid command id');
+        return;
+      }
+      // 2) Capability grant — the invoking seat must be granted this command.
+      const grants = getPersistence().get(who)?.execCommands || [];
+      if (!Array.isArray(grants) || !grants.includes(cmd)) {
+        fail('not granted to this seat');
+        return;
+      }
+      // 3) Load the registry entry (read-at-invocation, no cache/watch).
+      const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
+      let entry;
+      try {
+        entry = JSON.parse(fs.readFileSync(entryPath, 'utf-8'));
+      } catch (e) {
+        fail(e.code === 'ENOENT' ? 'no such registered command' : `registry read failed (${e.message})`);
+        return;
+      }
+      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.argv) || !entry.argv.length) {
+        fail('malformed registry entry (needs a non-empty argv)');
+        return;
+      }
+      // 4) Validate the payload (size cap on RAW body → JSON.parse → schema).
+      const v = parseAndValidate(entry, rawBody);
+      if (!v.ok) {
+        fail(v.error);
+        return;
+      }
+
+      // 5) Run it — argv wholly from the registry, payload only via stdin (or an
+      // opt-in temp file). Detached, timeout-killed. Defer off the watcher scan.
+      const argv = entry.argv.map(String);
+      const runCwd = entry.cwd ? String(entry.cwd) : (session.cwd || os.homedir());
+      const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
+      const payloadJson = JSON.stringify(v.value);
+
+      setImmediate(() => {
+        let child;
+        try {
+          // NOT detached: a plain child dies on a normal SIGKILL. detached:true
+          // would make the child a process-group leader, but child.kill signals
+          // only the leader PID (not the group) — so it buys no group-kill while
+          // risking orphaned grandchildren on timeout. v1 commands are simple
+          // atomic writes with no grandchildren; keep it plain.
+          child = childProcess.spawn(argv[0], argv.slice(1), {
+            cwd: runCwd,
+            stdio: ['pipe', 'ignore', 'pipe'],
+          });
+        } catch (e) {
+          fail(`spawn failed (${e.message})`);
+          return;
+        }
+        let done = false;
+        let stderr = '';
+        const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); fn(); };
+        const timer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch {}
+          finish(() => fail(`timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        if (child.stderr) child.stderr.on('data', (d) => { if (stderr.length < 2000) stderr += d.toString(); });
+        child.on('error', (e) => finish(() => fail(`run failed (${e.message})`)));
+        child.on('exit', (code, signal) => finish(() => {
+          if (code === 0) {
+            // Silent success — no re-bill. Audit only.
+            log.info('intent', `exec ${cmd} by ${who}: ok`);
+            this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: 'ok' });
+            return;
+          }
+          const how = signal ? `killed (${signal})` : `exit ${code}`;
+          const tail = stderr.trim().split('\n').pop() || '';
+          fail(tail ? `${how}: ${tail.slice(0, 200)}` : how);
+        }));
+        // Hand the validated payload over stdin, then close it.
+        try {
+          if (child.stdin) { child.stdin.write(payloadJson); child.stdin.end(); }
+        } catch { /* a fast-exiting child may EPIPE — the exit handler reports it */ }
+      });
     }
 
     // [agent:file view|open <path>] — put a file in front of the operator without
@@ -2067,6 +2193,14 @@ function createSessionManager(deps) {
           if (tpl) {
             if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
             if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
+            // execCommands capability grant — the allowlist of registered command
+            // ids this seat may [agent:exec]. Seeded post-create (like stripLevel)
+            // to keep create()'s 16-arg signature untouched. A seat with no grant
+            // can run nothing; the grant rides the template, so a Bash-less trader
+            // seat's "read-only toward the trading system" becomes physics.
+            if (Array.isArray(tpl.execCommands) && tpl.execCommands.length) {
+              getPersistence().upsert({ name, execCommands: tpl.execCommands.map(String) });
+            }
           }
           // The intent path bypasses the renderer's create flow, so tell the owning
           // window to draw the sidebar tab + terminal (reused verbatim from reload).

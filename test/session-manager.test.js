@@ -634,3 +634,155 @@ test('spawn template: a file missing "type" errors, no spawn', async () => {
   await tick();
   assert.strictEqual(created.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// _handleExecIntent — [agent:exec <cmd>] {json}: registered-only command run.
+// Real temp registry (~/.clodex/library/exec/<cmd>.json) + real child_process
+// (short /bin/sh scripts) + captured _injectText/_broadcast (no PTY). Exercises
+// all three failure classes (unknown/ungranted, schema, nonzero/timeout), the
+// silent-success asymmetry, stdin payload delivery, and the argv-injection
+// invariant (payload never contributes to argv).
+const cpReal = require('child_process');
+const { isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal } = require('../exec-schema');
+
+function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-exec-'));
+  const execDir = pathReal.join(REGISTRY_DIR, 'library', 'exec');
+  fsReal.mkdirSync(execDir, { recursive: true });
+  if (entry) fsReal.writeFileSync(pathReal.join(execDir, `${cmd}.json`), JSON.stringify(entry));
+  const persistence = { list: () => [], get: (n) => (n === 't2' ? { execCommands: grants } : null) };
+  const m = mk({
+    REGISTRY_DIR, fs: fsReal, path: pathReal, os: osReal,
+    childProcess: cpReal, isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal,
+    getPersistence: () => persistence,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  const replies = [], ipc = [];
+  m._injectText = (_s, t) => replies.push(t);
+  m._broadcast = (_c, msg) => ipc.push(msg);
+  const session = { name: 't2', agentType: 'claude', cwd: REGISTRY_DIR };
+  return { m, session, replies, ipc, REGISTRY_DIR, execDir };
+}
+const waitFor = async (pred, ms = 2000) => {
+  const start = Date.now();
+  while (!pred() && Date.now() - start < ms) await new Promise((r) => setTimeout(r, 10));
+  if (!pred()) throw new Error('waitFor timed out');
+};
+
+test('_handleExecIntent: ungranted cmd is refused, nothing runs', () => {
+  const { m, session, replies, ipc } = mkExec({ grants: [], entry: { argv: ['/bin/true'], schema: { type: 'object' } } });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  assert.match(replies.at(-1), /not granted/);
+  assert.strictEqual(ipc.at(-1).body.startsWith('err'), true);
+});
+
+test('_handleExecIntent: unknown cmd id (not in registry) bounces', () => {
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'] }); // no entry file written
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  assert.match(replies.at(-1), /no such registered command/);
+});
+
+test('_handleExecIntent: malformed cmd id rejected (filename-token guard)', () => {
+  const { m, session, replies } = mkExec({ grants: ['../etc/passwd'] });
+  m._handleExecIntent(session, '../etc/passwd', '{}');
+  assert.match(replies.at(-1), /invalid command id/);
+});
+
+test('_handleExecIntent: schema-invalid payload bounces with the field error, no run', () => {
+  const entry = { argv: ['/bin/true'], schema: { type: 'object', required: ['id'], properties: { id: { type: 'filename' } } } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{"id":"../escape"}');
+  assert.match(replies.at(-1), /filename token/);
+});
+
+test('_handleExecIntent: traversal id in payload rejected by the filename type', () => {
+  const entry = { argv: ['/bin/true'], schema: { type: 'object', required: ['id'], properties: { id: { type: 'filename' } } } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{"id":"../../../tmp/pwned"}');
+  assert.match(replies.at(-1), /filename token/);
+});
+
+test('_handleExecIntent: valid payload → command runs, silent success + stdin delivery', async () => {
+  const { m, session, replies, ipc, execDir } = mkExec({ grants: ['bridge-reply'] });
+  const outPath = pathReal.join(execDir, 'stdin.out');
+  // argv comes WHOLLY from the registry; the command just copies stdin to a file.
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat > "${outPath}"`],
+    schema: { type: 'object', required: ['id'], properties: { id: { type: 'filename' }, note: { type: 'string' } } },
+  };
+  fsReal.writeFileSync(pathReal.join(execDir, 'bridge-reply.json'), JSON.stringify(entry));
+  m._handleExecIntent(session, 'bridge-reply', '{"id":"r1.json","note":"hi"}');
+  await waitFor(() => ipc.some((x) => x.body === 'ok'));
+  assert.deepStrictEqual(replies, [], 'clean exit is silent — no re-bill');
+  assert.strictEqual(ipc.at(-1).body, 'ok');
+  assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(outPath, 'utf8')), { id: 'r1.json', note: 'hi' });
+});
+
+test('_handleExecIntent: payload NEVER contributes to argv (injection is structural)', async () => {
+  const { m, session, ipc, execDir } = mkExec({ grants: ['bridge-reply'] });
+  const canary = pathReal.join(execDir, 'PWNED');
+  const outPath = pathReal.join(execDir, 'stdin.out');
+  // A hostile string field: if it reached argv/shell it would touch the canary.
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat > "${outPath}"`],
+    schema: { type: 'object', properties: { note: { type: 'string', maxLength: 200 } } },
+  };
+  fsReal.writeFileSync(pathReal.join(execDir, 'bridge-reply.json'), JSON.stringify(entry));
+  m._handleExecIntent(session, 'bridge-reply', `{"note":"; touch ${canary}; echo "}`);
+  await waitFor(() => ipc.some((x) => x.body === 'ok'));
+  assert.strictEqual(fsReal.existsSync(canary), false, 'no shell splice — canary untouched');
+  // The metacharacter string arrived intact via stdin, as DATA.
+  assert.strictEqual(JSON.parse(fsReal.readFileSync(outPath, 'utf8')).note, `; touch ${canary}; echo `);
+});
+
+test('_handleExecIntent: nonzero exit bounces loudly with the stderr tail', async () => {
+  const entry = { argv: ['/bin/sh', '-c', 'cat >/dev/null; echo boom 1>&2; exit 3'], schema: { type: 'object' } };
+  const { m, session, replies, ipc } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  assert.match(replies.at(-1), /exit 3/);
+  assert.match(replies.at(-1), /boom/);
+  assert.strictEqual(ipc.at(-1).body.startsWith('err'), true);
+});
+
+test('_handleExecIntent: a slow command is timeout-killed and bounces', async () => {
+  const entry = { argv: ['/bin/sh', '-c', 'cat >/dev/null; sleep 5'], timeoutMs: 150, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0, 3000);
+  assert.match(replies.at(-1), /timed out/);
+});
+
+test('_handleExecIntent: malformed registry entry (no argv) bounces', () => {
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry: { schema: { type: 'object' } } });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  assert.match(replies.at(-1), /malformed registry entry/);
+});
+
+test('_handleExecIntent: execCommands grant seeded from template on spawn', async () => {
+  const persisted = {};
+  const persistence = {
+    list: () => [],
+    get: (n) => persisted[n] || null,
+    setStripLevel: () => {},
+    setAutoCompact: () => {},
+    upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
+  };
+  const m = mk({
+    getPersistence: () => persistence,
+    getTemplates: () => ({ list: () => [] }),
+    AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default',
+    ensureDir: () => {}, fs: fsReal, path: pathReal, os: osReal,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._injectText = () => {}; m._sendToSession = () => {}; m._broadcast = () => {};
+  m.create = async () => {};
+  // Template resolves via a file path (intent.template is a name-or-path string).
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'degen-seat.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['bridge-reply', 'other'] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'degen', cwd: '/proj/desk', template: file });
+  await waitFor(() => persisted.degen && persisted.degen.execCommands, 1000);
+  assert.deepStrictEqual(persisted.degen.execCommands, ['bridge-reply', 'other']);
+});
