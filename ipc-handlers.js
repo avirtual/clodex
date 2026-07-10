@@ -18,6 +18,7 @@
 // superset of the real references — an unused dep would simply be inert.
 
 const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
+const { pathFor } = require('./clodex-paths');
 
 function registerIpcHandlers(deps) {
   const {
@@ -332,7 +333,7 @@ function registerIpcHandlers(deps) {
     if (entry.type !== 'claude' && entry.type !== 'codex') return { ok: true, sessions: [], activeId: null };
     // Prefer the live symlink's real directory; fall back to the cwd→slug path.
     let slugDir = null;
-    try { slugDir = path.dirname(fs.realpathSync(path.join(REGISTRY_DIR, `${name}.jsonl`))); } catch {}
+    try { slugDir = path.dirname(fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript'))); } catch {}
     if (!slugDir) slugDir = claudeProjectDir(entry.cwd);
     const activeId = entry.sessionId || null;
     const tracked = new Set([...(Array.isArray(entry.sessionIds) ? entry.sessionIds : []), ...(activeId ? [activeId] : [])]);
@@ -820,7 +821,7 @@ function registerIpcHandlers(deps) {
     if (!s.agentType) return { ok: false, error: 'Export only works for agent sessions' };
 
     // Resolve the JSONL file via the symlink
-    const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
+    const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     let jsonlPath;
     try {
       jsonlPath = fs.realpathSync(linkPath);
@@ -1168,7 +1169,7 @@ function registerIpcHandlers(deps) {
   // render them without double-spawning.
   const readCtxFor = (name) => {
     try {
-      const c = parseCtxFile(fs.readFileSync(path.join(REGISTRY_DIR, `${name}-ctx`), 'utf-8'));
+      const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
       return { ctx: c.pct, ctxTok: c.tok, ctxSize: c.size };
     } catch { return { ctx: null, ctxTok: null, ctxSize: null }; }
   };

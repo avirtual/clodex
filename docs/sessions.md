@@ -62,22 +62,39 @@ auto ones). Renaming a workspace rewrites matching `workspace:` lines across
 both libraries in the same motion (`renameWorkspaceScope`), so scoped files
 don't orphan. Nothing is ever written into a project's `.claude/`.
 
-Agent sessions then get their transport: `{name}.sock` Unix socket +
-`~/.clodex/{name}.json` registry entry (agent-transport.js). A stale
+Agent sessions then get their transport: `run/<name>/agent.sock` Unix socket +
+`run/<name>/agent.json` registry entry (agent-transport.js). A stale
 registry entry from a dead pid is force-cleaned; a live one throws
 "already running elsewhere". `persistence.upsert` records everything needed
 to respawn the session later (bash included — restored as a fresh shell).
 
 ## 2. Hook generation (cli-hooks.js)
 
-Per Claude session under the registry dir: `{name}-hook.sh` (SessionStart —
-atomically repoints the `{name}.jsonl` transcript symlink; emits the memory
-digest only for conversations being born), `{name}-hook.json` (the
-`--settings` payload: statusline, hooks, `ANTHROPIC_BASE_URL` routing —
-wire base wins over proxy base —, `permissions.deny` from
-denyBuiltins ∪ disabledTools, `skillOverrides` for disabled skills),
-plus the attention/statusline/acks/pending/ctxwarn scripts (see
-[messaging.md](messaging.md) §7 for the drain semantics).
+**Per-agent runtime dir.** Everything one agent generates lives under
+`~/.clodex/run/<name>/` with UNSUFFIXED names (`hook.sh`, `hook.json`,
+`transcript.jsonl`, `agent.json`, `agent.sock`, `statusline.sh`, `attn.jsonl`,
+`acks`, `pending.sh`, `ctx`, `ctxwarn`, `append-prompt.md`, … — 18 kinds).
+`clodex-paths.js` (`pathFor` / `runDirFor`) is the single source of that
+grammar; every mint site routes through it, and cleanup drops the whole
+`run/<name>/` dir. SHARED state stays at the `~/.clodex` root and never moves:
+`messages/`, `pending/<name>/` (parked DMs — only the drain SCRIPT relocates,
+its body still targets the shared dir), `agents/`, `skills/`, `library/`,
+`skill-plugins/<name>/`, `clodex.log`, `wire-shadow.jsonl`, and the one shared
+`codex-session-hook.sh`. Two generated scripts resolve the name at runtime and
+so mirror the grammar in bash (the Codex hook's `run/$NAME/…` paths; the
+statusline is JS-interpolated and uses `pathFor` directly) — the byte-pinned
+`cli-hooks.test.js` enforces the mirror. Upgrading from the old flat `{name}-*`
+layout triggers a one-time, marker-gated (`run/.migrated`), name-driven sweep at
+launch (legacy-sweep.js) that deletes only exact `{knownName}{knownSuffix}`
+files — shared files can't be misattributed — plus a log-only orphan pass.
+
+Per Claude session: `run/<name>/hook.sh` (SessionStart — atomically repoints the
+`run/<name>/transcript.jsonl` symlink; emits the memory digest only for
+conversations being born), `run/<name>/hook.json` (the `--settings` payload:
+statusline, hooks, `ANTHROPIC_BASE_URL` routing — wire base wins over proxy
+base —, `permissions.deny` from denyBuiltins ∪ disabledTools, `skillOverrides`
+for disabled skills), plus the attention/statusline/acks/pending/ctxwarn scripts
+(see [messaging.md](messaging.md) §7 for the drain semantics).
 
 Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
 (existing file backed up once, restored on cleanup).

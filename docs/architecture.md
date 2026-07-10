@@ -68,8 +68,21 @@ Conventions the refactor established:
   construction.
 - **ipc-prompt.js** — `IPC_PROMPT`, the sole source of truth for the
   agent-facing IPC protocol text.
-- **agent-transport.js** — `~/.clodex` registry + per-agent Unix-socket
-  transport.
+- **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
+  Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
+  `run/*/agent.json`.
+- **clodex-paths.js** — the per-agent runtime path grammar under `~/.clodex`:
+  `pathFor(root, name, kind)` / `runDirFor(root, name)` over 18 artifact kinds,
+  the single source every mint site routes through. Pure leaf (no I/O, like
+  scope-util); NOT in the leak-scanner lists. Shared dirs (`messages/`,
+  `pending/`, `agents/`, `skills/`, …) stay at the root and are outside the
+  grammar.
+- **legacy-sweep.js** — one-time, marker-gated (`run/.migrated`), name-driven
+  migration of the OLD flat `{name}-*` artifacts into `run/<name>/`, plus a
+  log-only orphan pass. `runLegacySweep` deletes only `{knownName}{knownSuffix}`
+  (never filename-parsed, so shared `wire-shadow.jsonl` / `codex-session-hook.sh`
+  can't be misattributed); `findOrphans` is pure. Called from the whenReady
+  bootstrap.
 - **jsonl-watcher.js** — polls the per-agent transcript symlink, extracts
   assistant turns, emits text/sessionId/activity.
 - **cli-hooks.js** — generates the per-session hook scripts + settings for

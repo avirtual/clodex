@@ -100,6 +100,7 @@ function createSessionManager(deps) {
     parseCtxFile,
     parseIntent,
     path,
+    pathFor,
     peerStatusLabel,
     pty,
     randBase36,
@@ -110,6 +111,7 @@ function createSessionManager(deps) {
     resolveProxyAgentId,
     resolveProxyBase,
     resolveSystemPromptFile,
+    runDirFor,
     scheduleTrayRefresh,
     setupClaudeHook,
     setupCodexHook,
@@ -549,7 +551,7 @@ function createSessionManager(deps) {
           if (sysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
             args.push('--system-prompt-file', sysFile);
           }
-          const promptPath = path.join(REGISTRY_DIR, `${name}-append-prompt.md`);
+          const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
           fs.writeFileSync(promptPath, append, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
           break;
@@ -576,7 +578,7 @@ function createSessionManager(deps) {
           }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          const instructionsPath = path.join(REGISTRY_DIR, `${name}-instructions.md`);
+          const instructionsPath = pathFor(REGISTRY_DIR, name, 'instructions');
           fs.writeFileSync(instructionsPath, merged, { mode: 0o600 });
           args.push('-c', `model_instructions_file=${instructionsPath}`);
           // Optional API proxy routing (skip if the user already set one in args)
@@ -631,7 +633,11 @@ function createSessionManager(deps) {
       let transport = null;
       let socketPath = null;
       if (agentType) {
-        socketPath = path.join(REGISTRY_DIR, `${name}.sock`);
+        // Bind the per-agent socket under run/<name>/ (clodex-paths grammar).
+        // ensureDir here so the bind never depends on hook-setup ordering having
+        // created the dir first.
+        ensureDir(runDirFor(REGISTRY_DIR, name));
+        socketPath = pathFor(REGISTRY_DIR, name, 'socket');
         transport = new Transport(socketPath, (msg) => {
           this._onIncoming(name, msg);
         });
@@ -644,7 +650,7 @@ function createSessionManager(deps) {
           if (e.code === 'EEXIST') {
             try {
               const existing = JSON.parse(
-                fs.readFileSync(path.join(REGISTRY_DIR, `${name}.json`), 'utf-8'),
+                fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
               );
               if (!isAlive(existing.pid)) {
                 registry.unregister(name);
@@ -752,7 +758,7 @@ function createSessionManager(deps) {
       if (agentType && session.intentSource === 'wire') {
         const { TranscriptSentinel } = require('./wire-intents');
         session.sentinel = new TranscriptSentinel({
-          linkPath: path.join(REGISTRY_DIR, `${name}.jsonl`),
+          linkPath: pathFor(REGISTRY_DIR, name, 'transcript'),
           onSessionId,
           // The sentinel never parses transcripts itself: armed windows get a
           // real JsonlWatcher (starts at EOF — exactly the "tail from now"
@@ -776,7 +782,7 @@ function createSessionManager(deps) {
       // Claude sidechannel: statusline script writes numeric ctx% to a file;
       // tail it to decorate the sidebar tab.
       if (agentType === 'claude') {
-        const ctxPath = path.join(REGISTRY_DIR, `${name}-ctx`);
+        const ctxPath = pathFor(REGISTRY_DIR, name, 'ctx');
         let lastRaw = null;
         const readCtx = () => {
           try {
@@ -798,7 +804,7 @@ function createSessionManager(deps) {
               // to self-compact on its next turn — no PTY interruption). Removed
               // when it drops back under threshold (post-compact). Idempotent: the
               // file content is stable, so re-writing it on every ctx tick is fine.
-              const warnPath = path.join(REGISTRY_DIR, `${name}-ctxwarn`);
+              const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               const warn = ctxReminderFor(c.tok);
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
@@ -808,9 +814,9 @@ function createSessionManager(deps) {
           } catch {}
         };
         // Needs-attention tail: the Notification hook appends raw event JSON to
-        // {name}-attn.jsonl (truncated at setup — offset 0 is always fresh).
-        // Rides the same directory watch as the ctx sidechannel.
-        const attnPath = path.join(REGISTRY_DIR, `${name}-attn.jsonl`);
+        // attn.jsonl (truncated at setup — offset 0 is always fresh). Rides the
+        // same per-agent run-dir watch as the ctx sidechannel.
+        const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
         let attnOffset = 0;
         const readAttn = () => {
           try {
@@ -829,10 +835,12 @@ function createSessionManager(deps) {
             }
           } catch { /* observer-grade */ }
         };
+        // Watch the per-agent run dir (not the shared root) — the ctx/attn files
+        // are now run/<name>/{ctx,attn.jsonl} with unsuffixed basenames.
         try {
-          session.ctxWatcher = fs.watch(REGISTRY_DIR, (_event, fname) => {
-            if (fname === `${name}-ctx`) readCtx();
-            else if (fname === `${name}-attn.jsonl`) readAttn();
+          session.ctxWatcher = fs.watch(runDirFor(REGISTRY_DIR, name), (_event, fname) => {
+            if (fname === 'ctx') readCtx();
+            else if (fname === 'attn.jsonl') readAttn();
           });
         } catch {}
         readCtx();
@@ -1633,7 +1641,7 @@ function createSessionManager(deps) {
     _memoryAck(session, line) {
       if (session.agentType === 'claude') {
         try {
-          fs.appendFileSync(path.join(REGISTRY_DIR, `${session.name}-acks`), line + '\n');
+          fs.appendFileSync(pathFor(REGISTRY_DIR, session.name, 'acks'), line + '\n');
           return;
         } catch { /* fall through to the injected line */ }
       }
@@ -1954,7 +1962,7 @@ function createSessionManager(deps) {
     // Inject a reloaded session's mandatory handoff body as turn-one, once the
     // FRESH process is actually listening. Same-process restart, so the body rides
     // a closure variable across kill→create — no disk needed. Readiness gate: the
-    // SessionStart hook repoints ~/.clodex/<name>.jsonl at CLI boot, and kill()'s
+    // SessionStart hook repoints run/<name>/transcript.jsonl at CLI boot, and kill()'s
     // cleanup unlinked the old link before we respawned — so link-present = fresh
     // CLI booted. Probe with readlinkSync, NOT session.sessionId: the watcher only
     // sets sessionId once the transcript FILE exists, and Claude creates it lazily
@@ -1964,7 +1972,7 @@ function createSessionManager(deps) {
     // appears (CLI failed to boot), bail rather than inject blind into a half-dead
     // PTY — but surface the drop in the IPC log, not just the dev console.
     async _injectReloadHandoff(session, handoff, timeoutMs = 30000) {
-      const linkPath = path.join(REGISTRY_DIR, `${session.name}.jsonl`);
+      const linkPath = pathFor(REGISTRY_DIR, session.name, 'transcript');
       const start = Date.now();
       for (;;) {
         if (session._dead) return;

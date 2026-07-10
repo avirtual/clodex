@@ -9,18 +9,21 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createAgentTransport } = require('../agent-transport');
+const { pathFor, runDirFor } = require('../clodex-paths');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-reg-')); }
 function mk(REGISTRY_DIR) { return createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 }); }
+// Registry entries now live per-agent at run/<name>/agent.json (clodex-paths).
+function regFile(root, name) { return pathFor(root, name, 'registry'); }
 
-test('register: writes an atomic json and round-trips via listPeers/getPeer', () => {
+test('register: writes an atomic json under run/<name>/ and round-trips via listPeers/getPeer', () => {
   const REGISTRY_DIR = tmp();
   const { registry } = mk(REGISTRY_DIR);
   const sock = path.join(REGISTRY_DIR, 'foo.sock');
   fs.writeFileSync(sock, '');            // socket must exist for listPeers
   registry.register('foo', sock);
 
-  const j = JSON.parse(fs.readFileSync(path.join(REGISTRY_DIR, 'foo.json'), 'utf-8'));
+  const j = JSON.parse(fs.readFileSync(regFile(REGISTRY_DIR, 'foo'), 'utf-8'));
   assert.strictEqual(j.name, 'foo');
   assert.strictEqual(j.socket, sock);
   assert.strictEqual(j.pid, process.pid);
@@ -52,13 +55,14 @@ test('cleanup: prunes dead-pid records (and their sockets), keeps live ones', ()
 
   const deadSock = path.join(REGISTRY_DIR, 'dead.sock');
   fs.writeFileSync(deadSock, '');
-  fs.writeFileSync(path.join(REGISTRY_DIR, 'dead.json'),
+  fs.mkdirSync(runDirFor(REGISTRY_DIR, 'dead'), { recursive: true });
+  fs.writeFileSync(regFile(REGISTRY_DIR, 'dead'),
     JSON.stringify({ name: 'dead', socket: deadSock, pid: 2147483647 })); // no such pid
 
   const removed = registry.cleanup();
   assert.strictEqual(removed, 1);
-  assert.ok(fs.existsSync(path.join(REGISTRY_DIR, 'live.json')));
-  assert.ok(!fs.existsSync(path.join(REGISTRY_DIR, 'dead.json')));
+  assert.ok(fs.existsSync(regFile(REGISTRY_DIR, 'live')));
+  assert.ok(!fs.existsSync(regFile(REGISTRY_DIR, 'dead')));
   assert.ok(!fs.existsSync(deadSock), 'cleanup also unlinks the dead socket');
 });
 
@@ -69,5 +73,5 @@ test('unregister: removes the record', () => {
   fs.writeFileSync(sock, '');
   registry.register('z', sock);
   registry.unregister('z');
-  assert.ok(!fs.existsSync(path.join(REGISTRY_DIR, 'z.json')));
+  assert.ok(!fs.existsSync(regFile(REGISTRY_DIR, 'z')));
 });

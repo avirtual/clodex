@@ -21,7 +21,7 @@
 //                     recovery) claim before dispatching, so their overlap
 //                     window during tee-failure recovery can't double-fire.
 //   TranscriptSentinel the JSONL machinery demoted to what only it can do:
-//                     (1) session identity from the ~/.clodex/<name>.jsonl
+//                     (1) session identity from the run/<name>/transcript.jsonl
 //                     symlink (repointed by the SessionStart hook at CLI
 //                     boot — the wire only learns an id on the first turn,
 //                     too late for /clear-then-quit resume correctness);
@@ -130,7 +130,7 @@ class ActivityTracker {
 
 class TranscriptSentinel {
   // opts:
-  //   linkPath     ~/.clodex/<name>.jsonl (the SessionStart hook's symlink)
+  //   linkPath     run/<name>/transcript.jsonl (the SessionStart hook's symlink)
   //   onSessionId  fired with the new id whenever the symlink repoints
   //   makeWatcher  ({ onText?, onCompactSummary? }) => JsonlWatcher-shaped
   //                object with start()/stop() that begins at transcript EOF.

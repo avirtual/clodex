@@ -1,4 +1,4 @@
-// jsonl-watcher.js — the JsonlWatcher class. Polls the ~/.clodex/{name}.jsonl
+// jsonl-watcher.js — the JsonlWatcher class. Polls the run/<name>/transcript.jsonl
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
 // through /clear + /compact, extracts assistant text (Claude type:"assistant";
 // Codex event_msg/agent_message), buffers by requestId, and flushes on a new
@@ -6,8 +6,8 @@
 // onSessionId (persistence), onActivity (UI), onCompactSummary, onFileTouches.
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
-// the {name}.jsonl symlink), injected as a factory param so the class body stays
-// byte-identical. Text/file-touch extraction is delegated to transcript.js and
+// the run/<name>/transcript.jsonl symlink via clodex-paths.pathFor), injected as
+// a factory param. Text/file-touch extraction is delegated to transcript.js and
 // file-touch.js. The 250ms fs polling loop needs a live filesystem, so the class
 // itself is left to integration; extractText/extractFileTouches have their own
 // unit tests in their home modules.
@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { extractText } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
+const { pathFor } = require('./clodex-paths');
 
 // Watcher-owned tuning (moved from main.js — M3 left them behind as free
 // identifiers, which broke every non-wire agent spawn at watcher.start()).
@@ -66,7 +67,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
     _poll() {
       if (this._stopped) return;
 
-      const linkPath = path.join(REGISTRY_DIR, `${this._name}.jsonl`);
+      const linkPath = pathFor(REGISTRY_DIR, this._name, 'transcript');
 
       // Check symlink target
       try {

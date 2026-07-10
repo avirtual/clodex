@@ -9,6 +9,8 @@ const { execSync, spawn } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
+const { pathFor, runDirFor } = require('./clodex-paths');
+const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 
 // Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
 // (/usr/bin:/bin:/usr/sbin:/sbin), so `claude`/`codex` from ~/.local/bin or
@@ -213,8 +215,11 @@ function logStartupDiagnostics() {
 // Clodex-owned runtime dir: registry, sockets, hook scripts, prompt files,
 // jsonl symlinks, spilled messages. Lives in $HOME (not /tmp) so macOS's
 // 3-day tmp reaper can't delete files under long-running sessions, and kept
-// short because {name}.sock must fit the 104-char Unix socket path limit.
-// Moving here (v0.6.6) ended /tmp/wb-wrap interop with the Python wb-wrap.
+// short because run/{name}/agent.sock must fit the 104-char Unix socket path
+// limit (the per-agent run/ dir grammar — clodex-paths.js — costs ~10 chars more
+// than the old flat {name}.sock; still within budget for a 64-char name under a
+// normal $HOME). Moving here (v0.6.6) ended /tmp/wb-wrap interop with Python
+// wb-wrap. Per-agent runtime artifacts live under run/<name>/ (clodex-paths).
 const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
 const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
 // Layer-3 delivery parking store (Claude): pending/<name>/ per agent. Deliveries
@@ -514,7 +519,7 @@ const { IPC_PROMPT, DEFAULT_COMPACT_CONTINUATION } = require('./ipc-prompt');
 function rebuildAllStatusScripts(manager) {
   for (const [name, s] of manager.sessions) {
     if (s.agentType !== 'claude') continue;
-    const p = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
+    const p = pathFor(REGISTRY_DIR, name, 'statusline');
     try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!s.proxyBase, uiSettings, REGISTRY_DIR), { mode: 0o700 }); } catch {}
   }
 }
@@ -589,7 +594,7 @@ const wirescope = new WirescopeSupervisor();
 // listings, so callers union this with the persisted disabled set.
 function parseSkillRoster(name) {
   try {
-    const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
+    const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const real = fs.realpathSync(linkPath);
     const lines = fs.readFileSync(real, 'utf8').split('\n');
     let names = [];
@@ -678,7 +683,7 @@ function readEffectiveToolState(cwd) {
 
 // Claude Code stores transcripts under ~/.claude/projects/<slug>/<uuid>.jsonl,
 // where the slug is the cwd with every '/' and '.' turned into '-'. Used only
-// as a FALLBACK for the session picker when the live ~/.clodex/<name>.jsonl
+// as a FALLBACK for the session picker when the live run/<name>/transcript.jsonl
 // symlink can't be resolved (e.g. a never-run / dead session); the symlink's
 // real directory is preferred and authoritative when present.
 function claudeProjectDir(cwd) {
@@ -1022,6 +1027,7 @@ const SessionManager = createSessionManager({
     parseCtxFile,
     parseIntent,
     path,
+    pathFor,
     peerStatusLabel,
     pty,
     randBase36,
@@ -1032,6 +1038,7 @@ const SessionManager = createSessionManager({
     resolveProxyAgentId,
     resolveProxyBase,
     resolveSystemPromptFile,
+    runDirFor,
     scheduleTrayRefresh,
     setupClaudeHook,
     setupCodexHook,
@@ -1669,6 +1676,31 @@ app.whenReady().then(() => {
   cleanupOldMessages();
   setInterval(cleanupOldMessages, MSG_CLEANUP_INTERVAL);
   registry.cleanup();
+
+  // One-time migration of the OLD flat ~/.clodex artifacts into run/<name>/
+  // (clodex-paths grammar), plus a log-only orphan pass. Candidate names =
+  // sessions.json (all workspaces) ∪ any live session — at startup the
+  // SessionManager map is still empty, so persistence is the source. The sweep
+  // is name-driven (deletes only {knownName}{knownSuffix}) and marker-gated
+  // (run/.migrated), so it runs at most once; the orphan pass is diagnostic and
+  // never deletes. Best-effort — a failure here must not block launch.
+  try {
+    const candidateNames = new Set([
+      ...persistence.list().map((e) => e.name),
+      ...manager.sessions.keys(),
+    ]);
+    const names = [...candidateNames];
+    runLegacySweep({ root: REGISTRY_DIR, names, log });
+    let runEntries = [];
+    let rootEntries = [];
+    try { runEntries = fs.readdirSync(path.join(REGISTRY_DIR, 'run')); } catch {}
+    try { rootEntries = fs.readdirSync(REGISTRY_DIR); } catch {}
+    const { orphanDirs, orphanRootFiles } = findOrphans({ runEntries, rootEntries, candidates: candidateNames });
+    if (orphanDirs.length) log.info('migrate', `orphan run dirs (no session entry, log-only): ${orphanDirs.join(', ')}`);
+    if (orphanRootFiles.length) log.info('migrate', `stray root-level flat artifacts (log-only): ${orphanRootFiles.join(', ')}`);
+  } catch (e) {
+    log.info('migrate', `legacy sweep skipped (${e && e.message})`);
+  }
 
   // Check for updates on startup and every 6 hours
   checkForUpdate(true);

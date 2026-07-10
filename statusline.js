@@ -7,10 +7,16 @@
 // for as main.js globals, so a fake settings store makes the whole script
 // output unit-testable without booting the app. rebuildAllStatusScripts stays
 // in main.js (it iterates the live SessionManager) and calls these.
+//
+// The ctx side-channel path is JS-interpolated (the agent name is known at
+// generation), so it routes through clodex-paths.pathFor directly — no runtime
+// bash mirror needed (unlike the Codex hook, which resolves $NAME at runtime).
 // Gotcha: renderClaudeStatusScript builds a bash HEREdoc — backslashes and `${}`
 // inside the returned template are shell/awk syntax, not JS interpolation; edit
 // with care. `headless` writes only the ctx side-channel (window SIZE is off the
 // wire — the CLI is its sole source) and suppresses the default component line.
+
+const { pathFor } = require('./clodex-paths');
 
 // Render Claude's statusline bash script based on user-selected components.
 // Session name prefix is always shown. Components: model, context, cost,
@@ -66,7 +72,7 @@ ${branchSh}
 # unaffected; the token counts feed the proxy bar's absolute "used/size"
 # display; model_id lets the app correct the window size the CLI under-reports
 # for 1M models (MODEL_WINDOWS in argv-merge.js).
-printf '%s\\t%s\\t%s\\t%s' "\${CTX_NUM}" "\${CTX_TOK}" "\${CTX_SIZE}" "\${MODEL_ID}" > "${registryDir}/${name}-ctx" 2>/dev/null || true
+printf '%s\\t%s\\t%s\\t%s' "\${CTX_NUM}" "\${CTX_TOK}" "\${CTX_SIZE}" "\${MODEL_ID}" > "${pathFor(registryDir, name, 'ctx')}" 2>/dev/null || true
 ${customCmd ? `export CLODEX_AGENT_NAME="${name}"
 OUT="$(printf '%s' "$INPUT" | ( ${customCmd} ) 2>/dev/null)"
 if [ -n "$OUT" ]; then

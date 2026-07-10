@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createCliHooks } = require('../cli-hooks');
+const { pathFor, runDirFor } = require('../clodex-paths');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-hooks-')); }
 function mk(REGISTRY_DIR) {
@@ -23,13 +24,13 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   const settingsPath = h.setupClaudeHook('agent1');
-  assert.strictEqual(settingsPath, path.join(REGISTRY_DIR, 'agent1-hook.json'));
+  assert.strictEqual(settingsPath, pathFor(REGISTRY_DIR, 'agent1', 'settings'));
 
-  const script = fs.readFileSync(path.join(REGISTRY_DIR, 'agent1-hook.sh'), 'utf-8');
+  const script = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'hook'), 'utf-8');
   assert.match(script, /ln -sf "\$TPATH" "\$TMPLINK"/); // repoints the transcript symlink
-  assert.match(script, /agent1\.jsonl/);
+  assert.match(script, /run\/agent1\/transcript\.jsonl/); // into the per-agent run dir
 
-  const out = JSON.parse(fs.readFileSync(path.join(REGISTRY_DIR, 'agent1-hook-output.json'), 'utf-8'));
+  const out = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'hookOutput'), 'utf-8'));
   assert.match(out.hookSpecificOutput.additionalContext, /clodex agent named 'agent1'/);
 
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -41,7 +42,7 @@ test('setupClaudeHook: proxyBase routes ANTHROPIC_BASE_URL through the per-agent
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('a2', 'http://127.0.0.1:7800');
-  const settings = JSON.parse(fs.readFileSync(path.join(REGISTRY_DIR, 'a2-hook.json'), 'utf-8'));
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'a2', 'settings'), 'utf-8'));
   assert.strictEqual(settings.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:7800/agent/a2/anthropic');
 });
 
@@ -89,10 +90,17 @@ test('generated scripts: heredoc terminators at column 0, python unindented', ()
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('agent9');
   h.setupCodexHook('agent9', tmp());
-  const scripts = fs.readdirSync(REGISTRY_DIR).filter((f) => f.endsWith('.sh'));
+  // Per-agent scripts live under run/<name>/; the shared codex hook stays at the
+  // root. Collect both so the byte-shape check covers every generated .sh.
+  const runDir = runDirFor(REGISTRY_DIR, 'agent9');
+  const scripts = [
+    ...fs.readdirSync(REGISTRY_DIR).filter((f) => f.endsWith('.sh')).map((f) => path.join(REGISTRY_DIR, f)),
+    ...fs.readdirSync(runDir).filter((f) => f.endsWith('.sh')).map((f) => path.join(runDir, f)),
+  ];
   assert.ok(scripts.length >= 4, `expected several generated scripts, got ${scripts}`);
-  for (const f of scripts) {
-    const lines = fs.readFileSync(path.join(REGISTRY_DIR, f), 'utf-8').split('\n');
+  for (const fp of scripts) {
+    const f = path.basename(fp);
+    const lines = fs.readFileSync(fp, 'utf-8').split('\n');
     assert.strictEqual(lines[0], '#!/bin/bash', `${f}: shebang must be line 1, column 0`);
     let inHeredoc = false;
     for (const [i, ln] of lines.entries()) {

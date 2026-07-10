@@ -16,6 +16,7 @@
 // here (getVersion/isPackaged), required in-module.
 
 const { app } = require('electron');
+const { pathFor } = require('./clodex-paths');
 
 function createRemoteWiring(deps) {
   const {
@@ -75,7 +76,7 @@ function createRemoteWiring(deps) {
               const p = proxyPoller.snapshot(sess.name);
               let ctx = null;
               try {
-                ctx = parseCtxFile(fs.readFileSync(path.join(REGISTRY_DIR, `${sess.name}-ctx`), 'utf-8'));
+                ctx = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, sess.name, 'ctx'), 'utf-8'));
               } catch {}
               const wireTok = p && p.context && typeof p.context.inputTokens === 'number'
                 ? p.context.inputTokens : null;
@@ -97,7 +98,7 @@ function createRemoteWiring(deps) {
         getTranscript: (name, limit) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
-          const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
+          const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
           let jsonlPath;
           try { jsonlPath = fs.realpathSync(linkPath); }
           catch { return { ok: true, messages: [] }; } // no transcript yet

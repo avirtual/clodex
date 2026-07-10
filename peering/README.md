@@ -214,5 +214,9 @@ seconds and the box's sessions appear as remote tabs.
   missing; `ldd` the electron binary to find which.
 - **App runs but sessions don't spawn** — check `~/.clodex/clodex.log` for
   `spawn <name>` lines and `journalctl --user -u clodex`.
-- **Runtime dir** `~/.clodex/` (sockets, registry, JSONL) is created by spawned
-  sessions — it's output, not config. Config is `~/.config/clodex/`.
+- **Runtime dir** `~/.clodex/` is created by spawned sessions — it's output,
+  not config (config is `~/.config/clodex/`). Per-agent artifacts (socket,
+  registry entry, transcript symlink, hook scripts, side-channels) live under
+  `~/.clodex/run/<name>/`; shared state stays at the root (`messages/`,
+  `pending/`, `agents/`, `skills/`). No manual cleanup needed — a stale flat
+  layout from an older build is migrated once on the next launch.

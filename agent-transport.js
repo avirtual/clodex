@@ -18,6 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const { ensureDir } = require('./fs-util');
+const { pathFor, runDirFor } = require('./clodex-paths');
 
 function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
   function isAlive(pid) {
@@ -25,10 +26,28 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     catch (e) { return e.code === 'EPERM'; }
   }
 
+  // Registry entries + sockets live per-agent at run/<name>/{agent.json,agent.sock}
+  // (clodex-paths grammar). Discovery iterates run/*/agent.json instead of the
+  // old flat *.json scan — we own both ends of this namespace, so there is no
+  // external reader to keep compatible.
+  const RUN_DIR = path.join(REGISTRY_DIR, 'run');
+
+  // Every run/<name>/agent.json path, skipping half-written tmp files. Best
+  // effort: a missing run dir just yields nothing.
+  function* regEntries() {
+    let names;
+    try { names = fs.readdirSync(RUN_DIR); } catch { return; }
+    for (const name of names) {
+      const regPath = pathFor(REGISTRY_DIR, name, 'registry');
+      if (!fs.existsSync(regPath)) continue;
+      yield regPath;
+    }
+  }
+
   const registry = {
     register(name, socketPath) {
-      ensureDir(REGISTRY_DIR);
-      const regPath = path.join(REGISTRY_DIR, `${name}.json`);
+      ensureDir(runDirFor(REGISTRY_DIR, name));
+      const regPath = pathFor(REGISTRY_DIR, name, 'registry');
       const data = JSON.stringify({ name, socket: socketPath, pid: process.pid });
       const tmpPath = `${regPath}.tmp.${process.pid}`;
       fs.writeFileSync(tmpPath, data, { mode: 0o600 });
@@ -43,16 +62,14 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     },
 
     unregister(name) {
-      try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}.json`)); } catch {}
+      try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'registry')); } catch {}
     },
 
     listPeers() {
-      ensureDir(REGISTRY_DIR);
       const peers = [];
-      for (const fname of fs.readdirSync(REGISTRY_DIR)) {
-        if (!fname.endsWith('.json') || fname.includes('.tmp.')) continue;
+      for (const regPath of regEntries()) {
         try {
-          const info = JSON.parse(fs.readFileSync(path.join(REGISTRY_DIR, fname), 'utf-8'));
+          const info = JSON.parse(fs.readFileSync(regPath, 'utf-8'));
           if (fs.existsSync(info.socket) && isAlive(info.pid)) {
             peers.push(info);
           }
@@ -66,15 +83,12 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     },
 
     cleanup() {
-      ensureDir(REGISTRY_DIR);
       let removed = 0;
-      for (const fname of fs.readdirSync(REGISTRY_DIR)) {
-        if (!fname.endsWith('.json') || fname.includes('.tmp.')) continue;
+      for (const regPath of regEntries()) {
         try {
-          const fpath = path.join(REGISTRY_DIR, fname);
-          const info = JSON.parse(fs.readFileSync(fpath, 'utf-8'));
+          const info = JSON.parse(fs.readFileSync(regPath, 'utf-8'));
           if (!fs.existsSync(info.socket) || !isAlive(info.pid)) {
-            fs.unlinkSync(fpath);
+            fs.unlinkSync(regPath);
             if (fs.existsSync(info.socket)) fs.unlinkSync(info.socket);
             removed++;
           }

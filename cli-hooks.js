@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { pathFor, runDirFor } = require('./clodex-paths');
 const { composeDigest } = require('./memory-store');
 const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
@@ -27,25 +28,25 @@ const { denyAgentRules } = require('./agents-util');
 
 function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings }) {
   function writeClaudeDigestFile(name) {
-    ensureDir(REGISTRY_DIR);
+    ensureDir(runDirFor(REGISTRY_DIR, name));
     const digest = composeDigest(memoryStore.list(name));
     const ctx = `You are the clodex agent named '${name}'.` + (digest ? `\n\n${digest}` : '');
     // Atomic: a mid-session store mutation rewrites this file while a /clear
     // could be cat-ing it from the hook at the same instant.
-    atomicWriteFileSync(path.join(REGISTRY_DIR, `${name}-hook-digest.json`), JSON.stringify({
+    atomicWriteFileSync(pathFor(REGISTRY_DIR, name, 'hookDigest'), JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }
     }) + '\n');
     return !!digest;
   }
 
   function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null) {
-    ensureDir(REGISTRY_DIR);
-    const linkPath = path.join(REGISTRY_DIR, `${name}.jsonl`);
-    const scriptPath = path.join(REGISTRY_DIR, `${name}-hook.sh`);
-    const settingsPath = path.join(REGISTRY_DIR, `${name}-hook.json`);
-    const outputPath = path.join(REGISTRY_DIR, `${name}-hook-output.json`);
-    const digestPath = path.join(REGISTRY_DIR, `${name}-hook-digest.json`);
-    const statusPath = path.join(REGISTRY_DIR, `${name}-statusline.sh`);
+    ensureDir(runDirFor(REGISTRY_DIR, name));
+    const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
+    const scriptPath = pathFor(REGISTRY_DIR, name, 'hook');
+    const settingsPath = pathFor(REGISTRY_DIR, name, 'settings');
+    const outputPath = pathFor(REGISTRY_DIR, name, 'hookOutput');
+    const digestPath = pathFor(REGISTRY_DIR, name, 'hookDigest');
+    const statusPath = pathFor(REGISTRY_DIR, name, 'statusline');
     const msgDir = path.join(REGISTRY_DIR, 'messages');
 
     // Pre-render hook output: the agent NAME only. The protocol prompt itself
@@ -94,8 +95,8 @@ fi
     // just appends the raw hook JSON to a per-session file; classification and
     // policy live in JS (attention.js / SessionManager). Truncated at setup so
     // a resume never replays last run's stale dialogs.
-    const attnPath = path.join(REGISTRY_DIR, `${name}-attn.jsonl`);
-    const attnScriptPath = path.join(REGISTRY_DIR, `${name}-attn.sh`);
+    const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
+    const attnScriptPath = pathFor(REGISTRY_DIR, name, 'attnScript');
     fs.writeFileSync(attnPath, '');
     fs.writeFileSync(attnScriptPath, `#!/bin/bash
 IN="$(cat)"
@@ -108,8 +109,8 @@ printf '%s\\n' "$IN" >> "${attnPath}"
     // is lost, which the channel tolerates (success acks are bookkeeping).
     // The file is left alone at setup: acks queued just before a quit are still
     // valid on resume (the mutations they confirm persisted).
-    const ackPath = path.join(REGISTRY_DIR, `${name}-acks`);
-    const ackScriptPath = path.join(REGISTRY_DIR, `${name}-acks.sh`);
+    const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
+    const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
 [ -s "${ackPath}" ] || exit 0
 python3 - "${ackPath}" <<'PYEOF'
@@ -131,8 +132,10 @@ PYEOF
     // exactly, keeping the hook and the Node cap-fire drain single-source-of-
     // truth): whoever renames the dir first owns every message then present; a
     // delivery parked after the claim lands in a fresh dir and drains next turn.
+    // pendingDir stays at the SHARED ~/.clodex/pending/<name> root (parked DMs
+    // are not per-run state); only the drain SCRIPT relocates into run/<name>/.
     const pendingDir = path.join(REGISTRY_DIR, 'pending', name);
-    const pendingScriptPath = path.join(REGISTRY_DIR, `${name}-pending.sh`);
+    const pendingScriptPath = pathFor(REGISTRY_DIR, name, 'pendingScript');
     fs.writeFileSync(pendingScriptPath, `#!/bin/bash
 [ -d "${pendingDir}" ] || exit 0
 python3 - "${pendingDir}" <<'PYEOF'
@@ -166,8 +169,8 @@ PYEOF
     // this hook only READS — it never consumes the file, so the reminder recurs on
     // every submit while over (deliberate; the escalation wording counters
     // habituation). Silent when the file is absent.
-    const ctxwarnPath = path.join(REGISTRY_DIR, `${name}-ctxwarn`);
-    const ctxwarnScriptPath = path.join(REGISTRY_DIR, `${name}-ctxwarn.sh`);
+    const ctxwarnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
+    const ctxwarnScriptPath = pathFor(REGISTRY_DIR, name, 'ctxwarnScript');
     fs.writeFileSync(ctxwarnScriptPath, `#!/bin/bash
 [ -s "${ctxwarnPath}" ] || exit 0
 python3 - "${ctxwarnPath}" <<'PYEOF'
@@ -248,9 +251,11 @@ PYEOF
   }
 
   function setupCodexHook(name, cwd) {
-    ensureDir(REGISTRY_DIR);
+    ensureDir(runDirFor(REGISTRY_DIR, name));
+    // codex-session-hook.sh is SHARED (one script for all Codex agents, routed
+    // by $WB_WRAP_NAME), so it stays at the ~/.clodex root, not under run/.
     const scriptPath = path.join(REGISTRY_DIR, 'codex-session-hook.sh');
-    const outputPath = path.join(REGISTRY_DIR, `${name}-hook-output.json`);
+    const outputPath = pathFor(REGISTRY_DIR, name, 'hookOutput');
 
     // Pre-render hook output: the agent NAME only. The protocol prompt ships via
     // model_instructions_file and is static across agents (prefix-cache sharing);
@@ -267,6 +272,10 @@ PYEOF
 
     // Generic hook script: repoint the transcript symlink, then emit the
     // name-only additionalContext (per-name output file, routed by WB_WRAP_NAME).
+    // GRAMMAR MIRROR: $NAME is resolved at RUNTIME, so the run/<name>/ paths are
+    // rebuilt here in bash — keep in lockstep with clodex-paths.js (transcript =
+    // run/$NAME/transcript.jsonl, hookOutput = run/$NAME/hook-output.json). The
+    // byte-pinned cli-hooks test enforces this mirror.
     const script = `#!/bin/bash
 set -euo pipefail
 NAME="\${WB_WRAP_NAME:-}"
@@ -274,11 +283,13 @@ NAME="\${WB_WRAP_NAME:-}"
 INPUT="$(cat)"
 TPATH="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('transcript_path',''))" 2>/dev/null || true)"
 [ -z "$TPATH" ] && exit 0
-LINK="${REGISTRY_DIR}/\${NAME}.jsonl"
+RUNDIR="${REGISTRY_DIR}/run/\${NAME}"
+mkdir -p "$RUNDIR"
+LINK="\${RUNDIR}/transcript.jsonl"
 TMPLINK="\${LINK}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "$LINK"
-OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
+OUTPUT="\${RUNDIR}/hook-output.json"
 [ -f "$OUTPUT" ] && cat "$OUTPUT" || exit 0
 `;
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -304,16 +315,18 @@ OUTPUT="${REGISTRY_DIR}/\${NAME}-hook-output.json"
     fs.writeFileSync(hooksPath, JSON.stringify(hooksConfig));
   }
 
+  // Both cleanups drop the whole per-agent run/<name>/ dir — every hook/status/
+  // side-channel artifact lives there now. The socket + registry entry share the
+  // dir but are torn down separately by agent-transport (registry.unregister +
+  // socket unlink in SessionManager._cleanup); rmSync here is idempotent against
+  // that. The SHARED pending/<name>/ parked-DM dir is untouched (gated on
+  // _userKilled elsewhere), as is the shared codex-session-hook.sh.
   function cleanupClaudeHook(name) {
-    for (const suffix of ['-hook.sh', '-hook.json', '-hook-output.json', '-hook-digest.json', '-statusline.sh', '-append-prompt.md', '-ctx', '-ctxwarn', '-ctxwarn.sh', '-attn.sh', '-attn.jsonl', '-acks.sh', '-acks', '-pending.sh', '.jsonl']) {
-      try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
-    }
+    try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
   }
 
   function cleanupCodexHook(name, cwd) {
-    for (const suffix of ['-hook-output.json', '-instructions.md', '.jsonl']) {
-      try { fs.unlinkSync(path.join(REGISTRY_DIR, `${name}${suffix}`)); } catch {}
-    }
+    try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';

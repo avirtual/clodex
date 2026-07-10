@@ -14,7 +14,7 @@ test('renderClaudeStatusScript: writes the ctx side-channel to the injected dir'
   const ui = fakeUi({ claude: ['model', 'context'], claudeCommand: '' });
   const script = renderClaudeStatusScript('agentx', false, ui, '/reg/dir');
   assert.ok(script.startsWith('#!/bin/bash'));
-  assert.ok(script.includes('/reg/dir/agentx-ctx'), 'side-channel path uses injected registryDir + name');
+  assert.ok(script.includes('/reg/dir/run/agentx/ctx'), 'side-channel path uses the per-agent run dir (clodex-paths)');
   assert.ok(script.includes('[clodex:agentx]'), 'session name prefix present');
   // enabled components appear in the printf line
   assert.ok(script.includes('$MODEL'));
@@ -26,7 +26,7 @@ test('renderClaudeStatusScript: writes the ctx side-channel to the injected dir'
 test('renderClaudeStatusScript: headless suppresses the visible component line but keeps the side-channel', () => {
   const ui = fakeUi({ claude: ['model', 'cost'], claudeCommand: '' });
   const headless = renderClaudeStatusScript('h', true, ui, '/d');
-  assert.ok(headless.includes('/d/h-ctx'), 'side-channel still written under headless');
+  assert.ok(headless.includes('/d/run/h/ctx'), 'side-channel still written under headless');
   assert.ok(headless.includes('headless: side-channel only'), 'component line replaced by the headless no-op');
   assert.ok(!/printf '.*\$MODEL/.test(headless), 'no visible component printf under headless');
 });
