@@ -270,6 +270,19 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         this._save(all);
       }
     },
+    // Keep-warm hold INTENT, epoch ms. The in-process HoldKeeper is memory-only
+    // by design (wire/hold.js header) — persisting the deadline (never the
+    // last-request bytes/auth headers) lets the first main-line turn after a
+    // restart re-arm it. A falsy value CLEARS to an absent key (explicit
+    // disarm / lapse), so a dormant session carries no stale field.
+    setHoldUntil(name, holdUntil) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (holdUntil && holdUntil > 0) entry.holdUntil = holdUntil;
+      else delete entry.holdUntil;
+      this._save(all);
+    },
     setLabel(name, label) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

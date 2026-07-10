@@ -48,6 +48,30 @@ test('persistence: setSessionId accumulates a dedup move-to-end history', () => 
   } finally { cleanup(); }
 });
 
+test('persistence: setHoldUntil round-trips and clears to an ABSENT key', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    // No hold on a fresh entry.
+    assert.strictEqual('holdUntil' in stores.persistence.get('a'), false);
+    // Arm: the epoch-ms deadline persists.
+    stores.persistence.setHoldUntil('a', 1_700_000_000_000);
+    assert.strictEqual(stores.persistence.get('a').holdUntil, 1_700_000_000_000);
+    // survives an unrelated upsert (spread-merge keeps the field)
+    stores.persistence.upsert({ name: 'a', label: 'x' });
+    assert.strictEqual(stores.persistence.get('a').holdUntil, 1_700_000_000_000);
+    // Disarm / lapse: falsy clears to an ABSENT key, no stale field left behind.
+    stores.persistence.setHoldUntil('a', null);
+    assert.strictEqual('holdUntil' in stores.persistence.get('a'), false);
+    // 0 is treated as clear too (never persists a non-positive deadline).
+    stores.persistence.setHoldUntil('a', 0);
+    assert.strictEqual('holdUntil' in stores.persistence.get('a'), false);
+    // No-op on an unknown name (never creates an entry).
+    stores.persistence.setHoldUntil('ghost', 123);
+    assert.strictEqual(stores.persistence.get('ghost'), null);
+  } finally { cleanup(); }
+});
+
 test('persistence: entries missing workspaceId migrate to the default id', () => {
   const { userData, stores, cleanup } = freshStores();
   try {

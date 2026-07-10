@@ -170,3 +170,38 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
   assert.strictEqual(delivered.length, 1);
   assert.deepStrictEqual(marked, ['real-conv-id']);
 });
+
+// Keep-warm lifecycle listener: re-anchors must RE-PERSIST the deadline (the
+// keeper restarts its window on every organic turn, so a stale persisted
+// holdUntil would wrongly lapse-clear a still-valid hold after a restart);
+// failure-strike disarms clear the intent; explicit 'off' is the wire:hold
+// handler's job and is skipped here.
+test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped', () => {
+  const holds = [];
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [], get: () => null,
+      setHoldUntil: (name, v) => holds.push([name, v]),
+    }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m.sessions.set('a', { name: 'a', sessionId: 'sid-1' });
+
+  // Re-anchor: keeper's `until` is epoch SECONDS → persisted as epoch ms.
+  m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: 1_700_000_000 });
+  assert.deepStrictEqual(holds, [['a', 1_700_000_000_000]]);
+
+  // Unknown wire sid (child claude / rotated id): never touches persistence.
+  m._onHoldLifecycle({ session: 'stray', event: 're-anchored', until: 1_700_000_000 });
+  assert.strictEqual(holds.length, 1);
+
+  // Failure-strike disarm clears the intent (keys on cause, not reason text).
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3 });
+  assert.deepStrictEqual(holds[1], ['a', null]);
+
+  // Explicit off: handled (logged+cleared) by the wire:hold handler — skipped here.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'off', pings: 0 });
+  // Expiry/max-pings: log-only, field clears lazily on the next re-arm check.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
+  assert.strictEqual(holds.length, 2);
+});

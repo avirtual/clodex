@@ -67,16 +67,33 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   const maxPings = caps.maxPings ?? DEFAULTS.maxPings;
   const maxFailures = caps.maxFailures ?? DEFAULTS.maxFailures;
   const margin = caps.marginSeconds ?? DEFAULTS.marginSeconds;
-  if (now > hold.until) return ['disarm', 'hold period over'];
-  if (hold.pings >= maxPings) return ['disarm', `max pings (${maxPings}) reached`];
+  // Third element is a stable machine-readable `cause` (the disarm emits carry
+  // it so persistence-clearing keys on it, never on the human `reason` text —
+  // rewording a message must not silently break holdUntil-clearing).
+  if (now > hold.until) return ['disarm', 'hold period over', 'expired'];
+  if (hold.pings >= maxPings) return ['disarm', `max pings (${maxPings}) reached`, 'max-pings'];
   if (hold.failures >= maxFailures) {
-    return ['disarm', `${hold.failures} consecutive ping failures (stale credentials?)`];
+    return ['disarm', `${hold.failures} consecutive ping failures (stale credentials?)`, 'failures'];
   }
   if (!hasEntry) return ['skip', 'no replayable request cached'];
   if (!warmthQ || !warmthQ.found) return ['skip', 'prefix not in ledger'];
   if (warmthQ.remaining_s <= 0) return ['skip', 'prefix already cold'];
   if (warmthQ.remaining_s >= margin) return ['skip', 'not yet due'];
   return ['ping', 'due'];
+}
+
+// PURE re-arm planning for a persisted hold INTENT (holdUntil, epoch ms) seen
+// on a session's first main-line turn after an app restart. The keeper itself
+// is in-memory by design (header), so the intent — not the last-request bytes
+// — is what survives on the sessions.json record. Returns:
+//   { arm: true, hours }  re-arm the keeper for the REMAINING window (arm()
+//                         re-clamps against maxHours on its own, so no clamp here)
+//   { clear: true }       the persisted deadline already lapsed → drop the field
+//   null                  nothing persisted (no hold to restore) → no-op
+function rearmPlan(holdUntil, nowMs) {
+  if (!(holdUntil > 0)) return null;
+  if (holdUntil <= nowMs) return { clear: true };
+  return { arm: true, hours: (holdUntil - nowMs) / 3600e3 };
 }
 
 // Minimal JSON POST on node http/https — injectable (opts.request) so
@@ -258,7 +275,7 @@ class HoldKeeper extends EventEmitter {
   disarm(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
-    if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'off', pings: prev.pings });
+    if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'off', cause: 'off', pings: prev.pings });
     return { armed: false, disarmed: !!prev, session: sessionId, pings: prev ? prev.pings : 0 };
   }
 
@@ -268,7 +285,7 @@ class HoldKeeper extends EventEmitter {
   endSession(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
-    if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'session ended', pings: prev.pings });
+    if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'session ended', cause: 'session-ended', pings: prev.pings });
     return { session: sessionId, holdDisarmed: !!prev };
   }
 
@@ -308,10 +325,10 @@ class HoldKeeper extends EventEmitter {
             wq = this.warmth.query({ hash: prefixHash(entry.obj, msgs.length) });
           } catch { wq = null; }
         }
-        const [action, reason] = holdDecision(hold, !!entry, wq, now, this);
+        const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
         if (action === 'disarm') {
           this._holds.delete(sid);
-          this.emit('hold', { session: sid, event: 'disarmed', reason, pings: hold.pings });
+          this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings });
         } else if (action === 'ping') {
           const res = await this.ping(sid);
           const cur = this._holds.get(sid); // may have been disarmed mid-await
@@ -339,4 +356,4 @@ class HoldKeeper extends EventEmitter {
   }
 }
 
-module.exports = { HoldKeeper, holdDecision, postJson };
+module.exports = { HoldKeeper, holdDecision, postJson, rearmPlan };

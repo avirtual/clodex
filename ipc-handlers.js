@@ -264,6 +264,18 @@ function registerIpcHandlers(deps) {
       const j = (hours > 0)
         ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force })
         : manager._holdKeeper.disarm(w.sessionId);
+      // Persist the hold INTENT per session NAME so a restart can re-arm it
+      // (the keeper is in-memory by design). Derive the deadline from the
+      // clamped arm result's `until` (epoch SECONDS), never the raw requested
+      // hours. hours<=0 (explicit disarm) clears the field + logs here — the
+      // keeper's own 'off' disarm event is skipped by the lifecycle listener.
+      if (j.armed && j.until) {
+        persistence.setHoldUntil(name, Math.round(j.until * 1000));
+        log.info('keepwarm', `armed ${name} ${hours}h until ${new Date(j.until * 1000).toISOString()}`);
+      } else if (!(hours > 0)) {
+        persistence.setHoldUntil(name, null);
+        log.info('keepwarm', `disarmed ${name} (explicit)`);
+      }
       return { ok: true, status: 200, armed: !!j.armed, skipped: j.skipped || null, body: j };
     } catch (e) {
       return { ok: false, error: e.message };

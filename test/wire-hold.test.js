@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { HoldKeeper, holdDecision } = require('../wire/hold');
+const { HoldKeeper, holdDecision, rearmPlan } = require('../wire/hold');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { WireProxy } = require('../wire/proxy');
 
@@ -58,9 +58,12 @@ function stampWarm(store, obj) {
 test('holdDecision: full verdict matrix', () => {
   const hold = { until: 2000, pings: 0, failures: 0 };
   const warm = { found: true, warm: true, remaining_s: 100 };
-  assert.deepEqual(holdDecision(hold, true, warm, 2001), ['disarm', 'hold period over']);
-  assert.deepEqual(holdDecision({ ...hold, pings: 24 }, true, warm, 1000), ['disarm', 'max pings (24) reached']);
+  assert.deepEqual(holdDecision(hold, true, warm, 2001), ['disarm', 'hold period over', 'expired']);
+  assert.deepEqual(holdDecision({ ...hold, pings: 24 }, true, warm, 1000), ['disarm', 'max pings (24) reached', 'max-pings']);
   assert.equal(holdDecision({ ...hold, failures: 2 }, true, warm, 1000)[0], 'disarm');
+  // machine-readable cause on the disarm branches (persistence-clearing keys on it)
+  assert.equal(holdDecision(hold, true, warm, 2001)[2], 'expired');
+  assert.equal(holdDecision({ ...hold, failures: 2 }, true, warm, 1000)[2], 'failures');
   assert.deepEqual(holdDecision(hold, false, warm, 1000), ['skip', 'no replayable request cached']);
   assert.deepEqual(holdDecision(hold, true, { found: false }, 1000), ['skip', 'prefix not in ledger']);
   assert.deepEqual(holdDecision(hold, true, null, 1000), ['skip', 'prefix not in ledger']);
@@ -70,6 +73,20 @@ test('holdDecision: full verdict matrix', () => {
   // caps overridable
   assert.equal(holdDecision({ ...hold, pings: 3 }, true, warm, 1000, { maxPings: 3 })[0], 'disarm');
   assert.equal(holdDecision(hold, true, { found: true, remaining_s: 500 }, 1000, { marginSeconds: 600 })[0], 'ping');
+});
+
+test('rearmPlan: restore, lapse, and no-op verdicts off a fixed now', () => {
+  const now = 1_000_000_000_000; // fixed epoch ms
+  // Future deadline -> re-arm for the REMAINING window (hours, unclamped here)
+  assert.deepEqual(rearmPlan(now + 2 * 3600e3, now), { arm: true, hours: 2 });
+  assert.deepEqual(rearmPlan(now + 30 * 60e3, now), { arm: true, hours: 0.5 });
+  // Already lapsed (or exactly at deadline) -> clear the stale field, never arm
+  assert.deepEqual(rearmPlan(now - 1, now), { clear: true });
+  assert.deepEqual(rearmPlan(now, now), { clear: true });
+  // Nothing persisted -> no-op (guard flips without touching the keeper)
+  assert.equal(rearmPlan(undefined, now), null);
+  assert.equal(rearmPlan(null, now), null);
+  assert.equal(rearmPlan(0, now), null);
 });
 
 test('noteRequest caches the entry and evicts oldest past the cap', () => {

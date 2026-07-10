@@ -162,6 +162,7 @@ function createSessionManager(deps) {
     // shadow log; the JSONL path stays the live intent authority.
     async _ensureWire() {
       if (this._wire) return this._wire;
+      const { rearmPlan } = require('./wire/hold'); // pure re-arm math (used in the turn hook below)
       const { WireProxy } = require('./wire/proxy');
       const { isSubagentRole } = require('./wire/role');
       const { ShadowDiff } = require('./wire/shadow');
@@ -185,6 +186,7 @@ function createSessionManager(deps) {
           const { HoldKeeper } = require('./wire/hold');
           hold = new HoldKeeper({ warmth });
           hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
+          hold.on('hold', (ev) => this._onHoldLifecycle(ev)); // operator-facing subset → clodex.log
           hold.start();
         } catch (e) {
           this._shadowLog({ type: 'wire-hold-unavailable', error: e.message });
@@ -259,6 +261,38 @@ function createSessionManager(deps) {
                 this._noteConversationForDigest(s, t.sessionId);
               } else {
                 this._shadowLog({ type: 'wire-stray-session', agent: t.agent, sessionId: t.sessionId });
+              }
+            }
+            // Keep-warm re-arm across restart: the HoldKeeper is memory-only
+            // (wire/hold.js), so an armed hold dies on app restart while its
+            // INTENT survives on the sessions.json record. Restore it off the
+            // first main-line turn — the organic turn just warmed the prefix, so
+            // the warm-gated arm succeeds. Guard UNTIL armed (not once-per-spawn):
+            // a decline this turn retries next turn, so a hold is never silently
+            // re-lost. Keyed by s.sessionId (the corroborated identity above).
+            if (this._holdKeeper && !s._holdRearmed) {
+              try {
+                const p = getPersistence();
+                const rec = p.list().find((x) => x.name === t.agent);
+                const plan = rearmPlan(rec && rec.holdUntil, Date.now());
+                if (!plan) {
+                  s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
+                } else if (plan.clear) {
+                  p.setHoldUntil(t.agent, null);
+                  s._holdRearmed = true;
+                  log.info('keepwarm', `disarmed ${t.agent} (expired before re-arm)`);
+                } else if (plan.arm && s.sessionId) {
+                  const r = this._holdKeeper.arm(s.sessionId, plan.hours);
+                  if (r && r.armed && r.until) {
+                    s._holdRearmed = true;
+                    p.setHoldUntil(t.agent, Math.round(r.until * 1000)); // clamped truth
+                    log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
+                      `until ${new Date(r.until * 1000).toISOString()}`);
+                  }
+                  // decline (prefix not warm yet) → leave the guard, retry next turn
+                }
+              } catch (e) {
+                this._shadowLog({ type: 'wire-hold-rearm-error', agent: t.agent, error: e.message });
               }
             }
           } else if (s && s.agentType === 'claude') {
@@ -348,6 +382,52 @@ function createSessionManager(deps) {
           () => {},
         );
       } catch { /* shadow only — never surfaces */ }
+    }
+
+    // Resolve a wire session_id back to its (stable) session NAME — the key the
+    // hold intent is persisted under. Best-effort: a /clear-rotated id may not
+    // match, in which case the caller logs the raw id.
+    _nameForWireSession(sid) {
+      if (!sid) return null;
+      for (const [name, s] of this.sessions) {
+        if (s.sessionId === sid) return name;
+      }
+      return null;
+    }
+
+    // clodex.log keep-warm lifecycle (INFO/WARN). The shadow log carries the
+    // full firehose (armed / re-anchored / ping / disarmed) for forensics; THIS
+    // is the operator-facing subset Bogdan went looking for and found empty:
+    // disarms and ping FAILURES only — successful pings and re-anchors stay
+    // shadow-only (263 re-anchors in one run is too chatty for clodex.log).
+    // Failure-strikes also CLEAR the persisted intent (a dead credential must
+    // not re-arm on the next restart); expiry/max-pings just log — the field
+    // clears lazily on the next re-arm check. Explicit ('off') disarms are
+    // logged+cleared by the wire:hold handler, so they're skipped here.
+    // Re-anchors are quiet but DO persist: every organic turn restarts the
+    // keeper's window (until = now + hours), so without this the persisted
+    // holdUntil lags reality and a restart late in a re-anchored window would
+    // wrongly lapse-clear a still-valid hold.
+    _onHoldLifecycle(ev) {
+      try {
+        if (!ev) return;
+        if (ev.event === 're-anchored') {
+          const name = this._nameForWireSession(ev.session);
+          if (name && ev.until > 0) getPersistence().setHoldUntil(name, Math.round(ev.until * 1000));
+          return;
+        }
+        if (ev.event === 'disarmed') {
+          if (ev.cause === 'off') return;
+          const name = this._nameForWireSession(ev.session);
+          if (ev.cause === 'failures' && name) getPersistence().setHoldUntil(name, null);
+          log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
+            `${ev.pings != null ? `, ${ev.pings} pings` : ''})`);
+        } else if (ev.event === 'ping' && ev.result && ev.result.ok === false && !ev.result.skipped) {
+          const name = this._nameForWireSession(ev.session);
+          const r = ev.result;
+          log.warn('keepwarm', `ping FAILED ${name || ev.session}: ${r.reason || r.status_code || 'error'}`);
+        }
+      } catch { /* logging must never break the emitter */ }
     }
 
     // --- Window <-> workspace registration ---

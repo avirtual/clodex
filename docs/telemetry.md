@@ -134,6 +134,27 @@ popovers the owner will answer.
   intents, autocompact decisions, peer transitions, crashes). Logging must
   never throw into callers — it wraps the PTY and the crash net.
 
+## 6b. In-process keep-warm holds (wire/hold.js `HoldKeeper`)
+
+The built-in wire proxy's hold keeper is **in-memory by design** — it
+replays the session's last request as a 1-token cache-read ping, so its
+state includes request bytes + auth headers that must never touch disk.
+What DOES persist is the hold **intent**: `holdUntil` (epoch ms) on the
+session's sessions.json record, written on arm (from the arm result's
+clamped `until`, never the raw requested hours), re-written on every
+re-anchor (organic turns restart the keeper's window, so the persisted
+deadline must track it), and cleared on explicit disarm, failure-strike
+disarm, or lapse. After an app restart the first main-line wire turn
+re-arms the remaining window — retried each turn until the warm-gated
+`arm()` accepts (a strict once-per-spawn guard would silently re-lose the
+hold on a first-turn decline). Failure-disarm detection keys on the
+disarm event's machine-readable `cause` field (`'failures'`), never the
+human `reason` string. Residual gap, accepted: a session that stays idle
+across the restart has nothing to warm-gate against, so it sits cold
+until its next organic turn. Operator-facing lifecycle (disarms, ping
+failures) logs to clodex.log under `keepwarm`; the per-ping firehose
+stays in the shadow log.
+
 ## 7. Wirescope window & settings
 
 `openWirescopeWindow` (main.js) hosts the proxy UI in a hardened
@@ -155,6 +176,8 @@ are a proxy-side concept; the nearest in-repo trace is the supervisor's
 - The managed wirescope outlives the GUI; adopt, never double-spawn;
   vendor-bump restart at most once per launch.
 - Nothing that reaches a peer carries base/capabilities/sessionId.
+- Keep-warm persistence carries the hold INTENT only (`holdUntil`) —
+  never request bytes or auth headers.
 - Ops log stays coarse and never throws.
 - Statusline heredoc bytes are pinned; headless still writes the
   side-channel.
