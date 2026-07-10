@@ -37,6 +37,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
+    sessionScopeCtx, renameWorkspaceScope,
     // stores (siblings of persistence above, declared in main.js's multi-line
     // `let persistence, templates, …` list) — value-injected: initStores runs
     // before this factory in whenReady and the stores are never reassigned.
@@ -408,7 +409,10 @@ function registerIpcHandlers(deps) {
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
     return {
       ok: true,
-      agents: agentLibrary.list(),
+      // Scope-filtered offer list (same resolver the Edit Session agents catalog
+      // uses) — a workspace/personal-scoped agent isn't offered to a session it
+      // doesn't belong to. The drawer still shows everything (agentLibrary.list()).
+      agents: agentLibrary.listFor(sessionScopeCtx(name)),
       enabled: Array.isArray(entry.agents) ? entry.agents : [],
       denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
     };
@@ -1288,7 +1292,18 @@ function registerIpcHandlers(deps) {
   ipcMain.handle('workspace:list', () => workspaces.list());
   ipcMain.handle('workspace:current', (e) => workspaceOfSender(e));
   ipcMain.handle('workspace:setName', (e, name) => {
-    workspaces.setName(workspaceOfSender(e), name || 'Workspace');
+    const id = workspaceOfSender(e);
+    const prev = workspaces.get(id);
+    const oldName = prev && prev.name;
+    const newName = name || 'Workspace';
+    workspaces.setName(id, newName);
+    // Keep `workspace:`-scoped skills/agents pointing at the renamed workspace
+    // (they key off the DISPLAY name) — rewrite them in the same motion so they
+    // don't orphan. Exact-match on the old name; count logged.
+    if (oldName && oldName !== newName) {
+      const n = renameWorkspaceScope(oldName, newName);
+      if (n) log.info('workspace', `rescoped ${n} library file(s): "${oldName}" → "${newName}"`);
+    }
     refreshTrayMenu();
     refreshAppMenu();
     return true;

@@ -69,21 +69,28 @@ function collectAppendChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-function renderAgentChecklist(container, enabledSet) {
+// `autoSet` (optional) = names auto-INCLUDED for this session by `sessions:`
+// scope. Such a row renders CHECKED + disabled + a dim `· auto` suffix so the
+// forced injection is visible instead of a checkbox that lies (the spawn union
+// re-adds it regardless of the persisted state). collect + the save reconcile
+// exclude auto names so they're never written to the persisted record.
+function renderAgentChecklist(container, enabledSet, autoSet = null) {
   container.innerHTML = '';
   if (!agentLibCache.length) {
     container.innerHTML = '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>';
     return;
   }
   for (const a of agentLibCache) {
+    const auto = !!(autoSet && autoSet.has(a.name));
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = a.name;
-    cb.checked = enabledSet.has(a.name);
+    cb.checked = auto || enabledSet.has(a.name);
+    if (auto) cb.disabled = true;
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(a.name)}</strong>${a.description ? ' — ' + esc(a.description) : ''}`;
+    txt.innerHTML = `<strong>${esc(a.name)}</strong>${a.description ? ' — ' + esc(a.description) : ''}${auto ? ' <span class="auto-flag">· auto</span>' : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);
@@ -139,21 +146,25 @@ function wireBulkToggles(popoverEl, listEl) {
   });
 }
 
-function renderInjectChecklist(container, enabledSet) {
+// `autoSet` (optional): same `sessions:`-scope auto-include semantics as
+// renderAgentChecklist — a matched skill renders CHECKED + disabled + `· auto`.
+function renderInjectChecklist(container, enabledSet, autoSet = null) {
   container.innerHTML = '';
   if (!skillLibCache.length) {
     container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skill Library (Skills menu).</span>';
     return;
   }
   for (const s of skillLibCache) {
+    const auto = !!(autoSet && autoSet.has(s.name));
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = s.name;
-    cb.checked = enabledSet.has(s.name);
+    cb.checked = auto || enabledSet.has(s.name);
+    if (auto) cb.disabled = true;
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(s.name)}</strong>${s.description ? ' — ' + esc(s.description) : ''}`;
+    txt.innerHTML = `<strong>${esc(s.name)}</strong>${s.description ? ' — ' + esc(s.description) : ''}${auto ? ' <span class="auto-flag">· auto</span>' : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);

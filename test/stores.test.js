@@ -164,6 +164,78 @@ test('skillLibrary: save/list/remove', () => {
   } finally { cleanup(); }
 });
 
+// --- scope: listFor filters offers by workspace/sessions frontmatter ---------
+test('agentLibrary.listFor: scope frontmatter filters the offer list; list() unchanged', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.agentLibrary.save('global', '---\ndescription: everyone\n---\nb');
+    stores.agentLibrary.save('crypto', '---\ndescription: coins\nsessions: trader, stocks\n---\nb');
+    stores.agentLibrary.save('deskonly', '---\ndescription: ws\nworkspace: trading\n---\nb');
+    // list() shows all three (the drawer view).
+    assert.deepStrictEqual(stores.agentLibrary.list().map((a) => a.name).sort(),
+      ['crypto', 'deskonly', 'global']);
+    // A session named 'trader' in the 'default' workspace: global + its personal.
+    assert.deepStrictEqual(
+      stores.agentLibrary.listFor({ session: 'trader', workspace: 'default' }).map((a) => a.name).sort(),
+      ['crypto', 'global']);
+    // In the 'trading' workspace, the workspace-scoped one is offered too.
+    assert.deepStrictEqual(
+      stores.agentLibrary.listFor({ session: 'clodex', workspace: 'trading' }).map((a) => a.name).sort(),
+      ['deskonly', 'global']);
+    // An unrelated session/workspace sees only globals.
+    assert.deepStrictEqual(
+      stores.agentLibrary.listFor({ session: 'clodex', workspace: 'default' }).map((a) => a.name),
+      ['global']);
+  } finally { cleanup(); }
+});
+
+test('skillLibrary.listFor: scope parsed from content; list() shape unchanged', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.skillLibrary.save('warm', '---\nname: warm\ndescription: global\n---\ndo');
+    stores.skillLibrary.save('coin', '---\nname: coin\ndescription: crypto\nsessions: stocks\n---\ndo');
+    // list() carries no meta field (wire shape preserved) — just the four keys.
+    assert.deepStrictEqual(Object.keys(stores.skillLibrary.list()[0]).sort(),
+      ['content', 'description', 'file', 'name']);
+    assert.deepStrictEqual(
+      stores.skillLibrary.listFor({ session: 'stocks', workspace: 'default' }).map((s) => s.name).sort(),
+      ['coin', 'warm']);
+    assert.deepStrictEqual(
+      stores.skillLibrary.listFor({ session: 'other', workspace: 'default' }).map((s) => s.name),
+      ['warm']);
+  } finally { cleanup(); }
+});
+
+// --- renameWorkspaceScope: rewrite workspace: lines across both libraries -----
+test('renameWorkspaceScope: rewrites matching workspace lines, counts, preserves the rest', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.agentLibrary.save('a1', '---\ndescription: d\nworkspace: trading\ntools: Bash\n---\nagent body');
+    stores.skillLibrary.save('s1', '---\nname: s1\ndescription: d\nworkspace: trading\n---\nskill body');
+    stores.agentLibrary.save('a2', '---\ndescription: d\nworkspace: other\n---\nbody');   // not renamed
+    stores.agentLibrary.save('a3', '---\ndescription: d\n---\nglobal body');              // no scope
+
+    const n = stores.renameWorkspaceScope('trading', 'Markets');
+    assert.strictEqual(n, 2, 'two files rewritten (a1 + s1)');
+
+    const a1 = fs.readFileSync(path.join(registryDir, 'agents', 'a1.md'), 'utf-8');
+    assert.match(a1, /workspace: Markets/);
+    assert.ok(a1.includes('tools: Bash'), 'other frontmatter keys preserved');
+    assert.ok(a1.includes('agent body'), 'body preserved');
+    const s1 = fs.readFileSync(path.join(registryDir, 'skills', 's1.md'), 'utf-8');
+    assert.match(s1, /workspace: Markets/);
+    assert.ok(s1.includes('skill body'));
+    // The non-matching + unscoped files are untouched.
+    assert.match(fs.readFileSync(path.join(registryDir, 'agents', 'a2.md'), 'utf-8'), /workspace: other/);
+    assert.ok(!fs.readFileSync(path.join(registryDir, 'agents', 'a3.md'), 'utf-8').includes('workspace:'));
+
+    // Idempotent / no-op cases.
+    assert.strictEqual(stores.renameWorkspaceScope('trading', 'Markets'), 0, 'old name already gone');
+    assert.strictEqual(stores.renameWorkspaceScope('Markets', 'Markets'), 0, 'unchanged name');
+    assert.strictEqual(stores.renameWorkspaceScope('', 'X'), 0, 'blank old name');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: missing file -> defaults, set round-trips + validates', () => {
   const { stores, cleanup } = freshStores();
   try {

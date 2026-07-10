@@ -117,6 +117,7 @@ function createSessionManager(deps) {
     shouldHoldDm,
     spillToFile,
     stripLevelOf,
+    unionEnabled,
     vetFileIntent,
     whichBin,
     writeClaudeDigestFile,
@@ -520,7 +521,12 @@ function createSessionManager(deps) {
           // library. Writes no file, touches no repo. The paired permissions.deny
           // (above) is what forces the model to actually use these lean agents.
           if (!args.includes('--agents')) {
-            const agentsObj = buildAgentsArg(agents, getAgentLibrary().list());
+            // Union the persisted enabled agents with any `sessions:`-scoped
+            // library agents assigned to THIS session (assignment = intent —
+            // computed at spawn, never written back to the record).
+            const agentLib = getAgentLibrary().list();
+            const effectiveAgents = unionEnabled(agents, agentLib, name);
+            const agentsObj = buildAgentsArg(effectiveAgents, agentLib);
             if (agentsObj) args.push('--agents', JSON.stringify(agentsObj));
           }
           // clodex-injected skills: scaffold the enabled library subset into a

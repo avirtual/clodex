@@ -100,6 +100,10 @@ Conventions the refactor established:
 - **memory-store.js** — agent memory units (list/remember/recall/pin).
 - **attention.js**, **ctx-reminder.js**, **file-touch.js**,
   **proxy-util.js**, **agents-util.js**, **skills-util.js**,
+  **scope-util.js** (skill/agent visibility: `visibleTo` /
+  `autoEnabledFor` / `unionEnabled` / `reconcilePartialSelection` — the
+  `workspace:`/`sessions:` frontmatter scope predicate + spawn-union +
+  scoped-checklist save semantics),
   **wire-intents.js**, **wire-telemetry.js** — pure helper layers.
 - **remote.js** — the remote/peer HTTP+SSE server (phone access + peering
   owner side).

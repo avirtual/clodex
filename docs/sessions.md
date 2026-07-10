@@ -33,6 +33,10 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   `--settings {name}-hook.json`; `--add-dir` for the messages dir;
   `--agents` JSON from the agent library; `--plugin-dir` for injected
   skills; `--resume <id>` (+`--fork-session`) when resuming.
+  The agent/skill enabled set is UNIONED at spawn with any `sessions:`-scoped
+  library items assigned to this session (`scope-util.unionEnabled`) —
+  assignment is intent, computed each spawn and NEVER written back to the
+  persisted record.
 - **codex** — `mergeCodexInstructions` merges system + IPC_PROMPT + appends
   into `{name}-instructions.md` (`model_instructions_file`); shared
   `codex-session-hook.sh` routed by `WB_WRAP_NAME`; resume/fork is a
@@ -41,6 +45,22 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
 - **bash** — `$SHELL` with extraArgs verbatim; no hooks, no transport,
   private (invisible to `[agent:who]`, not DM-able — but peer-visible for
   attach/control).
+
+**Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
+libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:
+`workspace: <name>` (visible only in that workspace — matched on its DISPLAY
+name) and `sessions: a, b` (personal — visible only to the named sessions,
+globally-unique). Neither key = GLOBAL (every pre-scope file unchanged, zero
+migration); both = union. The scope only affects the OFFER surfaces (the
+Skills/Agents popovers + the Edit Session agents catalog filter via
+`library.listFor(ctx)` — `scope-util.visibleTo`); the library DRAWER still
+lists everything. `workspace:` scope only offers; `sessions:` scope also
+AUTO-INCLUDES its files at spawn (union above, never persisted — the scoped
+checklists render those rows checked+disabled `· auto` and `reconcilePartial-
+Selection` keeps Save from dropping out-of-scope selections or persisting the
+auto ones). Renaming a workspace rewrites matching `workspace:` lines across
+both libraries in the same motion (`renameWorkspaceScope`), so scoped files
+don't orphan. Nothing is ever written into a project's `.claude/`.
 
 Agent sessions then get their transport: `{name}.sock` Unix socket +
 `~/.clodex/{name}.json` registry entry (agent-transport.js). A stale

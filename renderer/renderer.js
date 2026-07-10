@@ -7,6 +7,7 @@ const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_F
 const { esc, shortPath, fmtTokens, fmtCountdown, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { createIpcLog } = require('./ipc-log');
 const { createTermSearch } = require('./term-search');
 const { initBanners } = require('./banners');
@@ -2514,6 +2515,12 @@ let argsEditingName = null;
 // onRestarted } source (built by peers-ui) that swaps the data layer while the
 // dialog DOM stays identical. Null = the local session path (default).
 let argsEditingSource = null;
+// Scoped-checklist Save inputs for the args-dialog agents list: persisted set,
+// rendered (in-scope) names, and auto-included names — so save reconciles instead
+// of dropping an out-of-scope persisted agent (and never persists an auto one).
+let argsAgentsPersisted = [];
+let argsAgentsRendered = [];
+let argsAgentsAuto = [];
 
 argsProxyMode.addEventListener('change', () => {
   argsProxyUrl.style.display = argsProxyMode.value === 'custom' ? '' : 'none';
@@ -2534,13 +2541,15 @@ async function openArgsDialog(name, argsSource = null) {
     if (!r || !r.ok) { alert(r && r.error ? r.error : 'Session not found.'); return; }
     ({ res, settings, promptLib, agentLib } = r);
   } else {
-    [res, settings, promptLib, agentLib] = await Promise.all([
+    [res, settings, promptLib] = await Promise.all([
       window.api.getSessionArgs(name),
       window.api.getSettings(),
       window.api.listPrompts(),
-      window.api.listAgents(),
     ]);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+    // Agents come SCOPE-FILTERED from getSessionArgs (res.agentCatalog), same as
+    // the peer path pulls the box's filtered catalog — never the unscoped library.
+    agentLib = res.agentCatalog || [];
   }
   argsEditingSource = argsSource;
   setAgentLibCache(agentLib || []);
@@ -2567,7 +2576,14 @@ async function openArgsDialog(name, argsSource = null) {
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
-  renderAgentChecklist(argsAgentsList, new Set(res.agents || []));
+  // Scope: `sessions:`-scoped agents render auto (checked+disabled `· auto`); the
+  // agentLib carries frontmatter meta both locally (readSessionArgs.agentCatalog)
+  // and over the wire (the box's catalog), so autoEnabledFor resolves either way.
+  const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
+  renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto);
+  argsAgentsPersisted = res.agents || [];
+  argsAgentsRendered = (agentLib || []).map((a) => a.name);
+  argsAgentsAuto = [...argsAuto];
   renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = isClaude ? '' : 'none';
   argsToolsSection.style.display = isClaude ? '' : 'none';
@@ -2595,7 +2611,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const promptsHidden = argsPromptRow.style.display === 'none';
   const systemPromptFile = promptsHidden ? null : (argsSystemPrompt.value || null);
   const appendPromptFiles = promptsHidden ? [] : collectAppendChecklist(argsAppendList);
-  const agents = argsAgentsRow.style.display === 'none' ? [] : collectAgentChecklist(argsAgentsList);
+  // Reconcile the scoped agents checklist: keep an out-of-scope persisted agent
+  // (never rendered) and exclude auto-included ones from the persisted set.
+  const agents = argsAgentsRow.style.display === 'none' ? [] : reconcilePartialSelection(
+    argsAgentsPersisted, argsAgentsRendered, collectAgentChecklist(argsAgentsList), argsAgentsAuto);
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);

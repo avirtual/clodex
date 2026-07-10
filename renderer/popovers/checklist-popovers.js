@@ -24,6 +24,16 @@ const {
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
   setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
 } = require('../lib/checklists');
+const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
+const { parseSkillFrontmatter } = require('../../skills-util');
+
+// Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
+// Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
+// grammar the library drawer uses). Feeds render (checked+disabled `· auto`) and
+// the Save reconcile (exclude from the persisted set).
+const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [], session));
+const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
+  (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
 function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession }) {
   // --- Tools quick-access popover ------------------------------------------
@@ -107,6 +117,12 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   // Non-null while editing a PEER session's skills: swaps the fetch/save/restart
   // data layer (the box's catalog + wire persist) while the DOM stays identical.
   let skillsEditingSource = null;
+  // Scoped-checklist Save inputs captured at render: the persisted inject set, the
+  // rendered (in-scope) skill names, and the auto-included names — so Apply can
+  // reconcile (out-of-scope survivors kept, auto excluded) instead of dropping.
+  let skillsInjectPersisted = [];
+  let skillsInjectRendered = [];
+  let skillsInjectAuto = [];
 
   function closeSkillsPopover() {
     skillsPopover.classList.add('hidden');
@@ -123,10 +139,15 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // Library-injection section: only shown when the library is non-empty.
     setSkillLibCache(res.skillLib || []);
     if (getSkillLibCache().length) {
-      renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []));
+      const auto = skillAutoSet(res.skillLib, name);
+      renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []), auto);
+      skillsInjectPersisted = res.injectSkills || [];
+      skillsInjectRendered = (res.skillLib || []).map((s) => s.name);
+      skillsInjectAuto = [...auto];
       popoverInjectSkillsSection.style.display = '';
     } else {
       popoverInjectSkillsSection.style.display = 'none';
+      skillsInjectPersisted = []; skillsInjectRendered = []; skillsInjectAuto = [];
     }
     skillsPopoverRestart.checked = false;
     skillsPopoverName.textContent = name;
@@ -151,8 +172,14 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const disabledSkills = collectSkillChecklist(popoverSkillsList);
     // Only send injectSkills when the library section is shown; otherwise pass
     // undefined so the handler preserves the persisted set (empty library != none).
+    // When shown, RECONCILE against the scoped render: an out-of-scope persisted
+    // skill (never rendered) survives, and auto-included skills are excluded from
+    // the persisted set (the spawn union re-adds them).
     const injectSkills = popoverInjectSkillsSection.style.display === 'none'
-      ? undefined : collectInjectChecklist(popoverInjectSkillsList);
+      ? undefined
+      : reconcilePartialSelection(
+          skillsInjectPersisted, skillsInjectRendered,
+          collectInjectChecklist(popoverInjectSkillsList), skillsInjectAuto);
     const restart = skillsPopoverRestart.checked;
     // Capture the peer source (if any) before close() nulls it.
     const source = skillsEditingSource;
@@ -206,6 +233,11 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const popoverBuiltinsList = document.getElementById('popover-builtins-list');
   const agentsPopoverRestart = document.getElementById('agents-popover-restart');
 
+  // Scoped-checklist Save inputs for the agents list (see the skills equivalents).
+  let agentsPersisted = [];
+  let agentsRendered = [];
+  let agentsAuto = [];
+
   function closeAgentsPopover() {
     agentsPopover.classList.add('hidden');
     agentsPopover.dataset.name = '';
@@ -215,7 +247,11 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const res = await window.api.getAgentCatalog(name);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     setAgentLibCache(res.agents || []);
-    renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []));
+    const auto = agentAutoSet(res.agents, name);
+    renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []), auto);
+    agentsPersisted = res.enabled || [];
+    agentsRendered = (res.agents || []).map((a) => a.name);
+    agentsAuto = [...auto];
     renderBuiltinChecklist(popoverBuiltinsList, new Set(res.denyBuiltins || []));
     agentsPopoverRestart.checked = false;
     agentsPopoverName.textContent = name;
@@ -232,7 +268,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   document.getElementById('agents-popover-apply').addEventListener('click', async () => {
     const name = agentsPopover.dataset.name;
     if (!name) return closeAgentsPopover();
-    const agents = collectAgentChecklist(popoverAgentsList);
+    // Reconcile against the scoped render (out-of-scope survivors kept, auto
+    // excluded) — same as the skills popover.
+    const agents = reconcilePartialSelection(
+      agentsPersisted, agentsRendered, collectAgentChecklist(popoverAgentsList), agentsAuto);
     const denyBuiltins = collectBuiltinChecklist(popoverBuiltinsList);
     const restart = agentsPopoverRestart.checked;
     // The agent roster is fixed at conversation creation (--resume replays the

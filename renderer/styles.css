@@ -1758,6 +1758,26 @@ html, body {
   text-overflow: ellipsis;
 }
 
+/* Scope caption on an agent/skill library row (workspace: / sessions:); absent
+   for global (unscoped) files. Dimmer than the preview, its own line. */
+.prompt-item-scope {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.75;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dim `· auto` suffix on a checklist row auto-included by `sessions:` scope
+   (rendered checked + disabled) — marks a forced injection vs a real choice. */
+.auto-flag {
+  color: var(--text-dim);
+  opacity: 0.7;
+  font-size: 10px;
+}
+
 .prompt-item-actions {
   display: none;
   margin-top: 6px;

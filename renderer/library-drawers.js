@@ -26,6 +26,34 @@
 
 const { esc } = require('./lib/format');
 
+// Scope caption for a library row (point 7 of the scope feature): a dim label
+// derived from the two optional frontmatter keys — `workspace: <name>` and/or
+// `sessions: a, b`. No keys → global → no badge. Agent rows carry parsed `meta`;
+// skill rows carry only raw `content`, so parse a minimal frontmatter subset for
+// just the two scope keys (mirrors scope-util's grammar — display only).
+function scopeMetaFromContent(content) {
+  const m = String(content || '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const meta = {};
+  if (m) for (const line of m[1].split(/\r?\n/)) {
+    const mm = line.match(/^(workspace|sessions):\s*(.*)$/);
+    if (!mm) continue;
+    let v = mm[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    meta[mm[1]] = v;
+  }
+  return meta;
+}
+function scopeBadgeHtml(meta) {
+  meta = meta || {};
+  const parts = [];
+  const ws = meta.workspace != null ? String(meta.workspace).trim() : '';
+  const ss = meta.sessions != null ? String(meta.sessions).trim() : '';
+  if (ws) parts.push(`workspace: ${ws}`);
+  if (ss) parts.push(`sessions: ${ss}`);
+  return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(' · '))}</div>` : '';
+}
+
 function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache }) {
   const promptsDrawer = document.getElementById('prompts-drawer');
   const promptsList = document.getElementById('prompts-list');
@@ -192,6 +220,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.innerHTML = `
         <div class="prompt-item-title">${esc(a.name)}</div>
         <div class="prompt-item-preview">${esc(preview)}</div>
+        ${scopeBadgeHtml(a.meta)}
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
         </div>
@@ -312,6 +341,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.innerHTML = `
         <div class="prompt-item-title">${esc(s.name)}</div>
         <div class="prompt-item-preview">${esc(s.description || '(no description)')}</div>
+        ${scopeBadgeHtml(scopeMetaFromContent(s.content))}
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
         </div>

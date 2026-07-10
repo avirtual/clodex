@@ -35,7 +35,7 @@ function createRemoteWiring(deps) {
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     // Edit Session catalogs: CLAUDE_TOOLS is a load-time const (value); the
     // libraries are whenReady-assigned stores read at request time (getters).
-    CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary,
+    CLAUDE_TOOLS, getPromptLibrary,
     // store getters (whenReady-assigned / TDZ at factory call)
     getPersistence, getUiSettings, getWorkspaces,
     // mutable singletons (get+set, M4 pattern)
@@ -199,7 +199,11 @@ function createRemoteWiring(deps) {
           return {
             ...base,
             catalogs: {
-              agents: getAgentLibrary().list(),
+              // Agents catalog is the SCOPE-FILTERED list readSessionArgs already
+              // resolved for this box session (base.agentCatalog) — so a remote
+              // edit is offered exactly the box's in-scope agents, no more than a
+              // local edit would be. Prompts/tools are unscoped.
+              agents: base.agentCatalog || [],
               prompts: getPromptLibrary().list(),
               claudeTools: CLAUDE_TOOLS,
               proxyUrl: getUiSettings().get().proxyUrl,

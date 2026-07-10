@@ -370,6 +370,10 @@ const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 
 let persistence, templates, workspaces, promptLibrary,
   agentDefaults, agentLibrary, skillLibrary, uiSettings;
+// Workspace-rename → library rescope helper (from initStores). Not one of the
+// eight stores — a cross-library maintenance fn used by workspace:setName to
+// keep `workspace:`-scoped skills/agents pointing at the renamed workspace.
+let renameWorkspaceScope;
 
 // Resolve a session's strip level from its persisted entry, honoring the legacy
 // `stripThinking:'on'` field (pre-leveled) as level 1. Single source of truth
@@ -447,7 +451,15 @@ const SKILL_PLUGIN_NAME = 'clodex-skills';
 // The dir is rebuilt from scratch each spawn so a removed/edited library skill
 // can't linger. Writes only under ~/.clodex — never the repo or ~/.claude.
 function writeSkillPlugin(name, injectSkills) {
-  const plugin = buildSkillPlugin(injectSkills, skillLibrary.list(), SKILL_PLUGIN_NAME);
+  const lib = skillLibrary.list();
+  // Auto-include `sessions:`-scoped library skills for this session (assignment =
+  // intent) — a spawn-time UNION with the persisted injectSkills, never written
+  // back to the record. skillLibrary.list() carries the raw file as `content`, so
+  // parse the scope frontmatter here to feed autoEnabledFor (its list() shape has
+  // no meta, kept lean for the wire).
+  const scoped = lib.map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content).meta }));
+  const effective = unionEnabled(injectSkills, scoped, name);
+  const plugin = buildSkillPlugin(effective, lib, SKILL_PLUGIN_NAME);
   const dir = path.join(SKILL_PLUGINS_DIR, name);
   // Clear any prior scaffold (set shrank, or nothing injected now).
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -541,7 +553,8 @@ function randBase36(len) {
   return s.slice(0, len);
 }
 const { ctxReminderFor } = require('./ctx-reminder');
-const { buildSkillPlugin } = require('./skills-util');
+const { buildSkillPlugin, parseSkillFrontmatter } = require('./skills-util');
+const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
 const { resolveSessionArgsPatch } = require('./session-args');
@@ -1026,6 +1039,7 @@ const SessionManager = createSessionManager({
     shouldHoldDm,
     spillToFile,
     stripLevelOf,
+    unionEnabled,
     vetFileIntent,
     whichBin,
     writeClaudeDigestFile,
@@ -1269,11 +1283,26 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
+// The scope context for a session: its own name + its workspace's DISPLAY name
+// (resolved through the entry's workspaceId → workspace record; unknown/headless
+// entries fall back to the default workspace name). Single source for every
+// offer-surface scope filter (Agents popover, Edit Session agents catalog, Skills
+// popover) so local + over-the-wire reads resolve scope identically.
+function sessionScopeCtx(name) {
+  const entry = persistence.get(name);
+  const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
+  const ws = workspaces.get(wsId);
+  return { session: name, workspace: (ws && ws.name) || null };
+}
+
 // Read a session's editable args (the Edit Session dialog's source of truth).
 // Shared by the session:getArgs IPC handler and the peer session-args GET
 // endpoint (remote-wiring) so the local + over-the-wire reads can't drift — the
-// remote path just appends the box's catalogs. Returns { ok:false } for an
-// unknown name, mirroring the old inline handler.
+// remote path just appends the box's catalogs. `agentCatalog` is the SCOPE-
+// FILTERED agent library for this session (the dialog's agents checklist renders
+// from it, local and remote alike), so a workspace/personal-scoped agent isn't
+// offered to a session it doesn't belong to. Returns { ok:false } for an unknown
+// name, mirroring the old inline handler.
 function readSessionArgs(name) {
   const entry = persistence.get(name);
   return entry ? {
@@ -1290,6 +1319,7 @@ function readSessionArgs(name) {
     effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
     disabledSkills: entry.disabledSkills || [],
     injectSkills: entry.injectSkills || [],
+    agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
     stripLevel: stripLevelOf(entry),
   } : { ok: false };
 }
@@ -1366,7 +1396,7 @@ function readSkillCatalog(name) {
     effective: eff.overrides,        // lower-layer state, per skill (value+source)
     skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
     canReenable: SKILL_REENABLE_CONFIRMED,
-    skillLib: skillLibrary.list(),   // library skills available to inject
+    skillLib: skillLibrary.listFor(sessionScopeCtx(name)), // scope-filtered inject offer list
     injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
   };
 }
@@ -1408,7 +1438,6 @@ const { syncRemoteServer } = createRemoteWiring({
   // exposes the box's own skillLibrary — both correct for a remote edit.
   readSkillCatalog, applySessionSkills,
   getPromptLibrary: () => promptLibrary,
-  getAgentLibrary: () => agentLibrary,
   getPersistence: () => persistence,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
@@ -1579,7 +1608,7 @@ if (!singleInstance) {
 
 app.whenReady().then(() => {
   ({ persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, uiSettings } =
+    agentDefaults, agentLibrary, skillLibrary, uiSettings, renameWorkspaceScope } =
     initStores(app.getPath('userData'), { log, registryDir: REGISTRY_DIR }));
   proxyPoller.start();
 
@@ -1670,6 +1699,9 @@ app.whenReady().then(() => {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
+    // Skill/agent scope: the per-session scope context resolver (offer filters)
+    // and the workspace-rename → library rescope helper.
+    sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
     agentLibrary, skillLibrary, uiSettings,
     getRemoteServer: () => remoteServer,

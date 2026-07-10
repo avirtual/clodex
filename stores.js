@@ -31,6 +31,7 @@ const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { parseAgentFrontmatter } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
+const { visibleTo } = require('./scope-util');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
@@ -663,6 +664,13 @@ function initStores(userDataPath, { log, registryDir } = {}) {
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     },
+    // Scope-filtered view of list() for the OFFER surfaces (Agents popover, the
+    // Edit Session agents catalog): only items visible to the given
+    // { session, workspace } context. list() itself stays unfiltered so the
+    // library DRAWER keeps showing everything. Same per-item shape as list().
+    listFor(ctx) {
+      return this.list().filter((a) => visibleTo(a.meta, ctx || {}));
+    },
     raw(name) {
       try { return fs.readFileSync(this._file(name), 'utf-8'); } catch { return null; }
     },
@@ -699,6 +707,14 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         } catch { /* skip unreadable */ }
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
+    },
+    // Scope-filtered view for the OFFER surfaces (the Skills popover's inject
+    // catalog, local + over the wire). The scope keys live in each file's
+    // frontmatter, which list() carries verbatim as `content` — re-parse it here
+    // rather than widen the list() item shape, so the remote skillLib payload
+    // stays byte-for-byte what it was. list() itself stays unfiltered (drawer).
+    listFor(ctx) {
+      return this.list().filter((s) => visibleTo(parseSkillFrontmatter(s.content).meta, ctx || {}));
     },
     raw(name) {
       try { return fs.readFileSync(this._file(name), 'utf-8'); } catch { return null; }
@@ -774,11 +790,51 @@ function initStores(userDataPath, { log, registryDir } = {}) {
     },
   };
 
+  // Workspace rename → rescope the libraries. A `workspace:`-scoped skill/agent
+  // keys off the workspace DISPLAY name, so renaming a workspace would orphan its
+  // scoped files unless we rewrite them in the same motion. Exact-match on the old
+  // trimmed name (what visibleTo compares); rewrites only the `workspace:`
+  // frontmatter line's value, leaving the body and every other key byte-identical.
+  // Returns the count rewritten. No-op when the name is unchanged/blank.
+  function renameWorkspaceScope(oldName, newName) {
+    const from = String(oldName == null ? '' : oldName).trim();
+    const to = String(newName == null ? '' : newName).trim();
+    if (!from || from === to) return 0;
+    let count = 0;
+    for (const dir of [AGENTS_DIR, SKILLS_LIB_DIR]) {
+      let files;
+      try { files = fs.readdirSync(dir); } catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.md')) continue;
+        const p = path.join(dir, f);
+        let raw;
+        try { raw = fs.readFileSync(p, 'utf-8'); } catch { continue; }
+        // Only the leading frontmatter fence carries scope; never touch the body.
+        const fence = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+        if (!fence) continue;
+        const block = fence[0];
+        const nextBlock = block.replace(/^(\s*workspace:\s*)(.*)$/m, (whole, pre, val) => {
+          let v = val.trim();
+          if ((v.startsWith('"') && v.endsWith('"')) ||
+              (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+          return v === from ? `${pre}${to}` : whole;
+        });
+        if (nextBlock === block) continue;
+        try {
+          atomicWriteFileSync(p, nextBlock + raw.slice(block.length));
+          count++;
+        } catch { /* leave the file as-is on a write error */ }
+      }
+    }
+    return count;
+  }
+
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
 
   return {
     persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, uiSettings,
+    renameWorkspaceScope,
   };
 }
 
