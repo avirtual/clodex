@@ -2,19 +2,39 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { InjectQueue, shouldDeferInject, isInjectInFlight } = require('../inject-queue');
+const { InjectQueue, shouldDeferInject, isInjectInFlight, canFireCompact } = require('../inject-queue');
 
 // --- isInjectInFlight: compact dup-drop truth table --------------------------
-// The dup-drop guard fires when a self-compact is already in flight (guard armed
-// OR continuation stashed). Extracted pure so it has a test even though the
-// SessionManager it lives on can't be required under plain node.
-test('isInjectInFlight: in flight iff guard or continuation set', () => {
-  assert.strictEqual(isInjectInFlight({ guard: false, continuation: null }), false);
-  assert.strictEqual(isInjectInFlight({ guard: true, continuation: null }), true);
-  assert.strictEqual(isInjectInFlight({ guard: false, continuation: 'do X' }), true);
-  assert.strictEqual(isInjectInFlight({ guard: true, continuation: 'do X' }), true);
+// The dup-drop guard fires when a self-compact is already in flight (LATCH set,
+// guard armed, OR continuation stashed). Extracted pure so it has a test even
+// though the SessionManager it lives on can't be required under plain node.
+test('isInjectInFlight: in flight iff pending, guard, or continuation set', () => {
+  assert.strictEqual(isInjectInFlight({ pending: null, guard: false, continuation: null }), false);
+  assert.strictEqual(isInjectInFlight({ pending: { cmd: '/compact' }, guard: false, continuation: null }), true);
+  assert.strictEqual(isInjectInFlight({ pending: null, guard: true, continuation: null }), true);
+  assert.strictEqual(isInjectInFlight({ pending: null, guard: false, continuation: 'do X' }), true);
+  assert.strictEqual(isInjectInFlight({ pending: null, guard: true, continuation: 'do X' }), true);
   // Empty-string continuation is not "stashed" — only a real body counts.
-  assert.strictEqual(isInjectInFlight({ guard: false, continuation: '' }), false);
+  assert.strictEqual(isInjectInFlight({ pending: null, guard: false, continuation: '' }), false);
+  // Fields absent entirely (back-compat) → not in flight.
+  assert.strictEqual(isInjectInFlight({}), false);
+});
+
+// --- canFireCompact: latch fire gate -----------------------------------------
+// A latched self-compact may fire only when the latch is set AND both inject
+// queues are empty (CLI parked at prompt, nothing about to wake it). Pure so the
+// gate is testable off the SessionManager.
+test('canFireCompact: fires iff pending latch and both queues empty', () => {
+  const p = { cmd: '/compact', continuation: 'go' };
+  assert.strictEqual(canFireCompact({ pending: p, holdQueueLen: 0, ptyQueueLen: 0 }), true);
+  // No latch -> never fires.
+  assert.strictEqual(canFireCompact({ pending: null, holdQueueLen: 0, ptyQueueLen: 0 }), false);
+  // Either queue non-empty -> wait (a queued inject is about to wake the CLI).
+  assert.strictEqual(canFireCompact({ pending: p, holdQueueLen: 1, ptyQueueLen: 0 }), false);
+  assert.strictEqual(canFireCompact({ pending: p, holdQueueLen: 0, ptyQueueLen: 2 }), false);
+  assert.strictEqual(canFireCompact({ pending: p, holdQueueLen: 3, ptyQueueLen: 4 }), false);
+  // Missing lengths default to 0 (fresh session, queues never built).
+  assert.strictEqual(canFireCompact({ pending: p }), true);
 });
 
 // --- shouldDeferInject: typing quiet-gate decision ---------------------------

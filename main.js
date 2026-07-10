@@ -540,7 +540,7 @@ const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord
 const { buildAgentsArg, denyAgentRules } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
-const { InjectQueue, isInjectInFlight } = require('./inject-queue');
+const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, shadowIntentKey } = require('./intent-scanner');
@@ -1013,6 +1013,7 @@ const SessionManager = createSessionManager({
     isDraftOpen,
     isHumanPtyInput,
     isInjectInFlight,
+    canFireCompact,
     lastTranscriptWrite,
     log,
     memoryStore,

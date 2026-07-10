@@ -9,16 +9,58 @@ const { IntentDeduper, ActivityTracker, TranscriptSentinel } = require('../wire-
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('IntentDeduper: first claim wins, repeat within TTL drops, expiry re-opens', () => {
+test('IntentDeduper: source-aware claim matrix ({ok, reason})', () => {
   let now = 1000;
-  const d = new IntentDeduper({ ttl: 100, now: () => now });
-  assert.strictEqual(d.claim('alice', 'k1'), true);
-  assert.strictEqual(d.claim('alice', 'k1'), false);   // wire vs recovery overlap
-  assert.strictEqual(d.claim('bob', 'k1'), true);      // per-agent namespaces
-  now += 101;
-  assert.strictEqual(d.claim('alice', 'k1'), true);    // TTL expired
-  d.prune(new Set(['bob']));
-  assert.strictEqual(d.claim('alice', 'k1'), true);    // pruned -> fresh
+  const mk = () => new IntentDeduper({ ttl: 100, now: () => now });
+
+  // wire-after-wire: ALLOWED (distinct turns are distinct emissions — collapsing
+  // them would eat a deliberate retry, the exact bug this fix closes).
+  {
+    const d = mk();
+    assert.deepStrictEqual(d.claim('alice', 'k1', 'wire'), { ok: true, reason: null });
+    assert.deepStrictEqual(d.claim('alice', 'k1', 'wire'), { ok: true, reason: null });
+  }
+  // cross-path overlap: REJECT both directions (the real dedupe case).
+  {
+    const d = mk();
+    assert.strictEqual(d.claim('alice', 'k1', 'wire').ok, true);
+    const r = d.claim('alice', 'k1', 'recovery');
+    assert.strictEqual(r.ok, false);
+    assert.match(r.reason, /cross-path overlap \(wire→recovery\)/);
+  }
+  {
+    const d = mk();
+    assert.strictEqual(d.claim('alice', 'k1', 'recovery').ok, true);
+    const r = d.claim('alice', 'k1', 'wire');
+    assert.strictEqual(r.ok, false);
+    assert.match(r.reason, /cross-path overlap \(recovery→wire\)/);
+  }
+  // recovery-after-recovery: REJECT (the replay tail repeats each poll).
+  {
+    const d = mk();
+    assert.strictEqual(d.claim('alice', 'k1', 'recovery').ok, true);
+    const r = d.claim('alice', 'k1', 'recovery');
+    assert.strictEqual(r.ok, false);
+    assert.match(r.reason, /recovery replay repeat/);
+  }
+  // per-agent namespaces + TTL expiry + prune all re-open a fresh claim.
+  {
+    const d = mk();
+    assert.strictEqual(d.claim('alice', 'k1', 'wire').ok, true);
+    assert.strictEqual(d.claim('bob', 'k1', 'recovery').ok, true); // other agent unaffected
+    // A cross-path prior blocks until TTL expiry, then re-opens.
+    assert.strictEqual(d.claim('alice', 'k1', 'recovery').ok, false);
+    now += 101;
+    assert.strictEqual(d.claim('alice', 'k1', 'recovery').ok, true); // TTL expired
+    d.prune(new Set(['alice']));
+    assert.strictEqual(d.claim('bob', 'k1', 'wire').ok, true);       // pruned -> fresh
+  }
+  // default source is 'wire' (call-site omission stays back-compatible).
+  {
+    const d = mk();
+    assert.strictEqual(d.claim('alice', 'k1').ok, true);
+    assert.strictEqual(d.claim('alice', 'k1').ok, true); // wire-after-wire default
+  }
 });
 
 test('ActivityTracker: thinking on request, idle+turnEnd on terminal stop, side-calls invisible', () => {

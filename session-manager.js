@@ -86,6 +86,7 @@ function createSessionManager(deps) {
     isDraftOpen,
     isHumanPtyInput,
     isInjectInFlight,
+    canFireCompact,
     lastTranscriptWrite,
     log,
     memoryStore,
@@ -243,9 +244,39 @@ function createSessionManager(deps) {
             // the wire's finalize callback — _handleIntent can kill/inject
             // PTYs and even unregister this agent from the wire (reload).
             if (s.sentinel) s.sentinel.noteWireHealthy();
+            // Per-batch Set: LOAD-BEARING, not a nicety. The deduper allows
+            // wire-after-wire (distinct turns), so two IDENTICAL intents in ONE
+            // turn's text both pass the cross-turn claim — this Set is the only
+            // thing stopping that intra-turn double-fire. Do not "simplify" away.
+            const fired = new Set();
             for (const intent of intents) {
-              if (!this._intentDeduper.claim(t.agent, shadowIntentKey(t.agent, intent))) continue;
+              const bkey = shadowIntentKey(t.agent, intent);
+              if (fired.has(bkey)) {
+                log.warn('intent', `intra-turn dup ${intent.type} ${t.agent} — swallowed`);
+                continue;
+              }
+              const v = this._intentDeduper.claim(t.agent, bkey, 'wire');
+              if (!v.ok) {
+                log.warn('intent', `drop ${intent.type} ${t.agent}: ${v.reason}`);
+                this._shadowLog({ type: 'intent-drop', agent: t.agent, intentType: intent.type, source: 'wire', reason: v.reason });
+                continue;
+              }
+              fired.add(bkey);
               setImmediate(() => this._handleIntent(t.agent, intent));
+            }
+            // Compact LATCH fire (wire-owned Claude only): a [agent:context
+            // compact] this turn set _compactPending synchronously in
+            // _handleContextIntent (dispatched above via setImmediate — FIFO, so
+            // this check, ALSO setImmediate, runs after the dispatch loop's
+            // handlers have set the latch). Fire the real /compact only on a
+            // TERMINAL main-line stop with both queues empty (canFireCompact) —
+            // Claude Code silently drops slash commands while busy. If the queue
+            // is non-empty (or this stop is non-terminal) the latch waits for the
+            // next terminal stop; no timers. Normal case degenerates to today's
+            // behavior: the emitting turn is usually terminal with nothing queued,
+            // so this fires it on the very next receipt.
+            if (t.stop && t.stop.is_turn) {
+              setImmediate(() => this._maybeFireCompactLatch(s));
             }
             // Identity backstop: the sentinel's symlink poll is the primary
             // (it fires at CLI boot, before any turn); the receipt keeps
@@ -355,8 +386,21 @@ function createSessionManager(deps) {
           const s = this.sessions.get(ev.agent);
           if (s && s.intentSource === 'wire' && s.sentinel && !s.sentinel.recovering) {
             s.sentinel.armRecovery((text) => {
+              // Same per-batch Set as the wire loop (load-bearing — see there).
+              const fired = new Set();
               for (const intent of this._extractIntents(text)) {
-                if (!this._intentDeduper.claim(ev.agent, shadowIntentKey(ev.agent, intent))) continue;
+                const bkey = shadowIntentKey(ev.agent, intent);
+                if (fired.has(bkey)) {
+                  log.warn('intent', `intra-turn dup ${intent.type} ${ev.agent} — swallowed`);
+                  continue;
+                }
+                const v = this._intentDeduper.claim(ev.agent, bkey, 'recovery');
+                if (!v.ok) {
+                  log.warn('intent', `drop ${intent.type} ${ev.agent}: ${v.reason}`);
+                  this._shadowLog({ type: 'intent-drop', agent: ev.agent, intentType: intent.type, source: 'recovery', reason: v.reason });
+                  continue;
+                }
+                fired.add(bkey);
                 setImmediate(() => this._handleIntent(ev.agent, intent));
               }
             });
@@ -1098,6 +1142,7 @@ function createSessionManager(deps) {
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._compactValveTimer);
       clearTimeout(s._parkCapTimer);
+      s._compactPending = null; // no timer, but null for symmetry with the valve state
       // Drop any parked deliveries ONLY for a session going away for good — i.e. a
       // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
       // restart's kill, quit's killAll), so an unconditional rm would eat parked
@@ -1319,13 +1364,16 @@ function createSessionManager(deps) {
     }
 
     // In-flight release valve (see COMPACT_INFLIGHT_TIMEOUT): a self-compact whose
-    // summary never lands would otherwise leave _compactGuard + _compactContinuation
-    // stuck, silently suppressing every future self-compact via the in-flight
-    // guard. On timeout, clear BOTH and flush anything queued, logging + mirroring
-    // to the IPC drawer. No auto-retry — and the stashed continuation text is
-    // dropped (the agent's post-compact follow-up is lost, logged not retried;
-    // re-issuing is the agent's call). Cleared on the normal completion path
-    // (_fireCompactContinuation / _releaseCompactGuard).
+    // summary never lands — OR a LATCH that never fires (queue never drains, no
+    // further terminal stop) — would otherwise leave _compactPending / _compactGuard
+    // / _compactContinuation stuck, silently suppressing every future self-compact
+    // via the in-flight guard. On timeout, clear ALL THREE and flush anything
+    // queued, logging + mirroring to the IPC drawer. No auto-retry — and the
+    // stashed continuation text is dropped (the agent's post-compact follow-up is
+    // lost, logged not retried; re-issuing is the agent's call). Cleared on the
+    // normal completion path (_fireCompactContinuation / _releaseCompactGuard).
+    // Armed at BOTH latch-set and fire time; each arm RESETS the timer
+    // (_clearCompactValve first), so the post-fire window is a full 5min.
     //
     // Accepted trade-off: a LEGITIMATE compaction that streams longer than 5 min
     // trips the valve too, freeing the queue so injections can land mid-compaction
@@ -1335,7 +1383,8 @@ function createSessionManager(deps) {
       this._clearCompactValve(session);
       session._compactValveTimer = setTimeout(() => {
         session._compactValveTimer = null;
-        const wasStuck = session._compactGuard || session._compactContinuation;
+        const wasStuck = session._compactPending || session._compactGuard || session._compactContinuation;
+        session._compactPending = null;
         session._compactGuard = false;
         session._compactContinuation = null;
         if (wasStuck) {
@@ -2022,14 +2071,15 @@ function createSessionManager(deps) {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
         return;
       }
-      // In-flight guard: while a self-compact is pending (guard set or continuation
-      // stashed, awaiting the summary), a SECOND /compact injection would land
-      // mid-compaction and collide with the first (observed as "Connection closed
-      // mid-response"). Drop the duplicate rather than inject a colliding command.
-      // Path-independent — catches a re-dispatched intent from any source. The
-      // release valve below bounds how long this can suppress: a failed/abandoned
-      // compact whose summary never lands must not wedge self-compact forever.
-      if (sub === 'compact' && isInjectInFlight({ guard: session._compactGuard, continuation: session._compactContinuation })) {
+      // In-flight guard: while a self-compact is in flight (LATCH set, guard set,
+      // or continuation stashed awaiting the summary), a SECOND /compact would
+      // land mid-compaction and collide with the first (observed as "Connection
+      // closed mid-response"), or stomp the first's stashed continuation. Drop the
+      // duplicate. Path-independent — catches a re-dispatched intent from any
+      // source. The release valve bounds how long this suppresses: a failed/
+      // abandoned compact (or a latch that never fires) must not wedge self-
+      // compact forever.
+      if (sub === 'compact' && isInjectInFlight({ pending: session._compactPending, guard: session._compactGuard, continuation: session._compactContinuation })) {
         this._broadcast('ipc-message', {
           type: 'context', from: session.name, to: session.name,
           body: 'context compact → dropped (already in flight)',
@@ -2037,37 +2087,83 @@ function createSessionManager(deps) {
         log.warn('intent', `compact ${session.name} dropped — already in flight`);
         return;
       }
-      // Native /compact compacts then PARKS waiting for input (verified from the
-      // transcript: nothing fires between the compact-summary entry and the next
-      // injected turn). So for a SELF-FIRED compact, stash a continuation to inject
-      // once the summary lands — without it an operator-independent agent compacts
-      // and stalls forever. The flag is set ONLY on this intent path, so a human's
-      // manual /compact (local command) never triggers a nudge. The actual inject
-      // is driven by the JsonlWatcher's onCompactSummary callback (the clean
-      // trigger — the summarized conversation is back and ready by then).
       if (sub === 'compact') {
         const cont = (body && body.trim()) ? body.trim() : DEFAULT_COMPACT_CONTINUATION;
-        session._compactContinuation = cont;
-        // Wire-owned sessions have no always-on transcript watcher; arm the
-        // sentinel's compact rendezvous for exactly this window (isCompactSummary
-        // is a transcript fact — nothing rides the wire for it).
-        if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
+        // Wire-owned Claude: LATCH, don't fire now. Claude Code silently discards
+        // slash commands while the CLI is busy — which is how the original
+        // 3-attempt failure happened (a /compact injected mid-turn evaporated).
+        // So stash the intent and let the wire turn.completed fire-check
+        // (_maybeFireCompactLatch) run it on the next TERMINAL main-line stop with
+        // both inject queues empty (= CLI genuinely parked at its prompt). Arm the
+        // valve at LATCH-SET: a latch that never fires (queue never drains, no
+        // further terminal stop) must not wedge self-compact via the guard above.
+        if (session.intentSource === 'wire') {
+          session._compactPending = { cmd, continuation: cont };
+          this._armCompactValve(session);
+          log.info('intent', `compact ${session.name} → latched (fires at next terminal stop, queue empty)`);
+          this._broadcast('ipc-message', {
+            type: 'context', from: session.name, to: session.name, body: 'context compact → latched',
+          });
+          return;
+        }
+        // Non-wire (codex, jsonl-fallback claude): no wire terminal-stop receipt
+        // exists to fire a latch off, so inject immediately as before. Documented
+        // degradation (messaging.md): a mid-turn compact here can still be dropped
+        // by the CLI — the latch protection is wire-only.
+        this._executeCompact(session, cmd, cont);
+        return;
       }
-      // Inject the literal slash command as a turn — same PTY-write path as any
-      // other injection (_injectText defers the Enter off the death window).
-      // bypassHold: the intent often lands before the sender's own idle event,
-      // and a queued bare slash command must never '\n'-join into a flush batch
-      // (the command line would swallow the rest as garbage).
+      // Non-compact context command (clear): inject immediately — no continuation,
+      // no guard, no latch. bypassHold: the intent often lands before the sender's
+      // own idle event, and a queued bare slash command must never '\n'-join into a
+      // flush batch (the command line would swallow the rest as garbage).
       this._injectText(session, cmd, { bypassHold: true });
-      // Guard AFTER the /compact write itself is on the wire: from here until
-      // the continuation fires, injections queue instead of racing it. The valve
-      // bounds the in-flight window so a compact that errors/never lands its
-      // summary can't leave the guard + continuation stuck forever.
-      if (sub === 'compact') { this._armCompactGuard(session); this._armCompactValve(session); }
       log.info('intent', `${sub} ${session.name} → ${cmd}`);
       this._broadcast('ipc-message', {
         type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${cmd}`,
       });
+    }
+
+    // Run the actual self-compact: stash the continuation (native /compact PARKS
+    // waiting for input after summarizing — without a continuation an operator-
+    // independent agent compacts and stalls forever), arm the sentinel's compact
+    // rendezvous (isCompactSummary is a transcript fact — nothing rides the wire
+    // for it), inject the literal /compact as a turn, then arm the guard + valve.
+    // Shared by the non-wire immediate path and the wire latch-fire path. Arming
+    // the valve here RESETS it (_armCompactValve → _clearCompactValve first), so
+    // the post-fire in-flight window is a full 5min, never the latch-set remainder.
+    _executeCompact(session, cmd, continuation) {
+      session._compactContinuation = continuation;
+      if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
+      this._injectText(session, cmd, { bypassHold: true });
+      this._armCompactGuard(session);
+      this._armCompactValve(session);
+      log.info('intent', `compact ${session.name} → ${cmd}`);
+      this._broadcast('ipc-message', {
+        type: 'context', from: session.name, to: session.name, body: `context compact → ${cmd}`,
+      });
+    }
+
+    // Wire turn.completed fire-check for a latched self-compact (scheduled via
+    // setImmediate AFTER the dispatch loop on a terminal main-line stop, so a
+    // latch set synchronously by THIS turn's compact intent is already visible —
+    // FIFO setImmediate ordering). Fire only when the latch is set AND both inject
+    // queues are empty (canFireCompact): a queued inject is about to wake the CLI,
+    // and /compact injected then would be silently dropped. Otherwise a no-op —
+    // the next terminal stop retries (event-driven, no timers). Never throws into
+    // the wire observer.
+    _maybeFireCompactLatch(session) {
+      try {
+        if (!session || session._dead) return;
+        const pending = session._compactPending;
+        const holdQueueLen = session._injectQueue ? session._injectQueue.length : 0;
+        const ptyQueueLen = session._injectPtyQueue ? session._injectPtyQueue.length : 0;
+        if (!canFireCompact({ pending, holdQueueLen, ptyQueueLen })) return;
+        session._compactPending = null;
+        this._executeCompact(session, pending.cmd, pending.continuation);
+      } catch (e) {
+        this._shadowLog({ type: 'compact-latch-fire-error', agent: session && session.name, error: e.message });
+      }
     }
 
     // Inject a reloaded session's mandatory handoff body as turn-one, once the

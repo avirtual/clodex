@@ -38,14 +38,29 @@ function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWa
 }
 
 // Pure predicate for the compact in-flight guard: a self-compact is "in flight"
-// while its guard is armed OR its continuation is still stashed (awaiting the
-// summary). A duplicate [agent:context compact] landing in that window must be
+// while its LATCH is set (pending, awaiting a terminal stop to fire), its guard
+// is armed, OR its continuation is still stashed (awaiting the summary). A
+// duplicate [agent:context compact] landing in any of those windows must be
 // dropped rather than injected — a second /compact collides with the first
-// mid-compaction ("Connection closed mid-response"). Extracted here purely so
-// the drop decision has a unit test even though the SessionManager it lives on
-// can't be required under plain node.
-function isInjectInFlight({ guard, continuation }) {
-  return !!(guard || continuation);
+// mid-compaction ("Connection closed mid-response"), and a second latch would
+// stomp the first's continuation. Extracted here purely so the drop decision has
+// a unit test even though the SessionManager it lives on can't be required under
+// plain node.
+function isInjectInFlight({ pending, guard, continuation }) {
+  return !!(pending || guard || continuation);
+}
+
+// Pure predicate for the compact LATCH fire gate: a latched self-compact (see
+// _handleContextIntent) may only fire when the CLI is genuinely parked at its
+// prompt — i.e. a latch is set AND both inject queues are empty. A non-empty
+// queue means an injection is about to wake the CLI right back up, so firing
+// /compact now would land it mid-turn and Claude Code silently discards slash
+// commands while busy (the original 3-attempt failure). Empty ⇒ fire; the fire
+// site retries at the next terminal main-line stop otherwise (event-driven, no
+// timers). holdQueueLen = the turn-batch hold array; ptyQueueLen = the
+// byte-atomic InjectQueue.length.
+function canFireCompact({ pending, holdQueueLen, ptyQueueLen }) {
+  return !!pending && (holdQueueLen || 0) === 0 && (ptyQueueLen || 0) === 0;
 }
 
 class InjectQueue {
@@ -146,4 +161,4 @@ class InjectQueue {
   }
 }
 
-module.exports = { InjectQueue, shouldDeferInject, isInjectInFlight };
+module.exports = { InjectQueue, shouldDeferInject, isInjectInFlight, canFireCompact };

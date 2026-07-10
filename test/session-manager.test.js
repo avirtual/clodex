@@ -11,6 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createSessionManager } = require('../session-manager');
+const { canFireCompact } = require('../inject-queue');
 
 // Minimal fake deps: only what the PTY-free methods touch. Everything else is
 // undefined, which the destructure tolerates (those methods aren't reached).
@@ -204,4 +205,111 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped',
   // Expiry/max-pings: log-only, field clears lazily on the next re-arm check.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
   assert.strictEqual(holds.length, 2);
+});
+
+// --- Compact latch (FIX C) ---------------------------------------------------
+// A wire-owned Claude self-compact LATCHES instead of firing immediately: Claude
+// Code silently drops slash commands mid-turn, so the wire turn.completed
+// fire-check runs /compact only at a terminal stop with both queues empty. A fake
+// InjectQueue (just a .length) + a captured _injectText/sentinel let us drive
+// _maybeFireCompactLatch and _executeCompact without a PTY.
+function mkCompact(overrides = {}) {
+  const injected = [];
+  const armed = [];
+  // INJECT_HOLD_TIMEOUT set large so _armCompactGuard's inner _armInjectValve
+  // doesn't fire a stray 0ms timer (undefined delay) during the assertions.
+  const m = mk({
+    log: { info: () => {}, warn: () => {} },
+    INJECT_HOLD_TIMEOUT: 60_000,
+    canFireCompact, // the real pure predicate (main.js injects it live)
+    ...overrides,
+  });
+  m._injectText = (s, text) => injected.push(text);
+  m._broadcast = () => {};
+  return { m, injected, armed };
+}
+
+test('_maybeFireCompactLatch: fires on empty queues, skips when either queue non-empty', () => {
+  const { m, injected } = mkCompact();
+  const sentinelArmed = [];
+  const s = {
+    name: 'a', intentSource: 'wire', agentType: 'claude',
+    _compactPending: { cmd: '/compact', continuation: 'carry on' },
+    sentinel: { armCompact: (cb) => sentinelArmed.push(cb) },
+    _injectQueue: [], _injectPtyQueue: { length: 0 },
+  };
+  m.sessions.set('a', s);
+
+  // pty queue busy → skip, latch survives, nothing injected.
+  s._injectPtyQueue.length = 1;
+  m._maybeFireCompactLatch(s);
+  assert.ok(s._compactPending, 'latch survives while a queue is non-empty');
+  assert.deepStrictEqual(injected, []);
+
+  // hold queue busy → still skip.
+  s._injectPtyQueue.length = 0;
+  s._injectQueue = ['queued dm'];
+  m._maybeFireCompactLatch(s);
+  assert.ok(s._compactPending);
+  assert.deepStrictEqual(injected, []);
+
+  // both empty → fire: latch cleared, /compact injected, continuation stashed,
+  // sentinel armed, guard + valve set.
+  s._injectQueue = [];
+  m._maybeFireCompactLatch(s);
+  assert.strictEqual(s._compactPending, null, 'latch cleared on fire');
+  assert.deepStrictEqual(injected, ['/compact']);
+  assert.strictEqual(s._compactContinuation, 'carry on');
+  assert.strictEqual(sentinelArmed.length, 1);
+  assert.strictEqual(s._compactGuard, true);
+  assert.ok(s._compactValveTimer, 'valve armed at fire');
+  clearTimeout(s._compactValveTimer);
+  clearTimeout(s._injectHoldTimer);
+});
+
+test('_maybeFireCompactLatch: no latch or dead session is a no-op', () => {
+  const { m, injected } = mkCompact();
+  const s = { name: 'a', _injectQueue: [], _injectPtyQueue: { length: 0 } };
+  m._maybeFireCompactLatch(s); // no _compactPending
+  assert.deepStrictEqual(injected, []);
+  s._compactPending = { cmd: '/compact', continuation: 'x' };
+  s._dead = true;
+  m._maybeFireCompactLatch(s); // dead
+  assert.deepStrictEqual(injected, []);
+  assert.ok(s._compactPending, 'dead session: latch untouched');
+});
+
+test('compact valve clears a stuck latch (never-fired) along with guard/continuation', async () => {
+  // Drive the REAL valve body with a 1ms timeout (injected dep) rather than
+  // reimplementing it, so the test breaks if _armCompactValve stops clearing
+  // the latch.
+  const flushed = [];
+  const { m } = mkCompact({ COMPACT_INFLIGHT_TIMEOUT: 1 });
+  m._maybeFlushInjectQueue = (s) => flushed.push(s.name);
+  const s = { name: 'a', _compactPending: { cmd: '/compact', continuation: 'x' } };
+  m.sessions.set('a', s);
+  m._armCompactValve(s);
+  assert.ok(s._compactValveTimer, 'valve armed at latch-set');
+  await new Promise((r) => setTimeout(r, 15));
+  assert.strictEqual(s._compactPending, null, 'valve cleared the stuck latch');
+  assert.strictEqual(s._compactGuard, false);
+  assert.strictEqual(s._compactContinuation, null);
+  assert.deepStrictEqual(flushed, ['a'], 'valve flushed the queue');
+});
+
+test('_executeCompact: shared body stashes continuation, injects, arms guard + valve; each arm RESETS the valve', () => {
+  const { m, injected } = mkCompact({ COMPACT_INFLIGHT_TIMEOUT: 60_000 });
+  const s = { name: 'a', sentinel: { armCompact: () => {} } };
+  m.sessions.set('a', s);
+  m._executeCompact(s, '/compact', 'do the thing');
+  assert.deepStrictEqual(injected, ['/compact']);
+  assert.strictEqual(s._compactContinuation, 'do the thing');
+  assert.strictEqual(s._compactGuard, true);
+  const t1 = s._compactValveTimer;
+  assert.ok(t1);
+  // A second arm resets (clears then re-creates) — not a stacked second timer.
+  m._armCompactValve(s);
+  assert.notStrictEqual(s._compactValveTimer, t1, 'valve timer replaced, not stacked');
+  clearTimeout(s._compactValveTimer);
+  clearTimeout(s._injectHoldTimer);
 });

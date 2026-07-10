@@ -43,16 +43,43 @@ class IntentDeduper {
     this._seen = new Map(); // agent -> Map<key, ts>
   }
 
-  // True exactly once per (agent, key) within the TTL: the caller that gets
-  // true dispatches, everyone else drops.
-  claim(agent, key) {
+  // Source-aware claim. Returns { ok, reason } — ok true = the caller dispatches;
+  // reason (non-null only when ok is false) names WHY the drop happened, so the
+  // dispatch sites can log it (a generic call-site string would lie about which
+  // case fired). `source` is 'wire' (live receipt) or 'recovery' (tee-failure
+  // transcript replay).
+  //
+  // The deduper exists for exactly ONE overlap: tee-failure recovery replays the
+  // handover turn's tail through onText AFTER the wire already dispatched it — the
+  // two paths must not double-fire. So the rules are source-shaped, NOT
+  // claim-once:
+  //   - reject when a non-expired prior claim came from the OTHER source
+  //     (cross-path overlap — the real dedupe case, both directions), OR
+  //   - reject recovery-after-recovery (the replay tail repeats each poll).
+  //   - ALLOW wire-after-wire: distinct wire turns are distinct emissions and a
+  //     turn can't legitimately dispatch twice from the wire (verified: one
+  //     turn.completed per reqId, close()-guarded). Collapsing them would eat a
+  //     deliberate retry — the exact bug this fix closes. (Intra-turn duplicate
+  //     intents in ONE turn's text are deduped by the per-batch Set at the call
+  //     site, not here — that Set is load-bearing precisely because this allows
+  //     wire-after-wire.)
+  claim(agent, key, source = 'wire') {
     const now = this._now();
     let m = this._seen.get(agent);
     if (!m) { m = new Map(); this._seen.set(agent, m); }
-    for (const [k, ts] of m) { if (now - ts > this._ttl) m.delete(k); }
-    if (m.has(key)) return false;
-    m.set(key, now);
-    return true;
+    for (const [k, rec] of m) { if (now - rec.ts > this._ttl) m.delete(k); }
+    const prior = m.get(key);
+    if (prior) {
+      if (source === 'recovery' || prior.source === 'recovery') {
+        const reason = (source === 'recovery' && prior.source === 'recovery')
+          ? 'recovery replay repeat'
+          : `cross-path overlap (${prior.source}→${source})`;
+        return { ok: false, reason };
+      }
+      // wire-after-wire: allow, and re-stamp so the TTL tracks the latest turn.
+    }
+    m.set(key, { ts: now, source });
+    return { ok: true, reason: null };
   }
 
   prune(liveNames) {

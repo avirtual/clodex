@@ -18,8 +18,8 @@ Per-session `intentSource`, decided in `SessionManager.create`:
 - **wire** — a Claude session that registered with the in-process wire tee
   (and `WIRE_INTENTS_LIVE`). Intents ride wire `turn.completed`: the
   `_ensureWire` listener runs `_extractIntents(text)`, claims each occurrence
-  through `_intentDeduper.claim(agent, shadowIntentKey(...))`, then dispatches
-  `_handleIntent` via `setImmediate`. A `TranscriptSentinel` keeps the
+  through `_intentDeduper.claim(agent, shadowIntentKey(...), 'wire')`, then
+  dispatches `_handleIntent` via `setImmediate`. A `TranscriptSentinel` keeps the
   transcript-only jobs alive (symlink identity, compact rendezvous, recovery
   replay if the tee fails).
 - **jsonl** (legacy path) — Codex, wire-failed Claude, or
@@ -34,6 +34,34 @@ Per-session `intentSource`, decided in `SessionManager.create`:
 
 All paths converge on `_extractIntents` → `parseIntent` (per line) →
 `_handleIntent`.
+
+**Source-aware dedupe** (`IntentDeduper.claim(agent, key, source)`, returns
+`{ok, reason}`). The deduper exists for ONE overlap: tee-failure recovery replays
+the handover turn's tail through `onText` *after* the wire already dispatched it.
+So the rule is source-shaped, not claim-once: reject when a non-expired prior
+came from the OTHER source (cross-path, both directions) or recovery-after-
+recovery (the replay tail repeats each poll); **allow wire-after-wire** — distinct
+wire turns are distinct emissions (one `turn.completed` per reqId), and collapsing
+them would eat a deliberate retry (the compact-retry bug). Because wire-after-wire
+is allowed, each dispatch loop ALSO carries a per-turn `Set(shadowIntentKey)` to
+drop intra-turn duplicate intents — that Set is load-bearing, not a nicety. Every
+drop (cross-path, replay repeat, intra-turn) logs `log.warn('intent', …)` + a
+shadow record; silence here is what hid the original 3-attempt compact failure.
+
+**Compact latch** (wire-owned Claude only). `[agent:context compact]` does NOT
+inject `/compact` inline — Claude Code silently discards slash commands while the
+CLI is busy. Instead `_handleContextIntent` sets `session._compactPending =
+{cmd, continuation}` and arms the in-flight valve; the wire `turn.completed`
+handler runs `_maybeFireCompactLatch` on a TERMINAL main-line stop
+(`t.stop.is_turn`) when both inject queues are empty (`canFireCompact` — CLI
+genuinely parked). The fire-check is scheduled via `setImmediate` AFTER the
+dispatch loop, so a latch set synchronously by the same turn's intent is already
+visible (FIFO ordering) and the normal case fires on the very next receipt. The
+in-flight guard treats a set latch as in-flight (a second compact drops+logs);
+the 5-min valve clears `_compactPending` too, so a latch that never fires can't
+wedge. **Non-wire sessions (codex, jsonl-fallback Claude) keep the immediate
+inject** — no wire terminal-stop receipt exists to fire a latch off, so a mid-turn
+compact there can still be dropped by the CLI (documented degradation).
 
 ## 2. Grammar (intent-scanner.js — pure, electron-free)
 
