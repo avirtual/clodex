@@ -81,26 +81,48 @@ test('persistence: entries missing workspaceId migrate to the default id', () =>
   } finally { cleanup(); }
 });
 
-test('templates: save/list/remove', () => {
-  const { stores, cleanup } = freshStores();
+// Templates are per-file (library/templates/<name>.json); the FILENAME is the
+// identity, so list() re-injects id = name = filename stem and the stored file
+// carries no synthetic id. These cases exercise that fs shape.
+const tplFile = (registryDir, name) =>
+  path.join(registryDir, 'library', 'templates', `${name}.json`);
+
+test('templates: save/list/remove over per-file storage', () => {
+  const { registryDir, stores, cleanup } = freshStores();
   try {
+    assert.deepStrictEqual(stores.templates.list(), []); // dir absent → empty
+    stores.templates.saveByName({ name: 'T', type: 'claude', cwd: '/x' });
+    // One file on disk, keyed by name; id aliases the filename stem on read.
+    assert.ok(fs.existsSync(tplFile(registryDir, 'T')));
+    const list = stores.templates.list();
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].id, 'T');
+    assert.strictEqual(list[0].name, 'T');
+    stores.templates.remove('T'); // remove by id (= name = filename)
     assert.deepStrictEqual(stores.templates.list(), []);
-    stores.templates.save({ id: 't1', name: 'T', type: 'claude', cwd: '/x' });
-    stores.templates.save({ id: 't1', name: 'T2' }); // upsert by id
-    assert.strictEqual(stores.templates.list().length, 1);
-    assert.strictEqual(stores.templates.list()[0].name, 'T2');
-    stores.templates.remove('t1');
-    assert.deepStrictEqual(stores.templates.list(), []);
+    assert.strictEqual(fs.existsSync(tplFile(registryDir, 'T')), false);
   } finally { cleanup(); }
 });
 
-test('templates: schemaless store round-trips the full config subset verbatim', () => {
+test('templates: the stored file is a portable object with NO synthetic id', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'trader-seat', type: 'claude', cwd: '/proj/desk' });
+    const onDisk = JSON.parse(fs.readFileSync(tplFile(registryDir, 'trader-seat'), 'utf-8'));
+    assert.strictEqual('id' in onDisk, false);   // id is never persisted
+    assert.strictEqual(onDisk.name, 'trader-seat'); // portability hint written
+    assert.strictEqual(onDisk.type, 'claude');
+  } finally { cleanup(); }
+});
+
+test('templates: the full config subset round-trips (schemaless), id/name = filename', () => {
   const { stores, cleanup } = freshStores();
   try {
     // A rich template (as "Export as Template…" snapshots it) survives a
-    // save → load round-trip byte-for-byte — the store keeps the whole object.
+    // write → read round-trip. id/name are the filename stem on read; every
+    // config field is preserved verbatim.
     const rich = {
-      id: 'tpl-1', name: 'trader-seat', type: 'claude', cwd: '/proj/desk',
+      name: 'trader-seat', type: 'claude', cwd: '/proj/desk',
       extraArgs: ['--model', 'opus', '--dangerously-skip-permissions'],
       proxy: false,
       agents: ['reviewer'],
@@ -108,68 +130,133 @@ test('templates: schemaless store round-trips the full config subset verbatim', 
       disabledTools: ['Edit', 'NotebookEdit'],
       disabledSkills: ['some-skill'],
       injectSkills: ['trader-notes'],
+      systemPromptFile: 'trader-seat',
+      appendPromptFiles: ['00-house-rules', '50-wake'],
       stripLevel: 2,
       autoCompact: false,
     };
-    stores.templates.save(rich);
-    assert.deepStrictEqual(stores.templates.list()[0], rich);
+    stores.templates.saveByName(rich);
+    const loaded = stores.templates.list()[0];
+    assert.deepStrictEqual(loaded, { ...rich, id: 'trader-seat' });
   } finally { cleanup(); }
 });
 
-test('templates: an old {id,name,type,cwd,extraArgs} template loads unchanged (back-compat)', () => {
+test('templates: an old template lacking prompt fields loads as-is (back-compat)', () => {
   const { stores, cleanup } = freshStores();
   try {
-    // Pre-config templates carry none of the new fields; they must load as-is
-    // (missing config = clodex defaults are supplied at spawn, not here).
-    const legacy = { id: 'old', name: 'Legacy', type: 'codex', cwd: '/x', extraArgs: ['-a'] };
-    stores.templates.save(legacy);
+    // Pre-config / pre-prompt-refs templates carry none of the new fields; they
+    // must load with no field invented (missing config = clodex defaults at
+    // spawn; absent prompt refs → null/[] there, so the seat still spawns).
+    stores.templates.saveByName({ name: 'Legacy', type: 'codex', cwd: '/x', extraArgs: ['-a'] });
     const loaded = stores.templates.list()[0];
-    assert.deepStrictEqual(loaded, legacy);
-    assert.strictEqual('agents' in loaded, false);      // no field invented on load
+    assert.strictEqual(loaded.type, 'codex');
+    assert.deepStrictEqual(loaded.extraArgs, ['-a']);
+    assert.strictEqual('agents' in loaded, false);
     assert.strictEqual('stripLevel' in loaded, false);
-    // A pre-prompt-refs template has no prompt fields either; the spawn path
-    // maps their absence to null/[] (no prompt applied), so a template authored
-    // before the F6-reversal still spawns unchanged.
     assert.strictEqual('systemPromptFile' in loaded, false);
     assert.strictEqual('appendPromptFiles' in loaded, false);
   } finally { cleanup(); }
 });
 
-test('templates: saveByName mints an id, then overwrites the same name in place', () => {
+test('templates: saveByName writes then overwrites the same name in place', () => {
   const { stores, cleanup } = freshStores();
   try {
-    // First save has no id — saveByName mints one and returns the stored object.
     const first = stores.templates.saveByName({ name: 'seat', type: 'claude', cwd: '/a' });
-    assert.match(first.id, /^tpl-/);
+    assert.strictEqual(first.id, 'seat'); // id = filename stem, no synthetic mint
     assert.strictEqual(stores.templates.list().length, 1);
-    // Re-saving the same name reuses that id and overwrites in place (no dup).
     const second = stores.templates.saveByName({ name: 'seat', type: 'codex', cwd: '/b' });
-    assert.strictEqual(second.id, first.id);
-    assert.strictEqual(stores.templates.list().length, 1);
+    assert.strictEqual(second.id, 'seat');
+    assert.strictEqual(stores.templates.list().length, 1); // overwrote, no dup
     assert.strictEqual(stores.templates.list()[0].type, 'codex');
     assert.strictEqual(stores.templates.list()[0].cwd, '/b');
   } finally { cleanup(); }
 });
 
-test('templates: saveByName matches names case-insensitively (no near-dup)', () => {
-  const { stores, cleanup } = freshStores();
+test('templates: saveByName overwrites the existing exact filename case-insensitively (no Foo+foo)', () => {
+  const { registryDir, stores, cleanup } = freshStores();
   try {
-    const a = stores.templates.saveByName({ name: 'Trader-Seat', type: 'claude', cwd: '/a' });
+    stores.templates.saveByName({ name: 'Trader-Seat', type: 'claude', cwd: '/a' });
     const b = stores.templates.saveByName({ name: 'trader-seat', type: 'claude', cwd: '/b' });
-    assert.strictEqual(b.id, a.id);                       // same identity
-    assert.strictEqual(stores.templates.list().length, 1); // collapsed onto one row
+    // The original filename casing is preserved — no second near-dup file.
+    // (Asserted via readdir, not existsSync: macOS APFS is case-insensitive, so
+    // existsSync('trader-seat') would resolve to Trader-Seat.json there; a
+    // directory listing is the FS-agnostic check.)
+    assert.strictEqual(b.id, 'Trader-Seat');
+    assert.strictEqual(stores.templates.list().length, 1);
+    assert.strictEqual(stores.templates.list()[0].cwd, '/b');
+    const files = fs.readdirSync(path.join(registryDir, 'library', 'templates'));
+    assert.deepStrictEqual(files, ['Trader-Seat.json']); // exactly one, original casing
+  } finally { cleanup(); }
+});
+
+test('templates: save() renames in place, unlinking the old file (no orphan)', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'old-name', type: 'claude', cwd: '/a' });
+    // Drawer Edit / dialog template-mode passes the OLD name as id + the NEW name.
+    stores.templates.save({ id: 'old-name', name: 'new-name', type: 'claude', cwd: '/a' });
+    assert.strictEqual(fs.existsSync(tplFile(registryDir, 'old-name')), false); // old unlinked
+    assert.ok(fs.existsSync(tplFile(registryDir, 'new-name')));
+    const list = stores.templates.list();
+    assert.strictEqual(list.length, 1); // renamed, not duplicated
+    assert.strictEqual(list[0].id, 'new-name');
+  } finally { cleanup(); }
+});
+
+test('templates: save() with matching id/name is a plain overwrite (no unlink)', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'seat', type: 'claude', cwd: '/a' });
+    stores.templates.save({ id: 'seat', name: 'seat', type: 'claude', cwd: '/b' }); // edit-in-place
+    assert.ok(fs.existsSync(tplFile(registryDir, 'seat')));
+    assert.strictEqual(stores.templates.list().length, 1);
     assert.strictEqual(stores.templates.list()[0].cwd, '/b');
   } finally { cleanup(); }
 });
 
-test('templates: saveByName preserves an explicit id when the name is new', () => {
-  const { stores, cleanup } = freshStores();
+test('templates: list() skips a malformed file', () => {
+  const { registryDir, stores, cleanup } = freshStores();
   try {
-    // A caller passing its own id (drawer-authored New with a pre-set id) keeps it.
-    const stored = stores.templates.saveByName({ id: 'mine', name: 'fresh', type: 'claude' });
-    assert.strictEqual(stored.id, 'mine');
-    assert.strictEqual(stores.templates.list()[0].id, 'mine');
+    stores.templates.saveByName({ name: 'good', type: 'claude', cwd: '/a' });
+    fs.writeFileSync(tplFile(registryDir, 'bad'), '{ not json ');
+    const list = stores.templates.list();
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].id, 'good');
   } finally { cleanup(); }
+});
+
+test('templates: migration explodes templates.json → per-file, renames the blob once', () => {
+  const { userData, registryDir } = freshStores();
+  try {
+    // Seed a legacy blob (pre-validation names incl. illegal chars + a dup + an
+    // empty-slug entry) BEFORE init runs the one-shot migration.
+    const blob = [
+      { id: 'tpl-1', name: 'Trader Seat', type: 'claude', cwd: '/a' }, // space → slug
+      { id: 'tpl-2', name: 'trader seat', type: 'codex', cwd: '/b' },  // dup slug → first-wins skip
+      { id: 'tpl-3', name: '!!!', type: 'claude', cwd: '/c' },         // empty slug → dropped
+      { id: 'tpl-4', name: 'plain', type: 'claude', cwd: '/d' },
+    ];
+    const blobPath = path.join(userData, 'templates.json');
+    fs.writeFileSync(blobPath, JSON.stringify(blob));
+    // Re-init over the SAME dirs so migrateTemplatesJson runs against the blob.
+    const stores = initStores(userData, { registryDir });
+    const list = stores.templates.list();
+    const names = list.map(t => t.name).sort();
+    assert.deepStrictEqual(names, ['plain', 'trader-seat']); // slugified, dup + empty dropped
+    // The exploded file strips the synthetic id and is a portable object.
+    const onDisk = JSON.parse(fs.readFileSync(tplFile(registryDir, 'trader-seat'), 'utf-8'));
+    assert.strictEqual('id' in onDisk, false);
+    assert.strictEqual(onDisk.cwd, '/a'); // first-wins: tpl-1, not tpl-2
+    // Blob renamed to .migrated (never deleted — dropped entries recoverable).
+    assert.strictEqual(fs.existsSync(blobPath), false);
+    assert.ok(fs.existsSync(`${blobPath}.migrated`));
+    // Second init is a no-op (blob already renamed) — no re-run, no dup.
+    const stores2 = initStores(userData, { registryDir });
+    assert.strictEqual(stores2.templates.list().length, 2);
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
 });
 
 test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () => {

@@ -1955,9 +1955,12 @@ function createSessionManager(deps) {
           }
           tpl = obj;
         } else {
-          // Library name — case-insensitive exact. Templates key on id, not name,
-          // and nothing enforces name uniqueness, so 0 matches errors with the
-          // choices and >1 errors asking to disambiguate. NEVER silent-pick.
+          // Library name — case-insensitive exact. Templates are now per-file
+          // (filename = identity), so the name is unique on a case-INsensitive
+          // FS; the >1 branch stays reachable only on a case-SENSITIVE FS
+          // (headless Linux peers), where Foo.json + foo.json can coexist. 0
+          // matches errors with the choices, >1 asks to disambiguate. NEVER
+          // silent-pick.
           const wanted = v.toLowerCase();
           const all = getTemplates().list();
           const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);

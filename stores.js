@@ -186,7 +186,8 @@ function sanitizePeerControlled(raw) {
 function initStores(userDataPath, { log, registryDir } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
-  const TEMPLATES_FILE = path.join(userDataPath, 'templates.json');
+  const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
+  const TEMPLATES_DIR = path.join(registryDir, 'library', 'templates');
   const WORKSPACES_FILE = path.join(userDataPath, 'workspaces.json');
   const PROMPTS_FILE = path.join(userDataPath, 'prompts.json'); // legacy — migration only
   const AGENT_DEFAULTS_FILE = path.join(userDataPath, 'agent-defaults.json');
@@ -404,64 +405,82 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   };
 
   // ---------------------------------------------------------------------------
-  // Templates — saved session configurations (type, cwd, args)
+  // Templates — saved session configs, one portable JSON object per file under
+  // library/templates/<name>.json. A structural twin of agentLibrary: the
+  // FILENAME is the identity (mirrors _file(name)), and because the on-disk
+  // object is exactly the shape spawn's `template:./x.json` consumes, a library
+  // template literally IS a spawn-able file template. The stored file carries NO
+  // synthetic id — list() re-injects `id = <filename stem>` on read so the
+  // renderer/IPC (which key on `.id`) work unchanged against a name identity.
+  // Config subset: type/cwd/extraArgs/proxy/agents/denyBuiltins/disabledTools/
+  // disabledSkills/injectSkills/systemPromptFile/appendPromptFiles + opt-out
+  // stripLevel/autoCompact. NEVER a per-session identity (proxyAgent) or runtime
+  // state (sessionId). Schemaless: unknown fields load verbatim, missing config
+  // = clodex defaults at spawn (so pre-config / pre-prompt-refs templates load).
   // ---------------------------------------------------------------------------
   const templates = {
-    _load() {
-      try {
-        return JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf-8'));
-      } catch {
-        return [];
-      }
-    },
-    _save(entries) {
-      try {
-        atomicWriteFileSync(TEMPLATES_FILE, JSON.stringify(entries, null, 2));
-      } catch (e) {
-        console.error('templates save failed:', e);
-      }
-    },
+    _file(name) { return path.join(TEMPLATES_DIR, `${name}.json`); },
     list() {
-      return this._load();
+      let files;
+      try { files = fs.readdirSync(TEMPLATES_DIR); }
+      catch { return []; } // dir absent (nothing saved yet) → empty
+      const out = [];
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), 'utf-8'));
+          if (!obj || typeof obj !== 'object') continue;
+          // Filename is authoritative identity: a hand-renamed file's name (and
+          // id) follow its filename, whatever the in-file `name` hint says.
+          const stem = f.slice(0, -'.json'.length);
+          out.push({ ...obj, name: stem, id: stem });
+        } catch { /* skip a malformed file, like agentLibrary */ }
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
     },
+    // Write the portable object (id/name stripped from the body — filename is the
+    // identity, `name` re-added on read as a hint only). Overwrites <name>.json.
+    _write(name, template) {
+      ensureDir(TEMPLATES_DIR);
+      const { id, ...body } = template;
+      body.name = name; // portability hint; read treats the filename as canonical
+      fs.writeFileSync(this._file(name), JSON.stringify(body, null, 2), { mode: 0o600 });
+    },
+    // Rename-in-place (drawer Edit / dialog template-mode): the renderer passes
+    // both the OLD name as `id` and the NEW `name`. When they differ it's a
+    // rename — write the new file and unlink the old so it can't orphan (the
+    // rename-leak). The renderer's clash-check already refuses a rename onto
+    // ANOTHER template's name (verified renderer saveTemplateFromForm), so this
+    // trusts the caller and does no dest-collision check. Same name → plain
+    // overwrite. This is the sole caller that needs id-vs-name semantics.
     save(template) {
-      // template: { id, name, type, cwd, extraArgs } plus optional config the
-      // "Export as Template…" path snapshots from a session: proxy, agents,
-      // denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel,
-      // autoCompact. Schemaless — the whole object is stored verbatim, so new
-      // fields are additive and an old {id,name,type,cwd,extraArgs} template
-      // loads fine (missing config = clodex defaults at spawn). NEVER a
-      // per-session identity (proxyAgent) or runtime state (sessionId).
-      const all = this._load();
-      const idx = all.findIndex(t => t.id === template.id);
-      if (idx >= 0) all[idx] = template;
-      else all.push(template);
-      this._save(all);
+      this._write(template.name, template);
+      if (template.id && template.id !== template.name) {
+        try { fs.unlinkSync(this._file(template.id)); } catch {}
+      }
     },
     // Name-keyed upsert for the user-facing save paths (export-from-session, the
-    // form's "Save as Template", template-mode New). A case-insensitive name
-    // match reuses that template's id and overwrites in place, so re-exporting or
-    // re-saving the same name updates rather than piling up duplicates — and
-    // pre-empts the >1-ambiguous state the spawn resolver rejects. No match: keep
-    // the object's own id, or mint one if it lacks it. Returns the stored object
-    // (with its resolved id) so callers can select it. The generic id-keyed
-    // save() above stays for the drawer's rename-in-place (a known id).
+    // form's "Save as Template", template-mode New). Scans existing filenames
+    // case-insensitively and overwrites the matching EXACT filename (preserving
+    // its original casing) so we never birth both Foo.json and foo.json on a
+    // case-sensitive FS. No match → write <name>.json. Returns the stored object
+    // (with id = its resolved filename stem) so callers can select it.
     saveByName(template) {
-      const all = this._load();
       const wanted = (template.name || '').toLowerCase();
-      const idx = all.findIndex(t => (t.name || '').toLowerCase() === wanted);
-      const stored = idx >= 0
-        ? { ...template, id: all[idx].id }
-        : (template.id
-            ? template
-            : { ...template, id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` });
-      if (idx >= 0) all[idx] = stored;
-      else all.push(stored);
-      this._save(all);
-      return stored;
+      let target = template.name;
+      try {
+        for (const f of fs.readdirSync(TEMPLATES_DIR)) {
+          if (f.endsWith('.json') && f.slice(0, -'.json'.length).toLowerCase() === wanted) {
+            target = f.slice(0, -'.json'.length); // keep original casing
+            break;
+          }
+        }
+      } catch { /* dir absent → first save under template.name */ }
+      this._write(target, template);
+      return { ...template, name: target, id: target };
     },
     remove(id) {
-      this._save(this._load().filter(t => t.id !== id));
+      try { fs.unlinkSync(this._file(id)); } catch {}
     },
   };
 
@@ -617,6 +636,34 @@ function initStores(userDataPath, { log, registryDir } = {}) {
       try { fs.writeFileSync(dest, String(p.body ?? ''), { mode: 0o600 }); } catch {}
     }
     try { fs.renameSync(PROMPTS_FILE, `${PROMPTS_FILE}.migrated`); } catch {}
+  }
+
+  // One-shot: the legacy templates.json blob (misfiled in userData) → per-file
+  // library/templates/<name>.json. Existence-gated like migratePromptsJson.
+  // Names predate validation, so slugify to the filename charset; a dup slug or
+  // an already-present dest is SKIPPED (first-wins), and an empty slug drops the
+  // entry. None of that is data loss: templates.json is RENAMED to .migrated,
+  // never deleted, so any skipped/dropped entry stays recoverable on disk.
+  function migrateTemplatesJson() {
+    let entries;
+    try { entries = JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf-8')); }
+    catch { return; }
+    if (!Array.isArray(entries) || !entries.length) return;
+    ensureDir(TEMPLATES_DIR);
+    for (const t of entries) {
+      if (!t || typeof t !== 'object') continue;
+      // slugifyPromptName's charset, but WITHOUT its prompt-<ts> fallback: an
+      // empty slug drops the entry (no template-<ts> junk in the library).
+      const stem = String(t.name || '').trim().toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+      if (!stem) continue; // empty slug → drop (recoverable from .migrated)
+      const dest = templates._file(stem);
+      if (fs.existsSync(dest)) continue; // first-wins on a slug collision
+      const { id, ...body } = t; // strip the vestigial synthetic id
+      body.name = stem;
+      try { fs.writeFileSync(dest, JSON.stringify(body, null, 2), { mode: 0o600 }); } catch {}
+    }
+    try { fs.renameSync(TEMPLATES_FILE, `${TEMPLATES_FILE}.migrated`); } catch {}
   }
 
   // ---------------------------------------------------------------------------
@@ -889,6 +936,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   }
 
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
+  migrateTemplatesJson(); // one-shot: templates.json -> library/templates/*.json
 
   return {
     persistence, templates, workspaces, promptLibrary,
