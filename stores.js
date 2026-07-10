@@ -476,6 +476,19 @@ function initStores(userDataPath, { log, registryDir } = {}) {
       const w = all.find(x => x.id === id);
       if (w) { w.lastFocusedAt = Date.now(); this._save(all); }
     },
+    // Live open-window marker, so quit + relaunch restores the same window SET.
+    // Maintained by createWindow (true) and the closed handler (false); the
+    // closed handler skips the clear while a quit is in flight — quit tears
+    // every window down, and wiping the flags then would collapse the next
+    // launch back to a single window.
+    setOpen(id, open) {
+      const all = this._load();
+      const w = all.find(x => x.id === id);
+      if (w) {
+        if (open) w.open = true; else delete w.open;
+        this._save(all);
+      }
+    },
     sortedByRecent() {
       return this.list().slice().sort((a, b) =>
         (b.lastFocusedAt || 0) - (a.lastFocusedAt || 0),

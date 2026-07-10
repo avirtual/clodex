@@ -1528,11 +1528,16 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
 
-  // Track recency for "open most recent on startup" behavior
+  // Track recency for startup ordering + the open-window set for restore.
   workspaces.touch(workspaceId);
+  workspaces.setOpen(workspaceId, true);
   win.on('focus', () => workspaces.touch(workspaceId));
 
   win.on('closed', () => {
+    // An EXPLICIT close drops the workspace from the restore set; quit teardown
+    // must not (quit closes every window — clearing here would collapse the
+    // next launch to one window).
+    if (!appQuitting) workspaces.setOpen(workspaceId, false);
     manager.unregisterWindow(workspaceId);
     refreshAppMenu();
     refreshTrayMenu();
@@ -1746,10 +1751,16 @@ app.whenReady().then(() => {
 
   buildAppMenu();
 
-  // IDE-style startup: open only the most recently used workspace.
-  // Others are accessible via the File / Window / tray menus.
+  // Restore the window SET that was open at quit (the `open` flags survive
+  // quit because the closed handler skips its clear while appQuitting). Open
+  // least-recent first so the most recently focused window ends up on top.
+  // No flags (fresh install / pre-flag upgrade / all windows were explicitly
+  // closed) → IDE-style fallback: just the most recently used workspace.
   const sortedWorkspaces = workspaces.sortedByRecent();
-  if (sortedWorkspaces.length === 0) {
+  const toRestore = sortedWorkspaces.filter((w) => w.open);
+  if (toRestore.length > 0) {
+    for (const w of toRestore.reverse()) createWindow(w.id);
+  } else if (sortedWorkspaces.length === 0) {
     createWindow(DEFAULT_WORKSPACE_ID);
   } else {
     createWindow(sortedWorkspaces[0].id);

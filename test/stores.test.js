@@ -84,6 +84,25 @@ test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () =
   } finally { cleanup(); }
 });
 
+test('workspaces: setOpen round-trips true, clears to an ABSENT key', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.workspaces.list(); // seed default
+    stores.workspaces.upsert({ id: 'w2', name: 'Second' });
+    stores.workspaces.setOpen('default', true);
+    stores.workspaces.setOpen('w2', true);
+    assert.strictEqual(stores.workspaces.get('default').open, true);
+    assert.strictEqual(stores.workspaces.get('w2').open, true);
+    // Explicit close clears the flag entirely (absent, not false) — the
+    // startup filter is a truthiness check and the file stays clean.
+    stores.workspaces.setOpen('w2', false);
+    assert.ok(!('open' in stores.workspaces.get('w2')));
+    assert.strictEqual(stores.workspaces.get('default').open, true);
+    // Unknown id is a no-op, not a throw.
+    stores.workspaces.setOpen('ghost', true);
+  } finally { cleanup(); }
+});
+
 test('promptLibrary: save/list/raw/remove under the registry dir', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {
