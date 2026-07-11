@@ -16,6 +16,7 @@
 
 const { esc, shortTs } = require('../lib/format');
 const { STRIP_LEVELS } = require('../lib/constants');
+const { sessionMenuEntries } = require('../lib/session-actions');
 
 function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession }) {
   // --- Keep-warm duration dropdown ----------------------------------------
@@ -243,7 +244,9 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
   document.addEventListener('click', (e) => {
     if (!historyMenu) return;
     if (historyMenu.contains(e.target)) return;
-    if (e.target.closest('.px-action[data-act="history"]')) return; // toggle handled by the bar
+    // History now opens from the consolidated ⚙ session menu (async, after an
+    // await — so the opening click never reaches here), not a standalone toggle
+    // button; any outside click, including re-opening the session menu, dismisses.
     closeHistoryMenu();
   });
   document.addEventListener('keydown', (e) => {
@@ -271,15 +274,61 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
   }
 
+  // --- Consolidated session-actions menu (the `⚙ session ▾` bar button) ------
+  // Replaces the old row of standalone launcher buttons (tools/skills/agents/
+  // edit/history/reload) with one button + this menu, freeing the proxy bar for
+  // dynamic state (📄 files, keep-warm, context/cost). Entries come from the pure
+  // session-actions leaf (type-conditioned); picking one fires onPick(act) — the
+  // core (renderer.js) owns the act→opener routing because the openers span two
+  // islands (checklist-popovers + this one) plus a core dialog. Same transient-
+  // menu idiom as the strip/history menus.
+  let sessionMenu = null;
+  function closeSessionMenu() { if (sessionMenu) { sessionMenu.remove(); sessionMenu = null; } }
+
+  function openSessionMenu(anchorBtn, type, onPick) {
+    closeSessionMenu();
+    const entries = sessionMenuEntries(type);
+    if (!entries.length) return;
+    sessionMenu = document.createElement('div');
+    sessionMenu.className = 'warm-menu session-menu';
+    sessionMenu.innerHTML = entries
+      .map((en) => `<button class="warm-item session-item" data-act="${en.act}">${esc(en.label)}</button>`)
+      .join('');
+    sessionMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.session-item');
+      if (!item) return;
+      const act = item.dataset.act;
+      closeSessionMenu();
+      if (typeof onPick === 'function') onPick(act, anchorBtn);
+    });
+    document.body.appendChild(sessionMenu);
+    const r = anchorBtn.getBoundingClientRect();
+    const w = sessionMenu.offsetWidth;
+    sessionMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+    sessionMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!sessionMenu) return;
+    if (sessionMenu.contains(e.target)) return;
+    if (e.target.closest('.px-action[data-act="session-menu"]')) return; // toggle handled by the bar
+    closeSessionMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sessionMenu) closeSessionMenu();
+  });
+
   // Open-state predicates for the bar's toggle dispatch — it used to read the
   // warmMenu/stripMenu element vars directly; the island exposes them instead of
   // leaking the state (the subagent-popover predicate idiom).
   const isWarmMenuOpen = () => !!warmMenu;
   const isStripMenuOpen = () => !!stripMenu;
+  const isSessionMenuOpen = () => !!sessionMenu;
 
   return {
     openWarmMenu, closeWarmMenu, isWarmMenuOpen,
     openStripMenu, closeStripMenu, isStripMenuOpen,
+    openSessionMenu, closeSessionMenu, isSessionMenuOpen,
     openHistoryMenu, doHardRestart,
   };
 }

@@ -149,7 +149,8 @@ Conventions the refactor established:
 - **renderer/lib/** — pure-ish leaves: `constants.js`, `format.js`
   (string formatters, unit-tested), `render-html.js` (DOM-string builders),
   `checklists.js` (render/collect checklist pairs; owns five library
-  caches behind setters).
+  caches behind setters), `session-actions.js` (the type→entries mapping for
+  the consolidated `⚙ session ▾` menu, unit-tested).
 - **Islands** (own state + DOM, `init*(deps)`): `ipc-log.js`,
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
   (prompts/agents/skills drawers), `subagent-popover.js`,
@@ -159,11 +160,14 @@ Conventions the refactor established:
   `report-panel.js`, `context-popover.js`, `cost-popover.js`,
   `bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +
   `isFilesPopoverForKey` for the peer subsystem), plus two that are NOT on
-  the data seam by design: `checklist-popovers.js` (tools/skills/agents —
-  local config editors, direct `window.api`; tools/agents suppressed for
+  the data seam by design: `checklist-popovers.js` (tools/skills/agents/**intents**
+  — local config editors, direct `window.api`; tools/agents suppressed for
   peers, but **skills takes an optional peer `source`** so the same popover
-  edits a peer session's skills over the wire under the `args` cap) and
-  `session-menus.js` (warm/strip/history dropdowns — local action menus).
+  edits a peer session's skills over the wire under the `args` cap; the intents
+  popover applies IMMEDIATELY — the fire-time gate re-reads persistence — with an
+  optional restart only to refresh the seat's prompt) and
+  `session-menus.js` (warm/strip/history dropdowns + the consolidated
+  `⚙ session ▾` launcher menu — local action menus).
 - **renderer/peers-ui.js** — the peer runtime: sidebar peer rows, peer bar,
   control + type-to-take, the 13 peer event subscriptions, restore sweep,
   visibility/control maps, `PEER_UI_KINDS`, and the peer-select/peer-info

@@ -268,6 +268,7 @@ window.api = {
   setSessionTools: (name, disabledTools) => ipcRenderer.invoke('session:setTools', name, disabledTools),
   setSessionSkills: (name, disabledSkills, injectSkills) => ipcRenderer.invoke('session:setSkills', name, disabledSkills, injectSkills),
   setSessionAgents: (name, agents, denyBuiltins) => ipcRenderer.invoke('session:setAgents', name, agents, denyBuiltins),
+  setSessionIntents: (name, intents) => ipcRenderer.invoke('session:setIntents', name, intents),
   getSkillCatalog: (name) => ipcRenderer.invoke('session:skillCatalog', name),
   getAgentCatalog: (name) => ipcRenderer.invoke('session:agentCatalog', name),
   getSkillCatalogFor: (cwd) => ipcRenderer.invoke('settings:skillCatalogFor', cwd),

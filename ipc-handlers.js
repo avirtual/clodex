@@ -513,6 +513,17 @@ function registerIpcHandlers(deps) {
       Array.isArray(denyBuiltins) ? denyBuiltins : []);
     return { ok: true };
   });
+  // Focused per-session intent gating (mirror of setTools). UNLIKE the others this
+  // applies IMMEDIATELY with no restart: the fire-time gate (_handleIntent) re-reads
+  // persistence on every intent, so the upsert IS the apply. `intents` is the raw
+  // allowlist from collectIntentChecklist — an ARRAY ([] = everything gated) or NULL
+  // (all boxes checked → the living all-enabled default). setIntents removes the key
+  // on null, never freezes an array (mirrors setStripLevel's delete-when-default).
+  ipcMain.handle('session:setIntents', (_e, name, intents) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
+    persistence.setIntents(name, Array.isArray(intents) ? intents : null);
+    return { ok: true };
+  });
   // Agent catalog for the Agents popover. Unlike skills there's no transcript
   // roster or lower-layer/policy state to merge — built-ins are irreducible and
   // have no trim lever — so the catalog is simply the custom-subagent library

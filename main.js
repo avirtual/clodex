@@ -1344,6 +1344,7 @@ function readSessionArgs(name) {
     effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
     disabledSkills: entry.disabledSkills || [],
     injectSkills: entry.injectSkills || [],
+    intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
     stripLevel: stripLevelOf(entry),
   } : { ok: false };

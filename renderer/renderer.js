@@ -1301,17 +1301,10 @@ function renderSessionActions(holdHtml = '') {
   if (!el) return;
   const type = activeSession ? sessionTypeOf(activeSession) : null;
   const btns = [];
-  if (type === 'claude') {
-    btns.push('<button class="px-action" data-act="tools" title="Enable/disable tools for this session">🛠 tools</button>');
-    btns.push('<button class="px-action" data-act="skills" title="Enable/disable skills for this session">🧩 skills</button>');
-    // Always shown for Claude: the popover composes the custom-subagent library
-    // AND toggles the built-in agents (denying Explore/Plan/general-purpose
-    // trims them from the roster), so it's useful even with an empty library.
-    btns.push('<button class="px-action" data-act="agents" title="Enable/disable custom + built-in subagents for this session">🤖 agents</button>');
-  }
   if (type === 'claude' || type === 'codex') {
-    // Touched-files feed. Fed by the wire (Claude); a Codex session only gets
-    // the button once something lands in its feed (no Codex tap yet).
+    // Touched-files feed stays a STANDALONE button — it's live status (count +
+    // unseen accent latch), not a launcher. Fed by the wire (Claude); a Codex
+    // session only gets it once something lands in its feed (no Codex tap yet).
     const nFiles = (filesState.get(activeSession) || []).length;
     if (type === 'claude' || nFiles > 0) {
       const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
@@ -1320,9 +1313,11 @@ function renderSessionActions(holdHtml = '') {
       const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
       btns.push(`<button class="px-action${unseen}" data-act="files" title="Files this agent's tools touched — click to view or diff">${label}</button>`);
     }
-    btns.push('<button class="px-action" data-act="history" title="Past conversations — resume an earlier session">🕘 history</button>');
-    btns.push('<button class="px-action" data-act="reload" title="Hard restart: reload tools/skills/settings from disk in a fresh conversation (the CLI only reads them at launch — /clear and --resume don\'t). The current conversation stays in 🕘 history.">🔄 reload</button>');
-    btns.push('<button class="px-action" data-act="edit" title="Edit session settings">⚙ edit</button>');
+    // Everything else (tools/skills/agents/intents/edit/history/reload) collapses
+    // behind ONE button + a dropdown — the bar is out of width even at max, and
+    // these are seldom-clicked launchers. Entries are type-conditioned by the
+    // session-actions leaf; the menu's onPick routes back to the openers below.
+    btns.push('<button class="px-action" data-act="session-menu" title="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
   }
   // Peer tabs (type "remote"): the touched-files popup is the one action that
   // works across the link — served by the owner's query endpoint. Everything
@@ -1830,13 +1825,14 @@ setInterval(() => {
     if (bustSeg && activeSession) { openBustPopover(activeSession, bustSeg); return; }
     const action = e.target.closest('.px-action');
     if (action && activeSession) {
-      if (action.dataset.act === 'edit') openArgsDialog(activeSession);
-      else if (action.dataset.act === 'tools') openToolsPopover(activeSession, action);
-      else if (action.dataset.act === 'skills') openSkillsPopover(activeSession, action);
-      else if (action.dataset.act === 'agents') openAgentsPopover(activeSession, action);
-      else if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
-      else if (action.dataset.act === 'history') openHistoryMenu(activeSession, action);
-      else if (action.dataset.act === 'reload') doHardRestart(activeSession);
+      if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
+      else if (action.dataset.act === 'session-menu') {
+        // Toggle the consolidated launcher menu. onPick routes the chosen entry
+        // to its opener — the openers span two islands + a core dialog, so the
+        // core owns this dispatch (the menu island stays opener-agnostic).
+        if (isSessionMenuOpen()) closeSessionMenu();
+        else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor));
+      }
       else if (action.dataset.act === 'strip-menu') {
         if (isStripMenuOpen()) closeStripMenu();
         else openStripMenu(action, Number(action.dataset.level) || 0);
@@ -1857,18 +1853,34 @@ setInterval(() => {
 const {
   openWarmMenu, closeWarmMenu, isWarmMenuOpen,
   openStripMenu, closeStripMenu, isStripMenuOpen,
+  openSessionMenu, closeSessionMenu, isSessionMenuOpen,
   openHistoryMenu, doHardRestart,
 } = initSessionMenus({
   getActiveSession: () => activeSession, proxyState, sessionList,
   createTerminal, addSessionToSidebar, switchSession,
 });
 
+// Route a consolidated-menu pick to its opener. Kept in the core because the
+// openers span two islands (checklist-popovers + session-menus) plus the core
+// Edit dialog; the menu island stays opener-agnostic (it just emits the act).
+// `anchor` is the ⚙ button, so the launched popover positions over the bar.
+function routeSessionAction(act, anchor) {
+  if (!activeSession) return;
+  if (act === 'tools') openToolsPopover(activeSession, anchor);
+  else if (act === 'skills') openSkillsPopover(activeSession, anchor);
+  else if (act === 'agents') openAgentsPopover(activeSession, anchor);
+  else if (act === 'intents') openIntentsPopover(activeSession, anchor);
+  else if (act === 'edit') openArgsDialog(activeSession);
+  else if (act === 'history') openHistoryMenu(activeSession, anchor);
+  else if (act === 'reload') doHardRestart(activeSession);
+}
+
 // --- Quick config-editor popovers: Tools / Skills / Agents ---
 // Self-contained island (popovers/checklist-popovers.js). No popoverApi — these
 // edit local session config via window.api; the ctx popover's manage links and
 // the bar's ⚙ actions call the returned openers. Tools/Agents are local-only;
 // Skills also accepts a peer source (used by peers-ui for Edit Skills on a row).
-const { openToolsPopover, openSkillsPopover, openAgentsPopover } = initChecklistPopovers({
+const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession,
 });
 

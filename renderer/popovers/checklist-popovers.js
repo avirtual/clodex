@@ -22,6 +22,7 @@ const {
   renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist,
   renderInjectChecklist, collectInjectChecklist, renderAgentChecklist, collectAgentChecklist,
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
+  renderIntentChecklist, collectIntentChecklist,
   setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
@@ -304,17 +305,87 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (e.key === 'Escape' && !agentsPopover.classList.contains('hidden')) closeAgentsPopover();
   });
 
-  // Bulk "Check all / Uncheck all" controls for the three checklist popovers.
+  // --- Per-session Intents popover -----------------------------------------
+  // Live intent-gate editing (the New/Edit dialog's intent checklist, for a
+  // running seat). Unlike tools/skills/agents — where the gated config is frozen
+  // at spawn so a change only bites on restart — the fire-time gate re-reads
+  // persistence on EVERY intent, so Apply takes effect IMMEDIATELY with no
+  // restart; the optional checkbox only refreshes the seat's PROMPT (which still
+  // documents disabled verbs until it respawns, though the gate already bounces
+  // them). Persist mirrors the New dialog: all boxes checked → collect yields
+  // null → session:setIntents REMOVES the key (living all-enabled default),
+  // never a frozen array; [] is a real "everything gated" value.
+  const intentsPopover = document.getElementById('intents-popover');
+  const intentsPopoverName = document.getElementById('intents-popover-name');
+  const popoverIntentsList = document.getElementById('popover-intents-list');
+  const intentsPopoverRestart = document.getElementById('intents-popover-restart');
+
+  function closeIntentsPopover() {
+    intentsPopover.classList.add('hidden');
+    intentsPopover.dataset.name = '';
+  }
+
+  async function openIntentsPopover(name, anchorBtn) {
+    const res = await window.api.getSessionArgs(name);
+    if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+    // res.intents is the raw persisted allowlist (array, or null = all-enabled);
+    // renderIntentChecklist reads it through intentEnabled, same as the dialog.
+    renderIntentChecklist(popoverIntentsList, res.intents);
+    intentsPopoverRestart.checked = false;
+    intentsPopoverName.textContent = name;
+    intentsPopover.dataset.name = name;
+    intentsPopover.classList.remove('hidden');
+    const r = anchorBtn.getBoundingClientRect();
+    const w = intentsPopover.offsetWidth;
+    intentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+    intentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+  }
+
+  document.getElementById('intents-popover-cancel').addEventListener('click', closeIntentsPopover);
+  document.getElementById('intents-popover-close').addEventListener('click', closeIntentsPopover);
+  document.getElementById('intents-popover-apply').addEventListener('click', async () => {
+    const name = intentsPopover.dataset.name;
+    if (!name) return closeIntentsPopover();
+    const intents = collectIntentChecklist(popoverIntentsList); // array | null
+    const restart = intentsPopoverRestart.checked;
+    closeIntentsPopover();
+    const r = await window.api.setSessionIntents(name, intents);
+    if (!r || !r.ok) { alert(`Failed to update intents: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    if (!restart) return;
+    // Same re-attach dance as the tools popover's restart path.
+    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    const snapType = item ? item.querySelector('.session-type')?.textContent : null;
+    const snapCwd = item ? item.dataset.cwd : null;
+    const rr = await window.api.restartSession(name);
+    if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+    if (snapType) {
+      createTerminal(name);
+      addSessionToSidebar(name, snapType, snapCwd, null);
+      switchSession(name);
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (intentsPopover.classList.contains('hidden')) return;
+    if (intentsPopover.contains(e.target)) return;
+    if (e.target.closest('.px-action')) return; // the menu/toggle button handles itself
+    closeIntentsPopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !intentsPopover.classList.contains('hidden')) closeIntentsPopover();
+  });
+
+  // Bulk "Check all / Uncheck all" controls for the checklist popovers.
   wireBulkToggles(toolsPopover, popoverToolsList);
   wireBulkToggles(skillsPopover, popoverSkillsList);
   wireBulkToggles(agentsPopover, popoverAgentsList);
+  wireBulkToggles(intentsPopover, popoverIntentsList);
 
-  // Always-reachable ✕ close buttons (tools/skills; agents' is wired in-section
-  // above). A tall popover can push outside-click/Escape out of reach.
+  // Always-reachable ✕ close buttons (tools/skills; agents'/intents' are wired
+  // in-section above). A tall popover can push outside-click/Escape out of reach.
   document.getElementById('tools-popover-close').addEventListener('click', closeToolsPopover);
   document.getElementById('skills-popover-close').addEventListener('click', closeSkillsPopover);
 
-  return { openToolsPopover, openSkillsPopover, openAgentsPopover };
+  return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover };
 }
 
 module.exports = { initChecklistPopovers };

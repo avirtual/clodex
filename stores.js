@@ -366,6 +366,20 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         this._save(all);
       }
     },
+    // Per-session intent-gate allowlist (send-side; see intent-catalog). Like
+    // setStripLevel this stores the DIVERGENCE only: an ARRAY (incl. [] =
+    // everything gated) persists; NULL removes the key so the seat reverts to the
+    // living all-enabled default — never a frozen array. The fire-time gate reads
+    // this fresh, so writing it applies immediately (no respawn needed).
+    setIntents(name, intents) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (Array.isArray(intents)) entry.intents = intents.map(String);
+        else delete entry.intents;
+        this._save(all);
+      }
+    },
     // Per-session wirescope strip-aggressiveness LEVEL (a cumulative ladder, not
     // independent toggles): 0 = off, 1 = strip prior thinking, 2 = + strip
     // superseded tool results. Each level is a superset of the one below. clodex

@@ -72,6 +72,31 @@ test('persistence: setHoldUntil round-trips and clears to an ABSENT key', () => 
   } finally { cleanup(); }
 });
 
+test('persistence: setIntents persists an array, removes the key on null', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    // Absent by default (living all-enabled).
+    assert.strictEqual('intents' in stores.persistence.get('a'), false);
+    // A restricted allowlist persists, stringified.
+    stores.persistence.setIntents('a', ['dm', 'who']);
+    assert.deepStrictEqual(stores.persistence.get('a').intents, ['dm', 'who']);
+    // [] is a REAL value — "everything gated" — distinct from absent.
+    stores.persistence.setIntents('a', []);
+    assert.deepStrictEqual(stores.persistence.get('a').intents, []);
+    assert.strictEqual('intents' in stores.persistence.get('a'), true);
+    // survives an unrelated upsert (spread-merge keeps the field)
+    stores.persistence.upsert({ name: 'a', label: 'x' });
+    assert.deepStrictEqual(stores.persistence.get('a').intents, []);
+    // null → back to the all-enabled default: the key is REMOVED, never frozen.
+    stores.persistence.setIntents('a', null);
+    assert.strictEqual('intents' in stores.persistence.get('a'), false);
+    // No-op on an unknown name (never creates an entry).
+    stores.persistence.setIntents('ghost', ['dm']);
+    assert.strictEqual(stores.persistence.get('ghost'), null);
+  } finally { cleanup(); }
+});
+
 test('persistence: entries missing workspaceId migrate to the default id', () => {
   const { userData, stores, cleanup } = freshStores();
   try {

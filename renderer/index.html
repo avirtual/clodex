@@ -226,6 +226,20 @@
         <button id="tools-popover-apply" type="button">Apply</button>
       </div>
     </div>
+    <div id="intents-popover" class="hidden">
+      <div class="popover-title"><span>Intents — <span id="intents-popover-name"></span></span><button type="button" class="popover-close" id="intents-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div id="popover-intents-list" class="agent-checklist"></div>
+      <span class="hint-text">Unchecked intents are gated OFF for this session — it can't emit them (a gated seat still RECEIVES). <code>[agent:name]</code> is never gateable.</span>
+      <label class="tools-popover-restart">
+        <input type="checkbox" id="intents-popover-restart">
+        <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists disabled intents, but the gate already bounces them).</span>
+      </label>
+      <div class="popover-actions">
+        <button id="intents-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="intents-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
     <div id="peer-select-popover" class="hidden">
       <div class="popover-title"><span>Show sessions — <span id="peer-select-popover-name"></span></span><button type="button" class="popover-close" id="peer-select-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
