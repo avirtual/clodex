@@ -642,3 +642,102 @@ test('reminders: is exported as a store from initStores', () => {
     assert.strictEqual(typeof stores.reminders.markFired, 'function');
   } finally { cleanup(); }
 });
+
+// --- notifications (tenth store) -------------------------------------------
+
+test('notifications: missing file -> [], add mints id + createdAt, readAt=null, list round-trips', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    assert.deepStrictEqual(stores.notifications.list(), []);
+    assert.strictEqual(stores.notifications.unreadCount(), 0);
+    const rec = stores.notifications.add({ from: 'agent-a', workspaceId: 'ws-1', body: 'blocked on a decision' });
+    assert.match(rec.id, /^[a-z0-9]+$/);
+    assert.strictEqual(rec.from, 'agent-a');
+    assert.strictEqual(rec.workspaceId, 'ws-1');
+    assert.strictEqual(rec.body, 'blocked on a decision');
+    assert.strictEqual(typeof rec.createdAt, 'number');
+    assert.strictEqual(rec.readAt, null);
+    // _load re-reads the file, so this reflects saved bytes.
+    assert.deepStrictEqual(stores.notifications.list().map(n => n.id), [rec.id]);
+    assert.strictEqual(stores.notifications.unreadCount(), 1);
+  } finally { cleanup(); }
+});
+
+test('notifications: list is chronological (append order = createdAt order)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.notifications.add({ from: 'a', workspaceId: 'w', body: 'first' });
+    stores.notifications.add({ from: 'b', workspaceId: 'w', body: 'second' });
+    stores.notifications.add({ from: 'c', workspaceId: 'w', body: 'third' });
+    assert.deepStrictEqual(stores.notifications.list().map(n => n.body), ['first', 'second', 'third']);
+  } finally { cleanup(); }
+});
+
+test('notifications: add defaults workspaceId=null and body=""; coerces given ids to string', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const bare = stores.notifications.add({ from: 'a' });
+    assert.strictEqual(bare.workspaceId, null);
+    assert.strictEqual(bare.body, '');
+    const coerced = stores.notifications.add({ from: 'a', workspaceId: 42, body: 'x' });
+    assert.strictEqual(coerced.workspaceId, '42');
+  } finally { cleanup(); }
+});
+
+test('notifications: markRead flips readAt, is idempotent, returns false for unknown id', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const rec = stores.notifications.add({ from: 'a', workspaceId: 'w', body: 'x' });
+    assert.strictEqual(stores.notifications.markRead('nope'), false);
+    assert.strictEqual(stores.notifications.markRead(rec.id), true);
+    const readAt = stores.notifications.list()[0].readAt;
+    assert.strictEqual(typeof readAt, 'number');
+    assert.strictEqual(stores.notifications.unreadCount(), 0);
+    // Idempotent: already-read still returns true, keeps the original stamp.
+    assert.strictEqual(stores.notifications.markRead(rec.id), true);
+    assert.strictEqual(stores.notifications.list()[0].readAt, readAt);
+  } finally { cleanup(); }
+});
+
+test('notifications: markAllRead stamps every unread and returns the count flipped', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.notifications.add({ from: 'a', workspaceId: 'w', body: '1' });
+    const mid = stores.notifications.add({ from: 'b', workspaceId: 'w', body: '2' });
+    stores.notifications.add({ from: 'c', workspaceId: 'w', body: '3' });
+    stores.notifications.markRead(mid.id); // one already read
+    assert.strictEqual(stores.notifications.unreadCount(), 2);
+    assert.strictEqual(stores.notifications.markAllRead(), 2); // only the two unread flip
+    assert.strictEqual(stores.notifications.unreadCount(), 0);
+    assert.strictEqual(stores.notifications.markAllRead(), 0); // nothing left to flip
+  } finally { cleanup(); }
+});
+
+test('notifications: remove returns true when present, false for an unknown id', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const rec = stores.notifications.add({ from: 'a', workspaceId: 'w', body: 'x' });
+    assert.strictEqual(stores.notifications.remove('nope'), false);
+    assert.strictEqual(stores.notifications.remove(rec.id), true);
+    assert.deepStrictEqual(stores.notifications.list(), []);
+  } finally { cleanup(); }
+});
+
+test('notifications: ids are unique across many adds', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const ids = new Set();
+    for (let i = 0; i < 200; i++) ids.add(stores.notifications.add({ from: 'a', workspaceId: 'w', body: String(i) }).id);
+    assert.strictEqual(ids.size, 200);
+  } finally { cleanup(); }
+});
+
+test('notifications: is exported as a store from initStores', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    assert.strictEqual(typeof stores.notifications, 'object');
+    assert.strictEqual(typeof stores.notifications.add, 'function');
+    assert.strictEqual(typeof stores.notifications.markAllRead, 'function');
+    assert.strictEqual(typeof stores.notifications.unreadCount, 'function');
+  } finally { cleanup(); }
+});

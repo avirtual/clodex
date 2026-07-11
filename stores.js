@@ -1,9 +1,9 @@
 // stores.js — the persistence layer as a single factory. initStores() builds
-// the nine on-disk stores and returns them; main.js calls it once in
+// the ten on-disk stores and returns them; main.js calls it once in
 // app.whenReady() and destructures the result.
 //
 // DI seam: initStores(userDataPath, { log, registryDir }).
-//   - userDataPath  — app.getPath('userData'); the seven JSON stores live here.
+//   - userDataPath  — app.getPath('userData'); the eight JSON stores live here.
 //   - registryDir   — ~/.clodex; the prompt/agent/skill libraries live under it
 //                     (passed in to keep a single REGISTRY_DIR source of truth
 //                     in main.js rather than re-deriving os.homedir() here).
@@ -193,6 +193,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   const AGENT_DEFAULTS_FILE = path.join(userDataPath, 'agent-defaults.json');
   const UI_SETTINGS_FILE = path.join(userDataPath, 'ui-settings.json');
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
+  const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
@@ -971,6 +972,79 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   };
 
   // ---------------------------------------------------------------------------
+  // Operator inbox — [agent:notify-user] notes an agent raises to get Bogdan's
+  // attention when it's blocked on his decision. Chronological by createdAt (the
+  // store appends, so file order already IS chronological); the UI renders the
+  // list newest-first. Ids are base36 like reminders (no cancel-token contract
+  // here, but same _mintId keeps the two stores symmetric). readAt=null is the
+  // unread state; unreadCount() drives the sidebar badge.
+  // ---------------------------------------------------------------------------
+  const notifications = {
+    _load() {
+      try {
+        const all = JSON.parse(fs.readFileSync(NOTIFICATIONS_FILE, 'utf-8'));
+        return Array.isArray(all) ? all : [];
+      } catch { return []; }
+    },
+    _save(entries) {
+      try {
+        atomicWriteFileSync(NOTIFICATIONS_FILE, JSON.stringify(entries, null, 2));
+      } catch (e) { console.error('notifications save failed:', e); }
+    },
+    _mintId(all) {
+      for (let i = 0; i < 50; i++) {
+        const id = Math.random().toString(36).slice(2, 8);
+        if (id && !all.some((n) => n.id === id)) return id;
+      }
+      return Date.now().toString(36).slice(-6);
+    },
+    list() { return this._load(); },
+    // Append a note. Caller supplies from/workspaceId/body; the store owns id +
+    // createdAt and initializes readAt=null. Returns the stored record.
+    add({ from, workspaceId = null, body = '' }) {
+      const all = this._load();
+      const id = this._mintId(all);
+      const rec = {
+        id, from,
+        workspaceId: (workspaceId == null ? null : String(workspaceId)),
+        body: String(body == null ? '' : body),
+        createdAt: Date.now(),
+        readAt: null,
+      };
+      all.push(rec);
+      this._save(all);
+      return rec;
+    },
+    // Stamp one note read. Returns true if it existed and flipped (a no-op on an
+    // already-read note still returns true — the row IS read).
+    markRead(id) {
+      const all = this._load();
+      const rec = all.find((n) => n.id === id);
+      if (!rec) return false;
+      if (rec.readAt == null) { rec.readAt = Date.now(); this._save(all); }
+      return true;
+    },
+    // Stamp every unread note read at once. Returns the count flipped.
+    markAllRead() {
+      const all = this._load();
+      const now = Date.now();
+      let count = 0;
+      for (const n of all) { if (n.readAt == null) { n.readAt = now; count++; } }
+      if (count) this._save(all);
+      return count;
+    },
+    // Drop one note by id. Returns true if it existed.
+    remove(id) {
+      const all = this._load();
+      const next = all.filter((n) => n.id !== id);
+      if (next.length === all.length) return false;
+      this._save(next);
+      return true;
+    },
+    unreadCount() { return this._load().reduce((n, r) => n + (r.readAt == null ? 1 : 0), 0); },
+  };
+
+  // ---------------------------------------------------------------------------
   // UI preferences — statusline components per CLI, global
   // ---------------------------------------------------------------------------
   const uiSettings = {
@@ -1073,7 +1147,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
 
   return {
     persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, uiSettings,
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings,
     renameWorkspaceScope,
   };
 }
