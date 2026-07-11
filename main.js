@@ -547,6 +547,7 @@ const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queu
 const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, shadowIntentKey } = require('./intent-scanner');
+const { intentEnabled } = require('./intent-catalog');
 const { isFilenameToken, parseAndValidate, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
@@ -1016,6 +1017,7 @@ const SessionManager = createSessionManager({
     ensureDir,
     execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
     fs,
+    intentEnabled,
     isAlive,
     isDigested,
     isDraftOpen,

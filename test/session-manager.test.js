@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createSessionManager } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
+const { intentEnabled } = require('../intent-catalog');
 
 // Minimal fake deps: only what the PTY-free methods touch. Everything else is
 // undefined, which the destructure tolerates (those methods aren't reached).
@@ -21,6 +22,7 @@ function mk(overrides = {}) {
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
+    intentEnabled, // real pure leaf — the fire-time gate needs it on every _handleIntent
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
@@ -338,6 +340,114 @@ test('who: lists agent sessions from all workspaces, flat, self excluded', async
   // Exactly the other-workspace agent, labelled, no workspace annotation — proves
   // cross-workspace visibility, self-exclusion, and bash exclusion in one shot.
   assert.strictEqual(injected[0], '[agent:peers] b (idle)');
+});
+
+// --- Fire-time intent gate (per-session `intents` allowlist) ------------------
+// _handleIntent reads the SENDER's persisted `intents` FRESH on every fire and
+// bounces a disabled intent before the switch — send-side only. Absent list =
+// all enabled (back-compat). `name` is never gateable. `exec` passing the coarse
+// gate still meets its finer per-command grant. The resend bounce spells out
+// that the fallback is parking (a delay), not a loss.
+function mkGate(intents) {
+  // `intents` is the value persisted under sender 'a' (undefined = absent).
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws2' });
+  return { m, injected };
+}
+
+test('gate: absent allowlist lets every intent through (back-compat default)', async () => {
+  const { m, injected } = mkGate(undefined);
+  await m._handleIntent('a', { type: 'who' });
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /^\[agent:peers\]/); // the real who reply, not a bounce
+});
+
+test('gate: an enabled intent in a restrictive allowlist fires normally', async () => {
+  const { m, injected } = mkGate(['who', 'dm']);
+  await m._handleIntent('a', { type: 'who' });
+  assert.match(injected[0], /^\[agent:peers\]/);
+});
+
+test('gate: a disabled intent bounces loudly naming the gate, and does NOT run', async () => {
+  const { m, injected } = mkGate(['dm']); // who is off
+  await m._handleIntent('a', { type: 'who' });
+  assert.strictEqual(injected.length, 1);
+  assert.strictEqual(injected[0], '[agent:who] the who intent is disabled for this session');
+});
+
+test('gate: an empty array gates everything', async () => {
+  const { m, injected } = mkGate([]);
+  await m._handleIntent('a', { type: 'who' });
+  assert.strictEqual(injected[0], '[agent:who] the who intent is disabled for this session');
+});
+
+test('gate: the resend bounce spells out the parking fallback (delay, not loss)', async () => {
+  const { m, injected } = mkGate(['dm']); // resend off
+  await m._handleIntent('a', { type: 'resend', id: 'p1' });
+  assert.strictEqual(
+    injected[0],
+    "[agent:resend] the resend intent is disabled for this session — the message will deliver with the peer's next turn",
+  );
+});
+
+test('gate: `name` is never gateable, even with an empty allowlist', async () => {
+  const { m, injected } = mkGate([]);
+  await m._handleIntent('a', { type: 'name' });
+  assert.strictEqual(injected[0], '[agent:name] a');
+});
+
+test('gate: exec disabled → coarse bounce before the per-command grant is consulted', async () => {
+  const { m, injected } = mkGate(['dm']); // exec off
+  let ran = false;
+  m._handleExecIntent = () => { ran = true; };
+  await m._handleIntent('a', { type: 'exec', cmd: 'bridge-reply', body: '{}' });
+  assert.strictEqual(ran, false); // never reached the per-command layer
+  assert.strictEqual(injected[0], '[agent:exec] the exec intent is disabled for this session');
+});
+
+test('gate: exec enabled → passes the coarse gate, reaching the per-command grant', async () => {
+  const { m, injected } = mkGate(['exec']);
+  let seenCmd = null;
+  m._handleExecIntent = (_s, cmd) => { seenCmd = cmd; }; // stub the fine gate
+  await m._handleIntent('a', { type: 'exec', cmd: 'bridge-reply', body: '{}' });
+  assert.strictEqual(seenCmd, 'bridge-reply'); // coarse gate let it through
+  assert.strictEqual(injected.length, 0); // gate itself stayed silent
+});
+
+test('gate: a disabled intent from a sender with no live session is a silent no-op', async () => {
+  const { m, injected } = mkGate(['dm']);
+  m.sessions.delete('a'); // sender gone, but persistence still gates who off
+  await m._handleIntent('a', { type: 'who' }); // must not throw
+  assert.strictEqual(injected.length, 0);
+});
+
+test('gate: the allowlist is read FRESH per fire — a toggle applies without respawn', async () => {
+  const injected = [];
+  let intents = ['who']; // who enabled to start
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+  });
+  m._injectText = (_s, t) => injected.push(t);
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws2' });
+
+  await m._handleIntent('a', { type: 'who' });
+  assert.match(injected[0], /^\[agent:peers\]/); // enabled → fires
+
+  intents = ['dm']; // operator unchecks `who` mid-session (no respawn)
+  await m._handleIntent('a', { type: 'who' });
+  assert.strictEqual(injected[1], '[agent:who] the who intent is disabled for this session');
 });
 
 // --- spawn with template: applies the template's config -----------------------

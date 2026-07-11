@@ -89,6 +89,7 @@ function createSessionManager(deps) {
     ensureDir,
     execBodyCap,
     fs,
+    intentEnabled,
     isAlive,
     isDigested,
     isDraftOpen,
@@ -1606,6 +1607,29 @@ function createSessionManager(deps) {
 
     async _handleIntent(senderName, intent) {
       const session = this.sessions.get(senderName);
+
+      // Per-session intent gating (SEND side). Read the SENDER's allowlist FRESH
+      // from persistence on every fire — same as the exec per-command grant below
+      // — so a checklist toggle applies WITHOUT a respawn. `intentEnabled` treats
+      // an absent list as "all enabled" (back-compat, the overwhelming default)
+      // and never gates `name` (identity). A disabled intent gets a loud bounce
+      // naming the gate, then stops here. This is send-side ONLY: `_deliverMessage`
+      // is untouched, so a dm-GATED agent still RECEIVES dms — it just can't emit
+      // them. `exec` that passes here still hits its finer per-command grant in
+      // _handleExecIntent (the two gates are coarse + fine, both must allow).
+      if (!intentEnabled(intent.type, getPersistence().get(senderName)?.intents)) {
+        if (session) {
+          // resend has no prompt line — its instruction rides the dm park-bounce
+          // notice — so an agent with dm-on/resend-off will be told to emit a
+          // handle that then lands here. Spell out that the fallback is a DELAY
+          // (the parked copy still drains on the peer's next turn), not a loss.
+          const msg = intent.type === 'resend'
+            ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
+            : `the ${intent.type} intent is disabled for this session`;
+          this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
+        }
+        return;
+      }
 
       switch (intent.type) {
         case 'dm': {
