@@ -552,7 +552,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = []) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], intents = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -886,6 +886,15 @@ function createSessionManager(deps) {
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
         disabledSkills: Array.isArray(disabledSkills) ? disabledSkills : [],
         injectSkills: Array.isArray(injectSkills) ? injectSkills : [],
+        // Intent-gate allowlist is spawn-time config (it bakes into the append
+        // blob — see buildIpcPrompt in the claude/codex arms), so it's a create()
+        // param persisted by create()'s OWN upsert, not a post-create seed. That's
+        // what makes it survive kill()+recreate restarts, which drop the record and
+        // rebuild it from spawn args only (stripLevel's re-assert comment documents
+        // that hole). Conditional: an ABSENT list (all-enabled default) must stay
+        // absent — never freeze `intents: null` onto the record — while `[]`
+        // (everything gated) is a real value that persists.
+        ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
       });
 
       // Turn observation for agent modes. Two mutually exclusive paths:
@@ -2393,6 +2402,12 @@ function createSessionManager(deps) {
           await this.create(
             name, type, cwd, childArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
+            // Intent-gate allowlist is a spawn-time create() param (it bakes into the
+            // injected IPC prompt), so it's threaded IN here rather than seeded post-
+            // create like execCommands. `[]` (everything gated) is a real value that
+            // must apply; an absent key (all-enabled template) passes null → create()
+            // omits it → the seat keeps the living all-enabled default.
+            Array.isArray(tpl && tpl.intents) ? tpl.intents : null,
           );
           // stripLevel + autoCompact are NOT create() params — the poller asserts
           // strip on relink and reads autoCompact from persistence. Apply post-
@@ -2402,20 +2417,11 @@ function createSessionManager(deps) {
             if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
             // execCommands capability grant — the allowlist of registered command
             // ids this seat may [agent:exec]. Seeded post-create (like stripLevel)
-            // to keep create()'s 16-arg signature untouched. A seat with no grant
+            // to keep create()'s signature untouched. A seat with no grant
             // can run nothing; the grant rides the template, so a Bash-less trader
             // seat's "read-only toward the trading system" becomes physics.
             if (Array.isArray(tpl.execCommands) && tpl.execCommands.length) {
               getPersistence().upsert({ name, execCommands: tpl.execCommands.map(String) });
-            }
-            // Intent gate allowlist — the send-side gate `_handleIntent` reads it
-            // fresh. Seeded post-create like execCommands. NO `.length` guard: an
-            // EMPTY array is a real "everything gated" value (distinct from absent =
-            // all enabled), so a fully-locked-down template must apply its `[]`. The
-            // export only writes `intents` when the seat was restricted, so an
-            // all-enabled template simply has no key and this is skipped → absent.
-            if (Array.isArray(tpl.intents)) {
-              getPersistence().upsert({ name, intents: tpl.intents.map(String) });
             }
           }
           // The intent path bypasses the renderer's create flow, so tell the owning
@@ -2517,6 +2523,10 @@ function createSessionManager(deps) {
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
               entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
               entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+              // Thread the persisted allowlist through the cold respawn — kill() dropped
+              // the record, so without this the gated seat would come back all-enabled
+              // (the exact hole the stripLevel re-assert below plugs for stripping).
+              Array.isArray(entry.intents) ? entry.intents : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

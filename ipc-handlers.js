@@ -59,7 +59,7 @@ function registerIpcHandlers(deps) {
       // fires for non-dialog callers — keeping new sessions on the shared, lean
       // tools segment. An explicit array always wins (undefined === "untouched").
       const seedTools = (disabledTools === undefined) ? agentDefaults.getDefaultDeny() : disabledTools;
-      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || []);
+      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || [], Array.isArray(intents) ? intents : null);
       // Strip level isn't a spawn arg (it's a proxy-side override the poller
       // asserts once the session links), so persist it onto the entry after
       // create() rather than threading it through the 15-param spawn path.
@@ -76,14 +76,9 @@ function registerIpcHandlers(deps) {
       if (Array.isArray(execCommands)) {
         persistence.upsert({ name, execCommands: execCommands.map(String) });
       }
-      // Intent gate: the fire-time `_handleIntent` gate reads the seat's persisted
-      // `intents` allowlist. Persist the dialog's collected list after create (like
-      // execCommands). Only when explicitly passed — undefined = untouched (the
-      // "all enabled" back-compat default, which the checklist omits rather than
-      // freezing as an array so future intents light up), [] = "everything gated".
-      if (Array.isArray(intents)) {
-        persistence.upsert({ name, intents: intents.map(String) });
-      }
+      // NOTE: `intents` is NOT seeded here — unlike execCommands/stripLevel it's a
+      // spawn-time create() param (it bakes into the injected IPC prompt), threaded
+      // in above so it's persisted by create()'s own upsert AND survives restart.
       return { ok: true, session };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -1348,6 +1343,7 @@ function registerIpcHandlers(deps) {
           entry.injectSkills || [],
           entry.systemPromptFile || null,
           entry.appendPromptFiles || [],
+          Array.isArray(entry.intents) ? entry.intents : null,
         );
         restored.push({
           name: entry.name,
@@ -1399,6 +1395,7 @@ function registerIpcHandlers(deps) {
         entry.injectSkills || [],
         entry.systemPromptFile || null,
         entry.appendPromptFiles || [],
+        Array.isArray(entry.intents) ? entry.intents : null,
       );
       return { ok: true };
     } catch (err) {

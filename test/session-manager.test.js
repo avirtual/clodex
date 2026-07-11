@@ -897,19 +897,23 @@ test('_handleExecIntent: execCommands grant seeded from template on spawn', asyn
   assert.deepStrictEqual(persisted.degen.execCommands, ['bridge-reply', 'other']);
 });
 
-// --- intent-gate allowlist seeded from template on spawn ----------------------
-// The `intents` allowlist rides the template exactly like execCommands, but with
-// two distinguishing semantics: an EMPTY array is a real "everything gated" value
-// that MUST apply (no `.length` guard), and an ABSENT key means "all enabled" and
-// must stay absent (never frozen to []). Three tests pin all three cases.
-function mkSpawnPersistProbe() {
-  const persisted = {};
+// --- intent-gate allowlist threaded through create() on template spawn --------
+// U5a promoted `intents` from a post-create seed to a create() PARAM (it bakes
+// into the injected IPC prompt, so it must be spawn-time config that survives
+// restart). So the template path now threads `tpl.intents` into create() rather
+// than upserting after — these tests capture create()'s args and assert the
+// intents param (index 16, the 17th positional). Two distinguishing semantics:
+// an EMPTY array is a real "everything gated" value that MUST apply (no `.length`
+// guard), and an ABSENT key passes `null` so create() omits it (stays all-enabled).
+const INTENTS_ARG = 16; // create(...,systemPromptFile[14], appendPromptFiles[15], intents[16])
+function mkSpawnCreateProbe() {
+  const created = [];
   const persistence = {
     list: () => [],
-    get: (n) => persisted[n] || null,
+    get: () => null,
     setStripLevel: () => {},
     setAutoCompact: () => {},
-    upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
+    upsert: () => {},
   };
   const m = mk({
     getPersistence: () => persistence,
@@ -919,45 +923,99 @@ function mkSpawnPersistProbe() {
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._injectText = () => {}; m._sendToSession = () => {}; m._broadcast = () => {};
-  m.create = async () => {};
-  return { m, persisted };
+  m.create = async (...args) => { created.push(args); };
+  return { m, created };
 }
 
-test('spawn template: a restricted `intents` allowlist is seeded on spawn', async () => {
-  const { m, persisted } = mkSpawnPersistProbe();
+test('spawn template: a restricted `intents` allowlist is threaded into create()', async () => {
+  const { m, created } = mkSpawnCreateProbe();
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'trader-seat.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', intents: ['dm', 'exec', 'remind'] }));
   m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
     { name: 'trader', cwd: '/proj/desk', template: file });
-  await waitFor(() => persisted.trader && persisted.trader.intents, 1000);
-  assert.deepStrictEqual(persisted.trader.intents, ['dm', 'exec', 'remind']);
+  await waitFor(() => created.length, 1000);
+  assert.deepStrictEqual(created[0][INTENTS_ARG], ['dm', 'exec', 'remind']);
 });
 
-test('spawn template: an EMPTY `intents` array (fully gated) applies — no .length guard', async () => {
-  const { m, persisted } = mkSpawnPersistProbe();
+test('spawn template: an EMPTY `intents` array (fully gated) is threaded — no .length guard', async () => {
+  const { m, created } = mkSpawnCreateProbe();
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'locked.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', intents: [] }));
   m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
     { name: 'locked', cwd: '/proj/desk', template: file });
-  await waitFor(() => persisted.locked, 1000); // create() upsert lands the record
+  await waitFor(() => created.length, 1000);
   // The empty allowlist is a real value ("everything gated"), distinct from absent.
-  assert.ok(Array.isArray(persisted.locked.intents));
-  assert.strictEqual(persisted.locked.intents.length, 0);
+  assert.ok(Array.isArray(created[0][INTENTS_ARG]));
+  assert.strictEqual(created[0][INTENTS_ARG].length, 0);
 });
 
-test('spawn template: a template WITHOUT `intents` seeds no key (absent = all enabled)', async () => {
-  const { m, persisted } = mkSpawnPersistProbe();
+test('spawn template: a template WITHOUT `intents` threads null (absent = all enabled)', async () => {
+  const { m, created } = mkSpawnCreateProbe();
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'open.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['x'] }));
   m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
     { name: 'open', cwd: '/proj/desk', template: file });
-  await waitFor(() => persisted.open && persisted.open.execCommands, 1000);
-  // An all-enabled seat carries no `intents` — the field stays absent so future
-  // intents light up by default (never frozen to []).
-  assert.strictEqual('intents' in persisted.open, false);
+  await waitFor(() => created.length, 1000);
+  // An all-enabled seat carries no `intents` — create() gets null so the field
+  // stays absent (future intents light up by default, never frozen to []).
+  assert.strictEqual(created[0][INTENTS_ARG], null);
+});
+
+// --- restart-survival: create()'s OWN upsert persists the intents param -------
+// The regression that bit stripLevel: kill() drops the record, then a recreate
+// rebuilds it from spawn args ONLY. Because `intents` is now a create() param
+// persisted by create()'s own upsert, threading `entry.intents` back in on the
+// recreate re-establishes it. This pins that write directly by driving a real
+// create() on a bash session (agentType null → no PTY hooks/wire; a fake pty is
+// enough), since the upsert is type-agnostic. Absent→omitted, array/[]→written.
+function mkBashCreateProbe() {
+  const persisted = {};
+  const fakePty = { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) };
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [],
+      get: () => null,
+      upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
+      setSessionId: () => {},
+    }),
+    resolveProxyBase: () => null,
+    lastTranscriptWrite: () => null,
+    pty: fakePty,
+    os: osReal,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._sendToSession = () => {};
+  return { m, persisted };
+}
+// create(name,type,cwd,extraArgs,resumeId,workspaceId,systemPromptBody,fork,proxy,
+//        agents,denyBuiltins,disabledTools,disabledSkills,injectSkills,
+//        systemPromptFile,appendPromptFiles,intents)
+const bashCreate = (m, name, intents) => m.create(
+  name, 'bash', osReal.tmpdir(), [], null, 'ws', null, false, null,
+  [], [], [], [], [], null, [], intents,
+);
+
+test('create: a restricted intents param is persisted by create()\'s own upsert (survives restart)', async () => {
+  const { m, persisted } = mkBashCreateProbe();
+  await bashCreate(m, 'b-restricted', ['dm', 'exec']);
+  assert.deepStrictEqual(persisted['b-restricted'].intents, ['dm', 'exec']);
+});
+
+test('create: an EMPTY intents param persists as [] (everything gated, a real value)', async () => {
+  const { m, persisted } = mkBashCreateProbe();
+  await bashCreate(m, 'b-locked', []);
+  assert.ok(Array.isArray(persisted['b-locked'].intents));
+  assert.strictEqual(persisted['b-locked'].intents.length, 0);
+});
+
+test('create: a null intents param writes NO key (absent = all-enabled default stays absent)', async () => {
+  const { m, persisted } = mkBashCreateProbe();
+  await bashCreate(m, 'b-open', null);
+  assert.ok(persisted['b-open'], 'the record was written');
+  assert.strictEqual('intents' in persisted['b-open'], false);
 });
 
 // --- exec body-capture JSON terminator (_extractIntents) ---
