@@ -422,7 +422,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   // renderer/IPC (which key on `.id`) work unchanged against a name identity.
   // Config subset: type/cwd/extraArgs/proxy/agents/execCommands/denyBuiltins/
   // disabledTools/disabledSkills/injectSkills/systemPromptFile/appendPromptFiles
-  // + opt-out stripLevel/autoCompact. NEVER a per-session identity (proxyAgent) or runtime
+  // + opt-out stripLevel/autoCompact/intents. NEVER a per-session identity (proxyAgent) or runtime
   // state (sessionId). Schemaless: unknown fields load verbatim, missing config
   // = clodex defaults at spawn (so pre-config / pre-prompt-refs templates load).
   // ---------------------------------------------------------------------------

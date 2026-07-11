@@ -134,6 +134,7 @@ test('templates: the full config subset round-trips (schemaless), id/name = file
       appendPromptFiles: ['00-house-rules', '50-wake'],
       stripLevel: 2,
       autoCompact: false,
+      intents: ['dm', 'exec', 'remind'], // a restricted seat: only these three
     };
     stores.templates.saveByName(rich);
     const loaded = stores.templates.list()[0];

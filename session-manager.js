@@ -2408,6 +2408,15 @@ function createSessionManager(deps) {
             if (Array.isArray(tpl.execCommands) && tpl.execCommands.length) {
               getPersistence().upsert({ name, execCommands: tpl.execCommands.map(String) });
             }
+            // Intent gate allowlist — the send-side gate `_handleIntent` reads it
+            // fresh. Seeded post-create like execCommands. NO `.length` guard: an
+            // EMPTY array is a real "everything gated" value (distinct from absent =
+            // all enabled), so a fully-locked-down template must apply its `[]`. The
+            // export only writes `intents` when the seat was restricted, so an
+            // all-enabled template simply has no key and this is skipped → absent.
+            if (Array.isArray(tpl.intents)) {
+              getPersistence().upsert({ name, intents: tpl.intents.map(String) });
+            }
           }
           // The intent path bypasses the renderer's create flow, so tell the owning
           // window to draw the sidebar tab + terminal (reused verbatim from reload).

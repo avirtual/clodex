@@ -897,6 +897,69 @@ test('_handleExecIntent: execCommands grant seeded from template on spawn', asyn
   assert.deepStrictEqual(persisted.degen.execCommands, ['bridge-reply', 'other']);
 });
 
+// --- intent-gate allowlist seeded from template on spawn ----------------------
+// The `intents` allowlist rides the template exactly like execCommands, but with
+// two distinguishing semantics: an EMPTY array is a real "everything gated" value
+// that MUST apply (no `.length` guard), and an ABSENT key means "all enabled" and
+// must stay absent (never frozen to []). Three tests pin all three cases.
+function mkSpawnPersistProbe() {
+  const persisted = {};
+  const persistence = {
+    list: () => [],
+    get: (n) => persisted[n] || null,
+    setStripLevel: () => {},
+    setAutoCompact: () => {},
+    upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
+  };
+  const m = mk({
+    getPersistence: () => persistence,
+    getTemplates: () => ({ list: () => [] }),
+    AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default',
+    ensureDir: () => {}, fs: fsReal, path: pathReal, os: osReal,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._injectText = () => {}; m._sendToSession = () => {}; m._broadcast = () => {};
+  m.create = async () => {};
+  return { m, persisted };
+}
+
+test('spawn template: a restricted `intents` allowlist is seeded on spawn', async () => {
+  const { m, persisted } = mkSpawnPersistProbe();
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'trader-seat.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', intents: ['dm', 'exec', 'remind'] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'trader', cwd: '/proj/desk', template: file });
+  await waitFor(() => persisted.trader && persisted.trader.intents, 1000);
+  assert.deepStrictEqual(persisted.trader.intents, ['dm', 'exec', 'remind']);
+});
+
+test('spawn template: an EMPTY `intents` array (fully gated) applies — no .length guard', async () => {
+  const { m, persisted } = mkSpawnPersistProbe();
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'locked.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', intents: [] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'locked', cwd: '/proj/desk', template: file });
+  await waitFor(() => persisted.locked, 1000); // create() upsert lands the record
+  // The empty allowlist is a real value ("everything gated"), distinct from absent.
+  assert.ok(Array.isArray(persisted.locked.intents));
+  assert.strictEqual(persisted.locked.intents.length, 0);
+});
+
+test('spawn template: a template WITHOUT `intents` seeds no key (absent = all enabled)', async () => {
+  const { m, persisted } = mkSpawnPersistProbe();
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'open.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['x'] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'open', cwd: '/proj/desk', template: file });
+  await waitFor(() => persisted.open && persisted.open.execCommands, 1000);
+  // An all-enabled seat carries no `intents` — the field stays absent so future
+  // intents light up by default (never frozen to []).
+  assert.strictEqual('intents' in persisted.open, false);
+});
+
 // --- exec body-capture JSON terminator (_extractIntents) ---
 // exec bodies are JSON DATA: greedy multi-line capture swallowed trailing prose
 // a seat wrote on following lines INTO the payload, corrupting the downstream

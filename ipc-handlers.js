@@ -50,7 +50,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
   } = deps;
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands) => {
+  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
     try {
       const workspaceId = workspaceOfSender(e);
       // Seed tool denies from the global "*" default when the caller passed none.
@@ -75,6 +75,14 @@ function registerIpcHandlers(deps) {
       // (Claude dialog); undefined = untouched, [] = an explicit "no grants".
       if (Array.isArray(execCommands)) {
         persistence.upsert({ name, execCommands: execCommands.map(String) });
+      }
+      // Intent gate: the fire-time `_handleIntent` gate reads the seat's persisted
+      // `intents` allowlist. Persist the dialog's collected list after create (like
+      // execCommands). Only when explicitly passed — undefined = untouched (the
+      // "all enabled" back-compat default, which the checklist omits rather than
+      // freezing as an array so future intents light up), [] = "everything gated".
+      if (Array.isArray(intents)) {
+        persistence.upsert({ name, intents: intents.map(String) });
       }
       return { ok: true, session };
     } catch (err) {
@@ -156,6 +164,11 @@ function registerIpcHandlers(deps) {
     };
     if (entry.stripLevel === 1 || entry.stripLevel === 2) t.stripLevel = entry.stripLevel;
     if (entry.autoCompact === false) t.autoCompact = false;
+    // Intent gate: an opt-out field like stripLevel/autoCompact — present ONLY when
+    // the seat has a restricted allowlist (≥1 intent off). An all-enabled seat has
+    // no `intents` key, so we must NOT write `intents: []` here (that would freeze
+    // "everything gated" onto a template that meant "all on"). Absent stays absent.
+    if (Array.isArray(entry.intents)) t.intents = entry.intents;
     // Name-keyed: re-exporting the same session overwrites its template instead
     // of piling up duplicates (saveByName mints the id when the name is new).
     templates.saveByName(t);
