@@ -797,6 +797,10 @@ const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
 const stripRow = document.getElementById('strip-row');
 const inputStripLevel = document.getElementById('input-strip-level');
+// Auto-compact opt-out (Claude only; agent-type field). Checked = default ON, so
+// collectFormConfig OMITS the key; unchecked writes `autoCompact: false` — the same
+// 1:1 key-presence↔opt-out mapping export uses (ipc-handlers.js exportFromSession).
+const inputAutoCompact = document.getElementById('input-auto-compact');
 // Collapsible accordion sections grouping the Claude-only advanced controls, so
 // the new-session dialog stays short by default (expand the one you need).
 const toolsSection = document.getElementById('tools-section');
@@ -863,6 +867,7 @@ async function openDialog() {
   inputResume.value = '';
   inputFork.checked = false;
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
+  if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   // Collapse the advanced accordions each open so the dialog starts short.
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.open = false;
@@ -933,6 +938,9 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
     await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
+    // Same opt-out prefill as openTemplateEditor — the dropdown-apply path also
+    // ignored t.autoCompact before U9 (silent-drop twin), fixed here.
+    if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
   }
   // Proxy is an agent-type field; reflect the template's tri-state choice.
   if (t.type === 'claude' || t.type === 'codex') {
@@ -999,6 +1007,17 @@ function collectFormConfig() {
   // like exportFromSession's opt-out omission (never freeze `[]` = "everything
   // gated" onto a seat that meant "all on"). Present only when ≥1 intent is off.
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
+  // Auto-compact opt-out: Claude-only (its checkbox lives in the claude-only
+  // Other section). Checked = default = OMIT the key; unchecked = write `false`;
+  // NEVER `true` — key presence maps 1:1 to the opt-out, matching export
+  // (ipc-handlers.js exportFromSession). Conditional-spread like `intents` so an
+  // all-default config carries no key.
+  const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
+  // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
+  // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
+  // owned key on save means "removed", not "preserve the stored value". Keep the
+  // two lists in sync: a new conditionally-omitted key here (like intents /
+  // autoCompact) MUST also be in EDITOR_OWNED or merge-preserve will resurrect it.
   return {
     type,
     cwd: expandPath(inputCwd.value.trim()) || homeDir,
@@ -1007,6 +1026,7 @@ function collectFormConfig() {
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
+    ...(autoCompactOff ? { autoCompact: false } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
     disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
@@ -1112,6 +1132,9 @@ async function openTemplateEditor(tpl = null) {
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
+  // Opt-out prefill: unchecked ONLY when the template captured autoCompact:false;
+  // absent/true → checked (the default). Mirrors collectFormConfig's key mapping.
+  if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
   setDialogMode('template');
   // Fix section show/hide for the type without firing the default empty-set async

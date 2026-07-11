@@ -440,8 +440,27 @@ function initStores(userDataPath, { log, registryDir } = {}) {
   // state (sessionId). Schemaless: unknown fields load verbatim, missing config
   // = clodex defaults at spawn (so pre-config / pre-prompt-refs templates load).
   // ---------------------------------------------------------------------------
+  // The keys the New/Edit dialog FULLY controls — the exact set
+  // collectFormConfig() returns (renderer.js). Cross-pinned: this list and that
+  // return object are a maintained pair. `save()`'s merge-preserve treats these as
+  // editor-owned, so an OMITTED owned key on an edit save means "the user cleared
+  // it" (e.g. re-checked auto-compact / all intents), NOT "preserve the stored
+  // value" — only NON-owned keys (unknown/future fields) are carried forward. A
+  // new conditionally-omitted key in collectFormConfig MUST be added here too, or
+  // merge-preserve will resurrect it after the user clears it.
+  const EDITOR_OWNED = new Set([
+    'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
+    'autoCompact', 'denyBuiltins', 'disabledTools', 'disabledSkills',
+    'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
+  ]);
   const templates = {
     _file(name) { return path.join(TEMPLATES_DIR, `${name}.json`); },
+    // Raw parsed body of an existing template file (no id/name re-injection), or
+    // null if absent/malformed — used by save()'s merge-preserve.
+    _read(name) {
+      try { const o = JSON.parse(fs.readFileSync(this._file(name), 'utf-8')); return (o && typeof o === 'object') ? o : null; }
+      catch { return null; }
+    },
     list() {
       let files;
       try { files = fs.readdirSync(TEMPLATES_DIR); }
@@ -476,7 +495,18 @@ function initStores(userDataPath, { log, registryDir } = {}) {
     // trusts the caller and does no dest-collision check. Same name → plain
     // overwrite. This is the sole caller that needs id-vs-name semantics.
     save(template) {
-      this._write(template.name, template);
+      // Merge-preserve: carry forward keys the stored file has that the incoming
+      // cfg does NOT own (EDITOR_OWNED), so an export-only field (autoCompact
+      // pre-U9) or an unknown future key survives an edit round-trip instead of
+      // being wiped by the full-object overwrite. Owned keys come SOLELY from
+      // `template` — an omitted owned key is a clear, not a preserve.
+      const prior = this._read(template.id);
+      const merged = {};
+      if (prior) for (const [k, v] of Object.entries(prior)) {
+        if (!EDITOR_OWNED.has(k)) merged[k] = v;
+      }
+      Object.assign(merged, template);
+      this._write(template.name, merged);
       if (template.id && template.id !== template.name) {
         try { fs.unlinkSync(this._file(template.id)); } catch {}
       }

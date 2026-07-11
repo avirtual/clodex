@@ -240,6 +240,56 @@ test('templates: save() with matching id/name is a plain overwrite (no unlink)',
   } finally { cleanup(); }
 });
 
+// --- U9 merge-preserve on the by-id edit path (save()). collectFormConfig owns a
+// fixed key set (EDITOR_OWNED); editing must NOT wipe non-owned keys (export-only
+// fields, unknown future keys), but an OMITTED owned key IS a clear, not a
+// preserve. These four pin the exact interaction. ---
+
+test('templates: save() keeps an exported autoCompact:false when the box stays unchecked', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // Export writes the opt-out; the editor prefills the box unchecked and, left
+    // untouched, collectFormConfig re-emits autoCompact:false in the save payload.
+    stores.templates.saveByName({ name: 'exp', type: 'claude', cwd: '/a', autoCompact: false });
+    stores.templates.save({ id: 'exp', name: 'exp', type: 'claude', cwd: '/a', autoCompact: false });
+    assert.strictEqual(stores.templates.list()[0].autoCompact, false);
+  } finally { cleanup(); }
+});
+
+test('templates: save() REMOVES autoCompact when the box is re-checked (owned key omitted = clear)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'exp', type: 'claude', cwd: '/a', autoCompact: false });
+    // Box re-checked → collectFormConfig omits autoCompact → merge must NOT
+    // resurrect the stored false (autoCompact is EDITOR_OWNED).
+    stores.templates.save({ id: 'exp', name: 'exp', type: 'claude', cwd: '/a' });
+    assert.strictEqual('autoCompact' in stores.templates.list()[0], false);
+  } finally { cleanup(); }
+});
+
+test('templates: save() carries an unknown future key through an edit round-trip', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // Schemaless store: seed a key the dialog does not own.
+    stores.templates.saveByName({ name: 'fut', type: 'claude', cwd: '/a', futureThing: { deep: 1 } });
+    stores.templates.save({ id: 'fut', name: 'fut', type: 'claude', cwd: '/b' });
+    const loaded = stores.templates.list()[0];
+    assert.deepStrictEqual(loaded.futureThing, { deep: 1 }); // non-owned → preserved
+    assert.strictEqual(loaded.cwd, '/b'); // owned → updated by the incoming cfg
+  } finally { cleanup(); }
+});
+
+test('templates: save() REMOVES intents when all boxes re-checked (EDITOR_OWNED isn\'t autoCompact-shaped)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'gate', type: 'claude', cwd: '/a', intents: ['dm'] });
+    // All intents re-checked → collectFormConfig omits intents → same clear
+    // semantics as autoCompact, proving the owned-set covers every gated key.
+    stores.templates.save({ id: 'gate', name: 'gate', type: 'claude', cwd: '/a' });
+    assert.strictEqual('intents' in stores.templates.list()[0], false);
+  } finally { cleanup(); }
+});
+
 test('templates: list() skips a malformed file', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {

@@ -433,6 +433,12 @@
           </select>
           <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
         </label>
+        <label id="auto-compact-row">Auto-compact context
+          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+            <input type="checkbox" id="input-auto-compact" checked style="margin: 0;">
+            <span class="hint-text" style="margin: 0;">On by default: fire a <code>/compact</code> as this seat nears its context limit (needs a wirescope proxy). Uncheck to opt out — it runs to the CLI's own hard limit. Also togglable at runtime from the session ⚙ menu.</span>
+          </label>
+        </label>
       </details>
       <label id="model-row">Model
         <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
