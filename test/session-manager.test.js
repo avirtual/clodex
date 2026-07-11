@@ -1406,3 +1406,67 @@ test('remind: a gone agent\'s recurring schedule is pruned by the deliver seam (
     fsReal.rmSync(registryDir, { recursive: true, force: true });
   }
 });
+
+// ── U6: reply-trailer reachability (_isDmReachable + _buildDeliveryText gate) ──
+// The "(reply: [agent:dm <sender>])" nudge must only appear when that reply path
+// actually exists: receiver can emit dm AND sender is a reachable agent.
+
+function mkReach({ peers = [], receiverIntents = undefined } = {}) {
+  return mk({
+    getPeerManager: () => ({ statuses: () => peers }),
+    // Receiver record carries the intents allowlist the dm-enabled check reads.
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'rcv' ? { intents: receiverIntents } : null) }),
+  });
+}
+
+test('_isDmReachable: live local agent session → true; bash/dead/absent → false', () => {
+  const m = mkReach();
+  m.sessions.set('a', { name: 'a', agentType: 'claude' });
+  m.sessions.set('bash1', { name: 'bash1' });                 // no agentType → private bash
+  m.sessions.set('dead1', { name: 'dead1', agentType: 'claude', _dead: true });
+  assert.strictEqual(m._isDmReachable('a'), true);
+  assert.strictEqual(m._isDmReachable('bash1'), false, 'bash sessions are not DM-able');
+  assert.strictEqual(m._isDmReachable('dead1'), false, 'dead sender excluded');
+  assert.strictEqual(m._isDmReachable('ghost'), false, 'absent sender excluded');
+  // The old hardcoded exclusions now fall out of reachability for free.
+  assert.strictEqual(m._isDmReachable('user'), false);
+  assert.strictEqual(m._isDmReachable('reminder'), false);
+  assert.strictEqual(m._isDmReachable(''), false);
+});
+
+test('_isDmReachable: federated name@origin → true only for an ONLINE peer', () => {
+  const m = mkReach({ peers: [
+    { label: 'laptop', online: true },
+    { label: 'server', online: false },
+  ] });
+  assert.strictEqual(m._isDmReachable('t1@laptop'), true);
+  assert.strictEqual(m._isDmReachable('T1@LAPTOP'), true, 'origin match is case-insensitive');
+  assert.strictEqual(m._isDmReachable('t1@server'), false, 'offline peer → reply would bounce');
+  assert.strictEqual(m._isDmReachable('t1@unknown'), false, 'unconfigured origin');
+});
+
+test('_buildDeliveryText trailer: present only when sender reachable AND receiver dm-enabled', () => {
+  const target = { name: 'rcv', agentType: 'claude' };
+  const RE = /\(reply: start a line with \[agent:dm .+?\]\)/;
+
+  // Reachable live sender + receiver dm-enabled (intents absent = all enabled).
+  const m1 = mkReach();
+  m1.sessions.set('a', { name: 'a', agentType: 'claude' });
+  assert.match(m1._buildDeliveryText(target, 'a', 'hi', 'dm'), RE);
+
+  // Receiver has dm GATED OFF ([] = everything gated) → no trailer even though
+  // the sender is perfectly reachable.
+  const m2 = mkReach({ receiverIntents: [] });
+  m2.sessions.set('a', { name: 'a', agentType: 'claude' });
+  assert.doesNotMatch(m2._buildDeliveryText(target, 'a', 'hi', 'dm'), RE);
+
+  // Unreachable external sender (e.g. a `nc -U` wake script's from:"t1-wake") →
+  // no trailer: nothing answers [agent:dm t1-wake]. Trader's case.
+  const m3 = mkReach();
+  assert.doesNotMatch(m3._buildDeliveryText(target, 't1-wake', 'wake up', 'dm'), RE);
+
+  // Non-dm mtype (memory/system injection) never carries the conversational nudge.
+  const m4 = mkReach();
+  m4.sessions.set('a', { name: 'a', agentType: 'claude' });
+  assert.doesNotMatch(m4._buildDeliveryText(target, 'a', 'unit body', 'memory'), RE);
+});

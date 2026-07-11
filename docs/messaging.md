@@ -97,8 +97,15 @@ cold session re-bills its whole context). Held Claude targets get the message
 
 **Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body +
 reply trailer `(reply: start a line with [agent:dm <sender>])`. The trailer
-is parenthesized and non-column-1 so it can never self-fire; it's omitted
-for sender `user` (would teach a wrong reply path). Bodies over
+is parenthesized and non-column-1 so it can never self-fire; it's emitted ONLY
+when the advertised reply path exists on both ends — the RECEIVER's `dm` intent
+is enabled (fresh persistence read) AND the SENDER is dm-reachable NOW
+(`_isDmReachable`: a live local agent session, or an online federated peer
+`name@origin`). This subsumes the old `user`/`reminder` special-cases (neither
+is a reachable agent) and drops the trailer for external senders like a `nc -U`
+wake script's `from:"t1-wake"` that no session answers. Coupled to
+`_deliverMessage`'s drop-if-absent — widen `_isDmReachable` if local dm parking
+ever covers absent targets. Bodies over
 `MSG_SPILL_THRESHOLD` (500B) spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
 Codex gets a read-with-Read pointer.

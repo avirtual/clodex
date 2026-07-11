@@ -2806,6 +2806,34 @@ function createSessionManager(deps) {
       }
     }
 
+    // Is `senderName` an agent a recipient could actually [agent:dm] back RIGHT
+    // NOW? Gates the reply trailer (see _buildDeliveryText) so we never advertise
+    // a dead reply path. Two reachable shapes:
+    //   * name@origin — a federated peer sender: reachable iff that origin peer is
+    //     ONLINE (a reply routes through the consumer leg, which bounces an offline
+    //     peer). No dm-caps recheck: having RECEIVED a federated dm from them proves
+    //     they speak dm federation.
+    //   * plain name — a LIVE local agent session: in the map, agent type (bash
+    //     sessions aren't DM-able), not dead. A dead-but-resumable sender is
+    //     deliberately excluded: a plain local dm to an absent target DROPS in
+    //     _deliverMessage (`if (!target) return`), so a trailer would point at a
+    //     path that silently discards. This is why 'user' and 'reminder' need no
+    //     special-case — neither names a live agent session, so both return false.
+    // COUPLING: this "live-or-online only" rule tracks _deliverMessage's drop-if-
+    // absent behavior; if local dm parking ever widens to cover absent/resumable
+    // targets, widen this to match (a resumable sender would then be reachable).
+    _isDmReachable(senderName) {
+      if (!senderName) return false;
+      const at = senderName.lastIndexOf('@');
+      if (at > 0) {
+        const origin = senderName.slice(at + 1);
+        const peers = getPeerManager() ? getPeerManager().statuses() : [];
+        return peers.some((p) => p.online && p.label && p.label.toLowerCase() === origin.toLowerCase());
+      }
+      const s = this.sessions.get(senderName);
+      return !!(s && s.agentType && !s._dead);
+    }
+
     // Build the FINAL delivery text (prefix + spill-pointer/inline body + reply
     // trailer) a recipient reads — the exact bytes _deliverMessage would inject.
     // Factored out so the hold-park path parks byte-identical text (same
@@ -2816,16 +2844,23 @@ function createSessionManager(deps) {
       // Reply-syntax nudge, appended as the LAST thing the recipient reads before
       // composing: after a long analytical stretch an agent's register drifts to
       // "report to operator" and it can write a full reply without ever emitting
-      // the intent line, leaving the sender blocked. Agent-to-agent DMs only —
-      // operator-panel messages (sender 'user') are replied to as normal output,
-      // not via [agent:dm user], and memory/system injections aren't
-      // conversational (mtype gates them out). Parenthesized and never at column
-      // 1, so IntentScanner (which only fires on a cleaned line STARTING with
-      // [agent:) can't mistake it for a real intent. Empty when not applicable,
-      // so the pointer line's load-bearing trailing space is preserved.
-      // `reminder` is a synthetic self-reminder sender, not a repliable agent —
-      // suppressed like `user` so we don't invite a reply to the agent's own loop.
-      const trailer = (mtype === 'dm' && senderName !== 'user' && senderName !== 'reminder')
+      // the intent line, leaving the sender blocked. Parenthesized and never at
+      // column 1, so IntentScanner (which only fires on a cleaned line STARTING
+      // with [agent:) can't mistake it for a real intent. Empty when not
+      // applicable, so the pointer line's load-bearing trailing space is preserved.
+      //
+      // Only emitted when the reply path it advertises actually EXISTS, on both ends:
+      //   (a) the RECEIVER's `dm` intent is enabled (fresh persistence read) — a
+      //       dm-gated seat can't emit [agent:dm …], so nudging it to is a lie; and
+      //   (b) the SENDER is dm-reachable right now (_isDmReachable): a live local
+      //       agent session, or an online federated peer. This subsumes the old
+      //       hardcoded `user`/`reminder` exclusions — neither is a reachable agent
+      //       session, so both fall out naturally — and also fixes external senders
+      //       (e.g. a `nc -U` wake script posting from:"t1-wake") that used to
+      //       advertise a reply to a name no session answers.
+      const trailer = (mtype === 'dm'
+          && intentEnabled('dm', getPersistence().get(target.name)?.intents)
+          && this._isDmReachable(senderName))
         ? `(reply: start a line with [agent:dm ${senderName}])`
         : '';
 
