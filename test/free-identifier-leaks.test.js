@@ -42,6 +42,7 @@ const SCANNED_MODULES = [
   'catalogs.js',
   'statusline.js',
   'intent-scanner.js',
+  'intent-catalog.js',
   'exec-schema.js',
   'remind-schedule.js',
   'remind-scheduler.js',
