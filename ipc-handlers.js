@@ -59,26 +59,20 @@ function registerIpcHandlers(deps) {
       // fires for non-dialog callers — keeping new sessions on the shared, lean
       // tools segment. An explicit array always wins (undefined === "untouched").
       const seedTools = (disabledTools === undefined) ? agentDefaults.getDefaultDeny() : disabledTools;
-      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || [], Array.isArray(intents) ? intents : null);
+      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || [], Array.isArray(execCommands) ? execCommands : [], Array.isArray(intents) ? intents : null);
       // Strip level isn't a spawn arg (it's a proxy-side override the poller
       // asserts once the session links), so persist it onto the entry after
-      // create() rather than threading it through the 15-param spawn path.
+      // create() rather than threading it through the spawn path.
       // Set at creation = the cold-cache path: the first re-write is tiny.
       // An explicit dialog choice wins; otherwise seed from this agent name's
       // standing default (set previously from the bottom-bar menu, kill-proof).
       const seedStrip = (stripLevel === 1 || stripLevel === 2) ? stripLevel : agentDefaults.getStrip(name);
       if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(name, seedStrip);
-      // Exec-command grant: like stripLevel, not a spawn arg — the dispatcher
-      // reads the seat's persisted `execCommands` allowlist at invocation. Persist
-      // the dialog's checked grants onto the entry after create (mirrors the
-      // template spawn-seed path in session-manager). Only when explicitly passed
-      // (Claude dialog); undefined = untouched, [] = an explicit "no grants".
-      if (Array.isArray(execCommands)) {
-        persistence.upsert({ name, execCommands: execCommands.map(String) });
-      }
-      // NOTE: `intents` is NOT seeded here — unlike execCommands/stripLevel it's a
-      // spawn-time create() param (it bakes into the injected IPC prompt), threaded
-      // in above so it's persisted by create()'s own upsert AND survives restart.
+      // NOTE: neither `execCommands` nor `intents` is seeded here — both are now
+      // spawn-time create() params (threaded in above), persisted by create()'s own
+      // upsert so they survive kill()+recreate. execCommands used to be a post-create
+      // seed here (and in the template path), which is exactly what dropped the grant
+      // on every restart. undefined → create's [] default (untouched); [] ≡ no grants.
       return { ok: true, session };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -1354,6 +1348,7 @@ function registerIpcHandlers(deps) {
           entry.injectSkills || [],
           entry.systemPromptFile || null,
           entry.appendPromptFiles || [],
+          Array.isArray(entry.execCommands) ? entry.execCommands : [],
           Array.isArray(entry.intents) ? entry.intents : null,
         );
         restored.push({
@@ -1406,6 +1401,7 @@ function registerIpcHandlers(deps) {
         entry.injectSkills || [],
         entry.systemPromptFile || null,
         entry.appendPromptFiles || [],
+        Array.isArray(entry.execCommands) ? entry.execCommands : [],
         Array.isArray(entry.intents) ? entry.intents : null,
       );
       return { ok: true };

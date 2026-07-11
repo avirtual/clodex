@@ -869,32 +869,19 @@ test('_handleExecIntent: malformed registry entry (no argv) bounces', () => {
   assert.match(replies.at(-1), /malformed registry entry/);
 });
 
-test('_handleExecIntent: execCommands grant seeded from template on spawn', async () => {
-  const persisted = {};
-  const persistence = {
-    list: () => [],
-    get: (n) => persisted[n] || null,
-    setStripLevel: () => {},
-    setAutoCompact: () => {},
-    upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
-  };
-  const m = mk({
-    getPersistence: () => persistence,
-    getTemplates: () => ({ list: () => [] }),
-    AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default',
-    ensureDir: () => {}, fs: fsReal, path: pathReal, os: osReal,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
-  });
-  m._injectText = () => {}; m._sendToSession = () => {}; m._broadcast = () => {};
-  m.create = async () => {};
-  // Template resolves via a file path (intent.template is a name-or-path string).
+test('_handleExecIntent: execCommands grant flows from template into create() on spawn', async () => {
+  // Formerly asserted a POST-CREATE seed; execCommands is now a create() PARAM,
+  // so the grant is THREADED into create()'s args (EXEC_ARG) rather than upserted
+  // after — which is what makes it survive kill()+recreate. (create()'s own upsert
+  // persisting it is pinned separately in the restart-survival block below.)
+  const { m, created } = mkSpawnCreateProbe();
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'degen-seat.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['bridge-reply', 'other'] }));
   m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
     { name: 'degen', cwd: '/proj/desk', template: file });
-  await waitFor(() => persisted.degen && persisted.degen.execCommands, 1000);
-  assert.deepStrictEqual(persisted.degen.execCommands, ['bridge-reply', 'other']);
+  await waitFor(() => created.length, 1000);
+  assert.deepStrictEqual(created[0][EXEC_ARG], ['bridge-reply', 'other']);
 });
 
 // --- intent-gate allowlist threaded through create() on template spawn --------
@@ -905,7 +892,9 @@ test('_handleExecIntent: execCommands grant seeded from template on spawn', asyn
 // intents param (index 16, the 17th positional). Two distinguishing semantics:
 // an EMPTY array is a real "everything gated" value that MUST apply (no `.length`
 // guard), and an ABSENT key passes `null` so create() omits it (stays all-enabled).
-const INTENTS_ARG = 16; // create(...,systemPromptFile[14], appendPromptFiles[15], intents[16])
+// create(...,systemPromptFile[14], appendPromptFiles[15], execCommands[16], intents[17])
+const EXEC_ARG = 16;
+const INTENTS_ARG = 17;
 function mkSpawnCreateProbe() {
   const created = [];
   const persistence = {
@@ -964,6 +953,34 @@ test('spawn template: a template WITHOUT `intents` threads null (absent = all en
   assert.strictEqual(created[0][INTENTS_ARG], null);
 });
 
+// --- exec-command grant threaded through create() on template spawn -----------
+// Twin of the intents promotion: `execCommands` was a post-create seed (dropped
+// on restart) and is now a create() PARAM threaded from the template. Unlike
+// intents, an empty grant is NOT distinct from absent — both mean "nothing
+// granted" — so the template threads `[]` for a grant-less template and the
+// non-empty allowlist otherwise.
+test('spawn template: a captured `execCommands` grant is threaded into create()', async () => {
+  const { m, created } = mkSpawnCreateProbe();
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'trader-seat.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['trade-buy', 'trade-sell'] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'trader', cwd: '/proj/desk', template: file });
+  await waitFor(() => created.length, 1000);
+  assert.deepStrictEqual(created[0][EXEC_ARG], ['trade-buy', 'trade-sell']);
+});
+
+test('spawn template: a template WITHOUT execCommands threads [] (no grant)', async () => {
+  const { m, created } = mkSpawnCreateProbe();
+  const dir = tmpTplDir();
+  const file = pathReal.join(dir, 'open.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', intents: ['dm'] }));
+  m._handleSpawnIntent({ name: 'clodex', type: 'claude', workspaceId: 'default' },
+    { name: 'open', cwd: '/proj/desk', template: file });
+  await waitFor(() => created.length, 1000);
+  assert.deepStrictEqual(created[0][EXEC_ARG], []);
+});
+
 // --- restart-survival: create()'s OWN upsert persists the intents param -------
 // The regression that bit stripLevel: kill() drops the record, then a recreate
 // rebuilds it from spawn args ONLY. Because `intents` is now a create() param
@@ -992,10 +1009,10 @@ function mkBashCreateProbe() {
 }
 // create(name,type,cwd,extraArgs,resumeId,workspaceId,systemPromptBody,fork,proxy,
 //        agents,denyBuiltins,disabledTools,disabledSkills,injectSkills,
-//        systemPromptFile,appendPromptFiles,intents)
-const bashCreate = (m, name, intents) => m.create(
+//        systemPromptFile,appendPromptFiles,execCommands,intents)
+const bashCreate = (m, name, intents, execCommands = []) => m.create(
   name, 'bash', osReal.tmpdir(), [], null, 'ws', null, false, null,
-  [], [], [], [], [], null, [], intents,
+  [], [], [], [], [], null, [], execCommands, intents,
 );
 
 test('create: a restricted intents param is persisted by create()\'s own upsert (survives restart)', async () => {
@@ -1016,6 +1033,26 @@ test('create: a null intents param writes NO key (absent = all-enabled default s
   await bashCreate(m, 'b-open', null);
   assert.ok(persisted['b-open'], 'the record was written');
   assert.strictEqual('intents' in persisted['b-open'], false);
+});
+
+// --- restart-survival: create()'s OWN upsert persists the execCommands grant ---
+// Same regression the intents param fixed: kill() drops the record and the
+// recreate rebuilds it from spawn args only, so a grant that was a post-create
+// seed vanished on every restart. As a create() param persisted by create()'s
+// own upsert, threading `entry.execCommands` back in re-establishes it. The
+// exec-specific twist vs intents: an EMPTY grant writes NO key (absent ≡ [] ≡
+// "nothing granted"), so the upsert uses a `.length` guard — no bloat.
+test('create: a non-empty execCommands grant is persisted by create()\'s own upsert (survives restart)', async () => {
+  const { m, persisted } = mkBashCreateProbe();
+  await bashCreate(m, 'b-granted', null, ['trade-buy', 'trade-sell']);
+  assert.deepStrictEqual(persisted['b-granted'].execCommands, ['trade-buy', 'trade-sell']);
+});
+
+test('create: an EMPTY execCommands grant writes NO key (absent ≡ [] ≡ no grant)', async () => {
+  const { m, persisted } = mkBashCreateProbe();
+  await bashCreate(m, 'b-nogrant', null, []);
+  assert.ok(persisted['b-nogrant'], 'the record was written');
+  assert.strictEqual('execCommands' in persisted['b-nogrant'], false);
 });
 
 // --- exec body-capture JSON terminator (_extractIntents) ---

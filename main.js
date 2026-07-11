@@ -1292,7 +1292,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.intents) ? entry.intents : null);
+    await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null);
     // kill() removed the persistence entry (incl. stripLevel) and create()
     // re-wrote it from spawn args only — re-assert the session's OWN level so
     // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
@@ -1382,10 +1382,11 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    // Intents aren't editable in the args-edit dialog (no checklist there, mirroring
-    // exec), so they're not in the patch — thread the persisted value through so an
-    // args edit doesn't silently reset a gated seat to all-enabled.
-    await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.intents) ? beforeKill.intents : null);
+    // Neither exec grants nor intents are editable in the args-edit dialog (no
+    // checklist there), so they're not in the patch — thread the persisted values
+    // through so an args edit doesn't silently drop a seat's exec grant or reset a
+    // gated seat to all-enabled.
+    await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], Array.isArray(beforeKill.intents) ? beforeKill.intents : null);
     // kill() dropped the entry's stripLevel; re-assert the session's own level
     // (see session:restart) so editing args doesn't reset stripping.
     const argsLvl = stripLevelOf(beforeKill);
