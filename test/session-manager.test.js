@@ -786,3 +786,97 @@ test('_handleExecIntent: execCommands grant seeded from template on spawn', asyn
   await waitFor(() => persisted.degen && persisted.degen.execCommands, 1000);
   assert.deepStrictEqual(persisted.degen.execCommands, ['bridge-reply', 'other']);
 });
+
+// --- exec body-capture JSON terminator (_extractIntents) ---
+// exec bodies are JSON DATA: greedy multi-line capture swallowed trailing prose
+// a seat wrote on following lines INTO the payload, corrupting the downstream
+// JSON.parse (observed live). The terminator JSON.parses the accumulated buffer
+// after each body line and stops at the first complete value — no brace lexer.
+// Scoped to exec; dm/memory/context keep the greedy capture. These drive the
+// real _extractIntents with the real parseIntent + the 64KB region cap injected.
+const { parseIntent: parseIntentReal } = require('../intent-scanner');
+function mkExtract() {
+  return mk({ parseIntent: parseIntentReal, execBodyCap: 64 * 1024 });
+}
+const execBodyOf = (m, text) => {
+  const found = m._extractIntents(text).filter((x) => x.type === 'exec');
+  return found.length ? found[0].body : undefined;
+};
+
+test('exec terminator: single-line body captures identically to today (regression guard)', () => {
+  const m = mkExtract();
+  assert.strictEqual(execBodyOf(m, '[agent:exec bridge-reply] {"id":"r1.json"}'), '{"id":"r1.json"}');
+});
+
+test('exec terminator: prose on FOLLOWING lines is dropped, body is exactly the JSON', () => {
+  const m = mkExtract();
+  const body = execBodyOf(m,
+    '[agent:exec bridge-reply] {"id":"r1.json"}\nAlso, I want to flag the risk here.\nmore prose');
+  assert.strictEqual(body, '{"id":"r1.json"}');
+  assert.doesNotThrow(() => JSON.parse(body)); // the payload downstream would parse cleanly
+});
+
+test('exec terminator: trailing prose on the SAME line is unextractable → greedy → bounces', () => {
+  // No lexer, so a value + prose sharing one line can't be split; it falls to the
+  // greedy capture and stays invalid JSON, bouncing exactly like an incomplete
+  // payload. (Trader's "exec line isolated/last" prompt rule is the defence.)
+  const m = mkExtract();
+  const body = execBodyOf(m, '[agent:exec bridge-reply] {"id":"r1.json"} and my thesis is risk');
+  assert.strictEqual(body, '{"id":"r1.json"} and my thesis is risk');
+  assert.throws(() => JSON.parse(body));
+});
+
+test('exec terminator: braces inside JSON strings do not confuse the terminator', () => {
+  const m = mkExtract();
+  const body = execBodyOf(m,
+    '[agent:exec bridge-reply] {"note":"risk {tail} and }{ braces","id":"x"}\ntrailing prose');
+  assert.deepStrictEqual(JSON.parse(body), { note: 'risk {tail} and }{ braces', id: 'x' });
+});
+
+test('exec terminator: multi-line pretty-printed JSON is captured across lines', () => {
+  const m = mkExtract();
+  const body = execBodyOf(m,
+    '[agent:exec bridge-reply] {\n  "id": "r1.json",\n  "note": "hi"\n}\ntrailing commentary');
+  assert.deepStrictEqual(JSON.parse(body), { id: 'r1.json', note: 'hi' });
+});
+
+test('exec terminator: still-incomplete-at-EOR bounces exactly as today (greedy body kept)', () => {
+  const m = mkExtract();
+  const body = execBodyOf(m, '[agent:exec bridge-reply] {"id":"r1.json"'); // never closes
+  assert.strictEqual(body, '{"id":"r1.json"');
+  assert.throws(() => JSON.parse(body));
+});
+
+test('exec terminator: a col-1 intent after the value ends capture and still fires', () => {
+  // Stopping at the JSON leaves the following lines for the outer loop, so a real
+  // intent written after the payload is no longer swallowed (better than today).
+  const m = mkExtract();
+  const types = m._extractIntents(
+    '[agent:exec bridge-reply] {"id":"x"}\nsome prose\n[agent:dm clodex] hi there',
+  ).map((x) => x.type);
+  assert.deepStrictEqual(types, ['exec', 'dm']);
+});
+
+test('exec terminator: 64KB region cap — multi-line growth past the cap is not terminated early', () => {
+  // The cap bounds the growth loop (runaway re-parse guard): a value split across
+  // lines whose accumulation crosses 64KB before closing is left to the greedy
+  // capture (prose included), so prose-stripping is bounded to <=64KB payloads.
+  const m = mkExtract();
+  const parts = ['[agent:exec bridge-reply] {', `"pad":"${'a'.repeat(70 * 1024)}",`, '"id":"r1.json"', '}', 'trailing prose'];
+  const body = execBodyOf(m, parts.join('\n'));
+  assert.ok(body.includes('trailing prose'), 'over-cap multiline falls to greedy (not terminated)');
+  assert.throws(() => JSON.parse(body));
+  // A clean value already complete ON the intent line is accepted regardless of
+  // size — the cap only guards multi-line growth, and the precise per-command cap
+  // stays downstream in parseAndValidate.
+  const big = JSON.stringify({ id: 'r1.json', pad: 'a'.repeat(70 * 1024) });
+  assert.strictEqual(execBodyOf(m, `[agent:exec bridge-reply] ${big}`), big);
+});
+
+test('exec terminator: dm / memory multi-line capture is left untouched (greedy)', () => {
+  const m = mkExtract();
+  const dm = m._extractIntents('[agent:dm clodex] line one\nline two\nline three')[0];
+  assert.strictEqual(dm.body, 'line one\nline two\nline three');
+  const mem = m._extractIntents('[agent:memory remember] fact one\nfact two')[0];
+  assert.strictEqual(mem.body, 'fact one\nfact two');
+});

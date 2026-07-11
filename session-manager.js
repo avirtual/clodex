@@ -81,6 +81,7 @@ function createSessionManager(deps) {
     drainPending,
     enqueueOutbox,
     ensureDir,
+    execBodyCap,
     fs,
     isAlive,
     isDigested,
@@ -1477,12 +1478,57 @@ function createSessionManager(deps) {
     _extractIntents(text) {
       const intents = [];
       const lines = text.split('\n');
+      // A buffer parses as a complete JSON value? (trim first — leading/trailing
+      // whitespace and newlines are legal around a value). Used only for exec.
+      const jsonComplete = (s) => {
+        const t = s.trim();
+        if (!t) return false;
+        try { JSON.parse(t); return true; } catch { return false; }
+      };
       let i = 0;
       while (i < lines.length) {
         const line = lines[i].trim();
         i++;
         const intent = parseIntent(line);
         if (!intent || intent.type === 'escape') continue;
+
+        // exec bodies are JSON DATA, not free text. The shared greedy capture
+        // below would swallow any prose a seat writes on FOLLOWING lines into the
+        // payload, so the downstream JSON.parse then fails on a valid-value-plus-
+        // prose buffer (observed live). Terminate exec capture at the JSON value
+        // instead: accumulate body lines and JSON.parse the buffer after each; the
+        // first line at which it parses is the complete value, so stop there and
+        // leave any trailing prose lines for the outer loop to scan. JSON.parse is
+        // exact — braces inside strings and multi-line pretty-printed values are
+        // both handled — so there is no brace-counting lexer. The scan region is
+        // bounded to execBodyCap (exec-schema's DEFAULT_MAX_BYTES backstop) so a
+        // runaway non-JSON turn can't drive an unbounded re-parse. If it never
+        // parses within the cap — an incomplete value, or prose on the SAME line
+        // as the value (unextractable without a lexer) — fall through to the
+        // greedy capture so it bounces exactly as it does today. dm / memory /
+        // context keep the greedy capture untouched.
+        if (intent.type === 'exec') {
+          let buf = intent.body || '';
+          let j = i;
+          let complete = jsonComplete(buf); // may already be complete on the intent line
+          while (!complete && j < lines.length) {
+            const next = parseIntent(lines[j]);
+            if (next && next.type !== 'escape') break; // a col-1 intent ends the body
+            const grown = buf + '\n' + lines[j];
+            if (Buffer.byteLength(grown, 'utf8') > execBodyCap) break; // cap the region
+            buf = grown;
+            j++;
+            complete = jsonComplete(buf);
+          }
+          if (complete) {
+            intent.body = buf;   // exactly the JSON value; trailing prose not consumed
+            i = j;               // resume the outer loop at the value's first unused line
+            intents.push(intent);
+            continue;
+          }
+          // not complete within the cap → fall through to the greedy capture below,
+          // reproducing today's bytes so an incomplete payload bounces as before.
+        }
 
         // For dm: capture the multi-line body — every line from here until the
         // next real intent line (at column 1) or the end of the turn, whichever

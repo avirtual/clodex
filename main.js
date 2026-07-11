@@ -544,7 +544,7 @@ const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queu
 const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, shadowIntentKey } = require('./intent-scanner');
-const { isFilenameToken, parseAndValidate } = require('./exec-schema');
+const { isFilenameToken, parseAndValidate, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
@@ -1009,6 +1009,7 @@ const SessionManager = createSessionManager({
     drainPending,
     enqueueOutbox,
     ensureDir,
+    execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
     fs,
     isAlive,
     isDigested,
