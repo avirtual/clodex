@@ -988,6 +988,76 @@ test('_handleRemindIntent: scheduler add failure (past at) bounces with its erro
   assert.match(replies.at(-1), /already in the past/);
 });
 
+// --- _handleNotifyUserIntent — [agent:notify-user] text ---------------------
+// The operator-inbox seam: add the note to the store, fire notifyOS UNCONDITION-
+// ally, broadcast one `notify` ipc line. Tone matches exec/remind — SILENT on a
+// clean add, LOUD `[agent:notify-user] …` bounce on an empty body or an over-cap
+// (16KB) body. A fake store captures adds; a notifyOS spy captures the toast.
+function mkNotify() {
+  const added = [], toasts = [], ipc = [];
+  const store = {
+    add: (rec) => { added.push(rec); return { id: 'nt01', ...rec }; },
+  };
+  const m = mk({
+    getNotifications: () => store,
+    notifyOS: (opts) => toasts.push(opts),
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  const replies = [];
+  m._injectText = (_s, t) => replies.push(t);
+  m._broadcast = (_c, msg) => ipc.push(msg);
+  const session = { name: 't1', agentType: 'claude', workspaceId: 'ws-1' };
+  return { m, session, added, toasts, ipc, replies };
+}
+
+test('_handleNotifyUserIntent: valid note is silent, stored, toasted, and broadcast', () => {
+  const { m, session, added, toasts, ipc, replies } = mkNotify();
+  m._handleNotifyUserIntent(session, 'blocked on which API to use');
+  assert.strictEqual(replies.length, 0); // silent success
+  assert.deepStrictEqual(added, [{ from: 't1', workspaceId: 'ws-1', body: 'blocked on which API to use' }]);
+  // OS notification fires unconditionally (title = sender, body = first line).
+  assert.strictEqual(toasts.length, 1);
+  assert.strictEqual(toasts[0].title, 't1');
+  assert.strictEqual(toasts[0].body, 'blocked on which API to use');
+  // One `notify` ipc line for the audit log + the inbox island's live signal.
+  assert.strictEqual(ipc.at(-1).type, 'notify');
+  assert.strictEqual(ipc.at(-1).from, 't1');
+  assert.strictEqual(ipc.at(-1).to, 'user');
+});
+
+test('_handleNotifyUserIntent: an empty (or whitespace-only) body bounces loudly, no store write', () => {
+  const { m, session, added, toasts, replies } = mkNotify();
+  m._handleNotifyUserIntent(session, '   \n  ');
+  assert.strictEqual(added.length, 0);
+  assert.strictEqual(toasts.length, 0);
+  assert.match(replies.at(-1), /^\[agent:notify-user\] /);
+  assert.match(replies.at(-1), /empty note/);
+});
+
+test('_handleNotifyUserIntent: an over-16KB body bounces with a keep-it-a-summary nudge', () => {
+  const { m, session, added, replies } = mkNotify();
+  const huge = 'x'.repeat(16 * 1024 + 1);
+  m._handleNotifyUserIntent(session, huge);
+  assert.strictEqual(added.length, 0); // never stored
+  assert.match(replies.at(-1), /^\[agent:notify-user\] /);
+  assert.match(replies.at(-1), /keep it a summary/);
+});
+
+test('_handleNotifyUserIntent: toast + broadcast use the FIRST line only (multi-line note)', () => {
+  const { m, session, added, toasts, ipc } = mkNotify();
+  m._handleNotifyUserIntent(session, 'need a call on option A\nvs option B\ndetails here');
+  // Full body is stored; toast/broadcast preview only the first line.
+  assert.strictEqual(added[0].body, 'need a call on option A\nvs option B\ndetails here');
+  assert.strictEqual(toasts[0].body, 'need a call on option A');
+  assert.strictEqual(ipc.at(-1).body, 'need a call on option A');
+});
+
+test('_handleNotifyUserIntent: missing workspaceId stores null (does not crash)', () => {
+  const { m, added } = mkNotify();
+  m._handleNotifyUserIntent({ name: 't2', agentType: 'claude' }, 'no workspace on this session');
+  assert.strictEqual(added[0].workspaceId, null);
+});
+
 // --- _deliverReminder — durable fire routing (live / park-offline / drop) ----
 // The reminder deliver seam: a fired self-reminder must never be silently lost
 // the way a plain dm to an absent target is. Live → the DM path; offline but

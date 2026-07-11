@@ -1,6 +1,7 @@
 // session-manager.js — the SessionManager class: PTY spawn, per-session
 // lifecycle/state, activity + attention tracking, and the local end of intent
-// routing (dm/who/name/context/memory/spawn/file). Extracted verbatim from
+// routing (dm/who/name/context/memory/spawn/file/exec/remind/notify-user).
+// Extracted verbatim from
 // main.js (M4); every method body is byte-identical to the original modulo the
 // dependency seams documented below.
 //
@@ -36,6 +37,11 @@
 // session -> workspace -> window resolution depends on, so reversing the order
 // strands a dead sidebar tab. See the onExit block in create() (the inline
 // comment there marks it) and _cleanup.
+
+// [agent:notify-user] body cap. The inbox is an attention channel, not a
+// payload store; a note over this bounces with a "keep it a summary" nudge so a
+// runaway turn can't bloat the UI-rendered-wholesale notifications store.
+const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
 function createSessionManager(deps) {
   const {
@@ -131,7 +137,7 @@ function createSessionManager(deps) {
     writeClaudeDigestFile,
     writeSkillPlugin,
     // getter deps (whenReady-assigned; see header)
-    getPersistence, getTemplates, getUiSettings, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler,
+    getPersistence, getTemplates, getUiSettings, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     // electron seam fns (see header)
     getUserDataPath, openPath, notifyOS, setAppQuitting,
   } = deps;
@@ -1804,7 +1810,60 @@ function createSessionManager(deps) {
           this._handleRemindIntent(session, intent.spec, intent.body || '');
           break;
         }
+        case 'notify-user': {
+          // Agent raising a note into the operator's persistent inbox (to get
+          // Bogdan's attention when it's blocked on his decision). Agent sessions
+          // only — bash can't process intents.
+          if (!session || !session.agentType) break;
+          this._handleNotifyUserIntent(session, intent.body || '');
+          break;
+        }
       }
+    }
+
+    // [agent:notify-user] text — raise a note into the operator's persistent
+    // inbox. Distinct from `_onAttention`: this is agent-initiated (not a CLI
+    // permission dialog) and the OS notification fires UNCONDITIONALLY on every
+    // arrival, focus or not — the prompt line's "use sparingly, for decisions
+    // you're blocked on" is the volume control, not a focus gate. Result tone
+    // matches exec/remind: SILENT on a clean add (no re-bill), LOUD
+    // `[agent:notify-user] …` bounce on an empty body or an over-cap body (the
+    // inbox is an attention channel, not a payload dump). Guarded on the store
+    // dep so a build without it is a clean no-op rather than a crash.
+    _handleNotifyUserIntent(session, body) {
+      const reply = (msg) => this._injectText(session, `[agent:notify-user] ${msg}`, { parkable: true });
+      const who = session.name;
+      const store = getNotifications && getNotifications();
+      if (!store) { reply('the operator inbox is unavailable'); return; }
+
+      const text = String(body == null ? '' : body).trim();
+      if (!text) {
+        reply('empty note — say what decision you need from the operator');
+        return;
+      }
+      // Cap the body so a runaway turn can't bloat a store the UI renders
+      // wholesale. Bytes, not chars — the store persists UTF-8.
+      if (Buffer.byteLength(text, 'utf8') > NOTIFY_USER_MAX_BYTES) {
+        reply(`note too long (>${Math.round(NOTIFY_USER_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
+        return;
+      }
+
+      const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
+      const preview = text.split('\n')[0].slice(0, 200);
+      // Attention: fire the OS notification (title = sender, body = first line)
+      // unconditionally, then broadcast one ipc event. The single `notify`
+      // ipc-message both audits into the IPC Traffic log (like remind/exec) AND
+      // is the U4 inbox island's live signal — it re-syncs the unread badge and,
+      // if the drawer is open, refetches + repaints the (human-scale) list.
+      try {
+        notifyOS({
+          title: who,
+          body: preview || 'wants your attention',
+          silent: false,
+        });
+      } catch {}
+      this._broadcast('ipc-message', { type: 'notify', from: who, to: 'user', body: preview });
+      log.info('intent', `notify-user by ${who}: ${rec.id}`);
     }
 
     // [agent:remind <spec>] text — schedule/manage a durable self-reminder. The

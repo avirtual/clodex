@@ -374,7 +374,7 @@ const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 // ---------------------------------------------------------------------------
 
 let persistence, templates, workspaces, promptLibrary,
-  agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, uiSettings;
+  agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings;
 // Durable self-reminder scheduler ([agent:remind …]). Constructed in whenReady
 // once the `reminders` store exists; crosses to SessionManager as a getter.
 let remindScheduler = null;
@@ -1073,6 +1073,7 @@ const SessionManager = createSessionManager({
   getRemoteServer: () => remoteServer,
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
+  getNotifications: () => notifications,
   // electron seam fns — the only route from the class to electron. Keeping
   // these here is what lets session-manager.js never require('electron').
   getUserDataPath: () => app.getPath('userData'),
@@ -1634,7 +1635,7 @@ if (!singleInstance) {
 
 app.whenReady().then(() => {
   ({ persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, uiSettings, renameWorkspaceScope } =
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, renameWorkspaceScope } =
     initStores(app.getPath('userData'), { log, registryDir: REGISTRY_DIR }));
   proxyPoller.start();
 

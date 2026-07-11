@@ -395,6 +395,13 @@ function createAppMenus(deps) {
               if (win) win.webContents.send('request-open-exec-drawer');
             },
           },
+          {
+            label: 'Inbox…',
+            click: () => {
+              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+              if (win) win.webContents.send('request-open-inbox-drawer');
+            },
+          },
           { type: 'separator' },
           {
             label: 'Rename Workspace…',
