@@ -44,24 +44,40 @@ session eats one deeper re-cache — the accepted price of a deliberate per-sess
 opt-in (same stance as the L2 strips), not an automatic decision that needs the
 cold-gate.
 
-GATING — fold is part of STRIP LEVEL 2 (L2 = bust-riders + fold). It is NOT a
-separate flag/table/directive: it rides the existing consumer-tiered strip
-ladder (transforms.STRIP LEVELS), gated by `transforms._strip_l2_enabled`
-(effective level >= 2). That intent already persists in `strip_override` and is
-resolved EARLY in the chain (via `_strip_thinking_enabled`, before the directive
-strip), so fold inherits the durable-across-restart override AND is immune to the
-directive-before-strip race for free. Per-session: `[wirescope:strip-thinking
-l2]` / `/_strip?level=2`; global default: STRIP_L2. (Fold moved L3->L2 2026-06-20
-so it runs alongside the other L2 optimizations; L3 retired.) This module owns
-NO table — only its in-memory MEMO maps (deterministically recomputable).
+GATING — EXPERIMENTAL since 2026-07-12 (demoted OUT of production L2): fold
+fires only when `FOLD_EXPERIMENTAL=1` AND the session is at strip level >= 2
+(`transforms._strip_l2_enabled` — the strip-ladder plumbing is unchanged, the
+env flag is an additional AND). Default off => production L2 = the bust-riders
+only (edit-ack/tool-error stubs, task-reminder + filemod strips), which is the
+configuration that won every A/B run.
 
-OWNERSHIP. Wired into the server transform chain after the strips, before the
-hold echo. Gated by the L3 strip level.
+WHY DEMOTED (two runs, four/three arms, same tasks, within-run controlled).
+Folding settled edit INPUTS breaks the model's edit-from-memory discipline:
+settled `old_string`/`new_string` are the model's memory of what it wrote, and
+with them stubbed the model re-reads every just-edited file before the next
+edit round (Read/Edit 0.84 vs 0.32-0.40 in all non-fold arms; run2 24 / run4 19
+redundant re-reads vs 1-4 everywhere else; +62% requests, +31% USD in run2).
+The v2 assurance-carrying ack stub did NOT overcome the reflex (run4: the
+pathological re-reads are of files that legitimately changed, so they're
+correct-looking reads the model just shouldn't need). NOT the mechanics' fault:
+same-turn invariant held (zero live-turn stubs), rebased Read bodies carried
+correct post-edit content — the model had the current state and didn't trust
+it. What v2 DID fix (and why the stub text stays): the model imitating the
+terse v1 call stub as a fresh Edit input (3x InputValidationError in run2;
+zero in run4). Salvage direction if ever resumed: stub the read-after-own-edit
+follow-up reads too ("you already have the post-edit content"), i.e. make the
+tax itself cheap — see clodex run4 notes, CHANGELOG v0.6.31.
 """
 import json
+import os
 import re
 
 from proxylab import writer as writer_mod
+
+# EXPERIMENTAL master gate (see GATING in the module docstring). Default off:
+# the input fold lost the A/B twice (re-read tax); production L2 = riders only.
+FOLD_EXPERIMENTAL = os.environ.get("FOLD_EXPERIMENTAL", "0") not in (
+    "0", "no", "off", "false")
 
 # Only single-op Edit for v1. Write creates files (no prior read); MultiEdit /
 # NotebookEdit carry a multi-op shape we deliberately leave live for now.
@@ -69,8 +85,30 @@ _FOLD_EDIT_NAMES = frozenset({"Edit"})
 
 # Byte-stable stubs for a folded edit's two halves (envelope kept for pairing /
 # API validity; only the heavy args/ack body is replaced). Constants => stable.
-FOLD_CALL_STUB = {"_folded": "edit applied to the Read above"}
-FOLD_RESULT_STUB = "ok"
+#
+# STUB WORDING IS LOAD-BEARING (2026-07-12 A/B, ab-beta 296da85b vs ab-gamma
+# 91054c1e): the v1 stubs ({"_folded": "edit applied to the Read above"} / "ok")
+# broke the model's edit-from-memory discipline — settled edit INPUTS are the
+# model's memory of what it wrote, and bare "ok" dropped the CLI's own "no need
+# to Read it back" assurance with nothing vouching for context currency. Result:
+# Read/Edit ratio 0.84 vs 0.32-0.40 in every non-fold arm, +62% requests, +31%
+# USD — the fold's savings repaid several times over. Plus 3 cases of the model
+# IMITATING the terse call stub as a fresh Edit input -> InputValidationError.
+# v2 stubs therefore (a) assert explicitly that the folded Read above already
+# shows the post-edit content (restoring the assurance the ack-stub deleted),
+# and (b) self-describe as history-elision, not a callable shape. Still
+# constants => per-pair bytes stable, warmth semantics unchanged; the flip
+# itself re-cuts warm L2 prefixes once (deploy between sessions).
+FOLD_CALL_STUB = {
+    "_folded": "This edit's parameters were elided from replayed history; "
+    "its change IS already applied and reflected in the Read result above, "
+    "which shows the file's current content. This stub is not a valid Edit "
+    "input — new Edit calls always need file_path/old_string/new_string."
+}
+FOLD_RESULT_STUB = (
+    "File updated. The Read result above has been refreshed to show this "
+    "file's current post-edit content — no need to Read it back."
+)
 
 # A `cat -n` line: optional leading pad, an integer, a TAB, then the content.
 _NUM_LINE = re.compile(r"^\s*(\d+)\t(.*)$")
@@ -341,9 +379,12 @@ def writer_mod_is_real_user_turn(m):
 
 def fold_read_edits(obj, agent_id=None):
     """Fold settled same-turn Read+Edit chains. Returns a log dict, or None when
-    disabled (strip level < 2) / nothing to do. Mutates obj["messages"] in place.
-    Gate = transforms._strip_l2_enabled (fold is part of strip level 2)."""
+    disabled / nothing to do. Mutates obj["messages"] in place.
+    Gate = FOLD_EXPERIMENTAL (env, default off — demoted from production L2
+    2026-07-12, see module docstring) AND transforms._strip_l2_enabled."""
     if not isinstance(obj, dict):
+        return None
+    if not FOLD_EXPERIMENTAL:
         return None
     from proxylab import transforms as _t
     if not _t._strip_l2_enabled(obj, agent_id):
