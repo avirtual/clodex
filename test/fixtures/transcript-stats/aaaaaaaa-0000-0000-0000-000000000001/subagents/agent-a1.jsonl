@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"subagent task"},"uuid":"su1","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}
+{"type":"assistant","isSidechain":true,"requestId":"req_s1","message":{"id":"msg_s1","usage":{"input_tokens":5,"output_tokens":9,"cache_read_input_tokens":20,"cache_creation_input_tokens":4},"content":[{"type":"tool_use","id":"st1","name":"Grep","input":{"pattern":"foo"}},{"type":"tool_use","id":"st2","name":"Read","input":{"file_path":"/proj/main.js"}}]},"uuid":"sa1","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}

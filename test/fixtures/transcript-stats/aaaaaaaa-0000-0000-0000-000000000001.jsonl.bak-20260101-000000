@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":false,"requestId":"req_bak","message":{"id":"msg_bak","usage":{"input_tokens":999,"output_tokens":999,"cache_read_input_tokens":999,"cache_creation_input_tokens":999},"content":[{"type":"tool_use","id":"bt1","name":"Read","input":{"file_path":"/proj/should-not-count.js"}}]},"uuid":"bak1","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}
