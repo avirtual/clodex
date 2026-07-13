@@ -1321,6 +1321,7 @@ function registerIpcHandlers(deps) {
           type: entry.type,
           cwd: entry.cwd,
           label: entry.label || null,
+          backend: session.backend || null,
           replay,
           // Seed the sidebar dot with the CURRENT state — activity events
           // while detached were dropped, so without this a busy or blocked
@@ -1365,6 +1366,7 @@ function registerIpcHandlers(deps) {
           type: entry.type,
           cwd: entry.cwd,
           label: entry.label || null,
+          backend: (manager.sessions.get(entry.name) || {}).backend || null,
           ...readCtxFor(entry.name),
           proxy: proxyPoller.snapshot(entry.name),
         });

@@ -49,6 +49,7 @@ const SCANNED_MODULES = [
   'argv-merge.js',
   'transcript.js',
   'fs-util.js',
+  'claude-env.js',
 ];
 
 // The same guard for renderer.js extractions — these modules were carved out of

@@ -234,8 +234,13 @@ window.api.onRequestRenameWorkspace(() => startWorkspaceRename());
 // ---------------------------------------------------------------------------
 
 // Type chip glyph — the tinted square at the row's left edge ([data-type]
-// picks the tint in CSS; unknown types fall back to the bash grey).
-function typeGlyph(type) {
+// picks the tint in CSS; unknown types fall back to the bash grey). A claude
+// session routed to a cloud backend shows its backend letter instead of 'A'
+// (B = AWS Bedrock, V = GCP Vertex) — it's still an Anthropic model, so the
+// chip keeps its claude tint; only the glyph differs.
+function typeGlyph(type, backend) {
+  if (backend === 'bedrock') return 'B';
+  if (backend === 'vertex') return 'V';
   return { claude: 'A', codex: 'C', bash: '›_', remote: '@' }[type]
     || (type ? type[0].toUpperCase() : '?');
 }
@@ -263,9 +268,10 @@ function addFailedSessionToSidebar(entry) {
   // The hover card (session-hovercard.js) shows the restore error + type/cwd —
   // no title attributes on the row; the small close control keeps its own.
   if (entry.error) item.dataset.error = entry.error;
+  if (entry.backend) item.dataset.backend = entry.backend;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(entry.type)}">${typeGlyph(entry.type)}</span>
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
@@ -286,7 +292,7 @@ function addFailedSessionToSidebar(entry) {
     // Reload this item: remove the failed placeholder and add a real one
     item.remove();
     createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
     switchSession(entry.name);
   });
 
@@ -301,12 +307,13 @@ function addFailedSessionToSidebar(entry) {
   insertLocalSessionRow(item);
 }
 
-function addSessionToSidebar(name, type, cwd, label) {
+function addSessionToSidebar(name, type, cwd, label, backend = null) {
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
   item.dataset.cwd = cwd || '';
   item.dataset.type = type;
+  if (backend) item.dataset.backend = backend;
   const displayName = label || name;
   // Second line shows the cwd basename only; type + full path (and the live
   // stats) live in the hover card (session-hovercard.js), so the row carries
@@ -314,7 +321,7 @@ function addSessionToSidebar(name, type, cwd, label) {
   // keep native tooltips.
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(type)}">${typeGlyph(type)}</span>
+    <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
@@ -379,6 +386,7 @@ function restartSessionWithReattach(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = item ? item.dataset.type || null : null;
   const snapCwd = item ? item.dataset.cwd : null;
+  const snapBackend = item ? item.dataset.backend || null : null;
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
@@ -386,13 +394,15 @@ function restartSessionWithReattach(name) {
     }
     if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
+      // The respawn recomputed backend authoritatively; prefer it over the row
+      // snapshot so a pre-detection session's chip heals on restart.
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend);
       switchSession(name);
     }
   });
 }
 
-window.api.onSessionContextAction(({ action, name, type, cwd }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -407,7 +417,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd }) => {
       // success branch, but main owns the respawn (type/cwd come in the signal).
       if (type) {
         createTerminal(name);
-        addSessionToSidebar(name, type, cwd, null);
+        addSessionToSidebar(name, type, cwd, null, backend || null);
         switchSession(name);
       }
       break;
@@ -925,8 +935,10 @@ async function openDialog() {
 inputType.addEventListener('change', () => applyTypeDefaults());
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
 // so re-fetch when it changes.
-inputCwd.addEventListener('change', refreshNewSessionSkills);
-inputCwd.addEventListener('change', refreshNewSessionTools);
+// Bare refs would leak the DOM Event into the first (data) param — disabledSet —
+// which then throws `.has is not a function` mid-render and blanks the checklist.
+inputCwd.addEventListener('change', () => refreshNewSessionSkills());
+inputCwd.addEventListener('change', () => refreshNewSessionTools());
 
 inputProxyMode.addEventListener('change', () => {
   inputProxyUrl.style.display = inputProxyMode.value === 'custom' ? '' : 'none';
@@ -1102,7 +1114,7 @@ async function doCreate() {
   }
 
   createTerminal(name);
-  addSessionToSidebar(name, type, cwd, null);
+  addSessionToSidebar(name, type, cwd, null, (result.session && result.session.backend) || null);
   switchSession(name);
 }
 
@@ -3049,6 +3061,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = existing ? existing.dataset.type || null : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
+  const snapBackend = existing ? existing.dataset.backend || null : null;
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
   // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
@@ -3069,7 +3082,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (source) source.onRestarted();
     else if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend);
       switchSession(name);
     }
   }
@@ -3107,7 +3120,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       continue;
     }
     const { terminal } = createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
     // Seed the dot from the reattach snapshot — activity/attention events
     // fired while this window was detached were dropped, and the next live
     // event may be a turn away.

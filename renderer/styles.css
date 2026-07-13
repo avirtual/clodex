@@ -259,6 +259,11 @@ html, body {
 .session-chip[data-type="claude"] { --chip-color: #d97757; }
 .session-chip[data-type="codex"]  { --chip-color: #56b6c2; }
 .session-chip[data-type="remote"] { --chip-color: #b18cd9; }
+/* Cloud-backend claude sessions: distinct tint so B/V reads at a glance, not
+   just by letter (more specific than [data-type] above, so it wins). AWS amber,
+   GCP blue — brand-adjacent but clear of claude's terracotta. */
+.session-chip[data-backend="bedrock"] { --chip-color: #e6a23c; }
+.session-chip[data-backend="vertex"]  { --chip-color: #5b9bf5; }
 
 /* Activity dot rides the chip's corner (was a standalone left-column dot).
    The ring matches the sidebar bg so the dot reads as punched through. */

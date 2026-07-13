@@ -1293,7 +1293,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null);
+    const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null);
     // kill() removed the persistence entry (incl. stripLevel) and create()
     // re-wrote it from spawn args only — re-assert the session's OWN level so
     // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
@@ -1301,7 +1301,11 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const restartLvl = stripLevelOf(entry);
     if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
     if (entry.label) persistence.setLabel(name, entry.label);
-    return { ok: true, restarted: true };
+    // Return the freshly-computed backend so the renderer repaints the chip
+    // glyph authoritatively instead of carrying forward a stale row snapshot
+    // (a session first spawned before backend detection existed keeps 'A'
+    // through every UI restart otherwise).
+    return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
     // Same safety net as setArgs: never let a failed respawn eat the entry.
     persistence.upsert(entry);
@@ -1399,13 +1403,13 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // unchanged. Intents ARE owned by this dialog now: nextIntents came from the
     // patch (null = all-enabled/cleared, or the enabled subset incl [] = everything
     // gated), so thread it — not beforeKill's — so the edit's gate wins.
-    await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents);
+    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents);
     // kill() dropped the entry's stripLevel; re-assert the session's own level
     // (see session:restart) so editing args doesn't reset stripping.
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
-    return { ok: true, restarted: true };
+    return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
     // kill() dropped the persistence entry and create() failed before
     // re-adding it. Put it back (with the edited settings) so the session

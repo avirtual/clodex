@@ -43,6 +43,11 @@
 // runaway turn can't bloat the UI-rendered-wholesale notifications store.
 const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
+// Tee-blind backend detection (Bedrock/Vertex). Pure fs/os/path leaf, required
+// directly like ./wire-intents — it's stateless and electron-free, so it needs
+// no dep seam. See the wire-intent cutover gate in create().
+const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -581,6 +586,13 @@ function createSessionManager(deps) {
       // the shadow differ: comparing feeds only makes sense when both exist.
       let intentSource = 'jsonl';
       let wireRouted = false;
+      // Which cloud backend this claude session's effective env routes to:
+      // 'bedrock' (AWS) | 'vertex' (GCP) | null (Anthropic-direct / non-claude).
+      // Read once at spawn from the layered .claude settings `env` blocks. Two
+      // consumers: the wire-intent gate below (Bedrock/Vertex bypass the tee, so
+      // they must take intents from the JsonlWatcher) and the sidebar chip glyph
+      // (B/V in place of A), surfaced via the session record + list().
+      const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd)) : null;
 
       // Stable per-session proxy identity (clodex-<name>-<nonce>). Reuse the
       // persisted one across resume/restart/restore/clear; mint fresh on a new
@@ -639,7 +651,19 @@ function createSessionManager(deps) {
           // bytes actually flow through the wire may take intents from it. A
           // wire-failed spawn stays JSONL — never a silent intent blackout.
           wireRouted = !!wireBase;
-          if (wireBase && WIRE_INTENTS_LIVE) intentSource = 'wire';
+          if (wireBase && WIRE_INTENTS_LIVE) {
+            // A Bedrock/Vertex-backed session ignores the ANTHROPIC_BASE_URL our
+            // hook injects and routes straight to AWS/GCP, so its bytes never
+            // traverse the wire tee — turn.completed never fires and the wire
+            // intent scanner (plus its activity dot + touched-files) goes dark.
+            // Keep the wire registration (Bedrock just ignores it, harmless) but
+            // take intents from the JsonlWatcher, which reads the transcript
+            // regardless of backend. That lands the session in the already-
+            // supported wireRouted && intentSource==='jsonl' state (same as codex
+            // / a wire-failed spawn) — no new code path.
+            if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
+            else intentSource = 'wire';
+          }
           if (!args.includes('--settings')) {
             const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase);
             args.push('--settings', settingsPath);
@@ -841,7 +865,7 @@ function createSessionManager(deps) {
         sessionId: resumeId || null,
         workspaceId,
         proxyAgent, proxyBase,
-        intentSource, wireRouted, sentinel: null,
+        intentSource, wireRouted, backend, sentinel: null,
         // Touched-files feed (file-touch.js ring): which files this session's
         // file tools were aimed at. In-memory, session-lifetime — like activity.
         fileTouches: [],
@@ -1069,7 +1093,7 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      return { name, type, pid: ptyProc.pid };
+      return { name, type, pid: ptyProc.pid, backend };
     }
 
     write(name, data) {
@@ -1154,6 +1178,8 @@ function createSessionManager(deps) {
         pid: s.pty.pid,
         cwd: s.cwd,
         workspaceId: s.workspaceId,
+        // Cloud backend ('bedrock'|'vertex'|null) driving the sidebar chip glyph.
+        backend: s.backend || null,
         // Live turn state + dialog fact, so list() consumers (tray menu,
         // reattach seeding) don't start stale until the next activity event.
         activity: s.activityState || 'idle',
@@ -2511,7 +2537,7 @@ function createSessionManager(deps) {
           // Dropped harmlessly if the window is detached — the session still spawned
           // and the UI recomputes on reattach.
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd,
+            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });
           this._broadcast('ipc-message', {
             type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}` + (tpl ? ` (template ${tplLabel})` : ''),
@@ -2620,7 +2646,7 @@ function createSessionManager(deps) {
             // kill removed. Dropped harmlessly if the window is detached — the
             // session still respawned and the UI recomputes on reattach.
             this._sendToSession(name, 'session:context-action', {
-              action: 'reattach', name, type: entry.type, cwd: entry.cwd,
+              action: 'reattach', name, type: entry.type, cwd: entry.cwd, backend: (this.sessions.get(name) || {}).backend || null,
             });
             // Inject the mandatory handoff as turn-one once the FRESH process is
             // listening. reattach (above) is a UI signal fired immediately after
