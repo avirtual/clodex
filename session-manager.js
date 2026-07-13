@@ -85,6 +85,7 @@ function createSessionManager(deps) {
     diagWarning,
     draftChunkSignal,
     drainPending,
+    countPending,
     enqueueOutbox,
     ensureDir,
     execBodyCap,
@@ -151,6 +152,9 @@ function createSessionManager(deps) {
       // the box routes outbound DMs to an outbox only for an origin it has heard
       // from (plus any origin dir still on disk after a restart). Runtime-only.
       this._knownDmOrigins = new Set();
+      // name -> last-broadcast parked-DM count, so the pending-count poll emits
+      // deltas only (see startPendingPoll). Entry dropped when count returns to 0.
+      this._lastPendingCounts = new Map();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
@@ -1145,11 +1149,54 @@ function createSessionManager(deps) {
         // reattach seeding) don't start stale until the next activity event.
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
+        // Parked-DM count so a freshly opened window paints the ✉ badge without
+        // waiting for the next pending-count delta broadcast. Claude-only store.
+        pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }
 
     listForWorkspace(workspaceId) {
       return this.list().filter(s => s.workspaceId === workspaceId);
+    }
+
+    // Parked-DM count for one session (0 for non-claude). Lets the reattach
+    // snapshot seed the ✉ badge without waiting for the next poll delta.
+    pendingCountFor(name) {
+      const s = this.sessions.get(name);
+      return s && s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0;
+    }
+
+    // Poll the pending store for parked-DM counts and broadcast DELTAS ONLY on the
+    // 'pending-count' channel, driving the sidebar ✉ badge. Poll (not event) is
+    // deliberate: the UserPromptSubmit hook drains the store OUT OF PROCESS with an
+    // atomic dir-rename Node never observes, so Node-side park/drain call sites
+    // can't emit a complete signal — a reconcile poll is the only source of truth,
+    // and one mechanism beats two. Cheap: a readdir of a handful of tiny dirs per
+    // live Claude session per second (jsonl-watcher already polls at 250ms). A
+    // count returning to 0 drops the map entry so the map tracks only non-zero
+    // sessions. Claude-only: the store is a Claude-hook artifact (codex never parks).
+    startPendingPoll(intervalMs = 1000) {
+      if (this._pendingPollTimer) return;
+      const tick = () => {
+        const live = new Set();
+        for (const s of this.sessions.values()) {
+          if (s.agentType !== 'claude' || s._dead) continue;
+          live.add(s.name);
+          const count = countPending(PENDING_DIR, s.name);
+          if ((this._lastPendingCounts.get(s.name) || 0) === count) continue;
+          if (count > 0) this._lastPendingCounts.set(s.name, count);
+          else this._lastPendingCounts.delete(s.name);
+          this._broadcast('pending-count', { name: s.name, count });
+        }
+        // A session that went away with a non-zero last count: emit a final 0 so a
+        // lingering badge clears, then forget it.
+        for (const name of Array.from(this._lastPendingCounts.keys())) {
+          if (live.has(name)) continue;
+          this._lastPendingCounts.delete(name);
+          this._broadcast('pending-count', { name, count: 0 });
+        }
+      };
+      this._pendingPollTimer = setInterval(tick, intervalMs);
     }
 
     async killAll() {
@@ -1748,12 +1795,17 @@ function createSessionManager(deps) {
               : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
             break;
           }
-          // Deliver the parked copy. Not bypassHold: a mid-turn/compacting target
+          // Release the parked copy. Not bypassHold: a mid-turn/compacting target
           // still queues-and-flushes correctly; only the cost hold is bypassed.
-          this._injectText(target, claimed.text, { parkable: true });
+          // parkable + the SAME id: if a draft is open in the target pane at fire
+          // time, the divert re-parks under intent.id rather than splicing — so the
+          // handle survives and a later resend still resolves it. The reply is
+          // worded for that possibility (the inject is fire-and-forget, so we can't
+          // synchronously know whether it wrote or re-parked).
+          this._injectText(target, claimed.text, { parkable: true, parkId: intent.id });
           const origin = (claimed.text.match(/^\[agent:from (\S+)\]/) || [])[1] || senderName;
           this._sendToSession(target.name, 'session-mention', target.name, 'dm', origin);
-          reply(`delivered the parked message to ${claimed.name}.`);
+          reply(`released ${intent.id} to ${claimed.name} — it injects at the next safe moment; if a draft is open there it re-parks under the same id.`);
           this._broadcast('ipc-message', {
             type: 'dm', from: origin, to: claimed.name,
             body: `RESENT (${intent.id}): ${claimed.text}`,
@@ -3036,17 +3088,59 @@ function createSessionManager(deps) {
       if (target._parkCapTimer) return;         // earliest-parked deadline governs
       target._parkCapTimer = setTimeout(() => {
         target._parkCapTimer = null;
-        if (target._dead) return;
-        let texts = [];
-        try { texts = drainPending(PENDING_DIR, target.name, `cap.${process.pid}`); } catch {}
-        if (!texts.length) return;              // hook already drained on a submit
-        log.warn('inject', `park cap fired for ${target.name} — draining ${texts.length} parked deliver${texts.length === 1 ? 'y' : 'ies'} via queue (no submit in ${INJECT_QUIET_MAXWAIT / 1000}s)`);
-        this._broadcast('ipc-message', {
-          ts: Date.now(), from: 'clodex', to: target.name, kind: 'park-cap',
-          body: `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${texts.length} parked deliver${texts.length === 1 ? 'y' : 'ies'}`,
-        });
-        for (const t of texts) this._injectText(target, t);
+        this._flushParkedNow(target, `cap.${process.pid}`, 'park-cap');
       }, INJECT_QUIET_MAXWAIT);
+    }
+
+    // Claim + drain the target's parked deliveries NOW and inject them through the
+    // normal (NON-parkable) path. Shared by the starvation cap (tag `cap.<pid>`)
+    // and the operator flush button (tag `flush.<pid>`). The claim is atomic, so it
+    // races safely with the UserPromptSubmit hook, the idle-edge drain, and each
+    // other — whoever renames the dir first delivers, the losers read empty and
+    // no-op. NON-parkable on purpose: re-arming the parkable divert here is what
+    // let a resent DM re-park itself (the recursion Bogdan hit); a manual flush must
+    // land. A mid-turn target still batches to its idle edge via _injectText's hold
+    // gate, so no torn turn. Returns { ok, count }.
+    _flushParkedNow(target, tag, kind = 'park-flush') {
+      if (target._dead) return { ok: true, count: 0 };
+      let texts = [];
+      try { texts = drainPending(PENDING_DIR, target.name, tag); } catch {}
+      if (!texts.length) return { ok: true, count: 0 };  // another drainer won the claim
+      const plural = texts.length === 1 ? 'y' : 'ies';
+      const body = kind === 'park-cap'
+        ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${texts.length} parked deliver${plural}`
+        : `flushed ${texts.length} parked deliver${plural} (operator)`;
+      log.warn('inject', `${kind} for ${target.name} — draining ${texts.length} parked deliver${plural} via queue`);
+      this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
+      for (const t of texts) this._injectText(target, t);
+      return { ok: true, count: texts.length };
+    }
+
+    // Operator-initiated flush of a session's parked DMs (sidebar ✉ badge click).
+    // Operator-only by construction — reached via the session:flushPending
+    // ipcMain.handle, never an agent intent (agents keep [agent:resend] for id'd
+    // cost-holds; there is deliberately no agent-facing flush verb). Guards:
+    //   * unknown / non-claude / dead target → refuse, nothing to flush.
+    //   * dialog-blocked → REFUSE WITHOUT DRAINING. Draining would move the
+    //     durable, zero-loss parked files into the volatile in-memory inject queue
+    //     (lost on quit) where they'd sit behind the dialog anyway — and the Enter
+    //     that ends an injection would answer the open dialog. Leave them parked.
+    // On a successful claim, cancel the pending starvation cap (the messages are
+    // gone from the store) and push an immediate count:0 delta so the badge clears
+    // without waiting for the next poll tick.
+    flushPending(name) {
+      const target = this.sessions.get(name);
+      if (!target || target.agentType !== 'claude' || target._dead) {
+        return { ok: false, reason: 'no-such-agent' };
+      }
+      if (this._injectHoldReason(target) === 'dialog') {
+        return { ok: false, reason: 'dialog-blocked' };
+      }
+      const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
+      if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
+      this._lastPendingCounts.delete(name);
+      this._broadcast('pending-count', { name, count: 0 });
+      return r;
     }
 
     _injectText(session, text, opts = {}) {
@@ -3076,7 +3170,7 @@ function createSessionManager(deps) {
       // (a possible splice, no worse than before), whereas parking a CLI-driving
       // self-intent (compact/reload continuation, slash command) would stall the
       // agent — so those stay unparkable by omission, which is the safe direction.
-      const divert = opts.parkable ? this._parkDivertFor(session) : null;
+      const divert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
       this._injectQueueFor(session).enqueue(text, divert ? { divert } : undefined);
     }
 
@@ -3087,12 +3181,17 @@ function createSessionManager(deps) {
     // that instant, park the text for the operator's next submit (arming the
     // non-destructive cap) and tell the queue to skip the write. Parking is
     // best-effort — on failure it returns false so the delivery still injects.
-    _parkDivertFor(session) {
+    // `id` (optional) is a resend handle to preserve across a re-park: a resent DM
+    // that hits an open draft at fire time re-parks under the SAME id, so a later
+    // [agent:resend <id>] still resolves it (without this the divert re-parked
+    // id-less and the handle died). Only the resend call site passes it; every
+    // other parkable delivery re-parks id-less as before.
+    _parkDivertFor(session, id = null) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
         if (session._dead || !isDraftOpen(session)) return false;
         try {
-          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq());
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id);
         } catch (e) {
           log.error('inject', `fire-time park failed for ${session.name}: ${e.message} — injecting instead`);
           return false;

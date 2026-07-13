@@ -395,6 +395,23 @@ html, body {
 .session-warm[data-state="cold"]  { color: #6b7689; }
 .session-warm[data-state="stale"] { color: #6b7689; opacity: 0.7; }
 
+/* Parked-DM badge (✉N) — click to flush the queue now. Amber to read as a
+   pending/attention chip, distinct from the ctx/warm badges. */
+.session-pending {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: #1c1200;
+  background: #e0a030;
+  cursor: pointer;
+}
+.session-pending:empty { display: none; }
+.session-pending:hover { background: #f0b545; }
+
 /* Refusal marker on the tab (wire-only signal the CLI hides). */
 .session-item[data-refusal="1"] .session-type::after {
   content: " ⚠";

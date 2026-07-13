@@ -7,6 +7,8 @@ window.api = {
     ipcRenderer.invoke('session:list'),
   killSession: (name) =>
     ipcRenderer.invoke('session:kill', name),
+  flushPending: (name) =>
+    ipcRenderer.invoke('session:flushPending', name),
   retrySpawnSession: (name) =>
     ipcRenderer.invoke('session:retrySpawn', name),
   forgetSession: (name) =>
@@ -108,6 +110,8 @@ window.api = {
     ipcRenderer.on('ipc-message', (_e, msg) => callback(msg)),
   onSessionActivity: (callback) =>
     ipcRenderer.on('session-activity', (_e, name, state) => callback(name, state)),
+  onPendingCount: (callback) =>
+    ipcRenderer.on('pending-count', (_e, msg) => callback(msg)),
   onSessionAttention: (callback) =>
     ipcRenderer.on('session-attention', (_e, name, attn) => callback(name, attn)),
   onSessionCtx: (callback) =>

@@ -138,17 +138,44 @@ call sites only; self-intents are never parkable.
 - Parked files: `<seq>.json` or `<seq>.<id>.json` — the id segment is
   matched *structurally* (4 vs 3 segments), never by suffix, so a
   counter-shaped seq can't be claimed as an id.
+- **Two park types, both land in this store** (the distinction is *why* a DM
+  parked, and whether the sender is told):
+  1. **Cost/dialog hold-park** (`_parkHeldDelivery`, from `_gatedDeliver`) —
+     the target is idle-and-cold (`DM_HOLD_IDLE_MS`, 30min) or dialog-blocked.
+     The SENDER is notified (bounce/notice with a resend id). Does NOT arm the
+     cap — waits for the target's own next turn or an explicit resend.
+  2. **Busy/draft park** (`_maybeParkDelivery` + the fire-time divert in
+     `_parkDivertFor`) — the target is mid-turn (`thinking`) or has an open
+     draft / recent keystroke in its pane at the delivery instant. This is
+     draft-splice protection, not a cost hold; the SENDER is NOT told (the DM
+     was accepted, not refused). Arms the 5min cap, so it self-drains even if
+     the target never takes a turn.
 - **Resend**: cost/cold-hold parks mint a 5-char base36 id (unique across
   all pending dirs) and the bounce notice teaches `[agent:resend <id>]`.
   Resend claims by single-file rename (ENOENT = already delivered = success)
-  and bypasses the cost gate; a dialog hold re-parks under the same id.
+  and bypasses the cost gate; a dialog hold re-parks under the same id. Resend
+  re-delivers with `parkable` + the SAME id, so if a draft is open in the
+  target pane at fire time the divert re-parks under that id (the handle
+  survives — a later resend still resolves it) instead of splicing.
   SETTLED: resend is protocol-invisible — not in IPC_PROMPT; only the park
   notice hands out the incantation (ids only exist at park time).
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit hook) delivers parked mail
-  with the target's own next turn; the composing-operator park arms a
-  non-destructive 5min cap that drains through the inject queue. Cost/dialog
+  with the target's own next turn; the busy/draft park arms a non-destructive
+  5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
   explicit resend.
+- **Operator flush** (`countPending` + `flushPending` / `_flushParkedNow`) — a
+  parked-DM count badge (`✉N`) on the sidebar session row, fed by a 1s
+  `pending-count` poll (deltas only) over live Claude sessions plus a seed from
+  the reattach snapshot. Clicking it drains that session's queue NOW: the same
+  atomic claim as the cap (tag `flush.<pid>`), injected NON-parkable (so a
+  flushed message can't re-park — the recursion a `parkable` resend could hit).
+  It's the operator's true "deliver now" override, sidestepping the sender-
+  notice cost entirely (the operator has no turn cost). Guards: refuses a
+  dialog-blocked target WITHOUT draining (draining would move zero-loss durable
+  files into the volatile in-memory queue behind the dialog). **Operator-only**
+  via the `session:flushPending` ipcMain.handle — there is deliberately no
+  agent-facing flush verb (agents keep `[agent:resend]` for id'd cost-holds).
 - Parked deliveries are deleted only on explicit user-kill (`_cleanup` gates
   the rmrf on `_userKilled`); restarts and quits keep them.
 

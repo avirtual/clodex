@@ -545,7 +545,7 @@ const { buildAgentsArg, denyAgentRules } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled } = require('./intent-catalog');
@@ -1014,6 +1014,7 @@ const SessionManager = createSessionManager({
     diagWarning,
     draftChunkSignal,
     drainPending,
+    countPending,
     enqueueOutbox,
     ensureDir,
     execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
@@ -1661,6 +1662,7 @@ app.whenReady().then(() => {
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, renameWorkspaceScope } =
     initStores(app.getPath('userData'), { log, registryDir: REGISTRY_DIR }));
   proxyPoller.start();
+  SessionManager.startPendingPoll();
 
   // Durable self-reminder scheduler: real clock + timers, the reminders store,
   // and a deliver seam onto the existing DM pipeline. The reminder arrives as a

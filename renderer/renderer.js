@@ -308,6 +308,7 @@ function addSessionToSidebar(name, type, cwd, label) {
         <span class="session-badges">
           <span class="session-warm" title="Prompt-cache warmth (time to expiry)"></span>
           <span class="session-ctx" title="Context used"></span>
+          ${type === 'claude' ? '<span class="session-pending" title="Parked messages waiting — click to deliver now"></span>' : ''}
         </span>
       </div>
     </div>
@@ -326,6 +327,19 @@ function addSessionToSidebar(name, type, cwd, label) {
       window.api.killSession(name);
     }
   });
+
+  // Click the ✉ parked-message chip to flush that session's queue NOW (operator
+  // override). stopPropagation so it doesn't also switch sessions.
+  const pendingEl = item.querySelector('.session-pending');
+  if (pendingEl) {
+    pendingEl.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await window.api.flushPending(name);
+      if (r && r.ok === false && r.reason === 'dialog-blocked') {
+        pendingEl.title = 'Blocked on a permission dialog — answer it first, then flush';
+      }
+    });
+  }
 
   // Double-click name to rename (just the display label, not the IPC name)
   const nameEl = item.querySelector('.session-name');
@@ -1271,6 +1285,24 @@ window.api.onSessionCtx((name, pct, tok, size) => {
   }
   applyCtxBadge(name, pct);
   if (name === activeSession) renderProxyBar();
+});
+
+// Parked-DM count badge (✉N). Fed by the main-process pending-count poll (deltas
+// only) and seeded from session:list on first paint. Click-to-flush is wired in
+// addSessionToSidebar; this just paints the count. Hidden at 0 via :empty CSS.
+function applyPendingBadge(name, count) {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  const badge = el.querySelector('.session-pending');
+  if (!badge) return;
+  badge.textContent = count > 0 ? `✉${count}` : '';
+  badge.title = count > 0
+    ? `${count} parked message${count === 1 ? '' : 's'} waiting — click to deliver now`
+    : 'Parked messages waiting — click to deliver now';
+}
+
+window.api.onPendingCount((msg) => {
+  if (msg && typeof msg.name === 'string') applyPendingBadge(msg.name, msg.count || 0);
 });
 
 // Peer touched-files count shadow: peer key -> count. Fed by the owner's
@@ -3063,6 +3095,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize });
     }
     if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
+    if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
     if (!firstHealthy) firstHealthy = entry.name;
   }
   if (firstHealthy) switchSession(firstHealthy);

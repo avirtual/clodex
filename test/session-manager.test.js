@@ -1507,3 +1507,74 @@ test('_buildDeliveryText trailer: present only when sender reachable AND receive
   m4.sessions.set('a', { name: 'a', agentType: 'claude' });
   assert.doesNotMatch(m4._buildDeliveryText(target, 'a', 'unit body', 'memory'), RE);
 });
+
+// --- flushPending / _flushParkedNow (operator parked-DM flush) ----------------
+// PTY-free: drainPending is a spy (records the claim tag), _injectText is stubbed
+// so we don't build a real InjectQueue. Covers the three flushPending verdicts
+// and the claim-tag / dialog-guard invariants from the spec.
+
+function mkFlush(overrides = {}) {
+  const drained = [];
+  const m = mk({
+    PENDING_DIR: '/tmp/pending-test',
+    log: { warn() {}, info() {}, error() {} },
+    drainPending: (root, name, tag) => { drained.push({ name, tag }); return overrides._texts || []; },
+    ...overrides,
+  });
+  m._drained = drained;
+  m._injected = [];
+  m._injectText = (session, text, opts) => m._injected.push({ name: session.name, text, opts });
+  return m;
+}
+
+test('flushPending: unknown / non-claude / dead target → refused, nothing drained', () => {
+  const m = mkFlush();
+  assert.deepStrictEqual(m.flushPending('ghost'), { ok: false, reason: 'no-such-agent' });
+  m.sessions.set('cx', { name: 'cx', agentType: 'codex' });
+  assert.deepStrictEqual(m.flushPending('cx'), { ok: false, reason: 'no-such-agent' });
+  m.sessions.set('dead', { name: 'dead', agentType: 'claude', _dead: true });
+  assert.deepStrictEqual(m.flushPending('dead'), { ok: false, reason: 'no-such-agent' });
+  assert.strictEqual(m._drained.length, 0, 'refused targets never reach the drain');
+});
+
+test('flushPending: dialog-blocked target refuses WITHOUT draining (leaves durable store intact)', () => {
+  const m = mkFlush({ _texts: ['[agent:from bob] hi'] });
+  m.sessions.set('a', { name: 'a', agentType: 'claude', needsAttention: { kind: 'permission' } });
+  assert.deepStrictEqual(m.flushPending('a'), { ok: false, reason: 'dialog-blocked' });
+  assert.strictEqual(m._drained.length, 0, 'dialog guard returns before the claim');
+  assert.strictEqual(m._injected.length, 0);
+});
+
+test('flushPending: happy path claims with a flush.<pid> tag and injects each parked message', () => {
+  const m = mkFlush({ _texts: ['m1', 'm2'] });
+  m.sessions.set('a', { name: 'a', agentType: 'claude', activityState: 'idle' });
+  const r = m.flushPending('a');
+  assert.deepStrictEqual(r, { ok: true, count: 2 });
+  assert.strictEqual(m._drained.length, 1);
+  assert.match(m._drained[0].tag, /^flush\./, 'operator flush uses a flush.<pid> claim tag');
+  assert.deepStrictEqual(m._injected.map(x => x.text), ['m1', 'm2']);
+});
+
+test('flushPending: injects NON-parkable (the resend-recursion guard) and clears the badge', () => {
+  const m = mkFlush({ _texts: ['only'] });
+  const broadcasts = [];
+  m._broadcast = (channel, msg) => broadcasts.push({ channel, msg });
+  m.sessions.set('a', { name: 'a', agentType: 'claude', activityState: 'idle' });
+  m._lastPendingCounts.set('a', 1);
+  m.flushPending('a');
+  // NON-parkable is the recursion guard: no parkable flag means no fire-time
+  // divert, so a flushed message can never re-park the way a resent one could.
+  assert.strictEqual(m._injected.length, 1);
+  assert.ok(!m._injected[0].opts || !m._injected[0].opts.parkable,
+    'flush injects without parkable');
+  // The flush must push an immediate count:0 delta so the badge clears at once.
+  assert.ok(broadcasts.some(b => b.channel === 'pending-count' && b.msg.name === 'a' && b.msg.count === 0));
+  assert.strictEqual(m._lastPendingCounts.has('a'), false, 'poll map entry dropped');
+});
+
+test('_flushParkedNow: empty claim (another drainer won) is a no-op returning count 0', () => {
+  const m = mkFlush({ _texts: [] });
+  const target = { name: 'a', agentType: 'claude' };
+  assert.deepStrictEqual(m._flushParkedNow(target, 'cap.1', 'park-cap'), { ok: true, count: 0 });
+  assert.strictEqual(m._injected.length, 0);
+});

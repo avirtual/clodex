@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pending-test-'));
@@ -76,6 +76,37 @@ test('hasPending reflects parked state without claiming', () => {
   assert.equal(hasPending(root, 'a'), true);
   assert.deepStrictEqual(drainPending(root, 'a', 't'), ['x']);
   assert.equal(hasPending(root, 'a'), false);
+});
+
+test('countPending returns the parked count without claiming (drives the ✉ badge)', () => {
+  const root = tmpRoot();
+  assert.equal(countPending(root, 'a'), 0, 'absent store → 0');
+  parkDelivery(root, 'a', 'm1', '0001');
+  parkDelivery(root, 'a', 'm2', '0002');
+  assert.equal(countPending(root, 'a'), 2);
+  // Peek must not consume — a following drain still sees both.
+  assert.equal(countPending(root, 'a'), 2);
+  assert.deepStrictEqual(drainPending(root, 'a', 't'), ['m1', 'm2']);
+  assert.equal(countPending(root, 'a'), 0, 'drained store → 0');
+});
+
+test('countPending ignores stray .tmp files and the id suffix (counts real parks only)', () => {
+  const root = tmpRoot();
+  const dir = agentDir(root, 'a');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '.0001.json.tmp'), '{"text":"half');  // in-flight publish
+  parkDelivery(root, 'a', 'whole', '0002');
+  parkDelivery(root, 'a', 'tagged', SEQ(3), 'ab12c');                   // id-tagged park
+  assert.equal(countPending(root, 'a'), 2, 'two real parks, the .tmp excluded');
+});
+
+test('countPending reports 0 while a drain claim is mid-flight (claimed = committed)', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'x', '0001');
+  // Simulate the atomic claim without completing it: the agent dir is renamed to
+  // a `.draining.` sibling, so countPending's agentDir ENOENTs → 0.
+  fs.renameSync(agentDir(root, 'a'), `${agentDir(root, 'a')}.draining.midflight`);
+  assert.equal(countPending(root, 'a'), 0);
 });
 
 test('a stray .tmp in the store is ignored by drain (never a partial read)', () => {

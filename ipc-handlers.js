@@ -82,6 +82,9 @@ function registerIpcHandlers(deps) {
   ipcMain.handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   ipcMain.handle('session:listAll', () => manager.list());
   ipcMain.handle('session:kill', (_e, name) => manager.kill(name));
+  // Operator flush of a session's parked DMs (sidebar ✉ badge click). Operator-only
+  // by construction — no agent intent maps here.
+  ipcMain.handle('session:flushPending', (_e, name) => manager.flushPending(name));
   ipcMain.handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
   ipcMain.handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
   ipcMain.handle('session:setAutoCompact', (_e, name, on) => persistence.setAutoCompact(name, on !== false));
@@ -1324,6 +1327,7 @@ function registerIpcHandlers(deps) {
           // session reattaches showing idle grey until its next transition.
           activity: session.activityState || 'idle',
           attention: session.needsAttention || null,
+          pendingCount: manager.pendingCountFor(entry.name),
           ...readCtxFor(entry.name),
           proxy: proxyPoller.snapshot(entry.name),
         });

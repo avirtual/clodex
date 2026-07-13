@@ -117,6 +117,19 @@ function hasPending(root, name) {
   }
 }
 
+// Cheap count (not a claim): how many parked deliveries does `name` have right
+// now? Drives the sidebar's parked-message badge. A mid-flight drain has renamed
+// the agent dir out to a `<name>.draining.<tag>` sibling, so agentDir ENOENTs and
+// we report 0 — claimed means committed for delivery, no longer "waiting".
+function countPending(root, name) {
+  try {
+    return fs.readdirSync(agentDir(root, name))
+      .filter((f) => f.endsWith('.json') && !f.startsWith('.')).length;
+  } catch {
+    return 0;
+  }
+}
+
 // Is `id` already used by any parked delivery, in any agent's store? Resend
 // carries only the id (not the target), so ids must be unique ACROSS dirs, not
 // just within one — mint checks this to guarantee a resend resolves to exactly
@@ -170,4 +183,4 @@ function claimParkedById(root, id) {
   return null;
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, parkIdInUse, claimParkedById, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById, agentDir };
