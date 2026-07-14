@@ -232,8 +232,13 @@ window.api availability at parse time.
 ## Phase 4 — Docker image + auth v1 + docs
 
 Detailed spec (2026-07-15, post-P3). One milestone; everything lives under
-a new `docker/` directory except the two small code touches called out
-below. The engine/web-host stack is DONE — headless-main.js already reads
+a new `docker/web/` directory except the two small code touches called out
+below. (`docker/` itself is TAKEN — the peering arc's SSH/systemd peer
+test-box, tracked files cross-referenced from the peering docs; the web
+image nests beside it, RULED 07-15. References below to docker/X mean
+docker/web/X; compose build context becomes `../..` with
+`dockerfile: docker/web/Dockerfile`, and the repo-root .dockerignore
+still applies.) The engine/web-host stack is DONE — headless-main.js already reads
 CLODEX_DATA_DIR / CLODEX_WORKSPACES / CLODEX_WEB_PORT / CLODEX_WEB_TOKEN,
 exits 0 on SIGTERM and 64 on restart-request — so this phase is packaging
 + docs + two follow-ups deferred out of P3.
@@ -290,11 +295,19 @@ exits 0 on SIGTERM and 64 on restart-request — so this phase is packaging
 1. **web-host.js `/healthz`**: unauthenticated `GET /healthz` → 200
    `ok`, exempt from the token predicate (leaks only liveness, and a
    compose healthcheck can't carry a secret cleanly). One test.
-2. **fileOpen degradation (the deferred P3 ruling)**: the api-shim's
-   synthetic `open-path` currently dead-ends in a toast; route it to the
-   same in-page file view `[agent:file view]` renders instead, falling
-   back to the toast only if the view path can't serve it. Adjust the
-   api-shim test accordingly.
+2. **fileOpen degradation (RE-RULED 07-15 after call-graph audit)**: the
+   original "route open-path to the in-page view" ruling doesn't fit
+   the actual call graph — window.api.fileOpen's sole caller is the
+   file-peek modal's "Open in the default editor" button, fired while
+   the peek is ALREADY showing that path (with a Diff tab the shim
+   couldn't reconstruct: fileDiff needs the session name, which the
+   transport layer doesn't have). Honest degradation instead: the shim
+   sets `window.__CLODEX_WEB__ = true`, and files-popover hides the
+   Open button when it's set (mirrors the existing `api.remote` hide
+   at the same site) — there is no external editor to escape to and
+   the file is already on screen. open-path keeps its toast as a net
+   for any future source. The renderer touch is sanctioned despite the
+   original shim-only scoping.
 
 ### Docs
 
