@@ -60,9 +60,16 @@ finds its venv dir; peer hello still reports version/srcDir).
 ## Phase 2 — lift restore-sessions out of the IPC handler
 
 Extract the body of `app:restore-sessions` (ipc-handlers.js:1323) into a
-plain async fn `restoreSessionsForWorkspace(workspaceId)` following the
-exact restartSession precedent (defined in main.js, shared by ipc-handlers
-and remote-wiring). The IPC handler becomes a one-liner:
+plain async fn `restoreSessionsForWorkspace(workspaceId)`. RULING
+(07-14, resolved during implementation): the original "define it in
+main.js like restartSession" conflicted with the unit-test requirement —
+nothing in test/ can import main.js (it requires electron). So the core
+lands in a new electron-free leaf **session-restore.js** (in
+SCANNED_MODULES), taking { workspaceId, persistence, manager, proxyPoller,
+maybeCompactBeforeResume, readCtxFor, log }; main.js keeps only a thin
+closure over its module globals (the seam engine.js inherits in Phase 3);
+readCtxFor relocates from ipc-handlers to main.js (single-consumer, deps
+already there). The IPC handler becomes a one-liner:
 `(e) => restoreSessionsForWorkspace(workspaceOfSender(e))`.
 
 Return shape, failure semantics (`failed: true` entries kept in

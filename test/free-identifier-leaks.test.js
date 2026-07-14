@@ -51,6 +51,7 @@ const SCANNED_MODULES = [
   'fs-util.js',
   'claude-env.js',
   'relay-protocol.js',
+  'session-restore.js',
 ];
 
 // The same guard for renderer.js extractions — these modules were carved out of

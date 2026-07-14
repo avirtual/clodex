@@ -30,12 +30,13 @@ function registerIpcHandlers(deps) {
     diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
-    jsonlToMarkdown, log, manager, maybeCompactBeforeResume,
-    openWirescopeWindow, os, parseCtxFile,
+    jsonlToMarkdown, log, manager,
+    openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs,
+    resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
+    readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
@@ -1309,100 +1310,14 @@ function registerIpcHandlers(deps) {
     manager.write(name, data);
   });
 
-  // Renderer tells us it's ready — restore sessions for its workspace.
-  // Sessions already running (this can happen for the default workspace on
-  // second window creation via tray) are returned as-is so the renderer can
-  // render them without double-spawning.
-  const readCtxFor = (name) => {
-    try {
-      const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
-      return { ctx: c.pct, ctxTok: c.tok, ctxSize: c.size, ctxCost: c.cost, ctxModel: c.modelName };
-    } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
-  };
-
-  ipcMain.handle('app:restore-sessions', async (e) => {
-    const workspaceId = workspaceOfSender(e);
-    const saved = persistence.listForWorkspace(workspaceId);
-    const restored = [];
-    for (const entry of saved) {
-      if (manager.sessions.has(entry.name)) {
-        // Already running — report it and flush any buffered output so the
-        // new terminal shows everything that happened while detached
-        const session = manager.sessions.get(entry.name);
-        const replay = session.pendingOutput || null;
-        session.pendingOutput = '';
-        restored.push({
-          name: entry.name,
-          type: entry.type,
-          cwd: entry.cwd,
-          label: entry.label || null,
-          backend: session.backend || null,
-          replay,
-          // Seed the sidebar dot with the CURRENT state — activity events
-          // while detached were dropped, so without this a busy or blocked
-          // session reattaches showing idle grey until its next transition.
-          activity: session.activityState || 'idle',
-          attention: session.needsAttention || null,
-          pendingCount: manager.pendingCountFor(entry.name),
-          ...readCtxFor(entry.name),
-          proxy: proxyPoller.snapshot(entry.name),
-        });
-        continue;
-      }
-      try {
-        // Resume-time bake (opt-in, fail-safe): slim the transcript before
-        // --resume so the replayed prefix is small + permanently slimmer. Safe
-        // regardless of cache warmth — the bake is byte-identical to the live
-        // wire (bake ⊆ live-strip), so it can't bust a warm prefix. No-op unless
-        // the compactOnResume setting + a live wirescope are both present.
-        await maybeCompactBeforeResume(entry);
-        await manager.create(
-          entry.name,
-          entry.type,
-          entry.cwd,
-          entry.extraArgs || [],
-          entry.sessionId,
-          workspaceId,
-          entry.systemPrompt || null,
-          false,
-          entry.proxy ?? null,
-          entry.agents || [],
-          entry.denyBuiltins || [],
-          entry.disabledTools || [],
-          entry.disabledSkills || [],
-          entry.injectSkills || [],
-          entry.systemPromptFile || null,
-          entry.appendPromptFiles || [],
-          Array.isArray(entry.execCommands) ? entry.execCommands : [],
-          Array.isArray(entry.intents) ? entry.intents : null,
-        );
-        restored.push({
-          name: entry.name,
-          type: entry.type,
-          cwd: entry.cwd,
-          label: entry.label || null,
-          backend: (manager.sessions.get(entry.name) || {}).backend || null,
-          ...readCtxFor(entry.name),
-          proxy: proxyPoller.snapshot(entry.name),
-        });
-      } catch (err) {
-        // DO NOT remove from persistence — surface the failure to the UI
-        // so the user can retry or delete. Silently wiping was the cause
-        // of the "agents vanish after upgrade" bug.
-        console.error(`Failed to restore session ${entry.name}:`, err.message);
-        log.error('session', `restore failed ${entry.name}: ${err.message}`);
-        restored.push({
-          name: entry.name,
-          type: entry.type,
-          cwd: entry.cwd,
-          label: entry.label || null,
-          failed: true,
-          error: err.message,
-        });
-      }
-    }
-    return restored;
-  });
+  // Renderer tells us it's ready — restore sessions for its workspace. The core
+  // moved to the electron-free session-restore.js leaf (Phase 2); main.js binds
+  // its module globals in restoreSessionsForWorkspace and injects it here, so this
+  // handler is just the workspace-of-sender resolution. Sessions already running
+  // (e.g. the default workspace on a second tray-opened window) come back as-is
+  // so the renderer renders them without double-spawning; failures come back as
+  // `{ failed: true }` entries (kept in persistence) for the retry/forget UI.
+  ipcMain.handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   // Retry spawning a session that failed during restore
   ipcMain.handle('session:retrySpawn', async (e, name) => {

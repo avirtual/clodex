@@ -556,6 +556,7 @@ const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = requir
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
 const { initStores } = require('./stores');
+const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
 const { CLAUDE_TOOLS, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED, DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS } = require('./catalogs');
 
 // Short lowercase base36 token (park/resend handles). Concatenates random
@@ -1314,6 +1315,32 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
+// The per-session context badge fields (ctx %, tokens, size, cost, model),
+// read from the registry ctx file. MOVED here from ipc-handlers (was a local
+// const inside the app:restore-sessions handler, its only consumer) as part of
+// the Phase-2 restore extraction: the restore core is now the electron-free
+// session-restore.js leaf, and the thin closure below owns readCtxFor so it can
+// inject it. Kept a main.js closure (not moved into the leaf) because its deps —
+// parseCtxFile/pathFor/REGISTRY_DIR/fs — are all main.js module scope already.
+const readCtxFor = (name) => {
+  try {
+    const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
+    return { ctx: c.pct, ctxTok: c.tok, ctxSize: c.size, ctxCost: c.cost, ctxModel: c.modelName };
+  } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
+};
+
+// Restore the persisted sessions for a workspace on renderer-ready. The CORE is
+// the electron-free session-restore.js leaf (test-pinned failure semantics);
+// this closure just binds the main.js module globals it needs. Defined here (the
+// restartSession precedent) and injected into ipc-handlers so its handler is a
+// one-liner; engine.js inherits this exact seam in Phase 3.
+function restoreSessionsForWorkspace(workspaceId) {
+  return restoreSessionsCore({
+    workspaceId, persistence, manager, proxyPoller,
+    maybeCompactBeforeResume, readCtxFor, log,
+  });
+}
+
 // The scope context for a session: its own name + its workspace's DISPLAY name
 // (resolved through the entry's workspaceId → workspace record; unknown/headless
 // entries fall back to the default workspace name). Single source for every
@@ -1812,12 +1839,13 @@ app.whenReady().then(() => {
     diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
-    jsonlToMarkdown, log, manager, maybeCompactBeforeResume,
-    openWirescopeWindow, os, parseCtxFile,
+    jsonlToMarkdown, log, manager,
+    openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    resolveDeployFolder, restartSession, readSessionArgs, applySessionArgs,
+    resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
+    readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
