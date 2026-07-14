@@ -586,6 +586,16 @@ function createSessionManager(deps) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
+      // A nonexistent cwd makes the spawned CLI exit ~immediately (code 1), which
+      // the UI renders as a tab that flickers and vanishes — fail loudly up front
+      // instead so the dialog / spawn intent / restore path can show the reason.
+      // Empty cwd stays legal (the spawn falls back to HOME below).
+      if (cwd) {
+        let st = null;
+        try { st = fs.statSync(cwd); } catch { /* missing — handled below */ }
+        if (!st) throw new Error(`Directory does not exist: ${cwd}`);
+        if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+      }
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
 
       let cmd, args;

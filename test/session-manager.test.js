@@ -23,6 +23,7 @@ function mk(overrides = {}) {
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
     intentEnabled, // real pure leaf — the fire-time gate needs it on every _handleIntent
+    fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
@@ -123,6 +124,15 @@ test('create: rejects a duplicate session name before any spawn', async () => {
   const m = mk();
   m.sessions.set('dup', { name: 'dup' });
   await assert.rejects(() => m.create('dup', 'claude', '/tmp'), /already exists/);
+});
+
+test('create: rejects a nonexistent or non-directory cwd before any spawn', async () => {
+  // A bad cwd used to reach the PTY spawn, where the CLI exits ~immediately and
+  // the tab flickers away with no reason shown (found live in the docker web
+  // frontend, where there is no native directory picker to keep paths honest).
+  const m = mk();
+  await assert.rejects(() => m.create('ghost', 'claude', '/no/such/dir/anywhere'), /does not exist/);
+  await assert.rejects(() => m.create('ghost', 'bash', __filename), /Not a directory/);
 });
 
 // Stray-wire-session discrimination (the 7-digests-in-4-minutes incident): the
