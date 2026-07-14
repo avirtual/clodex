@@ -7,6 +7,7 @@ const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_F
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
 const { splitModelArg, withModelArg } = require('./lib/args-model');
+const { altChordAction } = require('./lib/web-shortcuts');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
@@ -2283,6 +2284,58 @@ document.addEventListener('keydown', (e) => {
       : (cur - 1 + items.length) % items.length;
     e.preventDefault();
     e.stopPropagation();
+    switchSession(items[next].dataset.name);
+  }
+}, true);
+
+// Browser-only Alt shortcuts — a tab's chrome reserves Cmd+T/W/1-9, so the
+// desktop Cmd chords above silently fail in a browser. The web frontend mirrors
+// them onto Alt: Alt+T new, Alt+W close, Alt+1..9 switch, Alt+Shift+] / [ cycle
+// (classified by e.code in web-shortcuts.js, since Option composes characters on
+// macOS). Same capture-phase + preventDefault/stopPropagation so xterm never sees
+// them. No-op in Electron, where window.__CLODEX_WEB__ is undefined.
+document.addEventListener('keydown', (e) => {
+  if (!window.__CLODEX_WEB__) return;
+  const action = altChordAction(e);
+  if (!action) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (action.type === 'new') {
+    if (dialogOverlay.classList.contains('hidden')) openDialog();
+    return;
+  }
+
+  if (action.type === 'close') {
+    if (!dialogOverlay.classList.contains('hidden')) {
+      closeDialog();
+    } else if (activeSession) {
+      const target = activeSession;
+      const entry = sessions.get(target);
+      if (entry && entry.peer) {
+        peerHideFromList(entry.peer.id, entry.peer.name);
+      } else {
+        window.api.confirmKill(target).then((ok) => {
+          if (ok) window.api.killSession(target);
+        });
+      }
+    }
+    return;
+  }
+
+  if (action.type === 'switch') {
+    const items = Array.from(sessionList.querySelectorAll('.session-item'));
+    if (items[action.index]) switchSession(items[action.index].dataset.name);
+    return;
+  }
+
+  if (action.type === 'cycle') {
+    const items = Array.from(sessionList.querySelectorAll('.session-item'));
+    if (items.length === 0) return;
+    const cur = items.findIndex(it => it.dataset.name === activeSession);
+    const next = action.dir === 'next'
+      ? (cur + 1) % items.length
+      : (cur - 1 + items.length) % items.length;
     switchSession(items[next].dataset.name);
   }
 }, true);

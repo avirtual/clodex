@@ -22,6 +22,11 @@
 
 const BAR_H = 30; // px — kept in sync with the .has-web-menubar offset in styles.css
 
+// The physical key is Alt everywhere; only the GLYPH is platform-cosmetic.
+// Browsers reach this page from any OS, so show ⌥ on Macs and "Alt+" elsewhere.
+// (navigator is global in Node 21+ too, so tests see the host platform's form.)
+const ACCEL_ALT = (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')) ? '⌥' : 'Alt+';
+
 const THEMES = [
   { key: 'midnight', label: 'Midnight' },
   { key: 'claude', label: 'Claude' },
@@ -77,7 +82,7 @@ function buildMenus(ctx) {
       label: 'File',
       items: () => [
         { label: 'New Workspace', run: () => newWorkspace() },
-        { label: 'New Session…', run: () => emit('request-open-new-dialog') },
+        { label: 'New Session…', accel: `${ACCEL_ALT}T`, run: () => emit('request-open-new-dialog') },
         { sep: true },
         { label: 'Prompts…', run: () => emit('request-open-prompts-drawer') },
         { label: 'Templates…', run: () => emit('request-open-templates-drawer') },

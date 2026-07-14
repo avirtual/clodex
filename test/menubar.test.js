@@ -78,6 +78,20 @@ test('every menu action targets a real channel (request-*/set-theme are on-chann
   }
 });
 
+test('New Session… carries the Alt+T accelerator hint (its real browser Alt chord)', async () => {
+  const { ctx } = recordingCtx();
+  const file = buildMenus(ctx).find((m) => m.label === 'File');
+  const rows = await Promise.resolve(file.items());
+  const newSession = rows.find((r) => r.label === 'New Session…');
+  // Platform-cosmetic glyph: ⌥ on a Mac, "Alt+" elsewhere. Node 21+ has a global
+  // navigator, so the test sees the HOST's form — assert either, pinned to T.
+  assert.match(newSession.accel, /^(⌥|Alt\+)T$/, 'New Session… advertises the Alt chord');
+  // No other File row advertises an accelerator — only chords with a working
+  // browser binding get a hint (New Workspace has no Alt binding).
+  const labelled = rows.filter((r) => r.accel).map((r) => r.label);
+  assert.deepEqual(labelled, ['New Session…'], 'only the honest accelerator is shown');
+});
+
 test('Theme submenu emits set-theme for each of the four themes', async () => {
   const { ctx, rec } = recordingCtx();
   const view = buildMenus(ctx).find((m) => m.label === 'View');
