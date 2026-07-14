@@ -8,6 +8,7 @@ const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, f
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
+const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
@@ -532,15 +533,21 @@ function updateSidebarActive() {
   }
 }
 
+// Number of sessions currently flagged needs-attention — derived from the same
+// dataset the sidebar badge uses, so the title count can never drift from it.
+function webAttentionCount() {
+  return sessionList.querySelectorAll('.session-item[data-attention]').length;
+}
+
 function updateWindowTitle() {
   const n = sessions.size;
-  if (n === 0) {
-    document.title = 'Clodex';
-  } else if (n === 1) {
-    document.title = `Clodex (1 session)`;
-  } else {
-    document.title = `Clodex (${n} sessions)`;
-  }
+  const base = n === 0 ? 'Clodex'
+    : n === 1 ? 'Clodex (1 session)'
+    : `Clodex (${n} sessions)`;
+  // Browser tabs have no dock/taskbar badge, so a hidden tab surfaces pending
+  // attention through a "(N)" title prefix. Desktop is unchanged — the ternary
+  // yields the same three base strings.
+  document.title = window.__CLODEX_WEB__ ? badgeTitle(base, webAttentionCount()) : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,10 +1276,16 @@ window.api.onSessionAttention((name, attn) => {
     el.dataset.attention = attn.kind;
     // Message rides the dataset for the hover card (no native title on rows).
     el.dataset.attentionMsg = attn.message || '';
+    // !document.hasFocus() mirrors the desktop's !owningWin.isFocused() gate on
+    // notifyOS — a tab the human is looking at doesn't need an OS notification.
+    if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(attentionNotice(name, attn));
   } else {
     delete el.dataset.attention;
     delete el.dataset.attentionMsg;
   }
+  // The needs-attention set/clear changed the tab-title badge count (web-gated
+  // inside; a no-op on desktop).
+  if (window.__CLODEX_WEB__) updateWindowTitle();
 });
 
 // ---------------------------------------------------------------------------
@@ -2128,6 +2141,10 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
   void el.offsetWidth;
   el.classList.add('mention-pulse');
   setTimeout(() => el.classList.remove('mention-pulse'), 2000);
+  // A mention is transient (the pulse, not a persistent fact), so it raises an
+  // OS notification but does NOT bump the title badge — the notification is the
+  // signal a hidden tab needs. Focus gate as at the attention site.
+  if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(mentionNotice(name, mtype));
 });
 
 // ---------------------------------------------------------------------------
@@ -2339,6 +2356,21 @@ document.addEventListener('keydown', (e) => {
     switchSession(items[next].dataset.name);
   }
 }, true);
+
+// Browser-only OS notifications — the desktop gets these natively via main's
+// notifyOS; a tab raises `new Notification()` off the attention/mention events
+// (wired at their onSession* handlers). Ask for permission on the first user
+// gesture, since Chrome gates requestPermission behind one (a no-op in Electron).
+const webNotifier = createWebNotifier();
+if (window.__CLODEX_WEB__) {
+  const askOnce = () => {
+    webNotifier.ensurePermission();
+    document.removeEventListener('pointerdown', askOnce, true);
+    document.removeEventListener('keydown', askOnce, true);
+  };
+  document.addEventListener('pointerdown', askOnce, true);
+  document.addEventListener('keydown', askOnce, true);
+}
 
 // ---------------------------------------------------------------------------
 // Restore sessions on startup
