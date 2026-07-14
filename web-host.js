@@ -268,12 +268,21 @@ function createWebHost({ engine, log, port, token, userDataPath, registerHandler
     UPDATE_REPO,
     checkForUpdate: () => {},                 // update-available is designated desktop-only
     getUpdateInfo: () => null, getReleasesCache: () => null,
-    createWindow: () => {},                   // browser tabs self-navigate; ws record work is in the handler
+    createWindow: () => {},                   // browser tabs self-navigate; workspace:new persists the record before calling this
     openWirescopeWindow: (url) => log.info('web', `openWirescopeWindow (no browser window): ${url}`),
     refreshAppMenu: () => {}, refreshTrayMenu: () => {}, setUiTheme: () => {},
     workspaceOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.workspaceId) || DEFAULT_WORKSPACE_ID,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
+
+  // Browser-only restart endpoint. The desktop app restarts from its native menu
+  // (confirmRestartClodex → app.relaunch); the web menu bar has no such path, so
+  // expose the engine's restart seam as an invoke the bar's File > Restart Clodex
+  // calls. engine.restartClodex is headless-main's restartHost: clean shutdown +
+  // exit 64 so the container supervisor (restart:always) relaunches. Not in
+  // api-contract — reached via the shim's raw invoke, keeping the desktop surface
+  // untouched.
+  handlers.set('app:restart', () => { if (typeof engine.restartClodex === 'function') engine.restartClodex(); return { ok: true }; });
 
   // ── frame dispatch (client → server). Nothing but a valid hello is accepted
   // before the connection is authed; a bad token or a pre-hello frame closes it.

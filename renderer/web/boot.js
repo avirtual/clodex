@@ -17,9 +17,11 @@ shim.start().then((welcome) => {
   // open, and homedir() resolves — so its initWorkspace/restoreSessions IIFEs run
   // against a live transport exactly as the Electron renderer's do post-preload.
   require('../renderer.js');
-  // The in-page menu (native app menu has no browser equivalent) — mounted after
+  // The top menu bar (native app menu has no browser equivalent) — mounted after
   // the renderer has registered its request-* subscribers so the items resolve.
-  menubar.mount(shim.emit);
+  // Passed the whole shim: emit() drives the local request-* drawer events and
+  // invoke() reaches the browser-only app:restart endpoint.
+  menubar.mount(shim);
 }).catch((err) => {
   // start() only rejects if the ready promise is rejected, which we never do;
   // log defensively so a future change can't fail silently.

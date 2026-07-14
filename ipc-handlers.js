@@ -1393,9 +1393,19 @@ function registerIpcHandlers(deps) {
   });
   handle('workspace:new', () => {
     const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Persist the record HERE, not only inside createWindow. The web host stubs
+    // createWindow (browser tabs self-navigate), so without this upsert the
+    // browser's New Workspace would jump to a phantom id that never reaches
+    // workspaces.json — absent from the switcher and gone at container relaunch.
+    // Desktop is behaviorally unchanged: createWindow's own `if (!ws)` upsert
+    // (main.js:272) now finds the record and no-ops, and the name matches exactly
+    // what that branch writes for a non-default id, so nothing user-visible moves.
+    // Return the id so the web caller can navigate to the freshly minted record.
+    workspaces.upsert({ id, name: 'New Workspace', bounds: null });
     createWindow(id);
     refreshAppMenu();
     refreshTrayMenu();
+    return id;
   });
 }
 

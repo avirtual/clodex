@@ -2798,3 +2798,12 @@ html, body {
 /* Peer bar reserves the terminal's top edge the same way the proxy bar
    reserves the bottom — never overlay terminal rows. */
 #main.has-peer-bar #terminal-container { top: 26px; }
+
+/* Browser frontend only: renderer/web/menubar.js adds .has-web-menubar to #main
+   when it mounts the top menu bar (30px), so the terminal starts below the bar.
+   The Electron app never sets this class, so its layout is byte-for-byte
+   unchanged. The combined rule wins over the single-class ones by specificity,
+   so a peer session stacks the peer bar under the menu bar. */
+#main.has-web-menubar #terminal-container { top: 30px; }
+#main.has-web-menubar #peer-bar { top: 30px; }
+#main.has-web-menubar.has-peer-bar #terminal-container { top: 56px; } /* 30 + 26 */

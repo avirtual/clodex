@@ -384,4 +384,4 @@ function start() {
 // incoming event frame, minus the wire.
 function emit(channel, ...args) { dispatchEvent(channel, args); }
 
-module.exports = { start, emit, toast };
+module.exports = { start, emit, toast, invoke };
