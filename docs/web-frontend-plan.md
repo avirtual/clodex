@@ -73,28 +73,161 @@ doc — it is the other half of the browser contract. No behavior change.
 
 ## Phase 3 — web host: WS transport + bundled renderer (the big one)
 
-- **web-host.js** (or web-wiring.js): plain-Node HTTP+WS server, engine-
-  side. Serves the renderer bundle; WS speaks a small framed protocol:
-  request/response mapping the 165 window.api invoke endpoints onto the
-  SAME registerIpcHandlers handler map (via the Phase-1 seam), plus
-  server→client event frames from the Phase-2 emitter.
-- **window.api WS shim**: a browser script implementing the preload
-  contract over the WS (invoke → request/await, on → event subscription).
-  The renderer must not know which transport it's on.
-- **Workspace handshake** replaces workspaceOfSender: a browser tab
-  declares its workspaceId on WS connect (default workspace by default);
-  the connection object carries it thereafter — same role a
-  BrowserWindow played.
-- **esbuild bundle** of renderer/ (xterm + lib + islands + popovers + the
-  7 pure leaves). The Electron renderer keeps loading raw files via
-  nodeIntegration — the bundle is FOR THE BROWSER ONLY.
-- **Web degradations, explicit and graceful** (v1): native file dialogs
-  (cwd pickers) → text input or a minimal server-side directory browser;
-  shell.openExternal → window.open; [agent:file view/open] → view renders
-  in-browser, open degrades to view; drag-drop of local files → absent.
-  Anything else discovered during the endpoint audit gets listed here.
-- PTY streams ride the same WS (base64 frames) — xterm feeds identically
-  to the Electron path.
+Detailed spec (2026-07-14, post-P1/P2). Two milestones, EACH delivered,
+reviewed, and committed separately: **P3a** (server side, headlessly
+testable) then **P3b** (browser client + bundle). Companion contracts:
+the 165-endpoint request half lives in preload.js; the 45-channel push
+half in docs/renderer-events.md.
+
+### P3a — web-host.js: WS server + engine wiring
+
+**Module + entrypoint.** New `web-host.js` (plain Node, NOT in the
+electron-boundary ALLOWED set): `createWebHost({ engine, log, port,
+token })` → `{ close }`. Started ONLY by headless-main.js when
+`CLODEX_WEB_PORT` is set — the Electron app never loads it. Dependency:
+add `ws` (zero-dep) to production dependencies; plain `http` for the
+rest (same stance as remote.js).
+
+**Wire protocol** — JSON text frames (JSON.stringify round-trips any JS
+string including lone surrogates, so pty-data rides as the already-
+decoded string; NO base64 layer — this supersedes the earlier base64
+note):
+- client→server: `{t:'hello', workspaceId?, token?}` (first frame;
+  workspaceId defaults to 'default'), `{t:'invoke', id, channel, args}`,
+  `{t:'send', channel, args}` (the 5 ipcMain.on channels: pty-input,
+  peer:input, session:context-menu, peer:context-menu,
+  peer:header-menu), `{t:'menu-pick', menuId, itemId|null}`,
+  `{t:'dialog-reply', dialogId, value}`.
+- server→client: `{t:'welcome', workspaceId, appVersion}`, `{t:'reply',
+  id, ok, value?|error?}`, `{t:'event', channel, args}` (the push half),
+  `{t:'menu-show', menuId, items}`, `{t:'dialog-show', dialogId, kind,
+  opts}`.
+Frames before a valid hello (or with a bad token when `token` is set)
+close the socket. Non-JSON-serializable handler return values: audit
+during implementation; if any Buffer/Date surfaces, normalize at the
+dispatcher (flag it in the handoff, don't silently coerce).
+
+**Handler map.** The web host calls registerIpcHandlers ONCE at startup
+with a deps object mirroring main.js:473's assembly: `{...engine,
+...engine.stores}` + its own transport (`handle`/`on` populate a plain
+Map<channel, fn>) + the degraded capabilities below + stubs for the
+host-only tail — createWindow (no-op: browser tabs self-navigate; the
+workspace record work already happens in the handlers),
+openWirescopeWindow (log-only), setUiTheme / refreshAppMenu /
+refreshTrayMenu (no-ops), checkForUpdate/UPDATE_REPO/getUpdateInfo/
+getReleasesCache (inert: update-available is a designated desktop-only
+channel), `workspaceOfSender(e)` reads the connection behind the sender
+token. An invoke frame dispatches `map.get(channel)(e, ...args)` with
+`e = {sender: {send: (ch, ...a) => conn.pushEvent(ch, a)}}` — the same
+opaque-token shape Phase 1 established (§C channels flow free).
+
+**Sender context for token-less capabilities.** showMessageBox /
+showSaveDialog take only (opts) — under Electron the window resolution
+is folded inside main.js's wrappers. The web host threads the requesting
+connection via AsyncLocalStorage: the invoke dispatcher runs each
+handler inside `als.run(conn, …)` and the capability impls read
+`als.getStore()`. No Phase-1 signature changes.
+
+**Degraded capabilities (v1, per the P1 handoff ruling: dialogs and
+menus belong to the requesting connection):**
+- `popupMenu(template, e)` — click closures STAY server-side: assign
+  item ids, send `menu-show` (labels/enabled/separators; drop
+  accelerators/submenus if none are actually used — audit), await
+  `menu-pick`, invoke the matching `template[i].click()`. Dismiss →
+  no-op.
+- `showMessageBox(opts)` — `dialog-show(kind:'message')` to the ALS
+  connection, await `dialog-reply`, resolve `{response}` (electron
+  shape). Timeout/disconnect → resolve as cancel (the last button /
+  cancelId).
+- `showSaveDialog(opts)` — `dialog-show(kind:'save')` prompts for a
+  filename; resolve `{canceled, filePath}` where filePath lands under
+  `<userDataPath>/exports/` (sanitized basename). Serve `GET
+  /exports/<file>` (token-gated) so the tab can offer a download.
+- `showOpenDialog(opts)` — `dialog-show(kind:'open')` free-text path
+  input; server validates fs.stat().isDirectory(); resolve `{canceled,
+  filePaths}`.
+- `openExternal(url)` → event to the ALS/sender connection; client
+  window.open. `openPath(p)` → degrade to the in-browser file view
+  where one exists, else log. `showItemInFolder(p)` → event; client
+  shows the path (toast/copy). `getAppVersion()` → package.json.
+  `getDesktopPath()` → the exports dir.
+
+**Connection-backed window handles (the P2 contract).** Per workspace
+with ≥1 tab, the host registers ONE multiplexing handle in
+`manager.registerWindow(workspaceId, handle)` implementing exactly the
+five methods: `webContents.send(ch, ...args)` fans an event frame to
+every tab on that workspace; `isDestroyed()` = no tabs left;
+`isFocused()` = any tab visible (client sends visibility hints;
+default true); `show()`/`focus()` = a `focus-hint` event (serves
+session-file-view). First tab registers, last disconnect unregisters —
+so the engine's pendingOutput buffering (2MB) resumes exactly as for a
+closed Electron window, and a reconnecting tab gets the replay through
+the SAME path the desktop uses: the renderer's restore flow invoking
+`app:restore-sessions` (session-restore.js returns `replay`).
+Additionally the host keeps its OWN per-session scrollback ring (same
+2MB cap) of pty-data it forwarded, replayed to a LATE-JOINING tab whose
+workspace was already attached (the one case the engine buffer can't
+cover — it only fills while detached). Zero engine change. Multi-tab
+resize: last-writer-wins, accepted for v1.
+
+**Auth v1 structure.** Optional `CLODEX_WEB_TOKEN`: bearer/`?token=`
+check on every HTTP route + the WS upgrade + the hello frame. Absent →
+localhost-trust stance (Phase 4 documents it). Structured so a real
+auth layer replaces one predicate later.
+
+**Tests (P3a is headlessly testable):** protocol framing + hello/token
+gating; invoke→fake-handler round-trip incl. sender-token §C push; ALS
+threading into a fake showMessageBox; the five-method handle contract
++ register/unregister timing; scrollback-ring replay; menu round-trip
+(click closure fires on pick, not on show). electron-boundary: web-host
+must NOT require electron (ALLOWED set unchanged). Leak-scanner lists:
+not applicable (new module, not an extraction) — state so in the
+handoff.
+
+### P3b — browser client: api-contract table + shim + esbuild bundle
+
+- **api-contract.js** (pure leaf): the single table `[{name, kind:
+  'invoke'|'send'|'on', channel, argmap?}]` for all 165 window.api
+  endpoints (argmap for the few non-passthrough wrappers, e.g.
+  showSessionContextMenu's `{name, cwd}` object). **preload.js becomes
+  a loop over the table** — window.api's surface and behavior byte-
+  identical (this is the "where code is shared, parameterization only"
+  clause; preload stays in the boundary ALLOWED set). Test: table
+  well-formed, no dup names/channels, every `invoke` channel has a
+  registered handler (capture-seam cross-check), and the generated
+  window.api key set matches the pre-refactor 165.
+- **renderer/web/api-shim.js**: builds window.api from the SAME table
+  over the WS (invoke → id'd request/await-reply; send → send frame;
+  on → event subscription). Connect + hello happen at boot; invoke
+  callers transparently await socket-open. Also handles menu-show /
+  dialog-show / focus-hint frames with minimal in-page UI (menu = the
+  existing context-menu look if trivially reusable, else a plain
+  positioned list; dialogs = simple modal). Reconnect on drop with a
+  banner; after reconnect re-run the restore flow (that's what replays
+  buffered output).
+- **renderer/web/index.html + boot**: sets `window.api` via the shim
+  (before renderer.js executes — preload-order equivalent), applies
+  shims for the two node touches under renderer/ (`os.homedir()` —
+  server passes home in `welcome`; `process` define for esbuild), then
+  loads the renderer bundle. Workspace via `?workspace=` (default
+  'default').
+- **esbuild** as devDependency; `npm run build:web` → `web-dist/`
+  (gitignored). Bundles renderer.js + lib + islands + popovers + xterm
+  npm pkgs + the 7 pure root leaves; alias `os` to the shim. The
+  Electron renderer keeps loading raw files via nodeIntegration — the
+  bundle is for the browser only. web-host serves `web-dist/` +
+  index.html.
+- **v1 degradations surfaced honestly in the UI** (not silently
+  broken): native-menu-driven `request-*` drawers → the in-page menu
+  bar/buttons open them directly (channel-D designation); set-theme /
+  zoom-nudge / update-available → absent; drag-drop of local files →
+  absent; `[agent:file open]` → degrades to view.
+
+Genuine spec tensions in either milestone: stop and get a ruling (the
+standing rule). Expected friction worth pre-flagging: handlers whose
+return values aren't JSON-cloneable, menu templates using more than
+label/enabled/separator, renderer code paths assuming synchronous
+window.api availability at parse time.
 
 ## Phase 4 — Docker image + auth v1 + docs
 
