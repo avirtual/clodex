@@ -231,18 +231,96 @@ window.api availability at parse time.
 
 ## Phase 4 — Docker image + auth v1 + docs
 
-- Dockerfile (node:20-slim + git + build toolchain + claude/codex CLIs) +
-  compose file: engine + web host, port published to 127.0.0.1 by
-  default; volumes for CLODEX_DATA_DIR, ~/.clodex, ~/.claude (OAuth from
-  a logged-in host), project mounts. restart: always (exit-64 contract).
-- Auth v1: the published-to-localhost port IS the boundary (same trust
-  stance as remote.js v1); optional CLODEX_WEB_TOKEN env → bearer check
-  on HTTP + WS upgrade for anything wider. Real login/TLS is a LATER arc;
-  the web host must be structured so it can be added without surgery.
-- docs: architecture.md third-host section; a docker/README with the
-  paranoia rationale (agents' blast radius = the container + mounts;
-  agents' world becomes Linux — mac-native workloads like this repo's
-  DMG builds stay host-side).
+Detailed spec (2026-07-15, post-P3). One milestone; everything lives under
+a new `docker/` directory except the two small code touches called out
+below. The engine/web-host stack is DONE — headless-main.js already reads
+CLODEX_DATA_DIR / CLODEX_WORKSPACES / CLODEX_WEB_PORT / CLODEX_WEB_TOKEN,
+exits 0 on SIGTERM and 64 on restart-request — so this phase is packaging
++ docs + two follow-ups deferred out of P3.
+
+### docker/Dockerfile (two-stage)
+
+- **Stage 1 (builder)**: `node:20-slim` + git; `npm ci --ignore-scripts`
+  (skips node-pty's gyp build, esbuild's platform binary arrives via
+  optionalDependencies, and — critically — skips the electron devDep's
+  binary download AND our postinstall, which is Electron-dev-only:
+  dev-rename-electron.js / fix-pty-helper.js have no business in the
+  image); `npm run build:web` → `web-dist/index.html`.
+- **Stage 2 (runtime)**: `node:20-slim` + `git bash procps
+  ca-certificates` + the build toolchain node-pty needs (`python3 make
+  g++`) — kept in the final image deliberately: agents in the container
+  will want to build things. Global CLIs: `npm i -g
+  @anthropic-ai/claude-code @openai/codex` (pin nothing; agents
+  self-update). App: copy the repo files electron-builder's `files` list
+  names (or the whole tree minus .dockerignore), then `npm ci --omit=dev
+  --ignore-scripts && npm rebuild node-pty` (Node-ABI native build, the
+  headless smoke recipe), copy `web-dist/` from the builder.
+- **Non-root user** `clodex` with a real `/home/clodex` and `HOME`/
+  `SHELL=/bin/bash` set — agent-transport creates `~/.clodex` 0700 and
+  fixPathFromLoginShell runs `$SHELL -ilc`. Set a container-local
+  `git config --global` example in docs, not the image.
+- `ENV CLODEX_DATA_DIR=/data CLODEX_WEB_PORT=8080`; `EXPOSE 8080`;
+  `CMD ["node", "headless-main.js"]`. No ENTRYPOINT wrapper — compose
+  `init: true` supplies PID-1 reaping (PTYs fork real process trees;
+  without a reaper, zombies).
+- **.dockerignore** (repo root): node_modules, dist, web-dist, deploy,
+  .git, vendor/wirescope (unpublicized — MUST stay out), peering,
+  docs, test, scratch artifacts.
+
+### docker/compose.yaml
+
+- One service `clodex`: build context `..` with
+  `dockerfile: docker/Dockerfile`; `ports: "127.0.0.1:8080:8080"` —
+  the localhost publish IS auth v1's boundary (same trust stance as
+  remote.js v1); widening it means setting CLODEX_WEB_TOKEN, and the
+  README says so in exactly those words.
+- `environment`: pass-through `CLODEX_WEB_TOKEN` (optional, empty =
+  localhost trust) and `CLODEX_WORKSPACES` (default 'default').
+- `volumes`: named `clodex-data:/data` (sessions.json + stores + exports),
+  named `clodex-dot:/home/clodex/.clodex` (registry/messages/log), named
+  `claude-auth:/home/clodex/.claude`, plus a commented example bind mount
+  for project checkouts (`- ./work:/home/clodex/work`).
+- `restart: always` — this is the exit-64 contract's supervisor half
+  (also restarts the clean exit-0, which is correct for a service);
+  `init: true`.
+- `healthcheck`: HTTP GET `/healthz` (see code touch below).
+
+### Code touches (small, each with a test where testable)
+
+1. **web-host.js `/healthz`**: unauthenticated `GET /healthz` → 200
+   `ok`, exempt from the token predicate (leaks only liveness, and a
+   compose healthcheck can't carry a secret cleanly). One test.
+2. **fileOpen degradation (the deferred P3 ruling)**: the api-shim's
+   synthetic `open-path` currently dead-ends in a toast; route it to the
+   same in-page file view `[agent:file view]` renders instead, falling
+   back to the toast only if the view path can't serve it. Adjust the
+   api-shim test accordingly.
+
+### Docs
+
+- **docker/README.md**: quickstart (compose up, open
+  `http://localhost:8080`), the paranoia rationale (the whole point:
+  agents' blast radius = the container + explicit mounts; their world
+  becomes Linux — mac-native workloads like this repo's DMG build stay
+  host-side), auth stance v1 (localhost publish = boundary; token for
+  anything wider; TLS/login is a later arc — front with a reverse proxy
+  meanwhile), the volume map, and the **macOS credential gotcha**: a
+  mac host keeps Claude OAuth in the Keychain, NOT in ~/.claude, so
+  mounting the host's ~/.claude does NOT log the container in — first
+  run is `docker compose exec clodex claude` (or `claude
+  setup-token`) inside the container; the named volume persists it.
+  Generic examples only (standing rule: no real domains/IPs).
+- **docs/architecture.md**: third-host section — main.js (Electron),
+  headless-main.js (plain Node), and the Docker image as the packaged
+  form of the headless host + web frontend.
+
+### Acceptance
+
+- Suite green (the two code touches are the only suite-visible change).
+- Live smoke (clodex runs it at review): `docker compose up` on the mac,
+  browser to localhost:8080, hello→welcome, create a bash session, PTY
+  round-trip, restart-request exits 64 and compose relaunches, SIGTERM
+  clean. Token mode: 401 without, 200 with.
 
 ## Out of scope (explicit)
 
