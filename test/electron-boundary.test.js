@@ -19,17 +19,19 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 
 // The host-adapter layer — the only root modules allowed to import electron.
-// main.js is the desktop host; app-menus.js + ipc-handlers.js are its
-// tray/menu + IPC surface; preload.js is the renderer bridge. Everything else
-// at the root is engine-side and must stay electron-free.
+// main.js is the desktop host; app-menus.js is its tray/menu surface; preload.js
+// is the renderer bridge. Everything else at the root is engine-side and must
+// stay electron-free. ipc-handlers.js LEFT this set in web-frontend Phase 1: its
+// transport (ipcMain) and native-GUI calls are now injected seams the host
+// backs, so the same handler map can also serve a browser over WS.
 //
 // SHRINKING this set is welcome — it means more of the tree went electron-free.
 // GROWING it re-couples an engine module to Electron and needs a documented
-// ruling (docs/engine-extraction-plan.md), not just an edit here.
+// ruling (docs/engine-extraction-plan.md or docs/web-frontend-plan.md), not just
+// an edit here.
 const ALLOWED = new Set([
   'main.js',
   'app-menus.js',
-  'ipc-handlers.js',
   'preload.js',
 ]);
 

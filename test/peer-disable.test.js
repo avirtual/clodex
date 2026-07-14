@@ -11,7 +11,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const Module = require('module');
 
 const { createPeerWiring } = require('../peer-wiring');
 
@@ -72,38 +71,28 @@ test('disabled peer keeps its persisted attachment + control claim (not pruned);
   assert.equal(store.peerAttached.gone, undefined, 'orphaned attachment (no record) is still pruned');
 });
 
-// --- ipc harness: load ipc-handlers with a faked electron so registerIpcHandlers
-// can register into a capturing ipcMain. Only the deps peer:setDisabled touches
-// are real; the rest are undefined (registration never runs the other bodies).
+// --- ipc harness: registerIpcHandlers is transport-agnostic (web-frontend
+// Phase 1) — it no longer requires electron; registration rides the injected
+// `handle`/`on` seams. The harness passes capturing seams (what main.js backs
+// with ipcMain and the web host with WS) so we can grab the handler under test.
+// Only the deps peer:setDisabled touches are real; the rest are undefined
+// (registration never runs the other bodies).
 function loadHandlers() {
   const handlers = new Map();
-  const fakeElectron = {
-    app: {}, BrowserWindow: {}, Menu: {}, dialog: {}, shell: {},
-    ipcMain: {
-      handle: (ch, fn) => handlers.set(ch, fn),
-      on: (ch, fn) => handlers.set(ch, fn),
-    },
+  const capture = {
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
   };
-  const origLoad = Module._load;
-  Module._load = function (request, ...rest) {
-    if (request === 'electron') return fakeElectron;
-    return origLoad.call(this, request, ...rest);
-  };
-  let registerIpcHandlers;
-  try {
-    delete require.cache[require.resolve('../ipc-handlers')];
-    ({ registerIpcHandlers } = require('../ipc-handlers'));
-  } finally {
-    Module._load = origLoad;
-  }
-  return { handlers, registerIpcHandlers };
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  return { handlers, capture, registerIpcHandlers };
 }
 
 function setDisabledFixture() {
-  const { handlers, registerIpcHandlers } = loadHandlers();
+  const { handlers, capture, registerIpcHandlers } = loadHandlers();
   const store = { peers: [{ id: 'a', label: 'A', url: 'http://a' }] };
   const calls = { forgetAttached: 0, forgetControlled: 0, sync: 0, broadcast: [], set: [] };
   registerIpcHandlers({
+    ...capture,
     uiSettings: {
       get: () => store,
       set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },

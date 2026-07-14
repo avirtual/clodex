@@ -458,14 +458,35 @@ app.whenReady().then(() => {
 
   initTray();
 
-  // ipcMain handlers (M5). The engine return is spread in whole — manager,
+  // ipc handlers (M5). The engine return is spread in whole — manager,
   // proxyPoller, wirescope, the helper surface, the store accessors — then the
-  // stores object, then the Electron-only / node-builtin extras the handlers
-  // still need. Unused deps are inert (see ipc-handlers header).
+  // stores object, then the node-builtin extras the handlers still need. Unused
+  // deps are inert (see ipc-handlers header).
+  //
+  // ipc-handlers.js is now transport-agnostic (web-frontend Phase 1): it holds
+  // NO electron require. The desktop adapter passes the electron-backed transport
+  // + native-GUI seams here (the web host will pass WS/browser versions over the
+  // same handler map). Each GUI wrapper owns its window resolution internally, so
+  // no BrowserWindow crosses the boundary; `e` reaches popupMenu as an opaque
+  // sender token that only this adapter (never ipc-handlers) unwraps.
   const { registerIpcHandlers } = require('./ipc-handlers');
   registerIpcHandlers({
     ...engine,
     ...engine.stores,
+    // Transport
+    handle: (channel, fn) => ipcMain.handle(channel, fn),
+    on: (channel, fn) => ipcMain.on(channel, fn),
+    // Native-GUI capabilities (electron-backed; the host resolves the window)
+    popupMenu: (template, e) =>
+      Menu.buildFromTemplate(template).popup({ window: BrowserWindow.fromWebContents(e.sender) }),
+    showMessageBox: (opts) => dialog.showMessageBox(BrowserWindow.getFocusedWindow(), opts),
+    showSaveDialog: (opts) => dialog.showSaveDialog(BrowserWindow.getFocusedWindow(), opts),
+    showOpenDialog: (opts) => dialog.showOpenDialog(opts),
+    openExternal: (url) => shell.openExternal(url),
+    openPath: (filePath) => shell.openPath(filePath),
+    showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
+    getAppVersion: () => app.getVersion(),
+    getDesktopPath: () => app.getPath('desktop'),
     fs, https, os, path, log,
     UPDATE_REPO, checkForUpdate,
     createWindow, openWirescopeWindow, workspaceOfSender,

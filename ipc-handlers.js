@@ -1,14 +1,23 @@
-// ipc-handlers.js — every ipcMain.handle/on registration, extracted verbatim
-// from the app.whenReady() body in main.js (M5). registerIpcHandlers(deps) RUNS
-// the registrations (it does not return them); main.js calls it from whenReady in
+// ipc-handlers.js — every channel registration, extracted verbatim from the
+// app.whenReady() body in main.js (M5). registerIpcHandlers(deps) RUNS the
+// registrations (it does not return them); main.js calls it from whenReady in
 // place of the blob, after the stores are initialized.
+//
+// TRANSPORT-AGNOSTIC (web-frontend Phase 1): this module no longer requires
+// electron. Registration rides the injected `handle(channel, fn)` / `on(channel,
+// fn)` seams (main.js passes ipcMain-backed wrappers; the web host will pass
+// WS-backed ones over the SAME handler map). Every native-GUI touch — dialogs,
+// context menus, shell/app calls — is likewise an injected capability seam
+// (popupMenu/showMessageBox/showSaveDialog/showOpenDialog/openExternal/openPath/
+// showItemInFolder/getAppVersion/getDesktopPath); the host owns window
+// resolution INSIDE each wrapper, so no BrowserWindow ever crosses the boundary
+// and the IPC event `e` is an opaque sender token this module never inspects.
 //
 // The blob was already 2-space indented inside the whenReady arrow and the factory
 // body is 2-space too, so the move is a ZERO-reindent copy — handler bodies are
 // byte-identical. The only body changes are the six READ-ONLY mutable-singleton
 // getter seams (remoteServer/remoteError/peerManager/tunnelManager/updateInfo/
-// releasesCache — 0 writes in the blob, so getters, no setters). Electron names
-// are required in-module (electron-heavy, like app-menus). All other names are
+// releasesCache — 0 writes in the blob, so getters, no setters). All other names are
 // value-injected verbatim: they are every main.js module-scope identifier the blob
 // references (stores/manager/proxyPoller/wirescope, the require-consts, the hoisted
 // helpers restartSession/waitForSessionExit/fetch*, and the app-menus / peer-wiring
@@ -17,12 +26,21 @@
 // was derived by static scan (raw-token ∩ main-scope) so it is a guaranteed
 // superset of the real references — an unused dep would simply be inert.
 
-const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const { pathFor } = require('./clodex-paths');
 const { validateExecDef } = require('./exec-schema');
 
 function registerIpcHandlers(deps) {
   const {
+    // Transport seams — registration (main.js: ipcMain.handle/on; web host:
+    // WS request/subscribe over the same handler map).
+    handle, on,
+    // Native-GUI capability seams — main.js backs each with electron and owns
+    // window resolution internally; the web host passes v1 degradations. `e` is
+    // an opaque sender token (popupMenu) this module never inspects.
+    // getAppVersion mirrors the engine's appVersion seam — both trace to
+    // package.json version; do NOT deduplicate them across the boundary.
+    popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
+    openExternal, openPath, showItemInFolder, getAppVersion, getDesktopPath,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR, SKILL_REENABLE_CONFIRMED,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
@@ -51,7 +69,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
   } = deps;
 
-  ipcMain.handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
     try {
       const workspaceId = workspaceOfSender(e);
       // Seed tool denies from the global "*" default when the caller passed none.
@@ -80,52 +98,52 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  ipcMain.handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
-  ipcMain.handle('session:listAll', () => manager.list());
-  ipcMain.handle('session:kill', (_e, name) => manager.kill(name));
+  handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
+  handle('session:listAll', () => manager.list());
+  handle('session:kill', (_e, name) => manager.kill(name));
   // Operator flush of a session's parked DMs (sidebar ✉ badge click). Operator-only
   // by construction — no agent intent maps here.
-  ipcMain.handle('session:flushPending', (_e, name) => manager.flushPending(name));
-  ipcMain.handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
-  ipcMain.handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
-  ipcMain.handle('session:setAutoCompact', (_e, name, on) => persistence.setAutoCompact(name, on !== false));
+  handle('session:flushPending', (_e, name) => manager.flushPending(name));
+  handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
+  handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
+  handle('session:setAutoCompact', (_e, name, on) => persistence.setAutoCompact(name, on !== false));
 
-  ipcMain.handle('dialog:selectDirectory', async () => {
-    const result = await dialog.showOpenDialog({
+  handle('dialog:selectDirectory', async () => {
+    const result = await showOpenDialog({
       properties: ['openDirectory'],
       defaultPath: os.homedir(),
     });
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle('update:check', () => checkForUpdate(false));
-  ipcMain.handle('update:info', () => getUpdateInfo());
+  handle('update:check', () => checkForUpdate(false));
+  handle('update:info', () => getUpdateInfo());
   // Cached release list for the peer-identity popover's age/behind line. Returns
   // [] until the first fetch lands / when offline — the renderer never blocks on
   // it (it renders from whatever is cached at open time).
-  ipcMain.handle('update:releases', () => getReleasesCache());
-  ipcMain.handle('update:open', () => {
-    if (getUpdateInfo()) shell.openExternal(getUpdateInfo().url);
+  handle('update:releases', () => getReleasesCache());
+  handle('update:open', () => {
+    if (getUpdateInfo()) openExternal(getUpdateInfo().url);
   });
-  ipcMain.handle('app:getVersion', () => app.getVersion());
+  handle('app:getVersion', () => getAppVersion());
 
   // Spawn-health diagnostics for the renderer banner — recomputed live so a
   // post-launch `electron-rebuild` clears the warning on the next poll.
-  ipcMain.handle('diagnostics:get', () => {
+  handle('diagnostics:get', () => {
     const d = collectSystemDiagnostics();
     return { ...d, warning: diagWarning(d), summary: diagSummary(d) };
   });
 
-  ipcMain.handle('templates:list', () => templates.list());
-  ipcMain.handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
+  handle('templates:list', () => templates.list());
+  handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   // Name-keyed upsert: the form's "Save as Template" and template-mode New route
   // here so re-saving a name overwrites rather than duplicating. Returns the
   // stored template (with its resolved id) so the caller can select it.
-  ipcMain.handle('templates:saveByName', (_e, template) => {
+  handle('templates:saveByName', (_e, template) => {
     const t = templates.saveByName(template);
     return { ok: true, template: t, templates: templates.list() };
   });
-  ipcMain.handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
+  handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
   // Snapshot a live session's PERSISTED config subset into a named template.
   // persistence.get carries the whole entry, so we pick exactly the spawnable
   // config — never identity (name/proxyAgent) or runtime state (sessionId).
@@ -135,7 +153,7 @@ function registerIpcHandlers(deps) {
   // agents/skills refs — so a reproducible seat carries its prompts; NEVER the
   // inline systemPromptBody (legacy param 7). A ref absent on the target
   // degrades to the CLI default at spawn (resolveSystemPromptFile/readAppendBodies).
-  ipcMain.handle('templates:exportFromSession', (_e, name, templateName) => {
+  handle('templates:exportFromSession', (_e, name, templateName) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: `no session "${name}"` };
     const tn = (templateName || '').trim();
@@ -170,26 +188,26 @@ function registerIpcHandlers(deps) {
 
   // Prompts library (~/.clodex/library/prompts/{system,append}/*.md). Both
   // Claude and Codex; referenced by session (system replaces, append composes).
-  ipcMain.handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
-  ipcMain.handle('prompts:save', (_e, kind, name, body) => {
+  handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
+  handle('prompts:save', (_e, kind, name, body) => {
     try { return { ok: true, prompts: promptLibrary.save(kind, name, body) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('prompts:remove', (_e, kind, name) => {
+  handle('prompts:remove', (_e, kind, name) => {
     return { ok: true, prompts: promptLibrary.remove(kind, name) };
   });
 
   // Custom subagent library (~/.clodex/agents/*.md). Claude-only.
-  ipcMain.handle('agents:list', () => agentLibrary.list());
-  ipcMain.handle('agents:get', (_e, name) => agentLibrary.raw(name));
-  ipcMain.handle('agents:save', (_e, name, content) => {
+  handle('agents:list', () => agentLibrary.list());
+  handle('agents:get', (_e, name) => agentLibrary.raw(name));
+  handle('agents:save', (_e, name, content) => {
     try {
       const agents = agentLibrary.save(name, content);
       refreshAppMenu(); // Agents menu lists the library — keep it current.
       return { ok: true, agents };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('agents:remove', (_e, name) => {
+  handle('agents:remove', (_e, name) => {
     const agents = agentLibrary.remove(name);
     refreshAppMenu();
     return { ok: true, agents };
@@ -198,16 +216,16 @@ function registerIpcHandlers(deps) {
   // Skill-injection library (~/.clodex/skills/*.md). Claude-only. Mirrors the
   // agents handlers; the Skills app menu lists this library, so save/remove
   // refresh the menu.
-  ipcMain.handle('skilllib:list', () => skillLibrary.list());
-  ipcMain.handle('skilllib:get', (_e, name) => skillLibrary.raw(name));
-  ipcMain.handle('skilllib:save', (_e, name, content) => {
+  handle('skilllib:list', () => skillLibrary.list());
+  handle('skilllib:get', (_e, name) => skillLibrary.raw(name));
+  handle('skilllib:save', (_e, name, content) => {
     try {
       const skills = skillLibrary.save(name, content);
       refreshAppMenu();
       return { ok: true, skills };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('skilllib:remove', (_e, name) => {
+  handle('skilllib:remove', (_e, name) => {
     const skills = skillLibrary.remove(name);
     refreshAppMenu();
     return { ok: true, skills };
@@ -222,9 +240,9 @@ function registerIpcHandlers(deps) {
   // schema), both checked via the single exec-schema validator — so the drawer
   // can't author a file the backend can't run. No app-menu listing, so no
   // refreshAppMenu (unlike agents/skills).
-  ipcMain.handle('exec:list', () => execLibrary.list());
-  ipcMain.handle('exec:get', (_e, name) => execLibrary.raw(name));
-  ipcMain.handle('exec:save', (_e, name, content) => {
+  handle('exec:list', () => execLibrary.list());
+  handle('exec:get', (_e, name) => execLibrary.raw(name));
+  handle('exec:save', (_e, name, content) => {
     let def;
     try {
       def = JSON.parse(content);
@@ -239,20 +257,20 @@ function registerIpcHandlers(deps) {
       return { ok: true, commands: execLibrary.save(name, JSON.stringify(def, null, 2)) };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('exec:remove', (_e, name) => {
+  handle('exec:remove', (_e, name) => {
     return { ok: true, commands: execLibrary.remove(name) };
   });
 
   // Operator inbox ([agent:notify-user]). Read/mark/remove over the notifications
   // store; the main-side handler owns the writes on arrival. list() is chronolog-
   // ical (the drawer reverses for newest-first); markRead is idempotent.
-  ipcMain.handle('notifications:list', () => notifications.list());
-  ipcMain.handle('notifications:markRead', (_e, id) => notifications.markRead(id));
-  ipcMain.handle('notifications:markAllRead', () => notifications.markAllRead());
-  ipcMain.handle('notifications:remove', (_e, id) => notifications.remove(id));
-  ipcMain.handle('notifications:unreadCount', () => notifications.unreadCount());
+  handle('notifications:list', () => notifications.list());
+  handle('notifications:markRead', (_e, id) => notifications.markRead(id));
+  handle('notifications:markAllRead', () => notifications.markAllRead());
+  handle('notifications:remove', (_e, id) => notifications.remove(id));
+  handle('notifications:unreadCount', () => notifications.unreadCount());
 
-  ipcMain.handle('prompts:inject', (_e, name, body) => {
+  handle('prompts:inject', (_e, name, body) => {
     const s = manager.sessions.get(name);
     if (!s) return { ok: false, error: 'Session not found' };
     manager._injectText(s, body);
@@ -261,27 +279,27 @@ function registerIpcHandlers(deps) {
 
   // Last-known proxy telemetry for a session — lets the renderer fill the
   // status bar immediately on attach/switch instead of waiting for the next poll.
-  ipcMain.handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
+  handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
 
   // Fetch the per-line tool roster + context composition for a session
   // (wirescope /_context). Read-only; gated by the caller on the
   // context_view/context_composition capability. Uses the live record's
   // session_id (from the snapshot), never a possibly-stale persisted one.
-  ipcMain.handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));
+  handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));
 
   // Fetch the on-demand per-session cost/efficiency report (wirescope /_report,
   // report_version 1). Disk-based on the proxy side, but we still resolve the
   // session_id from the live record and gate the caller on the
   // capabilities.context_report flag. detail=1 reserves the (v1.1) per-turn
   // series; harmless to pass against a v1 proxy that ignores it.
-  ipcMain.handle('proxy:report', (_e, name, opts) => fetchProxyReport(name, opts));
+  handle('proxy:report', (_e, name, opts) => fetchProxyReport(name, opts));
 
   // On-demand cache-bust forensics for one session (the bust-inspector
   // popover). Resolves the live session_id from the poller snapshot (never a
   // stale persisted one), then fetches /_bust — the per-transition divergence
   // series. Heavy disk read, called only when the popover opens (same profile
   // as proxy:report), never in the 5s poll.
-  ipcMain.handle('proxy:bust', (_e, name) => fetchProxyBust(name));
+  handle('proxy:bust', (_e, name) => fetchProxyBust(name));
 
   // On-demand live-activity detail for one subagent row (the child popover).
   // Resolves the live session_id from the poller snapshot (never a stale
@@ -289,7 +307,7 @@ function registerIpcHandlers(deps) {
   // a 1-2s loop only while the popover is open — never in the 5s poll. A `found:
   // false` body is a normal outcome (child expired / session cold), surfaced as
   // ok:true with the proxy's reason so the popover can close gracefully.
-  ipcMain.handle('proxy:subagentDetail', async (_e, name, child, maxlen) => {
+  handle('proxy:subagentDetail', async (_e, name, child, maxlen) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
     const snap = proxyPoller.snapshot(name);
@@ -308,14 +326,14 @@ function registerIpcHandlers(deps) {
 
   // Open an external URL in the default browser (e.g. the proxy session page).
   // http(s) only — never hand arbitrary schemes to the OS opener.
-  ipcMain.handle('app:openExternal', (_e, url) => {
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+  handle('app:openExternal', (_e, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) openExternal(url);
   });
 
   // Open a wirescope page in an in-app, clodex-chromed window instead of the
   // system browser. backgroundColor is the caller's active theme `--bg` so the
   // frame matches; the page content stays wirescope's own.
-  ipcMain.handle('app:openWirescope', (_e, url, backgroundColor) => {
+  handle('app:openWirescope', (_e, url, backgroundColor) => {
     openWirescopeWindow(url, backgroundColor);
   });
 
@@ -323,7 +341,7 @@ function registerIpcHandlers(deps) {
   // be routed AND exactly linked to a live proxy record (we use that record's
   // own session_id, never a possibly-stale persisted one), and the proxy must
   // advertise the hold capability. hours=0 disarms.
-  ipcMain.handle('proxy:hold', async (_e, name, hours, force) => {
+  handle('proxy:hold', async (_e, name, hours, force) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
     const snap = proxyPoller.snapshot(name);
@@ -350,7 +368,7 @@ function registerIpcHandlers(deps) {
   // fire button uses is decided by the payload's holdSource (set by
   // WireTelemetry.overlay under CLODEX_WIRE_TELEMETRY). hours<=0 disarms;
   // arming is warm-gated like the proxy's (force is the only override).
-  ipcMain.handle('wire:hold', (_e, name, hours, force) => {
+  handle('wire:hold', (_e, name, hours, force) => {
     if (!manager._holdKeeper || !manager._wireTelemetry) {
       return { ok: false, error: 'In-process wire keep-warm is not running' };
     }
@@ -385,7 +403,7 @@ function registerIpcHandlers(deps) {
   // overrides are in-memory) and pushes the level's wire state now. Level 2's
   // tool-result strip is gated on a separate capability and rejected until the
   // proxy advertises it (the menu disables it too).
-  ipcMain.handle('proxy:setStripLevel', async (_e, name, level) => {
+  handle('proxy:setStripLevel', async (_e, name, level) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
     const snap = proxyPoller.snapshot(name);
@@ -428,7 +446,7 @@ function registerIpcHandlers(deps) {
   // Editable args for the Edit Session dialog. The shape lives in main.js's
   // readSessionArgs (shared with the peer session-args GET endpoint so local +
   // remote reads can't drift); this handler is the thin local adapter.
-  ipcMain.handle('session:getArgs', (_e, name) => readSessionArgs(name));
+  handle('session:getArgs', (_e, name) => readSessionArgs(name));
 
   // Past conversations for the session picker. Two tiers:
   //  - tracked: ids clodex observed live (persisted sessionIds ∪ current active
@@ -437,7 +455,7 @@ function registerIpcHandlers(deps) {
   //    clodex never observed (pre-feature history, or started outside clodex).
   //    Best-effort and flagged: a cwd shared by >1 agent can't be split, so
   //    these may belong to a sibling agent. The renderer renders them dimmed.
-  ipcMain.handle('session:history', (_e, name) => {
+  handle('session:history', (_e, name) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found' };
     if (entry.type !== 'claude' && entry.type !== 'codex') return { ok: true, sessions: [], activeId: null };
@@ -479,15 +497,15 @@ function registerIpcHandlers(deps) {
   // the wire receipts or the legacy jsonl tap). Peek/diff are read-only looks
   // at the CURRENT disk/git state — created-vs-modified truth comes from git
   // here, never from the feed.
-  ipcMain.handle('session:files', (_e, name) => fetchSessionFiles(name));
-  ipcMain.handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
-  ipcMain.handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
-  ipcMain.handle('file:open', (_e, filePath) => shell.openPath(filePath));
+  handle('session:files', (_e, name) => fetchSessionFiles(name));
+  handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
+  handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
+  handle('file:open', (_e, filePath) => openPath(filePath));
 
   // Focused per-session tool gating: persist disabledTools only (leaves
   // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;
   // the renderer calls session:restart afterward if the user wants it now.
-  ipcMain.handle('session:setTools', (_e, name, disabledTools) => {
+  handle('session:setTools', (_e, name, disabledTools) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setDisabledTools(name, Array.isArray(disabledTools) ? disabledTools : []);
     return { ok: true };
@@ -496,7 +514,7 @@ function registerIpcHandlers(deps) {
   // (+ optional injectSkills), applied on next spawn via skillOverrides. Thin
   // adapter over the shared main.js applySessionSkills — the peer session-skills
   // POST endpoint calls the same helper, keeping local + remote in lockstep.
-  ipcMain.handle('session:setSkills', (_e, name, disabledSkills, injectSkills) =>
+  handle('session:setSkills', (_e, name, disabledSkills, injectSkills) =>
     applySessionSkills(name, disabledSkills, injectSkills));
   // Focused per-session agent composition (mirror of setSkills/setTools):
   // persist the enabled custom-subagent list + denyBuiltins only, leaving
@@ -504,7 +522,7 @@ function registerIpcHandlers(deps) {
   // FRESH start — the agent roster, like skills, is frozen at conversation
   // creation, so --resume replays the old one (the popover does the fresh
   // restart when the user asks for it now).
-  ipcMain.handle('session:setAgents', (_e, name, agents, denyBuiltins) => {
+  handle('session:setAgents', (_e, name, agents, denyBuiltins) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setAgents(name,
       Array.isArray(agents) ? agents : [],
@@ -517,7 +535,7 @@ function registerIpcHandlers(deps) {
   // allowlist from collectIntentChecklist — an ARRAY ([] = everything gated) or NULL
   // (all boxes checked → the living all-enabled default). setIntents removes the key
   // on null, never freezes an array (mirrors setStripLevel's delete-when-default).
-  ipcMain.handle('session:setIntents', (_e, name, intents) => {
+  handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setIntents(name, Array.isArray(intents) ? intents : null);
     return { ok: true };
@@ -526,7 +544,7 @@ function registerIpcHandlers(deps) {
   // roster or lower-layer/policy state to merge — built-ins are irreducible and
   // have no trim lever — so the catalog is simply the custom-subagent library
   // plus this session's persisted enabled set + denyBuiltins flag.
-  ipcMain.handle('session:agentCatalog', (_e, name) => {
+  handle('session:agentCatalog', (_e, name) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
     return {
@@ -543,14 +561,14 @@ function registerIpcHandlers(deps) {
   // transcript roster ∪ the persisted disabled set ∪ lower-layer overrides; never
   // empty for Claude). Thin adapter over the shared main.js readSkillCatalog — the
   // union logic lives there so the peer skill-catalog GET returns an identical shape.
-  ipcMain.handle('session:skillCatalog', (_e, name) => readSkillCatalog(name));
+  handle('session:skillCatalog', (_e, name) => readSkillCatalog(name));
   // Skill catalog for the NEW-SESSION dialog (no session/transcript yet, just a
   // chosen cwd). Static seed + whatever a lower settings layer for that cwd
   // already disables, with the same effective-state + provenance so a globally-
   // off skill renders disabled+labeled here too. This is the CLEAN trim path:
   // the skill roster is evaluated at conversation creation, so a fresh session
   // applies skillOverrides immediately — no restart/clear dance.
-  ipcMain.handle('settings:skillCatalogFor', (_e, cwd) => {
+  handle('settings:skillCatalogFor', (_e, cwd) => {
     const eff = readEffectiveSkillState(cwd || null);
     const names = [...new Set([...CLAUDE_SKILLS, ...Object.keys(eff.overrides)])].sort();
     return { ok: true, names, effective: eff.overrides, skillsLocked: eff.skillsLocked, canReenable: SKILL_REENABLE_CONFIRMED };
@@ -559,7 +577,7 @@ function registerIpcHandlers(deps) {
   // tool list itself is the static CLAUDE_TOOLS seed (sent via getSettings), so
   // here we only need the per-cwd lower-layer deny state to render externally-
   // off tools as read-only + labeled before the session exists.
-  ipcMain.handle('settings:toolCatalogFor', (_e, cwd) => {
+  handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
@@ -573,7 +591,7 @@ function registerIpcHandlers(deps) {
   // POST endpoint routes through source.save({...}) which never carries the key, and
   // remote-wiring strips it in both directions belt-and-suspenders. So this positional
   // slot is only ever reached by a local edit.
-  ipcMain.handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands) =>
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands,
@@ -586,10 +604,10 @@ function registerIpcHandlers(deps) {
   // strip-level re-assert + failed-respawn safety net rather than duplicating
   // (and drifting from) it. The IPC handler only supplies the sender's
   // workspace as the respawn target.
-  ipcMain.handle('session:restart', async (e, name, opts = {}) =>
+  handle('session:restart', async (e, name, opts = {}) =>
     restartSession(name, opts, workspaceOfSender(e)));
 
-  ipcMain.handle('settings:get', () => {
+  handle('settings:get', () => {
     const s = uiSettings.get();
     return {
       statusline: s.statusline,
@@ -609,7 +627,7 @@ function registerIpcHandlers(deps) {
       peers: s.peers,
     };
   });
-  ipcMain.handle('settings:set', (_e, partial) => {
+  handle('settings:set', (_e, partial) => {
     const next = uiSettings.set(partial);
     rebuildAllStatusScripts(manager);
     // The Traffic optimization toggle is the proxy's single control: on brings
@@ -624,7 +642,7 @@ function registerIpcHandlers(deps) {
 
   // Remote access status for the prefs dialog: running/port/error. The URL
   // shown is the localhost one — off-machine reach is the user's tailnet.
-  ipcMain.handle('remote:status', () => ({
+  handle('remote:status', () => ({
     running: !!(getRemoteServer() && getRemoteServer().running),
     port: uiSettings.get().remotePort,
     error: getRemoteError(),
@@ -634,7 +652,7 @@ function registerIpcHandlers(deps) {
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
   // ssh-run.js). Classification + the deploy script live off-electron so they're
   // unit-tested; these handlers are the thin electron adapter.
-  ipcMain.handle('peer:probe', async (_e, sshHost, port) => {
+  handle('peer:probe', async (_e, sshHost, port) => {
     if (!sshHost || typeof sshHost !== 'string') return { kind: 'ssh-fail', stderr: 'no ssh host given' };
     try {
       return await probePeer(sshHost, port || uiSettings.get().remotePort || 7900);
@@ -648,7 +666,7 @@ function registerIpcHandlers(deps) {
   // via peer-deploy.parseDeployLine). Resolves with { code, timedOut, stderr }:
   // code 0 = success, 42 = needs sudo (script emitted the exact commands as
   // ::need-sudo/::sudo-cmd lines), anything else = failure.
-  ipcMain.handle('peer:deploy', async (e, sshHost, opts = {}) => {
+  handle('peer:deploy', async (e, sshHost, opts = {}) => {
     if (!sshHost || typeof sshHost !== 'string') return { ok: false, error: 'no ssh host given' };
     let script;
     try {
@@ -695,7 +713,7 @@ function registerIpcHandlers(deps) {
   // playbook pointers so it can untangle the box. The briefing rides the spill
   // channel via _deliverMessage (>500B → file + @-attach). Injection is deferred
   // a beat so the fresh CLI has reached its input prompt before we type.
-  ipcMain.handle('peer:deployFix', async (e, sshHost, port, label, logText) => {
+  handle('peer:deployFix', async (e, sshHost, port, label, logText) => {
     const host = typeof sshHost === 'string' ? sshHost : '';
     const p = Number.isInteger(port) ? port : (uiSettings.get().remotePort || 7900);
     const name = fixSessionName(label || host || 'peer', new Set(manager.sessions.keys()));
@@ -724,13 +742,13 @@ function registerIpcHandlers(deps) {
   // reconnect and buffering logic lives in peer-client.js; events reach the
   // renderer as peer-state / peer-activity / peer-replay / peer-data /
   // peer-control / peer-exit broadcasts.
-  ipcMain.handle('peer:list', () => {
+  handle('peer:list', () => {
     const out = getPeerManager() ? getPeerManager().statuses() : [];
     const tunnels = new Map((getTunnelManager() ? getTunnelManager().statuses() : []).map((t) => [t.id, t]));
     for (const st of out) st.tunnel = tunnels.get(st.id) || null;
     return out;
   });
-  ipcMain.handle('peer:attach', (_e, id, name) => {
+  handle('peer:attach', (_e, id, name) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return { ok: false, error: 'no such peer' };
     const res = conn.attach(name);
@@ -742,7 +760,7 @@ function registerIpcHandlers(deps) {
     }
     return res;
   });
-  ipcMain.handle('peer:detach', (_e, id, name) => {
+  handle('peer:detach', (_e, id, name) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return { ok: false, error: 'no such peer' };
     const res = conn.detach(name);
@@ -753,10 +771,10 @@ function registerIpcHandlers(deps) {
     return res;
   });
   // Renderer reads this once at startup to seed its one-shot restore map.
-  ipcMain.handle('peer:attachedNames', () => uiSettings.get().peerAttached || {});
+  handle('peer:attachedNames', () => uiSettings.get().peerAttached || {});
   // Renderer prunes a persisted name that no longer exists on the live peer,
   // without a live connection to detach from.
-  ipcMain.handle('peer:forgetAttached', (_e, id, name) => {
+  handle('peer:forgetAttached', (_e, id, name) => {
     forgetPeerAttached(id, name);
     return { ok: true };
   });
@@ -768,7 +786,7 @@ function registerIpcHandlers(deps) {
   // BEFORE syncPeerManager runs, so each renderer marks the peer disabled ahead of
   // the peer-removed it triggers and soft-sheds (keeps the durable record) instead
   // of treating it as an explicit user detach.
-  ipcMain.handle('peer:setDisabled', (_e, id, on) => {
+  handle('peer:setDisabled', (_e, id, on) => {
     const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
     const rec = peers.find((p) => String(p.id) === String(id));
     if (!rec) return { ok: false, error: 'no such peer' };
@@ -785,7 +803,7 @@ function registerIpcHandlers(deps) {
   // claimed DM (P4): a cross-peer leg forms only when BOTH endpoints are
   // relayAllowed (symmetric gate). No broadcast/sync needed — nothing in the peer
   // connection lifecycle depends on it; the roster push reads it live each tick.
-  ipcMain.handle('peer:setRelayAllowed', (_e, id, on) => {
+  handle('peer:setRelayAllowed', (_e, id, on) => {
     const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
     const rec = peers.find((p) => String(p.id) === String(id));
     if (!rec) return { ok: false, error: 'no such peer' };
@@ -796,11 +814,11 @@ function registerIpcHandlers(deps) {
   });
   // Per-peer visibility selection. Renderer reads the whole map at startup and
   // keeps a local copy fresh from setVisible responses.
-  ipcMain.handle('peer:visible', () => uiSettings.get().peerVisible || {});
+  handle('peer:visible', () => uiSettings.get().peerVisible || {});
   // names = array ⇒ restrict this peer to those names (empty = show none);
   // names = null ⇒ delete the key (back to show-all). Sanitized through the
   // same name regex the persistence layer enforces.
-  ipcMain.handle('peer:setVisible', (_e, id, names) => {
+  handle('peer:setVisible', (_e, id, names) => {
     const map = { ...(uiSettings.get().peerVisible || {}) };
     if (names === null || names === undefined) {
       delete map[id];
@@ -812,7 +830,7 @@ function registerIpcHandlers(deps) {
     uiSettings.set({ peerVisible: map });
     return { ok: true, peerVisible: map };
   });
-  ipcMain.handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
+  handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.control(name, !!on, (res) => {
@@ -826,14 +844,14 @@ function registerIpcHandlers(deps) {
     });
   }));
   // Renderer reads this once at startup to seed its control-restore mirror.
-  ipcMain.handle('peer:controlledNames', () => uiSettings.get().peerControlled || {});
+  handle('peer:controlledNames', () => uiSettings.get().peerControlled || {});
   // Explicit drop of a persisted control claim — used when a restore re-acquire
   // finds the session is held by someone else (stale claim, don't retry-loop).
-  ipcMain.handle('peer:forgetControlled', (_e, id, name) => {
+  handle('peer:forgetControlled', (_e, id, name) => {
     forgetPeerControlled(id, name);
     return { ok: true };
   });
-  ipcMain.handle('peer:resize', (_e, id, name, cols, rows) => new Promise((resolve) => {
+  handle('peer:resize', (_e, id, name, cols, rows) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.resize(name, cols, rows, resolve);
@@ -843,7 +861,7 @@ function registerIpcHandlers(deps) {
   // new code). Authority is the tunnel, same as every other peer RPC; the
   // viewer fronts a confirm dialog for intentionality. The peer acks, then
   // quits + relaunches; its offline/online blip rides the existing reconnect.
-  ipcMain.handle('peer:restart', (_e, id) => new Promise((resolve) => {
+  handle('peer:restart', (_e, id) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.restart(resolve);
@@ -851,12 +869,12 @@ function registerIpcHandlers(deps) {
   // Remote session create/kill on a peer — makes the Mac the cockpit for a
   // headless box. Trust is the tunnel (settled); the viewer fronts a dialog
   // (create) / confirm (kill) for intentionality. The ack carries the outcome.
-  ipcMain.handle('peer:createSession', (_e, id, spec) => new Promise((resolve) => {
+  handle('peer:createSession', (_e, id, spec) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.createSession(spec || {}, resolve);
   }));
-  ipcMain.handle('peer:killSession', (_e, id, name) => new Promise((resolve) => {
+  handle('peer:killSession', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.killSession(String(name || ''), resolve);
@@ -864,7 +882,7 @@ function registerIpcHandlers(deps) {
   // Remote session restart on a peer — plain restart (keeps history) or a
   // fresh reload (new conversation, re-reads skills). The viewer fronts a
   // confirm only for the fresh variant, mirroring the local hard-restart.
-  ipcMain.handle('peer:restartSession', (_e, id, name, opts) => new Promise((resolve) => {
+  handle('peer:restartSession', (_e, id, name, opts) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.restartSession(String(name || ''), opts || {}, resolve);
@@ -872,12 +890,12 @@ function registerIpcHandlers(deps) {
   // Edit Session on a peer — read the box's editable args + catalogs, then apply
   // an edited patch. Gated in the UI on the 'args' cap (+ online); old boxes 501
   // and the affordance is hidden. Thin adapters over the peer-client request pair.
-  ipcMain.handle('peer:sessionArgs', (_e, id, name) => new Promise((resolve) => {
+  handle('peer:sessionArgs', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.sessionArgs(String(name || ''), resolve);
   }));
-  ipcMain.handle('peer:setSessionArgs', (_e, id, name, patch) => new Promise((resolve) => {
+  handle('peer:setSessionArgs', (_e, id, name, patch) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.setSessionArgs(String(name || ''), patch || {}, resolve);
@@ -885,26 +903,26 @@ function registerIpcHandlers(deps) {
   // Edit Skills on a peer — read the box's skill catalog, then persist an edited
   // disabled/inject set. Same 'args' cap + online gate as Edit Session; thin
   // adapters over the peer-client skill request pair.
-  ipcMain.handle('peer:skillCatalog', (_e, id, name) => new Promise((resolve) => {
+  handle('peer:skillCatalog', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.skillCatalog(String(name || ''), resolve);
   }));
-  ipcMain.handle('peer:setSessionSkills', (_e, id, name, disabledSkills, injectSkills) => new Promise((resolve) => {
+  handle('peer:setSessionSkills', (_e, id, name, disabledSkills, injectSkills) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.setSessionSkills(String(name || ''), disabledSkills, injectSkills, resolve);
   }));
   // Popover data for a peer session — one kind-dispatched pull, answered by
   // the owner from the same sources its own popups use.
-  ipcMain.handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
+  handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.query(name, String(kind || ''), args, resolve);
   }));
   // Keystrokes: fire-and-forget like local pty-input; a failed send surfaces
   // as the terminal simply not echoing.
-  ipcMain.on('peer:input', (_e, id, name, data) => {
+  on('peer:input', (_e, id, name, data) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (conn) conn.input(name, String(data ?? ''), () => {});
   });
@@ -912,23 +930,23 @@ function registerIpcHandlers(deps) {
   // Global default tool-deny set new sessions inherit (the "*" agent-default).
   // An explicit [] is honored (deny nothing); separate store from uiSettings, so
   // it gets its own setter. Returns the persisted set for the renderer to render.
-  ipcMain.handle('defaults:setToolDeny', (_e, list) => {
+  handle('defaults:setToolDeny', (_e, list) => {
     agentDefaults.setDefaultDeny(Array.isArray(list) ? list : []);
     return agentDefaults.getDefaultDeny();
   });
 
   // Theme set from a renderer's Preferences picker. The sender already applied
   // it locally, so skip echoing back to it; sync the other windows + menu.
-  ipcMain.handle('theme:set', (e, name) => { setUiTheme(name, e.sender); });
+  handle('theme:set', (e, name) => { setUiTheme(name, e.sender); });
 
-  ipcMain.handle('wirescope:status', () => wirescope.status());
-  ipcMain.handle('wirescope:start', () => wirescope.start());
-  ipcMain.handle('wirescope:stop', () => wirescope.stop());
-  ipcMain.handle('wirescope:restart', () => wirescope.restart());
+  handle('wirescope:status', () => wirescope.status());
+  handle('wirescope:start', () => wirescope.start());
+  handle('wirescope:stop', () => wirescope.stop());
+  handle('wirescope:restart', () => wirescope.restart());
   // Capture-log size/reclaimable readout. A non-200 / missing-endpoint result
   // (older proxy without /_prune) comes back ok:false → the renderer hides the
   // whole capture-logs affordance (presence IS the capability).
-  ipcMain.handle('wirescope:pruneInfo', async () => {
+  handle('wirescope:pruneInfo', async () => {
     try {
       const r = await ProxyClient.pruneInfo(wirescope.baseUrl());
       if (r.status !== 200 || !r.json || r.json.ok === false) {
@@ -942,7 +960,7 @@ function registerIpcHandlers(deps) {
   // Execute (or dry-run) a prune. opts: { olderThan, tier, scope, dryRun }.
   // wirescope enforces the safety guards (skips active/warm/recent); clodex just
   // relays and surfaces the result body.
-  ipcMain.handle('wirescope:prune', async (_e, opts) => {
+  handle('wirescope:prune', async (_e, opts) => {
     const o = opts || {};
     if (!o.olderThan) return { ok: false, error: 'older_than required' };
     try {
@@ -956,7 +974,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  ipcMain.handle('session:exportMarkdown', async (_e, name) => {
+  handle('session:exportMarkdown', async (_e, name) => {
     const s = manager.sessions.get(name);
     if (!s) return { ok: false, error: 'Session not found' };
     if (!s.agentType) return { ok: false, error: 'Export only works for agent sessions' };
@@ -972,10 +990,10 @@ function registerIpcHandlers(deps) {
 
     // Ask user where to save
     const defaultPath = path.join(
-      app.getPath('desktop'),
+      getDesktopPath(),
       `${name}-${new Date().toISOString().slice(0, 10)}.md`,
     );
-    const result = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow(), {
+    const result = await showSaveDialog({
       defaultPath,
       filters: [{ name: 'Markdown', extensions: ['md'] }],
     });
@@ -990,8 +1008,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  ipcMain.on('session:context-menu', (e, { name, cwd }) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
+  on('session:context-menu', (e, { name, cwd }) => {
     // Quick prompt picker — set the session's system/append prompt refs without
     // opening the Edit Session dialog. Persists immediately + applies on next
     // (re)start; the renderer is told so it can offer to restart now.
@@ -1025,7 +1042,7 @@ function registerIpcHandlers(deps) {
         },
       })) : [{ label: '(no append prompts in library)', enabled: false }]),
     ];
-    const menu = Menu.buildFromTemplate([
+    popupMenu([
       {
         label: 'Rename…',
         click: () => e.sender.send('session:context-action', { action: 'rename', name }),
@@ -1043,7 +1060,7 @@ function registerIpcHandlers(deps) {
       {
         label: 'Reveal Working Directory in Finder',
         enabled: !!cwd,
-        click: () => { if (cwd) shell.showItemInFolder(cwd); },
+        click: () => { if (cwd) showItemInFolder(cwd); },
       },
       {
         label: 'Open in Terminal',
@@ -1071,16 +1088,14 @@ function registerIpcHandlers(deps) {
         label: 'Kill Session',
         click: () => e.sender.send('session:context-action', { action: 'kill', name }),
       },
-    ]);
-    menu.popup({ window: win });
+    ], e);
   });
 
   // Peer session rows get their own menu — the verbs (attach/control/detach/
   // hide) differ entirely from a local session's, so it's a separate template
   // rather than an overload. State is supplied by the renderer (the source of
   // truth for attach/control lives there, not in persistence); we only render.
-  ipcMain.on('peer:context-menu', (e, st) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
+  on('peer:context-menu', (e, st) => {
     const { id, name, online, attached, controlled, holder, canCreate, canArgs, hostLabel, type } = st || {};
     const act = (action) => () => e.sender.send('peer:context-action', { action, id, name });
     const template = [];
@@ -1149,7 +1164,7 @@ function registerIpcHandlers(deps) {
         click: act('killRemote'),
       });
     }
-    Menu.buildFromTemplate(template).popup({ window: win });
+    popupMenu(template, e);
   });
 
   // Peer HEADER right-click: host-level actions (remote restart today). Distinct
@@ -1176,10 +1191,9 @@ function registerIpcHandlers(deps) {
       folder: resolveDeployFolder(reported, cfg.deployFolder),
     };
   }
-  ipcMain.handle('peer:deployConfig', (_e, id) => deployTargetFor(id));
+  handle('peer:deployConfig', (_e, id) => deployTargetFor(id));
 
-  ipcMain.on('peer:header-menu', (e, st) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
+  on('peer:header-menu', (e, st) => {
     const { id, label, online, canCreate, sev } = st || {};
     const template = [];
     // Create is gated on the peer advertising the 'create' capability (older
@@ -1216,13 +1230,13 @@ function registerIpcHandlers(deps) {
         }),
       });
     }
-    Menu.buildFromTemplate(template).popup({ window: win });
+    popupMenu(template, e);
   });
 
   // Native confirm for remote restart — mirrors dialog:confirmKill. The peer's
   // sessions resume via the normal quit/restore lifecycle, so the copy says so.
-  ipcMain.handle('dialog:confirmPeerRestart', async (_e, label) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmPeerRestart', async (_e, label) => {
+    const result = await showMessageBox({
       type: 'question',
       buttons: ['Restart', 'Cancel'],
       defaultId: 1,
@@ -1235,8 +1249,8 @@ function registerIpcHandlers(deps) {
 
   // Native confirm for the in-place update (re-run the deploy script over ssh).
   // Cancel default; the box's app restarts on success, so the copy says so.
-  ipcMain.handle('dialog:confirmPeerUpdate', async (_e, label) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmPeerUpdate', async (_e, label) => {
+    const result = await showMessageBox({
       type: 'question',
       buttons: ['Update', 'Cancel'],
       defaultId: 1,
@@ -1249,8 +1263,8 @@ function registerIpcHandlers(deps) {
 
   // Native confirm for the agent fallback after a failed deploy — opens a local
   // ad-hoc Claude session to untangle the box. Cancel default.
-  ipcMain.handle('dialog:confirmDeployFix', async (_e, sshHost) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmDeployFix', async (_e, sshHost) => {
+    const result = await showMessageBox({
       type: 'question',
       buttons: ['Open agent session', 'Cancel'],
       defaultId: 1,
@@ -1264,8 +1278,8 @@ function registerIpcHandlers(deps) {
   // Native confirm for killing a session ON a peer — destructive (removes it on
   // the remote box, no resume), distinct from local Detach/Hide. Mirrors
   // confirmKill's copy but names the host so it's unmistakably the remote one.
-  ipcMain.handle('dialog:confirmPeerKill', async (_e, name, label) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmPeerKill', async (_e, name, label) => {
+    const result = await showMessageBox({
       type: 'warning',
       buttons: ['Kill', 'Cancel'],
       defaultId: 1,
@@ -1280,8 +1294,8 @@ function registerIpcHandlers(deps) {
   // (new conversation, CLI re-reads skills/tools/settings; old convo stays in
   // 🕘 history). Plain peer restart has NO confirm, parity with the local plain
   // restart; only the fresh variant (which drops the live conversation) asks.
-  ipcMain.handle('dialog:confirmPeerReload', async (_e, name, label) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmPeerReload', async (_e, name, label) => {
+    const result = await showMessageBox({
       type: 'question',
       buttons: ['Reload', 'Cancel'],
       defaultId: 1,
@@ -1294,8 +1308,8 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  ipcMain.handle('dialog:confirmKill', async (_e, name) => {
-    const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+  handle('dialog:confirmKill', async (_e, name) => {
+    const result = await showMessageBox({
       type: 'warning',
       buttons: ['Kill', 'Cancel'],
       defaultId: 1,
@@ -1306,7 +1320,7 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  ipcMain.on('pty-input', (_e, name, data) => {
+  on('pty-input', (_e, name, data) => {
     manager.write(name, data);
   });
 
@@ -1317,10 +1331,10 @@ function registerIpcHandlers(deps) {
   // (e.g. the default workspace on a second tray-opened window) come back as-is
   // so the renderer renders them without double-spawning; failures come back as
   // `{ failed: true }` entries (kept in persistence) for the retry/forget UI.
-  ipcMain.handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
+  handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   // Retry spawning a session that failed during restore
-  ipcMain.handle('session:retrySpawn', async (e, name) => {
+  handle('session:retrySpawn', async (e, name) => {
     const workspaceId = workspaceOfSender(e);
     const entry = persistence.list().find(s => s.name === name);
     if (!entry) return { ok: false, error: 'No saved entry found' };
@@ -1352,15 +1366,15 @@ function registerIpcHandlers(deps) {
   });
 
   // "Forget" a session — remove from persistence without killing (it's not running)
-  ipcMain.handle('session:forget', (_e, name) => {
+  handle('session:forget', (_e, name) => {
     persistence.remove(name);
     return true;
   });
 
   // Workspace management
-  ipcMain.handle('workspace:list', () => workspaces.list());
-  ipcMain.handle('workspace:current', (e) => workspaceOfSender(e));
-  ipcMain.handle('workspace:setName', (e, name) => {
+  handle('workspace:list', () => workspaces.list());
+  handle('workspace:current', (e) => workspaceOfSender(e));
+  handle('workspace:setName', (e, name) => {
     const id = workspaceOfSender(e);
     const prev = workspaces.get(id);
     const oldName = prev && prev.name;
@@ -1377,7 +1391,7 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return true;
   });
-  ipcMain.handle('workspace:new', () => {
+  handle('workspace:new', () => {
     const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     createWindow(id);
     refreshAppMenu();
