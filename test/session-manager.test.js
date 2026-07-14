@@ -1687,3 +1687,22 @@ test('_relayClaimedDm: exhausted hop budget and offline destination both drop wi
   assert.strictEqual(dm.length, 0, 'hop-exhausted envelope dropped');
   assert.strictEqual(offline.dm.length, 0, 'offline destination dropped');
 });
+
+test('_relayClaimedDm: terminal-leg from is origin-normalized to OUR label for the source spoke', () => {
+  // The spoke stamps its own selfLabel (hostname-ish) — the hub must rewrite the
+  // suffix to its configured label ('docker'), or the recipient gets a reply
+  // address no roster advertises. Local part stays sacred.
+  const { m, dm } = mkRelay();
+  m._relayClaimedDm('p1', 'docker', { label: 'docker', relayAllowed: true }, {
+    rv: 1, to: 'murmur', finalTarget: 'murmur@murmurfi', from: 'degen@clodex-docker',
+    body: 'ack', urgent: false, hops: 1,
+  });
+  assert.strictEqual(dm.length, 1);
+  assert.strictEqual(dm[0].from, 'degen@docker', 'selfLabel suffix rewritten to hub label');
+
+  const bare = mkRelay();
+  bare.m._relayClaimedDm('p1', 'docker', { label: 'docker', relayAllowed: true }, {
+    rv: 1, to: 'murmur', finalTarget: 'murmur@murmurfi', from: 'degen', body: 'x', hops: 1,
+  });
+  assert.strictEqual(bare.dm[0].from, 'degen@docker', 'bare from gets qualified with hub label');
+});

@@ -255,13 +255,22 @@ distinct `relay` cap.
   name → normal park/bounce, with no `finalTarget` to chase and no way to
   re-relay. Do NOT propagate `finalTarget` onto the terminal leg — that reopens
   the loop the strip + `hops<=0` guard together close.
-- **`from` is sacred** — fully-qualified end-to-end (`agent@docker`), NEVER
-  rewritten to a hop origin. It's the load-bearing field for the reverse reply
-  path: the destination tags the recipient's sender with it, and the reply
-  re-enters the relay in reverse (dest's via-table → hub → origin). Because the
-  terminal leg carries a qualified `from`, the box's `/api/dm` accepts it
-  (`isQualifiedSender`) and `deliverDm` uses it as the senderTag directly rather
-  than re-qualifying with the hub's origin.
+- **`from`'s local part is sacred; its origin suffix is the hub's to normalize.**
+  The sender's agent name is never rewritten, and `from` is never replaced with a
+  hop's identity (that would point replies at the hub). It's the load-bearing
+  field for the reverse reply path: the destination tags the recipient's sender
+  with it, and the reply re-enters the relay in reverse (dest's via-table → hub →
+  origin). But the originating spoke stamps the suffix with its OWN selfLabel
+  (hostname-ish, `agent@clodex-docker`), and the only origin namespace the
+  destination can route a reply through is the hub's configured label for that
+  spoke — what the roster advertises (`agent@docker`). So `_relayClaimedDm`
+  rewrites the suffix to the hub's label on the terminal leg; shipping the
+  selfLabel through unchanged hands the recipient an unroutable reply address
+  whenever the two labels diverge (live failure: infra dm'd `docker@docker`, the
+  ack arrived stamped `docker@clodex-docker`). Because the terminal leg carries a
+  qualified `from`, the box's `/api/dm` accepts it (`isQualifiedSender`) and
+  `deliverDm` uses it as the senderTag directly rather than re-qualifying with
+  the hub's origin.
 - **Receipts — best-effort (v1), one deliberate exception to leg-2 silence.**
   There's no true end-to-end verdict across the two async legs (that's a v2
   receipt propagation). The relay-out DOES, unlike a normal silent outbox

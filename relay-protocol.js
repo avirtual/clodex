@@ -12,10 +12,17 @@
 // it and re-delivers to the destination spoke via a plain direct DM.
 //
 // Two invariants live here and must not be weakened:
-//   * `from` is SACRED — fully-qualified end-to-end (`agent@docker`), NEVER
-//     rewritten to a hop origin. It is the load-bearing field for the reverse
-//     reply path (the destination tags the recipient's sender with it, and the
-//     reply re-enters the relay in reverse). Rewriting it breaks replies.
+//   * `from`'s LOCAL part is SACRED — the sender's agent name is never rewritten,
+//     and `from` is never replaced with a hop's own identity (that would point
+//     replies at the hub). It is the load-bearing field for the reverse reply
+//     path (the destination tags the recipient's sender with it, and the reply
+//     re-enters the relay in reverse). The ORIGIN SUFFIX, though, is the hub's to
+//     normalize: the spoke stamps its own selfLabel (hostname-ish), but the only
+//     namespace the destination can route a reply through is the hub's configured
+//     label for the source spoke — the one the roster advertises. The hub
+//     rewrites `agent@<spoke selfLabel>` → `agent@<hub's label for that spoke>`
+//     on the terminal leg (see _relayClaimedDm); NOT doing so ships an
+//     unroutable reply address whenever the two labels diverge.
 //   * The TERMINAL hub→dest leg is a PLAIN DIRECT DM — the relay fields
 //     (`finalTarget`, `hops`, `rv`) are STRIPPED. This is a deliberate
 //     loop-prevention feature, not an accident: if the destination agent is
@@ -149,9 +156,10 @@ function computeRosterFor(targetId, statuses, relayAllowedIds) {
 // input signature `{to, from, body, urgent}`. Relay fields (finalTarget/hops/rv)
 // are deliberately absent (see the terminal-leg invariant up top); `origin` is NOT
 // here because conn.dm stamps it with the hub's own selfLabel and would ignore a
-// caller value. `from` is carried through UNCHANGED — sacred. Byte-shaped like a
-// normal consumer→box DM so the destination can't tell (or exploit) that it was
-// relayed.
+// caller value. `from` arrives here already origin-normalized by the caller (local
+// part sacred, suffix = the hub's label for the source spoke — see the `from`
+// invariant up top). Byte-shaped like a normal consumer→box DM so the destination
+// can't tell (or exploit) that it was relayed.
 function buildTerminalDm({ to, from, body, urgent }) {
   return { to, from, body, urgent: !!urgent };
 }

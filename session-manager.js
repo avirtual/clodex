@@ -3022,8 +3022,9 @@ function createSessionManager(deps) {
     // leg is a PLAIN direct DM — conn.dm sends only {to,from,origin,body,urgent}, so
     // the relay fields are stripped by construction (a deliberate loop-prevention
     // feature: an offline destination sees an ordinary direct DM to a missing local
-    // name and parks/bounces it, with no finalTarget to chase). `from` is carried
-    // through UNCHANGED — sacred, the reply path depends on it.
+    // name and parks/bounces it, with no finalTarget to chase). `from`'s LOCAL part
+    // is sacred (the reply path depends on it); its origin suffix is normalized to
+    // OUR label for the source spoke — see the inline comment at the rewrite.
     _relayClaimedDm(srcId, srcLabel, srcCfg, m) {
       const drop = (why) => {
         log.info('peer', `relay from ${srcLabel} → ${m.finalTarget} dropped: ${why}`);
@@ -3058,13 +3059,25 @@ function createSessionManager(deps) {
       if (!(dest.caps || []).includes('dm')) return drop(`destination peer '${destOrigin}' predates dm federation`);
       const conn = getPeerManager().get(dest.id);
       if (!conn) return drop(`destination peer '${destOrigin}' not reachable`);
-      // Terminal leg: plain direct DM, `from` preserved fully-qualified. The relay
-      // fields are stripped by construction — buildTerminalDm returns exactly
-      // conn.dm's {to,from,body,urgent} signature (conn.dm stamps origin itself).
-      conn.dm(buildTerminalDm({ to: destName, from: m.from, body: m.body || '', urgent: m.urgent === true }), (resp) => {
+      // Reply-path normalization: the originating spoke stamped `from`'s origin
+      // suffix with its OWN selfLabel (hostname-ish, e.g. agent@clodex-docker),
+      // but the only origin namespace the destination can route a reply through
+      // is OUR configured label for the source spoke — that's what the relay
+      // roster advertises (agent@docker). Rewrite the SUFFIX to srcLabel; the
+      // LOCAL part stays sacred (rewriting THAT, or the whole from to the hub's
+      // identity, is what the sacred rule forbids). Live failure this fixes:
+      // infra dm'd docker@docker, the ack came back stamped docker@clodex-docker
+      // — an address that bounces if replied to.
+      const fromAt = String(m.from || '').indexOf('@');
+      const senderLocal = fromAt > 0 ? String(m.from).slice(0, fromAt) : String(m.from || '');
+      const relayFrom = `${senderLocal || 'peer'}@${srcLabel}`;
+      // Terminal leg: plain direct DM. The relay fields are stripped by
+      // construction — buildTerminalDm returns exactly conn.dm's
+      // {to,from,body,urgent} signature (conn.dm stamps origin itself).
+      conn.dm(buildTerminalDm({ to: destName, from: relayFrom, body: m.body || '', urgent: m.urgent === true }), (resp) => {
         if (!(resp && resp.ok)) log.info('peer', `relay → ${m.finalTarget} not delivered: ${(resp && resp.error) || 'no response'}`);
       });
-      this._broadcast('ipc-message', { type: 'dm', from: m.from || srcLabel, to: m.finalTarget, body: `WIRE relay ${srcLabel}→${destOrigin}: ${m.body || ''}` });
+      this._broadcast('ipc-message', { type: 'dm', from: relayFrom, to: m.finalTarget, body: `WIRE relay ${srcLabel}→${destOrigin}: ${m.body || ''}` });
     }
 
     // Bounce a refused relay back to the originating sender on their spoke. Best-
