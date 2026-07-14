@@ -157,6 +157,7 @@ const engine = createEngine({
     // restartHost: shut down cleanly and exit 64 so a supervisor relaunches.
     restartHost: () => {
       log.info('app', 'restart requested — shutting down, exit 64 for supervisor relaunch');
+      if (webHost) { try { webHost.close(); } catch {} }
       try { engine.shutdown(); } catch {}
       releasePidLock();
       process.exit(64);
@@ -181,6 +182,24 @@ const workspaceIds = (process.env.CLODEX_WORKSPACES || DEFAULT_WORKSPACE_ID)
   }
 })();
 
+// ── Web host ── the browser frontend (web-frontend Phase 3). Opt-in via
+// CLODEX_WEB_PORT: a plain-Node HTTP+WS server that serves the renderer bundle
+// and speaks the window.api contract over WS onto the same engine. Electron never
+// loads this — it's the headless host's job. Optional CLODEX_WEB_TOKEN gates every
+// route + the WS upgrade + the hello frame; absent = localhost-trust (Phase 4).
+let webHost = null;
+const webPort = parseInt(process.env.CLODEX_WEB_PORT || '', 10);
+if (Number.isInteger(webPort) && webPort > 0) {
+  try {
+    const { createWebHost } = require('./web-host');
+    webHost = createWebHost({
+      engine, log, port: webPort,
+      token: process.env.CLODEX_WEB_TOKEN || null,
+      userDataPath,
+    });
+  } catch (e) { log.error('app', `web host failed to start: ${e && e.message}`); }
+}
+
 // ── Signals ── SIGTERM/SIGINT → engine.shutdown() (kills PTYs, stops
 // remote/peer/tunnel + timers) → exit 0. Replaces the Electron before-quit.
 let terminating = false;
@@ -188,6 +207,7 @@ function terminate(sig) {
   if (terminating) return;
   terminating = true;
   log.info('app', `${sig} — engine.shutdown(), killing all sessions`);
+  if (webHost) { try { webHost.close(); } catch (e) { log.error('app', `web host close error: ${e && e.message}`); } }
   try { engine.shutdown(); } catch (e) { log.error('app', `shutdown error: ${e && e.message}`); }
   releasePidLock();
   process.exit(0);
