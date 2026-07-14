@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
 const { API_CONTRACT } = require('../api-contract');
 
@@ -216,6 +217,24 @@ test('open-external event rewrites a proxyBase dashboard url to the published ba
     ws.onmessage({ data: JSON.stringify({ t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_timeline?s=1'] }) });
     assert.deepEqual(opened, ['http://localhost:7811/_timeline?s=1'], 'the loopback dashboard link is rewritten before opening');
   } finally { restore(); }
+});
+
+test('the in-page menu/dialog/toast styles are theme-token-driven, not hardcoded dark (Chunk 4)', () => {
+  // Source-level guard: the shim's injected stylesheet is a template literal, so
+  // assert on the source text. The always-dark panel/accent hexes that made the
+  // menus and modals ignore the theme must be gone, replaced by the same CSS
+  // custom properties the desktop dialogs use.
+  const src = fs.readFileSync(SHIM, 'utf8');
+  const style = src.slice(src.indexOf('const STYLE = `'), src.indexOf('`;', src.indexOf('const STYLE = `')));
+
+  for (const dead of ['#2b2b2b', '#222', '#1c1c1c', '#3a3a3a', '#3a6ea5', '#7db7ff', '#eee', '#444', '#555']) {
+    assert.ok(!style.includes(dead), `hardcoded ${dead} was replaced by a theme token`);
+  }
+  for (const tok of ['var(--sidebar-bg)', 'var(--border)', 'var(--text)', 'var(--accent)', 'var(--input-bg,var(--active-bg))']) {
+    assert.ok(style.includes(tok), `themed panels reference ${tok}`);
+  }
+  // The reconnect banner is the intentional exception — a theme-independent alarm.
+  assert.ok(style.includes('#8a1c1c'), 'the connection-lost banner stays a fixed alarm red');
 });
 
 test('a second welcome (reconnect) reloads to re-run the restore flow', async () => {

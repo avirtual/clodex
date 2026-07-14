@@ -196,32 +196,42 @@ function buildApi() {
 
 // ── in-page UI: reconnect banner, toasts, degraded native menus + dialogs. All
 // styling is a single injected stylesheet so the bundle stays self-contained.
+// The menus, dialogs and toasts follow the active theme via the same CSS custom
+// properties the desktop dialogs use (defined per-theme in styles.css, bundled
+// into the web build) — --sidebar-bg panels, --border edges, --accent primary,
+// --text ink — so they recolour under Claude/Paper/Light instead of staying
+// always-dark. The mapping mirrors the desktop analogs: .prompt-modal (modal +
+// input), #btn-create/.secondary (buttons), and menubar.js's .clx-mb-* (menu).
+// The reconnect banner is the deliberate exception: a fixed deep-red alarm bar,
+// theme-independent so "connection lost" reads the same on every theme.
 const STYLE = `
 .clx-banner{position:fixed;top:0;left:0;right:0;z-index:100000;background:#8a1c1c;color:#fff;
   font:600 12px/1 -apple-system,system-ui,sans-serif;text-align:center;padding:7px 12px}
 .clx-toast-wrap{position:fixed;bottom:14px;right:14px;z-index:100000;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
-.clx-toast{background:#222;color:#eee;font:400 12px/1.4 -apple-system,system-ui,sans-serif;
+.clx-toast{background:var(--sidebar-bg);color:var(--text);border:1px solid var(--border);
+  font:400 12px/1.4 -apple-system,system-ui,sans-serif;
   padding:9px 12px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.4);max-width:340px}
-.clx-toast a{color:#7db7ff}
-.clx-menu{position:fixed;z-index:100001;background:#2b2b2b;border:1px solid #444;border-radius:6px;
+.clx-toast a{color:var(--accent)}
+.clx-menu{position:fixed;z-index:100001;background:var(--sidebar-bg);border:1px solid var(--border);border-radius:6px;
   padding:4px 0;min-width:180px;box-shadow:0 6px 24px rgba(0,0,0,.5);
-  font:400 13px/1 -apple-system,system-ui,sans-serif;color:#eee}
+  font:400 13px/1 -apple-system,system-ui,sans-serif;color:var(--text)}
 .clx-menu-item{padding:6px 26px 6px 22px;position:relative;white-space:nowrap;cursor:default}
 .clx-menu-item[data-enabled="0"]{opacity:.4;pointer-events:none}
-.clx-menu-item:hover{background:#3a6ea5;color:#fff}
+.clx-menu-item:hover{background:var(--accent);color:#fff}
 .clx-menu-item .clx-mark{position:absolute;left:7px}
 .clx-menu-item .clx-arrow{position:absolute;right:9px;opacity:.7}
-.clx-menu-sep{height:1px;margin:4px 0;background:#444}
-.clx-modal-bg{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
-.clx-modal{background:#2b2b2b;color:#eee;border-radius:8px;padding:18px 20px;min-width:320px;max-width:480px;
+.clx-menu-sep{height:1px;margin:4px 0;background:var(--border)}
+.clx-modal-bg{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.clx-modal{background:var(--sidebar-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:18px 20px;min-width:320px;max-width:480px;
   box-shadow:0 8px 32px rgba(0,0,0,.55);font:400 13px/1.5 -apple-system,system-ui,sans-serif}
 .clx-modal h3{margin:0 0 8px;font-size:14px}
 .clx-modal .clx-detail{opacity:.8;margin-bottom:14px;white-space:pre-wrap}
-.clx-modal input{width:100%;box-sizing:border-box;margin:6px 0 14px;padding:7px 9px;background:#1c1c1c;
-  border:1px solid #555;border-radius:5px;color:#eee;font:inherit}
+.clx-modal input{width:100%;box-sizing:border-box;margin:6px 0 14px;padding:7px 9px;background:var(--input-bg,var(--active-bg));
+  border:1px solid var(--border);border-radius:5px;color:var(--text);font:inherit}
+.clx-modal input:focus{outline:none;border-color:var(--accent)}
 .clx-modal-btns{display:flex;justify-content:flex-end;gap:8px}
-.clx-modal-btns button{padding:6px 14px;border:1px solid #555;border-radius:5px;background:#3a3a3a;color:#eee;font:inherit;cursor:pointer}
-.clx-modal-btns button.clx-default{background:#3a6ea5;border-color:#3a6ea5;color:#fff}
+.clx-modal-btns button{padding:6px 14px;border:1px solid var(--border);border-radius:5px;background:var(--border);color:var(--text);font:inherit;cursor:pointer}
+.clx-modal-btns button.clx-default{background:var(--accent);border-color:var(--accent);color:#fff}
 `;
 function injectStyle() {
   const el = document.createElement('style');
