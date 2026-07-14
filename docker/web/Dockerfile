@@ -19,7 +19,7 @@
 # platform binary arrives via optionalDependencies, and — critically — skips the
 # electron devDep's binary download AND our postinstall (dev-rename-electron.js /
 # fix-pty-helper.js are Electron-dev-only and have no business in the image).
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -29,13 +29,17 @@ COPY . .
 RUN npm run build:web
 
 # ── Stage 2: runtime — the headless host + the built bundle.
-FROM node:20-slim AS runtime
+# node:22 (not 20) so node:sqlite exists — the wire shadow differ needs it;
+# on 20 the engine logs "wire shadow unavailable" and spawns unshadowed.
+FROM node:22-slim AS runtime
 
 # git/bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
 # node-pty's build toolchain, kept in the final image DELIBERATELY: agents in the
-# container will want to build things.
+# container will want to build things. python3-venv is for the wirescope
+# supervisor: it builds its venv (`python3 -m venv` + pip) at first boot, and
+# Debian ships venv/ensurepip as a separate package.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git bash procps ca-certificates python3 make g++ \
+      git bash procps ca-certificates python3 python3-venv make g++ \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.

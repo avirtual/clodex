@@ -7,9 +7,14 @@ node_modules
 dist
 web-dist
 
-# Private / unpublicized trees — MUST NOT ship in the image.
+# Private trees — MUST NOT ship in the image.
 deploy
-vendor/wirescope
+
+# vendor/wirescope is deliberately INCLUDED (it is git-tracked; "unpublicized"
+# means release notes, not the tree): the supervisor autostarts the proxy at
+# engine boot when settings point at the managed local port (the default), so
+# baking the snapshot in gives the container full wire telemetry. Its venv is
+# built at first boot under CLODEX_DATA_DIR (persisted by the data volume).
 
 # The other docker/ subdir is the peering test-box; neither belongs in the web
 # image, and excluding docker/ keeps the context small (Dockerfile is read via -f,

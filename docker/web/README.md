@@ -119,6 +119,15 @@ docker compose -f docker/web/compose.yaml exec clodex \
   bash -lc 'git config --global user.name "You" && git config --global user.email "you@example.com"'
 ```
 
+## Wire telemetry
+
+The image bundles the wirescope snapshot the desktop app ships, and the
+engine autostarts it inside the container (default settings point at the
+managed local port). First boot builds its Python venv under `/data` —
+give it ~30s and a network connection once; the data volume persists it.
+Proxy charts and per-session wire telemetry then work exactly as on the
+desktop. To turn it off, disable the proxy in Preferences.
+
 ## Operating notes
 
 - **Logs**: `docker compose -f docker/web/compose.yaml logs -f`.
