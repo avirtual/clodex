@@ -57,6 +57,15 @@ function enqueueOutbox(root, origin, msg, seq) {
     body: String(msg && msg.body != null ? msg.body : ''),
     urgent: !!(msg && msg.urgent),
     ts: Number.isFinite(msg && msg.ts) ? msg.ts : Date.now(),
+    // Hub-relay envelope fields — carried through ONLY when present, so a plain
+    // direct-DM outbox record stays byte-identical. Their ABSENCE is what marks a
+    // record as a direct DM (isRelayEnvelope keys on finalTarget), so dropping
+    // them here silently demotes a relay DM to a direct one — the claiming hub
+    // then can't tell it should relay and delivers it to a nonexistent local
+    // agent. Preserve them or spoke↔spoke relay never routes.
+    ...(msg && typeof msg.finalTarget === 'string' && msg.finalTarget ? { finalTarget: msg.finalTarget } : {}),
+    ...(msg && Number.isInteger(msg.hops) ? { hops: msg.hops } : {}),
+    ...(msg && Number.isInteger(msg.rv) ? { rv: msg.rv } : {}),
   });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, payload);
@@ -95,7 +104,15 @@ function claimOutbox(root, origin) {
     try {
       const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
       if (obj && typeof obj.to === 'string') {
-        out.push({ from: obj.from || '', to: obj.to, body: obj.body || '', urgent: !!obj.urgent, ts: obj.ts || 0 });
+        out.push({
+          from: obj.from || '', to: obj.to, body: obj.body || '', urgent: !!obj.urgent, ts: obj.ts || 0,
+          // Carry the relay envelope fields back out (see enqueueOutbox) — only
+          // when present, so a direct DM's readback is unchanged and
+          // isRelayEnvelope still discriminates on finalTarget's presence.
+          ...(typeof obj.finalTarget === 'string' && obj.finalTarget ? { finalTarget: obj.finalTarget } : {}),
+          ...(Number.isInteger(obj.hops) ? { hops: obj.hops } : {}),
+          ...(Number.isInteger(obj.rv) ? { rv: obj.rv } : {}),
+        });
       }
     } catch { /* skip a corrupt entry rather than abort the whole claim */ }
   }

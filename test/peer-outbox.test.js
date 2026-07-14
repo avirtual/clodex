@@ -35,6 +35,29 @@ test('enqueue then claim round-trips messages in arrival order', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('relay envelope fields (finalTarget/hops/rv) round-trip; a direct DM stays clean', () => {
+  const root = tmpRoot();
+  const seq = seqGen();
+  // A relay envelope enqueued under origin=hub, and a plain direct DM.
+  enqueueOutbox(root, 'hub', {
+    from: 'docker@docker', to: 'murmur', body: 'hi', urgent: false, ts: 111,
+    finalTarget: 'murmur@murmurfi', hops: 1, rv: 1,
+  }, seq());
+  enqueueOutbox(root, 'hub', { from: 'x', to: 'y', body: 'plain', ts: 222 }, seq());
+  const [relay, direct] = claimOutbox(root, 'hub');
+  // The relay fields MUST survive — dropping finalTarget silently demotes the
+  // relay DM to a direct one and the hub can't route it (the live bug).
+  assert.strictEqual(relay.finalTarget, 'murmur@murmurfi', 'finalTarget round-trips');
+  assert.strictEqual(relay.hops, 1, 'hops round-trips');
+  assert.strictEqual(relay.rv, 1, 'rv round-trips');
+  assert.strictEqual(relay.from, 'docker@docker', 'qualified from preserved');
+  // The direct DM must NOT gain any relay fields (absence = direct; discriminator).
+  assert.strictEqual('finalTarget' in direct, false, 'direct DM has no finalTarget');
+  assert.strictEqual('hops' in direct, false, 'direct DM has no hops');
+  assert.strictEqual('rv' in direct, false, 'direct DM has no rv');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('claim is a one-shot: a second claim sees nothing', () => {
   const root = tmpRoot();
   const seq = seqGen();
