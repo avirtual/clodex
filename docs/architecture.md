@@ -49,7 +49,11 @@ Conventions the refactor established:
 
 The engine-extraction arc (2026-07, phases 1–4) split the main process into a
 plain-Node **engine** and thin **host adapters**, so the Electron desktop app
-is one frontend among several (a headless Linux/k8s node is the second).
+is one frontend among several. There are three hosts today: the **Electron
+desktop app** (`main.js`), the **headless node** (`headless-main.js`, plain
+Node for Linux/k8s spokes), and — layered on the headless node — the **browser
+frontend** (`web-host.js` + the `web-dist/` bundle), whose packaged form is the
+Docker image under [`../docker/web/`](../docker/web/).
 
 - **engine.js** — `createEngine({ userDataPath, seams, log })` owns the whole
   electron-free bootstrap: stores → pollers → scheduler → log → wirescope +
@@ -93,6 +97,18 @@ is one frontend among several (a headless Linux/k8s node is the second).
   64 for a supervisor to relaunch, and SIGTERM/SIGINT → `engine.shutdown()` →
   exit 0. It restores `DEFAULT_WORKSPACE_ID` (or `CLODEX_WORKSPACES`). Also in
   `SCANNED_MODULES`. Deployment: [../peering/README.md](../peering/README.md).
+- **web-host.js** — the **browser frontend**, engine-side. Plain Node (HTTP +
+  `ws`), started by `headless-main.js` when `CLODEX_WEB_PORT` is set; the
+  Electron app never loads it. It drives the SAME `registerIpcHandlers` map and
+  event-push surface over a WebSocket that the desktop `window.api` speaks over
+  ipcRenderer — the browser client (`renderer/web/`, built by
+  `build/build-web.js` into `web-dist/`) rebuilds `window.api` from the shared
+  `api-contract.js` table, so the renderer runs unchanged. Optional
+  `CLODEX_WEB_TOKEN` gates every route + the WS upgrade + the hello frame;
+  absent = localhost trust. NOT in the leak-scanner lists (new code, not a
+  move-only extraction) and never imports electron. Packaged as the Docker image
+  in [`../docker/web/`](../docker/web/) (a two-stage build of the headless host +
+  the web bundle); the peer test-box in `../docker/` is unrelated.
 
 ### Coordinator
 

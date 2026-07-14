@@ -87,6 +87,9 @@ test('window.api is built from the table with exactly the 165-method surface', a
     assert.equal(names.length, API_CONTRACT.length, 'one method per contract row');
     assert.deepEqual(new Set(names), new Set(API_CONTRACT.map((r) => r.name)), 'names match the table');
     for (const n of names) assert.equal(typeof global.window.api[n], 'function', `${n} is a function`);
+    // The browser-frontend marker the renderer degrades on (e.g. hiding the
+    // file-peek Open button) must be set alongside window.api, before renderer.js runs.
+    assert.equal(global.window.__CLODEX_WEB__, true, 'browser-frontend marker is set');
   } finally { restore(); }
 });
 

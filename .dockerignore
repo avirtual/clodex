@@ -1,0 +1,32 @@
+# Build context for docker/web/Dockerfile (context is the repo root: ../..).
+# Denylist — anything not excluded here is sent to the daemon and may be COPYed.
+# Keep it tight: a smaller context is faster to send and can't leak private trees.
+
+# Dependencies + build artifacts — the image installs/builds its own.
+node_modules
+dist
+web-dist
+
+# Private / unpublicized trees — MUST NOT ship in the image.
+deploy
+vendor/wirescope
+
+# The other docker/ subdir is the peering test-box; neither belongs in the web
+# image, and excluding docker/ keeps the context small (Dockerfile is read via -f,
+# not from the context).
+docker
+
+# Not needed at build or runtime.
+.git
+.gitignore
+.claude
+peering
+docs
+test
+scripts
+
+# Scratch / local artifacts.
+.DS_Store
+*.local.md
+*.log
+HANDOFF.local.md

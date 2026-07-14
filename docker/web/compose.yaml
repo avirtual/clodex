@@ -1,0 +1,47 @@
+# docker/web/compose.yaml — run the browser-frontend Clodex image as a service.
+#
+#   docker compose -f docker/web/compose.yaml up --build
+#   # then open http://localhost:8080
+#
+# See README.md for the auth stance, the volume map, and the macOS OAuth gotcha.
+
+services:
+  clodex:
+    build:
+      context: ../..                     # the repo root
+      dockerfile: docker/web/Dockerfile
+    # The localhost publish IS auth v1's boundary (same trust stance as remote.js
+    # v1): only this machine can reach :8080. Widening it — e.g.
+    # "0.0.0.0:8080:8080" to expose on the LAN — means setting CLODEX_WEB_TOKEN
+    # (below) to a strong secret first. Do not widen without it.
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Empty = localhost trust. Set a strong secret before widening the publish;
+      # the browser then needs ?token=<secret> on the page URL.
+      CLODEX_WEB_TOKEN: "${CLODEX_WEB_TOKEN:-}"
+      # Comma-separated workspace ids to restore (single-workspace by convention).
+      CLODEX_WORKSPACES: "${CLODEX_WORKSPACES:-default}"
+    volumes:
+      - clodex-data:/data                     # sessions.json + stores + exports
+      - clodex-dot:/home/clodex/.clodex       # agent registry / messages / log
+      - claude-auth:/home/clodex/.claude      # Claude OAuth — persists the login
+      # Mount host project checkouts for agents to work on (uncomment + adjust):
+      # - ./work:/home/clodex/work
+    init: true                            # PID-1 reaper for PTY process trees
+    # The supervisor half of the exit-64 restart contract: relaunch on a
+    # restart-request (exit 64) and on a clean exit-0, as a service should.
+    restart: always
+    healthcheck:
+      # No curl/wget in the slim image — probe /healthz with the bundled node.
+      # /healthz is unauthenticated, so this works with or without a token.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  clodex-data:
+  clodex-dot:
+  claude-auth:

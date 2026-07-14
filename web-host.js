@@ -353,9 +353,12 @@ function createWebHost({ engine, log, port, token, userDataPath, registerHandler
   }
 
   const server = http.createServer((req, res) => {
-    if (!checkToken(tokenFromReq(req))) { res.writeHead(401).end('unauthorized'); return; }
     let pathname = '/';
     try { pathname = new URL(req.url, 'http://localhost').pathname; } catch { /* keep default */ }
+    // Unauthenticated liveness probe — exempt from the token gate so a compose
+    // healthcheck can hit it without carrying the secret. Leaks only liveness.
+    if (pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('ok'); return; }
+    if (!checkToken(tokenFromReq(req))) { res.writeHead(401).end('unauthorized'); return; }
     if (pathname.startsWith('/exports/')) return serveExports(req, res, pathname.slice('/exports/'.length));
     return serveStatic(req, res, pathname);
   });

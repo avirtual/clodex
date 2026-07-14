@@ -151,6 +151,12 @@ function connect() {
 
 // ── window.api, generated from the contract table (same loop shape as preload).
 function buildApi() {
+  // Marks the renderer as running under the browser frontend. The Electron
+  // preload never sets it; renderer code reads it to degrade actions that have no
+  // browser equivalent — e.g. the file-peek "Open in the default editor" button,
+  // which the container has no external editor to honour (the file is already
+  // shown in-page). Set alongside window.api so it is present before renderer.js runs.
+  window.__CLODEX_WEB__ = true;
   const api = {};
   for (const { name, kind, channel, argmap } of API_CONTRACT) {
     if (kind === 'invoke') {

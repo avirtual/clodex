@@ -177,7 +177,9 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
     filePeekPath.textContent = filePath;
     filePeekPath.title = filePath;
     // A remote file has no local path to hand to an editor — Open is owner-only.
-    document.getElementById('file-peek-open').style.display = api.remote ? 'none' : '';
+    // The browser frontend (window.__CLODEX_WEB__) likewise has no external editor
+    // to escape to, and the file is already shown in-page, so hide Open there too.
+    document.getElementById('file-peek-open').style.display = (api.remote || window.__CLODEX_WEB__) ? 'none' : '';
     filePeekBody.innerHTML = '<div class="cost-note">Loading…</div>';
     filePeekOverlay.classList.remove('hidden');
     const [diffRes, peekRes] = await Promise.all([

@@ -1,0 +1,76 @@
+# docker/web/Dockerfile — the browser-frontend Clodex image (web-frontend Phase 4).
+#
+# This is the packaged form of the HEADLESS host (headless-main.js, plain Node)
+# plus the web frontend (web-host.js + the esbuild bundle): `node headless-main.js`
+# with CLODEX_WEB_PORT set stands up the same engine the Electron app runs and
+# serves the browser client over WebSocket. The Electron desktop app is unrelated
+# and unchanged — it never runs in here.
+#
+# NOTE: this is a DIFFERENT image from ../Dockerfile (the peering arc's
+# SSH/systemd peer test-box). They share a directory, nothing else.
+#
+# Build context is the repo root (see docker/web/compose.yaml: context ../..),
+# filtered by the repo-root .dockerignore.
+#
+#   docker compose -f docker/web/compose.yaml up --build
+
+# ── Stage 1: builder — install the full deps and produce web-dist/index.html.
+# --ignore-scripts skips node-pty's gyp build (not needed here), esbuild's
+# platform binary arrives via optionalDependencies, and — critically — skips the
+# electron devDep's binary download AND our postinstall (dev-rename-electron.js /
+# fix-pty-helper.js are Electron-dev-only and have no business in the image).
+FROM node:20-slim AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY . .
+RUN npm run build:web
+
+# ── Stage 2: runtime — the headless host + the built bundle.
+FROM node:20-slim AS runtime
+
+# git/bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
+# node-pty's build toolchain, kept in the final image DELIBERATELY: agents in the
+# container will want to build things.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git bash procps ca-certificates python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
+# The agent CLIs, globally. Pin nothing — agents self-update.
+RUN npm i -g @anthropic-ai/claude-code @openai/codex
+
+# Non-root user with a real home: agent-transport creates ~/.clodex 0700 and
+# fixPathFromLoginShell runs `$SHELL -ilc`, so HOME + SHELL must be real.
+RUN useradd --create-home --shell /bin/bash clodex
+
+WORKDIR /app
+
+# Prod deps only, then rebuild node-pty against the Node ABI (the headless smoke
+# recipe — the dev checkout's node-pty is built for Electron's ABI, useless here).
+# Manifests first so a source-only change doesn't bust this layer.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
+ && npm rebuild node-pty
+
+# App source (filtered by .dockerignore) + the built browser bundle from stage 1.
+COPY . .
+COPY --from=builder /build/web-dist ./web-dist
+
+# Mount points owned by clodex so the named volumes come up writable by the user
+# (Docker seeds an empty named volume from the image path's ownership).
+RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/work \
+ && chown -R clodex:clodex /app /data /home/clodex
+
+ENV HOME=/home/clodex \
+    SHELL=/bin/bash \
+    CLODEX_DATA_DIR=/data \
+    CLODEX_WEB_PORT=8080
+
+USER clodex
+EXPOSE 8080
+
+# No ENTRYPOINT wrapper: compose `init: true` supplies PID-1 reaping (PTYs fork
+# real process trees; without a reaper, zombies accumulate).
+CMD ["node", "headless-main.js"]

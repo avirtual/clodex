@@ -12,6 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
+const http = require('node:http');
 const WebSocket = require('ws');
 
 const { createWebHost } = require('../web-host');
@@ -67,6 +68,17 @@ function connect(port, { token } = {}) {
   };
 }
 
+// Raw HTTP GET → { status, body }, for the token gate + the /healthz exemption.
+function httpGet(port, pathname) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: 'localhost', port, path: pathname }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+}
+
 async function poll(fn, ms = 1000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) { if (fn()) return true; await new Promise((r) => setTimeout(r, 10)); }
@@ -94,6 +106,19 @@ test('hello gate: pre-hello frames close the socket; a valid hello yields welcom
     assert.equal(welcome.workspaceId, 'default');
     assert.equal(typeof welcome.appVersion, 'string');
     ok.close();
+  } finally { host.close(); }
+});
+
+test('/healthz is an unauthenticated 200 even when a token gates everything else', async () => {
+  const { host, port } = await startHost({ token: 'secret' });
+  try {
+    const health = await httpGet(port, '/healthz');
+    assert.equal(health.status, 200, 'healthz served without a token');
+    assert.equal(health.body, 'ok');
+
+    // Any other route still demands the token — the exemption is /healthz-only.
+    const gated = await httpGet(port, '/');
+    assert.equal(gated.status, 401, 'the static bundle stays gated');
   } finally { host.close(); }
 });
 
