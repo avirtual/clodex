@@ -115,6 +115,20 @@ claimed column).
    lightweight structural index for multi-file work — the one controlled
    result where an index beat agentic grep on tokens/turns/cost
    (arXiv 2606.22417). Not vectors, not a map-in-every-prompt.
+4. **Grok-cache / auto-index (Bogdan 07-15, parked pending pot data):**
+   cache the skill's output keyed on file content hash — a grok call IS
+   a cheap-model re-ingestion, so the "index" is just its cache layer.
+   Trigger is EDIT-DRIVEN, never nightly: the wire's files channel
+   already announces every mutation, so hot files refresh exactly as
+   often as they change and cold files keep a valid entry forever at
+   zero refresh cost (resolves the staleness irony — an index lives
+   long on cold files nobody needs and dies fast on hot ones — by
+   making both halves correct behavior). Index the STRUCTURAL layer
+   (module shape, responsibilities, symbol homes), which decays far
+   slower than content. Decision inputs from the pot: grok-repeat rate
+   per file (what a cache would save) × edit-churn rate (what
+   invalidation would cost). Rule after the skill's first measured
+   window.
 
 ## Non-goals
 
