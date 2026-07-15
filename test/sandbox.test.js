@@ -440,3 +440,84 @@ test('writeComposeFile: references the auth env_file once the token exists, neve
   assert.doesNotMatch(yaml, /sk-secret-should-never-appear/);
   assert.doesNotMatch(yaml, /CLAUDE_CODE_OAUTH_TOKEN/);
 });
+
+// ── factory: remote-wire token auto-provision (remote-auth chunk 4) ──────────
+
+test('up: auto-provisions CLODEX_REMOTE_TOKEN into auth.env, compose stays token-clean, peer carries the Bearer', async () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const r = await sb.up();
+  assert.strictEqual(r.ok, true);
+
+  // A random hex secret landed in the 0600 auth.env under its own key.
+  const authFile = path.join(ud, 'sandbox', 'auth.env');
+  const authBody = fs.readFileSync(authFile, 'utf8');
+  assert.match(authBody, /^CLODEX_REMOTE_TOKEN=[0-9a-f]{64}$/m);
+  assert.strictEqual(fs.statSync(authFile).mode & 0o777, 0o600);
+  const token = authBody.match(/CLODEX_REMOTE_TOKEN=([0-9a-f]+)/)[1];
+
+  // The compose bytes reference only the env_file — never the key name or value
+  // (env_file injects it into the container env, so no compose `environment:` line
+  // is needed). This is the chunk-4 leak-guard.
+  const yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.ok(yaml.includes('env_file:'));
+  assert.doesNotMatch(yaml, /CLODEX_REMOTE_TOKEN/);
+  assert.ok(!yaml.includes(token), 'the secret value never appears in the compose bytes');
+
+  // The desktop-side sandbox peer entry carries the same token as its Bearer.
+  assert.strictEqual(settings._state().peers[0].id, SANDBOX_PEER_ID);
+  assert.strictEqual(settings._state().peers[0].token, token);
+});
+
+test('up twice: the remote token (and the peer Bearer) stay stable — provisioned once, never rerolled', async () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  await sb.up();
+  const first = fs.readFileSync(path.join(ud, 'sandbox', 'auth.env'), 'utf8');
+  await sb.up();
+  const second = fs.readFileSync(path.join(ud, 'sandbox', 'auth.env'), 'utf8');
+  assert.strictEqual(first, second, 'the token is idempotent across re-up');
+  // One peer row, unchanged token — no reconcile churn from a re-roll.
+  assert.strictEqual(settings._state().peers.length, 1);
+  assert.match(settings._state().peers[0].token, /^[0-9a-f]{64}$/);
+});
+
+test('setAuthToken preserves an existing remote token line (multi-key write)', async () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  // up() provisions the remote token first.
+  await sb.up();
+  const authFile = path.join(ud, 'sandbox', 'auth.env');
+  const remote = fs.readFileSync(authFile, 'utf8').match(/CLODEX_REMOTE_TOKEN=([0-9a-f]+)/)[1];
+
+  // Now the operator sets an OAuth token — the remote token must survive.
+  assert.deepStrictEqual(sb.setAuthToken('sk-oauth-added'), { ok: true, hasToken: true });
+  let body = fs.readFileSync(authFile, 'utf8');
+  assert.match(body, /^CLAUDE_CODE_OAUTH_TOKEN=sk-oauth-added$/m);
+  assert.match(body, new RegExp(`^CLODEX_REMOTE_TOKEN=${remote}$`, 'm'));
+
+  // Clearing the OAuth token leaves the remote token (and hence the file) intact.
+  assert.deepStrictEqual(sb.clearAuthToken(), { ok: true, hasToken: false });
+  assert.strictEqual(sb.hasAuthToken(), false);
+  body = fs.readFileSync(authFile, 'utf8');
+  assert.doesNotMatch(body, /CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(body, new RegExp(`^CLODEX_REMOTE_TOKEN=${remote}$`, 'm'));
+});

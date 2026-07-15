@@ -18,6 +18,7 @@
 'use strict';
 
 const cp = require('child_process');
+const crypto = require('crypto');
 const net = require('net');
 const path = require('path');
 const fs = require('fs');
@@ -253,26 +254,59 @@ function createSandbox(deps = {}) {
     return getConfig();
   }
 
-  // ── Auth token file (M4) ────────────────────────────────────────────────────
-  // The Claude OAuth token (`claude setup-token` on the host) seeds the sandbox
-  // with the same auth as the host. It lives ONLY in <userData>/sandbox/auth.env,
-  // mode 0600, as `CLAUDE_CODE_OAUTH_TOKEN=<token>` — referenced by the generated
-  // compose via env_file (writeComposeFile), so the value never enters the compose
-  // bytes, the config store, logs, or any IPC result. write is atomic (tmp +
-  // rename); clear deletes the file; exists is the hasToken flag's only source.
+  // ── Auth env file (M4 + remote-auth chunk 4) ────────────────────────────────
+  // <userData>/sandbox/auth.env (mode 0600) holds a set of KEY=value lines, ALL
+  // referenced by the generated compose via env_file — so their values reach the
+  // container's environment yet never enter the compose bytes, the config store,
+  // logs, or any IPC result. Two keys live here:
+  //   CLAUDE_CODE_OAUTH_TOKEN  — the host's Claude OAuth token (`claude
+  //                              setup-token`), user-seeded, drives hasAuthToken.
+  //   CLODEX_REMOTE_TOKEN      — an auto-generated operator secret for the peer
+  //                              wire (remote.js gate), provisioned on first up;
+  //                              the same value feeds the sandbox peer entry's
+  //                              Bearer (registerPeer), closing the wire end-to-end.
+  // The file is a multi-key set so setting/clearing one token never disturbs the
+  // other. Writes are atomic (tmp + rename); an empty set deletes the file.
+  function readAuthEnv() {
+    const out = {};
+    let raw;
+    try { raw = fs.readFileSync(authEnvPath(), 'utf8'); } catch { return out; }
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      const i = t.indexOf('=');
+      if (i <= 0) continue;
+      out[t.slice(0, i)] = t.slice(i + 1);
+    }
+    return out;
+  }
+  function writeAuthEnv(env) {
+    const keys = Object.keys(env).filter((k) => env[k] != null && String(env[k]).length).sort();
+    const file = authEnvPath();
+    if (!keys.length) {
+      try { fs.unlinkSync(file); } catch (e) { if (e && e.code !== 'ENOENT') throw e; }
+      return;
+    }
+    fs.mkdirSync(sandboxDir(), { recursive: true });
+    const body = keys.map((k) => `${k}=${env[k]}`).join('\n') + '\n';
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, body, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    try { fs.chmodSync(file, 0o600); } catch { /* best-effort mode reassert */ }
+  }
+
+  // hasAuthToken tracks the OAuth key SPECIFICALLY (not mere file existence) —
+  // the auth.env file may exist for the remote token alone, which must not read
+  // as an OAuth "configured" state in the dialog.
   function hasAuthToken() {
-    try { return fs.existsSync(authEnvPath()); } catch { return false; }
+    try { return !!readAuthEnv().CLAUDE_CODE_OAUTH_TOKEN; } catch { return false; }
   }
   function setAuthToken(token) {
     const t = String(token == null ? '' : token).trim();
     if (!t) return { ok: false, error: 'empty token' };
     try {
-      fs.mkdirSync(sandboxDir(), { recursive: true });
-      const file = authEnvPath();
-      const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, `CLAUDE_CODE_OAUTH_TOKEN=${t}\n`, { mode: 0o600 });
-      fs.renameSync(tmp, file);
-      try { fs.chmodSync(file, 0o600); } catch { /* best-effort mode reassert */ }
+      const env = readAuthEnv();
+      env.CLAUDE_CODE_OAUTH_TOKEN = t;   // preserves any CLODEX_REMOTE_TOKEN line
+      writeAuthEnv(env);
       return { ok: true, hasToken: true };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
@@ -280,11 +314,30 @@ function createSandbox(deps = {}) {
   }
   function clearAuthToken() {
     try {
-      fs.unlinkSync(authEnvPath());
+      const env = readAuthEnv();
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;   // keeps the remote token; file goes if now empty
+      writeAuthEnv(env);
     } catch (e) {
-      if (e && e.code !== 'ENOENT') return { ok: false, error: String((e && e.message) || e) };
+      return { ok: false, error: String((e && e.message) || e) };
     }
     return { ok: true, hasToken: false };
+  }
+
+  // The peer-wire operator secret. remoteToken() reads it (null if absent or the
+  // path can't resolve — registerPeer calls this even in settings-only tests with
+  // no userData); ensureRemoteToken() mints one on first up and persists it,
+  // idempotent thereafter so the value (and the peer's Bearer) stay stable.
+  function remoteToken() {
+    try { return readAuthEnv().CLODEX_REMOTE_TOKEN || null; } catch { return null; }
+  }
+  function ensureRemoteToken() {
+    const existing = remoteToken();
+    if (existing) return existing;
+    const env = readAuthEnv();
+    const tok = crypto.randomBytes(32).toString('hex');
+    env.CLODEX_REMOTE_TOKEN = tok;   // preserves any CLAUDE_CODE_OAUTH_TOKEN line
+    writeAuthEnv(env);
+    return tok;
   }
 
   // Detection: `docker info` distinguishes "not installed" (spawn ENOENT →
@@ -384,6 +437,11 @@ function createSandbox(deps = {}) {
   // then register the managed peer at the resolved wire port. stderr surfaces on
   // failure and the peer is NOT registered.
   async function up() {
+    // Provision the peer-wire token BEFORE composing: it must land in auth.env so
+    // writeComposeFile references the env_file, and so registerPeer can read it.
+    try { ensureRemoteToken(); } catch (e) {
+      return { ok: false, error: `token provision failed: ${(e && e.message) || e}` };
+    }
     let gen;
     try { gen = await writeComposeFile(); } catch (e) {
       return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
@@ -428,14 +486,19 @@ function createSandbox(deps = {}) {
   // place; an unchanged url writes nothing. Never duplicates.
   function registerPeer(wirePort) {
     const url = `http://127.0.0.1:${wirePort}`;
+    const token = remoteToken();   // the operator secret this peer authenticates with
     const store = getUiSettings();
     const peers = (store.get().peers || []).map((p) => ({ ...p }));
     const existing = peers.find((p) => p && p.id === SANDBOX_PEER_ID);
     if (existing) {
-      if (existing.url === url) return;   // already correct — no write, no reconcile churn
+      // Already correct (url AND token) → no write, no reconcile churn.
+      if (existing.url === url && (existing.token || null) === (token || null)) return;
       existing.url = url;
+      if (token) existing.token = token; else delete existing.token;
     } else {
-      peers.push({ id: SANDBOX_PEER_ID, label: SANDBOX_PEER_LABEL, url });
+      const entry = { id: SANDBOX_PEER_ID, label: SANDBOX_PEER_LABEL, url };
+      if (token) entry.token = token;
+      peers.push(entry);
     }
     store.set({ peers });
     syncPeerManager();
