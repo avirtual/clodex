@@ -10,6 +10,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
+const { SANDBOX_PLACEMENT_CWD, hasSandboxPeer, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
@@ -76,6 +77,16 @@ const resumeRow = document.getElementById('resume-row');
 const proxyRow = document.getElementById('proxy-row');
 const inputProxyMode = document.getElementById('input-proxy-mode');
 const inputProxyUrl = document.getElementById('input-proxy-url');
+// New Session placement selector (docs/sandbox-plan.md M3) — Host vs Sandbox.
+const placementRow = document.getElementById('placement-row');
+const inputPlacement = document.getElementById('input-placement');
+const placementHint = document.getElementById('placement-hint');
+// The rich fields greyed for sandbox placement (skills/prompts/tools/proxy/
+// intents/exec don't cross the create-on-peer wire until M5). Resolved by id at
+// call time — some of these row/section consts are declared later in the file.
+const PLACEMENT_RICH_ROW_IDS = [
+  'system-prompt-row', 'append-prompts-row', 'tools-section', 'skills-section', 'other-section', 'proxy-row',
+];
 
 // Map a proxy <select> mode + URL field to the persisted tri-state value:
 // null = follow the Clodex-level preference, false = off, string = custom.
@@ -778,6 +789,34 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     inputProxyMode.value = '';
     inputProxyUrl.style.display = 'none';
   }
+  // Per-type display just reset the rich rows; re-apply greying if the current
+  // placement is sandbox so a type change doesn't un-grey them.
+  if (currentPlacement() === 'sandbox') greyRichFields(true);
+}
+
+// Grey (disable + dim) or restore the rich rows for the current placement. Pure
+// visual + interaction gate — for sandbox placement doCreate only sends
+// name/type/cwd, so these fields are never read; greying just communicates why.
+function greyRichFields(grey) {
+  for (const id of PLACEMENT_RICH_ROW_IDS) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('placement-greyed', grey);
+  }
+  placementHint.style.display = grey ? '' : 'none';
+}
+
+// Placement is only meaningful in create mode (templates are host-authored). When
+// the selector is hidden it always reads 'host'.
+function currentPlacement() {
+  return (placementRow.style.display !== 'none' && inputPlacement.value === 'sandbox') ? 'sandbox' : 'host';
+}
+
+// Apply a placement change: swap the cwd default (without clobbering a typed
+// path) and grey/restore the rich fields.
+function applyPlacement() {
+  const placement = currentPlacement();
+  inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
+  greyRichFields(richFieldsGreyed(placement));
 }
 
 async function loadPromptLib() {
@@ -945,11 +984,17 @@ async function openDialog() {
   refreshNewSessionTools();
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
+  // Placement selector: shown ONLY when the sandbox peer is registered (zero
+  // noise otherwise). Default Host; a fresh open never inherits a stale grey.
+  inputPlacement.value = 'host';
+  placementRow.style.display = hasSandboxPeer(settings?.peers) ? '' : 'none';
+  greyRichFields(false);
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
 }
 
 inputType.addEventListener('change', () => applyTypeDefaults());
+inputPlacement.addEventListener('change', () => applyPlacement());
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
 // so re-fetch when it changes.
 // Bare refs would leak the DOM Event into the first (data) param — disabledSet —
@@ -1119,6 +1164,22 @@ async function doCreate() {
   const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
   const fork = supportsPrompts ? inputFork.checked : false;
 
+  // Sandbox placement: route the create through the `sandbox` peer instead of the
+  // local engine. Only name/type/cwd cross the create-on-peer wire (M3) — the
+  // rich fields were greyed and are not read here; they arrive with M5. The peer
+  // owner fans the new session back into the sidebar's peer section, so there's
+  // no local terminal/sidebar surgery to do.
+  if (currentPlacement() === 'sandbox') {
+    closeDialog();
+    const res = await window.api.peerCreateSession('sandbox', { name, type, cwd });
+    if (!res || res.ok === false) {
+      alert(`Failed to create sandbox session: ${(res && res.error) || 'unknown error'}`);
+      return;
+    }
+    showToast(`Created "${res.name || name}" (${res.type || type}) in the sandbox.`, { kind: 'peer-ui' });
+    return;
+  }
+
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
@@ -1171,7 +1232,13 @@ function setDialogMode(mode) {
   // The spawn-from-a-template dropdown and the quick "Save as Template" button
   // are create-mode affordances; in template-mode you're already editing one.
   btnSaveTemplate.style.display = authoring ? 'none' : '';
-  if (authoring) templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
+  if (authoring) {
+    templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
+    // Placement is a create-time choice; templates are host-authored. Hide the
+    // selector and drop any grey so the full field set is editable.
+    placementRow.style.display = 'none';
+    greyRichFields(false);
+  }
 }
 
 // Open the dialog as a template editor. tpl = null → blank "New Template"; a

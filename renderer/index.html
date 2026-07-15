@@ -363,6 +363,13 @@
   <div id="dialog-overlay" class="hidden">
     <div id="dialog">
       <h3 id="dialog-title">New Session</h3>
+      <label id="placement-row" style="display:none;">Run in
+        <select id="input-placement">
+          <option value="host">This Mac</option>
+          <option value="sandbox">Sandbox (Docker)</option>
+        </select>
+        <span class="hint-text" id="placement-hint" style="display:none;">Sandbox sessions run in the container. Skills, prompts, tools, proxy, and intent options aren’t available for sandbox sessions yet — set them from the session once it’s running.</span>
+      </label>
       <label id="template-row" style="display:none;">Template
         <div class="template-picker">
           <select id="input-template">
