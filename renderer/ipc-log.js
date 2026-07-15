@@ -14,6 +14,7 @@
 // guarantee.
 
 const { esc } = require('./lib/format');
+const { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
 
 function createIpcLog({ sessions, getActiveSession }) {
   const ipcLog = document.getElementById('ipc-log');
@@ -21,11 +22,16 @@ function createIpcLog({ sessions, getActiveSession }) {
   const ipcLogBody = document.getElementById('ipc-log-body');
   const ipcEmpty = document.getElementById('ipc-empty');
   const ipcCount = document.getElementById('ipc-count');
+  const ipcExportBtn = document.getElementById('ipc-export');
   const ipcClearBtn = document.getElementById('ipc-clear');
   const ipcToggleBtn = document.getElementById('ipc-toggle');
 
   let ipcMessageCount = 0;
   let unreadIpcCount = 0;
+  // Plain-text mirror of the entries for Export — the DOM is display-only.
+  // Capped; oldest lines drop first (the file says so when it happens).
+  const exportLines = [];
+  let exportDropped = 0;
 
   function updateIpcCount() {
     ipcCount.textContent = String(unreadIpcCount);
@@ -59,7 +65,24 @@ function createIpcLog({ sessions, getActiveSession }) {
     ipcLogBody.appendChild(ipcEmpty);
     ipcMessageCount = 0;
     unreadIpcCount = 0;
+    exportLines.length = 0;
+    exportDropped = 0;
     updateIpcCount();
+  }
+
+  function exportIpcLog() {
+    const head = exportDropped > 0
+      ? [`# ${exportDropped} older message(s) dropped (buffer keeps the last ${MAX_EXPORT_LINES})`]
+      : [];
+    const text = buildExportText(head.concat(exportLines));
+    if (!text) return; // nothing logged yet
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFilename(new Date());
+    a.click();
+    // Revoke on a delay — revoking synchronously races the download start.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
   ipcLogHeader.addEventListener('click', (e) => {
@@ -68,10 +91,17 @@ function createIpcLog({ sessions, getActiveSession }) {
   });
   ipcToggleBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleIpcLog(); });
   ipcClearBtn.addEventListener('click', (e) => { e.stopPropagation(); clearIpcLog(); });
+  ipcExportBtn.addEventListener('click', (e) => { e.stopPropagation(); exportIpcLog(); });
 
   function appendIpcEntry(msg) {
     if (ipcMessageCount === 0 && ipcEmpty.parentNode === ipcLogBody) ipcEmpty.remove();
     ipcMessageCount++;
+
+    exportLines.push(formatIpcLine(msg, new Date()));
+    if (exportLines.length > MAX_EXPORT_LINES) {
+      exportLines.shift();
+      exportDropped++;
+    }
 
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const entry = document.createElement('div');
