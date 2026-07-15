@@ -544,6 +544,12 @@ class PeerManager {
         const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster });
         this._peers.set(id, conn);
         conn.start();
+        // Announce the newborn immediately. _setOnline emits on TRANSITIONS,
+        // so a peer whose hello never succeeds (wrong port, box down) would
+        // otherwise never emit at all — saved in settings yet invisible in the
+        // sidebar, which reads only peer-state events. One offline status now;
+        // a successful hello follows with the online one moments later.
+        this._emit('peer-state', id, conn.status());
       }
     }
   }
