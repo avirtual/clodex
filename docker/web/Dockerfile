@@ -64,7 +64,16 @@ COPY --from=builder /build/web-dist ./web-dist
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).
+# ~/.claude.json ships onboarding-complete: interactive claude IGNORES
+# CLAUDE_CODE_OAUTH_TOKEN during first-run onboarding (theme picker, then a
+# "Select login method" screen — verified live, v2.1.209) even though the same
+# token authenticates fine in -p mode and in the post-onboarding REPL. Seeding
+# the flag skips onboarding so a seeded token (M4 auth.env) just works; without
+# a token, /login inside the REPL remains the documented fallback. The file
+# sits OUTSIDE the volumes on purpose — it's derived state, and baking it means
+# every recreate starts onboarded.
 RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/work \
+ && printf '{"hasCompletedOnboarding": true}' > /home/clodex/.claude.json \
  && chown -R clodex:clodex /app /data /home/clodex
 
 ENV HOME=/home/clodex \
