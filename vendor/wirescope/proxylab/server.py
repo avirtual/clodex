@@ -1371,8 +1371,15 @@ async def handler(request: Request) -> Response:
             # heaviness snapshot from the model-visible history (main line
             # only: a subagent's small history must not clobber the parent's)
             if session_id and not side_call and role in ("parent", "unknown"):
-                meta_mod._CONTEXT_STATS[session_id] = {**meta_mod._turn_stats(obj),
-                                              "ts": time.time()}
+                _ts = meta_mod._turn_stats(obj)
+                # since-compact baseline: turns_in_context is monotonic within a
+                # window; a DECREASE = /compact boundary. Stamp BEFORE overwriting
+                # _CONTEXT_STATS so we still have the previous window's turn count.
+                _prev = meta_mod._CONTEXT_STATS.get(session_id)
+                billing_mod.mark_compact_boundary(
+                    session_id, _ts.get("turns_in_context"),
+                    (_prev or {}).get("turns_in_context"))
+                meta_mod._CONTEXT_STATS[session_id] = {**_ts, "ts": time.time()}
     except Exception as e:
         record["parse_error"] = str(e)
         record["body_raw"] = raw.decode("utf-8", "replace")

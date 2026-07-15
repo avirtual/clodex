@@ -62,11 +62,20 @@ pathological re-reads are of files that legitimately changed, so they're
 correct-looking reads the model just shouldn't need). NOT the mechanics' fault:
 same-turn invariant held (zero live-turn stubs), rebased Read bodies carried
 correct post-edit content — the model had the current state and didn't trust
-it. What v2 DID fix (and why the stub text stays): the model imitating the
-terse v1 call stub as a fresh Edit input (3x InputValidationError in run2;
-zero in run4). Salvage direction if ever resumed: stub the read-after-own-edit
-follow-up reads too ("you already have the post-edit content"), i.e. make the
-tax itself cheap — see clodex run4 notes, CHANGELOG v0.6.31.
+it. CORRECTION (2026-07-12, post-v0.6.31): v2 did NOT fix the imitation
+defect — it EVOLVED it. Run4 wire capture 347 (session 1b1c75d8): the model
+emitted the full v2 stub text verbatim as a fresh Edit input — not blind
+shape-copying this time but REASONED misuse: the self-describing text taught
+it that an elision mechanism exists, so after one manual edit of an 8-file
+sweep it said "Now the same pattern for the other seven modules" and tried to
+invoke the stub as a batch-apply command; the InputValidationError then
+directly triggered an 8-file re-read sweep ("The folded-stub replay failed; I
+need to make these edits for real"). Any stub text the model can see is a
+prompt — there may be no wording that is simultaneously reassuring,
+informative, and not an affordance. Salvage direction if ever resumed: stub
+the read-after-own-edit follow-up reads too ("you already have the post-edit
+content"), i.e. make the tax itself cheap — see clodex run4 notes, CHANGELOG
+v0.6.31 + its correction note.
 """
 import json
 import os

@@ -385,3 +385,50 @@ def _accumulate(bill, session_key, stop=None, line=None):
     writer_mod._enqueue_json(core_mod.LOG_DIR / session_key / "_session.json",
                              json.loads(json.dumps(sess)))
     return snap
+
+
+def mark_compact_boundary(session_key, new_turns, prev_turns, now=None):
+    """Stamp the 'since-compact' baseline for a session on the REQUEST path.
+
+    A window's `turns_in_context` is monotonic non-decreasing (each real user
+    turn adds one; tool-loop hops don't) — only a /compact shrinks it. So a
+    DECREASE vs the previous main-line request is a compact boundary. We record
+    the cumulative counters AT the boundary; /_status reports the delta from
+    them as `since_compact`. The baseline rides INSIDE _SESSION_TOTALS ->
+    persists in _session.json and restores for free (same path as by_line), so
+    a proxy restart does NOT re-stamp: `prev_turns` is None after a restart
+    (in-memory _CONTEXT_STATS is gone), but a base already exists -> we leave it.
+    Only a genuine turns-decrease, or the true first window (no base yet),
+    stamps. main-line only (subagent histories never reach here).
+
+    new_turns/prev_turns = turns_in_context for this request and the previous
+    one (prev None on the first request of this process for the session)."""
+    if not session_key:
+        return
+    sess = _SESSION_TOTALS[session_key]
+    base = sess.get("_compact_base")
+    is_compact = prev_turns is not None and new_turns < prev_turns
+    if base is not None and not is_compact:
+        return
+    sess["_compact_base"] = {"turns": sess.get("turns", 0),
+                             "requests": sess.get("requests", 0),
+                             "est_usd": sess.get("est_usd", 0.0),
+                             "boundary_ts": now if now is not None else time.time(),
+                             "compacted": bool(is_compact)}
+
+
+def since_compact(tot):
+    """The /_status `since_compact` object from a session-totals dict: cumulative
+    counters minus the boundary baseline. None when there's no baseline yet
+    (pre-feature / no traffic). Deltas clamped >=0 (float noise / restart skew)."""
+    if not tot:
+        return None
+    base = tot.get("_compact_base")
+    if not base:
+        return None
+    return {"turns": max(0, tot.get("turns", 0) - base.get("turns", 0)),
+            "requests": max(0, tot.get("requests", 0) - base.get("requests", 0)),
+            "est_usd": round(max(0.0, tot.get("est_usd", 0.0)
+                                 - base.get("est_usd", 0.0)), 6),
+            "boundary_ts": base.get("boundary_ts"),
+            "compacted": bool(base.get("compacted"))}

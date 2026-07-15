@@ -85,6 +85,9 @@ def _identity():
                                           # + POST two-tier prune; see INTEGRATION.md)
             "cost_by_line": True,         # per-agent-line cost split: cost.main_est_usd
                                           # + sub_agents[].est_usd (+ /_report scope.agents)
+            "since_compact": True,        # /_status session.since_compact rollup
+                                          # {turns,requests,est_usd,boundary_ts,compacted}
+                                          # from the last /compact boundary (or start)
             # prior-turn thinking strip: per-session consumer opt-in via /_strip
             # or [wirescope:strip-thinking on]. `default` = the global flag (what
             # `effective` is when no per-session override is set). When the proxy
@@ -293,6 +296,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                                        if (tot.get("by_line") or {}).get("main")
                                        else None)}
                      if tot else None),
+            # per-window rollup from the last detected /compact boundary (or
+            # session start): {turns, requests, est_usd, boundary_ts, compacted}.
+            # Cumulative cost/turns_completed answer "how big is the whole
+            # session"; this answers "where is THIS context at" (clodex). null
+            # for pre-feature/no-traffic sessions; absent on pre-release payloads.
+            "since_compact": billing_mod.since_compact(tot),
             "refusals": (tot or {}).get("refusals", 0),
             # last ≤20 classifier hits, wire-truth detail (full stop_details);
             # the CLI only ever showed a generic toast
