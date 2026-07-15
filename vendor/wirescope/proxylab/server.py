@@ -30,6 +30,7 @@ from proxylab import fold as fold_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
+from proxylab import pot as pot_mod
 from proxylab import prune as prune_mod
 from proxylab import receipts as receipts_mod
 from proxylab import report as report_mod
@@ -631,6 +632,16 @@ async def handler(request: Request) -> Response:
             return Response(json.dumps({"error": "session required"}),
                             status_code=400, media_type="application/json")
         res = report_mod.bust_series(sess)
+        return Response(json.dumps(res, indent=2), media_type="application/json")
+
+    # GET /_pot[?days=N] — boiling-pot tier 2: per-file redundant-read heat over a
+    # trailing N-day window (default 14), files[] ranked by wasted tokens + window
+    # totals (the kill-criteria number). Standing SQLite aggregation, off the 5s
+    # poll (drawer/popover open). Frozen shape + redundant definition:
+    # pot_contract.md. Cross-session, no `session` param.
+    if request.method == "GET" and request.url.path.rstrip("/") == "/_pot":
+        days = request.query_params.get("days")
+        res = pot_mod.snapshot(days=days) if days else pot_mod.snapshot()
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
     # ---- capture-dir retention -------------------------------------------------
@@ -1376,9 +1387,15 @@ async def handler(request: Request) -> Response:
                 # window; a DECREASE = /compact boundary. Stamp BEFORE overwriting
                 # _CONTEXT_STATS so we still have the previous window's turn count.
                 _prev = meta_mod._CONTEXT_STATS.get(session_id)
-                billing_mod.mark_compact_boundary(
-                    session_id, _ts.get("turns_in_context"),
-                    (_prev or {}).get("turns_in_context"))
+                _new_tic = _ts.get("turns_in_context")
+                _prev_tic = (_prev or {}).get("turns_in_context")
+                billing_mod.mark_compact_boundary(session_id, _new_tic, _prev_tic)
+                # boiling-pot tier 2: roll per-file redundant-read counters off
+                # this request's message history, resetting the window on the same
+                # compact signal since_compact uses. Best-effort (swallows).
+                _is_compact = _prev_tic is not None and _new_tic is not None \
+                    and _new_tic < _prev_tic
+                pot_mod.ingest(session_id, obj, _is_compact)
                 meta_mod._CONTEXT_STATS[session_id] = {**_ts, "ts": time.time()}
     except Exception as e:
         record["parse_error"] = str(e)

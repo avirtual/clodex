@@ -139,7 +139,13 @@ store_mod.register_schema(
     "ALTER TABLE session_bust ADD COLUMN preamble_restart INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE session_bust ADD COLUMN conversation_restart INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE session_bust ADD COLUMN compact_restart INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE session_bust ADD COLUMN lapse_restart INTEGER NOT NULL DEFAULT 0")
+    "ALTER TABLE session_bust ADD COLUMN lapse_restart INTEGER NOT NULL DEFAULT 0",
+    # first_ts (2026-07-15): epoch of this session's FIRST real bust — set once on
+    # insert, preserved on every later conflict (COALESCE). last_ts already rides;
+    # together they give a consumer first/last/age without a per-event log (the
+    # popover papercut: bust COUNTS with no "when"). Additive; old rows -> NULL,
+    # so a consumer treats a missing first_ts as "unknown, fall back to last_ts".
+    "ALTER TABLE session_bust ADD COLUMN first_ts REAL")
 
 
 def _warmth_rows(hashes):
@@ -562,8 +568,8 @@ def bust_summary(session):
         con = store_mod.db()
         with store_mod.LOCK:
             r = con.execute(
-                f"SELECT {cols}, {rcols}, last_class, last_ts, last_write_tokens "
-                "FROM session_bust WHERE session_id=?", (session,)).fetchone()
+                f"SELECT {cols}, {rcols}, last_class, last_ts, last_write_tokens, "
+                "first_ts FROM session_bust WHERE session_id=?", (session,)).fetchone()
     except Exception:
         return None
     if not r:
@@ -575,7 +581,7 @@ def bust_summary(session):
     total = sum(by_class.values())
     if total <= 0:
         return None
-    lc, lt, lw = r[2 * n], r[2 * n + 1], r[2 * n + 2]
+    lc, lt, lw, first_ts = r[2 * n], r[2 * n + 1], r[2 * n + 2], r[2 * n + 3]
     # non-zero classes, biggest-first, each carrying its own fault + fix_hint so
     # the consumer renders severity/colour from the data, not a hardcoded map.
     # restart_between = how many of this class's busts were the one-time deploy tax
@@ -601,7 +607,12 @@ def bust_summary(session):
         restart_total - by_restart["lapse"] - by_restart["compact"])
     return {"total": total, "by_class": by_class, "by_restart": by_restart,
             "classes": classes, "actionable": actionable,
-            "actionable_excl_restart": actionable_excl_restart, "last_bust": last}
+            "actionable_excl_restart": actionable_excl_restart, "last_bust": last,
+            # first/last epoch of a real bust for the popover's first/last/age
+            # render. first_ts NULL on pre-migration rows -> consumer falls back
+            # to last_ts. last_bust.ts is the same value as last_ts (kept for the
+            # richer last-bust object); this pair is the age-triage primitive.
+            "first_ts": first_ts, "last_ts": lt}
 
 
 def _cold_ping_decision(obj):
@@ -743,12 +754,15 @@ def _record_warmth(obj, usage, is_main=True):
                     rinc = 1 if restart_straddle else 0
                     con.execute(
                         f"INSERT INTO session_bust(session_id, {bust_class}, {rcol}, "
-                        "last_class, last_ts, last_write_tokens) VALUES(?,1,?,?,?,?) "
+                        "last_class, last_ts, last_write_tokens, first_ts) "
+                        "VALUES(?,1,?,?,?,?,?) "
                         "ON CONFLICT(session_id) DO UPDATE SET "
                         f"{bust_class}={bust_class}+1, {rcol}={rcol}+{rinc}, "
                         "last_class=excluded.last_class, last_ts=excluded.last_ts, "
-                        "last_write_tokens=excluded.last_write_tokens",
-                        (sid, rinc, bust_class, now, created))
+                        "last_write_tokens=excluded.last_write_tokens, "
+                        # set-once: keep the earliest bust's ts across conflicts
+                        "first_ts=COALESCE(first_ts, excluded.first_ts)",
+                        (sid, rinc, bust_class, now, created, now))
                 con.execute("INSERT INTO session_head(session_id, hash, updated_at, "
                             "tools_hash, sys_hash, msg0_hash, sysfull_hash, "
                             "msg_count, cold_resumes) VALUES(?,?,?,?,?,?,?,?,?) "
