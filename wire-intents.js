@@ -15,7 +15,11 @@
 //                     heuristics. idle fires either on a terminal main-line
 //                     stop (turnEnd:true — the only one worth a notification)
 //                     or after a quiet-gap timer when requests stop mid-turn
-//                     (tool running >GAP with nothing in flight).
+//                     (tool running >GAP with nothing in flight). In-flight
+//                     entries carry a max-age: a receipt that never arrives
+//                     (lost turn.completed, no requestFailed either) expires
+//                     like a failed request instead of pinning 'thinking'
+//                     forever.
 //   IntentDeduper     claim-once ledger keyed by (agent, intent-key) with a
 //                     TTL. Both dispatch paths (wire live + transcript
 //                     recovery) claim before dispatching, so their overlap
@@ -34,6 +38,7 @@
 
 const DEDUPE_TTL_MS = 60_000;
 const IDLE_GAP_MS = 30_000; // no in-flight request for this long mid-turn -> idle
+const INFLIGHT_MAX_AGE_MS = 15 * 60_000; // receipt never arrived: treat as failed
 const COMPACT_ARM_TIMEOUT_MS = 10 * 60_000; // abandoned compact: stop parsing
 
 class IntentDeduper {
@@ -92,15 +97,17 @@ class IntentDeduper {
 class ActivityTracker {
   // emit(agent, 'thinking' | 'idle', { turnEnd }) — deduped, turnEnd true only
   // on a terminal main-line stop (the notification-worthy idle).
-  constructor(emit, { idleGapMs = IDLE_GAP_MS } = {}) {
+  constructor(emit, { idleGapMs = IDLE_GAP_MS, inflightMaxAgeMs = INFLIGHT_MAX_AGE_MS, now = Date.now } = {}) {
     this._emit = emit;
     this._gap = idleGapMs;
-    this._agents = new Map(); // agent -> { inflight:Set, state, timer }
+    this._maxAge = inflightMaxAgeMs;
+    this._now = now;
+    this._agents = new Map(); // agent -> { inflight:Map<reqId,ts>, state, timer, sweep }
   }
 
   _a(agent) {
     let a = this._agents.get(agent);
-    if (!a) { a = { inflight: new Set(), state: 'idle', timer: null }; this._agents.set(agent, a); }
+    if (!a) { a = { inflight: new Map(), state: 'idle', timer: null, sweep: null }; this._agents.set(agent, a); }
     return a;
   }
 
@@ -114,7 +121,8 @@ class ActivityTracker {
   turnStarted(agent, { reqId, sideCall } = {}) {
     if (sideCall) return; // title/probe traffic isn't the agent working
     const a = this._a(agent);
-    a.inflight.add(reqId);
+    a.inflight.set(reqId, this._now());
+    this._armSweep(agent, a);
     if (a.timer) { clearTimeout(a.timer); a.timer = null; }
     this._set(agent, a, 'thinking');
   }
@@ -122,6 +130,7 @@ class ActivityTracker {
   turnCompleted(agent, { reqId, sideCall, stop } = {}) {
     const a = this._a(agent);
     a.inflight.delete(reqId);
+    this._armSweep(agent, a);
     if (sideCall) return;
     if (stop && stop.is_turn) { this._set(agent, a, 'idle', true); return; }
     this._maybeGapIdle(agent, a);
@@ -133,7 +142,31 @@ class ActivityTracker {
   requestFailed(agent, reqId) {
     const a = this._a(agent);
     a.inflight.delete(reqId);
+    this._armSweep(agent, a);
     this._maybeGapIdle(agent, a);
+  }
+
+  // Max-age backstop for the receipt that never comes AT ALL — turn.completed
+  // AND requestFailed both lost (wire hiccup, proxy restart mid-stream). Any
+  // future event would be handled above; if the loss was on the turn's LAST
+  // request there IS no future event, and a bare inflight Set pinned
+  // 'thinking' forever. Expiry treats the stale entry exactly like
+  // requestFailed: drop it, let the quiet-gap timer decide. Cost of expiring
+  // a genuinely still-streaming >maxAge request: a transient idle that the
+  // next wire event corrects — recoverable, unlike the wedge.
+  _armSweep(agent, a) {
+    if (a.sweep) { clearTimeout(a.sweep); a.sweep = null; }
+    if (a.inflight.size === 0) return;
+    const oldest = Math.min(...a.inflight.values());
+    const delay = Math.max(oldest + this._maxAge - this._now(), 25);
+    a.sweep = setTimeout(() => {
+      a.sweep = null;
+      const cutoff = this._now() - this._maxAge;
+      for (const [id, ts] of a.inflight) { if (ts <= cutoff) a.inflight.delete(id); }
+      this._armSweep(agent, a);
+      if (a.inflight.size === 0) this._maybeGapIdle(agent, a);
+    }, delay);
+    if (a.sweep.unref) a.sweep.unref();
   }
 
   _maybeGapIdle(agent, a) {
@@ -149,6 +182,7 @@ class ActivityTracker {
     for (const [agent, a] of this._agents) {
       if (!liveNames.has(agent)) {
         if (a.timer) clearTimeout(a.timer);
+        if (a.sweep) clearTimeout(a.sweep);
         this._agents.delete(agent);
       }
     }

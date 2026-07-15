@@ -101,6 +101,33 @@ test('ActivityTracker: failed request (tee-failure) cannot wedge thinking', asyn
   assert.deepStrictEqual(events, ['thinking', 'idle']);
 });
 
+test('ActivityTracker: receipt lost entirely (no completed, no failed) expires instead of pinning thinking', async () => {
+  const events = [];
+  const a = new ActivityTracker((_n, state, meta) => events.push([state, meta.turnEnd]),
+    { idleGapMs: 10, inflightMaxAgeMs: 30 });
+  a.turnStarted('alice', { reqId: 'r1' });
+  // r1's turn.completed never arrives — pre-fix this stayed 'thinking' forever.
+  await sleep(80); // max-age sweep drops r1, quiet-gap timer follows
+  assert.deepStrictEqual(events, [['thinking', false], ['idle', false]]); // gap idle: no notification
+  // The receipt arriving AFTER expiry is harmless: already idle, deduped,
+  // and its turnEnd notification is forfeit (the request was silent >maxAge).
+  a.turnCompleted('alice', { reqId: 'r1', stop: { is_turn: true } });
+  assert.strictEqual(events.length, 2);
+});
+
+test('ActivityTracker: max-age sweep drops only stale entries — a fresh request keeps thinking', async () => {
+  const events = [];
+  const a = new ActivityTracker((_n, state, meta) => events.push([state, meta.turnEnd]),
+    { idleGapMs: 10, inflightMaxAgeMs: 70 });
+  a.turnStarted('alice', { reqId: 'r1' });   // receipt will be lost
+  await sleep(35);
+  a.turnStarted('alice', { reqId: 'r2' });   // live work, well inside max-age
+  await sleep(55); // sweep at ~70ms expires r1 only; r2 holds thinking, no idle flap
+  assert.deepStrictEqual(events, [['thinking', false]]);
+  a.turnCompleted('alice', { reqId: 'r2', stop: { is_turn: true } });
+  assert.deepStrictEqual(events.at(-1), ['idle', true]); // real turn end still notifies
+});
+
 const fakeWatcherFactory = (made) => (cbs) => {
   const w = { started: false, stopped: false, cbs,
     start() { this.started = true; }, stop() { this.stopped = true; } };
