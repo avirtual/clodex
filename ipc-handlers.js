@@ -501,6 +501,10 @@ function registerIpcHandlers(deps) {
   // at the CURRENT disk/git state — created-vs-modified truth comes from git
   // here, never from the feed.
   handle('session:files', (_e, name) => fetchSessionFiles(name));
+  // Boiling pot (docs/boiling-pot-plan.md): cross-agent file-heat snapshot. A
+  // global read-time merge (not per-session), carriage-ranked. Tier-1 data is
+  // all local, so it renders wire-off.
+  handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   handle('file:open', (_e, filePath) => openPath(filePath));

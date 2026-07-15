@@ -51,6 +51,10 @@ const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
+// Boiling-pot tier-1 producer + read-time merge (docs/boiling-pot-plan.md).
+// Pure electron-free leaves, required directly like ./claude-env — no dep seam.
+const { createFileHeat, aggregateStates, normalizeState } = require('./file-heat');
+const { readJsonSafe } = require('./fs-util');
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -257,12 +261,15 @@ function createSessionManager(deps) {
               this._activity.turnCompleted(t.agent, { reqId: t.reqId, sideCall: t.sideCall, stop: t.stop });
             }
           }
-          // Touched files ride every non-side-call receipt — subagent turns
-          // included (their edits are real file touches; the jsonl path never
-          // saw them cleanly, the wire does).
-          if (!t.sideCall && Array.isArray(t.files) && t.files.length) {
+          // Touched files + boiling-pot heat ride every non-side-call receipt —
+          // subagent turns included (their edits are real file touches / real
+          // carriage; the jsonl path never saw them cleanly, the wire does).
+          if (!t.sideCall) {
             const s = this.sessions.get(t.agent);
-            if (s) this._noteFileTouches(s, t.files, isSubagentRole(t.role));
+            if (s) {
+              if (Array.isArray(t.files) && t.files.length) this._noteFileTouches(s, t.files, isSubagentRole(t.role));
+              this._recordHeat(s, t.reads, t.files);
+            }
           }
           if (t.sideCall || isSubagentRole(t.role)) return; // intents: main line only
           const intents = this._extractIntents(t.text);
@@ -1329,6 +1336,7 @@ function createSessionManager(deps) {
       }
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
       if (s.watcher) s.watcher.stop();
+      if (s.fileHeat) { try { s.fileHeat.close(); } catch {} } // flush pending heat
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
@@ -1384,6 +1392,56 @@ function createSessionManager(deps) {
           try { getRemoteServer() && getRemoteServer().pushTelemetry(session.name, { files: { count } }); } catch {}
         }
       } catch { /* observer-grade — never near the PTY/intent path */ }
+    }
+
+    // Boiling pot (docs/boiling-pot-plan.md tier 1). Lazily bind the per-agent
+    // heat recorder at run/<name>/file-heat.json (created only once a turn
+    // actually touches files, so idle sessions never mint an empty file).
+    _fileHeatFor(session) {
+      if (!session.fileHeat) {
+        session.fileHeat = createFileHeat({ filePath: pathFor(REGISTRY_DIR, session.name, 'fileHeat') });
+      }
+      return session.fileHeat;
+    }
+
+    // Fold one turn's reads (carriage) + edits into the per-agent recorder.
+    // Best-effort diagnostic — never throws on the hot wire path; recordRead is
+    // fire-and-forget (its own stat is swallowed), we just guard the rejection.
+    _recordHeat(session, reads, files) {
+      try {
+        const hasReads = Array.isArray(reads) && reads.length;
+        const hasFiles = Array.isArray(files) && files.length;
+        if (!hasReads && !hasFiles) return;
+        const heat = this._fileHeatFor(session);
+        if (!heat) return;
+        if (hasReads) for (const r of reads) {
+          if (r && r.path) Promise.resolve(heat.recordRead(r.path, r.offset, r.limit)).catch(() => {});
+        }
+        if (hasFiles) for (const f of files) { if (f && f.path) heat.recordEdit(f.path); }
+      } catch { /* observer-grade — heat is a diagnostic, never worth a throw */ }
+    }
+
+    // Boiling-pot read-time view. Flush every live recorder so the on-disk files
+    // are current, then merge EVERY per-agent file-heat.json (live + dead agents)
+    // into one carriage-ranked snapshot. Cross-agent merge happens HERE at read
+    // time — never at write time (no shared-write contention). Tier-1 only: the
+    // redundancy columns stay null (wirescope /_pot fills them additively later).
+    potSnapshot(topN) {
+      try {
+        for (const s of this.sessions.values()) {
+          if (s.fileHeat) { try { s.fileHeat.flush(); } catch {} }
+        }
+        let names = [];
+        try { names = fs.readdirSync(path.join(REGISTRY_DIR, 'run')); } catch {}
+        const states = [];
+        for (const name of names) {
+          const raw = readJsonSafe(pathFor(REGISTRY_DIR, name, 'fileHeat'));
+          if (raw) states.push(normalizeState(raw));
+        }
+        return aggregateStates(states, { topN: Number.isInteger(topN) && topN > 0 ? topN : 10 });
+      } catch {
+        return { window: null, files: [] };
+      }
     }
 
     // Activity fan-out shared by both observation paths (wire tracker + legacy

@@ -197,6 +197,8 @@ const API_CONTRACT = [
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
   { name: 'newWorkspace', kind: 'invoke', channel: 'workspace:new' },
+  // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
+  { name: 'potSnapshot', kind: 'invoke', channel: 'pot:snapshot' },
 ];
 
 module.exports = { API_CONTRACT };
