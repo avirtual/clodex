@@ -29,6 +29,11 @@
 // loop process the key before the text arrives; ~30ms is comfortably enough.
 const CTRLU_SETTLE_MS = 30;
 
+// Bracketed-paste markers for the multi-line wrap below — single-sourced in
+// proxy-util (a pure leaf, so this require keeps the module electron-free and
+// unit-testable under plain node).
+const { PASTE_START, PASTE_END } = require('./proxy-util');
+
 // Pure decision: should the drainer keep waiting for a typing-quiet window before
 // injecting this item? True = wait more. Waits while a human touched the pane
 // within quietMs, but never past maxWaitMs from when THIS item began waiting.
@@ -77,7 +82,10 @@ class InjectQueue {
   //                         — surfaced for observability, never changes behavior
   //   ctrlUSettleMs         gap between the Ctrl-U write and the text write
   //                         (default CTRLU_SETTLE_MS; tests override to 0)
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs }) {
+  //   bracketedPaste()      live "does the CLI have paste mode 2004 on right
+  //                         now?" (sniffed from PTY output via pasteModeSignal)
+  //                         — gates the multi-line paste-wrap; default off
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste }) {
     this._write = write;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
@@ -88,6 +96,7 @@ class InjectQueue {
     this._sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     this._onCapFire = onCapFire || null;
     this._ctrlUSettleMs = Number.isFinite(ctrlUSettleMs) ? ctrlUSettleMs : CTRLU_SETTLE_MS;
+    this._bracketedPaste = bracketedPaste || (() => false);
     this._chain = Promise.resolve();
     this._length = 0;
   }
@@ -154,7 +163,24 @@ class InjectQueue {
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) return;
-    this._write(text.replace(/\n/g, '\r'));            // the text (\n→\r)
+    // Multi-line text: the \n→\r conversion below makes every interior newline
+    // an ENTER if node-pty happens to split this write across reads — the body
+    // submits early and the remainder lands as a SECOND prompt (observed live:
+    // a dm body + reply trailer arrived as two user turns in a box session).
+    // While the CLI has bracketed paste on (mode 2004, sniffed live from its
+    // own output — see pasteModeSignal), wrap the text in 200~/201~ markers:
+    // interior \r is then literal content regardless of read-splitting, exactly
+    // like a real terminal paste, and the paste region legitimately spans
+    // reads. The deferred Enter below still submits. Single-line text has no
+    // interior \r so it never needs the wrap; mode off ⇒ the old bare bytes
+    // (a wrap the CLI doesn't understand would land the markers literally).
+    let out = text.replace(/\n/g, '\r');               // the text (\n→\r)
+    if (text.includes('\n')) {
+      let pasteOn = false;
+      try { pasteOn = !!this._bracketedPaste(); } catch {}
+      if (pasteOn) out = PASTE_START + out + PASTE_END;
+    }
+    this._write(out);
     await this._sleep(this._settleMsFor(text));
     if (this._isDead()) return;
     this._write('\r');                                 // Enter — closes the unit

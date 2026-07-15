@@ -601,3 +601,28 @@ test('releaseAgeInfo: a missing/unparseable date keeps the behind count, age nul
   ];
   assert.deepStrictEqual(releaseAgeInfo('2.10.1', releases, Date.now()), { behind: 1, ageDays: null });
 });
+
+// --- pasteModeSignal: PTY-output paste-mode tracking -------------------------
+// The CLI enables/disables bracketed paste by writing \x1b[?2004h / \x1b[?2004l
+// to its terminal; the tracker reads that live state off the output stream to
+// gate the inject path's multi-line paste-wrap.
+const { pasteModeSignal } = require('../proxy-util');
+
+test('pasteModeSignal: enable turns it on, disable turns it off', () => {
+  assert.strictEqual(pasteModeSignal('boot noise \x1b[?2004h more', false), true);
+  assert.strictEqual(pasteModeSignal('teardown \x1b[?2004l bye', true), false);
+});
+
+test('pasteModeSignal: chunk with neither sequence keeps the previous state', () => {
+  assert.strictEqual(pasteModeSignal('plain output', true), true);
+  assert.strictEqual(pasteModeSignal('plain output', false), false);
+  assert.strictEqual(pasteModeSignal('', true), true);
+  assert.strictEqual(pasteModeSignal(null, true), true);
+  // prev defaults to false, and coerces truthy/absent cleanly
+  assert.strictEqual(pasteModeSignal('x'), false);
+});
+
+test('pasteModeSignal: both in one chunk — the LAST one wins', () => {
+  assert.strictEqual(pasteModeSignal('\x1b[?2004h mid \x1b[?2004l', true), false);
+  assert.strictEqual(pasteModeSignal('\x1b[?2004l mid \x1b[?2004h', false), true);
+});

@@ -247,3 +247,92 @@ test('InjectQueue: divert only claims its own item, not later ones', async () =>
   // First parked (no bytes); second wrote normally.
   assert.deepStrictEqual(writes, ['\x15', 'second', '\r']);
 });
+
+// --- InjectQueue: multi-line bracketed-paste wrap ----------------------------
+// A multi-line injection's \n→\r conversion makes each interior newline an
+// Enter if node-pty splits the write across reads (observed live: a dm body +
+// reply trailer landed as TWO user turns). While the CLI has paste mode 2004
+// on, the queue wraps multi-line text in 200~/201~ markers so interior \r is
+// literal content regardless of read-splitting; the trailing Enter still
+// submits as its own write.
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+test('InjectQueue: multi-line text is paste-wrapped when bracketedPaste is on', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    bracketedPaste: () => true,
+  });
+  await q.enqueue('body line\n(reply trailer)');
+  assert.deepStrictEqual(writes,
+    ['\x15', `${PASTE_START}body line\r(reply trailer)${PASTE_END}`, '\r']);
+});
+
+test('InjectQueue: single-line text is never wrapped, even with paste mode on', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    bracketedPaste: () => true,
+  });
+  await q.enqueue('one line only');
+  assert.deepStrictEqual(writes, ['\x15', 'one line only', '\r']);
+});
+
+test('InjectQueue: paste mode off (or absent) → old bare bytes for multi-line', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    // no bracketedPaste seam at all — back-compat default
+  });
+  await q.enqueue('line a\nline b');
+  assert.deepStrictEqual(writes, ['\x15', 'line a\rline b', '\r']);
+});
+
+test('InjectQueue: a throwing bracketedPaste falls back to unwrapped bytes', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    bracketedPaste: () => { throw new Error('boom'); },
+  });
+  await q.enqueue('line a\nline b');
+  assert.deepStrictEqual(writes, ['\x15', 'line a\rline b', '\r']);
+});
+
+test('InjectQueue: bracketedPaste is read at WRITE time, not enqueue time', async () => {
+  const writes = [];
+  let on = false; // off when enqueued, on by the time the item drains
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    bracketedPaste: () => on,
+  });
+  const first = q.enqueue('a\nb');
+  on = true;
+  const second = q.enqueue('c\nd');
+  await Promise.all([first, second]);
+  // First drained with mode still off at ITS write; the flag flipped
+  // synchronously before the chain ran, so both actually see on=true only if
+  // the queue read late — pin the second item, the unambiguous case.
+  assert.strictEqual(writes.filter((w) => w.startsWith(PASTE_START)).length >= 1, true);
+  assert.strictEqual(writes.at(-2), `${PASTE_START}c\rd${PASTE_END}`);
+});

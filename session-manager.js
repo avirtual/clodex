@@ -47,6 +47,11 @@ const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 // directly like ./wire-intents — it's stateless and electron-free, so it needs
 // no dep seam. See the wire-intent cutover gate in create().
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
+// Live bracketed-paste-mode tracking for the inject paste-wrap. Pure leaf,
+// required directly like ./claude-env (its siblings draftChunkSignal /
+// isDraftOpen cross as deps only because they predate the direct-require
+// precedent — move-only history, not a rule).
+const { pasteModeSignal } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -1146,6 +1151,14 @@ function createSessionManager(deps) {
         }
         this._sendToSession(name, 'pty-data', name, data);
         if (getRemoteServer()) { try { getRemoteServer().pushOutput(name, data); } catch {} }
+
+        // Live bracketed-paste mode (2004), sniffed from the CLI's own
+        // enable/disable writes — gates the InjectQueue's multi-line
+        // paste-wrap. The substring guard keeps the tracker off the hot path:
+        // it only runs on the rare chunk that carries the sequence at all.
+        if (data.includes('\x1b[?2004')) {
+          session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
+        }
 
         // In agent mode, PTY output is pass-through (intents come from JSONL)
         if (!agentType) {
@@ -3707,6 +3720,10 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           isDead: () => !!session._dead,
+          // Read live at each write: the CLI toggles 2004 around dialogs and
+          // teardown, so the wrap decision must track the CURRENT state, not
+          // the state when the item was enqueued.
+          bracketedPaste: () => !!session._pasteModeOn,
           // Observability: the quiet-gate cap forced an inject through active
           // typing (splice risk). Should drop to ~zero once parking handles DMs
           // during composition — this line validates that.

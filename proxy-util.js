@@ -230,6 +230,28 @@ function draftChunkSignal(chunk, inPaste = false) {
   return { closes, inPaste: paste };
 }
 
+// PTY-OUTPUT paste-mode tracker — the flip side of draftChunkSignal, which
+// reads INPUT. An application enables/disables bracketed paste by WRITING
+// \x1b[?2004h / \x1b[?2004l to its terminal, so the CLI's live paste-mode
+// state is readable from the output stream, CLI-agnostically. The inject path
+// uses it to decide whether wrapping a multi-line injection in 200~/201~
+// markers is safe: wrapped while the mode is OFF, the markers would land as
+// literal bytes in the input buffer. Returns the new state; a chunk carrying
+// neither sequence returns `prev`; when a chunk carries both, the LAST one
+// wins (matches the terminal's view). A sequence split across PTY reads is
+// missed — acceptable by fail direction: a missed enable ⇒ unwrapped
+// injection = the old behavior; a missed disable only matters in the
+// teardown window where the session is dying anyway.
+const PASTE_MODE_ON = '\x1b[?2004h';
+const PASTE_MODE_OFF = '\x1b[?2004l';
+function pasteModeSignal(chunk, prev = false) {
+  const s = chunk == null ? '' : String(chunk);
+  const on = s.lastIndexOf(PASTE_MODE_ON);
+  const off = s.lastIndexOf(PASTE_MODE_OFF);
+  if (on < 0 && off < 0) return !!prev;
+  return on > off;
+}
+
 // Level-triggered "is the operator mid-draft right now?" latch. True once a
 // keystroke has landed more recently than the last submit/abort — and it STAYS
 // true across thinking pauses, unlike the time-windowed quiet-gate which
@@ -508,7 +530,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
-  draftChunkSignal, isDraftOpen,
+  draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,
   versionSeverity, updateApplies, releaseAgeInfo,
   DM_HOLD_IDLE_MS, peerStatusLabel, shouldHoldDm,
 };
