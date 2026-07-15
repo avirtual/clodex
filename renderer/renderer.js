@@ -11,6 +11,7 @@ const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { SANDBOX_PLACEMENT_CWD, hasSandboxPeer, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
+const { dropText } = require('./lib/drop-paths');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
@@ -627,6 +628,40 @@ function createTerminal(name, peer = null) {
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
+
+// ── Drag-drop a file onto the active session: type its shell-quoted path at
+// the prompt (iTerm behavior). Desktop-only — browsers don't expose host paths
+// on dropped Files; Electron 32+ removed File.path, so resolution goes through
+// webUtils.getPathForFile. window.require (nodeIntegration) is the electron
+// access: esbuild leaves it alone, so the web bundle sees undefined and the
+// handler degrades to a toast. Document-level preventDefault first — without it
+// a drop that misses the handler navigates the whole window to file://.
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+terminalContainer.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (!files.length || !activeSession) return;
+  if (window.__CLODEX_WEB__ || !window.require) {
+    showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
+    return;
+  }
+  const entry = sessions.get(activeSession);
+  if (!entry) return;
+  if (entry.peer) {
+    // A host path means nothing inside a peer/sandbox filesystem — typing it
+    // would just plant a broken path at the remote prompt.
+    showToast(`"${activeSession}" runs on a peer — its filesystem doesn’t have this file.`, { kind: 'peer-ui' });
+    return;
+  }
+  const { webUtils } = window.require('electron');
+  const text = dropText(files.map((f) => {
+    try { return webUtils.getPathForFile(f); } catch { return null; }
+  }));
+  if (!text) return;
+  window.api.writeToSession(activeSession, text);
+  entry.terminal.focus();
+});
 
 // Read-only peer re-measure: xterm can hold stale char metrics when its pane
 // was visibility:hidden (auto-restore attaches without switching) or when the
