@@ -47,8 +47,8 @@ MEMORY:
 Your saved memories reach every NEW conversation of yours automatically — pinned units in full, the rest as an index you can recall by id. So when you learn something durable (a project fact, a hard-won gotcha, an operator preference), save it with [agent:memory remember], and pin the ones every future session must know (pinned=true saves and pins in one intent). Saves, pins and deletes succeed silently: the confirmation (with the unit id) arrives attached to your NEXT turn's context rather than waking you, so don't wait for it — only failures come back immediately.
 
 RULES:
-- An intent must start at column 1 on its own line. Indented or inline intents are ignored (that's how you quote one safely); escape a literal column-1 intent with a backslash: \`\\[agent:...]\`.
-- A dm or memory-remember body runs from its intent line until the next column-1 \`[agent:...]\` line or the end of your reply. You may emit several intents in one reply, each on its own line, in order. Put anything meant for your operator above the intents.
+- An intent must start on its own line. Leading whitespace and list decoration are stripped before matching, so an INDENTED intent still fires — indentation is not a quote. Mid-line intents (prose before the bracket) never fire. The only safe way to quote an intent literally is the backslash escape: \`\\[agent:...]\` (works indented too).
+- A dm or memory-remember body runs from its intent line until the next \`[agent:...]\` intent line or the end of your reply. You may emit several intents in one reply, each on its own line, in order. Put anything meant for your operator above the intents.
 - Messages are plain text, max 64KB.
 
 SHELL COMMANDS:
@@ -108,8 +108,8 @@ const MEMORY_SECTION = `MEMORY:
 Your saved memories reach every NEW conversation of yours automatically — pinned units in full, the rest as an index you can recall by id. So when you learn something durable (a project fact, a hard-won gotcha, an operator preference), save it with [agent:memory remember], and pin the ones every future session must know (pinned=true saves and pins in one intent). Saves, pins and deletes succeed silently: the confirmation (with the unit id) arrives attached to your NEXT turn's context rather than waking you, so don't wait for it — only failures come back immediately.`;
 
 const TRAILER = `RULES:
-- An intent must start at column 1 on its own line. Indented or inline intents are ignored (that's how you quote one safely); escape a literal column-1 intent with a backslash: \`\\[agent:...]\`.
-- A dm or memory-remember body runs from its intent line until the next column-1 \`[agent:...]\` line or the end of your reply. You may emit several intents in one reply, each on its own line, in order. Put anything meant for your operator above the intents.
+- An intent must start on its own line. Leading whitespace and list decoration are stripped before matching, so an INDENTED intent still fires — indentation is not a quote. Mid-line intents (prose before the bracket) never fire. The only safe way to quote an intent literally is the backslash escape: \`\\[agent:...]\` (works indented too).
+- A dm or memory-remember body runs from its intent line until the next \`[agent:...]\` intent line or the end of your reply. You may emit several intents in one reply, each on its own line, in order. Put anything meant for your operator above the intents.
 - Messages are plain text, max 64KB.
 
 SHELL COMMANDS:
