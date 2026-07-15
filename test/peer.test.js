@@ -19,6 +19,7 @@ const resizes = [];
 const controlChanges = [];
 const restarts = [];
 const created = [];
+const createdSpecs = []; // raw spec objects the owner received (M5 full-param body)
 const killed = [];
 const restartedSessions = [];
 const setArgsCalls = [];
@@ -87,13 +88,19 @@ before(async () => {
     restartApp: () => { restarts.push(Date.now()); },
     // Fake owner-side create/kill, mirroring main.js's distinguishable-error
     // contract: bad name/type, name taken, spawn ack {ok,name,type,pid}.
-    createSession: ({ name, type, cwd }) => {
+    createSession: (spec) => {
+      // Record the WHOLE spec (M5 full-param body) so client-side pass-through +
+      // exec-strip can be asserted; keep the {name,type,cwd} shape existing tests read.
+      createdSpecs.push(spec);
+      const { name, type, cwd } = spec || {};
       if (!/^[a-zA-Z0-9._-]{1,64}$/.test(String(name || ''))) return { ok: false, error: `invalid name "${name}"` };
       if (type !== 'claude' && type !== 'codex' && type !== 'bash') return { ok: false, error: `invalid type "${type}"` };
       if (created.some((c) => c.name === name) || name === 'alpha') return { ok: false, error: `name taken "${name}"` };
       created.push({ name, type, cwd });
       return { ok: true, name, type, pid: 4242 };
     },
+    // Session-less catalogs (M5) — box-truth for a New Session dialog on this peer.
+    getCatalogs: () => ({ agents: ['a1'], prompts: ['p1'], skills: ['s1'], claudeTools: ['Bash'], proxyUrl: null, proxyEnabled: false }),
     killSession: (name) => {
       if (name !== 'alpha' && !created.some((c) => c.name === name)) return { ok: false, error: `no such session "${name}"` };
       killed.push(name);
@@ -173,6 +180,10 @@ test('hello: identity and caps reach the peer, connection goes online', async ()
   assert.ok(st.caps.includes('control'));
   assert.ok(st.caps.includes('query'));
   assert.ok(st.caps.includes('create'));
+  // create2 rides alongside create (M5) — this box takes the full-param body +
+  // serves /api/catalogs. It reaches the renderer through peerStatuses untouched
+  // (no cap filter), the precedent the New Session un-grey gate reuses in slice 4.
+  assert.ok(st.caps.includes('create2'));
   assert.ok(st.caps.includes('args'));   // getSessionArgs callback wired → Edit Session
   // 'dm' is advertised because the server was built with a deliverDm callback —
   // it's what tells a consumer this box can be dm-federated.
@@ -527,6 +538,57 @@ test('create: distinguishable errors (collision, bad name, bad type)', async () 
   const badType = await new Promise((r) => conn.createSession({ name: 'ok2', type: 'python', cwd: '/tmp/x' }, r));
   assert.equal(badType.ok, false);
   assert.match(badType.error, /invalid type/);
+});
+
+test('create: the WHOLE spec (M5 full-param body) reaches the owner, not just name/type/cwd', async () => {
+  const spec = {
+    name: 'rich', type: 'claude', cwd: '/tmp/rich',
+    injectSkills: ['inj1'], stripLevel: 2, intents: ['dm'], denyBuiltins: ['Explore'],
+  };
+  const res = await new Promise((r) => conn.createSession(spec, r));
+  assert.ok(res.ok, 'create acked ok');
+  const got = createdSpecs.at(-1);
+  assert.deepStrictEqual(got.injectSkills, ['inj1']);
+  assert.strictEqual(got.stripLevel, 2);
+  assert.deepStrictEqual(got.intents, ['dm']);
+  assert.deepStrictEqual(got.denyBuiltins, ['Explore']);
+});
+
+test('create: exec grants are stripped CLIENT-side before the wire (never cross either direction)', async () => {
+  const res = await new Promise((r) => conn.createSession({
+    name: 'noexec', type: 'claude', cwd: '/tmp/ne',
+    execCommands: [{ name: 'rm', cmd: 'rm -rf /' }],
+  }, r));
+  assert.ok(res.ok);
+  const got = createdSpecs.at(-1);
+  assert.ok(!('execCommands' in got), 'execCommands never reached the owner over the wire');
+});
+
+test('getCatalogs: returns the box-truth catalogs wrapped as { ok, catalogs }', async () => {
+  const res = await new Promise((r) => conn.getCatalogs(r));
+  assert.ok(res.ok);
+  assert.deepStrictEqual(res.catalogs, {
+    agents: ['a1'], prompts: ['p1'], skills: ['s1'], claudeTools: ['Bash'], proxyUrl: null, proxyEnabled: false,
+  });
+});
+
+test('getCatalogs: an old (non-create2) box 501s → a clean { ok:false }', async () => {
+  // A bare server with no getCatalogs callback 501s the route; the client maps
+  // that to a well-formed error, never a throw.
+  const bare = new RemoteServer({
+    port: 0, pagePath: '/nonexistent',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+  });
+  await bare.start();
+  const c = new PeerConnection({ id: 'bare', url: `http://127.0.0.1:${bare.port}`, selfLabel: 'test', emit: () => {} });
+  c.start();
+  try {
+    const res = await new Promise((r) => c.getCatalogs(r));
+    assert.equal(res.ok, false);
+  } finally {
+    c.stop();
+    bare.stop();
+  }
 });
 
 test('kill: existing session acks ok; missing session is a distinguishable error', async () => {

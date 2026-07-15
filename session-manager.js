@@ -96,6 +96,7 @@ function createSessionManager(deps) {
     Transport,
     WIRE_INTENTS_LIVE,
     WIRE_SHADOW,
+    BUILTIN_AGENTS,
     buildAgentsArg,
     buildIpcPrompt,
     childProcess,
@@ -104,6 +105,8 @@ function createSessionManager(deps) {
     cleanupClaudeHook,
     cleanupCodexHook,
     cleanupSkillPlugin,
+    effectiveInjectedSkills,
+    unresolvedSubagentRefs,
     codexStatusLineArg,
     collectSystemDiagnostics,
     composeDigest,
@@ -622,6 +625,9 @@ function createSessionManager(deps) {
 
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
+      // Non-fatal config heads-up collected during the claude arm and handed back
+      // on the create result (the renderer toasts them). Never blocks a spawn.
+      const warnings = [];
       const agentType = (type === 'claude') ? 'claude' : (type === 'codex') ? 'codex' : null;
       // W3: which mechanism owns live intent dispatch + activity for this
       // session. 'wire' only when the claude spawn actually registered with the
@@ -778,6 +784,29 @@ function createSessionManager(deps) {
           if (!args.includes('--plugin-dir')) {
             const pluginDir = writeSkillPlugin(name, injectSkills);
             if (pluginDir) args.push('--plugin-dir', pluginDir);
+            // Warn (never block) when an injected skill's body names a subagent that
+            // isn't on THIS session's roster — the CLI would just fail to delegate,
+            // invisibly. Scan the EXACT records writeSkillPlugin loaded against the
+            // enabled set: custom agents (the --agents overlay) ∪ built-ins minus the
+            // denied ones. Lives inside this branch because a user-supplied
+            // --plugin-dir (else arm) means clodex injected nothing — warning about
+            // skills that aren't loaded would be the exact lie the shared union
+            // exists to prevent. Observer-grade: any hiccup degrades to no warning,
+            // so a detector bug can't stop a spawn.
+            try {
+              const records = effectiveInjectedSkills(name, injectSkills);
+              if (records.length) {
+                const agentLib = getAgentLibrary().list();
+                const deny = Array.isArray(denyBuiltins) ? denyBuiltins : [];
+                const enabled = new Set([
+                  ...unionEnabled(agents, agentLib, name),
+                  ...BUILTIN_AGENTS.filter((b) => !deny.includes(b)),
+                ]);
+                for (const { skill, ref } of unresolvedSubagentRefs(records, enabled)) {
+                  warnings.push(`Skill "${skill}" calls subagent "${ref}", which isn't enabled for this session — that delegation will fail. Enable it (or remove the deny) in the session's agents.`);
+                }
+              }
+            } catch {}
           } else {
             cleanupSkillPlugin(name);
           }
@@ -1173,7 +1202,7 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      return { name, type, pid: ptyProc.pid, backend };
+      return { name, type, pid: ptyProc.pid, backend, ...(warnings.length ? { warnings } : {}) };
     }
 
     write(name, data) {

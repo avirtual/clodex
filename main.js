@@ -37,21 +37,11 @@ fixPathFromLoginShell();
 
 // Env self-decontamination. If Clodex was launched (or relaunched — including
 // app.relaunch() from the remote restart endpoint) from inside a Claude Code
-// session, the whole process tree inherits that session's CLAUDE_* markers.
-// The damage is real and subtle: PTY-spawned CLIs see CLAUDE_CODE_SESSION_ID /
-// CLAUDE_CODE_CHILD_SESSION and behave as nested child sessions — observed
-// 2026-07-05 as every resumed agent silently NOT writing its transcript, which
-// blinds the JsonlWatcher (intents dead) and the phone view at once. Strip the
-// whole namespace before anything can inherit it; app.relaunch() then carries
-// the clean env forward. An inherited ANTHROPIC_BASE_URL is only scrubbed when
-// it points at an agent-scoped proxy route (ours or a dead predecessor's tee)
-// — a user's own global endpoint override survives.
-for (const k of Object.keys(process.env)) {
-  if (/^CLAUDE(CODE|_)/.test(k)) delete process.env[k];
-}
-if (/\/agent\/[^/]+\//.test(process.env.ANTHROPIC_BASE_URL || '')) {
-  delete process.env.ANTHROPIC_BASE_URL;
-}
+// session, inherited CLAUDE_* markers make PTY-spawned CLIs behave as nested
+// child sessions. Scrub semantics + survivor list (OAuth token, a user's own
+// ANTHROPIC_BASE_URL) live in claude-env.js; app.relaunch() then carries the
+// clean env forward.
+require('./claude-env').scrubInheritedClaudeMarkers(process.env);
 
 // Set once a quit is in flight (before-quit / non-darwin window-all-closed).
 // Used to suppress node-pty's native teardown throws during shutdown.

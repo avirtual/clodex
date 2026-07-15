@@ -42,7 +42,7 @@ const RESIZE_DEBOUNCE_MS = 80;
 class RemoteServer {
   constructor({ port, host, pagePath, getSessions, getTranscript, send, restartApp,
                 hostLabel, version, srcDir, getAttachInfo, sendInput, resizePty, onControlChange,
-                query, createSession, killSession, restartSession,
+                query, createSession, killSession, restartSession, getCatalogs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins, receiveRoster,
@@ -81,6 +81,10 @@ class RemoteServer {
     this._createSession = createSession || null;
     this._killSession = killSession || null;
     this._restartSession = restartSession || null;
+    // Session-less catalog read backing the New Session dialog's box-truth
+    // checklists (M5). Rides the 'create' cap; its presence + a full-param
+    // createSession is what the create2 hello cap advertises.
+    this._getCatalogs = getCatalogs || null;
     // Remote session config editing (the Edit Session dialog over the wire).
     // getSessionArgs reads the box's editable args + the catalogs the dialog's
     // checklists need; setSessionArgs applies them (kill+respawn on restart).
@@ -434,7 +438,13 @@ class RemoteServer {
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
-      if (this._createSession) caps.push('create'); // covers create + kill + restart (ship together)
+      if (this._createSession) {
+        caps.push('create'); // covers create + kill + restart (ship together)
+        // create2 = this box accepts the FULL-param create body + serves
+        // /api/catalogs (M5). A separate string so old clients ignore it and keep
+        // the bare {name,type,cwd} behavior; on this version 'create' ⇒ 'create2'.
+        caps.push('create2');
+      }
       if (this._getSessionArgs) caps.push('args');   // remote session config editing — args + skills pairs, ship together under one cap
       if (this._deliverDm) caps.push('dm'); // inbound DM + outbox claim (federation)
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
@@ -590,20 +600,36 @@ class RemoteServer {
       this._restartApp();
       return;
     }
-    // Remote session create — {name, type, cwd}. The owner routes to the live
-    // create() path; the ack carries the whole outcome (viewer sees no dialogs
-    // on this box), with distinguishable errors: bad name/type, name taken, bad
-    // cwd, spawn failure. Trust is the tunnel, same as every peer RPC — no token.
+    // Remote session create — the full-param body (M5): {name, type, cwd} plus the
+    // optional setArgs patch keys + create-only resumeId/fork/stripLevel/intents.
+    // Bare {name,type,cwd} stays valid (compat); the whole parsed body is forwarded
+    // so the owner (remote-wiring) maps it onto create() and drops what never
+    // crosses (exec grants). The ack carries the whole outcome (viewer sees no
+    // dialogs on this box), with distinguishable errors: bad name/type, name taken,
+    // bad cwd, spawn failure, plus non-fatal warnings[]. Trust is the tunnel, same
+    // as every peer RPC — no token.
     if (req.method === 'POST' && p === '/api/sessions') {
       if (!this._createSession) return this._json(res, 501, { ok: false, error: 'create not available' });
       return this._readBody(req, res, (body) => {
         let msg;
         try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
         Promise.resolve()
-          .then(() => this._createSession({ name: msg.name, type: msg.type, cwd: msg.cwd }))
+          .then(() => this._createSession(msg))
           .then((out) => this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'create failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    // Session-less catalogs for the New Session dialog when it targets THIS box
+    // (M5): the checklists must render the box's skills/agents/prompts/tools, not
+    // the viewer's own libraries. A SUPERSET of /api/session-args' catalogs block
+    // (adds skills; agents unscoped — no session to scope by pre-create). Rides the
+    // 'create' capability; the create2 hello cap tells the viewer it's available.
+    if (req.method === 'GET' && p === '/api/catalogs') {
+      if (!this._getCatalogs) return this._json(res, 501, { ok: false, error: 'catalogs not available' });
+      return Promise.resolve()
+        .then(() => this._getCatalogs())
+        .then((cat) => this._json(res, 200, { ok: true, catalogs: cat || {} }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
     // Remote session kill — user-initiated semantics on the owner (removes from
     // persistence, no resume). Path-scoped like input/control/resize.

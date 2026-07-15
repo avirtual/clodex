@@ -126,11 +126,122 @@ Fallback documented in the dialog: leave empty and log in interactively
 inside a sandbox bash session (`claude login` — works today, persists in
 the claude-auth volume).
 
-### M5 (later, unqueued) — full-param wire create
+### M5 — full-param wire create (ACTIVE, spec ruled 2026-07-16)
 
-Extend POST /api/sessions + peerCreateSession + remote-wiring create with
-the rich param set (skills/prompts/tools/intents/exec grants), then un-grey
-the M3 fields. A spec of its own; touches the peer protocol version.
+Goal: a sandbox-placed New Session is configured exactly like a host one —
+skills/prompts/tools/intents/proxy/extraArgs — instead of the M3 bare
+name/type/cwd. The wire op stays GENERIC (any peer with the cap), the
+sandbox is just its first consumer.
+
+**Ground truth (verified 07-16, do not re-derive):**
+
+- `manager.create()` takes the full 18-param set (session-manager.js:610);
+  the wire create (remote-wiring.js:163) currently nulls everything past
+  cwd. `POST /api/sessions` body is `{name,type,cwd}` (remote.js:597).
+- The wire EDIT path already solved most of M5's problems:
+  `setSessionArgs` carries {extraArgs, proxy, systemPrompt, agents,
+  denyBuiltins, disabledTools, disabledSkills, injectSkills,
+  systemPromptFile, appendPromptFiles} with `withoutExecGrants` as the
+  server-side backstop (exec grants are LOCAL-ONLY, settled), and
+  `getSessionArgs` returns the BOX's catalogs so the viewer's checklists
+  render box-truth, never its own libraries.
+- intents + execCommands are spawn-frozen (they materialize into the IPC
+  prompt / grant set at create; edit can't add them later) — so create is
+  the only wire op where intents can ever cross.
+- Capability mechanism exists: hello `caps` array ('create' covers
+  create/kill/restart; 'args' covers the edit pairs).
+
+**Decided:**
+
+1. **Param shape**: `POST /api/sessions` body grows the setArgs patch keys
+   VERBATIM (same names, same semantics) plus create-only fields:
+   `{name, type, cwd, extraArgs, resumeId, fork, proxy, agents,
+   denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel,
+   systemPromptFile, appendPromptFiles, intents}`. All optional — the old
+   M3 body stays valid, so the HTTP change is purely additive.
+   systemPromptBody stays null (F2: legacy inline body never authored at
+   create). Owner side maps onto the existing `manager.create()` params.
+2. **Exec grants NEVER cross** — `withoutExecGrants` applied inbound,
+   renderer never sends them (mirror of the edit path, belt-and-
+   suspenders). Known consequence: sandbox sessions can't receive exec
+   grants over the wire at all (the headless box has no local dialog);
+   acceptable for v1 — exec-in-container is contained anyway, revisit only
+   on operator ask.
+3. **Vetting taxonomy** (server side, remote-wiring createSession):
+   restrictive fields (denyBuiltins/disabledTools/disabledSkills/intents)
+   pass through — they only shrink capability. Referential fields
+   (agents/injectSkills/systemPromptFile/appendPromptFiles) resolve against
+   the BOX's libraries; unknown names ride a non-fatal `warnings[]` in the
+   ack (35be4c4-style warn-don't-block), never a hard fail. NOTE (hand,
+   07-16): the wire ack currently DROPS create()'s warnings — createSession
+   returns only {name,type,pid}. M5 must forward `out.warnings` in the ack
+   and surface them client-side through doCreate's existing toast path;
+   that plumbing is part of this milestone, not pre-existing. extraArgs/
+   proxy pass through (precedent: the edit wire already carries both;
+   trust is the tunnel).
+4. **Cap, not version bump**: hello caps gains `create2` when the box
+   accepts the full body. The viewer un-greys the M3 fields only when the
+   placement peer advertises `create2`; older peers keep the greyed M3
+   behavior. No protocol version change needed — additive body + cap gate.
+5. **Catalog truth**: when placement=Sandbox the dialog's checklists must
+   render the SANDBOX's catalogs (box-truth rule, same as the Edit dialog).
+   New `GET /api/catalogs` (rides the 'create' cap): a SUPERSET of
+   getSessionArgs' catalogs block — that block has NO skills key (the edit
+   dialog's skill checklist rides the separate session-scoped
+   getSkillCatalog, which needs a roster; pre-create there is none). Shape:
+   `{agents, prompts, skills: skillLib.list(), claudeTools, proxyUrl,
+   proxyEnabled}`. Dialog fetches on placement flip to Sandbox, re-renders
+   checklists from it; flipping back restores host catalogs. New renderer
+   IPC channel (peerCatalogs) → api-contract pin 177→178.
+6. **stripLevel** (hand-verified 07-16): NOT a manager.create() param —
+   locally it's seeded post-create in ipc-handlers.js:94-95
+   (persistence.setStripLevel, with an agentDefaults.getStrip fallback);
+   the engine path has no create-time seeding (it only re-asserts a
+   persisted level on restart/apply). Wire createSession replicates the
+   post-create seed (~2 lines, persistence is in engine scope) honoring the
+   EXPLICIT wire stripLevel only — no agentDefaults fallback; the client
+   is authoritative for a wire create, the box's local defaults must not
+   leak in.
+7. **Empty-library fix — ro library sub-mounts** (hand-scoped 07-16,
+   Bogdan-ruled 07-16: broad mount, skills+agents+library/): all four
+   libraries are shared
+   `~/.clodex` subdirs, LIVE-read (stores.js keeps no in-memory Map; every
+   accessor re-reads disk): skills=`skills/*.md`, agents=`agents/*.md`,
+   prompts=`library/prompts/{system,append}/*.md`, exec=
+   `library/exec/*.json`. So read-only bind sub-mounts give box catalogs ==
+   host catalogs AND host edits propagate mid-run — strictly better than
+   copy-at-Start. TRAP: the container's whole `/home/clodex/.clodex` is the
+   named volume `clodex-dot` (sandbox.js:142) which the box WRITES (run/,
+   messages/, pending/, registry) — do NOT replace it; layer ro binds ON
+   TOP for the library dirs only. Scope: **skills + agents + library/**
+   (library/ covers prompts; exec/ rides along but is dead weight —
+   exec grants never cross per Decision 2, so its presence is harmless;
+   omit-exec would mean two narrower prompt binds instead). This makes
+   Decision 3's referential warnings a rare path (names always resolve),
+   but the plumbing stays — required for the unknown-name case.
+
+Un-grey plan: `richFieldsGreyed(placement)` (pure leaf, placement.js) gains
+a `hasCreate2` boolean param — cap lookup stays in renderer.js
+(`peerStatuses.get(id).caps.includes('create2')`, exact precedent:
+peerSupportsArgs/peerSupportsCreate) so the leaf stays dependency-free.
+doCreate's sandbox branch collects the full cfg and posts the additive
+body only when create2.
+
+Sequencing (each its own review+commit):
+1. sandbox.js ro library sub-mounts — independent of the wire work, lands
+   first, de-risks the rest.
+2. Server+wiring: full-body createSession (param mapping, withoutExecGrants,
+   warnings-forwarding ack, stripLevel seed) + GET /api/catalogs.
+3. peer-client/ipc: full body through peerCreateSession, `create2` cap,
+   peerCatalogs channel (pin 177→178).
+4. Renderer: cap-aware un-grey, catalog swap on placement flip, full-cfg
+   post, warning toasts from the wire ack.
+
+Protocol tests pin the additive-body compatibility: old client → new
+server (bare body still works) and cap-gating (client never sends rich
+fields to a non-create2 server — an old server drops unknown keys
+silently, which would spawn an unconfigured session; the cap gate, not
+graceful-ignore, is load-bearing).
 
 ## Non-goals (v1)
 

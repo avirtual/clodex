@@ -28,10 +28,17 @@ function nextCwd(placement, currentCwd, hostDefault) {
   return currentCwd === SANDBOX_PLACEMENT_CWD ? hostDefault : currentCwd;
 }
 
-// The rich per-session fields are unavailable for sandbox placement until the
-// create-on-peer wire carries them (M5) — greyed, not sent.
-function richFieldsGreyed(placement) {
-  return placement === 'sandbox';
+// Whether the rich per-session fields are greyed (disabled, not sent) for the
+// current placement. Host is never greyed. Sandbox is greyed UNLESS the box
+// advertises the `create2` capability (M5): a create2 box takes the full-param
+// create body and serves its own catalogs, so the fields are live and box-true.
+// A non-create2 sandbox peer (an older box that would silently DROP unknown body
+// keys) keeps the M3 greyed behaviour — the cap gate is load-bearing: never send
+// rich fields to a box that can't honour them. hasCreate2 defaults false so an
+// un-updated caller stays safe (greyed).
+function richFieldsGreyed(placement, hasCreate2 = false) {
+  if (placement !== 'sandbox') return false;
+  return !hasCreate2;
 }
 
 module.exports = { SANDBOX_PLACEMENT_CWD, hasSandboxPeer, nextCwd, richFieldsGreyed };

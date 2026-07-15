@@ -30,9 +30,19 @@ test('nextCwd: a hand-typed path is preserved across a placement flip', () => {
   assert.strictEqual(nextCwd('host', '/srv/thing', '/Users/me'), '/srv/thing');
 });
 
-test('richFieldsGreyed: sandbox greys, host does not', () => {
-  assert.strictEqual(richFieldsGreyed('sandbox'), true);
+test('richFieldsGreyed: host is never greyed, regardless of create2', () => {
   assert.strictEqual(richFieldsGreyed('host'), false);
+  assert.strictEqual(richFieldsGreyed('host', false), false);
+  assert.strictEqual(richFieldsGreyed('host', true), false);
+});
+
+test('richFieldsGreyed: a non-create2 sandbox box stays greyed (M3 behaviour, cap gate)', () => {
+  assert.strictEqual(richFieldsGreyed('sandbox'), true, 'default (no cap) → greyed, safe');
+  assert.strictEqual(richFieldsGreyed('sandbox', false), true);
+});
+
+test('richFieldsGreyed: a create2 sandbox box un-greys (M5 full-param create)', () => {
+  assert.strictEqual(richFieldsGreyed('sandbox', true), false);
 });
 
 test('SANDBOX_PLACEMENT_CWD is the container work mount', () => {

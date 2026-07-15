@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { GATEABLE_INTENTS, GATEABLE_TYPES, intentEnabled, intentsAllowlistFromChecked } = require('../intent-catalog');
+const { GATEABLE_INTENTS, GATEABLE_TYPES, intentEnabled, intentsAllowlistFromChecked, deniedIntentCount } = require('../intent-catalog');
 
 const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 
@@ -75,6 +75,29 @@ test('intentsAllowlistFromChecked: nothing checked → [] (a real "everything ga
   const r = intentsAllowlistFromChecked([]);
   assert.ok(Array.isArray(r));
   assert.strictEqual(r.length, 0);
+});
+
+test('deniedIntentCount: absent/null allowlist → 0 (the living all-enabled default)', () => {
+  assert.strictEqual(deniedIntentCount(null), 0);
+  assert.strictEqual(deniedIntentCount(undefined), 0);
+  assert.strictEqual(deniedIntentCount('not-an-array'), 0);
+});
+
+test('deniedIntentCount: [] → every gateable intent denied', () => {
+  assert.strictEqual(deniedIntentCount([]), GATEABLE_INTENTS.length);
+});
+
+test('deniedIntentCount: a subset → the complement count', () => {
+  // Two allowed → the rest denied.
+  assert.strictEqual(deniedIntentCount(['dm', 'who']), GATEABLE_INTENTS.length - 2);
+  // All allowed → 0.
+  assert.strictEqual(deniedIntentCount(ALL_TYPES), 0);
+});
+
+test('deniedIntentCount: strays in the list do not offset the denied count', () => {
+  // A bogus/non-gateable entry can never mark a real intent enabled, so it can't
+  // shrink the denied count — only catalog membership counts.
+  assert.strictEqual(deniedIntentCount(['dm', 'name', 'bogus']), GATEABLE_INTENTS.length - 1);
 });
 
 test('intentsAllowlistFromChecked: stray/non-gateable values are dropped, not counted', () => {

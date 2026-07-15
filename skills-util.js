@@ -80,4 +80,40 @@ function buildSkillPlugin(names, library, pluginName = 'clodex-skills') {
   return { manifest, skills };
 }
 
-module.exports = { parseSkillFrontmatter, skillMd, buildSkillPlugin };
+// A skill body may instruct the model to spawn a specific subagent via the Task
+// tool's `subagent_type` field (e.g. grok's `subagent_type: "Explore"`). If that
+// target isn't on the session's enabled roster, the spawn silently fails to
+// delegate — a config foot-gun the operator can't see. `subagent_type` is a
+// literal Task-tool field name, so this regex has a low false-positive rate;
+// it accepts `:` or `=`, optional quotes, and the `[A-Za-z0-9_-]` agentType
+// charset (matching BUILTIN_AGENTS + the library name regex).
+const SUBAGENT_REF_RE = /subagent_type\s*[:=]\s*["']?([A-Za-z0-9_-]+)["']?/g;
+
+// Scan the EXACT set of injected skill records ([{ name, content }, ...] — the
+// same union writeSkillPlugin scaffolds, so we never warn about a skill that
+// isn't actually loaded) for subagent_type references whose target isn't in
+// `enabled` (the session's custom agents ∪ un-denied built-ins, a Set or array
+// of names). Returns deduped { skill, ref } pairs. Advisory only — the caller
+// warns and NEVER blocks: a reference in skill TEXT must not stop a spawn.
+function unresolvedSubagentRefs(records, enabled) {
+  const ok = enabled instanceof Set ? enabled : new Set(enabled || []);
+  const out = [];
+  const seen = new Set();
+  for (const rec of records || []) {
+    if (!rec || !rec.name) continue;
+    const body = String(rec.content || '');
+    SUBAGENT_REF_RE.lastIndex = 0;
+    let m;
+    while ((m = SUBAGENT_REF_RE.exec(body)) !== null) {
+      const ref = m[1];
+      if (ok.has(ref)) continue;
+      const key = `${rec.name}\0${ref}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ skill: rec.name, ref });
+    }
+  }
+  return out;
+}
+
+module.exports = { parseSkillFrontmatter, skillMd, buildSkillPlugin, unresolvedSubagentRefs };

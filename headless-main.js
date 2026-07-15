@@ -91,15 +91,12 @@ function fixPathFromLoginShell() {
 }
 fixPathFromLoginShell();
 
-// ── Env self-decontamination ── (see main.js) strip inherited CLAUDE_* markers
-// and an agent-scoped ANTHROPIC_BASE_URL so PTY-spawned CLIs don't behave as
-// nested child sessions (which silently blinds transcript writes).
-for (const k of Object.keys(process.env)) {
-  if (/^CLAUDE(CODE|_)/.test(k)) delete process.env[k];
-}
-if (/\/agent\/[^/]+\//.test(process.env.ANTHROPIC_BASE_URL || '')) {
-  delete process.env.ANTHROPIC_BASE_URL;
-}
+// ── Env self-decontamination ── strip inherited CLAUDE_* markers and an
+// agent-scoped ANTHROPIC_BASE_URL so PTY-spawned CLIs don't behave as nested
+// child sessions (which silently blinds transcript writes). The OAuth token
+// survives — in the sandbox it arrives via the seeded container env (M4) and
+// sessions must inherit it. Semantics live in claude-env.js.
+require('./claude-env').scrubInheritedClaudeMarkers(process.env);
 
 // ── PTY-teardown crash net ── node-pty's native layer can throw a Napi error
 // asynchronously as a PTY fd closes; benign during shutdown, loud otherwise.

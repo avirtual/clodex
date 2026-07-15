@@ -2036,6 +2036,11 @@ html, body {
   border-left-color: var(--error);
 }
 
+/* Non-fatal config heads-up (e.g. an injected skill names an unenabled subagent). */
+.toast-warn {
+  border-left-color: var(--warn);
+}
+
 .toast-clickable {
   cursor: pointer;
 }

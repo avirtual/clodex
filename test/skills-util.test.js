@@ -3,7 +3,7 @@
 // SKILL.md normalization (canonical name), and the plugin-scaffold builder.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseSkillFrontmatter, skillMd, buildSkillPlugin } = require('../skills-util');
+const { parseSkillFrontmatter, skillMd, buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
 
 test('parseSkillFrontmatter: splits frontmatter from body, strips quotes', () => {
   const { meta, body } = parseSkillFrontmatter(
@@ -48,4 +48,34 @@ test('buildSkillPlugin: scaffolds manifest + per-skill SKILL.md, skips unknown',
 test('buildSkillPlugin: empty / all-unknown => null', () => {
   assert.strictEqual(buildSkillPlugin([], []), null);
   assert.strictEqual(buildSkillPlugin(['x'], [{ name: 'y', content: '' }]), null);
+});
+
+test('unresolvedSubagentRefs: flags a subagent_type not in the enabled set', () => {
+  const records = [{ name: 'grok', content: 'Spawn Task with subagent_type: "grok-synth" to synthesize.' }];
+  const out = unresolvedSubagentRefs(records, new Set(['Explore', 'general-purpose']));
+  assert.deepStrictEqual(out, [{ skill: 'grok', ref: 'grok-synth' }]);
+});
+
+test('unresolvedSubagentRefs: silent when every ref is enabled (accepts array)', () => {
+  const records = [{ name: 'grok', content: 'subagent_type: "Explore" or subagent_type=general-purpose' }];
+  assert.deepStrictEqual(unresolvedSubagentRefs(records, ['Explore', 'general-purpose']), []);
+});
+
+test('unresolvedSubagentRefs: extracts multiple refs on one line, only the unenabled flagged', () => {
+  // Mirrors grok.md:54 — two refs on a line; deny Explore and only it warns.
+  const records = [{ name: 'grok', content: '`subagent_type: "Explore"` or `"general-purpose"` — actually subagent_type: general-purpose' }];
+  const out = unresolvedSubagentRefs(records, new Set(['general-purpose']));
+  assert.deepStrictEqual(out, [{ skill: 'grok', ref: 'Explore' }]);
+});
+
+test('unresolvedSubagentRefs: dedupes repeated skill+ref pairs', () => {
+  const records = [{ name: 'grok', content: 'subagent_type: worker ... later subagent_type=worker again' }];
+  assert.deepStrictEqual(unresolvedSubagentRefs(records, new Set()), [{ skill: 'grok', ref: 'worker' }]);
+});
+
+test('unresolvedSubagentRefs: no records / no refs / bad input => []', () => {
+  assert.deepStrictEqual(unresolvedSubagentRefs([], new Set(['x'])), []);
+  assert.deepStrictEqual(unresolvedSubagentRefs([{ name: 'plain', content: 'no task refs here' }], new Set()), []);
+  assert.deepStrictEqual(unresolvedSubagentRefs(null, null), []);
+  assert.deepStrictEqual(unresolvedSubagentRefs([{ content: 'subagent_type: x' }], new Set()), [], 'record without a name is skipped');
 });

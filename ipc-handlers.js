@@ -59,6 +59,9 @@ function registerIpcHandlers(deps) {
     readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
+    // GUI-managed remote token (write-only): the setter, the derived hasToken
+    // read, and the force-reconcile that makes a token change live immediately.
+    setRemoteToken, hasRemoteToken, refreshRemoteToken,
     waitForSessionExit, wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     // stores (siblings of persistence above, declared in main.js's multi-line
@@ -741,6 +744,10 @@ function registerIpcHandlers(deps) {
       theme: s.theme,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
+      // Operator wire token is WRITE-ONLY: the dialog sees only this derived
+      // boolean, never the value (it lives in <userData>/remote.env, not
+      // ui-settings). A host without the accessor (older wiring) reports false.
+      remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
       // Peer auth token is WRITE-ONLY (docs/remote-auth-plan.md §4): the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
       // the array back, so an omitted `token` carries forward in sanitizePeers —
@@ -768,6 +775,21 @@ function registerIpcHandlers(deps) {
     port: uiSettings.get().remotePort,
     error: getRemoteError(),
   }));
+
+  // Set (non-empty string) or clear (empty/null) the operator wire token, then
+  // force the RemoteServer to rebuild so the new gate is live at once (it reads
+  // the token only at construct). WRITE-ONLY: returns just a hasToken boolean —
+  // the value never rounds back through IPC. A host without the setter no-ops.
+  handle('remote:setToken', (_e, token) => {
+    if (typeof setRemoteToken !== 'function') return { ok: false, error: 'remote token not supported on this host' };
+    try {
+      const hasToken = setRemoteToken(token);
+      if (typeof refreshRemoteToken === 'function') refreshRemoteToken();
+      return { ok: true, hasToken };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
 
   // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
@@ -994,6 +1016,15 @@ function registerIpcHandlers(deps) {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.createSession(spec || {}, resolve);
+  }));
+  // Session-less catalogs for a New Session dialog targeting a peer (M5) — so its
+  // checklists render the BOX's skills/agents/prompts/tools, not the viewer's own
+  // libraries. Rides the box's 'create'/'create2' cap; the owner wraps the result
+  // as { ok:true, catalogs } and it's returned intact (renderer reads `.catalogs`).
+  handle('peer:catalogs', (_e, id) => new Promise((resolve) => {
+    const conn = getPeerManager() && getPeerManager().get(id);
+    if (!conn) return resolve({ ok: false, error: 'no such peer' });
+    conn.getCatalogs(resolve);
   }));
   handle('peer:killSession', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);

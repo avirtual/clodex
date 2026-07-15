@@ -171,15 +171,11 @@ function collectIntentChecklist(container) {
   return intentsAllowlistFromChecked(checked);
 }
 
-// The built-in subagents the CLI injects into the roster (each costs its
-// description line every turn). Denying one via permissions.deny Agent(name)
-// filters it out of the injected listing — a real roster trim (traced through
-// the listing builder; confirmed on the wire) AND stops delegation to it.
-// Names are case-sensitive — exactly the agentType strings, verified present
-// across live transcripts. Not every session injects all six (a session
-// launched with --agents/append-prompt can drop claude-code-guide/statusline-
-// setup), so denying an absent one is a harmless no-op.
-const BUILTIN_AGENTS = ['Explore', 'Plan', 'general-purpose', 'claude', 'claude-code-guide', 'statusline-setup'];
+// The built-in subagents the CLI injects into the roster — single-sourced in
+// agents-util (the main process computes the same roster for the injected-skill
+// subagent-ref check, so the list must not fork). See the definition there for
+// the full rationale (per-turn description cost, deny = real roster trim).
+const { BUILTIN_AGENTS } = require('../../agents-util');
 
 // Checklist polarity matches tools/skills: checked = available, unchecked =
 // denied. `deniedSet` is the persisted denyBuiltins list; collect returns the

@@ -75,6 +75,18 @@ function buildAgentsArg(names, library) {
   return Object.keys(obj).length ? obj : null;
 }
 
+// The built-in subagents the CLI injects into the roster (each costs its
+// description line every turn). Denying one via permissions.deny Agent(name)
+// filters it out of the injected listing — a real roster trim (traced through
+// the listing builder; confirmed on the wire) AND stops delegation to it.
+// Names are case-sensitive — exactly the agentType strings, verified present
+// across live transcripts. Not every session injects all six (a session
+// launched with --agents/append-prompt can drop claude-code-guide/statusline-
+// setup), so denying an absent one is a harmless no-op. Shared (main computes
+// the enabled roster for the skill-ref check; the renderer checklist offers
+// them for denial) — single source, never duplicate.
+const BUILTIN_AGENTS = ['Explore', 'Plan', 'general-purpose', 'claude', 'claude-code-guide', 'statusline-setup'];
+
 // permissions.deny rules that suppress built-in subagents. Because --agents is
 // ADDITIVE (built-ins stay registered), merely supplying a lean agent does not
 // stop the model from falling back to the heavy general-purpose; denying the
@@ -88,5 +100,5 @@ function denyAgentRules(denyBuiltins) {
 }
 
 module.exports = {
-  parseAgentFrontmatter, agentDef, buildAgentsArg, denyAgentRules,
+  parseAgentFrontmatter, agentDef, buildAgentsArg, denyAgentRules, BUILTIN_AGENTS,
 };

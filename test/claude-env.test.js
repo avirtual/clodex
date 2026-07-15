@@ -101,3 +101,39 @@ test('teeBlindBackend: bedrock is reported first when both are set', () => {
     'bedrock',
   );
 });
+
+// ── scrubInheritedClaudeMarkers — the entry-point env self-decontamination.
+// Pins the two survivors alongside the strip: the OAuth token (credential
+// config — scrubbing it spawned unauthenticated REPLs on a token-seeded
+// sandbox, found live 2026-07-16) and a user's own non-agent-scoped
+// ANTHROPIC_BASE_URL.
+const { scrubInheritedClaudeMarkers } = require('../claude-env');
+
+test('scrub: nesting markers go, OAuth token and unrelated vars survive', () => {
+  const env = {
+    CLAUDECODE: '1',
+    CLAUDE_CODE_SESSION_ID: 'abc',
+    CLAUDE_CODE_CHILD_SESSION: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-fake',
+    CLODEX_REMOTE_TOKEN: 'operator-secret',
+    PATH: '/usr/bin',
+  };
+  const out = scrubInheritedClaudeMarkers(env);
+  assert.strictEqual(out, env, 'mutates in place and returns the same object');
+  assert.deepStrictEqual(env, {
+    CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-fake',
+    CLODEX_REMOTE_TOKEN: 'operator-secret',
+    PATH: '/usr/bin',
+  });
+});
+
+test('scrub: agent-scoped ANTHROPIC_BASE_URL goes, a global override survives', () => {
+  const scoped = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:7800/agent/clodex-s2/anthropic' };
+  scrubInheritedClaudeMarkers(scoped);
+  assert.strictEqual(scoped.ANTHROPIC_BASE_URL, undefined);
+
+  const global = { ANTHROPIC_BASE_URL: 'https://gateway.example.com/v1' };
+  scrubInheritedClaudeMarkers(global);
+  assert.strictEqual(global.ANTHROPIC_BASE_URL, 'https://gateway.example.com/v1');
+});

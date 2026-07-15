@@ -63,4 +63,31 @@ function teeBlindBackend(env) {
   return null;
 }
 
-module.exports = { isEnvTruthy, readEffectiveClaudeEnv, teeBlindBackend };
+// Env self-decontamination, shared by both entry points (main.js /
+// headless-main.js), mutating IN PLACE. If Clodex was launched (or relaunched)
+// from inside a Claude Code session, the whole process tree inherits that
+// session's CLAUDE_* markers, and PTY-spawned CLIs seeing
+// CLAUDE_CODE_SESSION_ID / CLAUDE_CODE_CHILD_SESSION behave as nested child
+// sessions — observed 2026-07-05 as every resumed agent silently NOT writing
+// its transcript, which blinds the JsonlWatcher (intents dead) and the phone
+// view at once. So the namespace is stripped before anything can inherit it,
+// with two survivors:
+// - CLAUDE_CODE_OAUTH_TOKEN is credential config, not session state. The
+//   sandbox seeds it into the container env (M4 auth.env) and sessions must
+//   inherit it — scrubbing it spawned unauthenticated REPLs on a seeded box
+//   (observed live 2026-07-16, first sandbox e2e).
+// - ANTHROPIC_BASE_URL goes only when it points at an agent-scoped proxy route
+//   (ours or a dead predecessor's tee); a user's own global endpoint override
+//   survives.
+function scrubInheritedClaudeMarkers(env) {
+  for (const k of Object.keys(env)) {
+    if (k === 'CLAUDE_CODE_OAUTH_TOKEN') continue;
+    if (/^CLAUDE(CODE|_)/.test(k)) delete env[k];
+  }
+  if (/\/agent\/[^/]+\//.test(env.ANTHROPIC_BASE_URL || '')) {
+    delete env.ANTHROPIC_BASE_URL;
+  }
+  return env;
+}
+
+module.exports = { isEnvTruthy, readEffectiveClaudeEnv, teeBlindBackend, scrubInheritedClaudeMarkers };

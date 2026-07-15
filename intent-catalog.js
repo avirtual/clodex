@@ -67,4 +67,13 @@ function intentsAllowlistFromChecked(checkedTypes) {
   return enabled.length === GATEABLE_INTENTS.length ? null : enabled;
 }
 
-module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, intentEnabled, intentsAllowlistFromChecked };
+// How many gateable intents a session/template with allowlist `intentsList`
+// has DENIED — the complement of intentEnabled over the catalog. Reuses
+// intentEnabled per-type so the semantics never drift: absent/null → 0 (the
+// living all-enabled default), `[]` → all of them (everything gated), a subset
+// → the count outside it. Drives the templates preview "🔒N intents" chip.
+function deniedIntentCount(intentsList) {
+  return GATEABLE_INTENTS.filter((i) => !intentEnabled(i.type, intentsList)).length;
+}
+
+module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, intentEnabled, intentsAllowlistFromChecked, deniedIntentCount };

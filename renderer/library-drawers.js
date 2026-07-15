@@ -26,6 +26,7 @@
 
 const { esc } = require('./lib/format');
 const { splitModelArg } = require('./lib/args-model');
+const { deniedIntentCount } = require('../intent-catalog');
 
 // Scope caption for a library row (point 7 of the scope feature): a dim label
 // derived from the two optional frontmatter keys — `workspace: <name>` and/or
@@ -578,6 +579,12 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if ((t.agents || []).length) parts.push(`${t.agents.length} agent${t.agents.length > 1 ? 's' : ''}`);
     const gated = (t.disabledTools || []).length + (t.disabledSkills || []).length + (t.denyBuiltins || []).length;
     if (gated) parts.push(`−${gated} gated`);
+    // Send-side intent gating is a separate axis from the tool/skill/agent denies
+    // above (those bound what the seat can DO; this bounds what [agent:…] verbs it
+    // can SEND). Absent/all-enabled → 0 → no chip, matching the −N gated chip's
+    // "present only when non-empty" polarity.
+    const deniedIntents = deniedIntentCount(t.intents);
+    if (deniedIntents) parts.push(`🔒${deniedIntents} intent${deniedIntents > 1 ? 's' : ''}`);
     if ((t.injectSkills || []).length) parts.push(`+${t.injectSkills.length} skill${t.injectSkills.length > 1 ? 's' : ''}`);
     if ((t.execCommands || []).length) parts.push(`⚙${t.execCommands.length} exec`);
     if (t.stripLevel) parts.push(`strip L${t.stripLevel}`);

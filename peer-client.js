@@ -16,6 +16,7 @@
 const http = require('http');
 const { URL } = require('url');
 const { RELAY_ENVELOPE_V } = require('./relay-protocol');
+const { withoutExecGrants } = require('./session-args');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -363,9 +364,24 @@ class PeerConnection {
   // Host-level session lifecycle on the peer. Like restart/query, not tied to
   // an attachment or token — trust is the tunnel. The owner routes to its live
   // create()/kill() paths; the ack is the whole outcome (distinguishable errors).
-  createSession({ name, type, cwd }, cb) {
-    this._request('POST', '/api/sessions', { name, type, cwd }, (err, body) => {
+  // The whole spec is forwarded as the POST body (M5 full-param create: name/
+  // type/cwd plus the optional setArgs patch keys + create-only fields); a bare
+  // {name,type,cwd} stays valid. withoutExecGrants is the CLIENT-side mirror of
+  // the server backstop — exec grants must never ride the wire in either
+  // direction, even if a future caller hands us a spec carrying them.
+  createSession(spec, cb) {
+    this._request('POST', '/api/sessions', withoutExecGrants(spec || {}), (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+  // Session-less catalogs for a pre-create New Session dialog targeting this box
+  // (M5). GET /api/catalogs (rides the box's 'create'/'create2' cap); the owner
+  // wraps as { ok:true, catalogs } — returned intact so the renderer reads
+  // `.catalogs`. An old (non-create2) box 501s → { ok:false } here.
+  getCatalogs(cb) {
+    this._request('GET', '/api/catalogs', null, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
     });
   }
 

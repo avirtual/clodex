@@ -41,11 +41,16 @@ function createRemoteWiring(deps) {
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     // Edit Session catalogs: CLAUDE_TOOLS is a load-time const (value); the
     // libraries are whenReady-assigned stores read at request time (getters).
-    CLAUDE_TOOLS, getPromptLibrary,
+    // getAgentLibrary/getSkillLibrary back the session-less GET /api/catalogs.
+    CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary,
     // store getters (whenReady-assigned / TDZ at factory call)
     getPersistence, getUiSettings, getWorkspaces,
     // mutable singletons (get+set, M4 pattern)
     getRemoteServer, setRemoteServer, setRemoteError,
+    // GUI-managed operator token (remote-token.js, bound to userData in engine):
+    // the file-backed fallback for the wire gate. resolveRemoteToken applies the
+    // env-wins precedence.
+    readRemoteEnvToken, resolveRemoteToken,
     // host seams (former electron reads): version by value, isPackaged as getter
     appVersion, isPackaged,
   } = deps;
@@ -64,7 +69,10 @@ function createRemoteWiring(deps) {
     // whole wire; CLODEX_REMOTE_INSECURE=1 is the loud escape hatch that lets a
     // non-loopback bind serve with no token (fleet-migration only) — logged so
     // it can never be silently on.
-    const remoteToken = process.env.CLODEX_REMOTE_TOKEN || null;
+    // Env var WINS (explicit override; keeps every existing env-var deployment
+    // working), else the GUI-managed <userData>/remote.env token, else null
+    // (localhost-trust). readRemoteEnvToken is injected bound to userData.
+    const remoteToken = resolveRemoteToken(process.env.CLODEX_REMOTE_TOKEN, readRemoteEnvToken());
     const remoteInsecure = process.env.CLODEX_REMOTE_INSECURE === '1';
     if (remoteInsecure) {
       log.error('remote', 'CLODEX_REMOTE_INSECURE=1 — the remote wire will serve with NO operator token on a non-loopback bind. This is insecure; set CLODEX_REMOTE_TOKEN and remove the flag.');
@@ -146,17 +154,25 @@ function createRemoteWiring(deps) {
         // picks up any pending vendor bump. Delay lets the HTTP response and
         // the ingress hop flush before the server dies under them.
         restartApp: () => { log.info('app', 'restart requested remotely'); restartClodex(); },
-        // Remote session create — routes to the LIVE create() path (auto-persists,
-        // exactly like [agent:spawn]), so a peer becomes a cockpit for the headless
-        // box: no ssh + seed-script + restart. Trust is the tunnel (settled); no
-        // token. The viewer can't see this box's dialogs, so the ack IS the whole
-        // story — every failure mode returns a DISTINGUISHABLE error string.
-        // Defaults mirror the spawn intent: workspace 'default' (no requesting
-        // session here to inherit from), cwd created if absent (ensureDir).
-        createSession: async ({ name, type, cwd } = {}) => {
-          name = String(name || '').trim();
+        // Remote session create — the FULL-param body (M5). Routes to the LIVE
+        // create() path (auto-persists, exactly like [agent:spawn]), so a peer
+        // becomes a cockpit for the headless box: no ssh + seed-script + restart.
+        // Trust is the tunnel (settled); no token. The viewer can't see this box's
+        // dialogs, so the ack IS the whole story — every failure mode returns a
+        // DISTINGUISHABLE error string, and referential warnings ride out non-fatal.
+        // Bare {name,type,cwd} keeps today's exact behavior: every absent key falls
+        // to the SAME default the M3 hardcoded call passed. Defaults mirror the
+        // spawn intent: workspace 'default' (no requesting session here to inherit
+        // from), cwd created if absent (ensureDir).
+        createSession: async (body = {}) => {
+          // Exec grants NEVER cross the wire (Decision 2) — strip any the client
+          // sent before mapping (mirror of the setSessionArgs backstop), and force
+          // execCommands [] into create() regardless. The renderer never sends them.
+          const b = withoutExecGrants(body) || {};
+          const name = String(b.name || '').trim();
+          const type = b.type;
           const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
-          const rawCwd = String(cwd || '').trim();
+          const rawCwd = String(b.cwd || '').trim();
           if (!AGENT_NAME_RE.test(name)) {
             return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
           }
@@ -174,18 +190,65 @@ function createRemoteWiring(deps) {
             return { ok: false, error: `cannot create cwd "${dir}": ${e.message}` };
           }
           try {
+            // Map the wire body onto create()'s 18-param positional signature
+            // (session-manager.js:610). Each `|| default` reproduces the value the
+            // M3 hardcoded call passed for an absent key. systemPromptBody stays
+            // null (F2 — legacy inline body is never authored at create);
+            // execCommands stays [] (grants never cross); workspaceId is 'default'.
             const out = await manager.create(
-              name, t, dir, [], null, DEFAULT_WORKSPACE_ID,
-              null, false, null, [], [], [], [], [], null, [],
+              name, t, dir,
+              b.extraArgs || [],
+              b.resumeId || null,
+              DEFAULT_WORKSPACE_ID,
+              null,            // systemPromptBody — F2
+              !!b.fork,
+              b.proxy ?? null,
+              b.agents || [],
+              b.denyBuiltins || [],
+              b.disabledTools || [],
+              b.disabledSkills || [],
+              b.injectSkills || [],
+              b.systemPromptFile || null,
+              b.appendPromptFiles || [],
+              [],              // execCommands — never cross the wire
+              Array.isArray(b.intents) ? b.intents : null,
             );
+            // stripLevel isn't a create() param (it's a proxy-side override the
+            // poller asserts once the session links) — seed it onto the entry after
+            // create, EXPLICIT-only: the client is authoritative for a wire create,
+            // so NO agentDefaults fallback (Decision 6). Absent key → no seed, box
+            // behavior unchanged.
+            if (b.stripLevel === 1 || b.stripLevel === 2) getPersistence().setStripLevel(name, b.stripLevel);
             if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
             log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
-            return { ok: true, name: out.name, type: out.type, pid: out.pid };
+            // Forward create()'s non-fatal warnings (unresolved skill/agent refs
+            // against THIS box's libraries) so slice 4's create toast reads one
+            // shape whether the session is local or on a peer.
+            return {
+              ok: true, name: out.name, type: out.type, pid: out.pid,
+              ...(out.warnings && out.warnings.length ? { warnings: out.warnings } : {}),
+            };
           } catch (e) {
             log.error('session', `create ${name} via peer failed: ${e.message}`);
             return { ok: false, error: `spawn failed: ${e.message}` };
           }
         },
+        // Session-less catalogs for a pre-create New Session dialog targeting this
+        // box (M5). A SUPERSET of getSessionArgs' catalogs block: same agents/
+        // prompts/tools/proxy sources PLUS skills. The edit path reads skills from
+        // the separate per-session skill-catalog endpoint (it needs a roster) —
+        // there's none pre-create, so skills = the box's raw library list. agents is
+        // the box's FULL agent library too: getSessionArgs scope-filters by session,
+        // but there's no session to scope by here, and create-time scoping happens
+        // box-side at spawn anyway. Rides the existing 'create' cap.
+        getCatalogs: () => ({
+          agents: getAgentLibrary().list(),
+          prompts: getPromptLibrary().list(),
+          skills: getSkillLibrary().list(),
+          claudeTools: CLAUDE_TOOLS,
+          proxyUrl: getUiSettings().get().proxyUrl,
+          proxyEnabled: getUiSettings().get().proxyEnabled,
+        }),
         // Remote session kill — user-initiated semantics (removes from persistence,
         // no resume), same as the UI's kill. Ack distinguishes not-found from done.
         killSession: async (name) => {
@@ -407,7 +470,16 @@ function createRemoteWiring(deps) {
     });
   }
 
-  return { syncRemoteServer };
+  // The RemoteServer reads its operator token only at construct, so a token
+  // change (remote:setToken) must tear down any live server before reconciling —
+  // syncRemoteServer's own stop/start only fires on a port change or a toggle.
+  // Forcing the teardown here makes the new gate live immediately.
+  function refreshRemoteToken() {
+    if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
+    syncRemoteServer();
+  }
+
+  return { syncRemoteServer, refreshRemoteToken };
 }
 
 module.exports = { createRemoteWiring };

@@ -148,6 +148,28 @@ test('generateCompose: a workDir with spaces is double-quoted so YAML keeps it v
   assert.match(yaml, /- "\/Users\/me\/My Work #1:\/home\/clodex\/work"/);
 });
 
+test('generateCompose: read-only host library binds layered on clodex-dot (M5 Decision 7)', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null, libDir: '/Users/me/.clodex',
+  });
+  // Three ro binds: skills, agents, and one `library` dir (covers prompts+exec).
+  assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
+  assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
+  assert.match(yaml, /- "\/Users\/me\/\.clodex\/library:\/home\/clodex\/\.clodex\/library:ro"/);
+  // Layered AFTER clodex-dot (shadowing its subpaths) and BEFORE claude-auth;
+  // the clodex-dot volume itself stays — the box still writes run/, messages/,
+  // pending/ into it underneath the read-only library binds.
+  assert.match(yaml, /- clodex-dot:\/home\/clodex\/\.clodex\n( +- "[^\n]*:ro"\n){3} +- claude-auth:/);
+  // One `library` bind covers prompts + exec — no separate exec mount.
+  assert.doesNotMatch(yaml, /\/exec:ro/);
+});
+
+test('generateCompose: no library binds when libDir is absent (guard for none-passing callers)', () => {
+  const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null });
+  assert.doesNotMatch(yaml, /:ro"/);
+  assert.doesNotMatch(yaml, /home\/clodex\/\.clodex\/skills/);
+});
+
 // ── parseOwnPorts (self-collision guard) ────────────────────────────────────
 
 test('parseOwnPorts: extracts the three published host ports from a compose file', () => {
@@ -439,6 +461,28 @@ test('writeComposeFile: references the auth env_file once the token exists, neve
   assert.ok(yaml.includes(`- "${authPath}"`));
   assert.doesNotMatch(yaml, /sk-secret-should-never-appear/);
   assert.doesNotMatch(yaml, /CLAUDE_CODE_OAUTH_TOKEN/);
+});
+
+test('writeComposeFile: ensure-dirs the host library sources and binds them read-only', async () => {
+  const ud = freshUserData();
+  const reg = fs.mkdtempSync(path.join(TMP_USERDATA, 'reg-'));
+  const sb = createSandbox({
+    getUiSettings: () => fakeSettings(),
+    getUserDataPath: () => ud,
+    registryDir: reg,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  await sb.writeComposeFile();
+  // The three source dirs were created under the injected host registry root,
+  // so docker never binds a missing source.
+  for (const d of ['skills', 'agents', 'library']) {
+    assert.ok(fs.existsSync(path.join(reg, d)), `${d} ensure-dir'd`);
+  }
+  // And the compose bytes bind them read-only into the box.
+  const yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.ok(yaml.includes(`- "${path.join(reg, 'skills')}:/home/clodex/.clodex/skills:ro"`));
+  assert.ok(yaml.includes(`- "${path.join(reg, 'agents')}:/home/clodex/.clodex/agents:ro"`));
+  assert.ok(yaml.includes(`- "${path.join(reg, 'library')}:/home/clodex/.clodex/library:ro"`));
 });
 
 // ── factory: remote-wire token auto-provision (remote-auth chunk 4) ──────────

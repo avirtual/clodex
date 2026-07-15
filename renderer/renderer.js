@@ -155,6 +155,22 @@ const PLACEMENT_RICH_ROW_IDS = [
   'system-prompt-row', 'append-prompts-row', 'tools-section', 'skills-section', 'other-section', 'proxy-row',
 ];
 
+// Placement hint copy (M5). The greyed state means different things now: an old
+// (non-create2) box can't take the rich fields at all; a create2 box CAN but its
+// catalogs momentarily failed to load. Wrong-catalog is worse than no-catalog, so
+// a fetch failure greys with the "unavailable" hint rather than showing the Mac's
+// libraries as if they were the box's.
+const PLACEMENT_HINT_OLD_BOX = 'This sandbox is running an older Clodex that can’t configure skills, prompts, tools, proxy, or intents at create — set them from the session once it’s running, or update the sandbox.';
+const PLACEMENT_HINT_CATALOGS_UNAVAILABLE = 'Couldn’t load the sandbox’s skills/agents/tools catalogs — configure this session from the sandbox once it’s running.';
+// Monotonic guard so a slow peerCatalogs() response that lands after the user has
+// flipped back to Host (or re-flipped) is discarded instead of clobbering the UI.
+let placementCatalogToken = 0;
+// Host catalogs captured at dialog open, so a flip back from Sandbox restores the
+// Mac's libraries without a re-fetch race (setAgentLibCache et al. are swapped to
+// box truth while on Sandbox).
+let dialogHostSettings = null;
+let dialogHostAgentLib = null;
+
 // Map a proxy <select> mode + URL field to the persisted tri-state value:
 // null = follow the Clodex-level preference, false = off, string = custom.
 function proxyValueFromControls(modeSel, urlInput) {
@@ -1248,19 +1264,23 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     inputProxyMode.value = '';
     inputProxyUrl.style.display = 'none';
   }
-  // Per-type display just reset the rich rows; re-apply greying if the current
-  // placement is sandbox so a type change doesn't un-grey them.
-  if (currentPlacement() === 'sandbox') greyRichFields(true);
+  // A type change reset (and, for Claude, re-fetched from HOST sources) the rich
+  // rows. If placement is Sandbox, re-apply the sandbox state so box catalogs
+  // (create2) or the greyed state (non-create2) win over the host defaults just
+  // rendered. No cwd mutation here — that's applyPlacement's job.
+  if (currentPlacement() === 'sandbox') applySandboxState();
 }
 
-// Grey (disable + dim) or restore the rich rows for the current placement. Pure
-// visual + interaction gate — for sandbox placement doCreate only sends
-// name/type/cwd, so these fields are never read; greying just communicates why.
-function greyRichFields(grey) {
+// Grey (disable + dim) or restore the rich rows for the current placement. When
+// greyed, `hintText` (if given) replaces the default hint copy so the reason is
+// specific (old box vs catalogs-unavailable). For a create2 sandbox the fields
+// are live (not greyed) and carry box-truth catalogs.
+function greyRichFields(grey, hintText = null) {
   for (const id of PLACEMENT_RICH_ROW_IDS) {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('placement-greyed', grey);
   }
+  if (grey && hintText) placementHint.textContent = hintText;
   placementHint.style.display = grey ? '' : 'none';
 }
 
@@ -1270,12 +1290,93 @@ function currentPlacement() {
   return (placementRow.style.display !== 'none' && inputPlacement.value === 'sandbox') ? 'sandbox' : 'host';
 }
 
-// Apply a placement change: swap the cwd default (without clobbering a typed
-// path) and grey/restore the rich fields.
-function applyPlacement() {
+// Does the managed sandbox peer advertise the M5 `create2` capability (full-param
+// create + /api/catalogs)? Same peerStatuses + caps.includes() precedent as
+// peerSupportsArgs/activePeerConfigurable. Offline or old box → false → greyed.
+function sandboxHasCreate2() {
+  const st = peerStatuses.get('sandbox');
+  return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('create2'));
+}
+
+// Apply a placement change: swap the cwd default (without clobbering a typed path)
+// then apply the sandbox state. Flipping back to Host restores the Mac's catalogs
+// (they were swapped to box truth while on Sandbox).
+async function applyPlacement() {
   const placement = currentPlacement();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
-  greyRichFields(richFieldsGreyed(placement));
+  if (placement === 'sandbox') { await applySandboxState(); return; }
+  greyRichFields(false);
+  await restoreHostCatalogs();
+}
+
+// Grey/un-grey the rich fields for the CURRENT placement and, for a create2
+// sandbox, swap the checklists to the box's catalogs. No cwd mutation — safe to
+// call from a type change (which re-rendered host catalogs and must be corrected).
+// Non-create2 sandbox → M3 greyed. create2 sandbox → fetch box catalogs, render
+// them, un-grey; a fetch failure greys with the unavailable hint (never render the
+// Mac's libraries as if they were the box's). Stale responses are guarded.
+async function applySandboxState() {
+  const placement = currentPlacement();
+  // The grey decision lives in the tested placement leaf: host never greys, a
+  // non-create2 sandbox does (old box), a create2 sandbox doesn't (fields live).
+  if (richFieldsGreyed(placement, sandboxHasCreate2())) {
+    greyRichFields(true, PLACEMENT_HINT_OLD_BOX);
+    return;
+  }
+  if (placement !== 'sandbox') { greyRichFields(false); return; }
+  // Sandbox + create2: fetch the box's catalogs and render the fields from them.
+  const token = ++placementCatalogToken;
+  let res;
+  try { res = await window.api.peerCatalogs('sandbox'); }
+  catch { res = null; }
+  // Discard if the user flipped away (or re-flipped) while the fetch was in flight.
+  if (token !== placementCatalogToken || currentPlacement() !== 'sandbox') return;
+  if (!res || res.ok === false || !res.catalogs) {
+    greyRichFields(true, PLACEMENT_HINT_CATALOGS_UNAVAILABLE);
+    return;
+  }
+  populateChecklistsFromCatalogs(res.catalogs);
+  greyRichFields(false);
+}
+
+// Populate the dialog's checklists from a peer's box-truth catalogs (M5) — the
+// same cache setters + render functions openDialog uses for host catalogs, but
+// fed the box's agents/prompts/skills/tools instead of the Mac's. Checked sets
+// start empty (a fresh sandbox create begins from the box's defaults, like host).
+// The disable-skills checklist and tool provenance have no session-less box source
+// (they're cwd/roster-scoped, resolved box-side at spawn), so they render flat.
+function populateChecklistsFromCatalogs(cat) {
+  setAgentLibCache(cat.agents || []);
+  renderAgentChecklist(inputAgentsList, new Set());
+  setSkillLibCache(cat.skills || []);
+  renderInjectChecklist(inputInjectSkillsList, new Set());
+  renderSkillChecklist(inputSkillsList, [], new Set());
+  setClaudeToolsCache(cat.claudeTools || []);
+  renderToolChecklist(inputToolsList, new Set());
+  renderBuiltinChecklist(inputBuiltinsList, new Set());
+  refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
+  refreshNewSessionIntents();       // static catalog, box-independent
+  setPromptLibCache({
+    system: (cat.prompts || []).filter((p) => p.kind === 'system'),
+    append: (cat.prompts || []).filter((p) => p.kind === 'append'),
+  });
+  fillSystemPromptSelect(inputSystemPrompt, '');
+  renderAppendChecklist(inputAppendList, new Set());
+  setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
+}
+
+// Restore the Mac's catalogs after a flip back to Host (the caches hold box truth
+// while on Sandbox). Re-uses the captured open-time host settings/agentLib so
+// there's no re-fetch race; the cwd-scoped skill/tool provenance re-fetches (as it
+// does on any cwd change).
+async function restoreHostCatalogs() {
+  populateHostCatalogs(dialogHostSettings, dialogHostAgentLib);
+  // The prompt-lib cache holds box truth too after a Sandbox stint —
+  // populateHostCatalogs doesn't cover it (openDialog loads prompts through the
+  // separate refreshSystemPromptDropdown), so reload the Mac's library here or the
+  // dropdown/append checklist keep showing the box's prompts labeled as host's.
+  // A selected box-only prompt ref falls back to (CLI default), gracefully.
+  await refreshSystemPromptDropdown();
 }
 
 async function loadPromptLib() {
@@ -1431,6 +1532,11 @@ async function openDialog(prefill = null) {
   refreshCwdSuggestions();
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
+  // Reset placement to Host BEFORE applyTypeDefaults so a stale 'sandbox' value
+  // from a prior open can't trip the type-change → applySandboxState hook during
+  // open (which would fire a spurious catalog fetch). placementRow visibility is
+  // (re)decided below once settings land.
+  inputPlacement.value = 'host';
   // Collapse the advanced accordions each open so the dialog starts short.
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.open = false;
@@ -1443,17 +1549,11 @@ async function openDialog(prefill = null) {
     window.api.getSettings(),
     window.api.listAgents(),
   ]);
-  setAgentLibCache(agentLib || []);
-  renderAgentChecklist(inputAgentsList, new Set());
-  refreshNewSessionExecCommands();
-  refreshNewSessionIntents();
-  renderBuiltinChecklist(inputBuiltinsList, new Set());
-  setClaudeToolsCache(settings?.claudeTools || []);
-  setDefaultToolDenyCache(settings?.defaultToolDeny || []);
-  renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
-  refreshNewSessionTools();
-  setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
-  labelProxyDefault(inputProxyMode, settings);
+  // Capture the host catalogs so a flip Sandbox→Host restores them without a
+  // re-fetch race (M5 swaps the caches to box truth while on Sandbox).
+  dialogHostSettings = settings;
+  dialogHostAgentLib = agentLib || [];
+  populateHostCatalogs(settings, dialogHostAgentLib);
   // Placement selector: shown ONLY when the sandbox peer is registered (zero
   // noise otherwise). Default Host; a fresh open never inherits a stale grey.
   inputPlacement.value = 'host';
@@ -1465,6 +1565,25 @@ async function openDialog(prefill = null) {
   if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
+}
+
+// Populate the dialog's checklists + proxy from the Mac's catalogs (host
+// settings/agent-library). Shared by openDialog and the Sandbox→Host restore, so
+// the host path has one source of truth. cwd-scoped skill/tool provenance
+// re-fetches (refreshNewSessionSkills/Tools) as it does on any cwd change.
+function populateHostCatalogs(settings, agentLib) {
+  setAgentLibCache(agentLib || []);
+  renderAgentChecklist(inputAgentsList, new Set());
+  refreshNewSessionExecCommands();
+  refreshNewSessionIntents();
+  renderBuiltinChecklist(inputBuiltinsList, new Set());
+  setClaudeToolsCache(settings?.claudeTools || []);
+  setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+  renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
+  refreshNewSessionSkills();
+  refreshNewSessionTools();
+  setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
+  labelProxyDefault(inputProxyMode, settings);
 }
 
 inputType.addEventListener('change', () => applyTypeDefaults());
@@ -1644,18 +1763,38 @@ async function doCreate() {
   const fork = supportsPrompts ? inputFork.checked : false;
 
   // Sandbox placement: route the create through the `sandbox` peer instead of the
-  // local engine. Only name/type/cwd cross the create-on-peer wire (M3) — the
-  // rich fields were greyed and are not read here; they arrive with M5. The peer
-  // owner fans the new session back into the sidebar's peer section, so there's
-  // no local terminal/sidebar surgery to do.
+  // local engine. The peer owner fans the new session back into the sidebar's peer
+  // section, so there's no local terminal/sidebar surgery to do. When the box
+  // advertises create2 (M5) the full cfg crosses the wire (same collectFormConfig
+  // path as host); an older box takes only the bare {name,type,cwd} (its rich
+  // fields were greyed and never collected). systemPromptBody stays null (F2);
+  // execCommands are stripped client-side in peer-client (grants never cross).
   if (currentPlacement() === 'sandbox') {
     closeDialog();
-    const res = await window.api.peerCreateSession('sandbox', { name, type, cwd });
+    const spec = sandboxHasCreate2()
+      ? {
+          name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
+          disabledTools, disabledSkills, injectSkills, stripLevel,
+          systemPromptFile, appendPromptFiles,
+          ...(Array.isArray(intents) ? { intents } : {}),
+        }
+      : { name, type, cwd };
+    const res = await window.api.peerCreateSession('sandbox', spec);
     if (!res || res.ok === false) {
       alert(`Failed to create sandbox session: ${(res && res.error) || 'unknown error'}`);
       return;
     }
+    // If the sandbox peer's visible set was materialized (a row hidden earlier),
+    // the new session isn't in the whitelist and would land invisible — ensure it
+    // shows, then open it: "Run in: Sandbox" gives the same land-in-the-session
+    // parity a local create does (createTerminal + switchSession).
+    await ensurePeerSessionVisible('sandbox', res.name || name);
+    openPeerSession('sandbox', res.name || name);
     showToast(`Created "${res.name || name}" (${res.type || type}) in the sandbox.`, { kind: 'peer-ui' });
+    // Non-fatal spawn warnings from the box (e.g. an injected skill references a
+    // subagent the box hasn't enabled) — same ack shape + toast path as a local
+    // create (slice 2 forwards create()'s warnings[] over the wire).
+    for (const w of (res.warnings || [])) showToast(w, { kind: 'warn', duration: 15000 });
     return;
   }
 
@@ -1704,6 +1843,12 @@ async function doCreate() {
   createTerminal(name);
   addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null);
   switchSession(name);
+
+  // Non-fatal spawn warnings (e.g. an injected skill references a subagent this
+  // session hasn't enabled) — the session is already live; these just surface a
+  // config foot-gun that would otherwise fail silently at delegation time.
+  const warnings = (result.session && result.session.warnings) || [];
+  for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
 }
 
 // The dialog's primary action depends on which mode it was opened in: create a
@@ -2821,7 +2966,7 @@ createPotDrawer();
 const {
   typeToTakeControl, renderPeerBar, forgetControlMirror,
   openPeerSession, peerDisplayHost, peerHideFromList,
-  openPeerArgs,
+  ensurePeerSessionVisible, openPeerArgs,
 } = initPeersUi({
   sessions, sessionList, getActiveSession: () => activeSession,
   createTerminal, switchSession, removeSession, updateSidebarActive,
@@ -3220,6 +3365,33 @@ const wsLogsClearBtn = document.getElementById('ws-logs-clear-btn');
 const prefsRemoteEnabled = document.getElementById('prefs-remote-enabled');
 const remoteDot = document.getElementById('remote-dot');
 const remoteStatusText = document.getElementById('remote-status-text');
+const prefsRemoteToken = document.getElementById('prefs-remote-token');
+const prefsRemoteTokenSave = document.getElementById('prefs-remote-token-save');
+const prefsRemoteTokenClear = document.getElementById('prefs-remote-token-clear');
+const prefsRemoteTokenState = document.getElementById('prefs-remote-token-state');
+
+// Reflect the write-only token state (a derived boolean — the value never leaves
+// main). Called on prefs-open and after every set/clear.
+function renderRemoteTokenState(hasToken) {
+  prefsRemoteTokenState.textContent = hasToken
+    ? 'A token is configured ✓ — paste a new one to replace it, or Clear to remove.'
+    : 'No token set — phone access is open to anyone who can reach the port.';
+  prefsRemoteTokenState.style.color = hasToken ? 'var(--ok, #3fb950)' : 'var(--warn, #d9a55b)';
+}
+
+async function saveRemoteToken(value) {
+  const res = await window.api.remoteSetToken(value);
+  if (!res || res.ok === false) {
+    showToast(`Failed to update token: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  prefsRemoteToken.value = '';
+  renderRemoteTokenState(!!res.hasToken);
+  // The server was torn down + rebuilt with the new gate; reflect it now rather
+  // than waiting for the 1.5s poll tick.
+  refreshWsStatus();
+  showToast(res.hasToken ? 'Phone-access token saved.' : 'Phone-access token cleared.', { kind: res.hasToken ? 'warm' : 'peer-ui' });
+}
 const CLAUDE_LABELS = {
   'model': 'Model name',
   'context': 'Context usage (estimated)',
@@ -3988,6 +4160,8 @@ async function openPrefs() {
   prefsCompactOnResume.checked = !!s.compactOnResume;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
+  prefsRemoteToken.value = '';
+  renderRemoteTokenState(!!s.remoteHasToken);
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
   // Unchecked = denied by default for new sessions.
   setClaudeToolsCache(s.claudeTools || []);
@@ -4028,6 +4202,16 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   closePrefs();
 });
+
+// Phone-access token is managed OUT of the main Save flow — it lives write-only
+// in <userData>/remote.env, not ui-settings, and applies immediately (the server
+// rebuilds), so Save/Clear act on their own.
+prefsRemoteTokenSave.addEventListener('click', () => {
+  const v = prefsRemoteToken.value.trim();
+  if (!v) { showToast('Paste a token first (use Clear to remove).', { kind: 'warn' }); return; }
+  saveRemoteToken(v);
+});
+prefsRemoteTokenClear.addEventListener('click', () => saveRemoteToken(''));
 
 window.api.onRequestOpenPreferences(() => openPrefs());
 

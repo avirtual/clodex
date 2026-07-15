@@ -418,7 +418,7 @@
           <option value="host">This Mac</option>
           <option value="sandbox">Sandbox (Docker)</option>
         </select>
-        <span class="hint-text" id="placement-hint" style="display:none;">Sandbox sessions run in the container. Skills, prompts, tools, proxy, and intent options aren’t available for sandbox sessions yet — set them from the session once it’s running.</span>
+        <span class="hint-text" id="placement-hint" style="display:none;">Sandbox sessions run in the container — configure this session from the sandbox once it’s running.</span>
       </label>
       <label id="template-row" style="display:none;">Template
         <div class="template-picker">
@@ -757,6 +757,13 @@
           <span id="remote-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
+        <p class="hint-text" style="margin-top: 10px;">Optional access token that gates the wire. Paste a token you keep a copy of — you'll need it for <code>?token=</code> bookmarks on your phone. Stored write-only on this machine; it's never shown again after you save. The <code>CLODEX_REMOTE_TOKEN</code> env var, if set, overrides this.</p>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+          <input type="password" id="prefs-remote-token" placeholder="Paste a token to set…" autocomplete="off" style="flex: 1;">
+          <button id="prefs-remote-token-save" class="secondary" type="button" style="flex: none;">Save token</button>
+          <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
+        </div>
+        <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </section>
       <section>
         <h4>Session discovery</h4>
