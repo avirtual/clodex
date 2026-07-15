@@ -865,3 +865,62 @@ test('notifications: is exported as a store from initStores', () => {
     assert.strictEqual(typeof stores.notifications.unreadCount, 'function');
   } finally { cleanup(); }
 });
+
+test('uiSettings: sandbox defaults when the file has no sandbox key', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    assert.deepStrictEqual(stores.uiSettings.get().sandbox, {
+      workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
+      autoStart: false, image: null,
+    });
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a sandbox config survives a set/load round-trip', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ sandbox: {
+      workDir: '/Users/me/work', webPort: 7900, wirescopePort: 7901,
+      wirePort: 7902, autoStart: true, image: 'my/img:tag',
+    } });
+    // Round-trip: a FRESH load (not the in-memory return) reads it back verbatim.
+    assert.deepStrictEqual(uiSettings.get().sandbox, {
+      workDir: '/Users/me/work', webPort: 7900, wirescopePort: 7901,
+      wirePort: 7902, autoStart: true, image: 'my/img:tag',
+    });
+  } finally { cleanup(); }
+});
+
+test('uiSettings: sanitizeSandbox strips junk fields and bounds the values', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ sandbox: {
+      workDir: '   ',            // blank → null
+      webPort: 70000,           // out of range → default 7810
+      wirescopePort: 'nope',    // non-int → default 7811
+      wirePort: 7820,
+      autoStart: 'yes',         // truthy-but-not-true → false
+      image: '',                // empty → null
+      bogus: 'dropped',         // unknown key → gone
+    } });
+    assert.deepStrictEqual(uiSettings.get().sandbox, {
+      workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
+      autoStart: false, image: null,
+    });
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a sandbox write leaves the other settings intact', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [{ id: 'p', label: 'P', url: 'http://p' }] });
+    uiSettings.set({ sandbox: { autoStart: true } });
+    const s = uiSettings.get();
+    assert.strictEqual(s.sandbox.autoStart, true);
+    assert.strictEqual(s.peers.length, 1);
+    assert.strictEqual(s.peers[0].id, 'p');
+  } finally { cleanup(); }
+});

@@ -118,6 +118,21 @@ const DEFAULT_UI_SETTINGS = {
   // syncPeerManager. Controlled implies attached, so a name here is always a
   // subset of peerAttached.
   peerControlled: {},
+  // Managed local Docker sandbox (docs/sandbox-plan.md). The app owns this
+  // container's lifecycle and registers it as the `sandbox` peer. workDir null =
+  // a named volume (work lives inside Docker); a host path = bind mount. The
+  // three ports publish the container's web/wirescope/peer-wire to loopback,
+  // collision-bumped at compose-generation time. image null = default resolution
+  // (packaged → GHCR tag, dev → build from checkout). All settings-file+dialog
+  // editable; sandbox.js is the sole consumer.
+  sandbox: {
+    workDir: null,
+    webPort: 7810,
+    wirescopePort: 7811,
+    wirePort: 7820,
+    autoStart: false,
+    image: null,
+  },
 };
 
 function sanitizePeers(raw) {
@@ -187,6 +202,26 @@ function sanitizePeerVisible(raw) {
 // Persisted control claims: empty arrays dropped, like peerAttached.
 function sanitizePeerControlled(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
+}
+
+// Managed-sandbox config (docs/sandbox-plan.md). Bounds every field so a
+// hand-edited settings file can't feed sandbox.js junk: ports coerced to ints in
+// the ephemeral/registered range (else the default), workDir/image as non-empty
+// strings-or-null, autoStart a strict boolean. Returns null on a non-object so
+// the caller falls back to the default block. Junk/extra keys are dropped by
+// reconstruction (same stance as sanitizePeers).
+function sanitizeSandbox(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const port = (v, dflt) => (Number.isInteger(v) && v >= 1 && v <= 65535 ? v : dflt);
+  const strOrNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return {
+    workDir: strOrNull(raw.workDir),
+    webPort: port(raw.webPort, 7810),
+    wirescopePort: port(raw.wirescopePort, 7811),
+    wirePort: port(raw.wirePort, 7820),
+    autoStart: raw.autoStart === true,
+    image: strOrNull(raw.image),
+  };
 }
 
 function initStores(userDataPath, { log, registryDir } = {}) {
@@ -1146,6 +1181,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
+          sandbox: sanitizeSandbox(raw?.sandbox) ?? DEFAULT_UI_SETTINGS.sandbox,
         };
       } catch { return DEFAULT_UI_SETTINGS; }
     },
@@ -1171,6 +1207,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
         peerControlled: sanitizePeerControlled(partial?.peerControlled) ?? cur.peerControlled,
+        sandbox: sanitizeSandbox(partial?.sandbox) ?? cur.sandbox,
       };
       try {
         atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
