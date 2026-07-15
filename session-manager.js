@@ -1139,7 +1139,17 @@ function createSessionManager(deps) {
         // Send the exit event BEFORE cleanup so the renderer can still resolve
         // the session → workspace → window mapping. Otherwise the sidebar
         // tab sticks around as a "dead" entry.
-        this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null });
+        this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null });
+        // Exit observability: an always-on IPC-log entry (every exit, any type) so
+        // a vanished tab leaves a forensic trace — grep-stable body: `code=N`
+        // always, ` signal=X` / ` unexpected` only when applicable. Physically
+        // before _cleanup for handler ordering discipline (this send doesn't ride
+        // the session→window map, but the next editor shouldn't have to re-derive
+        // which sends do — see the _sendToSession landmine above).
+        this._broadcast('ipc-message', {
+          type: 'exit', from: name, to: 'exit',
+          body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
+        });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
         // Agents keep their entry on natural exit (they get --resume'd next
         // launch). A shell exiting naturally (user typed `exit`) is done —

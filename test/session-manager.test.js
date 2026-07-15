@@ -1166,35 +1166,46 @@ function mkExitProbe() {
     setAppQuitting: () => {},
   });
   m._sendToSession = (...a) => sent.push(a);
-  return { m, sent, exit: (payload) => onExitCb(payload) };
+  const broadcasts = [];
+  m._broadcast = (channel, msg) => broadcasts.push([channel, msg]);
+  return { m, sent, broadcasts, exit: (payload) => onExitCb(payload) };
 }
 // _sendToSession(name, channel, ...args) — the event payload starts at [2].
 const exitEventOf = (sent) => sent.find((a) => a[1] === 'session-exit');
+// The always-on exit IPC-log entry (any session type); body is a grep-stable
+// soft contract: `code=N` always, ` signal=X` / ` unexpected` only when applicable.
+const exitLogOf = (broadcasts) =>
+  (broadcasts.find((b) => b[0] === 'ipc-message' && b[1] && b[1].type === 'exit') || [])[1];
 
 test('session-exit: natural death sends expected:false with code and signal', async () => {
-  const { m, sent, exit } = mkExitProbe();
+  const { m, sent, broadcasts, exit } = mkExitProbe();
   await bashCreate(m, 'b-crash', null);
   exit({ exitCode: 1, signal: undefined });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-crash', 'session-exit', 'b-crash', 1, { expected: false, signal: null }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-crash', 'session-exit', 'b-crash', 1, { expected: false, signal: null, agentType: null }]);
+  // Unexpected exit, no signal → `code=1 unexpected`.
+  assert.deepStrictEqual(exitLogOf(broadcasts), { type: 'exit', from: 'b-crash', to: 'exit', body: 'code=1 unexpected' });
 });
 
 test('session-exit: a user-killed session (kill() flag) sends expected:true', async () => {
-  const { m, sent, exit } = mkExitProbe();
+  const { m, sent, broadcasts, exit } = mkExitProbe();
   await bashCreate(m, 'b-killed', null);
   // Set the flag directly rather than calling kill(): kill() arms a real 5s
   // SIGKILL fallback timer against the fake pid — firing process.kill(999)
   // from a test would hit whatever real process owns that pid.
   m.sessions.get('b-killed')._userKilled = true;
   exit({ exitCode: 1, signal: 15 });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-killed', 'session-exit', 'b-killed', 1, { expected: true, signal: 15 }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-killed', 'session-exit', 'b-killed', 1, { expected: true, signal: 15, agentType: null }]);
+  // Expected exit with a signal → `code=1 signal=15` (no ` unexpected`).
+  assert.strictEqual(exitLogOf(broadcasts).body, 'code=1 signal=15');
 });
 
 test('session-exit: app-quit teardown (killAll) sends expected:true', async () => {
-  const { m, sent, exit } = mkExitProbe();
+  const { m, sent, broadcasts, exit } = mkExitProbe();
   await bashCreate(m, 'b-quit', null);
   await m.killAll();
   exit({ exitCode: 0, signal: 15 });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-quit', 'session-exit', 'b-quit', 0, { expected: true, signal: 15 }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-quit', 'session-exit', 'b-quit', 0, { expected: true, signal: 15, agentType: null }]);
+  assert.strictEqual(exitLogOf(broadcasts).body, 'code=0 signal=15');
 });
 
 // --- exec body-capture JSON terminator (_extractIntents) ---

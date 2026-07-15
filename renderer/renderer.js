@@ -1372,8 +1372,12 @@ window.api.onSessionExit((name, code, meta) => {
   // stay silent, as does a clean self-exit (code 0, no signal — the user typed
   // `exit`/quit in the pane they were looking at). What's left is the session
   // dying on its own: without this toast the tab just vanished, and a crash
-  // was indistinguishable from a clean quit.
-  if (meta && !meta.expected && (code !== 0 || meta.signal)) {
+  // was indistinguishable from a clean quit. AGENT-ONLY: the toast means
+  // "something you rely on died while you weren't looking" — a bash pane is
+  // usually one the operator is looking AT, and intent-spawned bash that
+  // fast-fails at code≠0 would otherwise storm toasts. Every exit still lands in
+  // the IPC log (main-side, all types) — narrowing the toast hides nothing.
+  if (meta && meta.agentType && !meta.expected && (code !== 0 || meta.signal)) {
     const why = meta.signal ? `signal ${meta.signal}` : `code ${code}`;
     showToast(`${name} exited unexpectedly (${why})`, { kind: 'error', duration: 15000 });
   }
