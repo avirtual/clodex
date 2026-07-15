@@ -1735,7 +1735,7 @@ test('_isDmReachable: federated name@origin → true only for an ONLINE peer', (
 
 test('_buildDeliveryText trailer: present only when sender reachable AND receiver dm-enabled', () => {
   const target = { name: 'rcv', agentType: 'claude' };
-  const RE = /\(reply: start a line with \[agent:dm .+?\]\)/;
+  const RE = /\(reply: start a line with \[agent:dm .+?\], close the body with a bare \[agent:end\] line\)/;
 
   // Reachable live sender + receiver dm-enabled (intents absent = all enabled).
   const m1 = mkReach();

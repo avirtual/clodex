@@ -3412,7 +3412,7 @@ function createSessionManager(deps) {
       const trailer = (mtype === 'dm'
           && intentEnabled('dm', getPersistence().get(target.name)?.intents)
           && this._isDmReachable(senderName))
-        ? `(reply: start a line with [agent:dm ${senderName}])`
+        ? `(reply: start a line with [agent:dm ${senderName}], close the body with a bare [agent:end] line)`
         : '';
 
       if (body.length > MSG_SPILL_THRESHOLD) {
