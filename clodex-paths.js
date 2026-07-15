@@ -25,8 +25,11 @@
 //     acks               memory-mutation ack queue         (was {name}-acks)
 //     acks.sh            ack drain hook                    (was {name}-acks.sh)
 //     pending.sh         parked-DM drain hook              (was {name}-pending.sh)
+//     file-heat.json     boiling-pot per-file heat counters (new in run/; the
+//                        legacy suffix below is defensive — no flat build ever
+//                        wrote it, but keeping every kind sweepable is the invariant)
 //
-// 18 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 19 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), agents/, skills/, library/,
@@ -64,6 +67,7 @@ const KINDS = {
   acks: 'acks',
   acksScript: 'acks.sh',
   pendingScript: 'pending.sh',
+  fileHeat: 'file-heat.json',
 };
 
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
@@ -90,6 +94,7 @@ const LEGACY_SUFFIXES = {
   acks: '-acks',
   acksScript: '-acks.sh',
   pendingScript: '-pending.sh',
+  fileHeat: '-file-heat.json',
 };
 
 // The per-agent runtime dir: ~/.clodex/run/<name>/.
