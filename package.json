@@ -7,6 +7,7 @@
   "main": "main.js",
   "scripts": {
     "start": "ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
+    "dev": "CLODEX_DEV=1 ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
     "test": "node --test",
     "postinstall": "node build/dev-rename-electron.js && node build/fix-pty-helper.js",
     "rebuild": "electron-rebuild",

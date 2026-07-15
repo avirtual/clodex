@@ -27,6 +27,22 @@ async function restoreSessionsForWorkspace({
   const saved = persistence.listForWorkspace(workspaceId);
   const restored = [];
   for (const entry of saved) {
+    // Archived sessions keep their record but are NOT re-spawned. Surface them
+    // as archived rows so the sidebar's status filter (active/archived/all) has
+    // something to show and the operator can resume them on demand.
+    if (entry.archivedAt && !manager.sessions.has(entry.name)) {
+      restored.push({
+        name: entry.name,
+        type: entry.type,
+        cwd: entry.cwd,
+        label: entry.label || null,
+        backend: entry.backend || null,
+        archived: true,
+        archivedAt: entry.archivedAt,
+        createdAt: entry.createdAt || null,
+      });
+      continue;
+    }
     if (manager.sessions.has(entry.name)) {
       // Already running — report it and flush any buffered output so the
       // new terminal shows everything that happened while detached
@@ -46,6 +62,7 @@ async function restoreSessionsForWorkspace({
         activity: session.activityState || 'idle',
         attention: session.needsAttention || null,
         pendingCount: manager.pendingCountFor(entry.name),
+        createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
       });
@@ -84,6 +101,7 @@ async function restoreSessionsForWorkspace({
         cwd: entry.cwd,
         label: entry.label || null,
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
+        createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
       });

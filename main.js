@@ -519,6 +519,20 @@ app.whenReady().then(() => {
       createWindow(DEFAULT_WORKSPACE_ID);
     }
   });
+
+  // Dev-only hot reload — renderer edits reload windows in place; main-process
+  // edits relaunch the app (sessions --resume on the fresh launch). Gated on
+  // CLODEX_DEV (set by `npm run dev`) and never present in a packaged build.
+  if (process.env.CLODEX_DEV && !app.isPackaged) {
+    try {
+      require('./dev-reload').installDevReload({
+        app, BrowserWindow,
+        onRelaunch: () => { appQuitting = true; if (engine) engine.shutdown(); },
+      });
+    } catch (e) {
+      console.error('[dev-reload] failed to install:', e.message);
+    }
+  }
 });
 
 

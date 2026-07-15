@@ -83,6 +83,16 @@ const DEFAULT_UI_SETTINGS = {
   // connector). When routed through a strip-capable wire the gate ignores this entirely
   // and lets the wire do the surgical strip regardless.
   disableClaudeDesignMcp: false,
+  // Session discovery: on startup, scan for claude/codex conversations on this
+  // machine that clodex doesn't manage (incl. ones started in a plain terminal)
+  // and offer to adopt them. OFF by default — it opens a dialog on launch, and
+  // adoption resumes a conversation (a billable re-warm), so it's opt-in. The
+  // File ▸ Discover Sessions… entry works regardless of this flag.
+  discoverOnStartup: false,
+  // Working-directory MRU for the New Session dialog — the last handful of cwds
+  // the operator picked, most-recent first. Purely a convenience datalist; capped
+  // and deduped by the noteCwd handler.
+  recentCwds: [],
   // UI theme key (see THEMES in renderer.js). Canonical copy lives here so the
   // View > Theme menu can show the right radio; the renderer mirrors it to
   // localStorage for instant pre-paint application.
@@ -362,6 +372,28 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         entry.label = label;
         this._save(all);
       }
+    },
+    // Per-session git worktree provenance ({ path, branch, repo }), stamped after
+    // a worktree-backed create so kill() can offer to remove it. A falsy value
+    // clears the key (a session that no longer owns a worktree carries none).
+    setWorktree(name, worktree) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (worktree && worktree.path) entry.worktree = worktree;
+      else delete entry.worktree;
+      this._save(all);
+    },
+    // Manual archive: an archived session keeps its record (so it can be resumed
+    // later) but has no running PTY and is skipped by restore-spawn. Stamps
+    // archivedAt for sort/display; clearing it (unarchive) drops the key.
+    setArchived(name, archived) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (archived) entry.archivedAt = Date.now();
+      else delete entry.archivedAt;
+      this._save(all);
     },
     setExtraArgs(name, extraArgs) {
       const all = this._load();
@@ -694,6 +726,16 @@ function initStores(userDataPath, { log, registryDir } = {}) {
       return this.list().slice().sort((a, b) =>
         (b.lastFocusedAt || 0) - (a.lastFocusedAt || 0),
       );
+    },
+    // Per-workspace sidebar view state (group/sort/filter/search). Persisted so a
+    // workspace remembers how its session list is organized across restarts. A
+    // partial merge over the stored object; an absent key keeps its prior value.
+    setView(id, view) {
+      const all = this._load();
+      const w = all.find(x => x.id === id);
+      if (!w) return;
+      w.view = { ...(w.view || {}), ...(view || {}) };
+      this._save(all);
     },
   };
 
@@ -1196,6 +1238,8 @@ function initStores(userDataPath, { log, registryDir } = {}) {
           wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
           compactOnResume: typeof raw?.compactOnResume === 'boolean' ? raw.compactOnResume : DEFAULT_UI_SETTINGS.compactOnResume,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
+          discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
+          recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : DEFAULT_UI_SETTINGS.recentCwds,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
@@ -1222,6 +1266,8 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
         compactOnResume: partial?.compactOnResume ?? cur.compactOnResume,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
+        discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
+        recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,

@@ -14,7 +14,36 @@
         <span class="app-brand">Clodex</span>
         <span class="workspace-name" id="workspace-name" title="Double-click to rename workspace">Workspace</span>
       </div>
-      <button id="btn-new" title="New session (Cmd+T)">+</button>
+      <button id="btn-new" title="New or existing session (Cmd+T)">+</button>
+    </div>
+    <div id="sidebar-toolbar">
+      <input type="text" id="sidebar-search" class="sidebar-search" placeholder="Filter sessions…" spellcheck="false" autocomplete="off">
+      <div class="sidebar-toolbar-row">
+        <select id="sidebar-group" class="sidebar-select" title="Group sessions by">
+          <option value="none">No grouping</option>
+          <option value="project">Group: Project</option>
+          <option value="state">Group: State</option>
+          <option value="date">Group: Date</option>
+          <option value="pr">Group: PR status</option>
+        </select>
+        <select id="sidebar-sort" class="sidebar-select" title="Sort sessions by">
+          <option value="recency">Sort: Recent</option>
+          <option value="created">Sort: Created</option>
+          <option value="alpha">Sort: A–Z</option>
+        </select>
+        <select id="sidebar-status" class="sidebar-select" title="Show">
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+          <option value="all">All</option>
+        </select>
+        <select id="sidebar-activity" class="sidebar-select" title="Last activity within">
+          <option value="all">Any time</option>
+          <option value="1">1 day</option>
+          <option value="3">3 days</option>
+          <option value="7">7 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </div>
     </div>
     <div id="session-list"></div>
     <div id="update-banner" class="hidden" title="Click to view the release">
@@ -411,8 +440,23 @@
       </label>
       <label>Working Directory
         <div class="dir-picker">
-          <input type="text" id="input-cwd" placeholder="~ or /absolute/path" spellcheck="false">
+          <input type="text" id="input-cwd" placeholder="~ or /absolute/path" spellcheck="false" list="cwd-suggestions" autocomplete="off">
           <button id="btn-browse" class="secondary" type="button">Browse</button>
+        </div>
+        <datalist id="cwd-suggestions"></datalist>
+      </label>
+      <label id="worktree-row" style="display:none;">Git worktree
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="input-worktree" style="margin: 0;">
+          <span class="hint-text" style="margin: 0;">Create in a new git worktree — an isolated checkout of the repo above, on its own branch. Removal is offered when you kill the session.</span>
+        </label>
+        <div id="worktree-fields" style="display:none; margin-top:4px;">
+          <input type="text" id="input-worktree-branch" placeholder="new branch name — e.g. agent/feature-x" spellcheck="false" autocomplete="off">
+          <label style="margin-top:4px; font-weight: normal;">Create from
+            <input type="text" id="input-worktree-base" placeholder="(default branch)" spellcheck="false" list="worktree-base-list" autocomplete="off">
+            <datalist id="worktree-base-list"></datalist>
+            <span class="hint-text" style="margin: 0;">The branch/ref the new worktree branches off. Defaults to the repo's default branch.</span>
+          </label>
         </div>
       </label>
       <label id="system-prompt-row">System prompt
@@ -494,7 +538,10 @@
         <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url</span>
       </label>
       <label id="resume-row">Resume from session ID
-        <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
+        <div class="dir-picker">
+          <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
+          <button id="btn-find-session" class="secondary" type="button" title="Find an existing session on this machine to resume">Find…</button>
+        </div>
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="input-fork" style="margin: 0;">
           <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched)</span>
@@ -534,6 +581,21 @@
         <div style="flex: 1;"></div>
         <button id="peer-session-cancel" class="secondary">Cancel</button>
         <button id="peer-session-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Discover Sessions dialog — adopt claude/codex sessions started outside
+       clodex (global scan of ~/.claude/projects + live foreign processes). -->
+  <div id="discovery-overlay" class="hidden">
+    <div id="discovery-dialog">
+      <h3>Discover Sessions</h3>
+      <p class="hint-text">Claude/Codex conversations on this machine that Clodex isn't already managing — including ones started in a plain terminal. Adopt one to fill the New Session form with its type, directory, and session ID, so you can pick tools/prompts/proxy before resuming it. Adopting doesn't attach to a running process; it spawns a fresh Clodex-managed instance that resumes the same conversation.</p>
+      <div id="discovery-list" class="discovery-list"><div class="discovery-empty">Scanning…</div></div>
+      <div class="dialog-actions">
+        <button id="discovery-refresh" class="secondary" type="button">Rescan</button>
+        <div style="flex: 1;"></div>
+        <button id="discovery-close" class="secondary">Close</button>
       </div>
     </div>
   </div>
@@ -695,6 +757,14 @@
           <span id="remote-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
+      </section>
+      <section>
+        <h4>Session discovery</h4>
+        <p class="hint-text">Clodex can find Claude/Codex conversations on this machine that it isn't managing — including ones you started in a plain terminal — and let you adopt them (File ▸ Discover Sessions…). When enabled below, it checks on startup and offers any it finds; adopting resumes the conversation in a Clodex-managed session (it never attaches to a running process or spawns anything automatically).</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-discover-on-startup" style="margin: 0;">
+          <span>Offer to adopt external sessions on startup</span>
+        </label>
       </section>
       <section>
         <h4>Claude MCP</h4>

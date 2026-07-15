@@ -102,6 +102,16 @@ function createAppMenus(deps) {
       },
     });
     template.push({
+      label: 'Discover Sessions…',
+      click: () => {
+        let win = BrowserWindow.getFocusedWindow() || getManager().allLiveWindows()[0];
+        if (!win) win = createWindow(DEFAULT_WORKSPACE_ID);
+        win.show();
+        win.focus();
+        win.webContents.send('request-open-discovery');
+      },
+    });
+    template.push({
       label: 'New Workspace',
       accelerator: 'Shift+Cmd+N',
       click: () => {

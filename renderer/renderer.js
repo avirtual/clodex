@@ -77,6 +77,70 @@ const inputAppendList = document.getElementById('input-append-list');
 const inputResume = document.getElementById('input-resume');
 const inputFork = document.getElementById('input-fork');
 const resumeRow = document.getElementById('resume-row');
+const inputWorktree = document.getElementById('input-worktree');
+const inputWorktreeBranch = document.getElementById('input-worktree-branch');
+const inputWorktreeBase = document.getElementById('input-worktree-base');
+const worktreeBaseList = document.getElementById('worktree-base-list');
+const worktreeFields = document.getElementById('worktree-fields');
+const worktreeRow = document.getElementById('worktree-row');
+const cwdSuggestionsList = document.getElementById('cwd-suggestions');
+// The branch/base fields only matter once the worktree box is checked.
+if (inputWorktree) {
+  inputWorktree.addEventListener('change', () => {
+    worktreeFields.style.display = inputWorktree.checked ? '' : 'none';
+    if (inputWorktree.checked) inputWorktreeBranch.focus();
+  });
+}
+
+// Git repo detection for the current cwd — reveals the worktree row only inside
+// a repo and populates the base-branch autocomplete + default. Debounced so
+// typing a path doesn't shell out to git on every keystroke.
+let worktreeInfoToken = 0;
+async function refreshWorktreeForCwd() {
+  if (!worktreeRow) return;
+  const authoring = dialogMode === 'template';
+  const cwd = expandPath(inputCwd.value.trim()) || homeDir;
+  const token = ++worktreeInfoToken;
+  const info = await window.api.worktreeInfo(cwd);
+  if (token !== worktreeInfoToken) return; // a newer cwd won the race
+  const isRepo = info && info.ok && info.isRepo;
+  // Worktrees are runtime-only (hidden in template authoring) AND repo-only.
+  worktreeRow.style.display = (isRepo && !authoring) ? '' : 'none';
+  if (!isRepo || authoring) {
+    if (inputWorktree) inputWorktree.checked = false;
+    if (worktreeFields) worktreeFields.style.display = 'none';
+    return;
+  }
+  // Populate the base-branch datalist (default first) and seed the placeholder.
+  worktreeBaseList.textContent = '';
+  for (const b of (info.branches || [])) {
+    const opt = document.createElement('option');
+    opt.value = b;
+    worktreeBaseList.appendChild(opt);
+  }
+  inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
+}
+
+// Working Directory datalist: recently-picked dirs (MRU) first, then the most-
+// popular cwds across live sessions (labelled with their session count). Deduped
+// so a dir that's both recent and active shows once.
+async function refreshCwdSuggestions() {
+  if (!cwdSuggestionsList) return;
+  const res = await window.api.cwdSuggestions();
+  if (!res || !res.ok) return;
+  cwdSuggestionsList.textContent = '';
+  const seen = new Set();
+  const add = (value, label) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    const opt = document.createElement('option');
+    opt.value = value;
+    if (label) opt.label = label;
+    cwdSuggestionsList.appendChild(opt);
+  };
+  for (const c of (res.recent || [])) add(c, 'recent');
+  for (const p of (res.popular || [])) add(p.cwd, `${p.count} active session${p.count === 1 ? '' : 's'}`);
+}
 const proxyRow = document.getElementById('proxy-row');
 const inputProxyMode = document.getElementById('input-proxy-mode');
 const inputProxyUrl = document.getElementById('input-proxy-url');
@@ -268,6 +332,20 @@ function typeGlyph(type, backend) {
     || (type ? type[0].toUpperCase() : '?');
 }
 
+// The session X / kill gesture: ask (Archive / Delete / Cancel), then dispatch.
+// Archive stops the PTY but keeps the record (the row is re-rendered as archived
+// on the next meta refresh); Delete forgets it. Shared by the row X, the ⌘W
+// path, and the context menu so all three offer the same choice.
+async function closeSessionWithChoice(name) {
+  const action = await window.api.confirmKill(name);
+  if (action === 'archive') {
+    await window.api.archiveSession(name);
+    refreshSidebarView();
+  } else if (action === 'delete' || action === true) { // true = legacy/no-worktree yes
+    window.api.killSession(name);
+  }
+}
+
 // Local session rows stay contiguous ABOVE the peer block: renderPeers removes
 // and re-appends every [data-peer-ui] header/row at the END of sessionList, so
 // a new local row appended naively lands BELOW the peers (the interleaving bug).
@@ -368,9 +446,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
 
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (await window.api.confirmKill(name)) {
-      window.api.killSession(name);
-    }
+    closeSessionWithChoice(name);
   });
 
   // Click the ✉ parked-message chip to flush that session's queue NOW (operator
@@ -400,6 +476,10 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
   });
 
   insertLocalSessionRow(item);
+  // A freshly-created session is active NOW — seed its meta so recency sort
+  // places it correctly before the next meta poll, then re-lay-out.
+  sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
+  refreshSidebarView();
 }
 
 // Handle context menu actions from main process
@@ -461,9 +541,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend }) => {
       break;
     }
     case 'kill':
-      window.api.confirmKill(name).then((ok) => {
-        if (ok) window.api.killSession(name);
-      });
+      closeSessionWithChoice(name);
       break;
     case 'export':
       window.api.exportSessionMarkdown(name).then((res) => {
@@ -541,6 +619,8 @@ function removeSessionFromSidebar(name) {
   // Child subagent rows are siblings, not descendants — sweep them too.
   sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
   if (isSubagentPopoverForParent(name)) closeSubagentPopover();
+  sidebarMeta.delete(name);
+  if (typeof refreshSidebarView === 'function') refreshSidebarView();
 }
 
 function updateSidebarActive() {
@@ -553,6 +633,335 @@ function updateSidebarActive() {
 // dataset the sidebar badge uses, so the title count can never drift from it.
 function webAttentionCount() {
   return sessionList.querySelectorAll('.session-item[data-attention]').length;
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar view: group / sort / filter / search
+// ---------------------------------------------------------------------------
+// The row ELEMENTS are still created by addSessionToSidebar (so xterm state,
+// event listeners, and live badges survive); this engine only reorders them,
+// toggles their visibility, and inserts group headers — never destroys a live
+// row. Archived rows are lightweight placeholders (no terminal) added here.
+
+// Current view state; loaded from the workspace store on boot, persisted on
+// every change. Defaults: recency sort, no grouping, active-only.
+let sidebarView = { group: 'none', sort: 'recency', status: 'active', activity: 'all', search: '' };
+// name -> { lastActivityTs, createdAt, archivedAt, branch, prState, prNumber }
+const sidebarMeta = new Map();
+const collapsedGroups = new Set(); // group keys the user collapsed
+
+const sbSearch = document.getElementById('sidebar-search');
+const sbGroup = document.getElementById('sidebar-group');
+const sbSort = document.getElementById('sidebar-sort');
+const sbStatus = document.getElementById('sidebar-status');
+const sbActivity = document.getElementById('sidebar-activity');
+
+// Project label for a cwd: repo/dir basename, with its parent for context.
+function projectLabel(cwd) {
+  if (!cwd) return '(no directory)';
+  const parts = cwd.split('/').filter(Boolean);
+  if (parts.length <= 1) return cwd;
+  return parts.slice(-2).join('/');
+}
+
+function stateOf(item) {
+  if (item.dataset.attention) return 'needs attention';
+  const a = item.dataset.activity;
+  if (a === 'thinking' || a === 'working') return 'working';
+  if (item.classList.contains('archived')) return 'archived';
+  return 'idle';
+}
+
+function dateBucket(ts) {
+  if (!ts) return 'Unknown';
+  const days = (Date.now() - ts) / 86400000;
+  if (days < 1) return 'Today';
+  if (days < 2) return 'Yesterday';
+  if (days < 7) return 'This week';
+  if (days < 30) return 'This month';
+  return 'Older';
+}
+
+const DATE_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'Unknown'];
+const STATE_ORDER = ['needs attention', 'working', 'idle', 'archived'];
+const PR_ORDER = ['open', 'merged', 'closed', 'none', 'no PR / unknown'];
+
+// The group key + display label a row falls into for the current group mode.
+function groupFor(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  switch (sidebarView.group) {
+    case 'project': return projectLabel(item.dataset.cwd);
+    case 'state': return stateOf(item);
+    case 'date': return dateBucket(meta.lastActivityTs || meta.createdAt);
+    case 'pr': return meta.prState ? meta.prState : 'no PR / unknown';
+    default: return null;
+  }
+}
+
+function groupSortIndex(mode, key) {
+  const order = mode === 'date' ? DATE_ORDER : mode === 'state' ? STATE_ORDER : mode === 'pr' ? PR_ORDER : null;
+  if (!order) return 0;
+  const i = order.indexOf(key);
+  return i === -1 ? order.length : i;
+}
+
+// Does a row pass the current status/activity/search filters?
+function rowPasses(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  const archived = item.classList.contains('archived');
+  if (sidebarView.status === 'active' && archived) return false;
+  if (sidebarView.status === 'archived' && !archived) return false;
+  // Last-activity window (skip for archived — they have no live activity).
+  if (sidebarView.activity !== 'all' && !archived) {
+    const ts = meta.lastActivityTs || meta.createdAt;
+    const maxMs = Number(sidebarView.activity) * 86400000;
+    if (!ts || (Date.now() - ts) > maxMs) return false;
+  }
+  // Search over name, cwd, branch.
+  const q = sidebarView.search.trim().toLowerCase();
+  if (q) {
+    const hay = `${item.dataset.name} ${item.dataset.cwd || ''} ${meta.branch || ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function rowSortValue(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  switch (sidebarView.sort) {
+    case 'created': return meta.createdAt || 0;
+    case 'alpha': return item.dataset.name.toLowerCase();
+    default: return meta.lastActivityTs || meta.createdAt || 0; // recency
+  }
+}
+
+function compareRows(a, b) {
+  const va = rowSortValue(a), vb = rowSortValue(b);
+  if (sidebarView.sort === 'alpha') return String(va).localeCompare(String(vb));
+  return vb - va; // recency/created: newest first
+}
+
+// The one place that lays out the local session block. Reads every non-peer,
+// non-child .session-item, applies filter/sort/group, and re-inserts them
+// (with group headers) ABOVE the peer block. Child subagent rows ride with
+// their parent. Idempotent and safe to call on any state change.
+function refreshSidebarView() {
+  const firstPeer = sessionList.querySelector('[data-peer-ui]');
+  // Collect local top-level rows (exclude peer rows + subagent children).
+  const rows = [...sessionList.querySelectorAll('.session-item')].filter(
+    (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
+  // Remove any prior group headers / empty note.
+  sessionList.querySelectorAll('.session-group-header, .session-empty-note').forEach((el) => el.remove());
+
+  // Partition into visible / hidden by filter, and paint each row's PR badge.
+  for (const el of rows) {
+    applyPrBadge(el);
+    const pass = rowPasses(el);
+    el.style.display = pass ? '' : 'none';
+    // Hide a row's subagent children with it.
+    sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)
+      .forEach((c) => { c.style.display = pass ? '' : 'none'; });
+  }
+  const visible = rows.filter((el) => el.style.display !== 'none');
+
+  // childrenOf: subagent rows to re-attach right after each parent.
+  const childrenOf = (name) =>
+    [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`)];
+
+  const place = (el, anchor) => {
+    // Insert el (and its children) before `anchor` (or before the peer block).
+    const ref = anchor || firstPeer || null;
+    if (ref) sessionList.insertBefore(el, ref); else sessionList.appendChild(el);
+    for (const c of childrenOf(el.dataset.name)) {
+      if (ref) sessionList.insertBefore(c, ref); else sessionList.appendChild(c);
+    }
+  };
+
+  if (!visible.length) {
+    const note = document.createElement('div');
+    note.className = 'session-empty-note';
+    note.textContent = rows.length ? 'No sessions match the current filter.' : 'No sessions yet.';
+    if (firstPeer) sessionList.insertBefore(note, firstPeer); else sessionList.appendChild(note);
+    return;
+  }
+
+  if (sidebarView.group === 'none') {
+    for (const el of visible.sort(compareRows)) place(el, firstPeer);
+    return;
+  }
+
+  // Group: bucket, then order groups, then rows within each group.
+  const groups = new Map(); // key -> rows[]
+  for (const el of visible) {
+    const key = groupFor(el) || '(other)';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(el);
+  }
+  const keys = [...groups.keys()].sort((a, b) => {
+    const ia = groupSortIndex(sidebarView.group, a), ib = groupSortIndex(sidebarView.group, b);
+    if (ia !== ib) return ia - ib;
+    return String(a).localeCompare(String(b));
+  });
+  for (const key of keys) {
+    const header = makeGroupHeader(key, groups.get(key).length);
+    if (firstPeer) sessionList.insertBefore(header, firstPeer); else sessionList.appendChild(header);
+    const collapsed = collapsedGroups.has(key);
+    for (const el of groups.get(key).sort(compareRows)) {
+      place(el, firstPeer);
+      if (collapsed) {
+        el.style.display = 'none';
+        childrenOf(el.dataset.name).forEach((c) => { c.style.display = 'none'; });
+      }
+    }
+  }
+}
+
+// Paint the PR-status chip + branch tooltip onto a row from its meta. Shown for
+// open/merged/closed (a real PR); hidden for none/unknown so the row stays lean.
+// The chip lives in .session-badges (created by addSessionToSidebar); archived
+// rows have no badges span, so this is a no-op there.
+function applyPrBadge(item) {
+  const badges = item.querySelector('.session-badges');
+  if (!badges) return;
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  let chip = badges.querySelector('.session-pr');
+  const state = meta.prState;
+  if (!state || state === 'none') { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'session-pr';
+    badges.appendChild(chip);
+  }
+  chip.classList.remove('open', 'merged', 'closed');
+  if (state === 'open' || state === 'merged' || state === 'closed') chip.classList.add(state);
+  chip.textContent = meta.prNumber ? `#${meta.prNumber}` : state;
+  chip.title = `PR ${state}${meta.branch ? ` · ${meta.branch}` : ''}`;
+}
+
+// Debounced re-layout — activity events can arrive in bursts; coalesce them so
+// grouping/sorting recomputes at most ~4×/sec instead of per event.
+let relayoutTimer = null;
+function scheduleSidebarRelayout() {
+  if (relayoutTimer) return;
+  relayoutTimer = setTimeout(() => { relayoutTimer = null; refreshSidebarView(); }, 250);
+}
+
+function makeGroupHeader(key, count) {
+  const h = document.createElement('div');
+  h.className = 'session-group-header';
+  if (collapsedGroups.has(key)) h.classList.add('collapsed');
+  h.dataset.groupKey = key;
+  const caret = document.createElement('span');
+  caret.className = 'session-group-caret';
+  caret.textContent = '▾';
+  const title = document.createElement('span');
+  title.className = 'session-group-title';
+  title.textContent = key;
+  const cnt = document.createElement('span');
+  cnt.className = 'session-group-count';
+  cnt.textContent = String(count);
+  h.append(caret, title, cnt);
+  h.addEventListener('click', () => {
+    if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+    refreshSidebarView();
+  });
+  return h;
+}
+
+// Add a lightweight ARCHIVED placeholder row (no terminal). Clicking it resumes
+// the session (unarchive → restart), matching the failed-row retry gesture.
+function addArchivedSessionToSidebar(entry) {
+  if (sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`)) return;
+  const item = document.createElement('div');
+  item.className = 'session-item archived';
+  item.dataset.name = entry.name;
+  item.dataset.cwd = entry.cwd || '';
+  item.dataset.type = entry.type;
+  if (entry.backend) item.dataset.backend = entry.backend;
+  const displayName = entry.label || entry.name;
+  item.innerHTML = `
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
+    <div class="session-info">
+      <div class="session-name">${esc(displayName)}</div>
+      <div class="session-meta">
+        <span class="session-archived-label">archived — click to resume</span>
+      </div>
+    </div>
+    <button class="session-close" title="Delete archived session">&times;</button>`;
+  item.addEventListener('click', async (e) => {
+    if (e.target.closest('.session-close')) return;
+    await window.api.unarchiveSession(entry.name);
+    const res = await window.api.retrySpawnSession(entry.name);
+    if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
+    item.remove();
+    createTerminal(entry.name);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    switchSession(entry.name);
+    refreshSidebarView();
+  });
+  item.querySelector('.session-close').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (confirm(`Delete archived session "${entry.name}"? This forgets it permanently.`)) {
+      await window.api.forgetSession(entry.name);
+      item.remove();
+      refreshSidebarView();
+    }
+  });
+  if (firstPeerOrNull()) sessionList.insertBefore(item, firstPeerOrNull()); else sessionList.appendChild(item);
+  sidebarMeta.set(entry.name, {
+    lastActivityTs: entry.archivedAt || null, createdAt: entry.createdAt || null, archivedAt: entry.archivedAt || null,
+  });
+}
+function firstPeerOrNull() { return sessionList.querySelector('[data-peer-ui]'); }
+
+// Pull fresh meta (timestamps + PR status) for this workspace and re-render.
+// includePr:false for cheap timestamp-only refreshes (typing in search, etc.).
+let metaRefreshInFlight = false;
+async function refreshSidebarMeta({ includePr = true } = {}) {
+  if (metaRefreshInFlight) return;
+  metaRefreshInFlight = true;
+  try {
+    const res = await window.api.sidebarMeta({ includePr });
+    if (res && res.ok && res.meta) {
+      for (const [name, m] of Object.entries(res.meta)) {
+        sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), ...m });
+      }
+    }
+  } catch {} finally { metaRefreshInFlight = false; }
+  refreshSidebarView();
+}
+
+// Persist + apply a view change from the toolbar controls.
+function onViewControlChange() {
+  sidebarView = {
+    group: sbGroup.value, sort: sbSort.value,
+    status: sbStatus.value, activity: sbActivity.value,
+    search: sbSearch.value,
+  };
+  window.api.setSidebarView(sidebarView);
+  refreshSidebarView();
+}
+if (sbGroup) sbGroup.addEventListener('change', onViewControlChange);
+if (sbSort) sbSort.addEventListener('change', onViewControlChange);
+if (sbStatus) sbStatus.addEventListener('change', () => { onViewControlChange(); refreshSidebarMeta(); });
+if (sbActivity) sbActivity.addEventListener('change', onViewControlChange);
+if (sbSearch) sbSearch.addEventListener('input', onViewControlChange);
+
+// Load persisted view state + do the first meta fetch. Called from the restore
+// bootstrap once rows exist.
+async function initSidebarView() {
+  try {
+    const res = await window.api.getSidebarView();
+    if (res && res.ok && res.view) sidebarView = { ...sidebarView, ...res.view };
+  } catch {}
+  if (sbGroup) sbGroup.value = sidebarView.group;
+  if (sbSort) sbSort.value = sidebarView.sort;
+  if (sbStatus) sbStatus.value = sidebarView.status;
+  if (sbActivity) sbActivity.value = sidebarView.activity;
+  if (sbSearch) sbSearch.value = sidebarView.search || '';
+  await refreshSidebarMeta();
+  // Periodic timestamp refresh so recency sort + activity filter stay live.
+  setInterval(() => refreshSidebarMeta({ includePr: false }), 30000);
 }
 
 function updateWindowTitle() {
@@ -822,6 +1231,16 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     inputResume.value = '';
     inputFork.checked = false;
   }
+  // Worktree is runtime-only (a concrete checkout, not reusable config) AND
+  // repo-only — refreshWorktreeForCwd owns its visibility (hidden here first so
+  // a type-change to a non-repo template never flashes it). The async refresh
+  // re-reveals it when the cwd is a git repo.
+  if (worktreeRow) {
+    worktreeRow.style.display = 'none';
+    if (inputWorktree) inputWorktree.checked = false;
+    if (worktreeFields) worktreeFields.style.display = 'none';
+    if (!authoring) refreshWorktreeForCwd();
+  }
   // Proxy routing only makes sense for agent types — and it IS a template field,
   // so it stays visible in template-authoring mode.
   proxyRow.style.display = agentType ? '' : 'none';
@@ -988,17 +1407,28 @@ async function refreshNewSessionTools(disabledSet = null) {
   renderToolChecklist(inputToolsList, disabled, (res && res.ok && res.effective) || {});
 }
 
-async function openDialog() {
+// prefill (optional): seed the dialog for adopting an existing session —
+// { name, type, cwd, resumeId }. Everything else stays at the normal new-session
+// defaults, so the operator can still pick tools/prompts/proxy/worktree before
+// Create runs the SAME create() path (resumeId set = resume the conversation).
+async function openDialog(prefill = null) {
   editingTemplateId = null;
   setDialogMode('create'); // reset chrome if the last use was a template edit
   sessionCounter++;
-  inputName.value = `session-${sessionCounter}`;
-  inputType.value = 'claude';
-  inputCwd.value = homeDir;
+  inputName.value = (prefill && prefill.name) || `session-${sessionCounter}`;
+  inputType.value = (prefill && prefill.type) || 'claude';
+  inputCwd.value = (prefill && prefill.cwd) || homeDir;
   inputTemplate.value = '';
   inputSystemPrompt.value = '';
-  inputResume.value = '';
+  inputResume.value = (prefill && prefill.resumeId) || '';
   inputFork.checked = false;
+  if (inputWorktree) {
+    inputWorktree.checked = false;
+    inputWorktreeBranch.value = '';
+    inputWorktreeBase.value = '';
+    if (worktreeFields) worktreeFields.style.display = 'none';
+  }
+  refreshCwdSuggestions();
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   // Collapse the advanced accordions each open so the dialog starts short.
@@ -1029,6 +1459,10 @@ async function openDialog() {
   inputPlacement.value = 'host';
   placementRow.style.display = hasSandboxPeer(settings?.peers) ? '' : 'none';
   greyRichFields(false);
+  // Adopting an existing session: retitle so it's clear this resumes a
+  // conversation rather than starting fresh. Purely cosmetic — the Resume field
+  // carries the id and drives the behavior.
+  if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
 }
@@ -1041,6 +1475,11 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 // which then throws `.has is not a function` mid-render and blanks the checklist.
 inputCwd.addEventListener('change', () => refreshNewSessionSkills());
 inputCwd.addEventListener('change', () => refreshNewSessionTools());
+// Re-detect the git repo when the cwd changes — reveals/hides the worktree row
+// and repopulates its base-branch autocomplete. `input` (not just `change`) so a
+// datalist pick or paste updates it immediately; the async refresh is race-safe.
+inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
+inputCwd.addEventListener('input', () => refreshWorktreeForCwd());
 
 inputProxyMode.addEventListener('change', () => {
   inputProxyUrl.style.display = inputProxyMode.value === 'custom' ? '' : 'none';
@@ -1220,10 +1659,38 @@ async function doCreate() {
     return;
   }
 
+  // Opt-in git worktree: create it FIRST (off the entered cwd's repo), then spawn
+  // the session in the new worktree instead. Done before closeDialog so a failure
+  // can surface with the dialog still open for correction.
+  let spawnCwd = cwd;
+  let worktree = null;
+  // Only worktree-backed when the row is visible (i.e. cwd is a git repo) AND
+  // checked — the row hides itself outside a repo, so a stale checked state can't
+  // fire a worktree in a non-repo dir.
+  if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
+    const branch = inputWorktreeBranch.value.trim();
+    if (!branch) {
+      inputWorktreeBranch.style.borderColor = '#e94560';
+      return;
+    }
+    const base = inputWorktreeBase.value.trim() || null; // null → repo default branch
+    const wt = await window.api.createWorktree(cwd, branch, { base });
+    if (!wt || !wt.ok) {
+      alert(`Failed to create git worktree: ${(wt && wt.error) || 'unknown error'}`);
+      return;
+    }
+    spawnCwd = wt.path;
+    worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
+  }
+
+  // Remember the chosen source dir (the repo/cwd the user picked, not the derived
+  // worktree path) for the Working Directory MRU.
+  window.api.noteCwd(cwd);
+
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+  const result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Failed to create session: ${result.error || 'unknown error'}`);
@@ -1231,8 +1698,11 @@ async function doCreate() {
     return;
   }
 
+  // Stamp worktree provenance so the kill dialog can offer to remove it.
+  if (worktree) window.api.markSessionWorktree(name, worktree);
+
   createTerminal(name);
-  addSessionToSidebar(name, type, cwd, null, (result.session && result.session.backend) || null);
+  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null);
   switchSession(name);
 }
 
@@ -1243,13 +1713,16 @@ function submitDialog() {
   else doCreate();
 }
 
-document.getElementById('btn-new').addEventListener('click', openDialog);
+// The + button opens the New Session dialog directly. Adopting an existing
+// session is reachable from inside it via the "Find…" button next to the Resume
+// field (which pre-fills the same form), so there's no separate menu.
+document.getElementById('btn-new').addEventListener('click', () => openDialog());
 document.getElementById('btn-cancel').addEventListener('click', closeDialog);
 btnCreate.addEventListener('click', submitDialog);
 
 document.getElementById('btn-browse').addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
-  if (dir) { inputCwd.value = dir; refreshNewSessionSkills(); refreshNewSessionTools(); }
+  if (dir) { inputCwd.value = dir; refreshNewSessionSkills(); refreshNewSessionTools(); refreshWorktreeForCwd(); }
 });
 
 // Enter to submit (Escape no longer closes — only Cancel button does)
@@ -1397,6 +1870,13 @@ window.api.onSessionActivity((name, state) => {
     applyThinkBadge(el);
   }
   el.dataset.activity = state;
+  // Activity bumps recency and can move a row between state-groups; re-lay-out
+  // (debounced) only when the current view actually depends on it, so a plain
+  // ungrouped recency list doesn't thrash on every turn event.
+  if (sidebarView.group === 'state' || sidebarView.sort === 'recency') {
+    sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
+    scheduleSidebarRelayout();
+  }
 });
 
 // Needs-attention badge: the session's CLI is blocked on the human (permission
@@ -2428,9 +2908,7 @@ document.addEventListener('keydown', (e) => {
         // selection (the session keeps running on its owner regardless).
         peerHideFromList(entry.peer.id, entry.peer.name);
       } else {
-        window.api.confirmKill(target).then((ok) => {
-          if (ok) window.api.killSession(target);
-        });
+        closeSessionWithChoice(target);
       }
     }
     return;
@@ -2499,9 +2977,7 @@ document.addEventListener('keydown', (e) => {
       if (entry && entry.peer) {
         peerHideFromList(entry.peer.id, entry.peer.name);
       } else {
-        window.api.confirmKill(target).then((ok) => {
-          if (ok) window.api.killSession(target);
-        });
+        closeSessionWithChoice(target);
       }
     }
     return;
@@ -2556,6 +3032,170 @@ window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
 
 // ---------------------------------------------------------------------------
+// Discover Sessions dialog — adopt claude/codex sessions started outside clodex
+// ---------------------------------------------------------------------------
+const discoveryOverlay = document.getElementById('discovery-overlay');
+const discoveryList = document.getElementById('discovery-list');
+const discoveryRefresh = document.getElementById('discovery-refresh');
+const discoveryClose = document.getElementById('discovery-close');
+
+function closeDiscovery() { discoveryOverlay.classList.add('hidden'); }
+
+// A short, unique clodex session name derived from a cwd's basename (or type).
+function suggestAdoptName(cwd, type) {
+  const base = (cwd && cwd.split('/').filter(Boolean).pop()) || type;
+  let name = String(base).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 48) || type;
+  if (!sessions.has(name)) return name;
+  for (let i = 2; i < 100; i++) { const c = `${name}-${i}`; if (!sessions.has(c)) return c; }
+  return `${name}-${Date.now().toString(36)}`;
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const ms = Date.now() - (typeof ts === 'number' ? ts : Date.parse(ts));
+  if (!(ms >= 0)) return '';
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  return `${Math.round(hr / 24)}d ago`;
+}
+
+// Adopt = fill the New Session dialog (already open behind the picker) with the
+// chosen session's type/cwd/id and a suggested name, then return to it. The
+// operator customizes tools/prompts/proxy/worktree/etc. and hits Create, which
+// runs the normal create() path (resumeId set → resumes the conversation).
+// If the dialog wasn't already open (Find opened straight from a fresh state),
+// open it pre-filled instead.
+function adoptSession(rec) {
+  closeDiscovery();
+  const prefill = {
+    name: suggestAdoptName(rec.cwd, rec.type),
+    type: rec.type,
+    cwd: rec.cwd || homeDir,
+    resumeId: rec.sessionId,
+  };
+  if (!dialogOverlay.classList.contains('hidden')) {
+    // Dialog is open — fill it in place without resetting the operator's other
+    // choices. Type change drives the type-dependent sections (skills/tools/…).
+    inputName.value = prefill.name;
+    if (inputType.value !== prefill.type) { inputType.value = prefill.type; applyTypeDefaults(); }
+    inputCwd.value = prefill.cwd;
+    inputResume.value = prefill.resumeId;
+    inputFork.checked = false;
+    refreshNewSessionSkills();
+    refreshNewSessionTools();
+    refreshWorktreeForCwd();
+    dialogTitle.textContent = 'Adopt Session';
+    setTimeout(() => inputName.select(), 50);
+  } else {
+    openDialog(prefill);
+  }
+}
+
+function renderDiscovery(res) {
+  discoveryList.textContent = '';
+  const disk = (res && res.disk) || [];
+  const live = (res && res.live) || [];
+  if (!disk.length && !live.length) {
+    const empty = document.createElement('div');
+    empty.className = 'discovery-empty';
+    empty.textContent = 'No adoptable sessions found. Everything on this machine is already managed by Clodex.';
+    discoveryList.appendChild(empty);
+    return;
+  }
+  const addGroupHead = (text) => {
+    const h = document.createElement('div');
+    h.className = 'discovery-group-head';
+    h.textContent = text;
+    discoveryList.appendChild(h);
+  };
+  const addItem = (rec, { liveBadge = false } = {}) => {
+    const item = document.createElement('div');
+    item.className = 'discovery-item';
+    const meta = document.createElement('div');
+    meta.className = 'discovery-meta';
+    const title = document.createElement('div');
+    title.className = 'discovery-title';
+    title.textContent = rec.title || rec.cwd || rec.sessionId;
+    const sub = document.createElement('div');
+    sub.className = 'discovery-sub';
+    const bits = [rec.type];
+    if (rec.cwd) bits.push(rec.cwd);
+    if (rec.turns) bits.push(`${rec.turns} turns`);
+    const when = relTime(rec.lastActive || rec.mtime);
+    if (when) bits.push(when);
+    sub.textContent = bits.join(' · ');
+    meta.appendChild(title);
+    meta.appendChild(sub);
+    item.appendChild(meta);
+    if (liveBadge || rec.liveInCwd) {
+      const badge = document.createElement('span');
+      badge.className = 'discovery-live-badge';
+      badge.textContent = 'live';
+      badge.title = 'A claude/codex process is running in this directory right now';
+      item.appendChild(badge);
+    }
+    const btn = document.createElement('button');
+    btn.textContent = 'Adopt';
+    btn.addEventListener('click', () => adoptSession(rec));
+    item.appendChild(btn);
+    discoveryList.appendChild(item);
+  };
+
+  if (disk.length) {
+    addGroupHead(`Recent conversations (${disk.length})`);
+    for (const rec of disk) addItem(rec);
+  }
+  // Live foreign processes whose transcript wasn't in the disk list (e.g. a
+  // brand-new session with no cwd match). Adopting needs a sessionId, which the
+  // process lens doesn't carry — so these are informational unless matched.
+  const unmatchedLive = live.filter((p) => p.cwd && !disk.some((d) => d.cwd === p.cwd));
+  if (unmatchedLive.length) {
+    addGroupHead(`Running now, no resumable transcript found (${unmatchedLive.length})`);
+    for (const p of unmatchedLive) {
+      const item = document.createElement('div');
+      item.className = 'discovery-item';
+      const meta = document.createElement('div');
+      meta.className = 'discovery-meta';
+      const title = document.createElement('div');
+      title.className = 'discovery-title';
+      title.textContent = p.cwd || `pid ${p.pid}`;
+      const sub = document.createElement('div');
+      sub.className = 'discovery-sub';
+      sub.textContent = `${p.type} · pid ${p.pid}`;
+      meta.appendChild(title); meta.appendChild(sub);
+      item.appendChild(meta);
+      const badge = document.createElement('span');
+      badge.className = 'discovery-live-badge';
+      badge.textContent = 'live';
+      item.appendChild(badge);
+      discoveryList.appendChild(item);
+    }
+  }
+}
+
+async function openDiscovery() {
+  discoveryOverlay.classList.remove('hidden');
+  discoveryList.textContent = '';
+  const scanning = document.createElement('div');
+  scanning.className = 'discovery-empty';
+  scanning.textContent = 'Scanning…';
+  discoveryList.appendChild(scanning);
+  const res = await window.api.discoverSessions({});
+  renderDiscovery(res);
+}
+
+if (discoveryRefresh) discoveryRefresh.addEventListener('click', () => openDiscovery());
+if (discoveryClose) discoveryClose.addEventListener('click', () => closeDiscovery());
+if (discoveryOverlay) discoveryOverlay.addEventListener('click', (e) => { if (e.target === discoveryOverlay) closeDiscovery(); });
+window.api.onRequestOpenDiscovery(() => openDiscovery());
+// "Find…" next to the Resume field opens the picker on top of the New Session
+// dialog; adopting a row fills this dialog's fields in place.
+const btnFindSession = document.getElementById('btn-find-session');
+if (btnFindSession) btnFindSession.addEventListener('click', () => openDiscovery());
+
+// ---------------------------------------------------------------------------
 // Preferences dialog
 // ---------------------------------------------------------------------------
 
@@ -2566,6 +3206,7 @@ const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
+const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -3345,6 +3986,7 @@ async function openPrefs() {
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   prefsCompactOnResume.checked = !!s.compactOnResume;
+  if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
   // Unchecked = denied by default for new sessions.
@@ -3377,6 +4019,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     proxyEnabled: prefsProxyEnabled.checked,
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     compactOnResume: prefsCompactOnResume.checked,
+    discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });
   // Default tool denies live in a separate store (the "*" agent-default), so
@@ -3674,10 +4317,15 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 (async function restoreSessions() {
   const restored = await window.api.restoreSessions();
-  if (!restored || restored.length === 0) return;
+  if (!restored || restored.length === 0) { initSidebarView(); return; }
 
   let firstHealthy = null;
   for (const entry of restored) {
+    if (entry.archived) {
+      // Archived — no PTY; a lightweight placeholder that resumes on click.
+      addArchivedSessionToSidebar(entry);
+      continue;
+    }
     if (entry.failed) {
       // Render as a ghost entry — no xterm, but visible in the sidebar so
       // the user can either retry it or forget it.
@@ -3686,6 +4334,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     }
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     // Seed the dot from the reattach snapshot — activity/attention events
     // fired while this window was detached were dropped, and the next live
     // event may be a turn away.
@@ -3712,7 +4361,29 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
     if (!firstHealthy) firstHealthy = entry.name;
   }
+  // Focus the first HEALTHY (spawned) session — an archived/failed row has no
+  // terminal to switch to. Only fall back to restored[0] when it's spawnable.
   if (firstHealthy) switchSession(firstHealthy);
-  // Focus the first restored session
-  switchSession(restored[0].name);
+  // Load persisted view state, fetch meta, and lay out the grouped/sorted list.
+  initSidebarView();
+})();
+
+// Opt-in startup session discovery: if enabled, scan for adoptable external
+// sessions once the app has settled and open the picker only when there's
+// something to adopt. Gated on the preference (default off) so launch is silent
+// unless the operator asked for it; the File ▸ Discover Sessions… entry is
+// always available regardless. Only the primary (first-focused) window runs
+// this, piggybacking on isWorkspacePrimary if present, else a short delay.
+(async function maybeDiscoverOnStartup() {
+  try {
+    const s = await window.api.getSettings();
+    if (!s || !s.discoverOnStartup) return;
+    // Let restore + reattach finish painting before we scan/prompt.
+    await new Promise((r) => setTimeout(r, 1500));
+    const res = await window.api.discoverSessions({});
+    const disk = (res && res.disk) || [];
+    if (!disk.length) return;
+    renderDiscovery(res);
+    discoveryOverlay.classList.remove('hidden');
+  } catch {}
 })();

@@ -963,9 +963,16 @@ function createSessionManager(deps) {
       // Persist this session so we can resume it on next launch.
       // Bash/other sessions persist too (restored as fresh shells in the
       // saved cwd); their entry is dropped on natural exit instead.
+      // createdAt: stamped ONCE, at the session's first create. kill()+recreate
+      // (restart/restore) rebuilds the record from spawn args, so preserve any
+      // existing stamp rather than resetting it — the sidebar's "created" sort/
+      // group depends on it being stable across restarts.
+      const existingEntry = getPersistence().get(name);
+      const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
       getPersistence().upsert({
         name, type, cwd,
         extraArgs,
+        createdAt,
         sessionId: resumeId || null,
         workspaceId,
         systemPrompt: systemPromptBody || null,
@@ -1244,6 +1251,23 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
+    // Archive: stop the PTY but KEEP the persistence record (marked archivedAt),
+    // so the conversation can be resumed later. Unlike kill(), _userKilled stays
+    // false so _cleanup doesn't drop parked DMs, and the record is stamped before
+    // teardown so a fast _cleanup can't race the mark. Skipped by restore-spawn
+    // (session-restore filters archivedAt).
+    async archive(name) {
+      const s = this.sessions.get(name);
+      if (!s) return;
+      log.info('session', `archive ${name} pid=${s.pty.pid}`);
+      getPersistence().setArchived(name, true);
+      s._archived = true;
+      try { s.pty.kill(); } catch {}
+      setTimeout(() => {
+        try { process.kill(s.pty.pid, 'SIGKILL'); } catch {}
+      }, 5000);
+    }
+
     list() {
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
@@ -1265,6 +1289,30 @@ function createSessionManager(deps) {
 
     listForWorkspace(workspaceId) {
       return this.list().filter(s => s.workspaceId === workspaceId);
+    }
+
+    // Live PTY child pids of the sessions Clodex owns. Session-discovery uses
+    // this to exclude Clodex's own agents from the "foreign live process" scan.
+    livePids() {
+      const pids = new Set();
+      for (const s of this.sessions.values()) {
+        if (s.pty && Number.isInteger(s.pty.pid)) pids.add(s.pty.pid);
+      }
+      return pids;
+    }
+
+    // Every Claude/Codex conversation id Clodex knows about — the live session
+    // id plus each persisted entry's full sessionIds history. Session-discovery
+    // subtracts this from the on-disk scan so already-adopted transcripts don't
+    // show up as "new".
+    trackedSessionIds() {
+      const ids = new Set();
+      for (const s of this.sessions.values()) if (s.sessionId) ids.add(s.sessionId);
+      for (const e of getPersistence().list()) {
+        if (e.sessionId) ids.add(e.sessionId);
+        if (Array.isArray(e.sessionIds)) for (const id of e.sessionIds) ids.add(id);
+      }
+      return ids;
     }
 
     // Parked-DM count for one session (0 for non-claude). Lets the reattach

@@ -175,11 +175,91 @@ html, body {
   opacity: 0.85;
 }
 
+/* Sidebar toolbar — search box + group/sort/filter selects under the header. */
+#sidebar-toolbar {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sidebar-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--input-bg, var(--active-bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.sidebar-search::placeholder { color: var(--text-dim); }
+.sidebar-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sidebar-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--input-bg, var(--active-bg));
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sidebar-select:hover { color: var(--text); }
+
 #session-list {
   flex: 1;
   overflow-y: auto;
   padding: 4px 8px;
 }
+
+/* Session group header (group-by) — reuses the peer-header look: full-width,
+   uppercase, dim, click to collapse. The count + collapse caret sit inline. */
+.session-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 3px;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.session-group-header:first-child { margin-top: 0; }
+.session-group-header:hover { color: var(--text); }
+.session-group-caret {
+  display: inline-block;
+  width: 10px;
+  transition: transform 0.12s ease;
+}
+.session-group-header.collapsed .session-group-caret { transform: rotate(-90deg); }
+.session-group-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-group-count { opacity: 0.7; font-weight: 600; }
+.session-empty-note { padding: 16px 8px; text-align: center; font-size: 12px; color: var(--text-dim); }
+
+/* Archived rows read dimmer than live ones; a small badge marks them. */
+.session-item.archived { opacity: 0.62; }
+.session-archived-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+/* PR-status dot on a row (open=green, merged=purple, closed=red). */
+.session-pr {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  margin-left: 4px;
+}
+.session-pr.open { color: #2ecc71; }
+.session-pr.merged { color: #a371f7; }
+.session-pr.closed { color: #e5534b; }
 
 /* Sidebar footer — the always-visible operator-inbox opener + unread badge. */
 #sidebar-footer {
@@ -1479,7 +1559,7 @@ html, body {
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -1489,9 +1569,68 @@ html, body {
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden {
   display: none;
 }
+
+/* Discover Sessions can open ON TOP of the New Session dialog (via the Resume
+   field's "Find…" button), so it sits one layer above the shared z100 modals. */
+#discovery-overlay { z-index: 150; }
+
+/* Discover Sessions dialog — a scrollable list of adoptable sessions. */
+#discovery-dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#discovery-dialog h3 { margin: 0; }
+.discovery-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 120px;
+  max-height: 50vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.discovery-empty { padding: 24px; text-align: center; opacity: 0.6; }
+.discovery-group-head {
+  padding: 6px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+  position: sticky;
+  top: 0;
+  background: var(--sidebar-bg);
+}
+.discovery-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.discovery-item:first-child { border-top: none; }
+.discovery-meta { flex: 1; min-width: 0; }
+.discovery-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.discovery-sub { font-size: 12px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.discovery-live-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #2ecc71;
+  border: 1px solid #2ecc71;
+  border-radius: 4px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+}
+.discovery-item button { flex-shrink: 0; }
 
 /* Lightweight text-input modal (promptText): a real in-app replacement for the
    no-op window.prompt(). Sits above the New Session dialog (z100) and the

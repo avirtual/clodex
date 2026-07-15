@@ -28,6 +28,8 @@
 
 const { pathFor } = require('./clodex-paths');
 const { validateExecDef } = require('./exec-schema');
+const gitWorktree = require('./git-worktree');
+const sessionDiscovery = require('./session-discovery');
 
 function registerIpcHandlers(deps) {
   const {
@@ -54,7 +56,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
-    readSessionArgs, applySessionArgs,
+    readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     waitForSessionExit, wirescope, workspaceOfSender,
@@ -99,6 +101,50 @@ function registerIpcHandlers(deps) {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // Opt-in git worktree for a new session. The renderer calls this BEFORE
+  // session:create when the dialog's "Create in new git worktree" box is checked;
+  // on success it uses the returned path as the session cwd, then stamps the
+  // worktree onto the persisted entry via session:markWorktree so kill() can
+  // offer removal. Kept OUT of manager.create's (already huge) signature on
+  // purpose — worktree lifecycle is orthogonal to spawn.
+  handle('worktree:create', async (_e, cwd, branch, opts) =>
+    gitWorktree.createWorktree(cwd, branch, opts || null));
+  // Repo metadata for the dialog: is this cwd a git repo, its default branch,
+  // and the base-branch candidates for the autocomplete.
+  handle('worktree:info', async (_e, cwd) => {
+    try { return { ok: true, ...(await gitWorktree.repoInfo(cwd)) }; }
+    catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
+  });
+  // Working-directory suggestions for the New Session dialog: a persisted MRU of
+  // recently-picked dirs, plus the most-popular cwds across LIVE sessions (by
+  // count). Both are plain string lists; the renderer renders a datalist.
+  handle('session:cwdSuggestions', () => {
+    const recent = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const counts = new Map();
+    for (const s of manager.list()) {
+      if (!s.cwd) continue;
+      counts.set(s.cwd, (counts.get(s.cwd) || 0) + 1);
+    }
+    const popular = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([cwd, count]) => ({ cwd, count }));
+    return { ok: true, recent, popular };
+  });
+  // Record a chosen cwd into the MRU (most-recent first, capped, deduped). Called
+  // by the dialog on create so the next open offers it.
+  handle('session:noteCwd', (_e, cwd) => {
+    const dir = typeof cwd === 'string' && cwd.trim();
+    if (!dir) return { ok: false };
+    const cur = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const next = [dir, ...cur.filter((c) => c !== dir)].slice(0, 12);
+    uiSettings.set({ recentCwds: next });
+    return { ok: true };
+  });
+  // Stamp/clear the worktree provenance on a live+persisted session (post-create).
+  handle('session:markWorktree', (_e, name, worktree) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
+    persistence.setWorktree(name, worktree || null);
+    return { ok: true };
   });
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
@@ -495,6 +541,69 @@ function registerIpcHandlers(deps) {
     out.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
     return { ok: true, sessions: out, activeId };
   });
+
+  // --- Session discovery (adopt sessions started OUTSIDE clodex) ----------
+  // Global scan of ~/.claude/projects (every slug, not just one session's cwd)
+  // for recent transcripts clodex doesn't already track, plus foreign live
+  // claude/codex processes on this box. The renderer surfaces these so the
+  // operator can adopt one — adoption is just a normal create() with resumeId set
+  // to the discovered sessionId, so nothing new is needed on the spawn side.
+  handle('discovery:scan', async (_e, opts) => {
+    try {
+      const maxAgeMs = (opts && Number(opts.maxAgeMs)) || sessionDiscovery.DEFAULT_MAX_AGE_MS;
+      const tracked = manager.trackedSessionIds();
+      const disk = sessionDiscovery.discoverAdoptable({ tracked, maxAgeMs, readMeta: readSessionMeta });
+      let live = [];
+      if (!opts || opts.live !== false) {
+        try { live = await sessionDiscovery.discoverLiveProcesses({ ownPids: manager.livePids() }); } catch {}
+      }
+      // Cross-reference: flag disk rows whose cwd matches a live foreign process
+      // so the UI can mark "running now". Best-effort — cwd may be null either side.
+      const liveCwds = new Set(live.map((p) => p.cwd).filter(Boolean));
+      for (const r of disk) r.liveInCwd = !!(r.cwd && liveCwds.has(r.cwd));
+      return { ok: true, disk, live };
+    } catch (e) {
+      return { ok: false, error: e.message, disk: [], live: [] };
+    }
+  });
+
+  // --- Sidebar organizational metadata (group/sort/filter) ---------------
+  // Batch last-activity timestamps + git/gh PR status for this workspace's
+  // sessions. Timestamps are cheap (transcript stat); PR status shells out and
+  // is TTL-cached (session-meta.js), so includePr:false gives a fast timestamp-
+  // only refresh for sort/filter that don't need PR grouping.
+  handle('sidebar:meta', async (e, opts) => {
+    const workspaceId = workspaceOfSender(e);
+    const sessions = persistence.listForWorkspace(workspaceId).map((s) => ({ name: s.name, cwd: s.cwd }));
+    const includePr = !opts || opts.includePr !== false;
+    try {
+      const meta = await sessionMeta.metaFor(sessions, { includePr });
+      // Fold in the persisted archive/created stamps so one call feeds the whole
+      // toolbar (the render engine merges these onto rows by name).
+      for (const s of persistence.listForWorkspace(workspaceId)) {
+        if (!meta[s.name]) meta[s.name] = {};
+        meta[s.name].createdAt = s.createdAt || null;
+        meta[s.name].archivedAt = s.archivedAt || null;
+      }
+      return { ok: true, meta };
+    } catch (err) {
+      return { ok: false, error: err.message, meta: {} };
+    }
+  });
+
+  // Archive / unarchive. Archiving stops the PTY but keeps the record; the
+  // renderer replaces the live row with an archived one. Unarchive just clears
+  // the flag (the operator resumes it via the normal restore/resume path).
+  handle('session:archive', async (_e, name) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
+    await manager.archive(name);
+    return { ok: true };
+  });
+  handle('session:unarchive', (_e, name) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
+    persistence.setArchived(name, false);
+    return { ok: true };
+  });
   // --- Touched-files feed + peek/diff -----------------------------------
   // The feed is the session's in-memory ring (facts: tool + path + when, from
   // the wire receipts or the legacy jsonl tap). Peek/diff are read-only looks
@@ -628,6 +737,7 @@ function registerIpcHandlers(deps) {
       wirescopePort: s.wirescopePort,
       disableClaudeDesignMcp: s.disableClaudeDesignMcp,
       compactOnResume: s.compactOnResume,
+      discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
@@ -1336,15 +1446,40 @@ function registerIpcHandlers(deps) {
   });
 
   handle('dialog:confirmKill', async (_e, name) => {
+    // Three fates for a running session: Archive (keep the record, stop the PTY,
+    // resumable later), Delete (forget it entirely), or Cancel. A worktree-backed
+    // session additionally offers to remove its checkout on delete. Returns an
+    // ACTION string the renderer dispatches on: 'archive' | 'delete' | false.
+    // Grab worktree provenance BEFORE any kill (delete removes the record), then
+    // remove the worktree only after the PTY exits so git isn't racing a live cwd.
+    const entry = persistence.get(name);
+    const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
+    // Button order: Archive, Delete[, Delete + remove worktree], Cancel.
+    const buttons = ['Archive', 'Delete'];
+    if (worktree) buttons.push('Delete + remove worktree');
+    buttons.push('Cancel');
+    const cancelId = buttons.length - 1;
+    const detail = 'Archive keeps the conversation so you can resume it later; it just stops the running agent. Delete forgets the session entirely.'
+      + (worktree ? `\n\nThis session runs in a git worktree (branch "${worktree.branch}" at ${worktree.path}). "Delete + remove worktree" also runs \`git worktree remove --force\`.` : '');
     const result = await showMessageBox({
       type: 'warning',
-      buttons: ['Kill', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
-      message: `Kill session "${name}"?`,
-      detail: 'This ends the agent process. The conversation history is preserved and can be resumed later.',
+      buttons,
+      defaultId: cancelId,
+      cancelId,
+      message: `Close session "${name}"?`,
+      detail,
     });
-    return result.response === 0;
+    if (result.response === cancelId) return false;
+    if (result.response === 0) return 'archive';
+    // Delete (with or without worktree removal).
+    if (worktree && result.response === 2) {
+      setTimeout(async () => {
+        const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
+        if (r && r.ok) log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after deleting ${name}`);
+        else log.info('worktree', `remove failed for ${worktree.path}: ${(r && r.error) || 'unknown'}`);
+      }, 6000);
+    }
+    return 'delete';
   });
 
   on('pty-input', (_e, name, data) => {
@@ -1401,6 +1536,15 @@ function registerIpcHandlers(deps) {
   // Workspace management
   handle('workspace:list', () => workspaces.list());
   handle('workspace:current', (e) => workspaceOfSender(e));
+  // Per-workspace sidebar view state (group/sort/filter/search).
+  handle('workspace:getView', (e) => {
+    const w = workspaces.get(workspaceOfSender(e));
+    return { ok: true, view: (w && w.view) || null };
+  });
+  handle('workspace:setView', (e, view) => {
+    workspaces.setView(workspaceOfSender(e), view || {});
+    return { ok: true };
+  });
   handle('workspace:setName', (e, name) => {
     const id = workspaceOfSender(e);
     const prev = workspaces.get(id);
