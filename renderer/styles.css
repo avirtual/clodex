@@ -1161,6 +1161,9 @@ html, body {
 /* Cost-over-time popover (native render of wirescope's detail=1 series). */
 .cost-head { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
 .cost-head b { color: var(--text); font-weight: 600; }
+/* Cache-bust age triad (first → last · age) above the bust head. */
+.bust-span { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+.bust-span b { color: var(--text); font-weight: 600; }
 .cost-sec-title {
   font-size: 11px; font-weight: 600; color: var(--text-dim);
   display: flex; justify-content: space-between; align-items: baseline;
