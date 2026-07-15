@@ -38,6 +38,7 @@ const { parseDeployLine } = require('../peer-deploy');
 const { SEV_LINE } = require('./lib/constants');
 const { esc, baseName } = require('./lib/format');
 const { wireBulkToggles } = require('./lib/checklists');
+const { nextVisibleWithName } = require('./lib/peer-visibility');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -691,8 +692,11 @@ function initPeersUi({
     btn.disabled = false;
     if (res && res.ok) {
       closePeerSessionDialog();
+      // Owner's notifySessions fan-out refreshes the list; but if this peer's
+      // visible set is materialized the new name isn't in it — ensure it shows.
+      // Generic peers keep no-attach semantics: surface it, don't open it.
+      await ensurePeerSessionVisible(id, res.name || name);
       showToast(`Created "${res.name}" (${res.type}) on ${label}.`, { kind: 'peer-ui' });
-      // The owner's notifySessions fan-out refreshes the list; no local surgery.
     } else {
       showErr((res && res.error) || 'create failed — no response');
     }
@@ -728,6 +732,22 @@ function initPeersUi({
     if (res && res.ok) peerVisibleMap = res.peerVisible || {};
     const key = peerKey(id, name);
     if (sessions.has(key)) removeSession(key);
+    renderPeers();
+  }
+
+  // Ensure a just-created peer session is visible in the sidebar. Once a peer's
+  // visible set is materialized (any row hidden ⇒ explicit whitelist), a session
+  // created afterward isn't in the array and never renders until eye-toggled.
+  // No-op when the selection is unmaterialized (shows all already) or already
+  // includes the name; otherwise append + persist, mirroring peerHideFromList's
+  // peerSetVisible + res.peerVisible handling. Attachment overrides visibility at
+  // the render call site, but this keeps the row present if the tab is later
+  // detached, and is the ONLY thing that surfaces a no-attach generic-peer create.
+  async function ensurePeerSessionVisible(id, name) {
+    const next = nextVisibleWithName(peerVisibleMap[id], name);
+    if (!next) return;
+    const res = await window.api.peerSetVisible(id, next);
+    if (res && res.ok) peerVisibleMap = res.peerVisible || {};
     renderPeers();
   }
 
@@ -1383,7 +1403,7 @@ function initPeersUi({
   return {
     typeToTakeControl, renderPeerBar, forgetControlMirror,
     openPeerSession, peerDisplayHost, peerHideFromList,
-    openPeerArgs,
+    ensurePeerSessionVisible, openPeerArgs,
   };
 }
 

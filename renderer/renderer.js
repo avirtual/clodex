@@ -1345,6 +1345,12 @@ async function doCreate() {
       alert(`Failed to create sandbox session: ${(res && res.error) || 'unknown error'}`);
       return;
     }
+    // If the sandbox peer's visible set was materialized (a row hidden earlier),
+    // the new session isn't in the whitelist and would land invisible — ensure it
+    // shows, then open it: "Run in: Sandbox" gives the same land-in-the-session
+    // parity a local create does (createTerminal + switchSession).
+    await ensurePeerSessionVisible('sandbox', res.name || name);
+    openPeerSession('sandbox', res.name || name);
     showToast(`Created "${res.name || name}" (${res.type || type}) in the sandbox.`, { kind: 'peer-ui' });
     // Non-fatal spawn warnings from the box (e.g. an injected skill references a
     // subagent the box hasn't enabled) — same ack shape + toast path as a local
@@ -2480,7 +2486,7 @@ createPotDrawer();
 const {
   typeToTakeControl, renderPeerBar, forgetControlMirror,
   openPeerSession, peerDisplayHost, peerHideFromList,
-  openPeerArgs,
+  ensurePeerSessionVisible, openPeerArgs,
 } = initPeersUi({
   sessions, sessionList, getActiveSession: () => activeSession,
   createTerminal, switchSession, removeSession, updateSidebarActive,
