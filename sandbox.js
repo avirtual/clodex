@@ -129,9 +129,11 @@ function generateCompose({ image, ports, workDir, authEnvFile }) {
   L.push('      CLODEX_WORKSPACES: "${CLODEX_WORKSPACES:-default}"');
   L.push(`      CLODEX_WIRESCOPE_PUBLIC_URL: "\${CLODEX_WIRESCOPE_PUBLIC_URL:-http://localhost:${ports.wirescope}}"`);
   // M4 hook point: reference the auth env_file ONLY when one exists on disk.
+  // Quoted like the workDir bind: userData paths carry spaces ("Application
+  // Support") and an unquoted ` #` would truncate the YAML scalar.
   if (authEnvFile) {
     L.push('    env_file:');
-    L.push(`      - ${authEnvFile}`);
+    L.push(`      - "${authEnvFile}"`);
   }
   L.push('    volumes:');
   L.push('      - clodex-data:/data');
@@ -235,15 +237,54 @@ function createSandbox(deps = {}) {
   function authEnvPath() { return path.join(sandboxDir(), 'auth.env'); }
 
   // Config read/write through the ui-settings `sandbox` key, defaults filled.
+  // hasToken is DERIVED from the auth.env file's existence (M4) — never stored:
+  // the token value lives only in that 0600 file, never in ui-settings or any
+  // result payload. getConfig surfaces the boolean so the dialog can show the
+  // "configured" state; setConfig strips it before persisting.
   function getConfig() {
     let s = {};
     try { s = getUiSettings().get().sandbox || {}; } catch { s = {}; }
-    return { ...DEFAULT_CONFIG, ...s };
+    return { ...DEFAULT_CONFIG, ...s, hasToken: hasAuthToken() };
   }
   function setConfig(partial) {
     const next = { ...getConfig(), ...(partial || {}) };
+    delete next.hasToken;   // derived, file-backed — never persisted to ui-settings
     getUiSettings().set({ sandbox: next });
-    return next;
+    return getConfig();
+  }
+
+  // ── Auth token file (M4) ────────────────────────────────────────────────────
+  // The Claude OAuth token (`claude setup-token` on the host) seeds the sandbox
+  // with the same auth as the host. It lives ONLY in <userData>/sandbox/auth.env,
+  // mode 0600, as `CLAUDE_CODE_OAUTH_TOKEN=<token>` — referenced by the generated
+  // compose via env_file (writeComposeFile), so the value never enters the compose
+  // bytes, the config store, logs, or any IPC result. write is atomic (tmp +
+  // rename); clear deletes the file; exists is the hasToken flag's only source.
+  function hasAuthToken() {
+    try { return fs.existsSync(authEnvPath()); } catch { return false; }
+  }
+  function setAuthToken(token) {
+    const t = String(token == null ? '' : token).trim();
+    if (!t) return { ok: false, error: 'empty token' };
+    try {
+      fs.mkdirSync(sandboxDir(), { recursive: true });
+      const file = authEnvPath();
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, `CLAUDE_CODE_OAUTH_TOKEN=${t}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, file);
+      try { fs.chmodSync(file, 0o600); } catch { /* best-effort mode reassert */ }
+      return { ok: true, hasToken: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+  function clearAuthToken() {
+    try {
+      fs.unlinkSync(authEnvPath());
+    } catch (e) {
+      if (e && e.code !== 'ENOENT') return { ok: false, error: String((e && e.message) || e) };
+    }
+    return { ok: true, hasToken: false };
   }
 
   // Detection: `docker info` distinguishes "not installed" (spawn ENOENT →
@@ -403,6 +444,7 @@ function createSandbox(deps = {}) {
   return {
     detect, getConfig, setConfig, writeComposeFile,
     up, down, status, logsTail, registerPeer,
+    hasAuthToken, setAuthToken, clearAuthToken,
     composePath, sandboxDir,
   };
 }

@@ -3104,6 +3104,9 @@ const sbAutoStart = document.getElementById('sandbox-autostart');
 const sbToggleBtn = document.getElementById('btn-sandbox-toggle');
 const sbOpenRow = document.getElementById('sandbox-open-row');
 const sbOpenLink = document.getElementById('sandbox-open-link');
+const sbToken = document.getElementById('sandbox-token');
+const sbTokenSave = document.getElementById('sandbox-token-save');
+const sbTokenClear = document.getElementById('sandbox-token-clear');
 const sbPortInputs = [sbWebPort, sbWsPort, sbWirePort];
 let sbPollTimer = null;
 let sbRunning = false;
@@ -3145,6 +3148,16 @@ async function refreshSandboxStatus() {
   } catch { /* dialog closed mid-poll, or engine hiccup — next tick retries */ }
 }
 
+// The token field is WRITE-ONLY (docs/sandbox-plan.md M4): the value never
+// crosses back out, so the field always opens blank and the placeholder is the
+// only "configured" signal — a blank Save keeps whatever's already stored.
+function applyTokenState(hasToken) {
+  sbToken.value = '';
+  sbToken.placeholder = hasToken
+    ? '•••••••• configured — paste a new token to replace'
+    : 'Run `claude setup-token`, then paste the token here';
+}
+
 async function openSandboxDialog() {
   const cfg = await window.api.sandboxGetConfig();
   sbWorkdir.value = cfg.workDir || '';
@@ -3152,6 +3165,7 @@ async function openSandboxDialog() {
   sbWsPort.value = cfg.wirescopePort;
   sbWirePort.value = cfg.wirePort;
   sbAutoStart.checked = !!cfg.autoStart;
+  applyTokenState(!!cfg.hasToken);
   sandboxOverlay.classList.remove('hidden');
   await refreshSandboxStatus();
   // Poll compose ps only while the dialog is open (the peer row's dot is the
@@ -3192,6 +3206,31 @@ document.getElementById('sandbox-workdir-clear').addEventListener('click', () =>
 // Persist autoStart the moment it's toggled — it's honored at next launch even
 // if the user never clicks Start.
 sbAutoStart.addEventListener('change', () => { window.api.sandboxSetConfig({ autoStart: sbAutoStart.checked }); });
+
+// Auth token — write-only paste + clear (M4). Save writes the 0600 auth.env;
+// Clear deletes it. Neither reads a value back; the placeholder reflects state.
+// The token applies on the next Start (the env_file line lands when compose is
+// regenerated), so no restart is forced here.
+sbTokenSave.addEventListener('click', async () => {
+  const t = sbToken.value.trim();
+  if (!t) { showToast('Paste a token first (or use Clear to remove it).', { kind: 'peer-ui' }); return; }
+  const r = await window.api.sandboxSetToken(t);
+  if (!r || r.ok === false) {
+    showToast(`Save token failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 8000 });
+    return;
+  }
+  applyTokenState(true);
+  showToast('Claude auth token saved — it applies on the next Start.', { kind: 'peer-ui' });
+});
+sbTokenClear.addEventListener('click', async () => {
+  const r = await window.api.sandboxClearToken();
+  if (!r || r.ok === false) {
+    showToast(`Clear token failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 8000 });
+    return;
+  }
+  applyTokenState(false);
+  showToast('Claude auth token cleared.', { kind: 'peer-ui' });
+});
 
 sbToggleBtn.addEventListener('click', async () => {
   if (sbBusy) return;

@@ -128,6 +128,8 @@ const API_CONTRACT = [
   { name: 'sandboxUp', kind: 'invoke', channel: 'sandbox:up' },
   { name: 'sandboxDown', kind: 'invoke', channel: 'sandbox:down' },
   { name: 'sandboxLogsTail', kind: 'invoke', channel: 'sandbox:logsTail' },
+  { name: 'sandboxSetToken', kind: 'invoke', channel: 'sandbox:setToken' },
+  { name: 'sandboxClearToken', kind: 'invoke', channel: 'sandbox:clearToken' },
   { name: 'onRequestOpenSandboxDialog', kind: 'on', channel: 'request-open-sandbox-dialog' },
   { name: 'remoteStatus', kind: 'invoke', channel: 'remote:status' },
   { name: 'peerProbe', kind: 'invoke', channel: 'peer:probe' },

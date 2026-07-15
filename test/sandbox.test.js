@@ -130,7 +130,8 @@ test('generateCompose: auth env_file referenced by path, never inlined (M4 hook)
   const yaml = generateCompose({
     image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: '/data/sandbox/auth.env',
   });
-  assert.match(yaml, /env_file:\n {6}- \/data\/sandbox\/auth\.env/);
+  // Quoted like the workDir bind — userData paths carry spaces on macOS.
+  assert.match(yaml, /env_file:\n {6}- "\/data\/sandbox\/auth\.env"/);
   // A hook point only — no secret material lands in the bytes.
   assert.doesNotMatch(yaml, /CLAUDE_CODE_OAUTH_TOKEN/);
 });
@@ -362,4 +363,80 @@ test('up: a GENUINE squatter on 7810 (not our own port) still bumps', async () =
   const r = await sb.up();
   assert.strictEqual(r.ports.web, 7811); // bumped off the squatter
   assert.strictEqual(settings._state().peers[0].url, `http://127.0.0.1:${r.ports.wire}`);
+});
+
+// ── factory: auth token file (M4) ───────────────────────────────────────────
+
+test('setAuthToken: writes auth.env at mode 0600 with the CLAUDE_CODE_OAUTH_TOKEN line', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+  const r = sb.setAuthToken('sk-tok-123');
+  assert.deepStrictEqual(r, { ok: true, hasToken: true });
+  const file = path.join(ud, 'sandbox', 'auth.env');
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'CLAUDE_CODE_OAUTH_TOKEN=sk-tok-123\n');
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  assert.strictEqual(sb.hasAuthToken(), true);
+});
+
+test('setAuthToken: trims surrounding whitespace from a pasted token', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+  sb.setAuthToken('  sk-pasted\n');
+  const file = path.join(ud, 'sandbox', 'auth.env');
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'CLAUDE_CODE_OAUTH_TOKEN=sk-pasted\n');
+});
+
+test('setAuthToken: an empty/blank/null token is rejected and writes no file', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+  assert.strictEqual(sb.setAuthToken('   ').ok, false);
+  assert.strictEqual(sb.setAuthToken('').ok, false);
+  assert.strictEqual(sb.setAuthToken(null).ok, false);
+  assert.strictEqual(sb.hasAuthToken(), false);
+});
+
+test('getConfig.hasToken tracks the auth.env file; setConfig never persists it', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  assert.strictEqual(sb.getConfig().hasToken, false);
+  sb.setAuthToken('sk-x');
+  assert.strictEqual(sb.getConfig().hasToken, true);
+  // Persisting other config must not leak the derived flag into the store.
+  sb.setConfig({ webPort: 7999 });
+  assert.strictEqual('hasToken' in settings._state().sandbox, false);
+});
+
+test('clearAuthToken: deletes the file, idempotent when already absent', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+  sb.setAuthToken('sk-y');
+  assert.strictEqual(sb.hasAuthToken(), true);
+  assert.deepStrictEqual(sb.clearAuthToken(), { ok: true, hasToken: false });
+  assert.strictEqual(sb.hasAuthToken(), false);
+  assert.deepStrictEqual(sb.clearAuthToken(), { ok: true, hasToken: false }); // no-op, still ok
+});
+
+test('writeComposeFile: references the auth env_file once the token exists, never the value', async () => {
+  const ud = freshUserData();
+  const sb = createSandbox({
+    getUiSettings: () => fakeSettings(),
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  // No token yet → no env_file line.
+  await sb.writeComposeFile();
+  let yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.doesNotMatch(yaml, /env_file/);
+  // Seed the token → next regen references the file by path; the secret value
+  // (and the var name it's keyed under) never appear in the compose bytes.
+  sb.setAuthToken('sk-secret-should-never-appear');
+  await sb.writeComposeFile();
+  yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  const authPath = path.join(ud, 'sandbox', 'auth.env');
+  assert.ok(yaml.includes('env_file:'));
+  // Quoted like the workDir bind — userData paths carry spaces on macOS.
+  assert.ok(yaml.includes(`- "${authPath}"`));
+  assert.doesNotMatch(yaml, /sk-secret-should-never-appear/);
+  assert.doesNotMatch(yaml, /CLAUDE_CODE_OAUTH_TOKEN/);
 });

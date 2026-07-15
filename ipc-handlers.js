@@ -988,6 +988,10 @@ function registerIpcHandlers(deps) {
   handle('sandbox:up', () => getSandbox().up());
   handle('sandbox:down', () => getSandbox().down());
   handle('sandbox:logsTail', (_e, n) => getSandbox().logsTail(n));
+  // Auth token (M4): write-only paste + clear. The token value crosses IN here
+  // but NEVER back out — setToken/clearToken return a boolean hasToken flag only.
+  handle('sandbox:setToken', (_e, token) => getSandbox().setAuthToken(token));
+  handle('sandbox:clearToken', () => getSandbox().clearAuthToken());
 
   handle('session:exportMarkdown', async (_e, name) => {
     const s = manager.sessions.get(name);

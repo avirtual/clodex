@@ -746,6 +746,15 @@
       </div>
       <p class="hint-text" id="sandbox-ports-hint">Ports are editable while the sandbox is stopped. Collisions are bumped automatically when it starts.</p>
       <label class="sandbox-check"><input id="sandbox-autostart" type="checkbox" /> Start the sandbox automatically when Clodex launches</label>
+      <div class="sandbox-field" id="sandbox-auth-field">
+        <label for="sandbox-token">Claude auth token</label>
+        <div class="sandbox-workdir-row">
+          <input id="sandbox-token" type="password" spellcheck="false" autocomplete="off" placeholder="Run `claude setup-token`, then paste the token here" />
+          <button id="sandbox-token-save" class="secondary" type="button">Save</button>
+          <button id="sandbox-token-clear" class="secondary" type="button" title="Delete the stored token">Clear</button>
+        </div>
+        <p class="hint-text" id="sandbox-auth-hint">Seeds the sandbox with your Claude subscription auth (<code>CLAUDE_CODE_OAUTH_TOKEN</code>). Stored locally at mode 0600, applied on the next Start. Or leave empty and run <code>claude login</code> inside a sandbox bash session.</p>
+      </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" href="#">Open in browser →</a></div>
       <div class="dialog-actions">
         <button id="btn-sandbox-toggle">Start</button>
