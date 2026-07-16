@@ -75,6 +75,31 @@ test('defaultWorktreePath: sibling of the repo, branch slashes flattened', () =>
   assert.strictEqual(p, path.join('/tmp', 'myrepo-feature-x'));
 });
 
+test('listWorktrees: main first (isMain), created worktree appears then removed', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  let l = await wt.listWorktrees(repo);
+  assert.strictEqual(l.ok, true);
+  assert.strictEqual(l.worktrees.length, 1);
+  assert.strictEqual(l.worktrees[0].isMain, true);
+  assert.ok(l.worktrees[0].branch, 'main worktree has a branch');
+
+  const created = await wt.createWorktree(repo, 'wt/list-me');
+  assert.strictEqual(created.ok, true, created.error);
+  l = await wt.listWorktrees(repo);
+  assert.strictEqual(l.worktrees.length, 2);
+  const linked = l.worktrees.find((w) => !w.isMain);
+  assert.strictEqual(linked.branch, 'wt/list-me');
+
+  await wt.removeWorktree(created.path);
+  l = await wt.listWorktrees(repo);
+  assert.strictEqual(l.worktrees.length, 1);
+});
+
+test('listWorktrees: non-repo → ok:false', { skip: !gitAvailable() }, async () => {
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wl-'));
+  assert.strictEqual((await wt.listWorktrees(notRepo)).ok, false);
+});
+
 test('repoInfo: reports default branch + branch list for a repo, isRepo:false otherwise', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   execFileSync('git', ['-C', repo, 'branch', 'dev'], { stdio: 'ignore' });

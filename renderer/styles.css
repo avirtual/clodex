@@ -2375,6 +2375,122 @@ html, body {
 
 #agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden, #exec-drawer.hidden, #inbox-drawer.hidden, #pot-drawer.hidden { display: none; }
 
+/* Workspace panes (Explorer / Source Control / Worktrees) — same docked-drawer
+   frame as the library drawers, a touch wider for trees/diffs, and with a
+   scrollable body region below a fixed header. */
+.pane-drawer {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width);
+  bottom: 0;
+  width: 380px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
+}
+.pane-drawer.hidden { display: none; }
+/* Per-id display:none rules — the css-hidden-invariant test requires each
+   class="hidden" id to have its own #id.hidden rule (a generic .hidden would
+   let a mistyped id render always-visible). These mirror .pane-drawer.hidden
+   and the inner-element .hidden rules below. */
+#explorer-drawer.hidden, #scm-drawer.hidden, #worktrees-drawer.hidden { display: none; }
+#explorer-editor.hidden, #explorer-dirty.hidden, #explorer-editor-note.hidden, #scm-remote-out.hidden { display: none; }
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.pane-header .prompts-title { flex: 0 0 auto; }
+.pane-header button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pane-header button:hover { color: var(--text); background: var(--sidebar-hover); }
+.pane-scope { flex: 1; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+
+/* Explorer */
+.explorer-tree { flex: 1 1 40%; overflow: auto; padding: 4px 0; min-height: 60px; }
+.explorer-row { display: flex; align-items: center; gap: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; color: var(--text); }
+.explorer-row:hover { background: var(--sidebar-hover); }
+.explorer-row.selected { background: var(--active-bg); }
+.explorer-twisty { width: 10px; display: inline-block; color: var(--text-dim); }
+.explorer-icon { width: 14px; display: inline-block; text-align: center; opacity: 0.8; }
+.explorer-name { overflow: hidden; text-overflow: ellipsis; }
+.explorer-editor { flex: 1 1 60%; display: flex; flex-direction: column; border-top: 1px solid var(--border); min-height: 0; }
+.explorer-editor.hidden { display: none; }
+.explorer-editor-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.explorer-editor-path { flex: 1; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-dirty { color: var(--warn, #d19a66); font-size: 14px; }
+.explorer-dirty.hidden { display: none; }
+.explorer-editor-bar button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
+.explorer-editor-bar button:disabled { opacity: 0.45; cursor: default; }
+.explorer-textarea {
+  flex: 1; width: 100%; box-sizing: border-box; resize: none;
+  background: var(--bg); color: var(--text); border: none; outline: none;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  padding: 8px 10px; tab-size: 2; white-space: pre; overflow: auto;
+}
+.explorer-editor-note { padding: 10px; font-size: 12px; color: var(--text-dim); }
+.explorer-editor-note.hidden { display: none; }
+
+/* Source control */
+.scm-branchbar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.scm-branchbar .sidebar-select { flex: 1; min-width: 0; }
+.scm-aheadbehind { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.scm-remote-btn { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 7px; font-size: 12px; cursor: pointer; }
+.scm-remote-btn:hover { color: var(--text); background: var(--sidebar-hover); }
+.scm-changes { flex: 1; overflow: auto; padding: 4px 0; min-height: 60px; }
+.scm-group-label { padding: 6px 10px 2px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.scm-group-label button { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 5px; font-size: 10px; padding: 1px 6px; cursor: pointer; }
+.scm-file { display: flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.scm-file:hover { background: var(--sidebar-hover); }
+.scm-file.selected { background: var(--active-bg); }
+.scm-file-status { width: 14px; text-align: center; font-weight: 700; flex: 0 0 auto; }
+.scm-file-status.modified { color: var(--warn, #d19a66); }
+.scm-file-status.added { color: var(--ok, #98c379); }
+.scm-file-status.deleted { color: var(--error, #e06c75); }
+.scm-file-status.untracked { color: var(--text-dim); }
+.scm-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.scm-file-actions { display: none; gap: 4px; flex: 0 0 auto; }
+.scm-file:hover .scm-file-actions { display: flex; }
+.scm-file-actions button { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.scm-file-actions button:hover { color: var(--text); }
+.scm-commit-box { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.scm-commit-msg { width: 100%; box-sizing: border-box; resize: vertical; background: var(--input-bg, var(--active-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit; }
+.scm-commit-box button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+.scm-commit-box button:disabled { opacity: 0.45; cursor: default; }
+.scm-remote-out { max-height: 120px; overflow: auto; border-top: 1px solid var(--border); padding: 6px 10px; font-family: var(--mono, monospace); font-size: 11px; color: var(--text-dim); white-space: pre-wrap; }
+.scm-remote-out.hidden { display: none; }
+
+/* Worktrees */
+.worktrees-list { flex: 1; overflow: auto; padding: 4px 0; }
+.worktree-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.worktree-meta { flex: 1; min-width: 0; }
+.worktree-branch { font-weight: 600; }
+.worktree-path { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-main-badge { font-size: 9px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.worktree-item button { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+.worktree-item button:hover { color: var(--text); background: var(--sidebar-hover); }
+.worktrees-add { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.worktrees-add button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+
+/* Sidebar footer pane buttons row */
+.sidebar-pane-buttons { display: flex; gap: 4px; margin-bottom: 6px; }
+.sidebar-pane-buttons button { flex: 1; background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 4px 2px; font-size: 11px; cursor: pointer; }
+.sidebar-pane-buttons button:hover { color: var(--text); background: var(--sidebar-hover); }
+.sidebar-pane-buttons button.active { color: var(--text); background: var(--active-bg); border-color: var(--accent); }
+
 #agents-header, #skills-header, #templates-header, #exec-header, #inbox-header, #pot-header {
   display: flex;
   align-items: center;

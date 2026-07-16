@@ -55,6 +55,11 @@
       <span id="diag-text">Sessions can't start</span>
     </div>
     <div id="sidebar-footer">
+      <div class="sidebar-pane-buttons">
+        <button id="explorer-open" title="File explorer + editor (active session's directory)" type="button">Files</button>
+        <button id="scm-open" title="Source control (git) for the active session" type="button">Source</button>
+        <button id="worktrees-open" title="Manage git worktrees for the active session's repo" type="button">Worktrees</button>
+      </div>
       <button id="pot-open" title="Boiling pot — where token carriage concentrates across agents" type="button">
         <span class="pot-label">Boiling Pot</span>
       </button>
@@ -246,6 +251,74 @@
       No templates yet. Click <strong>+ New</strong> to author one, or use <strong>Export as Template…</strong> on a running agent's right-click menu.<br><br>
       A template is a saved session config (type, cwd, args incl. model, proxy, agents, tools, skills). Spawn from one with <code>[agent:spawn name:X template:Y]</code> or pick it in the New Session dialog.
     </div>
+  </div>
+
+  <!-- File explorer + editor pane (scoped to the active session's cwd) -->
+  <div id="explorer-drawer" class="hidden pane-drawer">
+    <div class="pane-header">
+      <span class="prompts-title">Explorer</span>
+      <span class="pane-scope" id="explorer-scope"></span>
+      <button id="explorer-refresh" title="Refresh" type="button">Refresh</button>
+      <button id="explorer-close" title="Close" type="button">×</button>
+    </div>
+    <div class="pane-body">
+      <div id="explorer-tree" class="explorer-tree"></div>
+      <div id="explorer-editor" class="explorer-editor hidden">
+        <div class="explorer-editor-bar">
+          <span id="explorer-editor-path" class="explorer-editor-path"></span>
+          <span id="explorer-dirty" class="explorer-dirty hidden" title="Unsaved changes">●</span>
+          <button id="explorer-save" type="button" disabled>Save</button>
+        </div>
+        <textarea id="explorer-textarea" class="explorer-textarea" spellcheck="false" wrap="off"></textarea>
+        <div id="explorer-editor-note" class="explorer-editor-note hidden"></div>
+      </div>
+    </div>
+    <div id="explorer-empty" class="hint">No active session, or its directory isn't readable. Explorer scopes to the focused session's working directory.</div>
+  </div>
+
+  <!-- Source control (git) pane -->
+  <div id="scm-drawer" class="hidden pane-drawer">
+    <div class="pane-header">
+      <span class="prompts-title">Source Control</span>
+      <button id="scm-refresh" title="Refresh" type="button">Refresh</button>
+      <button id="scm-close" title="Close" type="button">×</button>
+    </div>
+    <div class="pane-body">
+      <div id="scm-branchbar" class="scm-branchbar">
+        <select id="scm-branch-select" class="sidebar-select" title="Switch branch"></select>
+        <span id="scm-aheadbehind" class="scm-aheadbehind"></span>
+        <button id="scm-fetch" class="scm-remote-btn" title="git fetch --all" type="button">⟳</button>
+        <button id="scm-pull" class="scm-remote-btn" title="git pull --ff-only" type="button">↓</button>
+        <button id="scm-push" class="scm-remote-btn" title="git push" type="button">↑</button>
+        <button id="scm-newbranch" class="scm-remote-btn" title="Create a new branch" type="button">+</button>
+      </div>
+      <div id="scm-changes" class="scm-changes"></div>
+      <div id="scm-commit-box" class="scm-commit-box">
+        <textarea id="scm-commit-msg" class="scm-commit-msg" placeholder="Commit message (staged changes)" spellcheck="false" rows="2"></textarea>
+        <button id="scm-commit-btn" type="button" disabled>Commit</button>
+      </div>
+    </div>
+    <div id="scm-empty" class="hint">No active session, or its directory isn't a git repository.</div>
+    <div id="scm-remote-out" class="scm-remote-out hidden"></div>
+  </div>
+
+  <!-- Worktree management pane -->
+  <div id="worktrees-drawer" class="hidden pane-drawer">
+    <div class="pane-header">
+      <span class="prompts-title">Worktrees</span>
+      <button id="worktrees-refresh" title="Refresh" type="button">Refresh</button>
+      <button id="worktrees-close" title="Close" type="button">×</button>
+    </div>
+    <div class="pane-body">
+      <div id="worktrees-list" class="worktrees-list"></div>
+      <div class="worktrees-add">
+        <input type="text" id="worktree-new-branch" class="sidebar-search" placeholder="new branch name" spellcheck="false" autocomplete="off">
+        <input type="text" id="worktree-new-base" class="sidebar-search" placeholder="base branch (optional)" spellcheck="false" autocomplete="off" list="worktree-pane-base-list">
+        <datalist id="worktree-pane-base-list"></datalist>
+        <button id="worktree-add-btn" type="button">Create worktree</button>
+      </div>
+    </div>
+    <div id="worktrees-empty" class="hint">No active session, or its directory isn't a git repository.</div>
   </div>
 
   <div id="main">

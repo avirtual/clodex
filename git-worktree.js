@@ -160,19 +160,46 @@ async function removeWorktree(worktreePath) {
   return { ok: true };
 }
 
-// Parse `git worktree list --porcelain` into [{ path, branch, bare }]. The first
-// block is always the main working tree.
+// Parse `git worktree list --porcelain` into [{ path, branch, bare, head,
+// detached, locked }]. The first block is always the main working tree.
 function parseWorktreeList(out) {
   const blocks = String(out).split(/\n\n+/).filter(Boolean);
   return blocks.map((block) => {
-    const rec = { path: null, branch: null, bare: false };
+    const rec = { path: null, branch: null, head: null, bare: false, detached: false, locked: false };
     for (const line of block.split('\n')) {
       if (line.startsWith('worktree ')) rec.path = line.slice('worktree '.length);
       else if (line.startsWith('branch ')) rec.branch = line.slice('branch '.length);
+      else if (line.startsWith('HEAD ')) rec.head = line.slice('HEAD '.length);
       else if (line === 'bare') rec.bare = true;
+      else if (line === 'detached') rec.detached = true;
+      else if (line.startsWith('locked')) rec.locked = true;
     }
     return rec;
   });
 }
 
-module.exports = { repoToplevel, createWorktree, removeWorktree, defaultWorktreePath, defaultBranch, repoInfo };
+// List the worktrees of the repo containing `cwd`, for the management pane.
+// Returns { ok, repo, worktrees:[{ path, branch, head, isMain, detached,
+// locked }] } — isMain flags the primary checkout (first entry). branch is the
+// short name (refs/heads/x → x). Never throws.
+async function listWorktrees(cwd) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, error: 'Not inside a git repository', repo: null, worktrees: [] };
+  const r = await git(repo, ['worktree', 'list', '--porcelain']);
+  if (!r.ok) return { ok: false, error: (r.stderr || 'git worktree list failed').trim(), repo, worktrees: [] };
+  const entries = parseWorktreeList(r.stdout);
+  const worktrees = entries.map((e, i) => ({
+    path: e.path,
+    branch: e.branch ? e.branch.replace(/^refs\/heads\//, '') : null,
+    head: e.head ? e.head.slice(0, 8) : null,
+    isMain: i === 0,
+    detached: e.detached,
+    locked: e.locked,
+  }));
+  return { ok: true, repo, worktrees };
+}
+
+module.exports = {
+  repoToplevel, createWorktree, removeWorktree, defaultWorktreePath,
+  defaultBranch, repoInfo, listWorktrees,
+};

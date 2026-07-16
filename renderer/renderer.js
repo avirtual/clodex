@@ -38,6 +38,7 @@ const { initChecklistPopovers } = require('./popovers/checklist-popovers');
 const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
+const { initWorkspacePanes } = require('./panes/workspace-panes');
 
 // ---------------------------------------------------------------------------
 // State
@@ -1141,6 +1142,10 @@ function switchSession(name) {
   }
 
   renderPeerBar();
+
+  // Workspace panes (Explorer/SCM/Worktrees) scope to the active session — nudge
+  // whichever is open to re-pull for the newly-focused session.
+  if (typeof refreshWorkspacePanes === 'function') refreshWorkspacePanes();
 
   // Fit and focus after becoming visible. Peer terminals in read-only mode
   // keep the owner's geometry (letterbox) — fitting would be a resize we
@@ -2954,6 +2959,15 @@ createInboxDrawer();
 // file-heat ranking pulled fresh on open via window.api.potSnapshot; no core
 // state. Sidebar-footer button next to Inbox.
 createPotDrawer();
+
+// Workspace panes — Explorer / Source Control / Worktrees (panes/workspace-
+// panes.js). Docked drawers left of the terminal, one open at a time, each
+// scoped to the active session's cwd (resolved server-side by the fs:/scm:/
+// worktree: IPC). refreshWorkspacePanes re-pulls the open pane when the active
+// session changes.
+const { refreshOpenPane: refreshWorkspacePanes } = initWorkspacePanes({
+  getActiveSession: () => activeSession,
+});
 
 // ---------------------------------------------------------------------------
 // Peered Clodexes — self-contained subsystem (peers-ui.js). Owns the peer bar,
