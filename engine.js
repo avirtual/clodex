@@ -748,6 +748,12 @@ const {
 const { createJsonlWatcher } = require('./jsonl-watcher');
 const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });
 
+// Sidebar organizational metadata (session-meta.js): last-activity timestamps
+// (cheap transcript stat) + git branch / PR status (slow gh, TTL-cached). Powers
+// the sidebar toolbar's group/sort/filter. REGISTRY_DIR injected (electron-free).
+const { createSessionMeta } = require('./session-meta');
+const sessionMeta = createSessionMeta({ REGISTRY_DIR });
+
 // ---------------------------------------------------------------------------
 // Message spilling
 // ---------------------------------------------------------------------------
@@ -1599,7 +1605,7 @@ const sandboxManager = createSandboxManager({
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState,
-    readSessionMeta, claudeProjectDir, rebuildAllStatusScripts,
+    readSessionMeta, sessionMeta, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,

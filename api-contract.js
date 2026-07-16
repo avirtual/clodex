@@ -201,6 +201,11 @@ const API_CONTRACT = [
   { name: 'getSessionArgs', kind: 'invoke', channel: 'session:getArgs' },
   { name: 'getSessionHistory', kind: 'invoke', channel: 'session:history' },
   { name: 'discoverSessions', kind: 'invoke', channel: 'discovery:scan' },
+  // Sidebar organization: per-session meta (timestamps + git/PR status) for
+  // group/sort/filter, and per-workspace view-state persistence.
+  { name: 'sidebarMeta', kind: 'invoke', channel: 'sidebar:meta' },
+  { name: 'getSidebarView', kind: 'invoke', channel: 'workspace:getView' },
+  { name: 'setSidebarView', kind: 'invoke', channel: 'workspace:setView' },
   { name: 'setSessionArgs', kind: 'invoke', channel: 'session:setArgs' },
   { name: 'restartSession', kind: 'invoke', channel: 'session:restart' },
   { name: 'setSessionTools', kind: 'invoke', channel: 'session:setTools' },

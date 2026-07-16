@@ -20,6 +20,30 @@
         <button id="btn-add-peer" data-tip="Add peer">&#8644;</button>
       </div>
     </div>
+    <div id="sidebar-filterbar">
+      <input type="text" id="sidebar-search" class="sidebar-search" placeholder="Filter sessions…" spellcheck="false" autocomplete="off">
+      <div class="sidebar-filterbar-row">
+        <select id="sidebar-group" class="sidebar-select" data-tip="Group sessions by">
+          <option value="none">No grouping</option>
+          <option value="project">Group: Project</option>
+          <option value="state">Group: State</option>
+          <option value="date">Group: Date</option>
+          <option value="pr">Group: PR status</option>
+        </select>
+        <select id="sidebar-sort" class="sidebar-select" data-tip="Sort sessions by">
+          <option value="recency">Sort: Recent</option>
+          <option value="created">Sort: Created</option>
+          <option value="alpha">Sort: A–Z</option>
+        </select>
+        <select id="sidebar-activity" class="sidebar-select" data-tip="Last activity within">
+          <option value="all">Any time</option>
+          <option value="1">1 day</option>
+          <option value="3">3 days</option>
+          <option value="7">7 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </div>
+    </div>
     <div id="session-list"></div>
     <div id="update-banner" class="hidden" data-tip="Click to view the release">
       <span class="update-dot">●</span>

@@ -46,6 +46,7 @@ async function restoreSessionsForWorkspace({
         activity: session.activityState || 'idle',
         attention: session.needsAttention || null,
         pendingCount: manager.pendingCountFor(entry.name),
+        createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
       });
@@ -84,6 +85,7 @@ async function restoreSessionsForWorkspace({
         cwd: entry.cwd,
         label: entry.label || null,
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
+        createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
       });

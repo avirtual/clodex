@@ -432,6 +432,11 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
   });
 
   insertLocalSessionRow(item);
+  // A freshly-created session is active NOW — seed its meta so recency sort
+  // places it correctly before the next meta poll, then re-lay-out the block so
+  // grouping/sorting/filtering apply immediately.
+  sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
+  scheduleSidebarRelayout();
 }
 
 // Handle context menu actions from main process
@@ -573,12 +578,302 @@ function removeSessionFromSidebar(name) {
   // Child subagent rows are siblings, not descendants — sweep them too.
   sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
   if (isSubagentPopoverForParent(name)) closeSubagentPopover();
+  sidebarMeta.delete(name);
+  if (typeof refreshSidebarView === 'function') refreshSidebarView();
 }
 
 function updateSidebarActive() {
   for (const el of sessionList.querySelectorAll('.session-item')) {
     el.classList.toggle('active', el.dataset.name === activeSession);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar view: group / sort / filter / search
+// ---------------------------------------------------------------------------
+// The row ELEMENTS are still created by addSessionToSidebar (so xterm state,
+// event listeners, and live badges survive); this engine only reorders them,
+// toggles their visibility, and inserts group headers — never destroys a live
+// row. Archive-backed rows are a later (kill-flow) slice; the status filter
+// tolerates their absence (nothing is archived yet, so active/all coincide).
+
+// Current view state; loaded from the workspace store on boot, persisted on
+// every change. Defaults: recency sort, no grouping, active-only.
+let sidebarView = { group: 'none', sort: 'recency', status: 'active', activity: 'all', search: '' };
+// name -> { lastActivityTs, createdAt, branch, prState, prNumber }
+const sidebarMeta = new Map();
+const collapsedGroups = new Set(); // group keys the user collapsed
+
+const sbSearch = document.getElementById('sidebar-search');
+const sbGroup = document.getElementById('sidebar-group');
+const sbSort = document.getElementById('sidebar-sort');
+const sbStatus = document.getElementById('sidebar-status');
+const sbActivity = document.getElementById('sidebar-activity');
+
+// Project label for a cwd: repo/dir basename, with its parent for context.
+function projectLabel(cwd) {
+  if (!cwd) return '(no directory)';
+  const parts = cwd.split('/').filter(Boolean);
+  if (parts.length <= 1) return cwd;
+  return parts.slice(-2).join('/');
+}
+
+function stateOf(item) {
+  if (item.dataset.attention) return 'needs attention';
+  const a = item.dataset.activity;
+  if (a === 'thinking' || a === 'working') return 'working';
+  if (item.classList.contains('archived')) return 'archived';
+  return 'idle';
+}
+
+function dateBucket(ts) {
+  if (!ts) return 'Unknown';
+  const days = (Date.now() - ts) / 86400000;
+  if (days < 1) return 'Today';
+  if (days < 2) return 'Yesterday';
+  if (days < 7) return 'This week';
+  if (days < 30) return 'This month';
+  return 'Older';
+}
+
+const DATE_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'Unknown'];
+const STATE_ORDER = ['needs attention', 'working', 'idle', 'archived'];
+const PR_ORDER = ['open', 'merged', 'closed', 'none', 'no PR / unknown'];
+
+// The group key + display label a row falls into for the current group mode.
+function groupFor(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  switch (sidebarView.group) {
+    case 'project': return projectLabel(item.dataset.cwd);
+    case 'state': return stateOf(item);
+    case 'date': return dateBucket(meta.lastActivityTs || meta.createdAt);
+    case 'pr': return meta.prState ? meta.prState : 'no PR / unknown';
+    default: return null;
+  }
+}
+
+function groupSortIndex(mode, key) {
+  const order = mode === 'date' ? DATE_ORDER : mode === 'state' ? STATE_ORDER : mode === 'pr' ? PR_ORDER : null;
+  if (!order) return 0;
+  const i = order.indexOf(key);
+  return i === -1 ? order.length : i;
+}
+
+// Does a row pass the current status/activity/search filters?
+function rowPasses(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  const archived = item.classList.contains('archived');
+  if (sidebarView.status === 'active' && archived) return false;
+  if (sidebarView.status === 'archived' && !archived) return false;
+  // Last-activity window (skip for archived — they have no live activity).
+  if (sidebarView.activity !== 'all' && !archived) {
+    const ts = meta.lastActivityTs || meta.createdAt;
+    const maxMs = Number(sidebarView.activity) * 86400000;
+    if (!ts || (Date.now() - ts) > maxMs) return false;
+  }
+  // Search over name, cwd, branch.
+  const q = sidebarView.search.trim().toLowerCase();
+  if (q) {
+    const hay = `${item.dataset.name} ${item.dataset.cwd || ''} ${meta.branch || ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function rowSortValue(item) {
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  switch (sidebarView.sort) {
+    case 'created': return meta.createdAt || 0;
+    case 'alpha': return item.dataset.name.toLowerCase();
+    default: return meta.lastActivityTs || meta.createdAt || 0; // recency
+  }
+}
+
+function compareRows(a, b) {
+  const va = rowSortValue(a), vb = rowSortValue(b);
+  if (sidebarView.sort === 'alpha') return String(va).localeCompare(String(vb));
+  return vb - va; // recency/created: newest first
+}
+
+// The one place that lays out the local session block. Reads every non-peer,
+// non-child .session-item, applies filter/sort/group, and re-inserts them
+// (with group headers) ABOVE the peer block. Child subagent rows ride with
+// their parent. Idempotent and safe to call on any state change.
+function refreshSidebarView() {
+  const firstPeer = sessionList.querySelector('[data-peer-ui]');
+  // Collect local top-level rows (exclude peer rows + subagent children).
+  const rows = [...sessionList.querySelectorAll('.session-item')].filter(
+    (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
+  // Remove any prior group headers / empty note.
+  sessionList.querySelectorAll('.session-group-header, .session-empty-note').forEach((el) => el.remove());
+
+  // Partition into visible / hidden by filter, and paint each row's PR badge.
+  for (const el of rows) {
+    applyPrBadge(el);
+    const pass = rowPasses(el);
+    el.style.display = pass ? '' : 'none';
+    // Hide a row's subagent children with it.
+    sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)
+      .forEach((c) => { c.style.display = pass ? '' : 'none'; });
+  }
+  const visible = rows.filter((el) => el.style.display !== 'none');
+
+  // childrenOf: subagent rows to re-attach right after each parent.
+  const childrenOf = (name) =>
+    [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`)];
+
+  const place = (el, anchor) => {
+    // Insert el (and its children) before `anchor` (or before the peer block).
+    const ref = anchor || firstPeer || null;
+    if (ref) sessionList.insertBefore(el, ref); else sessionList.appendChild(el);
+    for (const c of childrenOf(el.dataset.name)) {
+      if (ref) sessionList.insertBefore(c, ref); else sessionList.appendChild(c);
+    }
+  };
+
+  if (!visible.length) {
+    const note = document.createElement('div');
+    note.className = 'session-empty-note';
+    note.textContent = rows.length ? 'No sessions match the current filter.' : 'No sessions yet.';
+    if (firstPeer) sessionList.insertBefore(note, firstPeer); else sessionList.appendChild(note);
+    return;
+  }
+
+  if (sidebarView.group === 'none') {
+    for (const el of visible.sort(compareRows)) place(el, firstPeer);
+    return;
+  }
+
+  // Group: bucket, then order groups, then rows within each group.
+  const groups = new Map(); // key -> rows[]
+  for (const el of visible) {
+    const key = groupFor(el) || '(other)';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(el);
+  }
+  const keys = [...groups.keys()].sort((a, b) => {
+    const ia = groupSortIndex(sidebarView.group, a), ib = groupSortIndex(sidebarView.group, b);
+    if (ia !== ib) return ia - ib;
+    return String(a).localeCompare(String(b));
+  });
+  for (const key of keys) {
+    const header = makeGroupHeader(key, groups.get(key).length);
+    if (firstPeer) sessionList.insertBefore(header, firstPeer); else sessionList.appendChild(header);
+    const collapsed = collapsedGroups.has(key);
+    for (const el of groups.get(key).sort(compareRows)) {
+      place(el, firstPeer);
+      if (collapsed) {
+        el.style.display = 'none';
+        childrenOf(el.dataset.name).forEach((c) => { c.style.display = 'none'; });
+      }
+    }
+  }
+}
+
+// Paint the PR-status chip + branch tooltip onto a row from its meta. Shown for
+// open/merged/closed (a real PR); hidden for none/unknown so the row stays lean.
+// The chip lives in .session-badges (created by addSessionToSidebar).
+function applyPrBadge(item) {
+  const badges = item.querySelector('.session-badges');
+  if (!badges) return;
+  const meta = sidebarMeta.get(item.dataset.name) || {};
+  let chip = badges.querySelector('.session-pr');
+  const state = meta.prState;
+  if (!state || state === 'none') { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'session-pr';
+    badges.appendChild(chip);
+  }
+  chip.classList.remove('open', 'merged', 'closed');
+  if (state === 'open' || state === 'merged' || state === 'closed') chip.classList.add(state);
+  chip.textContent = meta.prNumber ? `#${meta.prNumber}` : state;
+  // data-tip (not native title) — the sidebar tooltip mechanism (tooltip.js) is
+  // body-delegated, so this dynamically-added chip is picked up automatically.
+  chip.setAttribute('data-tip', `PR ${state}${meta.branch ? ` · ${meta.branch}` : ''}`);
+}
+
+// Debounced re-layout — activity events can arrive in bursts; coalesce them so
+// grouping/sorting recomputes at most ~4×/sec instead of per event.
+let relayoutTimer = null;
+function scheduleSidebarRelayout() {
+  if (relayoutTimer) return;
+  relayoutTimer = setTimeout(() => { relayoutTimer = null; refreshSidebarView(); }, 250);
+}
+
+function makeGroupHeader(key, count) {
+  const h = document.createElement('div');
+  h.className = 'session-group-header';
+  if (collapsedGroups.has(key)) h.classList.add('collapsed');
+  h.dataset.groupKey = key;
+  const caret = document.createElement('span');
+  caret.className = 'session-group-caret';
+  caret.textContent = '▾';
+  const title = document.createElement('span');
+  title.className = 'session-group-title';
+  title.textContent = key;
+  const cnt = document.createElement('span');
+  cnt.className = 'session-group-count';
+  cnt.textContent = String(count);
+  h.append(caret, title, cnt);
+  h.addEventListener('click', () => {
+    if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+    refreshSidebarView();
+  });
+  return h;
+}
+
+// Pull fresh meta (timestamps + PR status) for this workspace and re-render.
+// includePr:false for cheap timestamp-only refreshes (the periodic poll).
+let metaRefreshInFlight = false;
+async function refreshSidebarMeta({ includePr = true } = {}) {
+  if (metaRefreshInFlight) return;
+  metaRefreshInFlight = true;
+  try {
+    const res = await window.api.sidebarMeta({ includePr });
+    if (res && res.ok && res.meta) {
+      for (const [name, m] of Object.entries(res.meta)) {
+        sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), ...m });
+      }
+    }
+  } catch {} finally { metaRefreshInFlight = false; }
+  refreshSidebarView();
+}
+
+// Persist + apply a view change from the toolbar controls.
+function onViewControlChange() {
+  sidebarView = {
+    group: sbGroup.value, sort: sbSort.value,
+    // status has no control yet (archive is a later kill-flow slice) — preserve
+    // the current value (default 'active') rather than reading a null select.
+    status: sbStatus ? sbStatus.value : sidebarView.status,
+    activity: sbActivity.value,
+    search: sbSearch.value,
+  };
+  window.api.setSidebarView(sidebarView);
+  refreshSidebarView();
+}
+if (sbGroup) sbGroup.addEventListener('change', onViewControlChange);
+if (sbSort) sbSort.addEventListener('change', onViewControlChange);
+if (sbStatus) sbStatus.addEventListener('change', () => { onViewControlChange(); refreshSidebarMeta(); });
+if (sbActivity) sbActivity.addEventListener('change', onViewControlChange);
+if (sbSearch) sbSearch.addEventListener('input', onViewControlChange);
+
+// Load persisted view state + do the first meta fetch. Called from the restore
+// bootstrap once rows exist.
+async function initSidebarView() {
+  try {
+    const res = await window.api.getSidebarView();
+    if (res && res.ok && res.view) sidebarView = { ...sidebarView, ...res.view };
+  } catch {}
+  if (sbGroup) sbGroup.value = sidebarView.group;
+  if (sbSort) sbSort.value = sidebarView.sort;
+  if (sbStatus) sbStatus.value = sidebarView.status;
+  if (sbActivity) sbActivity.value = sidebarView.activity;
+  if (sbSearch) sbSearch.value = sidebarView.search || '';
+  await refreshSidebarMeta();
+  // Periodic timestamp refresh so recency sort + activity filter stay live.
+  setInterval(() => refreshSidebarMeta({ includePr: false }), 30000);
 }
 
 // Number of sessions currently flagged needs-attention — derived from the same
@@ -1753,6 +2048,11 @@ window.api.onSessionActivity((name, state) => {
     applyThinkBadge(el);
   }
   el.dataset.activity = state;
+  // Activity bumps recency + the "working/idle" state group. Seed the meta and
+  // re-lay-out (debounced) so recency sort + state grouping stay live between the
+  // periodic meta polls.
+  sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
+  scheduleSidebarRelayout();
 });
 
 // Needs-attention badge: the session's CLI is blocked on the human (permission
@@ -4599,7 +4899,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 (async function restoreSessions() {
   const restored = await window.api.restoreSessions();
-  if (!restored || restored.length === 0) return;
+  if (!restored || restored.length === 0) { initSidebarView(); return; }
 
   let firstHealthy = null;
   for (const entry of restored) {
@@ -4611,6 +4911,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     }
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     // Seed the dot from the reattach snapshot — activity/attention events
     // fired while this window was detached were dropped, and the next live
     // event may be a turn away.
@@ -4640,6 +4941,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (firstHealthy) switchSession(firstHealthy);
   // Focus the first restored session
   switchSession(restored[0].name);
+  // Load persisted view state, fetch meta, and lay out the grouped/sorted list.
+  initSidebarView();
 })();
 
 // Opt-in startup session discovery: if enabled, scan for adoptable external

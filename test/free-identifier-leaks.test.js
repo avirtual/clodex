@@ -55,6 +55,7 @@ const SCANNED_MODULES = [
   'session-restore.js',
   'session-discovery.js',
   'git-worktree.js',
+  'session-meta.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',

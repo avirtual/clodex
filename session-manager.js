@@ -997,9 +997,16 @@ function createSessionManager(deps) {
       // Persist this session so we can resume it on next launch.
       // Bash/other sessions persist too (restored as fresh shells in the
       // saved cwd); their entry is dropped on natural exit instead.
+      // createdAt: stamped ONCE, at the session's first create. kill()+recreate
+      // (restart/restore) rebuilds the record from spawn args, so preserve any
+      // existing stamp rather than resetting it — the sidebar's "created" sort/
+      // group depends on it being stable across restarts.
+      const existingEntry = getPersistence().get(name);
+      const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
       getPersistence().upsert({
         name, type, cwd,
         extraArgs,
+        createdAt,
         sessionId: resumeId || null,
         workspaceId,
         systemPrompt: systemPromptBody || null,

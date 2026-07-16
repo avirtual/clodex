@@ -63,7 +63,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
   assert.strictEqual(created[0].name, 'alpha');
   assert.deepStrictEqual(out, [{
     name: 'alpha', type: 'claude', cwd: '/w/a', label: 'A',
-    backend: 'claude-code', ctx: 5, proxy: { pct: 12 },
+    backend: 'claude-code', createdAt: null, ctx: 5, proxy: { pct: 12 },
   }]);
   // No persistence mutation on the happy path.
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']]);

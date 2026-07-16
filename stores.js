@@ -750,6 +750,16 @@ function initStores(userDataPath, { log, registryDir } = {}) {
       const w = all.find(x => x.id === id);
       if (w) { w.bounds = bounds; this._save(all); }
     },
+    // Per-workspace sidebar view state (group/sort/status/activity/search).
+    // Merged so a partial update from the toolbar keeps the other keys; restored
+    // on window create via workspace:getView.
+    setView(id, view) {
+      const all = this._load();
+      const w = all.find(x => x.id === id);
+      if (!w) return;
+      w.view = { ...(w.view || {}), ...(view || {}) };
+      this._save(all);
+    },
     // Per-window UI zoom (View-menu zoom items), restored on window create.
     // 1.0 clears the key so untouched workspaces stay clean.
     setZoomFactor(id, factor) {

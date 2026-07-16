@@ -56,7 +56,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
-    readSessionArgs, applySessionArgs,
+    readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     // GUI-managed remote token (write-only): the setter, the derived hasToken
@@ -566,6 +566,27 @@ function registerIpcHandlers(deps) {
       return { ok: true, disk, live };
     } catch (e) {
       return { ok: false, error: e.message, disk: [], live: [] };
+    }
+  });
+
+  // Sidebar organizational metadata for this workspace's sessions: last-activity
+  // timestamps (always) + git branch / PR status (includePr, the slow tier). Fed
+  // to the sidebar toolbar's group/sort/filter. createdAt is folded in from the
+  // persisted record so one call feeds the whole toolbar.
+  handle('sidebar:meta', async (e, opts) => {
+    const workspaceId = workspaceOfSender(e);
+    const list = persistence.listForWorkspace(workspaceId);
+    const sessions = list.map((s) => ({ name: s.name, cwd: s.cwd }));
+    const includePr = !opts || opts.includePr !== false;
+    try {
+      const meta = await sessionMeta.metaFor(sessions, { includePr });
+      for (const s of list) {
+        if (!meta[s.name]) meta[s.name] = {};
+        meta[s.name].createdAt = s.createdAt || null;
+      }
+      return { ok: true, meta };
+    } catch (err) {
+      return { ok: false, error: err.message, meta: {} };
     }
   });
   // --- Touched-files feed + peek/diff -----------------------------------
@@ -1537,6 +1558,16 @@ function registerIpcHandlers(deps) {
   // Workspace management
   handle('workspace:list', () => workspaces.list());
   handle('workspace:current', (e) => workspaceOfSender(e));
+  // Per-workspace sidebar view state (group/sort/status/activity/search) —
+  // restored on window create, persisted on every toolbar change.
+  handle('workspace:getView', (e) => {
+    const w = workspaces.get(workspaceOfSender(e));
+    return { ok: true, view: (w && w.view) || null };
+  });
+  handle('workspace:setView', (e, view) => {
+    workspaces.setView(workspaceOfSender(e), view || {});
+    return { ok: true };
+  });
   handle('workspace:setName', (e, name) => {
     const id = workspaceOfSender(e);
     const prev = workspaces.get(id);
