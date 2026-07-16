@@ -54,6 +54,7 @@ const SCANNED_MODULES = [
   'relay-protocol.js',
   'session-restore.js',
   'session-discovery.js',
+  'git-worktree.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',

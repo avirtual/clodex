@@ -29,6 +29,7 @@
 const { pathFor } = require('./clodex-paths');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
+const gitWorktree = require('./git-worktree');
 
 function registerIpcHandlers(deps) {
   const {
@@ -103,6 +104,49 @@ function registerIpcHandlers(deps) {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // Opt-in git worktree for a new session. The renderer calls this BEFORE
+  // session:create when the dialog's "Git worktree" box is checked; on success it
+  // uses the returned path as the session cwd, then stamps the worktree onto the
+  // persisted entry via session:markWorktree. Kept OUT of manager.create's
+  // (already huge) signature on purpose — worktree lifecycle is orthogonal to spawn.
+  handle('worktree:create', async (_e, cwd, branch, opts) =>
+    gitWorktree.createWorktree(cwd, branch, opts || null));
+  // Repo metadata for the dialog: is this cwd a git repo, its default branch, and
+  // the base-branch candidates for the autocomplete.
+  handle('worktree:info', async (_e, cwd) => {
+    try { return { ok: true, ...(await gitWorktree.repoInfo(cwd)) }; }
+    catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
+  });
+  // Working-directory suggestions for the New Session dialog: a persisted MRU of
+  // recently-picked dirs, plus the most-popular cwds across LIVE sessions (by
+  // count). Both are plain string lists; the renderer renders a datalist.
+  handle('session:cwdSuggestions', () => {
+    const recent = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const counts = new Map();
+    for (const s of manager.list()) {
+      if (!s.cwd) continue;
+      counts.set(s.cwd, (counts.get(s.cwd) || 0) + 1);
+    }
+    const popular = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([cwd, count]) => ({ cwd, count }));
+    return { ok: true, recent, popular };
+  });
+  // Record a chosen cwd into the MRU (most-recent first, capped, deduped). Called
+  // by the dialog on create so the next open offers it.
+  handle('session:noteCwd', (_e, cwd) => {
+    const dir = typeof cwd === 'string' && cwd.trim();
+    if (!dir) return { ok: false };
+    const cur = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const next = [dir, ...cur.filter((c) => c !== dir)].slice(0, 12);
+    uiSettings.set({ recentCwds: next });
+    return { ok: true };
+  });
+  // Stamp/clear the worktree provenance on a live+persisted session (post-create).
+  handle('session:markWorktree', (_e, name, worktree) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
+    persistence.setWorktree(name, worktree || null);
+    return { ok: true };
   });
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));

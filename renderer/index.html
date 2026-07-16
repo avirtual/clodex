@@ -416,8 +416,23 @@
       </label>
       <label>Working directory
         <div class="dir-picker">
-          <input type="text" id="input-cwd" placeholder="~ or /absolute/path" spellcheck="false">
+          <input type="text" id="input-cwd" placeholder="~ or /absolute/path" spellcheck="false" list="cwd-suggestions" autocomplete="off">
           <button id="btn-browse" class="secondary" type="button">Browse…</button>
+        </div>
+        <datalist id="cwd-suggestions"></datalist>
+      </label>
+      <label id="worktree-row" style="display:none;">Git worktree
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="input-worktree" style="margin: 0;">
+          <span class="hint-text" style="margin: 0;">Create in a new git worktree — an isolated checkout of the repo above, on its own branch.</span>
+        </label>
+        <div id="worktree-fields" style="display:none; margin-top:4px;">
+          <input type="text" id="input-worktree-branch" placeholder="new branch name — e.g. agent/feature-x" spellcheck="false" autocomplete="off">
+          <label style="margin-top:4px; font-weight: normal;">Create from
+            <input type="text" id="input-worktree-base" placeholder="(default branch)" spellcheck="false" list="worktree-base-list" autocomplete="off">
+            <datalist id="worktree-base-list"></datalist>
+            <span class="hint-text" style="margin: 0;">The branch/ref the new worktree branches off. Defaults to the repo's default branch.</span>
+          </label>
         </div>
       </label>
       <label id="system-prompt-row">System prompt

@@ -99,6 +99,10 @@ const DEFAULT_UI_SETTINGS = {
   // transcripts clodex doesn't track and offer to adopt them. OFF by default —
   // an opt-in convenience; only the focused/most-recent window ever triggers it.
   discoverOnStartup: false,
+  // Working-directory MRU for the New Session dialog: the dirs most recently
+  // picked as a session cwd, most-recent first, capped at 12. Fed to the
+  // cwd-suggestions datalist alongside the popular-across-live-sessions list.
+  recentCwds: [],
   // Built-in Claude Design MCP: the CLI auto-injects the claude.ai `claude_design`
   // connector (20 `mcp__claude_design__*` tools, ~4k tok/turn cache carriage) on
   // every launch for entitled accounts, with no honored global opt-out. The PRIMARY
@@ -435,6 +439,18 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         entry.label = label;
         this._save(all);
       }
+    },
+    // Per-session git worktree provenance ({ path, branch, base, repo }), stamped
+    // after a worktree-backed create so a later teardown can offer to remove it. A
+    // falsy value clears the key (a session that no longer owns a worktree carries
+    // none).
+    setWorktree(name, worktree) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (worktree && worktree.path) entry.worktree = worktree;
+      else delete entry.worktree;
+      this._save(all);
     },
     setExtraArgs(name, extraArgs) {
       const all = this._load();
@@ -1269,6 +1285,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
           wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
           compactOnResume: typeof raw?.compactOnResume === 'boolean' ? raw.compactOnResume : DEFAULT_UI_SETTINGS.compactOnResume,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
+          recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : DEFAULT_UI_SETTINGS.recentCwds,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
@@ -1299,6 +1316,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
         compactOnResume: partial?.compactOnResume ?? cur.compactOnResume,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
+        recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,

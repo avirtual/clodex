@@ -23,6 +23,14 @@
 
 const API_CONTRACT = [
   { name: 'createSession', kind: 'invoke', channel: 'session:create' },
+  // Opt-in git worktree at spawn + working-dir suggestions for the New Session
+  // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
+  // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.
+  { name: 'createWorktree', kind: 'invoke', channel: 'worktree:create' },
+  { name: 'worktreeInfo', kind: 'invoke', channel: 'worktree:info' },
+  { name: 'markSessionWorktree', kind: 'invoke', channel: 'session:markWorktree' },
+  { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
+  { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },
   { name: 'listSessions', kind: 'invoke', channel: 'session:list' },
   { name: 'killSession', kind: 'invoke', channel: 'session:kill' },
   { name: 'flushPending', kind: 'invoke', channel: 'session:flushPending' },

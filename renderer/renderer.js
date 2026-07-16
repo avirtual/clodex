@@ -81,6 +81,16 @@ const resumeRow = document.getElementById('resume-row');
 const proxyRow = document.getElementById('proxy-row');
 const inputProxyMode = document.getElementById('input-proxy-mode');
 const inputProxyUrl = document.getElementById('input-proxy-url');
+// Opt-in git worktree (New Session dialog): the row reveals only inside a git
+// repo, and the branch/base fields only once the box is checked. cwdSuggestionsList
+// backs the working-directory MRU datalist.
+const inputWorktree = document.getElementById('input-worktree');
+const inputWorktreeBranch = document.getElementById('input-worktree-branch');
+const inputWorktreeBase = document.getElementById('input-worktree-base');
+const worktreeBaseList = document.getElementById('worktree-base-list');
+const worktreeFields = document.getElementById('worktree-fields');
+const worktreeRow = document.getElementById('worktree-row');
+const cwdSuggestionsList = document.getElementById('cwd-suggestions');
 // New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
 // Host + one entry per registered sandbox box. The selected <option>'s value is the
 // placement: 'host' or a box id.
@@ -856,6 +866,15 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   // (create2) or the greyed state (non-create2/offline) win over the host defaults
   // just rendered. No cwd mutation here — that's applyPlacement's job.
   if (currentPlacement() !== 'host') applySandboxState();
+  // Worktree is runtime-only (a concrete checkout, not reusable config) AND
+  // repo-only — refreshWorktreeForCwd owns its visibility (hidden here first so a
+  // non-repo / template-authoring open never flashes the row).
+  if (worktreeRow) {
+    worktreeRow.style.display = 'none';
+    if (inputWorktree) inputWorktree.checked = false;
+    if (worktreeFields) worktreeFields.style.display = 'none';
+    if (!authoring) refreshWorktreeForCwd();
+  }
 }
 
 // Grey (disable + dim) or restore the rich rows for the current placement. When
@@ -1125,6 +1144,64 @@ async function refreshNewSessionTools(disabledSet = null) {
   renderToolChecklist(inputToolsList, disabled, (res && res.ok && res.effective) || {});
 }
 
+// The branch/base fields only matter once the worktree box is checked.
+if (inputWorktree) {
+  inputWorktree.addEventListener('change', () => {
+    worktreeFields.style.display = inputWorktree.checked ? '' : 'none';
+    if (inputWorktree.checked) inputWorktreeBranch.focus();
+  });
+}
+
+// Git repo detection for the current cwd — reveals the worktree row only inside
+// a repo and populates the base-branch autocomplete + default. A token guards
+// against a slower earlier cwd's response landing after a newer one.
+let worktreeInfoToken = 0;
+async function refreshWorktreeForCwd() {
+  if (!worktreeRow) return;
+  const authoring = dialogMode === 'template';
+  const cwd = expandPath(inputCwd.value.trim()) || homeDir;
+  const token = ++worktreeInfoToken;
+  const info = await window.api.worktreeInfo(cwd);
+  if (token !== worktreeInfoToken) return; // a newer cwd won the race
+  const isRepo = info && info.ok && info.isRepo;
+  // Worktrees are runtime-only (hidden in template authoring) AND repo-only.
+  worktreeRow.style.display = (isRepo && !authoring) ? '' : 'none';
+  if (!isRepo || authoring) {
+    if (inputWorktree) inputWorktree.checked = false;
+    if (worktreeFields) worktreeFields.style.display = 'none';
+    return;
+  }
+  // Populate the base-branch datalist (default first) and seed the placeholder.
+  worktreeBaseList.textContent = '';
+  for (const b of (info.branches || [])) {
+    const opt = document.createElement('option');
+    opt.value = b;
+    worktreeBaseList.appendChild(opt);
+  }
+  inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
+}
+
+// Working Directory datalist: recently-picked dirs (MRU) first, then the most-
+// popular cwds across live sessions (labelled with their session count). Deduped
+// so a dir that's both recent and active shows once.
+async function refreshCwdSuggestions() {
+  if (!cwdSuggestionsList) return;
+  const res = await window.api.cwdSuggestions();
+  if (!res || !res.ok) return;
+  cwdSuggestionsList.textContent = '';
+  const seen = new Set();
+  const add = (value, label) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    const opt = document.createElement('option');
+    opt.value = value;
+    if (label) opt.label = label;
+    cwdSuggestionsList.appendChild(opt);
+  };
+  for (const c of (res.recent || [])) add(c, 'recent');
+  for (const p of (res.popular || [])) add(p.cwd, `${p.count} active session${p.count === 1 ? '' : 's'}`);
+}
+
 // prefill (optional): seed the dialog for adopting an existing session —
 // { name, type, cwd, resumeId }. Everything else stays at the normal new-session
 // defaults, so the operator can still pick tools/prompts/proxy before Create runs
@@ -1140,6 +1217,14 @@ async function openDialog(prefill = null) {
   inputSystemPrompt.value = '';
   inputResume.value = (prefill && prefill.resumeId) || '';
   inputFork.checked = false;
+  if (inputWorktree) {
+    inputWorktree.checked = false;
+    inputWorktreeBranch.value = '';
+    inputWorktreeBranch.style.borderColor = '';
+    inputWorktreeBase.value = '';
+    if (worktreeFields) worktreeFields.style.display = 'none';
+  }
+  refreshCwdSuggestions();
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   // Reset placement to Host BEFORE applyTypeDefaults so a stale box value from a
@@ -1207,6 +1292,10 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 // which then throws `.has is not a function` mid-render and blanks the checklist.
 inputCwd.addEventListener('change', () => refreshNewSessionSkills());
 inputCwd.addEventListener('change', () => refreshNewSessionTools());
+// A cwd change may cross a repo boundary — re-detect so the worktree row
+// reveals/hides. Change-only (matches the skill/tool refreshes above) so a path
+// field doesn't shell out to git on every keystroke.
+inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 
 inputProxyMode.addEventListener('change', () => {
   inputProxyUrl.style.display = inputProxyMode.value === 'custom' ? '' : 'none';
@@ -1418,10 +1507,38 @@ async function doCreate() {
     return;
   }
 
+  // Opt-in git worktree: create it FIRST (off the entered cwd's repo), then spawn
+  // the session in the new worktree instead. Done before closeDialog so a failure
+  // can surface with the dialog still open for correction.
+  let spawnCwd = cwd;
+  let worktree = null;
+  // Only worktree-backed when the row is visible (i.e. cwd is a git repo) AND
+  // checked — the row hides itself outside a repo, so a stale checked state can't
+  // fire a worktree in a non-repo dir.
+  if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
+    const branch = inputWorktreeBranch.value.trim();
+    if (!branch) {
+      inputWorktreeBranch.style.borderColor = '#e94560';
+      return;
+    }
+    const base = inputWorktreeBase.value.trim() || null; // null → repo default branch
+    const wt = await window.api.createWorktree(cwd, branch, { base });
+    if (!wt || !wt.ok) {
+      alert(`Failed to create git worktree: ${(wt && wt.error) || 'unknown error'}`);
+      return;
+    }
+    spawnCwd = wt.path;
+    worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
+  }
+
+  // Remember the chosen source dir (the repo/cwd the user picked, not the derived
+  // worktree path) for the Working Directory MRU.
+  window.api.noteCwd(cwd);
+
   closeDialog();
 
   if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
-  const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+  const result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Create session failed: ${result.error || 'unknown error'}`);
@@ -1429,8 +1546,12 @@ async function doCreate() {
     return;
   }
 
+  // Stamp worktree provenance onto the persisted entry (a later teardown can use
+  // it to offer removing the checkout).
+  if (worktree) window.api.markSessionWorktree(name, worktree);
+
   createTerminal(name);
-  addSessionToSidebar(name, type, cwd, null, (result.session && result.session.backend) || null);
+  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null);
   switchSession(name);
 
   // Non-fatal spawn warnings (e.g. an injected skill references a subagent this
@@ -1472,6 +1593,7 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
   inputCwd.value = dir;
   refreshNewSessionSkills();
   refreshNewSessionTools();
+  refreshWorktreeForCwd();
 });
 
 // Translate a picked HOST folder to the box's container path and fill the cwd
@@ -2848,6 +2970,7 @@ function adoptSession(rec) {
     inputFork.checked = false;
     refreshNewSessionSkills();
     refreshNewSessionTools();
+    refreshWorktreeForCwd();
     dialogTitle.textContent = 'Adopt Session';
     setTimeout(() => inputName.select(), 50);
   } else {
