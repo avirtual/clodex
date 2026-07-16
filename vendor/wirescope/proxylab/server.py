@@ -1168,6 +1168,16 @@ async def handler(request: Request) -> Response:
                 record["strip_mcp"] = smcp
                 if smcp.get("removed"):
                     changed = True
+            # STRIP_TOOLS_GLOBAL: drop named tools[] entries by EXACT name for
+            # every routed CLI (sibling of STRIP_MCP_SERVERS, keyed on name not
+            # mcp prefix). For tools the CLI force-includes past --tools and
+            # settings permissions.deny alike (EndConversation). Default off in
+            # code; per-agent re-admit via [wirescope:keep-tools <name>].
+            stg = transforms_mod._strip_tools_global(obj, agent_id=agent_id)
+            if stg:
+                record["strip_tools_global"] = stg
+                if stg.get("removed"):
+                    changed = True
             # WIRESCOPE [wirescope:strip-thinking ...]: resolve the strip decision
             # into the sticky per-session store NOW, BEFORE the directive-strip
             # below removes the line from the wire — otherwise a directive placed
@@ -1310,6 +1320,16 @@ async def handler(request: Request) -> Response:
                     record["pin_settled_breakpoint"] = psb
                     if psb.get("pinned"):
                         changed = True
+            # SCRAP-TAIL 5m (L1 strip sessions): once we know this turn's frontier
+            # will be stripped+rewritten next turn, write that doomed cache at 5m
+            # (1.25x) instead of 1h (2x). Runs AFTER the pin so the pin (1h) stays a
+            # lower index than the 5m tail (legal ttl ordering); only fires when the
+            # tail sits PAST the settled boundary (durable boundary write stays 1h).
+            dst = transforms_mod._downshift_scrap_tail(obj, agent_id=agent_id)
+            if dst:
+                record["scrap_tail_5m"] = dst
+                if dst.get("downshifted"):
+                    changed = True
             # HOLD-WARM: /warm-cache sentinel turn -> arm/disarm + inject the
             # echo instruction; the turn then forwards like any other (the
             # model speaks the ack; this request becomes the replayable,

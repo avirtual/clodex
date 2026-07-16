@@ -508,11 +508,16 @@ def _subagent_detail(session, child, maxlen=None):
             "truncated": truncated}
 
 
-# Rough JSON-chars -> tokens divisor for tool schema sizing. Mirrors
-# analyze_tools.py's CHARS_PER_TOK so the live endpoint and the offline ledger
-# price a tool the same way; the ranking (what to trim) is robust to the exact
-# ratio.
+# Chars -> tokens divisors. PROSE (system text, messages, thinking) tokenizes at
+# ~4 ch/tok. Dense JSON tool SCHEMAS (short keys, punctuation, enum literals)
+# tokenize ~40% denser: wire-calibrated 2026-07-18 against a session's own
+# `/context` — 90,812 ch of tools[] reported as 32.7k tokens = 2.78 ch/tok, where
+# the /4 estimate lowballed it to 23.3k (~30% under). So tool schemas get their
+# own divisor; prose keeps /4. analyze_tools.py mirrors _SCHEMA_CHARS_PER_TOK at
+# its tool-schema call sites. Ranking (what to trim) is robust to the exact ratio;
+# the divisor split only matters for the absolute est_tokens shown next to /context.
 _CHARS_PER_TOK = 4
+_SCHEMA_CHARS_PER_TOK = 2.8
 
 
 def _tool_roster(obj):
@@ -533,11 +538,12 @@ def _tool_roster(obj):
             continue
         chars = len(json.dumps(t, ensure_ascii=False))
         per.append({"name": t.get("name"), "schema_chars": chars,
-                    "est_tokens": chars // _CHARS_PER_TOK})
+                    "est_tokens": int(chars / _SCHEMA_CHARS_PER_TOK)})
     per.sort(key=lambda x: x["schema_chars"], reverse=True)
     total = sum(p["schema_chars"] for p in per)
     return {"count": len(per), "names": [p["name"] for p in per],
-            "total_schema_chars": total, "est_tokens": total // _CHARS_PER_TOK,
+            "total_schema_chars": total,
+            "est_tokens": int(total / _SCHEMA_CHARS_PER_TOK),
             "per_tool": per}
 
 
@@ -774,7 +780,10 @@ def _composition(obj, total_tokens=None):
                       else len(json.dumps(bc, ensure_ascii=False)) if bc is not None
                       else 0)
                 chars["tool_results"] += ln
-    raw = {k: v // _CHARS_PER_TOK for k, v in chars.items() if v > 0}
+    # tools[] is dense JSON schema -> its own divisor; every other category is
+    # prose. Matters for the tools-vs-rest split before the receipt rescale.
+    raw = {k: (int(v / _SCHEMA_CHARS_PER_TOK) if k == "tools" else v // _CHARS_PER_TOK)
+           for k, v in chars.items() if v > 0}
     raw_total = sum(raw.values())
     if not raw_total:
         return None

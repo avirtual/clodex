@@ -1239,6 +1239,77 @@ def _strip_mcp_tools(obj, agent_id=None):
     return log
 
 
+# ---- GLOBAL EXACT-NAME TOOL STRIP (deployment-level) ----------------------
+# Drop named tools[] entries by EXACT name for every routed CLI, keyed on a
+# constant set. This is the sibling of STRIP_MCP_SERVERS (which keys on the
+# `mcp__<server>__*` prefix) for tools the CLI PINS into the outbound roster
+# past every native filter. Motivating case: EndConversation — a mandatory
+# safety tool the CLI force-includes even under a strict `--tools bash`
+# allowlist AND leaves on the wire under settings `permissions.deny`
+# (wire-proven 2026-07-18: --tools bash -> [Bash, EndConversation]; deny of
+# [Artifact, EndConversation] strips Artifact, keeps EndConversation). Its
+# entry is ~4.7k ch / ~1.7k tok of pure abuse-policy prose (empty
+# input_schema) a coding fleet never invokes, cached every turn. No native
+# means removes it; the proxy is the only lever.
+#
+# Same cache math as STRIP_MCP: tools[] is FIRST in cache order, so a CONSTANT
+# strip set reshapes the cached prefix to the smaller roster ONCE (one
+# downstream bust at adoption), then rides byte-stable (SORT_TOOLS downstream
+# re-alphabetizes, so the forwarded tools[] is identical every turn). Match is
+# by SET membership (case-insensitive), order-independent. Default OFF in code
+# (STRIP_TOOLS_GLOBAL="") so library/test embeddings are unaffected; a
+# deployment turns it on via STRIP_TOOLS_GLOBAL="EndConversation[,…]".
+# Per-agent re-admit: `[wirescope:keep-tools <name>]` (shares the resolver the
+# wirescope tool directives use). Kill switch: STRIP_TOOLS_GLOBAL="" (or =off).
+STRIP_TOOLS_GLOBAL = frozenset(
+    s.lower() for s in re.split(r"[,\s]+",
+                                os.environ.get("STRIP_TOOLS_GLOBAL", "").strip())
+    if s and s.lower() not in ("0", "no", "off", "false"))
+
+
+def _strip_tools_global(obj, agent_id=None):
+    """Drop tools[] whose name is in STRIP_TOOLS_GLOBAL (minus any the agent
+    re-admits via `[wirescope:keep-tools <name>]`). Returns a log dict
+    {removed, kept, targets[, miss]} or None (gate off / no tools / nothing to
+    strip). Mirrors _strip_mcp_tools including the defensive cache_control
+    migration onto the new last tool (never fires on the org-scope wire, where
+    tools carry no breakpoint)."""
+    if not STRIP_TOOLS_GLOBAL:
+        return None
+    tools = obj.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return None
+    keep = set()
+    for name, value in _ws_merged_pairs(obj, agent_id):
+        if name == "keep-tools":
+            keep.update(t.lower() for t in _ws_omit_target_list(value))
+    targets = STRIP_TOOLS_GLOBAL - keep
+    if not targets:
+        return None                          # every configured tool re-admitted
+    kept, removed, lost_cc = [], [], None
+    for t in tools:
+        nm = t.get("name") if isinstance(t, dict) else None
+        if nm and nm.lower() in targets:
+            removed.append(nm)
+            if isinstance(t, dict) and t.get("cache_control") and lost_cc is None:
+                lost_cc = t["cache_control"]
+        else:
+            kept.append(t)
+    log = {"targets": sorted(targets)}
+    if not removed:
+        log["removed"] = []
+        log["miss"] = True                   # configured but this req carried none
+        return log
+    if (lost_cc and kept and isinstance(kept[-1], dict)
+            and not any(isinstance(t, dict) and t.get("cache_control")
+                        for t in kept)):
+        kept[-1]["cache_control"] = lost_cc
+    obj["tools"] = kept
+    log["removed"] = removed
+    log["kept"] = [t.get("name") for t in kept]
+    return log
+
+
 # ---- SIDE-CALL MODEL DOWNSHIFT (WebFetch/WebSearch utility calls) ----------
 # The CLI dispatches two kinds of one-shot UTILITY side-calls on the SESSION'S
 # MAIN MODEL, ignoring both the invoking subagent's model and WebFetch's own
@@ -2732,6 +2803,64 @@ def _pin_settled_breakpoint(obj, agent_id=None):
             "ttl": cc.get("ttl"), "converted_string": needs_convert,
             "markers_total": len(markers) + (1 if mode == "added" else 0),
             "total_messages": len(msgs)}
+
+
+SCRAP_TAIL_5M = os.environ.get("SCRAP_TAIL_5M", "1") not in ("0", "no", "off", "false")
+
+
+def _downshift_scrap_tail(obj, agent_id=None):
+    """On a session that STRIPS prior thinking (L1+), the current turn's frontier —
+    the assistant thinking + tool_results that accrete PAST the settled boundary —
+    is guaranteed to be busted and rewritten next turn by the strip. Paying the 1h
+    write premium (2x) to cache that frontier buys durability that is discarded
+    before it is ever collected cross-turn; at that point the right thing is to
+    write the scrap at 5m (1.25x). Intra-turn reuse is unaffected: reads match on
+    content regardless of ttl (wire-proven via the :7802 probe — a 1h pin over a
+    5m-written prefix re-reads it with ephemeral_1h=0, never re-writes), and the
+    5m entry slides on every in-loop read seconds apart.
+
+    THE GUARDRAIL — downshift ONLY when the tail marker sits STRICTLY PAST the
+    settled boundary (`tail_idx > boundary`). When the CLI's rolling marker is AT
+    the boundary (the turn's FIRST request, marking the user prompt), that write is
+    the DURABLE anchor next turn's pin reads back at 1h — 5m there would re-expose
+    the >5min-gap eviction trap on the base prefix. So the boundary write stays 1h;
+    only the post-boundary frontier goes 5m. This exactly separates durable
+    (turn-start / at-or-below boundary) from scrap (mid-loop / past boundary).
+
+    Ordering stays legal: every remaining 1h marker (system blocks, the settled
+    pin, the boundary write) sits at a lower index than the single 5m tail, and the
+    API requires longer-TTL markers first. Gated by L1 (`_strip_thinking_enabled`)
+    so a non-strip session keeps the CLI's 1h tail untouched — the frontier is only
+    'doomed' when this session actually strips. Kill-switch `SCRAP_TAIL_5M` (default
+    on; real gate is L1). Runs AFTER the pin. Returns a log dict or None."""
+    if not SCRAP_TAIL_5M or not isinstance(obj, dict):
+        return None
+    if not _strip_thinking_enabled(obj, agent_id):
+        return None                       # non-strip session: frontier not doomed
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    boundary = _settled_boundary(msgs)
+    # the rolling tail = the highest-index message block carrying a marker
+    tail = None
+    for i, m in enumerate(msgs):
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list):
+            for blk in c:
+                if isinstance(blk, dict) and blk.get("cache_control"):
+                    tail = (i, blk)
+    if not tail:
+        return None
+    i, blk = tail
+    if i <= boundary:                     # durable boundary/prompt write -> keep 1h
+        return {"downshifted": False, "reason": "tail_at_durable_boundary",
+                "tail_idx": i, "boundary_idx": boundary}
+    was = blk["cache_control"].get("ttl")
+    if was == "5m":
+        return {"downshifted": False, "reason": "already_5m", "tail_idx": i}
+    blk["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
+    return {"downshifted": True, "tail_idx": i, "boundary_idx": boundary,
+            "from_ttl": was, "to_ttl": "5m", "total_messages": len(msgs)}
 
 
 def _patch_tool_descriptions(obj):
