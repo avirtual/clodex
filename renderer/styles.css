@@ -2965,7 +2965,32 @@ html, body {
 /* Wizard status / deploy-progress panel under a peer row. Indented to the
    inputs, muted chrome, grows without reflowing the row above it. */
 #peers-list .peer-row-wrap { margin-top: 6px; }
-#peers-list .peer-row-wrap .peer-row { margin-top: 0; }
+#peers-list .peer-row-wrap .peer-row { margin-top: 6px; }
+/* Collapsed one-liner header (accordion): clickable, folds the full config grid
+   and its status panel away until expanded. Caret rotates on expand. */
+#peers-list .peer-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  user-select: none;
+}
+#peers-list .peer-row-summary:hover { border-color: var(--text-dim); }
+#peers-list .peer-row-caret {
+  color: var(--text-dim);
+  font-size: 10px;
+  display: inline-block;
+  transition: transform 0.1s ease;
+}
+#peers-list .peer-row-wrap:not(.collapsed) .peer-row-caret { transform: rotate(90deg); }
+#peers-list .peer-row-summary-label { font-weight: 500; }
+#peers-list .peer-row-summary-status { font-size: 11px; }
+#peers-list .peer-row-wrap.collapsed .peer-row,
+#peers-list .peer-row-wrap.collapsed .peer-row-status { display: none; }
 .peer-row-status {
   margin: 6px 0 10px 116px;
   padding: 8px 10px;

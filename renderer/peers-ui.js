@@ -119,10 +119,17 @@ function initPeersUi({
   // recreate blips the container offline→online, which the row reflects as its live
   // busy signal (no persistent strip button to spin). Distinct from the generic
   // restart (bounce the same build); both stay meaningful for a box.
+  // Busy-lock: a rebuild is a minutes-long recreate reachable from three places
+  // (the Sandboxes panel, the header context menu, and now the ⓘ popover), so a
+  // second trigger while one is in flight must no-op rather than stack builds.
+  const rebuildingBoxes = new Set();
   async function rebuildBox(id, label) {
+    if (rebuildingBoxes.has(id)) return;
+    rebuildingBoxes.add(id);
     showToast(`Rebuilding ${label} — this can take a few minutes.`, { kind: 'peer-ui' });
     let res;
     try { res = await window.api.sandboxRebuild(id); } catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
+    finally { rebuildingBoxes.delete(id); }
     if (res && res.ok !== false) {
       showToast(`Rebuilt ${label} on the current code.`, { kind: 'peer-ui' });
     } else {
@@ -1426,6 +1433,19 @@ function initPeersUi({
     // against a stale resolve landing after the popover was closed/retargeted.
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
+    // Update / Rebuild slot. For a managed box, "Update Clodex" is the wrong verb
+    // — a rebuild recreates the box on the current code, which IS its update — so
+    // the slot offers Rebuild instead (reusing the header flow + its busy-lock).
+    // Always available for a box: the ⓘ only opens for an online peer, and a box
+    // is always ssh-reachable locally. Generic peers keep the online + ssh + behind
+    // gate resolved below.
+    if (boxIds.has(id)) {
+      peerInfoUpdateBtn.textContent = 'Rebuild';
+      peerInfoUpdateBtn.classList.remove('hidden');
+      peerInfoUpdateBtn.onclick = () => { closePeerInfoPopover(); rebuildBox(id, label); };
+    } else {
+      peerInfoUpdateBtn.textContent = 'Update Clodex';
+    }
     // Disable (pause) — always offered here: the ⓘ icon only renders for a live
     // peer, so anything reaching this popover is disable-able.
     peerInfoDisableBtn.onclick = () => { closePeerInfoPopover(); disablePeer(id, label); };
@@ -1448,7 +1468,7 @@ function initPeersUi({
     // Hidden when the peer isn't behind us: same-version or ahead has nothing to
     // gain from our deploy (the script pulls latest master). Kept for
     // patch/minor/major and 'unknown' (dev/unparseable — can't rule it out).
-    if (st.online && updateApplies(sev)) {
+    if (!boxIds.has(id) && st.online && updateApplies(sev)) {
       window.api.peerDeployConfig(id).then((cfg) => {
         if (!cfg || !cfg.sshHost) return;
         if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;

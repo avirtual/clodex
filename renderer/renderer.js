@@ -3051,12 +3051,23 @@ window.api.onPeerDeployLine((sshHost, line) => {
   if (h) h(line);
 });
 
-function addPeerRow(peer) {
+// Fold a peer row back to its one-line summary, refreshing that summary from the
+// row's live inputs first so an edited label/host is reflected while collapsed.
+function collapsePeerRow(wrap) {
+  if (wrap._refreshSummary) wrap._refreshSummary();
+  wrap.classList.add('collapsed');
+}
+
+function addPeerRow(peer, { expanded = false } = {}) {
   // Drop the "No peers yet." placeholder the moment a real row appears.
   const emptyHint = peersListBox.querySelector('.peers-empty');
   if (emptyHint) emptyHint.remove();
+  // Accordion: only one row's full config surface is open at a time. A row added
+  // expanded (Add Peer) collapses every existing row first; the dialog's initial
+  // load renders all rows collapsed (one line each).
+  if (expanded) peersListBox.querySelectorAll('.peer-row-wrap').forEach((w) => collapsePeerRow(w));
   const wrap = document.createElement('div');
-  wrap.className = 'peer-row-wrap';
+  wrap.className = expanded ? 'peer-row-wrap' : 'peer-row-wrap collapsed';
   const row = document.createElement('div');
   row.className = 'peer-row';
   row.dataset.peerId = peer.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
@@ -3108,6 +3119,36 @@ function addPeerRow(peer) {
   const destInput = row.querySelector('.peer-row-dest');
   destInput.addEventListener('input', () => updatePeerDestBadge(row));
   updatePeerDestBadge(row); // reflect a pre-filled destination immediately
+  // Collapsed one-liner header: a disclosure caret, the peer's label/host, and a
+  // dim live-status note. Clicking it toggles the row's full config surface below
+  // (accordion — see collapsePeerRow/expandPeerRow). Refreshed from the live
+  // inputs whenever the row collapses so an edited label shows when folded.
+  const summary = document.createElement('div');
+  summary.className = 'peer-row-summary';
+  summary.innerHTML =
+    `<span class="peer-row-caret">&#9654;</span>` +
+    `<span class="peer-row-summary-label"></span>` +
+    `<span class="peer-row-summary-status peer-status-dim"></span>`;
+  function refreshSummary() {
+    const lbl = row.querySelector('.peer-row-label').value.trim() || peerRowDest(row) || 'New peer';
+    summary.querySelector('.peer-row-summary-label').textContent = lbl;
+    const st = peer.id && peerStatuses.get(peer.id);
+    const statEl = summary.querySelector('.peer-row-summary-status');
+    if (st && st.online) statEl.textContent = st.version ? `online · v${st.version}` : 'online';
+    else if (peer.id) statEl.textContent = 'offline';
+    else statEl.textContent = '';
+  }
+  wrap._refreshSummary = refreshSummary;
+  refreshSummary();
+  summary.addEventListener('click', () => {
+    if (wrap.classList.contains('collapsed')) {
+      peersListBox.querySelectorAll('.peer-row-wrap').forEach((w) => collapsePeerRow(w));
+      wrap.classList.remove('collapsed');
+    } else {
+      collapsePeerRow(wrap);
+    }
+  });
+  wrap.appendChild(summary);
   wrap.appendChild(row);
   wrap.appendChild(status);
   peersListBox.appendChild(wrap);
@@ -3396,14 +3437,28 @@ function collectPeers() {
   return { ok: true, peers: out };
 }
 
-document.getElementById('peers-add').addEventListener('click', () => addPeerRow({}));
+document.getElementById('peers-add').addEventListener('click', () => addPeerRow({}, { expanded: true }));
+
+// Managed boxes register themselves as peers (sandbox.js registerPeer), but they
+// have their own management surface (the Sandboxes panel) and must NOT be
+// double-managed in this dialog. They're filtered out of the row list for display
+// only; Save re-fetches and re-merges them fresh at WRITE time (see the save
+// handler) — never from a dialog-open snapshot, because a box Rebuild between open
+// and Save re-registers the box with a fresh url/token that a stale stash would
+// clobber (same whole-array-round-trip lesson as the whitelist store).
+async function boxPeerIds() {
+  try { return new Set(((await window.api.sandboxListBoxes()) || []).map((b) => b && b.id).filter(Boolean)); }
+  catch { return new Set(); }
+}
 
 async function openPeersDialog() {
   const s = await window.api.getSettings();
   peersListBox.innerHTML = '';
+  const boxIds = await boxPeerIds();
   const peers = s.peers || [];
-  for (const p of peers) addPeerRow(p);
-  if (peers.length === 0) {
+  const genuine = peers.filter((p) => !(p && boxIds.has(p.id)));
+  for (const p of genuine) addPeerRow(p);
+  if (genuine.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'hint-text peers-empty';
     empty.textContent = 'No peers yet.';
@@ -3418,7 +3473,19 @@ document.getElementById('btn-peers-cancel').addEventListener('click', closePeers
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
   const collected = collectPeers();
   if (!collected.ok) return;   // invalid port/folder — inline error already shown, keep the dialog open
-  await window.api.setSettings({ peers: collected.peers });
+  // Re-merge the managed box peers FRESH at write time (never from a dialog-open
+  // stash): a box Rebuild since open bumps its ports and re-registers the peer with
+  // a new url/token, and setSettings replaces the whole peers array, so a stale
+  // snapshot here would overwrite that fresh entry. Re-fetch settings + the box-id
+  // set now; carry the box entries through untouched (hasToken is the derived
+  // getSettings shape — strip it; tokens round-trip via sanitizePeers' omit-carries-
+  // forward-by-id path).
+  const fresh = await window.api.getSettings();
+  const boxIds = await boxPeerIds();
+  const boxPeers = (fresh.peers || [])
+    .filter((p) => p && boxIds.has(p.id))
+    .map(({ hasToken, ...rest }) => rest);
+  await window.api.setSettings({ peers: [...collected.peers, ...boxPeers] });
   closePeersDialog();
 });
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
