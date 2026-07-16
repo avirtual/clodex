@@ -486,6 +486,13 @@ function createAppMenus(deps) {
               if (win) win.webContents.send('request-open-workbench');
             },
           },
+          {
+            label: 'Boiling Pot…',
+            click: () => {
+              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+              if (win) win.webContents.send('request-open-boiling-pot');
+            },
+          },
           { type: 'separator' },
           { role: 'reload' },
           { role: 'forceReload' },

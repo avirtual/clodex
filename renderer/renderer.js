@@ -3112,7 +3112,7 @@ createInboxDrawer();
 
 // Boiling-pot drawer (pot-drawer.js). Self-contained — a global, cross-agent
 // file-heat ranking pulled fresh on open via window.api.potSnapshot; no core
-// state. Sidebar-footer button next to Inbox.
+// state. Opened from the View menu ("Boiling Pot…") via request-open-boiling-pot.
 createPotDrawer();
 
 // Workbench popover — one floating surface (Files / Source Control / Worktrees)

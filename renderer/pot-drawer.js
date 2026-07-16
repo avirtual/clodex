@@ -1,8 +1,8 @@
 // pot-drawer.js — the "boiling pot": a left-side drawer ranking the files where
 // token CARRIAGE concentrates across every agent (docs/boiling-pot-plan.md).
-// Opened from the sidebar-footer button next to Inbox; a global, cross-agent
-// report you study, not a glance-value badge — so it's a drawer, pulled fresh
-// on open (window.api.potSnapshot), never a live feed.
+// Opened from the View menu ("Boiling Pot…"); a global, cross-agent report you
+// study, not a glance-value badge — so it's a drawer, pulled fresh on open
+// (window.api.potSnapshot), never a live feed.
 //
 // FRAMING (operator, verbatim): we rank by tokens CARRIED into expensive
 // contexts, not read COUNT. A file walked slice-by-slice accumulates carriage
@@ -25,7 +25,6 @@ function createPotDrawer() {
   const emptyEl = document.getElementById('pot-empty');
   const refreshBtn = document.getElementById('pot-refresh');
   const closeBtn = document.getElementById('pot-close');
-  const openBtn = document.getElementById('pot-open');
 
   // A tier-2 column is live only once at least one row carries a non-null value
   // (all-or-nothing, like sinceCompact) — so the whole redundancy column appears
@@ -86,7 +85,7 @@ function createPotDrawer() {
     drawer.classList.add('hidden');
   }
 
-  openBtn.addEventListener('click', openDrawer);
+  if (window.api.onRequestOpenBoilingPot) window.api.onRequestOpenBoilingPot(openDrawer);
   closeBtn.addEventListener('click', closeDrawer);
   refreshBtn.addEventListener('click', renderList);
 

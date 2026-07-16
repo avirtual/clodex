@@ -275,7 +275,8 @@ html, body {
   padding: 6px 8px;
 }
 
-#inbox-open {
+/* Footer content-surface rows (Workbench, Inbox) — glyph + label, full-width. */
+#btn-workbench, #inbox-open {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -289,7 +290,8 @@ html, body {
   font-size: 12px;
 }
 
-#inbox-open:hover { background: var(--sidebar-hover); color: var(--text); }
+#btn-workbench:hover, #inbox-open:hover { background: var(--sidebar-hover); color: var(--text); }
+.footer-glyph { font-size: 13px; line-height: 1; }
 
 .inbox-count {
   margin-left: auto;
@@ -2667,22 +2669,6 @@ html, body {
 .pot-head .pot-num { text-align: right; }
 /* Carriage is the ranked quantity — give it the emphasis. */
 .pot-carriage { color: var(--text); font-weight: 600; }
-
-#pot-open, #btn-workbench {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  padding: 5px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-}
-#pot-open:hover, #btn-workbench:hover { background: var(--sidebar-hover); color: var(--text); }
-.wb-open-glyph { font-size: 13px; line-height: 1; }
 
 #agents-empty, #skills-empty, #templates-empty, #exec-empty, #inbox-empty, #pot-empty {
   padding: 20px;
