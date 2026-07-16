@@ -836,6 +836,7 @@ function registerIpcHandlers(deps) {
       defaultToolDeny: agentDefaults.getDefaultDeny(),
       proxyEnabled: s.proxyEnabled,
       proxyUrl: s.proxyUrl,
+      lastCustomProxyUrl: s.lastCustomProxyUrl,
       wirescopeDir: s.wirescopeDir,
       wirescopePort: s.wirescopePort,
       disableClaudeDesignMcp: s.disableClaudeDesignMcp,
@@ -895,10 +896,18 @@ function registerIpcHandlers(deps) {
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
   // ssh-run.js). Classification + the deploy script live off-electron so they're
   // unit-tested; these handlers are the thin electron adapter.
-  handle('peer:probe', async (_e, sshHost, port) => {
+  handle('peer:probe', async (_e, sshHost, port, opts = {}) => {
     if (!sshHost || typeof sshHost !== 'string') return { kind: 'ssh-fail', stderr: 'no ssh host given' };
+    // Token resolution: the operator's typed value (write-only, never persisted
+    // to the renderer) wins; blank falls back to the stored token for the row's
+    // saved peer id; absent → probe bare. The stored value stays main-side only.
+    let token = typeof opts.token === 'string' && opts.token.trim() ? opts.token.trim() : null;
+    if (!token && opts.peerId) {
+      const saved = (uiSettings.get().peers || []).find((p) => p && p.id === opts.peerId);
+      if (saved && typeof saved.token === 'string' && saved.token) token = saved.token;
+    }
     try {
-      return await probePeer(sshHost, port || uiSettings.get().remotePort || 7900);
+      return await probePeer(sshHost, port || uiSettings.get().remotePort || 7900, { token });
     } catch (e) {
       return { kind: 'ssh-fail', stderr: e && e.message ? e.message : 'probe failed' };
     }

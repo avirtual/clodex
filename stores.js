@@ -84,6 +84,11 @@ const DEFAULT_UI_SETTINGS = {
   // it is a feature, not contamination. Detect-first adoption still means an
   // already-running 7800 wins and we never double-spawn.
   proxyUrl: 'http://127.0.0.1:7800',
+  // Last CUSTOM proxy URL a New Session picked — a prefill convenience ONLY,
+  // decoupled from proxyUrl so remembering it never mutates the global default
+  // (which feeds ANTHROPIC_BASE_URL for default-proxy spawns and gates the
+  // managed wirescope's autostart on port match). Empty = never set a custom one.
+  lastCustomProxyUrl: '',
   // wirescope source override: empty = the vendored copy bundled with Clodex;
   // a power user can point at their own checkout (settings-file-only, no UI).
   wirescopeDir: '',
@@ -1303,6 +1308,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
           },
           proxyEnabled: typeof raw?.proxyEnabled === 'boolean' ? raw.proxyEnabled : DEFAULT_UI_SETTINGS.proxyEnabled,
           proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl : DEFAULT_UI_SETTINGS.proxyUrl,
+          lastCustomProxyUrl: typeof raw?.lastCustomProxyUrl === 'string' ? raw.lastCustomProxyUrl : DEFAULT_UI_SETTINGS.lastCustomProxyUrl,
           wirescopeDir: typeof raw?.wirescopeDir === 'string' ? raw.wirescopeDir : DEFAULT_UI_SETTINGS.wirescopeDir,
           wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
           compactOnResume: typeof raw?.compactOnResume === 'boolean' ? raw.compactOnResume : DEFAULT_UI_SETTINGS.compactOnResume,
@@ -1334,6 +1340,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         },
         proxyEnabled: partial?.proxyEnabled ?? cur.proxyEnabled,
         proxyUrl: partial?.proxyUrl ?? cur.proxyUrl,
+        lastCustomProxyUrl: partial?.lastCustomProxyUrl ?? cur.lastCustomProxyUrl,
         wirescopeDir: partial?.wirescopeDir ?? cur.wirescopeDir,
         wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
         compactOnResume: partial?.compactOnResume ?? cur.compactOnResume,

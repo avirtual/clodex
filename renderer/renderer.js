@@ -1689,7 +1689,7 @@ function populateHostCatalogs(settings, agentLib) {
   renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
   refreshNewSessionSkills();
   refreshNewSessionTools();
-  setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.proxyUrl);
+  setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
 }
 
@@ -1946,7 +1946,10 @@ async function doCreate() {
 
   closeDialog();
 
-  if (typeof proxy === 'string') window.api.setSettings({ proxyUrl: proxy }); // remember last used
+  // Remember the last custom URL as a prefill ONLY — never touch the global
+  // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
+  // could abandon the managed wirescope when the port stops matching).
+  if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
   const result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
@@ -2091,7 +2094,7 @@ async function openTemplateEditor(tpl = null) {
     await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []));
     await refreshNewSessionInjectSkills(new Set((tpl && tpl.injectSkills) || []));
   }
-  setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.proxyUrl);
+  setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
   inputName.style.borderColor = '';
   dialogOverlay.classList.remove('hidden');
@@ -3987,8 +3990,14 @@ async function peerTestAndSetUp(row, status) {
   const testBtn = row.querySelector('.peer-row-test');
   testBtn.disabled = true;
   renderPeerStatus(status, `<span class="peer-status-dim">ssh <span class="peer-spin">…</span> connecting to ${esc(sshHost)}</span>`);
+  // Pass the row's typed token (write-only) + its saved-peer id so MAIN can fall
+  // back to the stored token when the field is blank (typed || stored || none).
+  const tokenEl = row.querySelector('.peer-row-token');
+  const typedToken = tokenEl ? tokenEl.value.trim() : '';
+  const probeOpts = { peerId: row.dataset.peerId };
+  if (typedToken) probeOpts.token = typedToken;
   let res;
-  try { res = await window.api.peerProbe(sshHost, port); }
+  try { res = await window.api.peerProbe(sshHost, port, probeOpts); }
   catch (e) { res = { kind: 'ssh-fail', stderr: (e && e.message) || 'probe failed' }; }
   testBtn.disabled = false;
   if (!res) { renderPeerStatus(status, `<span class="peer-status-warn">No response from probe.</span>`); return; }
@@ -4004,6 +4013,18 @@ async function peerTestAndSetUp(row, status) {
       `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-dim"> · no Clodex answering on 127.0.0.1:${port}</span>` +
       `<div class="peer-status-actions"><button type="button" class="peer-install-btn">Install Clodex on this peer</button></div>`);
     status.querySelector('.peer-install-btn').addEventListener('click', () => peerRunDeploy(row, status, sshHost, port));
+  } else if (res.kind === 'auth-required') {
+    // A live, token-protected Clodex answered (401/403) — NOT an empty box, so
+    // never offer a fresh install here. Point at the row's token field.
+    if (res.tokenSent) {
+      renderPeerStatus(status,
+        `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · Clodex is running on 127.0.0.1:${port}, but it rejected that auth token.</span>` +
+        `<div class="peer-status-note">Check the token below matches <code>CLODEX_REMOTE_TOKEN</code> on the peer, then Test again.</div>`);
+    } else {
+      renderPeerStatus(status,
+        `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · something is answering on 127.0.0.1:${port} and requires an auth token — most likely a token-protected Clodex.</span>` +
+        `<div class="peer-status-note">Enter the peer's <code>CLODEX_REMOTE_TOKEN</code> in the token field below, then Test again.</div>`);
+    }
   } else if (res.kind === 'not-clodex') {
     renderPeerStatus(status,
       `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · something is answering on 127.0.0.1:${port}, but it isn't Clodex.</span>` +
@@ -4852,7 +4873,7 @@ async function openArgsDialog(name, argsSource = null) {
   const isAgent = res.type === 'claude' || res.type === 'codex';
   if (argsModelRow) argsModelRow.style.display = isAgent ? '' : 'none';
   argsProxyRow.style.display = isAgent ? '' : 'none';
-  setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.proxyUrl);
+  setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(argsProxyMode, settings);
   // Prompt rows drive the save-time collect logic via their display; the
   // accordion sections that wrap them are toggled per type so inapplicable

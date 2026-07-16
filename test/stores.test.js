@@ -641,6 +641,29 @@ test('uiSettings: missing file -> defaults, set round-trips + validates', () => 
   } finally { cleanup(); }
 });
 
+test('uiSettings: lastCustomProxyUrl defaults empty, round-trips, and is decoupled from proxyUrl', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // Default is empty (never-set), separate from the 7800 global proxy default.
+    const def = stores.uiSettings.get();
+    assert.strictEqual(def.lastCustomProxyUrl, '');
+    assert.strictEqual(def.proxyUrl, 'http://127.0.0.1:7800');
+    // Writing the remembered custom URL must NOT touch the global proxyUrl — the
+    // whole point of the decoupling (a custom New Session no longer clobbers the
+    // global default that feeds ANTHROPIC_BASE_URL / gates the wirescope).
+    const next = stores.uiSettings.set({ lastCustomProxyUrl: 'http://127.0.0.1:7802' });
+    assert.strictEqual(next.lastCustomProxyUrl, 'http://127.0.0.1:7802');
+    assert.strictEqual(next.proxyUrl, 'http://127.0.0.1:7800', 'proxyUrl untouched by a lastCustomProxyUrl write');
+    // Survives an unrelated merge (spread-merge keeps the field), and reloads.
+    const after = stores.uiSettings.set({ theme: 'light' });
+    assert.strictEqual(after.lastCustomProxyUrl, 'http://127.0.0.1:7802', 'survives an unrelated upsert');
+    assert.strictEqual(stores.uiSettings.get().lastCustomProxyUrl, 'http://127.0.0.1:7802', 'reloads from disk');
+    // A non-string value is rejected by the load sanitizer (falls back to default).
+    stores.uiSettings.set({ lastCustomProxyUrl: 42 });
+    assert.strictEqual(stores.uiSettings.get().lastCustomProxyUrl, '', 'non-string sanitized to the empty default');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: peers are sanitized (junk dropped, empty-visible kept)', () => {
   const { stores, cleanup } = freshStores();
   try {

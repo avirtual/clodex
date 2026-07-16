@@ -15,34 +15,63 @@ const { sshRun, SSH_EXIT } = require('./ssh-run');
 
 // Sentinels the on-box probe script echoes so the classifier never has to guess
 // from curl's own noisy output. NOLISTEN = curl couldn't connect (no server);
-// BODY = curl got a response, whose text follows for JSON classification.
+// BODY = curl got a response, whose text follows for JSON classification;
+// CODE = the HTTP status curl saw (via -w), so a 401/403 auth gate is told apart
+// from a genuine "nothing there".
 const PROBE_NOLISTEN = 'CLODEX_PROBE_NOLISTEN';
 const PROBE_BODY = 'CLODEX_PROBE_BODY ';
+const PROBE_CODE = 'CLODEX_PROBE_CODE ';
 
-// The tiny script run on the box. curl -fsS: fail (non-zero) on HTTP errors,
-// silent progress, but show errors; -m bounds it. On connect failure we emit
-// the NOLISTEN sentinel (curl exit is the classifier's job on THIS side is
-// avoided — the sentinel is unambiguous). On success we emit BODY + the raw
-// response for JSON parsing off-box.
-function buildProbeScript(port) {
+// The tiny script run on the box. Deliberately DROPS curl's -f: with -f, ANY
+// HTTP error (a 401 from a token-protected Clodex included) makes curl exit
+// non-zero and look identical to connect-refused. Without -f, curl exits
+// non-zero ONLY on a real connect failure / timeout — so NOLISTEN stays
+// truthful — while an HTTP response (200 hello OR a 401/403 auth gate) comes
+// back exit 0 with the status recovered via -w. -sS silences progress but keeps
+// errors; -m bounds it.
+//
+// When a token is supplied it's sent as `Authorization: Bearer` — but the token
+// bytes must NEVER reach curl's argv (ps-visible on the box). printf is a bash
+// builtin (no argv), so it writes the header to a umask-077 temp file that curl
+// reads with `-H @file` and we rm immediately. The token is single-quote-escaped
+// so a quote in it can't break out of the printf argument.
+function buildProbeScript(port, token) {
   const p = String(parseInt(port, 10) || 7900);
-  return [
-    `body=$(curl -fsS -m 5 "http://127.0.0.1:${p}/api/peer/hello" 2>/dev/null)`,
-    `if [ $? -ne 0 ]; then echo "${PROBE_NOLISTEN}"; else echo "${PROBE_BODY}$body"; fi`,
-    '',
-  ].join('\n');
+  const url = `http://127.0.0.1:${p}/api/peer/hello`;
+  const w = `-w '\\n${PROBE_CODE}%{http_code}'`;
+  const lines = [];
+  let curl;
+  if (token) {
+    lines.push('umask 077');
+    lines.push('__ch=$(mktemp 2>/dev/null || echo "$HOME/.clodex-probe.$$")');
+    lines.push(`printf 'Authorization: Bearer %s\\n' ${shSingleQuote(token)} > "$__ch"`);
+    curl = `curl -sS -m 5 ${w} -H @"$__ch" "${url}" 2>/dev/null`;
+  } else {
+    curl = `curl -sS -m 5 ${w} "${url}" 2>/dev/null`;
+  }
+  lines.push(`__resp=$(${curl})`);
+  lines.push('__rc=$?');
+  if (token) lines.push('rm -f "$__ch"');
+  lines.push(`if [ $__rc -ne 0 ]; then echo "${PROBE_NOLISTEN}"; else echo "${PROBE_BODY}$__resp"; fi`);
+  lines.push('');
+  return lines.join('\n');
 }
 
 // Classify a peer box. Returns one of:
 //   { kind: 'ssh-fail', stderr }              ssh couldn't connect/auth/timed out
 //   { kind: 'no-listener' }                    ssh ok, nothing answering on <port>
+//   { kind: 'auth-required', tokenSent, status } something answered but the wire
+//                                              is token-gated (HTTP 401/403);
+//                                              tokenSent = we sent a token and it
+//                                              was rejected (else none was tried)
 //   { kind: 'not-clodex' }                     something answered, but not a Clodex hello
 //   { kind: 'hello-ok', version, caps, host, platform }
-// sshRun is injectable for tests.
-async function probePeer(sshHost, port, { sshRun: run = sshRun, timeoutMs = 15000 } = {}) {
+// sshRun is injectable for tests; token (optional) is sent as Bearer auth.
+async function probePeer(sshHost, port, { sshRun: run = sshRun, timeoutMs = 15000, token = null } = {}) {
+  const tokenSent = !!token;
   let res;
   try {
-    res = await run(sshHost, buildProbeScript(port), { timeoutMs });
+    res = await run(sshHost, buildProbeScript(port, token), { timeoutMs });
   } catch (e) {
     // Spawn failure (no ssh binary) — surface as an ssh failure the wizard shows.
     return { kind: 'ssh-fail', stderr: e && e.message ? e.message : 'ssh could not start' };
@@ -61,6 +90,14 @@ async function probePeer(sshHost, port, { sshRun: run = sshRun, timeoutMs = 1500
     // ssh ran but produced neither sentinel — treat as an ssh-layer problem
     // (wrong shell, script didn't execute) rather than silently claim no Clodex.
     return { kind: 'ssh-fail', stderr: lastLine(res.stderr) || `unexpected probe output: ${(res.stdout || '').trim().slice(0, 200)}` };
+  }
+  // An auth gate (401/403) answered before routing — a live, token-protected
+  // Clodex, NOT an empty box. Report it so the wizard points at the token field
+  // instead of offering a fresh install over a running peer.
+  const codeLine = lines.find((l) => l.startsWith(PROBE_CODE.trim()));
+  const status = codeLine ? parseInt(codeLine.slice(PROBE_CODE.trim().length).trim(), 10) : NaN;
+  if (status === 401 || status === 403) {
+    return { kind: 'auth-required', tokenSent, status };
   }
   const body = bodyLine.slice(PROBE_BODY.trim().length).replace(/^\s+/, '');
   let obj;
@@ -271,5 +308,5 @@ module.exports = {
   fixSessionName, buildDeployFixBriefing,
   classifyDeployFolder, shSingleQuote, classifyPeerDest,
   homeRelativize, resolveDeployFolder,
-  PROBE_NOLISTEN, PROBE_BODY,
+  PROBE_NOLISTEN, PROBE_BODY, PROBE_CODE,
 };

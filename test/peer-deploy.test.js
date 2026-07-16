@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  probePeer, parseDeployLine, buildProbeScript, PROBE_NOLISTEN,
+  probePeer, parseDeployLine, buildProbeScript, PROBE_NOLISTEN, PROBE_BODY, PROBE_CODE,
   fixSessionName, buildDeployFixBriefing, classifyDeployFolder, classifyPeerDest,
   homeRelativize, resolveDeployFolder,
 } = require('../peer-deploy');
@@ -70,6 +70,68 @@ test('buildProbeScript curls loopback + the given port at the hello endpoint', (
   assert.match(s, /127\.0\.0\.1:1234\/api\/peer\/hello/);
   // A non-numeric port must not reach the wire — falls back to the default.
   assert.match(buildProbeScript('nope'), /127\.0\.0\.1:7900\//);
+});
+
+// --- auth-gate probe: a token-protected Clodex must not read as an empty box --
+const curlLineOf = (s) => s.split('\n').find((l) => l.includes('curl')) || '';
+
+test('probePeer → auth-required (no token tried) on a 401 with nothing sent', async () => {
+  const stdout = `${PROBE_BODY}unauthorized\n${PROBE_CODE}401\n`;
+  const res = await probePeer('h', 7900, { sshRun: fakeRun({ code: 0, stdout, stderr: '', timedOut: false }) });
+  assert.equal(res.kind, 'auth-required');
+  assert.equal(res.tokenSent, false);
+  assert.equal(res.status, 401);
+});
+
+test('probePeer → auth-required (tokenSent) when the token we sent is rejected', async () => {
+  const stdout = `${PROBE_BODY}unauthorized\n${PROBE_CODE}403\n`;
+  const res = await probePeer('h', 7900, { token: 'wrong', sshRun: fakeRun({ code: 0, stdout, stderr: '', timedOut: false }) });
+  assert.equal(res.kind, 'auth-required');
+  assert.equal(res.tokenSent, true);
+  assert.equal(res.status, 403);
+});
+
+test('probePeer → hello-ok when a correct token yields a 200 hello (token validated end-to-end)', async () => {
+  const body = JSON.stringify({ ok: true, app: 'clodex', version: '3.0.0', caps: [], host: 'box', platform: 'linux' });
+  const stdout = `${PROBE_BODY}${body}\n${PROBE_CODE}200\n`;
+  const res = await probePeer('h', 7900, { token: 'right', sshRun: fakeRun({ code: 0, stdout, stderr: '', timedOut: false }) });
+  assert.equal(res.kind, 'hello-ok');
+  assert.equal(res.version, '3.0.0');
+});
+
+test('buildProbeScript drops -f (a 401 must not look like connect-refused) and recovers the status via -w', () => {
+  const curl = curlLineOf(buildProbeScript(7900));
+  assert.doesNotMatch(curl, /\s-f(\s|$)/);   // no -f flag
+  assert.doesNotMatch(curl, /--fail/);
+  assert.match(curl, /-w /);                  // status recovered via write-out
+  assert.match(buildProbeScript(7900), /CLODEX_PROBE_CODE %\{http_code\}/);
+});
+
+test('buildProbeScript with a token keeps it OUT of every argv-reaching position', () => {
+  const s = buildProbeScript(7900, 's3cr!t');
+  // Never on the curl command line — delivered via a header FILE (-H @file).
+  assert.doesNotMatch(curlLineOf(s), /s3cr!t/);
+  assert.match(curlLineOf(s), /-H @"\$__ch"/);
+  // Written with printf (a bash builtin → no argv) into a umask-077 temp file,
+  // then removed. The token is single-quoted in the printf arg.
+  assert.match(s, /umask 077/);
+  assert.ok(s.includes("printf 'Authorization: Bearer %s\\n' 's3cr!t'"), 'printf writes the header');
+  assert.match(s, /rm -f "\$__ch"/);
+});
+
+test('buildProbeScript single-quote-escapes a token that contains a quote', () => {
+  const s = buildProbeScript(7900, "a'b");
+  // shSingleQuote("a'b") === "'a'\\''b'" — closes, escaped quote, reopens.
+  assert.ok(s.includes("printf 'Authorization: Bearer %s\\n' 'a'\\''b'"), 'quote is escaped');
+  assert.doesNotMatch(curlLineOf(s), /a'b/);
+});
+
+test('buildProbeScript without a token probes bare — no header file at all', () => {
+  const s = buildProbeScript(7900);
+  assert.doesNotMatch(s, /umask 077/);
+  assert.doesNotMatch(s, /__ch/);
+  assert.doesNotMatch(s, /Authorization/);
+  assert.match(s, /127\.0\.0\.1:7900\/api\/peer\/hello/);
 });
 
 test('parseDeployLine parses every marker + falls back to log', () => {
