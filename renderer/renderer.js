@@ -694,8 +694,10 @@ function updateSidebarActive() {
 // tolerates their absence (nothing is archived yet, so active/all coincide).
 
 // Current view state; loaded from the workspace store on boot, persisted on
-// every change. Defaults: recency sort, no grouping, active-only.
-let sidebarView = { group: 'none', sort: 'recency', status: 'active', activity: 'all', search: '' };
+// every change. Defaults: recency sort, no grouping, ALL statuses — archived
+// rows must be visible-dimmed by default so ✕/⌘W reads as archive (a dimmed
+// row in place), never as a silent delete. 'Active' is the opt-in hide.
+let sidebarView = { group: 'none', sort: 'recency', status: 'all', activity: 'all', search: '' };
 // name -> { lastActivityTs, createdAt, branch, prState, prNumber }
 const sidebarMeta = new Map();
 const collapsedGroups = new Set(); // group keys the user collapsed
@@ -960,7 +962,22 @@ if (sbSearch) sbSearch.addEventListener('input', onViewControlChange);
 async function initSidebarView() {
   try {
     const res = await window.api.getSidebarView();
-    if (res && res.ok && res.view) sidebarView = { ...sidebarView, ...res.view };
+    if (res && res.ok && res.view) {
+      const v = { ...res.view };
+      // One-time migration: 'active' was the OLD default and hides archived
+      // rows, which made the reshaped ✕/⌘W read as a silent delete (the dimmed
+      // archived row was filtered out). The default is now 'all'; normalize a
+      // persisted 'active' that predates this change. The statusMigrated marker
+      // makes it fire ONCE per workspace, so a future DELIBERATE Active choice
+      // survives (persisted after the marker is set). Persist here (a load-time
+      // migration write, same pattern as persistence._load's workspaceId fill).
+      if (!v.statusMigrated) {
+        if (v.status === 'active') v.status = 'all';
+        window.api.setSidebarView({ status: v.status, statusMigrated: true });
+      }
+      delete v.statusMigrated; // marker stays in the store, not in live view state
+      sidebarView = { ...sidebarView, ...v };
+    }
   } catch {}
   if (sbGroup) sbGroup.value = sidebarView.group;
   if (sbSort) sbSort.value = sidebarView.sort;
