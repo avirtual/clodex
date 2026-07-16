@@ -3121,7 +3121,6 @@ createPotDrawer();
 // fs:/scm:/worktree: IPC. Opened from the toolbar button + the View-menu event.
 const { openWorkspace } = initWorkspacePopover({
   getActiveSession: () => activeSession,
-  getSessions: () => sessions,
   showToast,
 });
 const btnWorkspace = document.getElementById('btn-workspace');

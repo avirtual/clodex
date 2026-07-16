@@ -11,12 +11,12 @@
 // Source tab renders per-file diffs there (read-only). The Worktrees tab has no
 // editor and fills the width.
 //
-// Factory: initWorkspacePopover({ getActiveSession, getSessions, showToast }).
+// Factory: initWorkspacePopover({ getActiveSession, showToast }).
 // Returns { openWorkspace, closeWorkspace }. Owns its own DOM + IPC.
 
 const { renderDiffHtml } = require('../lib/render-html');
 
-function initWorkspacePopover({ getActiveSession, getSessions, showToast }) {
+function initWorkspacePopover({ getActiveSession, showToast }) {
   const $ = (id) => document.getElementById(id);
   const api = window.api;
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
@@ -33,18 +33,23 @@ function initWorkspacePopover({ getActiveSession, getSessions, showToast }) {
   let selName = null; // selected session name (scope)
 
   // =========================================================================
-  // Session dropdown (local sessions with a cwd; peer/remote excluded)
+  // Session dropdown (local sessions with a cwd; peer/remote excluded).
+  // Fetched from the main process at open: the renderer's own sessions Map is
+  // terminal plumbing (no cwd), while manager.list() is the record of truth
+  // and local-only by construction — peer sessions never enter it.
   // =========================================================================
+  let sessionCache = [];
+  async function fetchSessions() {
+    try {
+      const list = await api.listSessions();
+      sessionCache = (Array.isArray(list) ? list : [])
+        .filter((s) => s && s.cwd)
+        .map((s) => ({ name: s.name, label: s.name, cwd: s.cwd }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    } catch { sessionCache = []; }
+  }
   function localSessions() {
-    const out = [];
-    const map = getSessions ? getSessions() : null;
-    if (!map) return out;
-    for (const [name, entry] of map) {
-      if (!entry || entry.peer || !entry.cwd) continue;
-      out.push({ name, label: entry.label || entry.name, cwd: entry.cwd });
-    }
-    out.sort((a, b) => a.label.localeCompare(b.label));
-    return out;
+    return sessionCache;
   }
 
   function populateSessions() {
@@ -483,7 +488,8 @@ function initWorkspacePopover({ getActiveSession, getSessions, showToast }) {
 
   for (const k of Object.keys(tabs)) tabs[k].addEventListener('click', () => setTab(k));
 
-  function openWorkspace(tab) {
+  async function openWorkspace(tab) {
+    await fetchSessions();
     populateSessions();
     resetEditor();
     overlay.classList.remove('hidden');
