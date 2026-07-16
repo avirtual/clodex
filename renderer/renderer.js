@@ -39,6 +39,7 @@ const { initChecklistPopovers } = require('./popovers/checklist-popovers');
 const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
+const { initWorkbenchPopover } = require('./popovers/workbench-popover');
 
 // ---------------------------------------------------------------------------
 // State
@@ -3113,6 +3114,18 @@ createInboxDrawer();
 // file-heat ranking pulled fresh on open via window.api.potSnapshot; no core
 // state. Sidebar-footer button next to Inbox.
 createPotDrawer();
+
+// Workbench popover — one floating surface (Files / Source Control / Worktrees)
+// for a chosen session (popovers/workbench-popover.js). Scopes to the SELECTED
+// session's cwd (its own dropdown, default = active), resolved server-side by the
+// fs:/scm:/worktree: IPC. Opened from the toolbar button + the View-menu event.
+const { openWorkbench } = initWorkbenchPopover({
+  getActiveSession: () => activeSession,
+  showToast,
+});
+const btnWorkbench = document.getElementById('btn-workbench');
+if (btnWorkbench) btnWorkbench.addEventListener('click', () => openWorkbench());
+if (window.api.onRequestOpenWorkbench) window.api.onRequestOpenWorkbench(() => openWorkbench());
 
 // ---------------------------------------------------------------------------
 // Peered Clodexes — self-contained subsystem (peers-ui.js). Owns the peer bar,

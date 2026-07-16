@@ -30,6 +30,8 @@ const { pathFor } = require('./clodex-paths');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
+const gitScm = require('./git-scm');
+const fsExplorer = require('./fs-explorer');
 
 function registerIpcHandlers(deps) {
   const {
@@ -147,6 +149,81 @@ function registerIpcHandlers(deps) {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
     persistence.setWorktree(name, worktree || null);
     return { ok: true };
+  });
+
+  // --- Workspace panes: Explorer / Source Control / Worktrees -------------
+  // All three panes scope to a session's cwd, resolved SERVER-SIDE from the live
+  // session (like fetchFileDiff) so the renderer only passes a session name — it
+  // never has to know or trust a path. A peer/remote session has no local
+  // filesystem here, so these refuse it (the pane shows a "remote" notice).
+  const sessionCwd = (name) => {
+    const s = manager.sessions.get(name);
+    if (!s) return { error: 'Session not found' };
+    if (s.peer) return { error: 'remote' }; // peer sessions have no local fs
+    if (!s.cwd) return { error: 'Session has no working directory' };
+    return { cwd: s.cwd };
+  };
+
+  // Source control (git-scm.js). Each handler resolves cwd then delegates.
+  handle('scm:status', async (_e, name) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.status(r.cwd);
+  });
+  handle('scm:diff', async (_e, name, filePath, opts) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.fileDiff(r.cwd, filePath, opts || {});
+  });
+  handle('scm:stage', async (_e, name, paths) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.stage(r.cwd, paths);
+  });
+  handle('scm:unstage', async (_e, name, paths) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.unstage(r.cwd, paths);
+  });
+  handle('scm:discard', async (_e, name, filePath, opts) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.discard(r.cwd, filePath, opts || {});
+  });
+  handle('scm:commit', async (_e, name, message, opts) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.commit(r.cwd, message, opts || {});
+  });
+  handle('scm:branches', async (_e, name) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.branches(r.cwd);
+  });
+  handle('scm:checkout', async (_e, name, branch, opts) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitScm.checkout(r.cwd, branch, opts || {});
+  });
+  handle('scm:remote', async (_e, name, op) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    if (!['push', 'pull', 'fetch'].includes(op)) return { ok: false, error: 'Bad op' };
+    return gitScm.remoteOp(r.cwd, op);
+  });
+
+  // Worktree management pane: list all worktrees of the active session's repo.
+  // create/remove reuse the existing worktree:create + a new worktree:remove.
+  handle('worktree:list', async (_e, name) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return gitWorktree.listWorktrees(r.cwd);
+  });
+  handle('worktree:remove', async (_e, worktreePath) =>
+    gitWorktree.removeWorktree(worktreePath));
+
+  // File explorer + editor (fs-explorer.js). Confined to the session cwd.
+  handle('fs:list', async (_e, name, rel) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return fsExplorer.listDir(r.cwd, rel || '');
+  });
+  handle('fs:read', async (_e, name, rel) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return fsExplorer.readFile(r.cwd, rel);
+  });
+  handle('fs:write', async (_e, name, rel, content) => {
+    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
+    return fsExplorer.writeFile(r.cwd, rel, content);
   });
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));

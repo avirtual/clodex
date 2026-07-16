@@ -2443,6 +2443,131 @@ html, body {
 
 #agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden, #exec-drawer.hidden, #inbox-drawer.hidden, #pot-drawer.hidden { display: none; }
 
+/* Workbench popover — one floating workbench (Files / Source Control / Worktrees)
+   for a chosen session. Modeled on the file-peek modal (centered overlay, dark
+   backdrop) but larger: this is a working surface, not a peek. */
+#workbench-overlay {
+  position: fixed; inset: 0; z-index: 72;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 3vw; background: rgba(0, 0, 0, 0.55);
+}
+/* Definite height (not flex-stretch) so the native resize grabber's inline
+   height sticks; resize: both works with overflow: hidden. Drag switches the
+   panel to position: fixed (JS) — reset to centered on each open. */
+#workbench-modal {
+  width: 100%; max-width: 1180px; height: 88vh; max-height: 92vh;
+  min-width: 560px; min-height: 360px; resize: both;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--sidebar-bg); border: 1px solid var(--accent);
+  border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.workbench-topbar {
+  display: flex; align-items: center; gap: 10px; cursor: move;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); flex: none;
+}
+.workbench-title { font-size: 12px; font-weight: 600; flex: none; }
+#workbench-session { flex: 0 1 220px; min-width: 0; cursor: pointer; }
+.workbench-tabs { display: flex; gap: 4px; }
+.workbench-tab {
+  font-size: 11px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+}
+.workbench-tab:hover { color: var(--text); }
+.workbench-tab.active { color: var(--text); background: var(--active-bg); border-color: var(--accent); }
+#workbench-close { margin-left: auto; }
+
+.workbench-body { flex: 1; display: flex; min-height: 0; }
+.workbench-left {
+  flex: 0 0 340px; display: flex; flex-direction: column;
+  min-width: 0; border-right: 1px solid var(--border);
+}
+/* Worktrees tab has no editor — the left column fills the whole body. */
+.workbench-body.worktrees-mode .workbench-left { flex: 1; border-right: none; }
+.workbench-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.workbench-panel-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border); flex: none;
+}
+.workbench-scope { flex: 1; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workbench-panel-bar button, .wb-remote-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+}
+.workbench-panel-bar button:hover, .wb-remote-btn:hover { color: var(--text); background: var(--sidebar-hover); }
+
+/* Shared editor / diff area (right of the left column) */
+.workbench-editor { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.wb-editor-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.wb-editor-path { flex: 1; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.wb-dirty { color: var(--warn, #d19a66); font-size: 14px; }
+.wb-editor-bar button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 3px 12px; font-size: 11px; cursor: pointer; }
+.wb-editor-bar button:disabled { opacity: 0.45; cursor: default; }
+.wb-textarea {
+  flex: 1; width: 100%; box-sizing: border-box; resize: none;
+  background: var(--bg); color: var(--text); border: none; outline: none;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  padding: 8px 12px; tab-size: 2; white-space: pre; overflow: auto;
+}
+.wb-diff { flex: 1; overflow: auto; padding: 8px 12px; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.45; }
+.wb-editor-note { padding: 12px; font-size: 12px; color: var(--text-dim); }
+.wb-editor-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-dim); }
+
+/* Files tree */
+.wb-tree { flex: 1; overflow: auto; padding: 4px 0; min-height: 0; }
+.explorer-row { display: flex; align-items: center; gap: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; color: var(--text); }
+.explorer-row:hover { background: var(--sidebar-hover); }
+.explorer-row.selected { background: var(--active-bg); }
+.explorer-twisty { width: 10px; display: inline-block; color: var(--text-dim); }
+.explorer-icon { width: 14px; display: inline-block; text-align: center; opacity: 0.8; }
+.explorer-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* Source control */
+.wb-branchbar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.wb-branchbar .sidebar-select { flex: 1; min-width: 0; }
+.wb-aheadbehind { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.wb-changes { flex: 1; overflow: auto; padding: 4px 0; min-height: 0; }
+.scm-group-label { padding: 6px 10px 2px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.scm-group-label button { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 5px; font-size: 10px; padding: 1px 6px; cursor: pointer; }
+.scm-file { display: flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.scm-file:hover { background: var(--sidebar-hover); }
+.scm-file.selected { background: var(--active-bg); }
+.scm-file-status { width: 14px; text-align: center; font-weight: 700; flex: 0 0 auto; }
+.scm-file-status.modified { color: var(--warn, #d19a66); }
+.scm-file-status.added { color: var(--ok, #98c379); }
+.scm-file-status.deleted { color: var(--error, #e06c75); }
+.scm-file-status.untracked { color: var(--text-dim); }
+.scm-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.scm-file-actions { display: none; gap: 4px; flex: 0 0 auto; }
+.scm-file:hover .scm-file-actions { display: flex; }
+.scm-file-actions button { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.scm-file-actions button:hover { color: var(--text); }
+.wb-commit-box { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
+.wb-commit-msg { width: 100%; box-sizing: border-box; resize: vertical; background: var(--input-bg, var(--active-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit; }
+.wb-commit-box button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+.wb-commit-box button:disabled { opacity: 0.45; cursor: default; }
+
+/* Worktrees */
+.worktrees-list { flex: 1; overflow: auto; padding: 4px 0; min-height: 0; }
+.worktree-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.worktree-meta { flex: 1; min-width: 0; }
+.worktree-branch { font-weight: 600; }
+.worktree-path { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-main-badge { font-size: 9px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.worktree-item button { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+.worktree-item button:hover { color: var(--text); background: var(--sidebar-hover); }
+.worktrees-add { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
+.worktrees-add button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+/* Diff coloring inside .wb-diff is shared with the file-peek modal (.diff-* above). */
+
+/* Per-id display:none rules — the css-hidden-invariant test requires each
+   class="hidden" id to have its own #id.hidden rule (a generic .hidden would let
+   a mistyped id render always-visible). Covers every id the popover toggles. */
+#workbench-overlay.hidden,
+#wb-files-panel.hidden, #wb-scm-panel.hidden, #wb-worktrees-panel.hidden,
+#wb-editor.hidden, #wb-textarea.hidden, #wb-diff.hidden, #wb-editor-note.hidden,
+#wb-editor-placeholder.hidden, #wb-dirty.hidden,
+#wb-files-empty.hidden, #wb-scm-empty.hidden, #wb-worktrees-empty.hidden { display: none; }
+
 #agents-header, #skills-header, #templates-header, #exec-header, #inbox-header, #pot-header {
   display: flex;
   align-items: center;
@@ -2543,7 +2668,7 @@ html, body {
 /* Carriage is the ranked quantity — give it the emphasis. */
 .pot-carriage { color: var(--text); font-weight: 600; }
 
-#pot-open {
+#pot-open, #btn-workbench {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2556,7 +2681,8 @@ html, body {
   cursor: pointer;
   font-size: 12px;
 }
-#pot-open:hover { background: var(--sidebar-hover); color: var(--text); }
+#pot-open:hover, #btn-workbench:hover { background: var(--sidebar-hover); color: var(--text); }
+.wb-open-glyph { font-size: 13px; line-height: 1; }
 
 #agents-empty, #skills-empty, #templates-empty, #exec-empty, #inbox-empty, #pot-empty {
   padding: 20px;

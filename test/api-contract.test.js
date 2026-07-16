@@ -76,6 +76,12 @@ const PINNED_NAMES = [
   // Sidebar organization: per-session meta (timestamps + git/PR status) +
   // per-workspace view-state persistence (group/sort/filter/search).
   'sidebarMeta', 'getSidebarView', 'setSidebarView',
+  // Workbench popover: source control, worktree management, file explorer/editor,
+  // plus its single View-menu / toolbar open event.
+  'scmStatus', 'scmDiff', 'scmStage', 'scmUnstage', 'scmDiscard', 'scmCommit',
+  'scmBranches', 'scmCheckout', 'scmRemote', 'worktreeList', 'worktreeRemove',
+  'fsList', 'fsRead', 'fsWrite',
+  'onRequestOpenWorkbench',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {
@@ -99,8 +105,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 195-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 195, 'pinned list is the full 195-method surface');
+test('contract covers exactly the pinned 210-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 210, 'pinned list is the full 210-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -124,7 +130,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 195, 'window.api has exactly 195 methods');
+    assert.equal(generated.length, 210, 'window.api has exactly 210 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
