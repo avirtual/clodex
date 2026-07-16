@@ -24,6 +24,8 @@ function initWorkbenchPopover({ getActiveSession, showToast }) {
   const toast = (msg) => { if (showToast) showToast(msg, { kind: 'error' }); else alert(msg); };
 
   const overlay = $('workbench-overlay');
+  const modal = $('workbench-modal');
+  const topbar = overlay.querySelector('.workbench-topbar');
   const bodyEl = overlay.querySelector('.workbench-body');
   const sessionSel = $('workbench-session');
   const tabs = { files: $('workbench-tab-files'), scm: $('workbench-tab-scm'), worktrees: $('workbench-tab-worktrees') };
@@ -488,14 +490,57 @@ function initWorkbenchPopover({ getActiveSession, showToast }) {
 
   for (const k of Object.keys(tabs)) tabs[k].addEventListener('click', () => setTab(k));
 
+  // Reset drag offset AND any resized dimensions so each open starts fresh at
+  // the default centered size (no persistence — keep it simple).
+  function recenter() {
+    modal.style.position = '';
+    modal.style.left = '';
+    modal.style.top = '';
+    modal.style.margin = '';
+    modal.style.width = '';
+    modal.style.height = '';
+  }
+
   async function openWorkbench(tab) {
     await fetchSessions();
     populateSessions();
     resetEditor();
+    recenter();
     overlay.classList.remove('hidden');
     setTab(tab || 'files');
   }
   function closeWorkbench() { overlay.classList.add('hidden'); }
+
+  // Drag by the topbar background only — never the session select, tabs, or
+  // close button. Switches to position: fixed and clamps to the viewport.
+  topbar.addEventListener('mousedown', (e) => {
+    if (e.target !== topbar && !e.target.classList.contains('workbench-title')) return;
+    const rect = modal.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const origLeft = rect.left, origTop = rect.top;
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    // Freeze current size so switching to fixed doesn't re-resolve width:100%
+    // against the viewport and jump on narrow screens.
+    modal.style.width = `${rect.width}px`;
+    modal.style.height = `${rect.height}px`;
+    modal.style.left = `${origLeft}px`;
+    modal.style.top = `${origTop}px`;
+    const onMove = (ev) => {
+      const w = modal.offsetWidth, h = modal.offsetHeight;
+      const nl = Math.max(0, Math.min(origLeft + ev.clientX - startX, window.innerWidth - w));
+      const nt = Math.max(0, Math.min(origTop + ev.clientY - startY, window.innerHeight - h));
+      modal.style.left = `${nl}px`;
+      modal.style.top = `${nt}px`;
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
 
   $('workbench-close').addEventListener('click', () => closeWorkbench());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeWorkbench(); });

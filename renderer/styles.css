@@ -161,7 +161,7 @@ html, body {
    two secondary openers (new sandbox ▣, add peer ⇄) read quieter in dim/border.
    All fill with a faint tint on hover rather than changing shape. */
 #sidebar-toolbar { display: flex; align-items: center; gap: 6px; }
-#btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover, #btn-workbench {
+#btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover {
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
@@ -183,7 +183,7 @@ html, body {
   font-weight: 600;
 }
 #btn-new:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-#btn-new-sandbox:hover, #btn-add-peer:hover, #btn-discover:hover, #btn-workbench:hover { color: var(--text); border-color: var(--text-dim); }
+#btn-new-sandbox:hover, #btn-add-peer:hover, #btn-discover:hover { color: var(--text); border-color: var(--text-dim); }
 
 /* Sidebar filter bar — search box + group/sort/filter selects under the header.
    Distinct from #sidebar-toolbar (the header's + / sandbox / peer button row). */
@@ -2448,21 +2448,25 @@ html, body {
    backdrop) but larger: this is a working surface, not a peek. */
 #workbench-overlay {
   position: fixed; inset: 0; z-index: 72;
-  display: flex; align-items: stretch; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   padding: 4vh 3vw; background: rgba(0, 0, 0, 0.55);
 }
+/* Definite height (not flex-stretch) so the native resize grabber's inline
+   height sticks; resize: both works with overflow: hidden. Drag switches the
+   panel to position: fixed (JS) — reset to centered on each open. */
 #workbench-modal {
-  width: 100%; max-width: 1180px; max-height: 92vh;
+  width: 100%; max-width: 1180px; height: 88vh; max-height: 92vh;
+  min-width: 560px; min-height: 360px; resize: both;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--sidebar-bg); border: 1px solid var(--accent);
   border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 .workbench-topbar {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; cursor: move;
   padding: 10px 14px; border-bottom: 1px solid var(--border); flex: none;
 }
 .workbench-title { font-size: 12px; font-weight: 600; flex: none; }
-#workbench-session { flex: 0 1 220px; min-width: 0; }
+#workbench-session { flex: 0 1 220px; min-width: 0; cursor: pointer; }
 .workbench-tabs { display: flex; gap: 4px; }
 .workbench-tab {
   font-size: 11px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
@@ -2664,7 +2668,7 @@ html, body {
 /* Carriage is the ranked quantity — give it the emphasis. */
 .pot-carriage { color: var(--text); font-weight: 600; }
 
-#pot-open {
+#pot-open, #btn-workbench {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2677,7 +2681,8 @@ html, body {
   cursor: pointer;
   font-size: 12px;
 }
-#pot-open:hover { background: var(--sidebar-hover); color: var(--text); }
+#pot-open:hover, #btn-workbench:hover { background: var(--sidebar-hover); color: var(--text); }
+.wb-open-glyph { font-size: 13px; line-height: 1; }
 
 #agents-empty, #skills-empty, #templates-empty, #exec-empty, #inbox-empty, #pot-empty {
   padding: 20px;
