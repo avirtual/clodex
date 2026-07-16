@@ -21,7 +21,7 @@ const CLAUDE_ONLY_ENTRIES = [
   { act: 'intents', label: '🔒 Intents…' },
 ];
 const SHARED_ENTRIES = [
-  { act: 'edit', label: '⚙ Edit settings…' },
+  { act: 'edit', label: '⚙ Edit Settings…' },
   { act: 'history', label: '🕘 History…' },
   { act: 'reload', label: '🔄 Reload (fresh restart)' },
 ];

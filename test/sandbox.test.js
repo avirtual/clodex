@@ -16,11 +16,21 @@ const TMP_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-sandbox-'));
 process.on('exit', () => { try { fs.rmSync(TMP_USERDATA, { recursive: true, force: true }); } catch {} });
 
 const {
-  createSandbox,
+  createSandbox, createSandboxManager,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
-  parseOwnPorts, parsePsRows, parseComposeState,
+  parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState,
+  normalizeMounts, translatePath, composeProjectName,
   DEFAULT_CONFIG, CONTAINER_PORTS, SANDBOX_PEER_ID,
 } = require('../sandbox');
+
+// Compose calls are now `['compose','-p',<project>,'-f',<path>, <sub…>]` — the
+// subcommand starts right after the `-f <path>` pair. This slices it out for the
+// arg-vector assertions (rebuild's up/pull/build choices).
+function composeSubcommands(calls) {
+  return calls
+    .filter((a) => a.includes('compose'))
+    .map((a) => a.slice(a.indexOf('-f') + 2));
+}
 
 // ── resolveImage ────────────────────────────────────────────────────────────
 
@@ -170,6 +180,249 @@ test('generateCompose: no library binds when libDir is absent (guard for none-pa
   assert.doesNotMatch(yaml, /home\/clodex\/\.clodex\/skills/);
 });
 
+test('generateCompose: hostname defaults to `sandbox`, overridable per box (M6b P1)', () => {
+  // Omitted → the shared box id, keeping the single-box bytes byte-stable.
+  const shared = generateCompose({ image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null });
+  assert.match(shared, /^ {4}hostname: sandbox$/m);
+  // A per-box hostname (= its wire SELF_LABEL) is swapped in so two boxes don't
+  // both self-identify as 'sandbox'.
+  const named = generateCompose({ image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null, hostname: 'proj-x' });
+  assert.match(named, /^ {4}hostname: proj-x$/m);
+  assert.doesNotMatch(named, /hostname: sandbox/);
+});
+
+// ── generateCompose: user mounts (M6a) ──────────────────────────────────────
+
+test('generateCompose: a single mount with a derived target, read-write by default', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+    mounts: [{ host: '/Users/me/projects/foo' }],
+  });
+  // Derived target = /home/clodex/<basename>, no :ro suffix (RW default).
+  assert.match(yaml, /- "\/Users\/me\/projects\/foo:\/home\/clodex\/foo"/);
+  assert.doesNotMatch(yaml, /\/home\/clodex\/foo:ro/);
+});
+
+test('generateCompose: multiple mounts, ro flag emits :ro, explicit target honored', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+    mounts: [
+      { host: '/Users/me/code/app', ro: false },
+      { host: '/Users/me/reference/docs', ro: true },
+      { host: '/data-host/blob', container: '/home/clodex/blob' },
+    ],
+  });
+  assert.match(yaml, /- "\/Users\/me\/code\/app:\/home\/clodex\/app"/);
+  assert.match(yaml, /- "\/Users\/me\/reference\/docs:\/home\/clodex\/docs:ro"/);
+  assert.match(yaml, /- "\/data-host\/blob:\/home\/clodex\/blob"/);
+});
+
+test('generateCompose: two hosts sharing a basename get deterministic -N targets', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+    mounts: [{ host: '/a/shared' }, { host: '/b/shared' }, { host: '/c/shared' }],
+  });
+  assert.match(yaml, /- "\/a\/shared:\/home\/clodex\/shared"/);
+  assert.match(yaml, /- "\/b\/shared:\/home\/clodex\/shared-2"/);
+  assert.match(yaml, /- "\/c\/shared:\/home\/clodex\/shared-3"/);
+});
+
+test('generateCompose: a mount source with spaces/# is double-quoted verbatim', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+    mounts: [{ host: '/Users/me/My Notes #2', container: '/home/clodex/notes' }],
+  });
+  assert.match(yaml, /- "\/Users\/me\/My Notes #2:\/home\/clodex\/notes"/);
+});
+
+test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)', () => {
+  for (const target of ['/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.clodex/run', '/home/clodex', '/data', '/home/clodex/.claude']) {
+    assert.throws(() => generateCompose({
+      image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+      mounts: [{ host: '/Users/me/x', container: target }],
+    }), /would shadow/, `target ${target} must be refused`);
+  }
+});
+
+test('generateCompose: no mount binds when the list is empty or absent', () => {
+  const empty = generateCompose({ image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null, mounts: [] });
+  const absent = generateCompose({ image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null });
+  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude)/);
+  assert.strictEqual(empty, absent);   // omitting mounts === passing []
+});
+
+// ── normalizeMounts (pure, M6a) ─────────────────────────────────────────────
+
+test('normalizeMounts: derives targets, defaults RW, keeps explicit + ro', () => {
+  const r = normalizeMounts([
+    { host: '/a/foo' },
+    { host: '/b/bar', ro: true },
+    { host: '/c/baz', container: '/home/clodex/custom' },
+  ]);
+  assert.deepStrictEqual(r.mounts, [
+    { host: '/a/foo', container: '/home/clodex/foo', ro: false },
+    { host: '/b/bar', container: '/home/clodex/bar', ro: true },
+    { host: '/c/baz', container: '/home/clodex/custom', ro: false },
+  ]);
+});
+
+test('normalizeMounts: skips blank rows, rejects relative host or target', () => {
+  assert.deepStrictEqual(normalizeMounts([{ host: '  ' }, { host: '' }, {}]).mounts, []);
+  assert.match(normalizeMounts([{ host: 'relative/path' }]).error, /absolute/);
+  assert.match(normalizeMounts([{ host: '/ok', container: 'rel/target' }]).error, /absolute/);
+});
+
+test('normalizeMounts: rejects an explicit duplicate target, suffixes derived ones', () => {
+  assert.match(normalizeMounts([
+    { host: '/a/x', container: '/home/clodex/dup' },
+    { host: '/b/y', container: '/home/clodex/dup' },
+  ]).error, /Duplicate/);
+  // Derived collisions do NOT error — they suffix.
+  const ok = normalizeMounts([{ host: '/a/dup' }, { host: '/b/dup' }]);
+  assert.deepStrictEqual(ok.mounts.map((m) => m.container), ['/home/clodex/dup', '/home/clodex/dup-2']);
+});
+
+test('normalizeMounts: reserved-path shadow is refused in both nesting directions', () => {
+  // Target nested under a reserved path.
+  assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex/.clodex/run' }]).error, /shadow/);
+  // Target that is an ancestor of reserved paths.
+  assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex' }]).error, /shadow/);
+  // Exact reserved path.
+  assert.match(normalizeMounts([{ host: '/h', container: '/data' }]).error, /shadow/);
+});
+
+// ── translatePath: host folder → container path (M6a New Session picker) ─────
+
+test('translatePath: a folder under the work dir maps to /home/clodex/work[/rel]', () => {
+  // Exact workDir → the mount point itself.
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/work', workDir: '/Users/me/work', mounts: [] }),
+    { container: '/home/clodex/work' });
+  // A nested subpath → work + the relative remainder.
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/work/proj/src', workDir: '/Users/me/work', mounts: [] }),
+    { container: '/home/clodex/work/proj/src' });
+});
+
+test('translatePath: a folder under a derived-target mount maps to that target + rel', () => {
+  const mounts = [{ host: '/Users/me/code/app' }];   // derived → /home/clodex/app
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/code/app', workDir: null, mounts }),
+    { container: '/home/clodex/app' });
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/code/app/lib/x', workDir: null, mounts }),
+    { container: '/home/clodex/app/lib/x' });
+});
+
+test('translatePath: an explicit-target mount is honored', () => {
+  const mounts = [{ host: '/data/blob', container: '/home/clodex/blob' }];
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/data/blob/sub', workDir: null, mounts }),
+    { container: '/home/clodex/blob/sub' });
+});
+
+test('translatePath: derived-target -N collision remainder tracks normalizeMounts', () => {
+  const mounts = [{ host: '/a/shared' }, { host: '/b/shared' }];   // → shared, shared-2
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/b/shared/deep', workDir: null, mounts }),
+    { container: '/home/clodex/shared-2/deep' });
+});
+
+test('translatePath: the most specific (longest) host prefix wins', () => {
+  // A mount nested UNDER the work dir maps to the mount, not to work.
+  const mounts = [{ host: '/Users/me/work/special', container: '/home/clodex/special' }];
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/work/special/x', workDir: '/Users/me/work', mounts }),
+    { container: '/home/clodex/special/x' });
+});
+
+test('translatePath: an unreachable folder returns { reachable:false }', () => {
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/elsewhere', workDir: '/Users/me/work', mounts: [] }),
+    { reachable: false });
+  // A sibling that merely shares a prefix string is NOT under the dir (boundary-safe).
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/Users/me/workshop', workDir: '/Users/me/work', mounts: [] }),
+    { reachable: false });
+  // No workDir and no mounts → nothing is reachable.
+  assert.deepStrictEqual(
+    translatePath({ hostPath: '/anything', workDir: null, mounts: [] }),
+    { reachable: false });
+});
+
+test('translatePath: a blank or relative host path is unreachable (never translated)', () => {
+  assert.deepStrictEqual(translatePath({ hostPath: '', workDir: '/w', mounts: [] }), { reachable: false });
+  assert.deepStrictEqual(translatePath({ hostPath: 'rel/path', workDir: '/w', mounts: [] }), { reachable: false });
+});
+
+test('translateHostPath: reads the live config (workDir + mounts) via getConfig', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  sb.setConfig({ workDir: '/Users/me/work' });
+  assert.deepStrictEqual(sb.translateHostPath('/Users/me/work/a'), { container: '/home/clodex/work/a' });
+  // Add a mount, and a path under it now translates against the derived target.
+  sb.setConfig({ mounts: [{ host: dir }] });
+  assert.deepStrictEqual(sb.translateHostPath(path.join(dir, 'sub')),
+    { container: `/home/clodex/${path.basename(dir)}/sub` });
+  assert.deepStrictEqual(sb.translateHostPath('/nowhere'), { reachable: false });
+});
+
+// ── setConfig mount validation on save (M6a) ────────────────────────────────
+
+test('setConfig: persists valid mounts (cleaned shape), derived target stays dynamic', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  const r = sb.setConfig({ mounts: [{ host: dir, ro: true }, { host: '  ' }] });
+  assert.ok(!r.error, 'valid mounts accepted');
+  // Blank row dropped; stored shape is { host, ro } with no derived container.
+  assert.deepStrictEqual(settings._state().sandbox.mounts, [{ host: dir, ro: true }]);
+  assert.deepStrictEqual(sb.getConfig().mounts, [{ host: dir, ro: true }]);
+});
+
+test('setConfig: rejects a non-existent mount source, persists nothing', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  const r = sb.setConfig({ mounts: [{ host: '/no/such/folder/xyzzy' }] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /does not exist/);
+  assert.strictEqual(settings._state().sandbox, undefined);   // nothing written
+});
+
+test('setConfig: rejects a mount whose source is a file, not a folder', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const filePath = path.join(fs.mkdtempSync(path.join(TMP_USERDATA, 'f-')), 'a.txt');
+  fs.writeFileSync(filePath, 'x');
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  const r = sb.setConfig({ mounts: [{ host: filePath }] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /not a folder/);
+});
+
+test('setConfig: a shadow-target mount is refused at save, not just at generate', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  const r = sb.setConfig({ mounts: [{ host: dir, container: '/home/clodex/work' }] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /shadow/);
+});
+
+test('setConfig: a non-mount write is untouched by mount validation', () => {
+  const ud = freshUserData();
+  const settings = fakeSettings();
+  const sb = createSandbox({ getUiSettings: () => settings, getUserDataPath: () => ud });
+  const r = sb.setConfig({ webPort: 7999 });
+  assert.ok(!r.error);
+  assert.strictEqual(settings._state().sandbox.webPort, 7999);
+});
+
 // ── parseOwnPorts (self-collision guard) ────────────────────────────────────
 
 test('parseOwnPorts: extracts the three published host ports from a compose file', () => {
@@ -183,6 +436,21 @@ test('parseOwnPorts: empty for missing/garbage input', () => {
   assert.deepStrictEqual(parseOwnPorts(''), []);
   assert.deepStrictEqual(parseOwnPorts(null), []);
   assert.deepStrictEqual(parseOwnPorts('services:\n  clodex:\n    image: x'), []);
+});
+
+test('parseOwnPortMap: maps published host ports back to roles by container port', () => {
+  // Bumped ports (box 2 off box 1) — the role mapping is by the fixed CONTAINER
+  // port each targets, so it survives the bump AND is order-independent.
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: { web: 7812, wirescope: 7813, wire: 7821 }, workDir: null, authEnvFile: null,
+  });
+  assert.deepStrictEqual(parseOwnPortMap(yaml), { web: 7812, wirescope: 7813, wire: 7821 });
+});
+
+test('parseOwnPortMap: empty for missing/garbage input', () => {
+  assert.deepStrictEqual(parseOwnPortMap(''), {});
+  assert.deepStrictEqual(parseOwnPortMap(null), {});
+  assert.deepStrictEqual(parseOwnPortMap('services:\n  clodex:\n    image: x'), {});
 });
 
 // ── compose ps parsing ──────────────────────────────────────────────────────
@@ -338,6 +606,99 @@ test('down: succeeds and leaves the peer row in place (offline affordance)', asy
   assert.strictEqual(settings._state().peers.length, 1); // NOT removed
 });
 
+// ── factory: rebuild (image-kind branch, spawn + settings mocked) ───────────
+
+// A spawn recording the compose subcommand of every invocation, so a test can
+// assert the exact docker compose arg vector rebuild chose. `results` maps the
+// first non-flag compose word (up/pull/…) to a fakeSpawn behavior; unmatched
+// commands succeed. detect ('info') and any others fall through to code 0.
+function recordingSpawn(calls, results = {}) {
+  return (_cmd, args) => {
+    calls.push(args);
+    // args = ['compose','-p',<project>,'-f',<path>, <sub…>] for compose calls;
+    // the subcommand is the token right after the `-f <path>` pair.
+    const f = args.indexOf('-f');
+    const sub = f >= 0 ? args[f + 2] : args[0];
+    const behavior = results[sub] || { code: 0 };
+    return fakeSpawn(behavior)();
+  };
+}
+
+test('rebuild: dev build kind uses `up -d --build`, then registers the peer', async () => {
+  const settings = fakeSettings();
+  const calls = [];
+  const sb = createSandbox({
+    spawn: recordingSpawn(calls),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,   // dev checkout → resolveImage kind 'build'
+    repoRoot: '/repo',
+  });
+  const r = await sb.rebuild();
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.ports, { web: 7810, wirescope: 7811, wire: 7820 });
+  // Exactly one compose invocation: up -d --build (no pull in the build path).
+  const composeCalls = composeSubcommands(calls);
+  assert.deepStrictEqual(composeCalls, [['up', '-d', '--build']]);
+  assert.strictEqual(settings._state().peers.length, 1);
+  assert.strictEqual(settings._state().peers[0].id, 'sandbox');
+});
+
+test('rebuild: packaged pinned image kind pulls then `up -d`', async () => {
+  const settings = fakeSettings();
+  const calls = [];
+  const sb = createSandbox({
+    spawn: recordingSpawn(calls),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => true,   // packaged → resolveImage kind 'image' (GHCR tag)
+    appVersion: '9.9.9',
+  });
+  const r = await sb.rebuild();
+  assert.strictEqual(r.ok, true);
+  const composeCalls = composeSubcommands(calls);
+  assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d']]);
+  assert.strictEqual(settings._state().peers.length, 1);
+});
+
+test('rebuild: a failed pull surfaces stderr, skips up, and does NOT register the peer', async () => {
+  const settings = fakeSettings();
+  const calls = [];
+  const sb = createSandbox({
+    spawn: recordingSpawn(calls, { pull: { code: 1, stderr: 'manifest unknown' } }),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => true,
+    appVersion: '9.9.9',
+  });
+  const r = await sb.rebuild();
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /manifest unknown/);
+  // pull ran; up did NOT.
+  const composeCalls = composeSubcommands(calls);
+  assert.deepStrictEqual(composeCalls, [['pull']]);
+  assert.strictEqual(settings._state().peers.length, 0);
+});
+
+test('rebuild: a build failure surfaces stderr and does NOT register the peer', async () => {
+  const settings = fakeSettings();
+  const sb = createSandbox({
+    spawn: fakeSpawn({ code: 1, stderr: 'failed to solve: dockerfile' }),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+  });
+  const r = await sb.rebuild();
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /failed to solve/);
+  assert.strictEqual(settings._state().peers.length, 0);
+});
+
 // ── factory: re-up port stability (the self-collision fix) ──────────────────
 
 // A userData dir unique to a test, so its compose.yaml doesn't cross-talk.
@@ -385,6 +746,38 @@ test('up: a GENUINE squatter on 7810 (not our own port) still bumps', async () =
   const r = await sb.up();
   assert.strictEqual(r.ports.web, 7811); // bumped off the squatter
   assert.strictEqual(settings._state().peers[0].url, `http://127.0.0.1:${r.ports.wire}`);
+});
+
+test('status: exposes effective (bumped) ports while running, omits them when stopped', async () => {
+  const settings = fakeSettings();
+  const ud = freshUserData();
+  // A genuine squatter on 7810 forces the box off the configured default — the
+  // exact bug #4 shape (box 2 running on a bumped port).
+  const sbUp = createSandbox({
+    spawn: recordingSpawn([], { ps: { code: 0, stdout: '[{"Service":"clodex","State":"running"}]' } }),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: (p) => Promise.resolve(p === 7810),
+  });
+  await sbUp.up(); // writes the compose file publishing the bumped ports
+  const running = await sbUp.status();
+  assert.strictEqual(running.state, 'running');
+  // status.ports mirrors what the compose file actually publishes (effective, not
+  // configured) — and the web port really did bump off 7810.
+  assert.deepStrictEqual(running.ports, parseOwnPortMap(fs.readFileSync(sbUp.composePath(), 'utf8')));
+  assert.ok(running.ports.web && running.ports.web !== 7810);
+
+  // Same compose file on disk, but the container is stopped → no effective ports
+  // (the file persists but describes no live listener; Start regenerates them).
+  const sbStopped = createSandbox({
+    spawn: recordingSpawn([], { ps: { code: 0, stdout: '[{"Service":"clodex","State":"exited"}]' } }),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const stopped = await sbStopped.status();
+  assert.strictEqual(stopped.state, 'exited');
+  assert.strictEqual(stopped.ports, undefined);
 });
 
 // ── factory: auth token file (M4) ───────────────────────────────────────────
@@ -564,4 +957,249 @@ test('setAuthToken preserves an existing remote token line (multi-key write)', a
   body = fs.readFileSync(authFile, 'utf8');
   assert.doesNotMatch(body, /CLAUDE_CODE_OAUTH_TOKEN/);
   assert.match(body, new RegExp(`^CLODEX_REMOTE_TOKEN=${remote}$`, 'm'));
+});
+
+// ── composeProjectName (per-box volume namespace, M6b P2) ───────────────────
+
+test('composeProjectName: passes a valid id through, coerces junk, falls back', () => {
+  assert.strictEqual(composeProjectName('sandbox'), 'sandbox');
+  assert.strictEqual(composeProjectName('proj-1_x'), 'proj-1_x');
+  // Uppercase/dots/spaces are coerced to the compose charset (defensive — ids are
+  // already gated at create, but -p must never emit an invalid project name).
+  assert.strictEqual(composeProjectName('My.Proj Box'), 'my-proj-box');
+  assert.strictEqual(composeProjectName(''), 'sandbox');
+  assert.strictEqual(composeProjectName('---'), 'sandbox');
+});
+
+// ── manager: N instances behind one Map (M6b P1) ────────────────────────────
+
+// A ui-settings double carrying a `boxes` registry, shallow-merge set like the
+// peers double above. Seeded with whatever rows a test needs.
+function fakeBoxSettings(boxes) {
+  let state = { peers: [], boxes };
+  return {
+    _state: () => state,
+    get() { return { ...state }; },
+    set(partial) { state = { ...state, ...partial }; return state; },
+  };
+}
+
+test('manager: get() resolves the shared box by default and memoizes the instance', () => {
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  const a = mgr.get();          // default → 'sandbox'
+  const b = mgr.get('sandbox');
+  assert.ok(a, 'shared box resolves');
+  assert.strictEqual(a.id, 'sandbox');
+  assert.strictEqual(a, b, 'same id returns the memoized instance');
+});
+
+test('manager: get() returns null for an unknown box id', () => {
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  assert.strictEqual(mgr.get('nope'), null);
+});
+
+test('manager: list() reports every registry row as { id, label }', () => {
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: {} },
+    { id: 'proj', label: 'My Project', config: {} },
+  ]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  assert.deepStrictEqual(mgr.list(), [
+    { id: 'sandbox', label: 'sandbox' },
+    { id: 'proj', label: 'My Project' },
+  ]);
+});
+
+test('manager: each instance reads/writes its OWN registry row config', () => {
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: { webPort: 7810 } },
+    { id: 'proj', label: 'proj', config: { webPort: 7830 } },
+  ]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  assert.strictEqual(mgr.get('sandbox').getConfig().webPort, 7810);
+  assert.strictEqual(mgr.get('proj').getConfig().webPort, 7830);
+  // A write on one box lands on that box's row only, never the other's.
+  mgr.get('proj').setConfig({ autoStart: true });
+  const rows = Object.fromEntries(settings._state().boxes.map((b) => [b.id, b.config]));
+  assert.strictEqual(rows.proj.autoStart, true);
+  assert.strictEqual(rows.sandbox.autoStart, undefined);
+});
+
+test('manager: a box compose dir is per-id (basename ⇒ compose project ⇒ volume namespace)', () => {
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: {} },
+    { id: 'proj', label: 'proj', config: {} },
+  ]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => '/ud' });
+  // Shared box keeps the legacy `sandbox` dir (byte-stable); others get sandbox-<id>.
+  assert.strictEqual(mgr.get('sandbox').sandboxDir(), path.join('/ud', 'sandbox'));
+  assert.strictEqual(mgr.get('proj').sandboxDir(), path.join('/ud', 'sandbox-proj'));
+});
+
+test('manager: two boxes up() → two managed peer rows, isolated auth.env + hostname', async () => {
+  const ud = freshUserData();
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: {} },
+    { id: 'proj', label: 'proj', config: { webPort: 7830, wirescopePort: 7831, wirePort: 7840 } },
+  ]);
+  const calls = [];
+  const mgr = createSandboxManager({
+    spawn: recordingSpawn(calls),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+  });
+  const r1 = await mgr.get('sandbox').up();
+  const r2 = await mgr.get('proj').up();
+  assert.strictEqual(r1.ok, true);
+  assert.strictEqual(r2.ok, true);
+
+  // Each box's compose invocations carry its own -p project name (volume namespace).
+  const projFlags = calls.filter((a) => a.includes('compose')).map((a) => a[a.indexOf('-p') + 1]);
+  assert.ok(projFlags.includes('sandbox') && projFlags.includes('proj'), 'both -p projects seen');
+
+  // Two distinct managed peer rows keyed by box id.
+  const peers = Object.fromEntries(settings._state().peers.map((p) => [p.id, p]));
+  assert.ok(peers.sandbox && peers.proj, 'both boxes registered a peer');
+  assert.strictEqual(peers.proj.label, 'proj');
+  assert.notStrictEqual(peers.sandbox.url, peers.proj.url);
+
+  // Per-box auth.env (own remote token) under the per-box compose dir.
+  const sharedAuth = fs.readFileSync(path.join(ud, 'sandbox', 'auth.env'), 'utf8');
+  const projAuth = fs.readFileSync(path.join(ud, 'sandbox-proj', 'auth.env'), 'utf8');
+  const sharedTok = sharedAuth.match(/CLODEX_REMOTE_TOKEN=([0-9a-f]+)/)[1];
+  const projTok = projAuth.match(/CLODEX_REMOTE_TOKEN=([0-9a-f]+)/)[1];
+  assert.notStrictEqual(sharedTok, projTok, 'each box mints its own remote token');
+  assert.strictEqual(peers.sandbox.token, sharedTok);
+  assert.strictEqual(peers.proj.token, projTok);
+
+  // Each box's compose bytes carry its own hostname (its wire SELF_LABEL).
+  assert.match(fs.readFileSync(path.join(ud, 'sandbox', 'compose.yaml'), 'utf8'), /^ {4}hostname: sandbox$/m);
+  assert.match(fs.readFileSync(path.join(ud, 'sandbox-proj', 'compose.yaml'), 'utf8'), /^ {4}hostname: proj$/m);
+});
+
+test('manager: create() mints a box row from DEFAULT_CONFIG, gated to the tight charset', () => {
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  const r = mgr.create('proj-1', 'My Project');
+  assert.deepStrictEqual(r, { ok: true, box: { id: 'proj-1', label: 'My Project' } });
+  const row = settings._state().boxes.find((b) => b.id === 'proj-1');
+  assert.strictEqual(row.label, 'My Project');
+  assert.deepStrictEqual(row.config, DEFAULT_CONFIG);
+  // Now resolvable through get().
+  assert.strictEqual(mgr.get('proj-1').id, 'proj-1');
+});
+
+test('manager: create() rejects a bad charset, a dup, and the shared id; label falls back to id', () => {
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  assert.match(mgr.create('Bad.Id').error, /lowercase/);      // uppercase + dot
+  assert.match(mgr.create('has space').error, /lowercase/);
+  assert.match(mgr.create('sandbox').error, /already exists/); // shared id is taken
+  mgr.create('dup');
+  assert.match(mgr.create('dup').error, /already exists/);
+  // A blank label defaults to the id.
+  assert.strictEqual(mgr.create('bare').box.label, 'bare');
+});
+
+test("manager: create() rejects the reserved 'host' id (placement collision, M6b P3)", () => {
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
+  // 'host' passes BOX_ID_RE but is reserved for the New Session placement selector's
+  // "This Mac" value — a box named 'host' would be unaddressable. Rejected, no row added.
+  const r = mgr.create('host', 'Host');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /reserved/);
+  assert.strictEqual(settings._state().boxes.some((b) => b.id === 'host'), false);
+  assert.strictEqual(mgr.get('host'), null);
+});
+
+test('manager: remove() stops the box, drops its peer row + registry row, keeps others', async () => {
+  const ud = freshUserData();
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: {} },
+    { id: 'proj', label: 'proj', config: {} },
+  ]);
+  let synced = 0;
+  const calls = [];
+  const mgr = createSandboxManager({
+    spawn: recordingSpawn(calls),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+    syncPeerManager: () => { synced++; },
+  });
+  // Bring proj up so it has a peer row to drop.
+  await mgr.get('proj').up();
+  assert.ok(settings._state().peers.find((p) => p.id === 'proj'), 'proj registered');
+  synced = 0;
+
+  const r = await mgr.remove('proj');
+  assert.strictEqual(r.ok, true);
+  // Container stopped (a compose `down` ran), peer row + registry row gone.
+  const composeCalls = composeSubcommands(calls);
+  assert.ok(composeCalls.some((c) => c[0] === 'down'), 'down was invoked');
+  assert.strictEqual(settings._state().peers.find((p) => p.id === 'proj'), undefined);
+  assert.strictEqual(settings._state().boxes.find((b) => b.id === 'proj'), undefined);
+  assert.ok(settings._state().boxes.find((b) => b.id === 'sandbox'), 'shared box untouched');
+  assert.ok(synced > 0, 'peer manager reconciled after the row drop');
+  // The instance is de-memoized; get() re-null now the row is gone.
+  assert.strictEqual(mgr.get('proj'), null);
+});
+
+test('manager: remove() deletes ANY box including the default \'sandbox\', refuses only unknown ids', async () => {
+  // 'sandbox' has no special status (M6b P2) — it deletes like any other box.
+  const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
+  const mgr = createSandboxManager({
+    spawn: recordingSpawn([]),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const r = await mgr.remove('sandbox');
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(settings._state().boxes, [], 'the default box is gone — registry now empty');
+  assert.strictEqual(mgr.get('sandbox'), null, 'no reseed; get() is null with an empty registry');
+  // An unknown id is still refused.
+  assert.match((await mgr.remove('ghost')).error, /no such sandbox/);
+});
+
+test('unregisterPeer: drops this box\'s row only, no-op when already absent', () => {
+  const settings = fakeSettings({ peers: [
+    { id: 'sandbox', label: 'sandbox', url: 'http://a' },
+    { id: 'proj', label: 'proj', url: 'http://b' },
+  ] });
+  let synced = 0;
+  const sb = createSandbox({ getUiSettings: () => settings, id: 'proj', syncPeerManager: () => { synced++; } });
+  sb.unregisterPeer();
+  assert.deepStrictEqual(settings._state().peers.map((p) => p.id), ['sandbox']);
+  assert.strictEqual(synced, 1);
+  sb.unregisterPeer();   // already gone → no write, no churn
+  assert.strictEqual(synced, 1);
+});
+
+test('manager: bringUp is serialized across instances (shared chain, no probe race)', async () => {
+  const settings = fakeBoxSettings([
+    { id: 'sandbox', label: 'sandbox', config: {} },
+    { id: 'proj', label: 'proj', config: {} },
+  ]);
+  // Track how many bringUps are mid-flight at once via a probe that yields the
+  // event loop — if the chain works, it's never > 1.
+  let inFlight = 0, maxInFlight = 0;
+  const mgr = createSandboxManager({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => freshUserData(),
+    isPortInUse: async () => { inFlight++; maxInFlight = Math.max(maxInFlight, inFlight); await Promise.resolve(); inFlight--; return false; },
+    isPackaged: () => false,
+    repoRoot: '/repo',
+  });
+  await Promise.all([mgr.get('sandbox').up(), mgr.get('proj').up()]);
+  assert.strictEqual(maxInFlight, 1, 'the two bringUps never overlapped');
 });

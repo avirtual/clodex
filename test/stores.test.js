@@ -923,60 +923,164 @@ test('notifications: is exported as a store from initStores', () => {
   } finally { cleanup(); }
 });
 
-test('uiSettings: sandbox defaults when the file has no sandbox key', () => {
+// ── boxes registry (M6b P2: N instances, one shape, no top-level sandbox key) ─
+
+test('uiSettings: boxes defaults to one seed box on a fresh install (no top-level sandbox key)', () => {
   const { stores, cleanup } = freshStores();
   try {
-    assert.deepStrictEqual(stores.uiSettings.get().sandbox, {
+    const s = stores.uiSettings.get();
+    assert.strictEqual('sandbox' in s, false, 'no vestigial top-level sandbox key');
+    assert.strictEqual(s.boxes.length, 1);
+    assert.strictEqual(s.boxes[0].id, 'sandbox');
+    assert.strictEqual(s.boxes[0].label, 'sandbox');
+    assert.deepStrictEqual(s.boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
-      autoStart: false, image: null,
+      autoStart: false, image: null, mounts: [],
     });
   } finally { cleanup(); }
 });
 
-test('uiSettings: a sandbox config survives a set/load round-trip', () => {
+test('uiSettings: a pre-M6b file (sandbox key, no boxes) is ignored — no migration, just the seed', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    fs.writeFileSync(path.join(userData, 'ui-settings.json'), JSON.stringify({
+      sandbox: { workDir: '/Users/me/w', webPort: 7999, autoStart: true, mounts: [{ host: '/m', ro: true }] },
+    }));
+    const stores = initStores(userData, { log: console, registryDir });
+    const s = stores.uiSettings.get();
+    assert.strictEqual('sandbox' in s, false, 'legacy key is not carried forward');
+    // Missing boxes key → the fresh default seed, NOT the legacy sandbox config.
+    assert.strictEqual(s.boxes.length, 1);
+    assert.strictEqual(s.boxes[0].id, 'sandbox');
+    assert.strictEqual(s.boxes[0].config.workDir, null);
+    assert.strictEqual(s.boxes[0].config.webPort, 7810);
+    assert.strictEqual(s.boxes[0].config.autoStart, false);
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('uiSettings: a multi-box registry round-trips each box config verbatim', () => {
   const { stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
-    uiSettings.set({ sandbox: {
-      workDir: '/Users/me/work', webPort: 7900, wirescopePort: 7901,
-      wirePort: 7902, autoStart: true, image: 'my/img:tag',
-    } });
-    // Round-trip: a FRESH load (not the in-memory return) reads it back verbatim.
-    assert.deepStrictEqual(uiSettings.get().sandbox, {
-      workDir: '/Users/me/work', webPort: 7900, wirescopePort: 7901,
-      wirePort: 7902, autoStart: true, image: 'my/img:tag',
+    uiSettings.set({ boxes: [
+      { id: 'sandbox', label: 'sandbox', config: {} },
+      { id: 'proj', label: 'My Project', config: {
+        workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
+        wirePort: 7840, autoStart: true, image: 'my/img:tag',
+        mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
+      } },
+    ] });
+    const boxes = Object.fromEntries(uiSettings.get().boxes.map((b) => [b.id, b]));
+    assert.strictEqual(boxes.proj.label, 'My Project');
+    assert.deepStrictEqual(boxes.proj.config, {
+      workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
+      wirePort: 7840, autoStart: true, image: 'my/img:tag',
+      mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
+    });
+    // The shared box's blank config fills to DEFAULT_SANDBOX_CONFIG.
+    assert.deepStrictEqual(boxes.sandbox.config, {
+      workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
+      autoStart: false, image: null, mounts: [],
     });
   } finally { cleanup(); }
 });
 
-test('uiSettings: sanitizeSandbox strips junk fields and bounds the values', () => {
+test('uiSettings: deleting every box persists an empty list (never re-seeded)', () => {
   const { stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
-    uiSettings.set({ sandbox: {
+    uiSettings.set({ boxes: [] });
+    // A present-but-empty boxes array is preserved across a fresh load — the seed
+    // only fills a MISSING key, not a deliberately emptied one.
+    assert.deepStrictEqual(uiSettings.get().boxes, []);
+  } finally { cleanup(); }
+});
+
+// M6b P2: the box-id charset is enforced UNIFORMLY (no loose-id admittance) — a
+// row whose id has dots/uppercase/spaces is DROPPED, so it can never collide two
+// boxes onto one docker-compose project.
+test('uiSettings: boxes sanitizer drops bad-charset ids, non-objects, and dedups', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ boxes: [
+      { id: 'sandbox', label: 'sandbox', config: {} },
+      { id: 'Bad.Id', label: 'x', config: {} },     // uppercase + dot → dropped
+      { id: 'has space', label: 'y', config: {} },   // space → dropped
+      { id: 'proj', label: 'first', config: {} },
+      { id: 'proj', label: 'second', config: {} },   // duplicate id → dropped
+      { id: 'host', label: 'z', config: {} },         // reserved (placement) → dropped (M6b P3)
+      'not an object',
+    ] });
+    const ids = uiSettings.get().boxes.map((b) => b.id);
+    assert.deepStrictEqual(ids, ['sandbox', 'proj']);
+    assert.strictEqual(uiSettings.get().boxes.find((b) => b.id === 'proj').label, 'first');
+  } finally { cleanup(); }
+});
+
+// M6a regression, re-homed onto box config: mounts is a whitelist-store key — it
+// shipped without a sanitizeSandbox line and vanished on every round-trip. Prove
+// it survives through the REAL sanitizer path (freshStores → set → get) as a box
+// config, plus the shape-guarding drops the store still owns.
+test('uiSettings: a box config\'s mounts survive the sanitizer round-trip (M6a whitelist regression)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config: { mounts: [
+      { host: '/Users/me/proj', ro: false },
+      { host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' },
+    ] } }] });
+    assert.deepStrictEqual(uiSettings.get().boxes[0].config.mounts, [
+      { host: '/Users/me/proj', ro: false },
+      { host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' },
+    ]);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a box config sanitizer bounds junk fields + coerces mount rows', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config: {
       workDir: '   ',            // blank → null
-      webPort: 70000,           // out of range → default 7810
-      wirescopePort: 'nope',    // non-int → default 7811
-      wirePort: 7820,
+      webPort: 70000,           // out of range → default
+      wirescopePort: 'nope',    // non-int → default
       autoStart: 'yes',         // truthy-but-not-true → false
       image: '',                // empty → null
       bogus: 'dropped',         // unknown key → gone
-    } });
-    assert.deepStrictEqual(uiSettings.get().sandbox, {
+      mounts: [
+        { host: '  ' },                         // blank host → dropped
+        { ro: true },                           // no host → dropped
+        'not-an-object',                        // non-object → dropped
+        { host: '/a', ro: 'yes' },              // truthy-not-true ro → false
+        { host: '  /b  ', container: '  ' },    // host trimmed; blank container omitted
+        { host: '/c', container: '  /home/clodex/c  ', ro: true }, // container trimmed
+      ],
+    } }] });
+    assert.deepStrictEqual(uiSettings.get().boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
       autoStart: false, image: null,
+      mounts: [
+        { host: '/a', ro: false },
+        { host: '/b', ro: false },
+        { host: '/c', ro: true, container: '/home/clodex/c' },
+      ],
     });
   } finally { cleanup(); }
 });
 
-test('uiSettings: a sandbox write leaves the other settings intact', () => {
+test('uiSettings: a boxes write leaves the other settings intact', () => {
   const { stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
     uiSettings.set({ peers: [{ id: 'p', label: 'P', url: 'http://p' }] });
-    uiSettings.set({ sandbox: { autoStart: true } });
+    uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config: { autoStart: true } }] });
     const s = uiSettings.get();
-    assert.strictEqual(s.sandbox.autoStart, true);
+    assert.strictEqual(s.boxes[0].config.autoStart, true);
     assert.strictEqual(s.peers.length, 1);
     assert.strictEqual(s.peers[0].id, 'p');
   } finally { cleanup(); }

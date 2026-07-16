@@ -6,7 +6,35 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord,
+  boxWirescopeView,
 } = require('../proxy-util');
+
+test('boxWirescopeView: a box surfaces its host-reachable base + sessionId', () => {
+  const p = { base: 'http://127.0.0.1:7800', sessionId: 'sess-1' };
+  assert.deepStrictEqual(
+    boxWirescopeView(p, 'http://localhost:7813'),
+    { base: 'http://localhost:7813', sessionId: 'sess-1' },
+  );
+});
+
+test('boxWirescopeView: trailing slashes on the public url are trimmed', () => {
+  const p = { base: 'http://127.0.0.1:7800', sessionId: 'sess-1' };
+  assert.strictEqual(boxWirescopeView(p, 'http://localhost:7813//').base, 'http://localhost:7813');
+});
+
+test('boxWirescopeView: no public url (generic peer) → null (base stays stripped)', () => {
+  const p = { base: 'http://127.0.0.1:7800', sessionId: 'sess-1' };
+  assert.strictEqual(boxWirescopeView(p, ''), null);
+  assert.strictEqual(boxWirescopeView(p, undefined), null);
+  assert.strictEqual(boxWirescopeView(p, '   '), null);
+});
+
+test("boxWirescopeView: gated on the box's own wirescope tracking the session", () => {
+  // No live base or sessionId → nothing to link to, even with a public url set.
+  assert.strictEqual(boxWirescopeView({ sessionId: 'sess-1' }, 'http://localhost:7813'), null);
+  assert.strictEqual(boxWirescopeView({ base: 'http://127.0.0.1:7800' }, 'http://localhost:7813'), null);
+  assert.strictEqual(boxWirescopeView(null, 'http://localhost:7813'), null);
+});
 
 test('mintProxyAgent: prefixed, name-embedded, unique against taken set', () => {
   let n = 0;

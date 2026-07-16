@@ -70,9 +70,9 @@ function registerIpcHandlers(deps) {
     // read-only mutable singletons (get seams)
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
-    // Managed sandbox module accessor (engine.getSandbox) — lazy so a host that
-    // omits it simply has no sandbox handlers reachable.
-    getSandbox,
+    // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
+    // lazy so a host that omits them simply has no sandbox handlers reachable.
+    getSandbox, getSandboxManager,
   } = deps;
 
   handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
@@ -1016,21 +1016,45 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ── Managed Docker sandbox (sandbox.js, docs/sandbox-plan.md M2) ──────────
-  // The engine's sandbox module owns lifecycle + config; these are thin relays
-  // (getSandbox() resolves it lazily so a host that omits it just 404s the row).
-  // Every result shape is already the module's own — no reshaping here.
-  handle('sandbox:detect', () => getSandbox().detect());
-  handle('sandbox:status', () => getSandbox().status());
-  handle('sandbox:getConfig', () => getSandbox().getConfig());
-  handle('sandbox:setConfig', (_e, partial) => getSandbox().setConfig(partial || {}));
-  handle('sandbox:up', () => getSandbox().up());
-  handle('sandbox:down', () => getSandbox().down());
-  handle('sandbox:logsTail', (_e, n) => getSandbox().logsTail(n));
+  // ── Managed Docker sandbox (sandbox.js, docs/sandbox-plan.md M2 / M6b P1) ──
+  // The engine's sandbox manager owns N box instances; these are thin relays.
+  // getSandbox(boxId) resolves an instance lazily (default: the shared 'sandbox'
+  // box), or null for an unknown id — withBox guards that so a bogus id yields an
+  // error payload rather than a throw. The boxId is an OPTIONAL trailing arg: the
+  // P1 renderer omits it, so every call resolves the shared box unchanged. Every
+  // result shape is otherwise the module's own — no reshaping here.
+  const withBox = (boxId, fn) => {
+    const s = getSandbox(boxId);
+    if (!s) return { ok: false, error: `no such sandbox: ${boxId}` };
+    return fn(s);
+  };
+  handle('sandbox:detect', (_e, boxId) => withBox(boxId, (s) => s.detect()));
+  handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
+  handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));
+  handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {})));
+  handle('sandbox:translatePath', (_e, hostPath, boxId) => withBox(boxId, (s) => s.translateHostPath(hostPath)));
+  handle('sandbox:up', (_e, boxId) => withBox(boxId, (s) => s.up()));
+  handle('sandbox:rebuild', (_e, boxId) => withBox(boxId, (s) => s.rebuild()));
+  handle('sandbox:down', (_e, boxId) => withBox(boxId, (s) => s.down()));
+  handle('sandbox:logsTail', (_e, n, boxId) => withBox(boxId, (s) => s.logsTail(n)));
   // Auth token (M4): write-only paste + clear. The token value crosses IN here
   // but NEVER back out — setToken/clearToken return a boolean hasToken flag only.
-  handle('sandbox:setToken', (_e, token) => getSandbox().setAuthToken(token));
-  handle('sandbox:clearToken', () => getSandbox().clearAuthToken());
+  handle('sandbox:setToken', (_e, token, boxId) => withBox(boxId, (s) => s.setAuthToken(token)));
+  handle('sandbox:clearToken', (_e, boxId) => withBox(boxId, (s) => s.clearAuthToken()));
+  // Box registry CRUD (M6b P2): the manager owns the list; these mint/drop rows.
+  // getSandboxManager is the same lazy accessor as getSandbox, exposing list/
+  // create/remove. A host without a manager simply has no box-list surface.
+  handle('sandbox:listBoxes', () => (getSandboxManager() ? getSandboxManager().list() : []));
+  handle('sandbox:createBox', (_e, id, label) => {
+    const mgr = getSandboxManager();
+    if (!mgr) return { ok: false, error: 'sandbox manager unavailable' };
+    return mgr.create(id, label);
+  });
+  handle('sandbox:deleteBox', (_e, id) => {
+    const mgr = getSandboxManager();
+    if (!mgr) return { ok: false, error: 'sandbox manager unavailable' };
+    return mgr.remove(id);
+  });
 
   handle('session:exportMarkdown', async (_e, name) => {
     const s = manager.sessions.get(name);
@@ -1165,16 +1189,16 @@ function registerIpcHandlers(deps) {
     }
     if (!attached) {
       template.push({ label: 'Attach', click: act('attach') });
-      template.push({ label: 'Take control', enabled: !!online, click: act('takeControl') });
+      template.push({ label: 'Take Control', enabled: !!online, click: act('takeControl') });
     } else if (controlled) {
-      template.push({ label: 'Release control', click: act('releaseControl') });
+      template.push({ label: 'Release Control', click: act('releaseControl') });
       template.push({ label: 'Detach (keep listed)', click: act('detach') });
     } else {
-      template.push({ label: 'Take control', enabled: !!online, click: act('takeControl') });
+      template.push({ label: 'Take Control', enabled: !!online, click: act('takeControl') });
       template.push({ label: 'Detach (keep listed)', click: act('detach') });
     }
     template.push({ type: 'separator' });
-    template.push({ label: 'Hide from list', click: act('hide') });
+    template.push({ label: 'Hide from List', click: act('hide') });
     // Host-level lifecycle on the peer — restart/reload/kill. All gated on the
     // create capability (they ship together) + peer online. Restart mirrors the
     // local pair: a plain restart (--resume, keeps history, no confirm) and a
@@ -1217,7 +1241,7 @@ function registerIpcHandlers(deps) {
       }
       template.push({ type: 'separator' });
       template.push({
-        label: `Kill "${name}" on ${hostLabel || 'peer'}`,
+        label: `Kill "${name}" on ${hostLabel || 'peer'}…`,
         enabled: !!online,
         click: act('killRemote'),
       });
@@ -1252,7 +1276,7 @@ function registerIpcHandlers(deps) {
   handle('peer:deployConfig', (_e, id) => deployTargetFor(id));
 
   on('peer:header-menu', (e, st) => {
-    const { id, label, online, canCreate, sev } = st || {};
+    const { id, label, online, canCreate, sev, isBox } = st || {};
     const template = [];
     // Create is gated on the peer advertising the 'create' capability (older
     // peers 501 the endpoint); the renderer passes canCreate from st.caps.
@@ -1265,10 +1289,20 @@ function registerIpcHandlers(deps) {
       template.push({ type: 'separator' });
     }
     template.push({
-      label: `Restart Clodex on ${label || 'peer'}`,
+      label: `Restart Clodex on ${label || 'peer'}…`,
       enabled: !!online,
       click: () => e.sender.send('peer:context-action', { action: 'restart', id, name: label }),
     });
+    // Managed sandbox box only: Rebuild recreates the container on the current
+    // code/image (the box "upgrade" op) — kept off the crowded action strip. A
+    // different op from Restart (which just bounces the same build), so both show.
+    if (isBox) {
+      template.push({
+        label: `Rebuild ${label || 'sandbox'}`,
+        enabled: !!online,
+        click: () => e.sender.send('peer:context-action', { action: 'rebuild', id, name: label }),
+      });
+    }
     // "Update Clodex on <box>…" re-runs the idempotent deploy script over ssh.
     // Only offered for peers reached via an ssh host (a url-only peer has no ssh
     // route) and only when online (nothing to update on an unreachable box).
@@ -1314,7 +1348,7 @@ function registerIpcHandlers(deps) {
       defaultId: 1,
       cancelId: 1,
       message: `Update Clodex on ${label || 'this peer'}?`,
-      detail: 'Re-runs the deploy script over ssh (git pull → build → restart). Safe and idempotent; it can take a few minutes. The box restarts on success and its sessions resume.',
+      detail: 'Re-runs the deploy script over ssh (git pull → build → restart). Safe and idempotent; it can take a few minutes. The peer restarts on success and its sessions resume.',
     });
     return result.response === 0;
   });
@@ -1324,11 +1358,11 @@ function registerIpcHandlers(deps) {
   handle('dialog:confirmDeployFix', async (_e, sshHost) => {
     const result = await showMessageBox({
       type: 'question',
-      buttons: ['Open agent session', 'Cancel'],
+      buttons: ['Open Agent Session', 'Cancel'],
       defaultId: 1,
       cancelId: 1,
       message: 'Open an agent session to fix this?',
-      detail: `Creates a local Claude session briefed with the deploy log and the playbook for ${sshHost || 'the box'}, so it can ssh in and finish the install.`,
+      detail: `Creates a local Claude session briefed with the deploy log and the playbook for ${sshHost || 'the peer'}, so it can ssh in and finish the install.`,
     });
     return result.response === 0;
   });
@@ -1343,7 +1377,7 @@ function registerIpcHandlers(deps) {
       defaultId: 1,
       cancelId: 1,
       message: `Kill session "${name}" on ${label || 'the peer'}?`,
-      detail: 'This ends the agent process on the remote box and removes it — it will not resume.',
+      detail: 'This ends the agent process on the remote machine and removes it — it will not resume.',
     });
     return result.response === 0;
   });
@@ -1361,7 +1395,7 @@ function registerIpcHandlers(deps) {
       message: `Reload "${name}" on ${label || 'the peer'} with a fresh conversation?`,
       detail: 'Starts a new conversation so the CLI reloads tools, skills, and settings from disk '
         + '(a plain restart keeps the old roster). The current conversation isn\'t lost — it stays '
-        + 'available under 🕘 history on the remote box.',
+        + 'available under 🕘 history on the remote machine.',
     });
     return result.response === 0;
   });

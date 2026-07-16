@@ -9,8 +9,8 @@ const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
-const { SANDBOX_PLACEMENT_CWD, hasSandboxPeer, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
+const { detectNotice: sandboxDetectNotice, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
@@ -30,6 +30,7 @@ const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
 const { initSubagentPopover } = require('./subagent-popover');
 const { initSessionHovercard } = require('./session-hovercard');
+const { initTooltips } = require('./tooltip');
 const { initReportPanel } = require('./popovers/report-panel');
 const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
@@ -80,7 +81,9 @@ const resumeRow = document.getElementById('resume-row');
 const proxyRow = document.getElementById('proxy-row');
 const inputProxyMode = document.getElementById('input-proxy-mode');
 const inputProxyUrl = document.getElementById('input-proxy-url');
-// New Session placement selector (docs/sandbox-plan.md M3) — Host vs Sandbox.
+// New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
+// Host + one entry per registered sandbox box. The selected <option>'s value is the
+// placement: 'host' or a box id.
 const placementRow = document.getElementById('placement-row');
 const inputPlacement = document.getElementById('input-placement');
 const placementHint = document.getElementById('placement-hint');
@@ -98,6 +101,9 @@ const PLACEMENT_RICH_ROW_IDS = [
 // libraries as if they were the box's.
 const PLACEMENT_HINT_OLD_BOX = 'This sandbox is running an older Clodex that can’t configure skills, prompts, tools, proxy, or intents at create — set them from the session once it’s running, or update the sandbox.';
 const PLACEMENT_HINT_CATALOGS_UNAVAILABLE = 'Couldn’t load the sandbox’s skills/agents/tools catalogs — configure this session from the sandbox once it’s running.';
+// A box that's in the registry but not running (no online peer). Nothing to fetch
+// and create is blocked with a clear error — tell the user to start it first.
+const PLACEMENT_HINT_BOX_OFFLINE = 'This sandbox isn’t running — start it from the Sandboxes panel, then pick it here.';
 // Monotonic guard so a slow peerCatalogs() response that lands after the user has
 // flipped back to Host (or re-flipped) is discarded instead of clobbering the UI.
 let placementCatalogToken = 0;
@@ -241,7 +247,7 @@ function startWorkspaceRename() {
     const newSpan = document.createElement('span');
     newSpan.id = 'workspace-name';
     newSpan.className = 'workspace-name';
-    newSpan.title = 'Double-click to rename workspace';
+    newSpan.dataset.tip = 'Double-click to rename workspace';
     newSpan.textContent = newName;
     input.replaceWith(newSpan);
     if (commit && newName !== current) {
@@ -317,7 +323,7 @@ function addFailedSessionToSidebar(entry) {
         <span class="session-failed-label">failed — click to retry</span>
       </div>
     </div>
-    <button class="session-close" title="Forget session">&times;</button>
+    <button class="session-close" data-tip="Forget session">&times;</button>
   `;
 
   // Click anywhere (except close) to retry
@@ -356,8 +362,8 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
   const displayName = label || name;
   // Second line shows the cwd basename only; type + full path (and the live
   // stats) live in the hover card (session-hovercard.js), so the row carries
-  // no title attributes — only the small click controls (✉ flush, × kill)
-  // keep native tooltips.
+  // no title attributes — the small click controls (✉ flush, × kill) carry
+  // data-tip like the rest of the sidebar (tooltip.js), not native titles.
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
@@ -366,14 +372,14 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
       <div class="session-meta">
         ${cwdLabel ? `<span class="session-cwd">${cwdLabel}</span>` : ''}
         <span class="session-badges">
-          ${type === 'claude' ? '<span class="session-pending" title="Parked messages waiting — click to deliver now"></span>' : ''}
+          ${type === 'claude' ? '<span class="session-pending" data-tip="Parked messages waiting — click to deliver now"></span>' : ''}
           <span class="session-think"></span>
           <span class="session-warm"></span>
           <span class="session-ctx"></span>
         </span>
       </div>
     </div>
-    <button class="session-close" title="Kill session">&times;</button>
+    <button class="session-close" data-tip="Kill session">&times;</button>
   `;
 
   item.addEventListener('click', (e) => {
@@ -397,7 +403,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null) {
       e.stopPropagation();
       const r = await window.api.flushPending(name);
       if (r && r.ok === false && r.reason === 'dialog-blocked') {
-        pendingEl.title = 'Blocked on a permission dialog — answer it first, then flush';
+        pendingEl.dataset.tip = 'Blocked on a permission dialog — answer it first, then flush';
       }
     });
   }
@@ -846,10 +852,10 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     inputProxyUrl.style.display = 'none';
   }
   // A type change reset (and, for Claude, re-fetched from HOST sources) the rich
-  // rows. If placement is Sandbox, re-apply the sandbox state so box catalogs
-  // (create2) or the greyed state (non-create2) win over the host defaults just
-  // rendered. No cwd mutation here — that's applyPlacement's job.
-  if (currentPlacement() === 'sandbox') applySandboxState();
+  // rows. If placement is a box, re-apply the sandbox state so box catalogs
+  // (create2) or the greyed state (non-create2/offline) win over the host defaults
+  // just rendered. No cwd mutation here — that's applyPlacement's job.
+  if (currentPlacement() !== 'host') applySandboxState();
 }
 
 // Grey (disable + dim) or restore the rich rows for the current placement. When
@@ -866,26 +872,53 @@ function greyRichFields(grey, hintText = null) {
 }
 
 // Placement is only meaningful in create mode (templates are host-authored). When
-// the selector is hidden it always reads 'host'.
+// the selector is hidden it always reads 'host'; otherwise it's the selected
+// <option>'s value — 'host' or a box id.
 function currentPlacement() {
-  return (placementRow.style.display !== 'none' && inputPlacement.value === 'sandbox') ? 'sandbox' : 'host';
+  return placementRow.style.display !== 'none' ? (inputPlacement.value || 'host') : 'host';
 }
 
-// Does the managed sandbox peer advertise the M5 `create2` capability (full-param
+// Does the given box's peer advertise the M5 `create2` capability (full-param
 // create + /api/catalogs)? Same peerStatuses + caps.includes() precedent as
 // peerSupportsArgs/activePeerConfigurable. Offline or old box → false → greyed.
-function sandboxHasCreate2() {
-  const st = peerStatuses.get('sandbox');
+function boxHasCreate2(boxId) {
+  const st = peerStatuses.get(boxId);
   return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('create2'));
+}
+
+// Is the given box's peer registered AND online? A box can be in the registry but
+// stopped (no peer / offline peer) — create must not fire at a dead peer.
+function boxPeerOnline(boxId) {
+  const st = peerStatuses.get(boxId);
+  return !!(st && st.online);
+}
+
+// Rebuild the placement <select> from the box registry: "This Mac" first, then one
+// option per box (label shown, box id carried as the value). Called at each open so
+// a created/deleted box is reflected. An offline box still gets an option (its
+// (stopped) suffix flags it) — create pre-checks the peer and errors clearly.
+function populatePlacementOptions(boxes) {
+  inputPlacement.innerHTML = '';
+  const host = document.createElement('option');
+  host.value = 'host';
+  host.textContent = 'This Mac';
+  inputPlacement.appendChild(host);
+  for (const b of (boxes || [])) {
+    if (!b || !b.id) continue;
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = boxPeerOnline(b.id) ? (b.label || b.id) : `${b.label || b.id} (stopped)`;
+    inputPlacement.appendChild(opt);
+  }
 }
 
 // Apply a placement change: swap the cwd default (without clobbering a typed path)
 // then apply the sandbox state. Flipping back to Host restores the Mac's catalogs
-// (they were swapped to box truth while on Sandbox).
+// (they were swapped to box truth while on a box).
 async function applyPlacement() {
   const placement = currentPlacement();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
-  if (placement === 'sandbox') { await applySandboxState(); return; }
+  if (placement !== 'host') { await applySandboxState(); return; }
   greyRichFields(false);
   await restoreHostCatalogs();
 }
@@ -898,20 +931,23 @@ async function applyPlacement() {
 // Mac's libraries as if they were the box's). Stale responses are guarded.
 async function applySandboxState() {
   const placement = currentPlacement();
+  if (placement === 'host') { greyRichFields(false); return; }
+  // Box placement. An offline box has no catalogs to fetch and create will be
+  // blocked — grey with a start-it-first hint rather than the old-box copy.
+  if (!boxPeerOnline(placement)) { greyRichFields(true, PLACEMENT_HINT_BOX_OFFLINE); return; }
   // The grey decision lives in the tested placement leaf: host never greys, a
-  // non-create2 sandbox does (old box), a create2 sandbox doesn't (fields live).
-  if (richFieldsGreyed(placement, sandboxHasCreate2())) {
+  // non-create2 box does (old box), a create2 box doesn't (fields live).
+  if (richFieldsGreyed(placement, boxHasCreate2(placement))) {
     greyRichFields(true, PLACEMENT_HINT_OLD_BOX);
     return;
   }
-  if (placement !== 'sandbox') { greyRichFields(false); return; }
-  // Sandbox + create2: fetch the box's catalogs and render the fields from them.
+  // Box + create2: fetch the box's catalogs and render the fields from them.
   const token = ++placementCatalogToken;
   let res;
-  try { res = await window.api.peerCatalogs('sandbox'); }
+  try { res = await window.api.peerCatalogs(placement); }
   catch { res = null; }
-  // Discard if the user flipped away (or re-flipped) while the fetch was in flight.
-  if (token !== placementCatalogToken || currentPlacement() !== 'sandbox') return;
+  // Discard if the user flipped away (or to another box) while the fetch was in flight.
+  if (token !== placementCatalogToken || currentPlacement() !== placement) return;
   if (!res || res.ok === false || !res.catalogs) {
     greyRichFields(true, PLACEMENT_HINT_CATALOGS_UNAVAILABLE);
     return;
@@ -1102,10 +1138,10 @@ async function openDialog() {
   inputFork.checked = false;
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
-  // Reset placement to Host BEFORE applyTypeDefaults so a stale 'sandbox' value
-  // from a prior open can't trip the type-change → applySandboxState hook during
-  // open (which would fire a spurious catalog fetch). placementRow visibility is
-  // (re)decided below once settings land.
+  // Reset placement to Host BEFORE applyTypeDefaults so a stale box value from a
+  // prior open can't trip the type-change → applySandboxState hook during open
+  // (which would fire a spurious catalog fetch). The options + placementRow
+  // visibility are (re)built below once the box registry lands.
   inputPlacement.value = 'host';
   // Collapse the advanced accordions each open so the dialog starts short.
   for (const sec of [toolsSection, skillsSection, otherSection]) {
@@ -1113,21 +1149,24 @@ async function openDialog() {
   }
   applyTypeDefaults();
   inputName.style.borderColor = '';
-  const [, , settings, agentLib] = await Promise.all([
+  const [, , settings, agentLib, boxes] = await Promise.all([
     refreshTemplatesDropdown(),
     refreshSystemPromptDropdown(),
     window.api.getSettings(),
     window.api.listAgents(),
+    window.api.sandboxListBoxes(),
   ]);
-  // Capture the host catalogs so a flip Sandbox→Host restores them without a
-  // re-fetch race (M5 swaps the caches to box truth while on Sandbox).
+  // Capture the host catalogs so a flip box→Host restores them without a re-fetch
+  // race (M5 swaps the caches to box truth while on a box).
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
-  // Placement selector: shown ONLY when the sandbox peer is registered (zero
-  // noise otherwise). Default Host; a fresh open never inherits a stale grey.
+  // Placement selector: rebuild its options from the box registry (Host + one per
+  // box), shown ONLY when at least one box is registered (zero noise otherwise).
+  // Default Host; a fresh open never inherits a stale grey.
+  populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
-  placementRow.style.display = hasSandboxPeer(settings?.peers) ? '' : 'none';
+  placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
   greyRichFields(false);
   dialogOverlay.classList.remove('hidden');
   setTimeout(() => inputName.select(), 50);
@@ -1323,16 +1362,24 @@ async function doCreate() {
   const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
   const fork = supportsPrompts ? inputFork.checked : false;
 
-  // Sandbox placement: route the create through the `sandbox` peer instead of the
-  // local engine. The peer owner fans the new session back into the sidebar's peer
+  // Box placement: route the create through THAT box's peer instead of the local
+  // engine. The peer owner fans the new session back into the sidebar's peer
   // section, so there's no local terminal/sidebar surgery to do. When the box
   // advertises create2 (M5) the full cfg crosses the wire (same collectFormConfig
   // path as host); an older box takes only the bare {name,type,cwd} (its rich
   // fields were greyed and never collected). systemPromptBody stays null (F2);
   // execCommands are stripped client-side in peer-client (grants never cross).
-  if (currentPlacement() === 'sandbox') {
+  const placement = currentPlacement();
+  if (placement !== 'host') {
+    const boxId = placement;
+    // Guard: don't fire a create at a stopped box — peerCreateSession would fail
+    // obscurely at a dead peer. Keep the dialog open with a clear, actionable error.
+    if (!boxPeerOnline(boxId)) {
+      alert(`The "${boxId}" sandbox isn't running — start it from the Sandboxes panel first.`);
+      return;
+    }
     closeDialog();
-    const spec = sandboxHasCreate2()
+    const spec = boxHasCreate2(boxId)
       ? {
           name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
@@ -1340,18 +1387,22 @@ async function doCreate() {
           ...(Array.isArray(intents) ? { intents } : {}),
         }
       : { name, type, cwd };
-    const res = await window.api.peerCreateSession('sandbox', spec);
+    const res = await window.api.peerCreateSession(boxId, spec);
     if (!res || res.ok === false) {
-      alert(`Failed to create sandbox session: ${(res && res.error) || 'unknown error'}`);
+      alert(`Create sandbox session failed: ${(res && res.error) || 'unknown error'}`);
       return;
     }
-    // If the sandbox peer's visible set was materialized (a row hidden earlier),
-    // the new session isn't in the whitelist and would land invisible — ensure it
-    // shows, then open it: "Run in: Sandbox" gives the same land-in-the-session
-    // parity a local create does (createTerminal + switchSession).
-    await ensurePeerSessionVisible('sandbox', res.name || name);
-    openPeerSession('sandbox', res.name || name);
-    showToast(`Created "${res.name || name}" (${res.type || type}) in the sandbox.`, { kind: 'peer-ui' });
+    // If the box peer's visible set was materialized (a row hidden earlier), the new
+    // session isn't in the whitelist and would land invisible — ensure it shows,
+    // then open it: a box placement gives the same land-in-the-session parity a
+    // local create does (createTerminal + switchSession).
+    await ensurePeerSessionVisible(boxId, res.name || name);
+    openPeerSession(boxId, res.name || name);
+    // Name the sandbox by its friendly label (peer status carries it), not the raw
+    // box id — parity with the "Created sandbox …" toast in the Sandboxes panel.
+    const boxSt = peerStatuses.get(boxId);
+    const boxLabel = (boxSt && boxSt.label) || boxId;
+    showToast(`Created "${res.name || name}" (${res.type || type}) in ${boxLabel}.`, { kind: 'peer-ui' });
     // Non-fatal spawn warnings from the box (e.g. an injected skill references a
     // subagent the box hasn't enabled) — same ack shape + toast path as a local
     // create (slice 2 forwards create()'s warnings[] over the wire).
@@ -1365,7 +1416,7 @@ async function doCreate() {
   const result = await window.api.createSession(name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
-    alert(`Failed to create session: ${result.error || 'unknown error'}`);
+    alert(`Create session failed: ${result.error || 'unknown error'}`);
     refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
     return;
   }
@@ -1389,13 +1440,41 @@ function submitDialog() {
 }
 
 document.getElementById('btn-new').addEventListener('click', openDialog);
+// Sidebar-header toolbar siblings of + (new session): new sandbox opens the
+// sandbox panel (P2's box list owns creation — no inline create flow), add peer
+// opens the peers-SETUP dialog. Both are just openers; Cmd+T still maps to +.
+document.getElementById('btn-new-sandbox').addEventListener('click', () => openSandboxDialog());
+document.getElementById('btn-add-peer').addEventListener('click', () => openPeersDialog());
 document.getElementById('btn-cancel').addEventListener('click', closeDialog);
 btnCreate.addEventListener('click', submitDialog);
 
 document.getElementById('btn-browse').addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
-  if (dir) { inputCwd.value = dir; refreshNewSessionSkills(); refreshNewSessionTools(); }
+  if (!dir) return;
+  // Box placement: the picker returns a HOST folder but the box takes a container
+  // path. Translate it against THAT box's live config; if the box can't see the
+  // folder, tell the user rather than writing a wrong path. Typed paths are left
+  // untouched (power users / web frontend enter a container path directly).
+  if (currentPlacement() !== 'host') {
+    await pickSandboxCwd(dir);
+    return;
+  }
+  inputCwd.value = dir;
+  refreshNewSessionSkills();
+  refreshNewSessionTools();
 });
+
+// Translate a picked HOST folder to the box's container path and fill the cwd
+// field. Reachable (under the box workDir or a configured mount) → fill silently.
+// Unreachable → leave the field as-is and tell the user, rather than writing a
+// wrong container path. (The mount-into-the-shared-box + restart flow was
+// superseded by M6b's per-project boxes — a folder the shared box can't see will
+// find-or-create its OWN box; that lands in the M6b work.)
+async function pickSandboxCwd(hostDir) {
+  const t = await window.api.sandboxTranslatePath(hostDir, currentPlacement());
+  if (t && t.container) { inputCwd.value = t.container; return; }
+  showToast(`"${hostDir}" isn't reachable in the sandbox — type a container path, or mount the folder from the Sandboxes panel.`, { kind: 'warn', duration: 9000 });
+}
 
 // Enter to submit (Escape no longer closes — only Cancel button does)
 dialogOverlay.addEventListener('keydown', (e) => {
@@ -1524,7 +1603,7 @@ window.api.onSessionExit((name, code, meta) => {
   // the IPC log (main-side, all types) — narrowing the toast hides nothing.
   if (meta && meta.agentType && !meta.expected && (code !== 0 || meta.signal)) {
     const why = meta.signal ? `signal ${meta.signal}` : `code ${code}`;
-    showToast(`${name} exited unexpectedly (${why})`, { kind: 'error', duration: 15000 });
+    showToast(`${name} exited unexpectedly (${why}).`, { kind: 'error', duration: 15000 });
   }
 });
 
@@ -1621,7 +1700,7 @@ function applyPendingBadge(name, count) {
   const badge = el.querySelector('.session-pending');
   if (!badge) return;
   badge.textContent = count > 0 ? `✉${count}` : '';
-  badge.title = count > 0
+  badge.dataset.tip = count > 0
     ? `${count} parked message${count === 1 ? '' : 's'} waiting — click to deliver now`
     : 'Parked messages waiting — click to deliver now';
 }
@@ -1677,16 +1756,16 @@ function sideChannelSegs(name) {
     const heavy = usedTok >= CTX_HEAVY_TOKENS ? ' px-ctx-heavy' : usedTok >= CTX_WARN_TOKENS ? ' px-ctx-warn' : '';
     if (sizeTok) {
       const p2 = Math.round((usedTok / sizeTok) * 100);
-      segs.push(`<span class="px-seg${heavy}" title="Context: tokens used / window size">🧠 ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
+      segs.push(`<span class="px-seg${heavy}" data-tip="Context: tokens used / window size">🧠 ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
     } else {
-      segs.push(`<span class="px-seg${heavy}" title="Context tokens used">🧠 ${fmtTokens(usedTok)}</span>`);
+      segs.push(`<span class="px-seg${heavy}" data-tip="Context tokens used">🧠 ${fmtTokens(usedTok)}</span>`);
     }
   } else if (typeof pct === 'number' && pct > 0) {
-    segs.push(`<span class="px-seg" title="Context window used">🧠 ${pct}%</span>`);
+    segs.push(`<span class="px-seg" data-tip="Context window used">🧠 ${pct}%</span>`);
   }
   if (sc && typeof sc.cost === 'number' && sc.cost > 0) {
     const costTxt = sc.cost >= 1 ? sc.cost.toFixed(2) : sc.cost.toFixed(4);
-    segs.push(`<span class="px-seg px-cost" title="Cost so far, reported by the CLI (no wirescope — no live breakdown)">~$${costTxt}</span>`);
+    segs.push(`<span class="px-seg px-cost" data-tip="Cost so far, reported by the CLI (no wirescope — no live breakdown)">~$${costTxt}</span>`);
   }
   return segs;
 }
@@ -1733,13 +1812,13 @@ function renderSessionActions(holdHtml = '') {
       // Unseen-changes latch: accent-lit from the moment a touch lands until
       // the popover is opened — a count silently ticking is too easy to miss.
       const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
-      btns.push(`<button class="px-action${unseen}" data-act="files" title="Files this agent's tools touched — click to view or diff">${label}</button>`);
+      btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched — click to view or diff">${label}</button>`);
     }
     // Everything else (tools/skills/agents/intents/edit/history/reload) collapses
     // behind ONE button + a dropdown — the bar is out of width even at max, and
     // these are seldom-clicked launchers. Entries are type-conditioned by the
     // session-actions leaf; the menu's onPick routes back to the openers below.
-    btns.push('<button class="px-action" data-act="session-menu" title="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
+    btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
   }
   // Peer tabs (type "remote"): the touched-files popup is the one action that
   // works across the link — served by the owner's query endpoint. Everything
@@ -1754,13 +1833,13 @@ function renderSessionActions(holdHtml = '') {
     // Same unseen latch as local sessions: a count silently ticking on a
     // remote agent is exactly what Bogdan couldn't see without clicking.
     const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
-    btns.push(`<button class="px-action${unseen}" data-act="files" title="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
+    btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
   }
   // Peer config: a single button opening the Edit Session dialog for the REMOTE
   // session (Skills fold in there as a peer-only section), served by peers-ui's
   // openPeerArgs through the existing peer data source.
   if (activePeerConfigurable()) {
-    btns.push('<button class="px-action" data-act="peer-edit" title="Edit this remote session\'s settings (args, prompts, tools, skills…)">⚙ Edit session</button>');
+    btns.push('<button class="px-action" data-act="peer-edit" data-tip="Edit this remote session\'s settings (args, prompts, tools, skills…)">⚙ Edit Session</button>');
   }
   el.innerHTML = btns.join('') + (holdHtml || '');
 }
@@ -1841,27 +1920,27 @@ function renderProxyBar() {
     const heavy = usedTok >= CTX_HEAVY_TOKENS ? ' px-ctx-heavy' : usedTok >= CTX_WARN_TOKENS ? ' px-ctx-warn' : '';
     if (sizeTok) {
       const p2 = Math.round((usedTok / sizeTok) * 100);
-      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context: tokens used / window size'}">🧠 ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Context: tokens used / window size'}">🧠 ${fmtTokens(usedTok)}/${fmtTokens(sizeTok)} (${p2}%)</span>`);
     } else {
-      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} title="${ctxTip || 'Context tokens used'}">🧠 ${fmtTokens(usedTok)}</span>`);
+      segs.push(`<span class="px-seg${heavy}${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Context tokens used'}">🧠 ${fmtTokens(usedTok)}</span>`);
     }
   } else if (typeof pct === 'number' && pct > 0) {
-    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Context window used'}">🧠 ${pct}%</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Context window used'}">🧠 ${pct}%</span>`);
   } else if (p.context && p.context.messages != null) {
-    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} title="${ctxTip || 'Messages in context'}">🧠 ${p.context.messages} msg</span>`);
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Messages in context'}">🧠 ${p.context.messages} msg</span>`);
   }
   // Turn count: the LIVE number (turns in context, resets at compact) leads;
   // the cumulative total rides the tooltip. Decision shared with the hovercard
   // via turn-stat.js.
   const tSeg = turnSeg(p);
-  if (tSeg) segs.push(`<span class="px-seg" title="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
+  if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
   // API roundtrips — the truer "how busy" gauge than turns (one prompt fans out
   // into many tool-loop roundtrips; ~8× is typical). Live-first like the turn
   // seg: prefers wirescope's since_compact rollup (p.sinceCompact, shape frozen
   // 07-15 — flips automatically once the proxy release vendors), cumulative in
   // the tooltip; degrades to the cumulative count on older proxies.
   const rSeg = reqSeg(p);
-  if (rSeg) segs.push(`<span class="px-seg" title="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
+  if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
   if (p.warmth) {
     let txt;
     if (dead) {
@@ -1885,16 +1964,16 @@ function renderProxyBar() {
     const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId)
       || peerQueries.includes('cost');
     if (timeline) {
-      segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" title="${esc(cSeg.tip)} — click for the over-time breakdown">${esc(cSeg.text)}</span>`);
+      segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" data-tip="${esc(cSeg.tip)} — click for the over-time breakdown">${esc(cSeg.text)}</span>`);
     } else {
-      segs.push(`<span class="px-seg px-cost" title="${esc(cSeg.tip)} (wirescope)">${esc(cSeg.text)}</span>`);
+      segs.push(`<span class="px-seg px-cost" data-tip="${esc(cSeg.tip)} (wirescope)">${esc(cSeg.text)}</span>`);
     }
   } else if (sc && typeof sc.cost === 'number' && sc.cost > 0) {
     // Wire-off fallback (Bedrock/Vertex or no proxy): the wirescope cost
     // telemetry above is dark, so show the CLI's own running total from the ctx
     // side-channel. No time-series, so it's plain text — no breakdown popover.
     const costTxt = sc.cost >= 1 ? sc.cost.toFixed(2) : sc.cost.toFixed(4);
-    segs.push(`<span class="px-seg px-cost" title="Cost so far, reported by the CLI (no wirescope — no live breakdown)">~$${costTxt}</span>`);
+    segs.push(`<span class="px-seg px-cost" data-tip="Cost so far, reported by the CLI (no wirescope — no live breakdown)">~$${costTxt}</span>`);
   }
   if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">⚠ ${p.refusals}</span>`);
   // Cache-bust chip: report GENUINE busts only. Two classes of noise are
@@ -1930,12 +2009,12 @@ function renderProxyBar() {
         ? `${contentCount} genuine cache-bust${contentCount === 1 ? '' : 's'} from a real prefix change — ${esc((contentCls[0] && contentCls[0].fix_hint) || 'inspect what changed')}.${clickable ? ' Click to inspect.' : ''}`
         : `${genuineCount} cache-bust${genuineCount === 1 ? '' : 's'} from the cache going cold — expected, nothing changed.${clickable ? ' Click to inspect.' : ''}`;
       const attrs = clickable ? ' data-act="bust"' : '';
-      segs.push(`<span class="${cls}"${attrs} title="${tip}">💥 ${genuineCount}</span>`);
+      segs.push(`<span class="${cls}"${attrs} data-tip="${tip}">💥 ${genuineCount}</span>`);
     }
   }
   if (p.base && p.sessionId) {
     const url = `${p.base}/_session?session=${encodeURIComponent(p.sessionId)}`;
-    segs.push(`<a class="px-seg px-link" data-url="${esc(url)}" title="Open this session's wirescope page in a clodex window (⌘-click for browser)">🔍 wirescope</a>`);
+    segs.push(`<a class="px-seg px-link" data-url="${esc(url)}" data-tip="Open this session's wirescope page in a clodex window (⌘-click for browser)">🔍 wirescope</a>`);
   }
 
   tele.innerHTML = segs.join('<span class="px-sep">·</span>');
@@ -1974,11 +2053,11 @@ function buildProxyExtras(p) {
       const pending = p.pingable === false;
       const label = pending ? '🔒 armed' : `🔒 held${remTxt}`;
       const tip = pending ? 'Armed — starts keeping warm after the next turn. Click to change or stop.' : 'Keeping cache warm. Click to change or stop.';
-      holdHtml = `<button class="px-hold" data-act="warm-menu" data-held="1" title="${tip}">${label}</button>`;
+      holdHtml = `<button class="px-hold" data-act="warm-menu" data-held="1" data-tip="${tip}">${label}</button>`;
     } else if (actionable) {
-      holdHtml = `<button class="px-hold" data-act="warm-menu" title="Keep prompt cache warm">🔥 keep warm</button>`;
+      holdHtml = `<button class="px-hold" data-act="warm-menu" data-tip="Keep prompt cache warm">🔥 keep warm</button>`;
     } else {
-      holdHtml = `<button class="px-hold" disabled title="Keep prompt cache warm — waiting for a live proxy session">🔥 keep warm</button>`;
+      holdHtml = `<button class="px-hold" disabled data-tip="Keep prompt cache warm — waiting for a live proxy session">🔥 keep warm</button>`;
     }
   }
 
@@ -1996,7 +2075,7 @@ function buildProxyExtras(p) {
       : (lvl === 0
         ? 'Strip wasted re-read carriage from the wire to reclaim cost. Click to choose a level.'
         : `Strip level ${lvl} active${lvl >= 2 ? ' (thinking + edit-acks + failed-call stubs)' : ' (prior-turn thinking)'}. Click to change.`);
-    stripHtml = `<button class="px-action px-strip${lvl > 0 ? ' is-on' : ''}"${actionable ? '' : ' disabled'} data-act="strip-menu" data-level="${lvl}" title="${esc(tip)}">${label}</button>`;
+    stripHtml = `<button class="px-action px-strip${lvl > 0 ? ' is-on' : ''}"${actionable ? '' : ' disabled'} data-act="strip-menu" data-level="${lvl}" data-tip="${esc(tip)}">${label}</button>`;
   }
 
   return stripHtml + holdHtml;
@@ -2190,6 +2269,11 @@ initSessionHovercard({
   proxyPollMs: PROXY_POLL_MS, typeGlyph,
 });
 
+// Shared attr-driven tooltip for the sidebar's small icon chrome (tooltip.js).
+// Elements opt in with data-tip="…"; the rich per-row card above stays the
+// authority for session rows and defers wherever a data-tip child is hovered.
+initTooltips();
+
 // --- Toast bubbles -----------------------------------------------------------
 // Transient bottom-right notifications. Returns nothing; auto-dismisses unless
 // opts.sticky. Body text is set via textContent (never innerHTML) so a session
@@ -2261,7 +2345,7 @@ function checkWarmthCooldown(name) {
     const disp = entry && entry.peer
       ? `${entry.peer.name}@${peerDisplayHost(peerStatuses.get(entry.peer.id))}`
       : name;
-    showToast(`${disp}: cache going cold in ~${mins} min`, { kind: 'warm', name });
+    showToast(`${disp}: cache going cold in ~${mins} min.`, { kind: 'warm', name });
   }
 }
 
@@ -2741,7 +2825,7 @@ function renderRemoteTokenState(hasToken) {
 async function saveRemoteToken(value) {
   const res = await window.api.remoteSetToken(value);
   if (!res || res.ok === false) {
-    showToast(`Failed to update token: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
+    showToast(`Update token failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
     return;
   }
   prefsRemoteToken.value = '';
@@ -2968,6 +3052,9 @@ window.api.onPeerDeployLine((sshHost, line) => {
 });
 
 function addPeerRow(peer) {
+  // Drop the "No peers yet." placeholder the moment a real row appears.
+  const emptyHint = peersListBox.querySelector('.peers-empty');
+  if (emptyHint) emptyHint.remove();
   const wrap = document.createElement('div');
   wrap.className = 'peer-row-wrap';
   const row = document.createElement('div');
@@ -3004,13 +3091,13 @@ function addPeerRow(peer) {
     <div class="peer-row-break"></div>
     <span class="peer-row-dest-badge hidden"></span>
     <label class="peer-row-advlabel">port</label>
-    <input type="text" class="peer-row-port" title="Peer protocol port on the box (default 7900)" value="${esc(String(portVal))}">
+    <input type="text" class="peer-row-port" title="Peer protocol port on the remote machine (default 7900)" value="${esc(String(portVal))}">
     <label class="peer-row-advlabel">folder</label>
-    <input type="text" class="peer-row-folder" title="Install/clone dir on the box — ~/… (home-relative) or /abs (default ~/wb-wrap-ui)" value="${esc(folderVal)}">
+    <input type="text" class="peer-row-folder" title="Install/clone dir on the peer — ~/… (home-relative) or /abs (default ~/wb-wrap-ui)" value="${esc(folderVal)}">
     <label class="peer-row-advlabel">token</label>
-    <input type="password" class="peer-row-token" autocomplete="off" spellcheck="false" title="Operator auth token for a tokened remote wire (CLODEX_REMOTE_TOKEN on the box). Write-only: leave blank to keep the stored one." placeholder="${peer.hasToken ? 'set — blank keeps' : 'optional'}">
+    <input type="password" class="peer-row-token" autocomplete="off" spellcheck="false" title="Operator auth token for a tokened remote wire (CLODEX_REMOTE_TOKEN on the peer). Write-only: leave blank to keep the stored one." placeholder="${peer.hasToken ? 'set — blank keeps' : 'optional'}">
     ${peer.hasToken ? `<label class="peer-row-cleartoken" title="Delete the stored token on save"><input type="checkbox" class="peer-row-token-clear"> clear</label>` : ''}
-    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the box</span>` : ''}`;
+    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ''}`;
   // Status/progress area (probe result → install offer → deploy step list).
   // Below the inputs so it can grow without reflowing the row.
   const status = document.createElement('div');
@@ -3140,17 +3227,17 @@ async function peerTestAndSetUp(row, status) {
   } else if (res.kind === 'no-listener') {
     renderPeerStatus(status,
       `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-dim"> · no Clodex answering on 127.0.0.1:${port}</span>` +
-      `<div class="peer-status-actions"><button type="button" class="peer-install-btn">Install Clodex on this box</button></div>`);
+      `<div class="peer-status-actions"><button type="button" class="peer-install-btn">Install Clodex on this peer</button></div>`);
     status.querySelector('.peer-install-btn').addEventListener('click', () => peerRunDeploy(row, status, sshHost, port));
   } else if (res.kind === 'not-clodex') {
     renderPeerStatus(status,
       `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · something is answering on 127.0.0.1:${port}, but it isn't Clodex.</span>` +
-      `<div class="peer-status-note">Pick a different port, or free that one on the box.</div>`);
+      `<div class="peer-status-note">Pick a different port, or free that one on the peer.</div>`);
   } else { // ssh-fail
     renderPeerStatus(status,
       `<span class="peer-status-err">✗ ssh could not connect.</span>` +
       (res.stderr ? `<pre class="peer-status-pre">${esc(res.stderr)}</pre>` : '') +
-      `<div class="peer-status-note">Check key-based ssh works from a terminal (<code>ssh ${esc(sshHost)}</code>), and that Remote Login is enabled on the box.</div>`);
+      `<div class="peer-status-note">Check key-based ssh works from a terminal (<code>ssh ${esc(sshHost)}</code>), and that Remote Login is enabled on the peer.</div>`);
   }
 }
 
@@ -3196,7 +3283,7 @@ async function peerRunDeploy(row, status, sshHost, port) {
     else if (ev.type === 'sudo-cmd') {
       sudoCmds.push(ev.command);
       tailBox.innerHTML =
-        `<div class="peer-status-warn">Run these on the box, then click Test &amp; Set Up again:</div>` +
+        `<div class="peer-status-warn">Run these on the peer, then click Test &amp; Set Up again:</div>` +
         `<pre class="peer-status-pre peer-sudo-cmds">${esc(sudoCmds.join('\n'))}</pre>`;
     }
     else if (ev.type === 'done') { sawDone = true; }
@@ -3209,7 +3296,7 @@ async function peerRunDeploy(row, status, sshHost, port) {
     tailBox.innerHTML = `<div class="peer-status-ok">✓ Clodex is running on ${esc(sshHost)}. Click Save to add the peer — the tunnel connects automatically.</div>`;
   } else if (res && res.needSudo) {
     // The sudo commands are already shown from the ::sudo-cmd lines; just anchor the retry.
-    if (!sudoCmds.length) tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo on the box — see the box's terminal, then Test &amp; Set Up again.</div>`;
+    if (!sudoCmds.length) tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo on the peer — see the peer's terminal, then Test &amp; Set Up again.</div>`;
     appendDeployActions(tailBox, row, status, sshHost, port, null);
   } else {
     const why = res && res.timedOut ? 'timed out' : (res && res.error) ? res.error : `exit ${res ? res.code : '?'}`;
@@ -3241,7 +3328,7 @@ function appendDeployActions(tailBox, row, status, sshHost, port, logText) {
       if (res && res.ok) {
         showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: 'peer-ui' });
       } else {
-        showToast(`Could not open a fix session: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+        showToast(`Open fix session failed: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
       }
     });
     actions.appendChild(fix);
@@ -3314,7 +3401,14 @@ document.getElementById('peers-add').addEventListener('click', () => addPeerRow(
 async function openPeersDialog() {
   const s = await window.api.getSettings();
   peersListBox.innerHTML = '';
-  for (const p of s.peers || []) addPeerRow(p);
+  const peers = s.peers || [];
+  for (const p of peers) addPeerRow(p);
+  if (peers.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'hint-text peers-empty';
+    empty.textContent = 'No peers yet.';
+    peersListBox.appendChild(empty);
+  }
   peersOverlay.classList.remove('hidden');
 }
 
@@ -3335,20 +3429,45 @@ const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
 const sbStatusRow = document.getElementById('sandbox-status');
 const sbWorkdir = document.getElementById('sandbox-workdir');
-const sbWebPort = document.getElementById('sandbox-webport');
-const sbWsPort = document.getElementById('sandbox-wsport');
-const sbWirePort = document.getElementById('sandbox-wireport');
 const sbAutoStart = document.getElementById('sandbox-autostart');
 const sbToggleBtn = document.getElementById('btn-sandbox-toggle');
+const sbRebuildBtn = document.getElementById('btn-sandbox-rebuild');
 const sbOpenRow = document.getElementById('sandbox-open-row');
 const sbOpenLink = document.getElementById('sandbox-open-link');
+// Effective-ports line: shown only while running (what the box IS listening on).
+// Ports have no editable field — engine-managed, settings-file-only (M6b bug #4).
+const sbPortsLine = document.getElementById('sandbox-ports-line');
 const sbToken = document.getElementById('sandbox-token');
 const sbTokenSave = document.getElementById('sandbox-token-save');
 const sbTokenClear = document.getElementById('sandbox-token-clear');
-const sbPortInputs = [sbWebPort, sbWsPort, sbWirePort];
+const sbMountsList = document.getElementById('sandbox-mounts-list');
+const sbMountsAdd = document.getElementById('sandbox-mounts-add');
+const sbMountsRestart = document.getElementById('sandbox-mounts-restart');
+// M6b P2: box list + create/delete controls. The detail fields above are now
+// scoped to sbCurrentBox — every sandbox IPC call threads it as the boxId.
+const sbBoxList = document.getElementById('sandbox-box-list');
+const sbBoxNewId = document.getElementById('sandbox-box-new-id');
+const sbBoxCreate = document.getElementById('sandbox-box-create');
+const sbDetail = document.getElementById('sandbox-detail');
+const sbDetailLabel = document.getElementById('sandbox-detail-label');
+const sbDeleteBtn = document.getElementById('btn-sandbox-delete');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
+// The selected box's EFFECTIVE (last-generated, possibly bumped) host ports by
+// role — status.ports while running, null when stopped. Both the Open-in-browser
+// link and its click handler read the live web port from here, not the (disabled,
+// possibly-stale) configured field. Bug #4: two boxes on the same configured port.
+let sbEffectivePorts = null;
+// The box the detail view is currently scoped to (default: the shared box), and
+// the registry rows [{id,label}] backing the list.
+let sbCurrentBox = 'sandbox';
+let sbBoxes = [];
+// M6a mounts editor: the live in-memory list (host + ro per row), and a flag set
+// when the list is edited while the box is running — a bind only attaches at
+// container create, so the change needs a restart to take effect.
+let sbMounts = [];
+let sbMountsDirty = false;
 
 // Render a notice {kind,text} into a .sandbox-row as a colored dot + text.
 function renderSandboxNotice(row, notice) {
@@ -3359,14 +3478,30 @@ function renderSandboxNotice(row, notice) {
   row.appendChild(document.createTextNode(notice.text));
 }
 
-// Reflect running/stopped into the button label, the Open-in-browser link, and
-// which fields are editable (ports lock while the sandbox is up).
-function applySandboxRunning(running) {
+// The live web port to open: the effective (bumped) port when running, else the
+// engine default (the link only shows while running, so effective is normally set).
+// Keeps box 2's link off box 1's port (bug #4).
+function effectiveWebPort() {
+  return (sbEffectivePorts && sbEffectivePorts.web) || 7810;
+}
+
+// Reflect running/stopped into the button label, the Open-in-browser link, and the
+// effective-ports line. `ports` is the effective per-role host ports from status
+// (running only); ports have no editable field now — they're engine-managed and
+// only ever surfaced here, as what the box IS listening on.
+function applySandboxRunning(running, ports = null) {
   sbRunning = running;
+  sbEffectivePorts = running ? (ports || null) : null;
   sbToggleBtn.textContent = running ? 'Stop' : 'Start';
-  for (const inp of sbPortInputs) inp.disabled = running;
+  const portsLine = sandboxPortsLineText(sbEffectivePorts);
+  if (running && portsLine) {
+    sbPortsLine.textContent = portsLine;
+    sbPortsLine.classList.remove('hidden');
+  } else {
+    sbPortsLine.classList.add('hidden');
+  }
   if (running) {
-    sbOpenLink.href = sandboxOpenUrl(sbWebPort.value || 7810);
+    sbOpenLink.href = sandboxOpenUrl(effectiveWebPort());
     sbOpenRow.classList.remove('hidden');
   } else {
     sbOpenRow.classList.add('hidden');
@@ -3376,13 +3511,24 @@ function applySandboxRunning(running) {
 async function refreshSandboxStatus() {
   try {
     const [detect, status] = await Promise.all([
-      window.api.sandboxDetect(),
-      window.api.sandboxStatus(),
+      window.api.sandboxDetect(sbCurrentBox),
+      window.api.sandboxStatus(sbCurrentBox),
     ]);
     renderSandboxNotice(sbDockerRow, sandboxDetectNotice(detect));
     const sn = sandboxStatusNotice(status && status.state);
     renderSandboxNotice(sbStatusRow, sn);
-    if (!sbBusy) applySandboxRunning(sn.running);
+    if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
+    // The mounts restart-hint depends on running state — repaint it each poll.
+    sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
+    // Keep the selected box's list row (dot + Start/Stop label) in step with the
+    // detail poll, so the row reflects the same state without its own docker call.
+    const selRow = sbBoxList.querySelector('.sandbox-box-row.selected');
+    if (selRow) {
+      const dot = selRow.querySelector('.sandbox-dot');
+      if (dot) dot.className = `sandbox-dot ${sn.kind}`;
+      const tog = selRow.querySelector('.sandbox-box-toggle');
+      if (tog && !sbBusy) tog.textContent = sn.running ? 'Stop' : 'Start';
+    }
   } catch { /* dialog closed mid-poll, or engine hiccup — next tick retries */ }
 }
 
@@ -3396,18 +3542,158 @@ function applyTokenState(hasToken) {
     : 'Run `claude setup-token`, then paste the token here';
 }
 
-async function openSandboxDialog() {
-  const cfg = await window.api.sandboxGetConfig();
+// Render the mounts editor from sbMounts: one row per mount (host path + rw/ro
+// toggle + remove), plus the running-restart hint. Pure DOM off the in-memory
+// list — every mutation goes through persistMounts, which is the validation gate.
+function renderMounts() {
+  sbMountsList.innerHTML = '';
+  for (let i = 0; i < sbMounts.length; i++) {
+    const m = sbMounts[i];
+    const row = document.createElement('div');
+    row.className = 'sandbox-mount-row';
+    const pathEl = document.createElement('span');
+    pathEl.className = 'sandbox-mount-path';
+    pathEl.textContent = m.host;
+    pathEl.title = m.host;
+    const roBtn = document.createElement('button');
+    roBtn.type = 'button';
+    roBtn.className = 'secondary sandbox-mount-mode';
+    roBtn.textContent = m.ro ? 'read-only' : 'read-write';
+    roBtn.title = 'Toggle whether agents can write to this folder';
+    roBtn.addEventListener('click', () => persistMounts(sbMounts.map((x, j) => j === i ? { ...x, ro: !x.ro } : x)));
+    const rmBtn = document.createElement('button');
+    rmBtn.type = 'button';
+    rmBtn.className = 'secondary sandbox-mount-remove';
+    rmBtn.textContent = 'Remove';
+    rmBtn.addEventListener('click', () => persistMounts(sbMounts.filter((_x, j) => j !== i)));
+    row.append(pathEl, roBtn, rmBtn);
+    sbMountsList.appendChild(row);
+  }
+  sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
+}
+
+// Validate + persist a proposed mounts list through setConfig (the engine is the
+// single validation authority — absolute/exists/no-shadow/no-dup). On success
+// adopt the cleaned list the engine stored and re-render; on rejection keep the
+// old list and toast the reason. A successful edit while running arms the
+// restart-needed hint.
+async function persistMounts(next) {
+  const r = await window.api.sandboxSetConfig({ mounts: next }, sbCurrentBox);
+  if (r && r.ok === false) {
+    showToast(`Mount rejected: ${r.error || 'invalid folder'}`, { kind: 'error', duration: 9000 });
+    renderMounts();   // repaint the unchanged list (e.g. reset a half-toggled control)
+    return;
+  }
+  sbMounts = (r && r.mounts) ? r.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : next;
+  if (sbRunning) sbMountsDirty = true;
+  renderMounts();
+}
+
+sbMountsAdd.addEventListener('click', async () => {
+  const dir = await window.api.selectDirectory();
+  if (!dir) return;
+  await persistMounts([...sbMounts, { host: dir, ro: false }]);
+});
+
+// Render the box list from sbBoxes: one row per registry box (status dot + label
+// + inline Start/Stop), the current box highlighted. Each row's dot/toggle comes
+// from that box's own compose status (fetched in parallel on render — not on the
+// steady 3s poll, which only touches the selected box). Clicking a row selects it;
+// the Start/Stop button toggles that box without selecting it.
+async function renderBoxList() {
+  const boxes = sbBoxes;
+  const notices = await Promise.all(boxes.map((b) =>
+    window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice())));
+  sbBoxList.innerHTML = '';
+  if (boxes.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'hint-text sandbox-box-empty';
+    empty.textContent = 'No sandboxes yet — create one below.';
+    sbBoxList.appendChild(empty);
+    return;
+  }
+  boxes.forEach((b, i) => {
+    const sn = notices[i];
+    const row = document.createElement('div');
+    row.className = 'sandbox-box-row' + (b.id === sbCurrentBox ? ' selected' : '');
+    const dot = document.createElement('span');
+    dot.className = `sandbox-dot ${sn.kind}`;
+    const label = document.createElement('span');
+    label.className = 'sandbox-box-label';
+    label.textContent = b.label;
+    label.title = b.id;
+    const tog = document.createElement('button');
+    tog.type = 'button';
+    tog.className = 'secondary sandbox-box-toggle';
+    tog.textContent = sn.running ? 'Stop' : 'Start';
+    tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
+    row.append(dot, label, tog);
+    row.addEventListener('click', () => selectBox(b.id));
+    sbBoxList.appendChild(row);
+  });
+}
+
+// Load the detail fields for sbCurrentBox from its stored config. Every box is
+// deletable (M6b P2, no shared-box special status); 'sandbox' is merely the
+// default-created box name.
+async function loadBoxDetail() {
+  // Switching boxes: drop the previous box's effective ports so its link/hint can't
+  // apply here — the next status poll (refreshSandboxStatus) repopulates them.
+  sbEffectivePorts = null;
+  const cfg = await window.api.sandboxGetConfig(sbCurrentBox);
+  const box = sbBoxes.find((b) => b.id === sbCurrentBox);
+  sbDetailLabel.textContent = (box && box.label) || sbCurrentBox;
   sbWorkdir.value = cfg.workDir || '';
-  sbWebPort.value = cfg.webPort;
-  sbWsPort.value = cfg.wirescopePort;
-  sbWirePort.value = cfg.wirePort;
   sbAutoStart.checked = !!cfg.autoStart;
+  sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
+  sbMountsDirty = false;
+  renderMounts();
   applyTokenState(!!cfg.hasToken);
-  sandboxOverlay.classList.remove('hidden');
+}
+
+// Show/hide the per-box detail surface. Hidden when the registry is empty (the
+// user deleted every box) — only the create row remains.
+function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
+
+// Switch the detail view to another box. No-op mid-lifecycle so a switch can't
+// race an in-flight up/down/rebuild.
+async function selectBox(id) {
+  if (sbBusy || id === sbCurrentBox) return;
+  sbCurrentBox = id;
+  await loadBoxDetail();
+  await renderBoxList();
   await refreshSandboxStatus();
+}
+
+// Start/Stop a box straight from its list row (no field persist — its config is
+// already stored). Guarded by sbBusy like the detail lifecycle buttons.
+async function toggleBox(id, running) {
+  if (sbBusy) return;
+  sbBusy = true;
+  try {
+    const r = running ? await window.api.sandboxDown(id) : await window.api.sandboxUp(id);
+    if (!r || r.ok === false) {
+      showToast(`Sandbox ${running ? 'stop' : 'start'} failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
+    }
+  } catch (e) {
+    showToast(`Sandbox ${running ? 'stop' : 'start'} failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
+  } finally {
+    sbBusy = false;
+    await renderBoxList();
+    if (id === sbCurrentBox) await refreshSandboxStatus();
+  }
+}
+
+async function openSandboxDialog() {
+  sbBoxes = await window.api.sandboxListBoxes();
+  if (!sbBoxes.some((b) => b.id === sbCurrentBox)) sbCurrentBox = (sbBoxes[0] && sbBoxes[0].id) || null;
+  if (sbCurrentBox) { showDetail(true); await loadBoxDetail(); } else { showDetail(false); }
+  await renderBoxList();
+  sandboxOverlay.classList.remove('hidden');
+  if (sbCurrentBox) await refreshSandboxStatus();
   // Poll compose ps only while the dialog is open (the peer row's dot is the
-  // global indicator — no background polling).
+  // global indicator — no background polling). The poll touches the selected box
+  // only; other rows refresh on list re-render (open/select/create/delete/toggle).
   if (sbPollTimer) clearInterval(sbPollTimer);
   sbPollTimer = setInterval(refreshSandboxStatus, 3000);
 }
@@ -3419,13 +3705,12 @@ function closeSandboxDialog() {
 
 // Persist the editable config from the fields (ports coerced; blank workDir =
 // named volume). The engine's sanitizer is the backstop, but send clean values.
+// The ports are engine-managed (no field) so they're NOT collected — setConfig
+// merges over the stored config, so the persisted port values (or defaults) are
+// preserved untouched. workDir + autoStart are the only GUI-editable config now.
 function collectSandboxConfig() {
-  const intOr = (el, dflt) => { const n = parseInt(el.value, 10); return Number.isInteger(n) ? n : dflt; };
   return {
     workDir: sbWorkdir.value.trim() || null,
-    webPort: intOr(sbWebPort, 7810),
-    wirescopePort: intOr(sbWsPort, 7811),
-    wirePort: intOr(sbWirePort, 7820),
     autoStart: sbAutoStart.checked,
   };
 }
@@ -3434,7 +3719,10 @@ function collectSandboxConfig() {
 // field is the input surface (the degraded picker would confuse), so hide the
 // button there.
 const sbWorkdirPick = document.getElementById('sandbox-workdir-pick');
-if (window.__CLODEX_WEB__) sbWorkdirPick.classList.add('hidden');
+// The folder pickers are native (dialog.showOpenDialog); on the web frontend the
+// degraded picker would confuse, so hide both add-by-folder affordances there
+// (existing mount rows still render + toggle/remove — those need no picker).
+if (window.__CLODEX_WEB__) { sbWorkdirPick.classList.add('hidden'); sbMountsAdd.classList.add('hidden'); }
 sbWorkdirPick.addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
   if (dir) sbWorkdir.value = dir;
@@ -3443,7 +3731,7 @@ document.getElementById('sandbox-workdir-clear').addEventListener('click', () =>
 
 // Persist autoStart the moment it's toggled — it's honored at next launch even
 // if the user never clicks Start.
-sbAutoStart.addEventListener('change', () => { window.api.sandboxSetConfig({ autoStart: sbAutoStart.checked }); });
+sbAutoStart.addEventListener('change', () => { window.api.sandboxSetConfig({ autoStart: sbAutoStart.checked }, sbCurrentBox); });
 
 // Auth token — write-only paste + clear (M4). Save writes the 0600 auth.env;
 // Clear deletes it. Neither reads a value back; the placeholder reflects state.
@@ -3452,7 +3740,7 @@ sbAutoStart.addEventListener('change', () => { window.api.sandboxSetConfig({ aut
 sbTokenSave.addEventListener('click', async () => {
   const t = sbToken.value.trim();
   if (!t) { showToast('Paste a token first (or use Clear to remove it).', { kind: 'peer-ui' }); return; }
-  const r = await window.api.sandboxSetToken(t);
+  const r = await window.api.sandboxSetToken(t, sbCurrentBox);
   if (!r || r.ok === false) {
     showToast(`Save token failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 8000 });
     return;
@@ -3461,7 +3749,7 @@ sbTokenSave.addEventListener('click', async () => {
   showToast('Claude auth token saved — it applies on the next Start.', { kind: 'peer-ui' });
 });
 sbTokenClear.addEventListener('click', async () => {
-  const r = await window.api.sandboxClearToken();
+  const r = await window.api.sandboxClearToken(sbCurrentBox);
   if (!r || r.ok === false) {
     showToast(`Clear token failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 8000 });
     return;
@@ -3475,21 +3763,108 @@ sbToggleBtn.addEventListener('click', async () => {
   sbBusy = true;
   const wasRunning = sbRunning;
   sbToggleBtn.disabled = true;
+  sbRebuildBtn.disabled = true;
   sbToggleBtn.textContent = wasRunning ? 'Stopping…' : 'Starting…';
   try {
     // Persist the current field values before Start so the container comes up on
     // the configured ports/workdir; a Stop doesn't need them but a save is cheap.
-    await window.api.sandboxSetConfig(collectSandboxConfig());
-    const r = wasRunning ? await window.api.sandboxDown() : await window.api.sandboxUp();
+    await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+    const r = wasRunning ? await window.api.sandboxDown(sbCurrentBox) : await window.api.sandboxUp(sbCurrentBox);
     if (!r || r.ok === false) {
       showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
+    } else if (!wasRunning) {
+      sbMountsDirty = false;   // a fresh Start created the container with current mounts
     }
   } catch (e) {
-    showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} error: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
+    showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     sbBusy = false;
     sbToggleBtn.disabled = false;
+    sbRebuildBtn.disabled = false;
     await refreshSandboxStatus();
+  }
+});
+
+// Rebuild the box on the current code (dev: image rebuild; packaged: image pull),
+// then recreate the container. A build can take minutes, so both buttons lock and
+// the label shows progress; the box --resumes its sessions so no confirm is needed.
+sbRebuildBtn.addEventListener('click', async () => {
+  if (sbBusy) return;
+  sbBusy = true;
+  sbToggleBtn.disabled = true;
+  sbRebuildBtn.disabled = true;
+  sbRebuildBtn.textContent = 'Rebuilding…';
+  try {
+    // Persist the current field values first so the rebuilt container comes up on
+    // the configured ports/workdir, exactly like Start does.
+    await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+    const r = await window.api.sandboxRebuild(sbCurrentBox);
+    if (!r || r.ok === false) {
+      showToast(`Sandbox rebuild failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
+    } else {
+      sbMountsDirty = false;   // rebuild recreated the container with current mounts
+      showToast('Sandbox rebuilt on the current code.', { kind: 'peer-ui' });
+    }
+  } catch (e) {
+    showToast(`Sandbox rebuild failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
+  } finally {
+    sbBusy = false;
+    sbToggleBtn.disabled = false;
+    sbRebuildBtn.disabled = false;
+    sbRebuildBtn.textContent = 'Rebuild';
+    await refreshSandboxStatus();
+  }
+});
+
+// Create a box: the engine gates the id (lowercase compose-charset) and mints a
+// row from defaults. On success refresh the list and select the new box.
+sbBoxCreate.addEventListener('click', async () => {
+  if (sbBusy) return;
+  const id = sbBoxNewId.value.trim();
+  if (!id) { showToast('Enter a sandbox id first.', { kind: 'peer-ui' }); return; }
+  const r = await window.api.sandboxCreateBox(id, id);
+  if (!r || r.ok === false) {
+    showToast(`Create sandbox failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
+    return;
+  }
+  sbBoxNewId.value = '';
+  sbBoxes = await window.api.sandboxListBoxes();
+  sbCurrentBox = r.box.id;
+  showDetail(true);
+  await loadBoxDetail();
+  await renderBoxList();
+  await refreshSandboxStatus();
+  showToast(`Created sandbox "${r.box.label}".`, { kind: 'peer-ui' });
+});
+sbBoxNewId.addEventListener('keydown', (e) => { if (e.key === 'Enter') sbBoxCreate.click(); });
+
+// Delete the current box: confirm (noting the left-behind volumes), then the
+// engine stops the container, drops the peer row, and removes the registry row.
+// Any box is deletable — 'sandbox' has no special status (M6b P2). Emptying the
+// registry hides the detail surface until a box is created.
+sbDeleteBtn.addEventListener('click', async () => {
+  if (sbBusy || !sbCurrentBox) return;
+  const box = sbBoxes.find((b) => b.id === sbCurrentBox);
+  const label = (box && box.label) || sbCurrentBox;
+  const ok = confirm(`Delete sandbox "${label}"? Its container is stopped and removed and it's dropped from the peer list. Its Docker volumes are LEFT BEHIND — reclaim them with \`docker volume rm\` if you want the data gone.`);
+  if (!ok) return;
+  sbBusy = true;
+  sbDeleteBtn.disabled = true;
+  try {
+    const r = await window.api.sandboxDeleteBox(sbCurrentBox);
+    if (!r || r.ok === false) {
+      showToast(`Delete sandbox failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
+      return;
+    }
+    if (r.downError) showToast(`Sandbox "${label}" deleted, but stop reported: ${r.downError}`, { kind: 'warn', duration: 9000 });
+    else showToast(`Sandbox "${label}" deleted (volumes left behind).`, { kind: 'peer-ui' });
+    sbBoxes = await window.api.sandboxListBoxes();
+    sbCurrentBox = (sbBoxes[0] && sbBoxes[0].id) || null;
+  } finally {
+    sbBusy = false;
+    sbDeleteBtn.disabled = false;
+    if (sbCurrentBox) { showDetail(true); await loadBoxDetail(); await renderBoxList(); await refreshSandboxStatus(); }
+    else { showDetail(false); await renderBoxList(); }
   }
 });
 
@@ -3499,7 +3874,7 @@ sbToggleBtn.addEventListener('click', async () => {
 // fan → shim window.open).
 sbOpenLink.addEventListener('click', (e) => {
   e.preventDefault();
-  window.api.openExternal(sandboxOpenUrl(sbWebPort.value || 7810));
+  window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
 });
 
 document.getElementById('btn-sandbox-close').addEventListener('click', closeSandboxDialog);
@@ -3824,7 +4199,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       })
     : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant);
   if (!res || !res.ok) {
-    alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+    alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
   }
   if (res.restarted) {

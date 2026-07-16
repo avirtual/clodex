@@ -78,7 +78,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     const holdApi = holdApiFor(name);
     if (opts.off) {
       const r = await holdApi(name, 0, false);
-      if (!r.ok) alert('Could not disarm hold: ' + r.error);
+      if (!r.ok) alert('Disarm hold failed: ' + r.error);
       return;
     }
     const hours = opts.hours;
@@ -155,7 +155,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
         `(Tip: cheapest to set the level on a fresh session, or after /clear when the cache is cold.)`
       )) return;
       const r = await window.api.setStripLevel(name, level);
-      if (!r || !r.ok) alert('Could not change strip level: ' + ((r && r.error) || 'unknown error'));
+      if (!r || !r.ok) alert('Change strip level failed: ' + ((r && r.error) || 'unknown error'));
       // New level shows on the next poll (≤5s).
     });
     document.body.appendChild(stripMenu);

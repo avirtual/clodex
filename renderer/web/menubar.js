@@ -88,12 +88,12 @@ function buildMenus(ctx) {
         { label: 'Templates…', run: () => emit('request-open-templates-drawer') },
         { label: 'Exec Commands…', run: () => emit('request-open-exec-drawer') },
         { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
-        { label: 'Sandbox…', run: () => emit('request-open-sandbox-dialog') },
+        { label: 'Sandboxes…', run: () => emit('request-open-sandbox-dialog') },
         { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
         { label: 'Preferences…', run: () => emit('request-open-preferences') },
         { sep: true },
-        { label: 'Restart Clodex', run: () => confirmRestart(invoke) },
+        { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
       ],
     },
     {
@@ -129,7 +129,7 @@ function buildMenus(ctx) {
         rows.push(
           { sep: true },
           { label: 'New Skill…', run: () => emit('request-open-skills-drawer', ':new') },
-          { label: 'Manage Skill Library…', run: () => emit('request-open-skills-drawer', null) },
+          { label: 'Manage Skills…', run: () => emit('request-open-skills-drawer', null) },
         );
         return rows;
       },

@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, statusNotice, openUrl } = require('../renderer/lib/sandbox-view');
+const { detectNotice, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -52,4 +52,26 @@ test('statusNotice: absent/unknown → not-created copy, running false', () => {
 
 test('openUrl: localhost + the web port', () => {
   assert.strictEqual(openUrl(7810), 'http://localhost:7810');
+});
+
+test('portsLineText: stopped (no effective ports) → empty (caller hides the line)', () => {
+  assert.strictEqual(portsLineText(null), '');
+  assert.strictEqual(portsLineText(undefined), '');
+});
+
+test('portsLineText: running → the effective ports, middot-joined (states what IS)', () => {
+  assert.strictEqual(
+    portsLineText({ web: 7812, wirescope: 7813, wire: 7821 }),
+    'Web 7812 · Wirescope 7813 · Peer wire 7821',
+  );
+});
+
+test('portsLineText: a role missing from a partial parse is skipped', () => {
+  assert.strictEqual(portsLineText({ web: 7812 }), 'Web 7812');
+  assert.strictEqual(portsLineText({ web: 7812, wire: 7821 }), 'Web 7812 · Peer wire 7821');
+});
+
+test('portsLineText: a non-numeric port value is skipped', () => {
+  assert.strictEqual(portsLineText({ web: NaN, wirescope: 7813 }), 'Wirescope 7813');
+  assert.strictEqual(portsLineText({}), '');
 });

@@ -23,7 +23,7 @@ function createAppMenus(deps) {
     DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
     checkForUpdate, confirmRestartClodex, createWindow,
     // getter deps (TDZ / whenReady-assigned when this factory runs)
-    getManager, getPeerManager, getUpdateInfo,
+    getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary,
   } = deps;
 
@@ -87,7 +87,7 @@ function createAppMenus(deps) {
         template.push({ type: 'separator' });
       }
     } else {
-      template.push({ label: 'No sessions', enabled: false });
+      template.push({ label: '(no sessions)', enabled: false });
       template.push({ type: 'separator' });
     }
 
@@ -183,8 +183,8 @@ function createAppMenus(deps) {
     }
 
     template.push({ type: 'separator' });
-    template.push({ label: 'Check for Updates', click: () => checkForUpdate(false) });
-    template.push({ label: 'Restart Clodex', click: () => { confirmRestartClodex(); } });
+    template.push({ label: 'Check for Updates…', click: () => checkForUpdate(false) });
+    template.push({ label: 'Restart Clodex…', click: () => { confirmRestartClodex(); } });
     template.push({ label: 'Quit Clodex', role: 'quit' });
     return Menu.buildFromTemplate(template);
   }
@@ -302,7 +302,7 @@ function createAppMenus(deps) {
         click: () => openDrawer(':new'),
       },
       {
-        label: 'Manage Skill Library…',
+        label: 'Manage Skills…',
         click: () => openDrawer(null),
       }
     );
@@ -364,7 +364,7 @@ function createAppMenus(deps) {
             },
           },
           { label: 'Check for Updates…', click: () => checkForUpdate(false) },
-          { label: 'Restart Clodex', click: () => { confirmRestartClodex(); } },
+          { label: 'Restart Clodex…', click: () => { confirmRestartClodex(); } },
           { type: 'separator' },
           { role: 'services' },
           { type: 'separator' },
@@ -422,13 +422,6 @@ function createAppMenus(deps) {
             click: () => {
               const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
               if (win) win.webContents.send('request-open-inbox-drawer');
-            },
-          },
-          {
-            label: 'Sandbox…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-sandbox-dialog');
             },
           },
           { type: 'separator' },
@@ -588,36 +581,68 @@ function createAppMenus(deps) {
         }
       }
 
-      // Peers section: configured peers with an online/offline indicator, each
-      // expanding to its live sessions (click = attach in the focused window,
-      // matching how peer tabs live today). No control verbs — sessions + manage
-      // only, to keep the menu light. "Manage Peered Clodexes…" owns the add/
-      // edit/remove UI that used to sit in Preferences.
-      const peerList = getPeerManager() ? getPeerManager().statuses() : [];
+      // A peer status row → a menu entry: online/offline indicator + label, its
+      // submenu the live sessions (click = attach in the focused window, matching
+      // how peer tabs live today). No control verbs — sessions only, to keep the
+      // menu light. Shared by the Peers and Sandboxes sections below.
+      const peerEntry = (st) => {
+        const indicator = st.online ? '●' : '○';
+        const label = st.label || st.host || st.id;
+        let sub;
+        if (!st.online) {
+          sub = [{ label: 'offline', enabled: false }];
+        } else if (!st.sessions || st.sessions.length === 0) {
+          sub = [{ label: '(no sessions)', enabled: false }];
+        } else {
+          sub = st.sessions.map((s) => ({
+            label: s.name,
+            click: () => sendToFocused('request-open-peer-session', st.id, s.name),
+          }));
+        }
+        return { label: `${indicator}  ${label}`, submenu: sub };
+      };
+
+      // Split managed sandbox boxes out of the peer list: a box's peer id IS its
+      // box id (sandbox.js registerPeer), so the registry ids ∩ peer ids marks
+      // them. Peers = genuine remotes only; boxes get their own subsection. A box
+      // gets a peer status row once it's first started (and keeps it, online or
+      // offline, until deleted), so boxList is exactly that intersection — a
+      // never-started seed box has no row and shows nowhere but the panel.
+      const sbMgr = getSandboxManager();
+      const boxIds = new Set((sbMgr ? sbMgr.list() : []).map((b) => b && b.id).filter(Boolean));
+      const allStatuses = getPeerManager() ? getPeerManager().statuses() : [];
+      const peerList = allStatuses.filter((st) => !boxIds.has(st.id));
+      const boxList = allStatuses.filter((st) => boxIds.has(st.id));
+
+      // Peers section: genuine remote Clodexes. "Manage Peered Clodexes…" owns the
+      // add/edit/remove UI that used to sit in Preferences.
       wsMenu.submenu.push({ type: 'separator' }, { label: 'Peers', enabled: false });
       if (peerList.length === 0) {
         wsMenu.submenu.push({ label: '(no peers configured)', enabled: false });
       } else {
-        for (const st of peerList) {
-          const indicator = st.online ? '●' : '○';
-          const label = st.label || st.host || st.id;
-          let sub;
-          if (!st.online) {
-            sub = [{ label: 'offline', enabled: false }];
-          } else if (!st.sessions || st.sessions.length === 0) {
-            sub = [{ label: '(no sessions)', enabled: false }];
-          } else {
-            sub = st.sessions.map((s) => ({
-              label: s.name,
-              click: () => sendToFocused('request-open-peer-session', st.id, s.name),
-            }));
-          }
-          wsMenu.submenu.push({ label: `${indicator}  ${label}`, submenu: sub });
-        }
+        for (const st of peerList) wsMenu.submenu.push(peerEntry(st));
       }
       wsMenu.submenu.push({
         label: 'Manage Peered Clodexes…',
         click: () => sendToFocused('request-open-peers-dialog'),
+      });
+
+      // Sandboxes section: managed Docker boxes, same entry shape. The box rows +
+      // their header are gated on a box peer actually existing (registry ∩ peers)
+      // so a non-sandbox user sees no clutter — but "Manage Clodex Sandboxes…" is
+      // always-on, mirroring the always-on "Manage Peered Clodexes…" above. That
+      // keeps a menu path to the panel (which owns box creation/config) even for a
+      // fresh install whose seed box was never started, now that File > Sandboxes…
+      // is gone.
+      if (boxList.length > 0) {
+        wsMenu.submenu.push({ type: 'separator' }, { label: 'Sandboxes', enabled: false });
+        for (const st of boxList) wsMenu.submenu.push(peerEntry(st));
+      } else {
+        wsMenu.submenu.push({ type: 'separator' });
+      }
+      wsMenu.submenu.push({
+        label: 'Manage Clodex Sandboxes…',
+        click: () => sendToFocused('request-open-sandbox-dialog'),
       });
     }
 

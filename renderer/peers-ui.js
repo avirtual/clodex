@@ -39,6 +39,7 @@ const { SEV_LINE } = require('./lib/constants');
 const { esc, baseName } = require('./lib/format');
 const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
+const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -80,6 +81,55 @@ function initPeersUi({
 
   function peerDisplayHost(st) { return (st && (st.host || st.label)) || 'peer'; }
 
+  // Managed sandbox boxes render distinct from generic peers. A box's peer id IS
+  // its box id (sandbox.js registerPeer keys off it), so the box-registry ids ∩
+  // peer ids marks them. Cached — renderPeers repaints often, so we never fetch
+  // per repaint: seeded once at init and refreshed only when a NEW peer id appears
+  // (a box's peer shows up when it's first started) or a peer drops. A changed set
+  // triggers one repaint.
+  let boxIds = new Set();
+  async function refreshBoxIds() {
+    let boxes = [];
+    try { boxes = await window.api.sandboxListBoxes(); } catch { boxes = []; }
+    const next = new Set((boxes || []).map((b) => b && b.id).filter(Boolean));
+    const changed = next.size !== boxIds.size || [...next].some((x) => !boxIds.has(x));
+    boxIds = next;
+    if (changed) renderPeers();
+  }
+  refreshBoxIds();
+
+  // Open a running box's web UI in the external browser. The effective web port is
+  // the bug-#4 source of truth: sandboxStatus(id).ports.web (present only while
+  // running). Online-gated at the button, but guard anyway — an online peer whose
+  // container is mid-recreate could briefly lack ports.
+  async function openBoxWeb(id, label) {
+    let st;
+    try { st = await window.api.sandboxStatus(id); } catch { st = null; }
+    const port = st && st.ports && st.ports.web;
+    if (!port) {
+      showToast(`${label} isn't serving a web UI yet — start it first.`, { kind: 'warm' });
+      return;
+    }
+    window.api.openExternal(sandboxOpenUrl(port));
+  }
+
+  // Rebuild a box straight from its sidebar header (the box "upgrade" affordance —
+  // recreate on the current code/image). Mirrors the panel's Rebuild and the peer
+  // update flow's toast shape: a start toast, then a completion/failure toast. The
+  // recreate blips the container offline→online, which the row reflects as its live
+  // busy signal (no persistent strip button to spin). Distinct from the generic
+  // restart (bounce the same build); both stay meaningful for a box.
+  async function rebuildBox(id, label) {
+    showToast(`Rebuilding ${label} — this can take a few minutes.`, { kind: 'peer-ui' });
+    let res;
+    try { res = await window.api.sandboxRebuild(id); } catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
+    if (res && res.ok !== false) {
+      showToast(`Rebuilt ${label} on the current code.`, { kind: 'peer-ui' });
+    } else {
+      showToast(`Rebuild failed on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+    }
+  }
+
   function renderPeers() {
     sessionList.querySelectorAll('[data-peer-ui]').forEach((el) => el.remove());
     for (const [id, st] of peerStatuses) {
@@ -93,7 +143,7 @@ function initPeersUi({
       let stateText = st.online ? '' : 'offline';
       if (!st.online && tun && tun.state === 'down') {
         stateText = 'tunnel down';
-        if (tun.error) header.title = tun.error;
+        if (tun.error) header.dataset.tip = tun.error;
       }
       // Identity surfacing: an online peer's hello carries version + caps (+ os).
       // Show them in the header tooltip; the version delta tints the peer NAME
@@ -103,7 +153,7 @@ function initPeersUi({
       let sev = 'unknown';
       if (st.online && st.version) {
         const capList = (st.caps || []).join(', ') || 'none';
-        header.title = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}`;
+        header.dataset.tip = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}`;
         if (getOurAppVersion()) sev = versionSeverity(getOurAppVersion(), st.version);
       }
       // Tint the name only when the peer is genuinely BEHIND us (patch/minor/major
@@ -119,16 +169,22 @@ function initPeersUi({
       const hostLabel = peerDisplayHost(st);
       const canCreate = peerSupportsCreate(st);
       const off = st.online ? '' : 'disabled';
+      // Managed sandbox box: a distinct chip before the label, plus a web-open (↗)
+      // action for its served UI. The generic dot stays (online/offline is still
+      // meaningful for a box); the chip is the "this is a box, not a laptop" mark.
+      const isBox = boxIds.has(id);
       header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
+        (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
         `<span class="peer-state">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
-          (canCreate ? `<button class="peer-select peer-new" title="New Session on ${esc(hostLabel)}…" aria-label="New Session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
-          `<button class="peer-select peer-restart" title="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button>` +
-          `<button class="peer-select peer-eye" title="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` +
+          (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
+          (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}’s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : '') +
+          `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button>` +
+          `<button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` +
           // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
           // identity to show (online + version) — nothing to surface otherwise.
-          ((st.online && st.version) ? `<button class="peer-select peer-info peer-sev-${sev}" title="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : '') +
+          ((st.online && st.version) ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : '') +
         `</span>`;
       header.querySelector('.peer-eye').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -144,6 +200,11 @@ function initPeersUi({
         e.stopPropagation();
         openPeerSessionDialog(id, hostLabel);
       });
+      const webBtn = header.querySelector('.peer-web');
+      if (webBtn) webBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openBoxWeb(id, hostLabel);
+      });
       header.querySelector('.peer-restart').addEventListener('click', (e) => {
         e.stopPropagation();
         restartPeerHost(id, hostLabel);
@@ -155,6 +216,9 @@ function initPeersUi({
         window.api.showPeerHeaderMenu({
           id, label: peerDisplayHost(st), online: !!st.online,
           canCreate: peerSupportsCreate(st),
+          // Managed box → the menu offers Rebuild (the strip stays uncrowded; a
+          // minutes-long recreate fits the menu next to Restart/Update).
+          isBox,
           // sev is in scope from this row's identity block; main gates the Update
           // item on it (updateApplies) so we don't offer a pointless restart to a
           // same-version or ahead peer. 'unknown' (offline / unparseable) keeps it.
@@ -201,7 +265,7 @@ function initPeersUi({
         </div>` +
           // Close (detach) only makes sense for an attached tab; unattached rows
           // get no X (it was a dead affordance before).
-          (sessions.has(key) ? '<button class="session-close" title="Detach">&times;</button>' : '');
+          (sessions.has(key) ? '<button class="session-close" data-tip="Detach">&times;</button>' : '');
         item.addEventListener('click', (e) => {
           if (e.target.classList.contains('session-close')) return;
           openPeerSession(id, s.name);
@@ -258,7 +322,7 @@ function initPeersUi({
         `<span class="peer-label">${esc(hostLabel)}</span>` +
         `<span class="peer-state">paused</span>` +
         `<span class="peer-actions">` +
-          `<button class="peer-select peer-enable" title="Resume ${esc(hostLabel)}" aria-label="Resume ${esc(hostLabel)}">&#9654;</button>` +
+          `<button class="peer-select peer-enable" data-tip="Resume ${esc(hostLabel)}" aria-label="Resume ${esc(hostLabel)}">&#9654;</button>` +
         `</span>`;
       header.querySelector('.peer-enable').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -552,7 +616,7 @@ function initPeersUi({
       await doPeerRestart(id, label);
       return;
     }
-    const why = res && res.needSudo ? 'needs sudo on the box'
+    const why = res && res.needSudo ? 'needs sudo on the peer'
       : res && res.timedOut ? 'timed out'
       : failReasons.length ? failReasons.join('; ')
       : (res && res.error) ? res.error
@@ -589,6 +653,11 @@ function initPeersUi({
         // Host-level remote restart. `name` carries the peer's display label here
         // (the header menu has no session). Shared with the header ↻ icon.
         await restartPeerHost(id, name || 'peer');
+        break;
+      case 'rebuild':
+        // Managed box: recreate on the current code/image (the "upgrade" op). Only
+        // offered for box peers (main gates the item on isBox). `name` is the label.
+        await rebuildBox(id, name || 'sandbox');
         break;
       case 'newSession':
         // `name` carries the peer's display label here (header menu, no session).
@@ -771,10 +840,16 @@ function initPeersUi({
   }
 
   window.api.onPeerState((id, status) => {
+    // A newly-appeared peer might be a box's peer (first Start) — refresh the box-id
+    // cache once so the row can render its box chip/actions. refreshBoxIds repaints
+    // only if the set actually changed, so a plain generic-peer connect costs one
+    // cheap listBoxes and no extra render.
+    const isNewPeer = !peerStatuses.has(id);
     peerStatuses.set(id, status);
     renderPeers();
     renderPeerBar();
     maybeRestorePeer(id);
+    if (isNewPeer && !boxIds.has(id)) refreshBoxIds();
   });
 
   window.api.onPeerActivity((id, name, state) => {

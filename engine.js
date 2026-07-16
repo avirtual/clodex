@@ -481,7 +481,7 @@ function rebuildAllStatusScripts(manager) {
 // streaming/refusals, a clodex2 concern).
 // See https://github.com/avirtual/wirescope (INTEGRATION.md).
 
-const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies } = require('./proxy-util');
+const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies, boxWirescopeView } = require('./proxy-util');
 const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
@@ -1066,7 +1066,7 @@ function peerProxyView(p) {
   if (caps.context_timeline && p.base && p.sessionId) queries.push('cost');
   if (p.base && p.sessionId) queries.push('bust');
   if (caps.context_report && p.base && p.sessionId) queries.push('report');
-  return {
+  const view = {
     linked: !!p.linked,
     model: p.model || null,
     context: p.context || null,
@@ -1083,6 +1083,16 @@ function peerProxyView(p) {
     stripLevel: typeof p.stripLevel === 'number' ? p.stripLevel : 0,
     queries,
   };
+  // A managed sandbox box runs this on the container side and advertises a
+  // host-reachable wirescope via CLODEX_WIRESCOPE_PUBLIC_URL (sandbox.js's compose
+  // env). Unlike a generic peer's loopback proxyBase (stripped above by omission),
+  // that URL resolves from the host, so surface base+sessionId to light the viewer's
+  // 🔍 wirescope session link. No-op for a generic peer (env unset → null). The
+  // query chips already route through the peer-query path, so this only affects the
+  // direct dashboard link.
+  const box = boxWirescopeView(p, process.env.CLODEX_WIRESCOPE_PUBLIC_URL);
+  if (box) { view.base = box.base; view.sessionId = box.sessionId; }
+  return view;
 }
 
 // kill() only sends the signal — removal from manager.sessions happens in the
@@ -1400,8 +1410,8 @@ const {
 // seams/getters everything else here rides. registerPeer writes through the
 // uiSettings peers path and calls syncPeerManager to reconcile.
 // ---------------------------------------------------------------------------
-const { createSandbox } = require('./sandbox');
-const sandbox = createSandbox({
+const { createSandboxManager } = require('./sandbox');
+const sandboxManager = createSandboxManager({
   getUserDataPath: () => userDataPath,
   getUiSettings: () => uiSettings,
   syncPeerManager,
@@ -1476,8 +1486,11 @@ const sandbox = createSandbox({
   // pull / build can take a while and the app must not block on it; failures
   // just leave the sandbox stopped (the dialog surfaces the error on demand).
   try {
-    if (sandbox.getConfig().autoStart) sandbox.up().catch(() => {});
-  } catch { /* config read failed — skip autostart */ }
+    for (const box of sandboxManager.list()) {
+      const inst = sandboxManager.get(box.id);
+      try { if (inst && inst.getConfig().autoStart) inst.up().catch(() => {}); } catch { /* skip this box */ }
+    }
+  } catch { /* registry read failed — skip autostart */ }
 
   // Mid-run watchdog. Autostart only fires at launch and on the settings
   // toggle, so a managed wirescope that dies BETWEEN launches (crash, OOM,
@@ -1572,7 +1585,11 @@ const sandbox = createSandbox({
     getRemoteError: () => remoteError,
     getPeerManager: () => peerManager,
     getTunnelManager: () => tunnelManager,
-    getSandbox: () => sandbox,
+    // getSandbox(boxId) resolves a managed box instance (default: the shared
+    // 'sandbox' box), or null for an unknown id. The manager itself is exposed for
+    // list()/iteration (autostart, and the P2 box-list UI).
+    getSandbox: (boxId) => sandboxManager.get(boxId),
+    getSandboxManager: () => sandboxManager,
     // ── ipc-handlers consumers (helper surface) ──
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,

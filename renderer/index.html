@@ -12,24 +12,28 @@
     <div id="sidebar-header">
       <div class="app-title-stack">
         <span class="app-brand">Clodex</span>
-        <span class="workspace-name" id="workspace-name" title="Double-click to rename workspace">Workspace</span>
+        <span class="workspace-name" id="workspace-name" data-tip="Double-click to rename workspace">Workspace</span>
       </div>
-      <button id="btn-new" title="New session (Cmd+T)">+</button>
+      <div id="sidebar-toolbar">
+        <button id="btn-new" data-tip="New session (Cmd+T)">+</button>
+        <button id="btn-new-sandbox" data-tip="New sandbox">&#9635;</button>
+        <button id="btn-add-peer" data-tip="Add peer">&#8644;</button>
+      </div>
     </div>
     <div id="session-list"></div>
-    <div id="update-banner" class="hidden" title="Click to view the release">
+    <div id="update-banner" class="hidden" data-tip="Click to view the release">
       <span class="update-dot">●</span>
       <span id="update-text">Update available</span>
     </div>
-    <div id="diag-banner" class="hidden" title="Spawn diagnostics — click to copy details">
+    <div id="diag-banner" class="hidden" data-tip="Spawn diagnostics — click to copy details">
       <span class="diag-dot">▲</span>
       <span id="diag-text">Sessions can't start</span>
     </div>
     <div id="sidebar-footer">
-      <button id="pot-open" title="Boiling pot — where token carriage concentrates across agents" type="button">
+      <button id="pot-open" data-tip="Boiling pot — where token carriage concentrates across agents" type="button">
         <span class="pot-label">Boiling Pot</span>
       </button>
-      <button id="inbox-open" title="Operator inbox — notes agents raised for you" type="button">
+      <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
         <span class="inbox-label">Inbox</span>
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
@@ -110,7 +114,7 @@
   <!-- Skill library drawer -->
   <div id="skills-drawer" class="hidden">
     <div id="skills-header">
-      <span class="prompts-title">Skill Library</span>
+      <span class="prompts-title">Skills Library</span>
       <button id="skills-new" title="New skill" type="button">+ New</button>
       <button id="skills-close" title="Close" type="button">×</button>
     </div>
@@ -144,7 +148,7 @@
   <div id="exec-drawer" class="hidden">
     <div id="exec-header">
       <span class="prompts-title">Exec Commands</span>
-      <button id="exec-new" title="New command" type="button">+ New</button>
+      <button id="exec-new" title="New exec command" type="button">+ New</button>
       <button id="exec-close" title="Close" type="button">×</button>
     </div>
     <div id="exec-list"></div>
@@ -178,7 +182,7 @@
   <div id="inbox-drawer" class="hidden">
     <div id="inbox-header">
       <span class="prompts-title">Inbox</span>
-      <button id="inbox-mark-all" title="Mark every note read" type="button">Mark all read</button>
+      <button id="inbox-mark-all" title="Mark every note read" type="button">Mark All Read</button>
       <button id="inbox-close" title="Close" type="button">×</button>
     </div>
     <div id="inbox-list"></div>
@@ -235,7 +239,7 @@
     </div>
     <div id="tools-popover" class="hidden">
       <div class="popover-title"><span>Tools — <span id="tools-popover-name"></span></span><button type="button" class="popover-close" id="tools-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-tools-list" class="agent-checklist"></div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="tools-popover-restart">
@@ -248,11 +252,11 @@
     </div>
     <div id="intents-popover" class="hidden">
       <div class="popover-title"><span>Intents — <span id="intents-popover-name"></span></span><button type="button" class="popover-close" id="intents-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-intents-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked intents are gated OFF for this session — it can't emit them (a gated seat still RECEIVES). <code>[agent:name]</code> is never gateable.</span>
       <div id="intents-popover-exec" class="exec-grant-readout">
-        <div class="popover-subhead">Exec grants <span class="hint-text">(read-only — edit in the ⚙ Edit session dialog)</span></div>
+        <div class="popover-subhead">Exec Grants <span class="hint-text">(read-only — edit in the ⚙ Edit Session dialog)</span></div>
         <div id="intents-popover-exec-list" class="agent-checklist"></div>
         <span class="hint-text" id="intents-popover-exec-note"></span>
       </div>
@@ -266,8 +270,8 @@
       </div>
     </div>
     <div id="peer-select-popover" class="hidden">
-      <div class="popover-title"><span>Show sessions — <span id="peer-select-popover-name"></span></span><button type="button" class="popover-close" id="peer-select-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div class="popover-title"><span>Show Sessions — <span id="peer-select-popover-name"></span></span><button type="button" class="popover-close" id="peer-select-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="peer-select-list" class="agent-checklist"></div>
       <div class="popover-actions">
         <button id="peer-select-popover-cancel" class="secondary" type="button">Cancel</button>
@@ -288,11 +292,11 @@
     </div>
     <div id="skills-popover" class="hidden">
       <div class="popover-title"><span>Skills — <span id="skills-popover-name"></span></span><button type="button" class="popover-close" id="skills-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-skills-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
       <div id="popover-inject-skills-section" style="display:none;">
-        <div class="popover-subhead">Inject from Skill Library</div>
+        <div class="popover-subhead">Inject from Skills Library</div>
         <div id="popover-inject-skills-list" class="agent-checklist"></div>
         <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Like trimming, this only takes effect in a NEW conversation.</span>
       </div>
@@ -307,10 +311,10 @@
     </div>
     <div id="agents-popover" class="hidden">
       <div class="popover-title"><span>Agents — <span id="agents-popover-name"></span></span><button type="button" class="popover-close" id="agents-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-agents-list" class="agent-checklist"></div>
       <span class="hint-text">Checked custom subagents are injected into this session (<code>--agents</code>).</span>
-      <div class="popover-subhead">Built-in agents</div>
+      <div class="popover-subhead">Built-in Agents</div>
       <div id="popover-builtins-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster — reclaiming their per-turn description tokens — and no longer delegatable. This removes the capability too, so it's a trim <em>and</em> a behavior change. Not every session loads all of these; denying an absent one is a no-op.</span>
       <label class="tools-popover-restart">
@@ -327,7 +331,7 @@
       <div id="ctx-popover-body"></div>
     </div>
     <div id="cost-popover" class="hidden">
-      <div class="popover-title"><span>Cost over time — <span id="cost-popover-name"></span></span><button type="button" class="popover-close" id="cost-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-title"><span>Cost over Time — <span id="cost-popover-name"></span></span><button type="button" class="popover-close" id="cost-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="cost-popover-body"></div>
     </div>
     <div id="subagent-popover" class="hidden">
@@ -335,11 +339,11 @@
       <div id="subagent-popover-body"></div>
     </div>
     <div id="bust-popover" class="hidden">
-      <div class="popover-title"><span>Cache busts — <span id="bust-popover-name"></span></span><button type="button" class="popover-close" id="bust-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-title"><span>Cache Busts — <span id="bust-popover-name"></span></span><button type="button" class="popover-close" id="bust-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="bust-popover-body"></div>
     </div>
     <div id="files-popover" class="hidden">
-      <div class="popover-title"><span>Touched files — <span id="files-popover-name"></span></span><button type="button" class="popover-close" id="files-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-title"><span>Touched Files — <span id="files-popover-name"></span></span><button type="button" class="popover-close" id="files-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="files-popover-body"></div>
     </div>
     <div id="file-peek-overlay" class="hidden">
@@ -358,7 +362,7 @@
     </div>
     <div id="report-overlay" class="hidden">
       <div id="report-modal">
-        <div class="popover-title"><span>Session report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
+        <div class="popover-title"><span>Session Report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
         <div id="report-body"></div>
       </div>
     </div>
@@ -385,9 +389,10 @@
     <div id="dialog">
       <h3 id="dialog-title">New Session</h3>
       <label id="placement-row" style="display:none;">Run in
+        <!-- Options are rebuilt at open from the box registry (M6b P3): "This Mac"
+             plus one entry per sandbox box (label shown, box id carried as value). -->
         <select id="input-placement">
           <option value="host">This Mac</option>
-          <option value="sandbox">Sandbox (Docker)</option>
         </select>
         <span class="hint-text" id="placement-hint" style="display:none;">Sandbox sessions run in the container — configure this session from the sandbox once it’s running.</span>
       </label>
@@ -409,10 +414,10 @@
           <option value="bash">bash</option>
         </select>
       </label>
-      <label>Working Directory
+      <label>Working directory
         <div class="dir-picker">
           <input type="text" id="input-cwd" placeholder="~ or /absolute/path" spellcheck="false">
-          <button id="btn-browse" class="secondary" type="button">Browse</button>
+          <button id="btn-browse" class="secondary" type="button">Browse…</button>
         </div>
       </label>
       <label id="system-prompt-row">System prompt
@@ -428,7 +433,7 @@
       <details id="tools-section" class="dialog-section" style="display:none;">
         <summary>Tools</summary>
         <label id="tools-row">
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="input-tools-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
         </label>
@@ -436,20 +441,20 @@
       <details id="skills-section" class="dialog-section" style="display:none;">
         <summary>Skills</summary>
         <label id="skills-row">Skills
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="input-skills-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
         </label>
         <label id="inject-skills-row">Custom skills
           <div id="input-inject-skills-list" class="agent-checklist"></div>
-          <span class="hint-text">Inject skills from your <strong>Skill Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
+          <span class="hint-text">Inject skills from your <strong>Skills Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
         </label>
       </details>
       <details id="other-section" class="dialog-section" style="display:none;">
         <summary>Other options</summary>
         <label id="agents-row">Custom subagents
           <div id="input-agents-list" class="agent-checklist"></div>
-          <div class="popover-subhead">Built-in agents</div>
+          <div class="popover-subhead">Built-in Agents</div>
           <div id="input-builtins-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
         </label>
@@ -484,20 +489,20 @@
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
       </label>
-      <label id="proxy-row">API Proxy
+      <label id="proxy-row">API proxy
         <select id="input-proxy-mode">
           <option value="">Default</option>
           <option value="off">Off</option>
           <option value="custom">Custom URL…</option>
         </select>
         <input type="text" id="input-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" style="display:none;">
-        <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url</span>
+        <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url.</span>
       </label>
       <label id="resume-row">Resume from session ID
         <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="input-fork" style="margin: 0;">
-          <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched)</span>
+          <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched).</span>
         </label>
       </label>
       <div class="dialog-actions">
@@ -525,9 +530,9 @@
           <option value="bash">bash</option>
         </select>
       </label>
-      <label>Working Directory
-        <input type="text" id="peer-input-cwd" placeholder="~ or /absolute/path (on the remote box)" spellcheck="false">
-        <span class="hint-text">Path on the remote machine. Created if it doesn't exist.</span>
+      <label>Working directory
+        <input type="text" id="peer-input-cwd" placeholder="~ or /absolute/path (on the peer)" spellcheck="false">
+        <span class="hint-text">Directory on the remote machine. Created if it doesn't exist.</span>
       </label>
       <div id="peer-session-error" class="peer-bar-error" style="display:none;"></div>
       <div class="dialog-actions">
@@ -574,7 +579,7 @@
       <details id="args-tools-section" class="dialog-section">
         <summary>Tools</summary>
         <label id="args-tools-row">
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="args-tools-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>).</span>
         </label>
@@ -583,7 +588,7 @@
         <summary>Custom subagents</summary>
         <label id="args-agents-row">
           <div id="args-agents-list" class="agent-checklist"></div>
-          <div class="popover-subhead">Built-in agents</div>
+          <div class="popover-subhead">Built-in Agents</div>
           <div id="args-builtins-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op. Applies on a fresh restart.</span>
         </label>
@@ -591,11 +596,11 @@
       <details id="args-skills-section" class="dialog-section">
         <summary>Skills</summary>
         <label id="args-skills-row">
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="args-skills-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source. Like subagents, a skill change takes effect only in a NEW conversation — tick "Restart session now" to apply immediately (this clears the session's history).</span>
           <div id="args-inject-skills-section" style="display:none;">
-            <div class="popover-subhead">Inject from Skill Library</div>
+            <div class="popover-subhead">Inject from Skills Library</div>
             <div id="args-inject-skills-list" class="agent-checklist"></div>
             <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Also applies only in a new conversation.</span>
           </div>
@@ -715,7 +720,7 @@
         <h4>Default tools for new sessions</h4>
         <p class="hint-text">Unchecked tools are denied for new Claude sessions by default (you can still adjust per session at create). A consistent set lets sessions share one cached tools segment — leaving rarely-used tools off also trims each prompt. Applies only to new sessions; existing ones are unaffected.</p>
         <label id="prefs-tools-row">Tools
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check all</button><button type="button" data-bulk="none">Uncheck all</button></div>
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
@@ -731,11 +736,11 @@
   <div id="peers-overlay" class="hidden">
     <div id="peers-dialog">
       <h3>Peered Clodexes</h3>
-      <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. <strong>Test &amp; Set Up</strong> checks the box over SSH and, if no Clodex is running there yet, offers to install one. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
+      <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. <strong>Test &amp; Set Up</strong> checks the host over SSH and, if no Clodex is running there yet, offers to install one. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
       <div id="peers-list"></div>
-      <button id="peers-add" class="secondary" type="button" style="margin-top: 6px;">Add peer</button>
+      <button id="peers-add" class="secondary" type="button" style="margin-top: 6px;">Add Peer</button>
       <div class="dialog-actions">
-        <button id="btn-peers-sandbox" class="secondary" type="button" title="Manage the local Docker sandbox peer">Sandbox…</button>
+        <button id="btn-peers-sandbox" class="secondary" type="button" title="Manage the local Docker sandboxes">Sandboxes…</button>
         <div style="flex: 1;"></div>
         <button id="btn-peers-cancel" class="secondary">Cancel</button>
         <button id="btn-peers-save">Save</button>
@@ -743,37 +748,46 @@
     </div>
   </div>
 
-  <!-- Managed Docker sandbox: one-button local container run as the `sandbox` peer -->
+  <!-- Managed Docker sandboxes: N local containers, each run as its own peer -->
   <div id="sandbox-overlay" class="hidden">
     <div id="sandbox-dialog">
-      <h3>Sandbox</h3>
-      <p class="hint-text">Run a Clodex engine inside a local Docker container and use it as a peer: agents placed here are sandboxed (their shell, file writes, and network live in the container) while keeping full Clodex features over the peer wire. The container publishes to <code>127.0.0.1</code> only.</p>
+      <h3>Sandboxes</h3>
+      <p class="hint-text">Run Clodex engines inside local Docker containers and use them as peers: agents placed in a sandbox have their shell, file writes, and network confined to the container, while keeping full Clodex features over the peer wire. Each container publishes to <code>127.0.0.1</code> only.</p>
       <div id="sandbox-docker" class="sandbox-row"></div>
+      <!-- M6b P2: one row per registry box (label, status dot, Start/Stop); select
+           a row to open its config below. Any box is deletable; 'sandbox' is just
+           the default-created box name. An empty registry hides the detail pane. -->
+      <div id="sandbox-box-list"></div>
+      <div id="sandbox-box-new" class="sandbox-box-new-row">
+        <input id="sandbox-box-new-id" type="text" spellcheck="false" autocomplete="off" maxlength="64" placeholder="new sandbox id (lowercase, dashes)" />
+        <button id="sandbox-box-create" class="secondary" type="button">Create Sandbox</button>
+      </div>
+      <div id="sandbox-detail">
+      <div class="sandbox-detail-header">
+        <span id="sandbox-detail-label"></span>
+        <button id="btn-sandbox-delete" class="secondary" type="button" title="Stop and delete this sandbox (its Docker volumes are left behind — remove them with `docker volume rm` if you want the data gone)">Delete Sandbox</button>
+      </div>
       <div id="sandbox-status" class="sandbox-row"></div>
       <div class="sandbox-field">
-        <label for="sandbox-workdir">Work folder</label>
+        <label for="sandbox-workdir">Working directory</label>
         <div class="sandbox-workdir-row">
           <input id="sandbox-workdir" type="text" placeholder="(named volume — work stays inside Docker)" spellcheck="false" />
           <button id="sandbox-workdir-pick" class="secondary" type="button">Choose…</button>
           <button id="sandbox-workdir-clear" class="secondary" type="button" title="Use a named volume instead of a host folder">Clear</button>
         </div>
       </div>
-      <div class="sandbox-ports">
-        <div class="sandbox-field">
-          <label for="sandbox-webport">Web port</label>
-          <input id="sandbox-webport" type="number" min="1" max="65535" />
-        </div>
-        <div class="sandbox-field">
-          <label for="sandbox-wsport">Wirescope port</label>
-          <input id="sandbox-wsport" type="number" min="1" max="65535" />
-        </div>
-        <div class="sandbox-field">
-          <label for="sandbox-wireport">Peer wire port</label>
-          <input id="sandbox-wireport" type="number" min="1" max="65535" />
-        </div>
-      </div>
-      <p class="hint-text" id="sandbox-ports-hint">Ports are editable while the sandbox is stopped. Collisions are bumped automatically when it starts.</p>
+      <!-- Ports are engine-managed (collision-bumped at Start); there's no field to
+           edit them (settings-file only, for a fixed-port firewall need). While the
+           box runs we show what it's ACTUALLY listening on — M6b bug #4 follow-on. -->
+      <p class="hint-text sandbox-row hidden" id="sandbox-ports-line"></p>
       <label class="sandbox-check"><input id="sandbox-autostart" type="checkbox" /> Start the sandbox automatically when Clodex launches</label>
+      <div class="sandbox-field" id="sandbox-mounts-field">
+        <label>Mounted folders</label>
+        <p class="hint-text">Extra host folders bind-mounted into the sandbox for agents to work in. Read-write by default; toggle a row to read-only for reference material. Changes apply on the next Start.</p>
+        <div id="sandbox-mounts-list"></div>
+        <button id="sandbox-mounts-add" class="secondary" type="button">Add Folder…</button>
+        <p class="hint-text hidden" id="sandbox-mounts-restart">Mounts changed — restart the sandbox (Stop then Start, or Rebuild) to apply.</p>
+      </div>
       <div class="sandbox-field" id="sandbox-auth-field">
         <label for="sandbox-token">Claude auth token</label>
         <div class="sandbox-workdir-row">
@@ -786,6 +800,10 @@
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" href="#">Open in browser →</a></div>
       <div class="dialog-actions">
         <button id="btn-sandbox-toggle">Start</button>
+        <button id="btn-sandbox-rebuild" class="secondary" title="Rebuild the container image on the current code and recreate the sandbox (its sessions resume automatically)">Rebuild</button>
+      </div>
+      </div><!-- /#sandbox-detail -->
+      <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-sandbox-close" class="secondary">Close</button>
       </div>

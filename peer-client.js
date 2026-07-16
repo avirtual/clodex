@@ -211,7 +211,19 @@ class PeerConnection {
           this._claimAndEmit();
         }
       },
-      onOpen: (req) => { this._eventsReq = req; this._eventsBackoff = RECONNECT_MIN_MS; },
+      onOpen: (req) => {
+        this._eventsReq = req;
+        this._eventsBackoff = RECONNECT_MIN_MS;
+        // An SSE (re)open is by definition recovery from a feed gap, and SSE has
+        // no replay — any 'sessions' events the box emitted while we were
+        // disconnected are lost. A compose recreate (Rebuild / in-place Update)
+        // severs this feed faster than the 15s hello cadence sees an offline dip,
+        // so neither the wasOffline nor identityChanged trigger fires; without a
+        // resync here the host sidebar keeps a stale (often empty) session list
+        // until the next organic change. Resync unconditionally — harmless
+        // duplicate GET on the wasOffline path (it refreshed just before this).
+        this._refreshSessions();
+      },
       onClose: () => {
         this._eventsReq = null;
         if (this._stopped || !this.online) return;

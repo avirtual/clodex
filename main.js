@@ -241,6 +241,7 @@ const {
   // getter deps (TDZ / whenReady-assigned — lazy)
   getManager: () => manager,
   getPeerManager: () => (engine ? engine.getPeerManager() : null),
+  getSandboxManager: () => (engine ? engine.getSandboxManager() : null),
   getUpdateInfo: () => updateInfo,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,

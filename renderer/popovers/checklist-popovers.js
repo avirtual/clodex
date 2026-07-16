@@ -80,7 +80,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const restart = toolsPopoverRestart.checked;
     closeToolsPopover();
     const r = await window.api.setSessionTools(name, disabledTools);
-    if (!r || !r.ok) { alert(`Failed to update tools: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    if (!r || !r.ok) { alert(`Update tools failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Same re-attach dance as the context-menu restart path.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -134,7 +134,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
 
   async function openSkillsPopover(name, anchorBtn, source = null) {
     const res = source ? await source.fetch() : await window.api.getSkillCatalog(name);
-    if (!res || !res.ok) { alert(source ? `Could not read skills on peer: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
+    if (!res || !res.ok) { alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
     skillsEditingSource = source;
     renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
       res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
@@ -194,7 +194,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const r = source
       ? await source.save({ disabledSkills, injectSkills })
       : await window.api.setSessionSkills(name, disabledSkills, injectSkills);
-    if (!r || !r.ok) { alert(`Failed to update skills: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    if (!r || !r.ok) { alert(`Update skills failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Fresh (non-resume) restart — the only way a skill change takes effect.
     if (source) { source.restartFresh(); return; }
@@ -282,7 +282,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (restart && !confirm(`Apply agent changes to "${name}" now?\n\nThis starts a NEW conversation — the current session's history will be cleared. (Leave "Restart fresh" unchecked to apply on the next fresh start instead.)`)) return;
     closeAgentsPopover();
     const r = await window.api.setSessionAgents(name, agents, denyBuiltins);
-    if (!r || !r.ok) { alert(`Failed to update agents: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    if (!r || !r.ok) { alert(`Update agents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Fresh (non-resume) restart — same re-attach dance as the skills popover.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -403,7 +403,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
     const r = await window.api.setSessionIntents(name, intents);
-    if (!r || !r.ok) { alert(`Failed to update intents: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    if (!r || !r.ok) { alert(`Update intents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Same re-attach dance as the tools popover's restart path.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);

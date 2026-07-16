@@ -218,7 +218,7 @@ function wireBulkToggles(popoverEl, listEl) {
 function renderInjectChecklist(container, enabledSet, autoSet = null) {
   container.innerHTML = '';
   if (!skillLibCache.length) {
-    container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skill Library (Skills menu).</span>';
+    container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skills Library (Skills menu).</span>';
     return;
   }
   for (const s of skillLibCache) {

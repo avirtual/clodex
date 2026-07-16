@@ -40,6 +40,32 @@ const {
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
 
+// A managed box's config block (M6b). One shape, N instances — every box row in
+// the `boxes` registry carries a copy. workDir null = a named volume; a host path
+// = a bind mount. The three ports publish web/wirescope/peer-wire to loopback,
+// collision-bumped at compose-generation. image null = default resolution.
+const DEFAULT_SANDBOX_CONFIG = {
+  workDir: null,
+  webPort: 7810,
+  wirescopePort: 7811,
+  wirePort: 7820,
+  autoStart: false,
+  image: null,
+  mounts: [],
+};
+
+// A managed box's id is gated to the docker-compose PROJECT-name charset
+// (lowercase, digits, dash/underscore) — sandbox.js pins the box's compose project
+// off its id, and project names disallow dots/uppercase. Uniform: creation AND the
+// sanitizer both enforce this, so no id that would collide two boxes onto one
+// project can ever persist (M6b P2).
+const BOX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+// Reserved box ids — mirrors sandbox.js RESERVED_BOX_IDS. 'host' is the New Session
+// placement selector's Mac value; a persisted box with that id would shadow it, so
+// the sanitizer drops it too (creation already rejects it). M6b P3.
+const RESERVED_BOX_IDS = new Set(['host']);
+
 const DEFAULT_UI_SETTINGS = {
   statusline: {
     claude: ['model', 'context', 'cost', 'cwd'],
@@ -118,21 +144,13 @@ const DEFAULT_UI_SETTINGS = {
   // syncPeerManager. Controlled implies attached, so a name here is always a
   // subset of peerAttached.
   peerControlled: {},
-  // Managed local Docker sandbox (docs/sandbox-plan.md). The app owns this
-  // container's lifecycle and registers it as the `sandbox` peer. workDir null =
-  // a named volume (work lives inside Docker); a host path = bind mount. The
-  // three ports publish the container's web/wirescope/peer-wire to loopback,
-  // collision-bumped at compose-generation time. image null = default resolution
-  // (packaged → GHCR tag, dev → build from checkout). All settings-file+dialog
-  // editable; sandbox.js is the sole consumer.
-  sandbox: {
-    workDir: null,
-    webPort: 7810,
-    wirescopePort: 7811,
-    wirePort: 7820,
-    autoStart: false,
-    image: null,
-  },
+  // Managed-sandbox registry (M6b: N instances, one shape). Each row is
+  // { id, label, config } where config is DEFAULT_SANDBOX_CONFIG's shape. The
+  // registry is the SOLE source of box state — there is no legacy top-level
+  // `sandbox` key and no migration into this list. A fresh install seeds one box
+  // (id 'sandbox') so the panel isn't empty; the user can rename/delete/add from
+  // there. Deleting every box yields a genuinely empty list (not re-seeded).
+  boxes: [{ id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_SANDBOX_CONFIG } }],
 };
 
 // `prior` (optional) is the CURRENT peers array — used to carry a peer's auth
@@ -226,12 +244,17 @@ function sanitizePeerControlled(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
 }
 
-// Managed-sandbox config (docs/sandbox-plan.md). Bounds every field so a
-// hand-edited settings file can't feed sandbox.js junk: ports coerced to ints in
+// A managed box's config block (docs/sandbox-plan.md, M6b). Bounds every field so
+// a hand-edited settings file can't feed sandbox.js junk: ports coerced to ints in
 // the ephemeral/registered range (else the default), workDir/image as non-empty
-// strings-or-null, autoStart a strict boolean. Returns null on a non-object so
-// the caller falls back to the default block. Junk/extra keys are dropped by
-// reconstruction (same stance as sanitizePeers).
+// strings-or-null, autoStart a strict boolean, mounts a sanitized array (M6a).
+// Returns null on a non-object so the caller falls back to DEFAULT_SANDBOX_CONFIG.
+// Junk/extra keys are dropped by reconstruction (same stance as sanitizePeers).
+// Consumed per-box by sanitizeBoxes — there is no top-level `sandbox` key.
+//
+// CRITICAL: this store is a WHITELIST — any key NOT reconstructed here is silently
+// dropped on every write. `mounts` (M6a) shipped without a line here and vanished
+// on every round-trip; every persisted box-config sub-key MUST appear below.
 function sanitizeSandbox(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const port = (v, dflt) => (Number.isInteger(v) && v >= 1 && v <= 65535 ? v : dflt);
@@ -243,7 +266,53 @@ function sanitizeSandbox(raw) {
     wirePort: port(raw.wirePort, 7820),
     autoStart: raw.autoStart === true,
     image: strOrNull(raw.image),
+    mounts: sanitizeSandboxMounts(raw.mounts),
   };
+}
+
+// M6a mount list → the persisted shape { host: non-empty string, ro: boolean,
+// container?: non-empty string }. Malformed entries (missing/blank host, non-object)
+// are dropped; a container is carried only when it's a non-empty string (an omitted
+// target stays dynamic — sandbox.js derives it). Non-array input → []. The store
+// only guards SHAPE; sandbox.js's normalizeMounts re-validates paths/shadows/dupes.
+function sanitizeSandboxMounts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const m of raw) {
+    if (!m || typeof m !== 'object') continue;
+    const host = typeof m.host === 'string' && m.host.trim() ? m.host.trim() : null;
+    if (!host) continue;
+    const entry = { host, ro: m.ro === true };
+    if (typeof m.container === 'string' && m.container.trim()) entry.container = m.container.trim();
+    out.push(entry);
+  }
+  return out;
+}
+
+// Managed-sandbox registry (M6b P2). Each row is { id, label, config } — id gated
+// UNIFORMLY to BOX_ID_RE (the compose project-name charset; a row failing it is
+// DROPPED, since box creation enforces the same rule so nothing valid can regress
+// to a bad id), label a non-empty display string (falls back to id), config the
+// sanitizeSandbox shape. Duplicate ids — and the reserved 'host' id — drop all but
+// the first / drop entirely. There is NO
+// migration and NO guaranteed 'sandbox' row: the registry is the sole source, an
+// empty/garbage input sanitizes to an empty list (the missing-key path in _load
+// supplies the fresh-install default instead). Returns null on non-array input so
+// the caller can pick between the persisted-empty [] and the default seed.
+function sanitizeBoxes(rawBoxes) {
+  if (!Array.isArray(rawBoxes)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const b of rawBoxes) {
+    if (!b || typeof b !== 'object') continue;
+    const id = typeof b.id === 'string' && BOX_ID_RE.test(b.id) ? b.id : null;
+    if (!id || seen.has(id) || RESERVED_BOX_IDS.has(id)) continue;
+    seen.add(id);
+    const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim().slice(0, 64) : id;
+    const config = sanitizeSandbox(b.config) ?? { ...DEFAULT_SANDBOX_CONFIG };
+    out.push({ id, label, config });
+  }
+  return out;
 }
 
 function initStores(userDataPath, { log, registryDir } = {}) {
@@ -1203,7 +1272,10 @@ function initStores(userDataPath, { log, registryDir } = {}) {
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
-          sandbox: sanitizeSandbox(raw?.sandbox) ?? DEFAULT_UI_SETTINGS.sandbox,
+          // No top-level `sandbox` key — the boxes registry is the sole source.
+          // A present-but-empty `boxes: []` (user deleted every box) is preserved;
+          // a MISSING key (fresh install / pre-M6b file) falls to the default seed.
+          boxes: sanitizeBoxes(raw?.boxes) ?? DEFAULT_UI_SETTINGS.boxes,
         };
       } catch { return DEFAULT_UI_SETTINGS; }
     },
@@ -1229,7 +1301,7 @@ function initStores(userDataPath, { log, registryDir } = {}) {
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
         peerControlled: sanitizePeerControlled(partial?.peerControlled) ?? cur.peerControlled,
-        sandbox: sanitizeSandbox(partial?.sandbox) ?? cur.sandbox,
+        boxes: sanitizeBoxes(partial?.boxes ?? cur.boxes) ?? cur.boxes,
       };
       try {
         atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));

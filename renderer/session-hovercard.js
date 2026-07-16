@@ -184,6 +184,9 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     cancel();
     if (!item) { hide(); return; } // header / child rows / gaps
     if (item.querySelector('.rename-input')) { hide(); return; }
+    // A small in-row control with its own data-tip (close ×, pending chip) owns
+    // the hover — defer to tooltip.js so the two never stack on the same spot.
+    if (e.target.closest && e.target.closest('[data-tip]')) { hide(); return; }
     hide();
     timer = setTimeout(() => show(item), HOVER_DELAY_MS);
   });

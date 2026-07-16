@@ -168,7 +168,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     promptName.style.borderColor = '';
     const res = await window.api.savePrompt(kind, name, body);
-    if (res && res.ok === false) { alert(`Failed: ${res.error || 'unknown error'}`); return; }
+    if (res && res.ok === false) { alert(`Save prompt failed: ${res.error || 'unknown error'}`); return; }
     closePromptEditor();
     refreshPromptsList();
   });
@@ -283,7 +283,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     const res = await window.api.saveAgent(name, content);
     if (!res || !res.ok) {
-      alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+      alert(`Save agent failed: ${res && res.error ? res.error : 'unknown error'}`);
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.
@@ -402,7 +402,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     const res = await window.api.saveSkillLib(name, content);
     if (!res || !res.ok) {
-      alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+      alert(`Save skill failed: ${res && res.error ? res.error : 'unknown error'}`);
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.
@@ -527,7 +527,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     const res = await window.api.saveExecCommand(name, content);
     if (!res || !res.ok) {
-      alert(`Failed: ${res && res.error ? res.error : 'unknown error'}`);
+      alert(`Save exec command failed: ${res && res.error ? res.error : 'unknown error'}`);
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.

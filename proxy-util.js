@@ -52,6 +52,23 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
+// A managed sandbox box publishes its wirescope on a host-reachable loopback port
+// and advertises it via CLODEX_WIRESCOPE_PUBLIC_URL. peerProxyView strips
+// base/sessionId for a generic peer — its proxyBase is on the OWNER's loopback,
+// unreachable from the viewer — but a BOX's public URL is reachable from the host,
+// so the box should surface it (with the live sessionId) to light the viewer's
+// wirescope session link. Gated on the box's own wirescope actively tracking the
+// session (p.base && p.sessionId — the same gate the cost/bust/report query chips
+// use), so the link never points at a session wirescope isn't following. Returns
+// { base, sessionId } to merge into the peer view, or null (unset publicUrl — the
+// generic-peer case — or no live base/sessionId). Trailing slashes trimmed, matching
+// web-host's proxyBase→public rewrite.
+function boxWirescopeView(p, publicUrl) {
+  const base = (publicUrl || '').trim().replace(/\/+$/, '');
+  if (!base || !p || !p.base || !p.sessionId) return null;
+  return { base, sessionId: p.sessionId };
+}
+
 // Normalize one /_status `sub_agents[]` entry (a Task/background subagent that
 // shares the parent's session_id on the wire) into the renderer's child-row
 // shape. `key` is the instance key (agent_id when the wire carried the
@@ -529,6 +546,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
+  boxWirescopeView,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,
   versionSeverity, updateApplies, releaseAgeInfo,

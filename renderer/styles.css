@@ -155,25 +155,35 @@ html, body {
   outline: none;
 }
 
-#btn-new {
+/* Sidebar-header mini toolbar: three same-sized icon buttons sharing one
+   outlined family — the primary + (new session) carries accent colour + a
+   accent border so it still leads, without the old loud filled-red block; the
+   two secondary openers (new sandbox ▣, add peer ⇄) read quieter in dim/border.
+   All fill with a faint tint on hover rather than changing shape. */
+#sidebar-toolbar { display: flex; align-items: center; gap: 6px; }
+#btn-new, #btn-new-sandbox, #btn-add-peer {
   width: 28px;
   height: 28px;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 18px;
-  font-weight: 600;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-
-#btn-new:hover {
-  opacity: 0.85;
+/* Primary action: accent glyph + accent outline, larger +. */
+#btn-new {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 600;
 }
+#btn-new:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+#btn-new-sandbox:hover, #btn-add-peer:hover { color: var(--text); border-color: var(--text-dim); }
 
 #session-list {
   flex: 1;
@@ -503,6 +513,25 @@ html, body {
   color: var(--text);
 }
 #session-hovercard[hidden] { display: none; }
+
+/* Shared sidebar tooltip (tooltip.js) — same bg/border/radius/shadow family as
+   the hovercard above so the two read as one system, sized down for one-line
+   labels. Fixed + pointer-transparent, below the popovers/dialogs like the card. */
+#ui-tooltip {
+  position: fixed;
+  z-index: 49;
+  pointer-events: none;
+  max-width: 260px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sidebar-bg) 92%, var(--text));
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+}
+#ui-tooltip[hidden] { display: none; }
 
 .hovercard-head {
   display: flex;
@@ -1654,8 +1683,13 @@ html, body {
 .sandbox-row { margin: 8px 0; font-size: 13px; }
 /* Per-id hidden rules (project invariant: no generic .hidden — see
    css-hidden-invariant.test.js). #sandbox-open-row ships hidden until running;
-   #sandbox-workdir-pick is hidden via JS on the web frontend (text field only). */
-#sandbox-open-row.hidden, #sandbox-workdir-pick.hidden { display: none; }
+   #sandbox-workdir-pick is hidden via JS on the web frontend (text field only).
+   #sandbox-ports-line ships hidden until running (shows the effective ports). */
+#sandbox-open-row.hidden, #sandbox-workdir-pick.hidden, #sandbox-ports-line.hidden { display: none; }
+/* Mounts restart-needed hint ships hidden (armed only after a running-box mount
+   edit); #sandbox-mounts-add is hidden via JS on the web frontend (no native
+   folder picker there). */
+#sandbox-mounts-restart.hidden, #sandbox-mounts-add.hidden { display: none; }
 .sandbox-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .sandbox-dot.ok { background: var(--ok); }
 .sandbox-dot.warn { background: var(--warn); }
@@ -1675,13 +1709,30 @@ html, body {
 .sandbox-field input:disabled { opacity: 0.5; }
 .sandbox-workdir-row { display: flex; gap: 6px; }
 .sandbox-workdir-row input { flex: 1; }
-.sandbox-ports { display: flex; gap: 10px; }
-.sandbox-ports .sandbox-field { flex: 1; }
-.sandbox-ports input { width: 100%; }
 .sandbox-check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; cursor: pointer; }
 .sandbox-check input { margin: 0; }
+.sandbox-mount-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.sandbox-mount-path { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.sandbox-mount-mode { min-width: 88px; }
+#sandbox-mounts-restart { color: var(--warn, #c88a2a); }
 #sandbox-open-link { color: var(--accent); text-decoration: none; }
 #sandbox-open-link:hover { text-decoration: underline; }
+/* M6b P2: box list + per-box detail. Each row = status dot + label + Start/Stop;
+   the selected row is highlighted and its config shows in #sandbox-detail below. */
+#sandbox-box-list { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.sandbox-box-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--border); cursor: pointer; font-size: 13px; background: var(--bg-elev, transparent);
+}
+.sandbox-box-row:hover { border-color: var(--accent); }
+.sandbox-box-row.selected { border-color: var(--accent); background: var(--accent-dim, rgba(127,127,127,0.12)); }
+.sandbox-box-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sandbox-box-toggle { min-width: 60px; }
+.sandbox-box-new-row { display: flex; gap: 6px; margin: 10px 0; }
+.sandbox-box-new-row input { flex: 1; }
+.sandbox-detail-header { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; }
+#sandbox-detail-label { flex: 1; font-size: 14px; font-weight: 600; }
+#btn-sandbox-delete[disabled] { opacity: 0.4; cursor: not-allowed; }
 #prefs-dialog h3 { margin-bottom: 16px; font-size: 16px; }
 #prefs-dialog h4 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 #prefs-dialog section { margin-bottom: 16px; }
@@ -2775,6 +2826,10 @@ html, body {
   flex: none;
 }
 .peer-dot.online { background: var(--ok); opacity: 1; }
+/* Managed sandbox box marker: a small accent-tinted glyph chip before the label,
+   distinguishing a box row from a generic (laptop) peer. Sits between the status
+   dot and the name; flex:none so it never squeezes the label. */
+.peer-box-chip { flex: none; font-size: 11px; line-height: 1; color: var(--accent); }
 /* peer-state carries the sole margin-left:auto, so it (and the action strip that
    follows it) hug the right edge; when there's no state text the empty span
    still consumes the free space and pushes the icons right. */
