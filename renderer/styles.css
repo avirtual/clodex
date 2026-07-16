@@ -161,7 +161,7 @@ html, body {
    two secondary openers (new sandbox ▣, add peer ⇄) read quieter in dim/border.
    All fill with a faint tint on hover rather than changing shape. */
 #sidebar-toolbar { display: flex; align-items: center; gap: 6px; }
-#btn-new, #btn-new-sandbox, #btn-add-peer {
+#btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover {
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
@@ -183,7 +183,7 @@ html, body {
   font-weight: 600;
 }
 #btn-new:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-#btn-new-sandbox:hover, #btn-add-peer:hover { color: var(--text); border-color: var(--text-dim); }
+#btn-new-sandbox:hover, #btn-add-peer:hover, #btn-discover:hover { color: var(--text); border-color: var(--text-dim); }
 
 /* Sidebar filter bar — search box + group/sort/filter selects under the header.
    Distinct from #sidebar-toolbar (the header's + / sandbox / peer button row). */
