@@ -152,7 +152,16 @@ import json, os, sys, glob, shutil, re
 d = sys.argv[1]
 ev = 'UserPromptSubmit'
 try:
-    ev = json.loads(sys.argv[2]).get('hook_event_name') or ev
+    _in = json.loads(sys.argv[2])
+    ev = _in.get('hook_event_name') or ev
+    # A subagent's tool calls fire the PARENT session's PostToolUse hook, but the
+    # additionalContext returned lands in the SUBAGENT's context, not the main
+    # agent's — so a consuming rename-claim here would deliver the parked DM into
+    # the subagent and lose it on exit. Subagent hook inputs carry agent_id; a
+    # main-agent call never does. Bail before the claim so the messages drain at
+    # the next main-context event instead (deferred, never lost).
+    if _in.get('agent_id'):
+        sys.exit(0)
 except Exception:
     pass                          # stdin absent/unparseable => safe default
 # Inline a spilled-message @-pointer at drain time. The '@\${path}' form in a

@@ -211,3 +211,31 @@ test('pending drain @-inline: text without a spill pointer is untouched', () => 
   const text = `[agent:from clodex] short inline body\n(reply: start a line with [agent:dm clodex])`;
   assert.strictEqual(drainPending(REGISTRY_DIR, 'inl5', [text]), text);
 });
+
+// Subagent theft guard: a subagent's tool calls fire the PARENT's PostToolUse
+// hook, but the returned additionalContext lands in the subagent's context and
+// is lost on exit. Subagent inputs carry agent_id; the drain must bail (defer)
+// rather than consume the pending dir. Run the GENERATED script directly so the
+// bash+python agent_id check is what's exercised.
+function runPending(REGISTRY_DIR, name, input) {
+  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'pendingScript')], { input }).toString();
+}
+test('pending drain: a subagent PostToolUse (agent_id present) defers — pending dir survives', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('sub1');
+  const pendDir = path.join(REGISTRY_DIR, 'pending', 'sub1');
+  fs.mkdirSync(pendDir, { recursive: true });
+  fs.writeFileSync(path.join(pendDir, 'm0.json'), JSON.stringify({ text: 'parked while subagent ran' }));
+
+  const subInput = JSON.stringify({ hook_event_name: 'PostToolUse', agent_id: 'abc123', agent_type: 'general-purpose' });
+  const out = runPending(REGISTRY_DIR, 'sub1', subInput);
+  assert.strictEqual(out.trim(), '', 'subagent event must produce no additionalContext');
+  assert.ok(fs.existsSync(path.join(pendDir, 'm0.json')), 'the parked message must remain unclaimed');
+
+  // A subsequent main-agent event (no agent_id) drains it normally.
+  const mainInput = JSON.stringify({ hook_event_name: 'PostToolUse' });
+  const out2 = runPending(REGISTRY_DIR, 'sub1', mainInput);
+  assert.match(JSON.parse(out2).hookSpecificOutput.additionalContext, /parked while subagent ran/);
+  assert.ok(!fs.existsSync(path.join(pendDir, 'm0.json')), 'main-agent drain must consume the pending dir');
+});
