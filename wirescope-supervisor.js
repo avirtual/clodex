@@ -347,6 +347,13 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
             WARMTH_LOG_FILE: process.env.WARMTH_LOG_FILE ?? '1',
             WS_SPAWNER_HINT: process.env.WS_SPAWNER_HINT ?? '1',
             WS_OMIT_DEFAULT: process.env.WS_OMIT_DEFAULT ?? 'useremail',
+            // EndConversation is CLI-pinned (immune to settings-deny /
+            // --disallowedTools), so the proxy strip is the only removal
+            // route. Default-on: the schema costs ~1.7k tokens per request
+            // and the tool is useless in a wrapped session. Export
+            // STRIP_TOOLS_GLOBAL= (empty) to turn it off; per-spawn
+            // re-admit via [wirescope:keep-tools EndConversation].
+            STRIP_TOOLS_GLOBAL: process.env.STRIP_TOOLS_GLOBAL ?? 'EndConversation',
           },
           detached: true,
           stdio: ['ignore', logFd, logFd],
