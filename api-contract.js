@@ -114,6 +114,7 @@ const API_CONTRACT = [
   { name: 'onIpcMessage', kind: 'on', channel: 'ipc-message' },
   { name: 'onSessionActivity', kind: 'on', channel: 'session-activity' },
   { name: 'onPendingCount', kind: 'on', channel: 'pending-count' },
+  { name: 'onSessionTicket', kind: 'on', channel: 'session-ticket' },
   { name: 'onSessionAttention', kind: 'on', channel: 'session-attention' },
   { name: 'onSessionCtx', kind: 'on', channel: 'session-ctx' },
   { name: 'onSessionProxy', kind: 'on', channel: 'session-proxy' },

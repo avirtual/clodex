@@ -186,6 +186,25 @@ test('persistence: setRosterSent stamps a one-time marker that survives upserts'
   } finally { cleanup(); }
 });
 
+test('persistence: ephemeral + reviewFor survive upsert spread-merge (Task 24)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // The team-review handler seeds these post-create; they must survive
+    // create()'s own full-record upsert on a restart (spread-merge, like
+    // rosterSentAt) so review-done's guard + restore keep working.
+    stores.persistence.upsert({ name: 'team-review-1', workspaceId: 'default', type: 'claude' });
+    stores.persistence.upsert({ name: 'team-review-1', ephemeral: true, reviewFor: 'lead' });
+    let e = stores.persistence.get('team-review-1');
+    assert.strictEqual(e.ephemeral, true, 'ephemeral flag persisted');
+    assert.strictEqual(e.reviewFor, 'lead', 'reviewFor persisted');
+    // An unrelated later upsert (mimicking a restart create()) keeps both.
+    stores.persistence.upsert({ name: 'team-review-1', label: 'x', type: 'claude' });
+    e = stores.persistence.get('team-review-1');
+    assert.strictEqual(e.ephemeral, true, 'ephemeral survives a later spread-merge');
+    assert.strictEqual(e.reviewFor, 'lead', 'reviewFor survives a later spread-merge');
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {

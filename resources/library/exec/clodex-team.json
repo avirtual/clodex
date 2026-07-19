@@ -8,7 +8,7 @@
     "additionalProperties": false,
     "required": ["action", "agent"],
     "properties": {
-      "action": { "type": "string", "enum": ["roster", "retire"] },
+      "action": { "type": "string", "enum": ["roster", "retire", "tickets"] },
       "agent": { "type": "string", "maxLength": 64 },
       "target": { "type": "string", "maxLength": 64 },
       "cwd": { "type": "string", "maxLength": 1000 }

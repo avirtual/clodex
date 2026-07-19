@@ -69,9 +69,9 @@ function defaultClodexHome() {
 
 // Validate + default one role def (shared by loadManifest and addRole so both
 // speak one schema). Throws Error naming `file` on a bad field. Returns the
-// canonical `{ template, standing, prompt, instantiate, ephemeral, brief }`
-// shape in fixed key order (so JSON.stringify gives a stable equality key for
-// addRole's no-op-if-equal check).
+// canonical `{ template, standing, prompt, instantiate, ephemeral, brief,
+// tools, type }` shape in fixed key order (so JSON.stringify gives a stable
+// equality key for addRole's no-op-if-equal check).
 function normalizeRoleDef(roleName, def, file) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) {
     throw new Error(`role "${roleName}" must be an object (${file})`);
@@ -92,6 +92,25 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.brief != null && typeof def.brief !== 'string') {
     throw new Error(`role "${roleName}" brief must be a string (${file})`);
   }
+  // `tools` (optional) is an ALLOWLIST of built-in tool names for the seat —
+  // callers invert it against the tool catalog into the existing disabledTools
+  // denylist (e.g. a reviewer restricted to Read/Grep/Glob). `type` (optional)
+  // is the session type (claude|codex) the role instantiates as; absent → the
+  // caller's default. Both additive + backward-compatible: an absent field is
+  // null, so a manifest that predates them is unchanged.
+  if (def.tools != null && (!Array.isArray(def.tools) || def.tools.some((t) => typeof t !== 'string'))) {
+    throw new Error(`role "${roleName}" tools must be an array of strings (${file})`);
+  }
+  // An empty allowlist is a silent-lockout trap: it can't mean "allow nothing"
+  // (a seat with no tools is useless) and must NOT quietly read as "unrestricted"
+  // (the disabledTools inverter treats []-length as "no restriction"). Fail loud
+  // at manifest load — omit `tools` for unrestricted, or list what's allowed.
+  if (Array.isArray(def.tools) && def.tools.length === 0) {
+    throw new Error(`role "${roleName}" tools must not be empty — omit it for unrestricted, or list the allowed tools (${file})`);
+  }
+  if (def.type != null && typeof def.type !== 'string') {
+    throw new Error(`role "${roleName}" type must be a string (${file})`);
+  }
   return {
     template: def.template ?? null,
     standing: def.standing ?? null,
@@ -99,6 +118,8 @@ function normalizeRoleDef(roleName, def, file) {
     instantiate: inst,
     ephemeral: def.ephemeral === true,
     brief: def.brief ?? null,
+    tools: def.tools ?? null,
+    type: def.type ?? null,
   };
 }
 
@@ -189,7 +210,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (roles.lead.instantiate !== 'session') {
       throw new Error(`lead role "lead" must have instantiate: session (${file})`);
     }
-    return { name, root: path.resolve(root), lead, roles, file };
+    // `watchdogMs` (optional) overrides the ticket stall watchdog's default STALL_MS
+    // for this team (Task 25). A positive number of milliseconds; absent → the
+    // handler's default. Additive/back-compat — an older manifest is unchanged.
+    const watchdogMs = m.watchdogMs;
+    if (watchdogMs != null && (typeof watchdogMs !== 'number' || !Number.isFinite(watchdogMs) || watchdogMs <= 0)) {
+      throw new Error(`team.json "watchdogMs" must be a positive number (${file})`);
+    }
+    return { name, root: path.resolve(root), lead, roles, file, watchdogMs: watchdogMs ?? null };
   }
 
   // A session (by cwd) belongs to project `root` iff its cwd is root or under

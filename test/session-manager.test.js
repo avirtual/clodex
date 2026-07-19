@@ -779,7 +779,7 @@ test('spawn template: malformed JSON file errors, no spawn', async () => {
 // the idle-edge Node drain is the turn-end fallback for a pure-text (no-tool)
 // turn. Real pending-store fns + isDraftOpen injected over a temp PENDING_DIR;
 // _injectText captured (no PTY). One atomic rename-claim = exactly-once.
-const { parkDelivery, drainPending, hasPending, hasActivePending } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal } = require('../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../proxy-util');
 
 function mkPark(overrides = {}) {
@@ -1383,11 +1383,12 @@ test('_armBootSettle: absolute-wait cap closes despite continuous sub-settle rep
   assert.strictEqual(s._bootSettling, false, 'boot window closed by the cap');
 });
 
-// MUST-FIX 2: an in-place restart routes through kill() (drops the persistence
-// record), so create()'s existingEntry would be null and re-inject the roster.
-// _preserveRosterStamp (called by engine.restartSession / applySessionArgs after
-// kill, before create) re-seeds JUST the stamp so create's read skips.
-test('_preserveRosterStamp: re-seeds a stamped seat across the kill+create restart seam', () => {
+// MUST-FIX 2 (task 22, generalized in task 24): an in-place restart routes through
+// kill() (drops the persistence record), so create()'s existingEntry would be null
+// and re-inject the roster / lose a reviewer seat's identity. _preserveAcrossRestart
+// (called by engine.restartSession / applySessionArgs after kill, before create)
+// re-seeds JUST the requested fields present on the prior entry so create's read sees them.
+test('_preserveAcrossRestart: re-seeds requested fields across the kill+create restart seam', () => {
   const store = [];
   const persistence = {
     list: () => store,
@@ -1399,14 +1400,621 @@ test('_preserveRosterStamp: re-seeds a stamped seat across the kill+create resta
   };
   const { m } = mkPark({ ...teamDeps, getPersistence: () => persistence });
   // kill() has already dropped the record; the store is empty for this name.
-  m._preserveRosterStamp('cx', { name: 'cx', rosterSentAt: 999, createdAt: 1 });
+  // A reviewer seat carries the roster stamp AND its ephemeral/reviewFor identity.
+  m._preserveAcrossRestart('cx', { name: 'cx', rosterSentAt: 999, ephemeral: true, reviewFor: 'lead', createdAt: 1 },
+    ['rosterSentAt', 'ephemeral', 'reviewFor']);
   assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'the stamp is re-seeded so create() skips re-inject');
-  // create()'s own upsert then spread-merges the full record over the stub, keeping the stamp.
+  assert.strictEqual(persistence.get('cx').ephemeral, true, 'ephemeral identity re-seeded');
+  assert.strictEqual(persistence.get('cx').reviewFor, 'lead', 'reviewFor identity re-seeded');
+  // create()'s own upsert then spread-merges the full record over the stub, keeping the fields.
   persistence.upsert({ name: 'cx', type: 'codex', cwd: '/proj/b', createdAt: 5 });
   assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'survives create()\'s rebuild upsert');
-  // A never-stamped (genuinely fresh) prior entry seeds nothing → still gets its roster.
-  m._preserveRosterStamp('fresh', { name: 'fresh' });
-  assert.strictEqual(persistence.get('fresh'), null, 'a fresh seat is not seeded');
+  assert.strictEqual(persistence.get('cx').reviewFor, 'lead', 'reviewFor survives create()\'s rebuild upsert');
+  // Only the REQUESTED fields carry: a prior entry lacking a requested field seeds nothing for it.
+  m._preserveAcrossRestart('fresh', { name: 'fresh' }, ['rosterSentAt', 'ephemeral', 'reviewFor']);
+  assert.strictEqual(persistence.get('fresh'), null, 'a fresh seat with none of the fields is not seeded');
+  // A FRESH restart drops rosterSentAt from the field list (new conversation) but
+  // still carries the seat's identity — request only ephemeral/reviewFor.
+  m._preserveAcrossRestart('rv', { name: 'rv', rosterSentAt: 5, ephemeral: true, reviewFor: 'lead' },
+    ['ephemeral', 'reviewFor']);
+  assert.strictEqual(persistence.get('rv').rosterSentAt, undefined, 'rosterSentAt NOT carried on a fresh restart');
+  assert.strictEqual(persistence.get('rv').ephemeral, true, 'identity still carried on a fresh restart');
+});
+
+// --- [agent:team-review] / [agent:review-done] — ephemeral cold-review seats (Task 24) ---
+// A team LEAD writes only the review scope; clodex spawns an ephemeral reviewer
+// seat from the `reviewer` role, briefs it, injects the scope; the seat returns a
+// verdict via [agent:review-done], which routes to the lead and archives the seat.
+
+// A team whose reviewer role carries a Read/Grep/Glob-only tools allowlist. The
+// stub resolveTeam returns it for any /proj cwd; a Map-backed persistence gives
+// get/upsert so the ephemeral+reviewFor seed round-trips. The seat name matches
+// the role KEY (`reviewer`), so create()'s own name-driven auto role-prompt path
+// binds the briefing — the handler passes no inline system body.
+function mkReview(extra = {}) {
+  const roleOverride = extra.reviewerRole;
+  delete extra.reviewerRole;
+  const reviewerRole = roleOverride || { instantiate: 'subagent', prompt: 'clodex-team-reviewer',
+    brief: 'the reviewer', tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false };
+  const team = { name: 'team', root: '/proj', lead: 'lead', file: '/proj/team.json',
+    roles: { lead: { instantiate: 'session', brief: 'the lead' }, reviewer: reviewerRole } };
+  const store = [];
+  const persistence = {
+    list: () => store,
+    get: (n) => store.find((e) => e.name === n) || null,
+    upsert: (e) => {
+      const i = store.findIndex((x) => x.name === e.name);
+      if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
+    },
+    remove: (n) => { const i = store.findIndex((x) => x.name === n); if (i >= 0) store.splice(i, 1); },
+  };
+  const overrides = {
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+    getPersistence: () => persistence,
+    ...extra,
+  };
+  const { m, injected } = mkPark(overrides);
+  const created = [];
+  const delivered = [];
+  const gated = [];
+  const archived = [];
+  const order = []; // shared recorder — proves deliver happens BEFORE archive (NIT 4)
+  m.create = async (...args) => { created.push(args); };
+  m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
+  // Default: delivery succeeds. A test can reassign m._gatedDeliver to return
+  // { error } (dead/absent lead) to drive MUST-FIX 3's bounce-and-keep-live arm.
+  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { delivered: true }; };
+  m.archive = async (name) => { archived.push(name); order.push('archive'); };
+  m._sendToSession = () => {};
+  return { m, injected, created, delivered, gated, archived, order, persistence, team };
+}
+
+test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope injected', async () => {
+  const { m, injected, created, delivered, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'check the boot-race fix');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'one reviewer seat spawned');
+  const [name, type, cwd, extraArgs, resumeId, ws, sysBody, fork, proxy, agents, denyB, disabledTools] = created[0];
+  assert.strictEqual(name, 'team-reviewer-1', 'first reviewer name matches the role key so create() auto-binds the prompt');
+  assert.strictEqual(type, 'claude', 'defaults to claude when role.type is null');
+  assert.strictEqual(cwd, '/proj', 'cwd defaults to team root');
+  // The handler passes NO inline system body — create()'s name-driven auto
+  // role-prompt path (seat stem === role key) binds the reviewer briefing itself.
+  assert.strictEqual(sysBody, null, 'no explicit inline briefing — auto-bound by create()');
+  // The Read/Grep/Glob allowlist inverts to a denylist of every OTHER catalog tool
+  // (create() auto-binds the role PROMPT but not its TOOLS — the handler owns this).
+  assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
+    'non-allowed tools are disabled');
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'allowlisted tools are NOT disabled');
+  // Seat identity reserved synchronously (MUST-FIX 1) — persisted before spawn.
+  const rec = persistence.get('team-reviewer-1');
+  assert.strictEqual(rec.ephemeral, true);
+  assert.strictEqual(rec.reviewFor, 'lead');
+  // Scope injected as the seat's first turn (active delivery, from the lead).
+  assert.deepStrictEqual(delivered, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
+});
+
+test('team-review: name bumps past an existing team-reviewer-1 (live or persisted)', async () => {
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  persistence.upsert({ name: 'team-reviewer-1', archivedAt: 1 }); // a prior review still reserves the slot
+  m.sessions.set('team-reviewer-2', { name: 'team-reviewer-2', agentType: 'claude', cwd: '/proj' }); // live
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created[0][0], 'team-reviewer-3', 'bumps past both the persisted -1 and the live -2');
+});
+
+test('team-review: a NON-lead is bounced, nothing spawned', async () => {
+  const { m, injected, created } = mkReview();
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('team-dev'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned for a non-lead');
+  assert.ok(injected.some((t) => /only the team lead \(lead\)/.test(t)), 'bounced with the lead-only reason');
+});
+
+test('team-review: an empty scope is bounced, nothing spawned', async () => {
+  const { m, injected, created } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), '   ');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned without a scope');
+  assert.ok(injected.some((t) => /a review scope is required/.test(t)));
+});
+
+test('team-review: a teamless sender is bounced', async () => {
+  const { m, injected, created } = mkReview();
+  m.sessions.set('solo', { name: 'solo', agentType: 'claude', cwd: '/elsewhere', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('solo'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, []);
+  assert.ok(injected.some((t) => /not on a team/.test(t)));
+});
+
+test('review-done: an ephemeral reviewer delivers its verdict to the lead, THEN archives (record kept)', async () => {
+  const { m, gated, archived, order, persistence } = mkReview();
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
+  m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
+  assert.deepStrictEqual(gated, [{ target: 'lead', sender: 'team-reviewer-1', body: 'VERDICT: ACCEPT' }],
+    'verdict delivered to the reviewFor lead (dm-style, parking/spill)');
+  assert.deepStrictEqual(archived, ['team-reviewer-1'], 'seat archived (record kept, not deleted)');
+  // NIT 4: the ordering is load-bearing (onExit-before-cleanup) — assert it for real,
+  // not just that both happened. Deliver must ENQUEUE before archive kills the seat.
+  assert.deepStrictEqual(order, ['deliver', 'archive'], 'verdict enqueued to the lead BEFORE the seat is archived');
+});
+
+test('review-done: a NON-reviewer seat is bounced (no delivery, no archive)', () => {
+  const { m, injected, gated, archived, persistence } = mkReview();
+  persistence.upsert({ name: 'plain', workspaceId: 'default' }); // no ephemeral/reviewFor
+  m.sessions.set('plain', { name: 'plain', agentType: 'claude', cwd: '/proj' });
+  m._handleReviewDone(m.sessions.get('plain'), 'VERDICT: ACCEPT');
+  assert.deepStrictEqual(gated, [], 'nothing delivered');
+  assert.deepStrictEqual(archived, [], 'nothing archived');
+  assert.ok(injected.some((t) => /only for an ephemeral reviewer seat/.test(t)));
+});
+
+test('review-done: an empty verdict is bounced', () => {
+  const { m, injected, gated, archived, persistence } = mkReview();
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
+  m._handleReviewDone(m.sessions.get('team-reviewer-1'), '  ');
+  assert.deepStrictEqual(gated, []);
+  assert.deepStrictEqual(archived, []);
+  assert.ok(injected.some((t) => /a verdict is required/.test(t)));
+});
+
+// MUST-FIX 3: an absent/dead lead makes _gatedDeliver return { error }. The verdict
+// went nowhere, so archiving would strand it — bounce to the reviewer and KEEP the
+// seat live so it can retry once the lead is back.
+test('review-done: a dead/absent lead ({error}) bounces and does NOT archive (seat kept live to retry)', () => {
+  const { m, injected, archived, persistence } = mkReview();
+  m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
+  m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
+  assert.deepStrictEqual(archived, [], 'seat NOT archived — stays live for a retry');
+  assert.ok(injected.some((t) => /verdict NOT delivered, seat kept live/.test(t)), 'reviewer bounced with a retry hint');
+});
+
+// A HELD/parked delivery ({held}/{parked}) is a REAL lead just busy — accepted; the
+// queue/park store carries the verdict, so the seat retires as normal.
+test('review-done: a HELD delivery is accepted and the seat still archives', () => {
+  const { m, archived, order, persistence } = mkReview();
+  m._gatedDeliver = () => { order.push('deliver'); return { held: 'busy' }; };
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
+  m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
+  assert.deepStrictEqual(archived, ['team-reviewer-1'], 'a held (not errored) delivery still retires the seat');
+  assert.deepStrictEqual(order, ['deliver', 'archive'], 'held delivery still enqueues before archive');
+});
+
+// MUST-FIX 1 (name-mint TOCTOU): two [agent:team-review] in one lead turn run their
+// mint loops synchronously, before either deferred create() populates the map. The
+// synchronous reservation must make the second mint a DISTINCT name.
+test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 collision)', async () => {
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  const lead = m.sessions.get('lead');
+  // Both handlers run synchronously (same turn) before either create() fires.
+  m._handleTeamReview(lead, 'first scope');
+  m._handleTeamReview(lead, 'second scope');
+  await new Promise((r) => setImmediate(r));
+  const names = created.map((c) => c[0]).sort();
+  assert.deepStrictEqual(names, ['team-reviewer-1', 'team-reviewer-2'], 'distinct seat names, no collision');
+  assert.strictEqual(persistence.get('team-reviewer-1').reviewFor, 'lead');
+  assert.strictEqual(persistence.get('team-reviewer-2').reviewFor, 'lead');
+});
+
+// MUST-FIX 4: a codex reviewer with a tools restriction would spawn FULLY ARMED
+// (disabledTools is consumed only in create()'s claude arm) — refuse rather than
+// silently unenforce the security config.
+test('team-review: a codex reviewer carrying a tools allowlist is REFUSED, nothing spawned', async () => {
+  const { m, injected, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob'], type: 'codex', template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned for a tools-restricted codex reviewer');
+  assert.ok(injected.some((t) => /only enforced for claude seats/.test(t)), 'bounced with the unenforceable-restriction reason');
+});
+
+// A codex reviewer WITHOUT a tools restriction is fine — nothing to unenforce.
+test('team-review: a codex reviewer with NO tools restriction spawns normally', async () => {
+  const { m, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: null, type: 'codex', template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'an unrestricted codex reviewer spawns');
+  assert.strictEqual(created[0][1], 'codex', 'spawns as codex');
+});
+
+// NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.
+// Preflight it and warn on the lead's confirm line so a team that never installed
+// the prompt gets a signal rather than a silently-unbriefed reviewer.
+test('team-review: a missing role-prompt file appends an UNBRIEFED warning to the confirm line', async () => {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  // Empty registry — library/prompts/system/clodex-team-reviewer.md does NOT exist.
+  const { m, injected, created } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'still spawns — the warning is advisory, not a block');
+  assert.ok(injected.some((t) => /boots UNBRIEFED/.test(t)), 'confirm line warns the prompt is missing');
+});
+
+// The prompt file PRESENT → no warning.
+test('team-review: an installed role-prompt file yields NO unbriefed warning', async () => {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const dir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
+  fsReal.mkdirSync(dir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(dir, 'clodex-team-reviewer.md'), 'you are the reviewer');
+  const { m, injected } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'confirmed');
+  assert.ok(!injected.some((t) => /UNBRIEFED/.test(t)), 'no warning when the prompt is installed');
+});
+
+// NIT 5: a team with no `reviewer` role bounces the lead, nothing spawned.
+test('team-review: a team with no reviewer role bounces the lead', async () => {
+  const { m, injected, created } = mkReview({
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj')
+      ? { name: 'team', root: '/proj', lead: 'lead', file: '/proj/team.json',
+          roles: { lead: { instantiate: 'session', brief: 'the lead' } } }
+      : null),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned without a reviewer role');
+  assert.ok(injected.some((t) => /no "reviewer" role to spawn/.test(t)), 'bounced with the missing-role reason');
+});
+
+// --- [agent:task …] — team ticket protocol (Task 25) ------------------------
+// A team LEAD opens/directs tickets; an ASSIGNEE closes them; clodex owns the
+// registry (tickets.json), lifecycle, and stall watchdog. The fixture uses a REAL
+// temp team dir so the ticket store round-trips to disk (like the T24 prompt
+// preflight). Seats are named per the <team>-<role> convention so matchSeatRole
+// binds them; the lead seat is `lead` (team.lead).
+const ticketsMod = require('../tickets-store');
+const tstore = ticketsMod.createTicketsStore();
+
+function mkTasks(extra = {}) {
+  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tk-'));
+  const team = {
+    name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
+    file: pathReal.join(teamDir, 'team.json'),
+    roles: {
+      lead: { instantiate: 'session', brief: 'the lead' },
+      hand: { instantiate: 'session', brief: 'the hand' },
+      reviewer: { instantiate: 'subagent', brief: 'the reviewer' },
+    },
+  };
+  const overrides = {
+    fs: fsReal, path: pathReal, countPending: countPendingReal,
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+    ...extra,
+  };
+  const { m, injected } = mkPark(overrides);
+  const gated = [];
+  const broadcasts = [];
+  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); return { delivered: true }; };
+  m._broadcast = (channel, msg) => broadcasts.push({ channel, msg });
+  m._sendToSession = () => {};
+  const seat = (name, cwd = '/proj', props = {}) => {
+    m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle', ...props });
+    return m.sessions.get(name);
+  };
+  const load = () => tstore.load(teamDir);
+  const one = (id) => load().find((t) => t.id === id);
+  return { m, injected, gated, broadcasts, team, teamDir, seat, load, one };
+}
+
+test('task add (assigned): mints t1, delivers spec to the assignee seat, confirms to lead', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  const t = f.one('t1');
+  assert.ok(t, 'ticket persisted');
+  assert.strictEqual(t.assignee, 'hand', 'role stored as the durable assignee');
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual(t.title, 'build the widget');
+  assert.strictEqual(t.opener, 'lead');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] build the widget\ndetail' }],
+    'spec delivered to the live seat holding the role, id-prefixed');
+  assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)), 'lead confirmed');
+});
+
+test('task add records a taskDir when the spec first line names one', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'work tasks/25-team-tickets/spec.md' });
+  assert.strictEqual(f.one('t1').taskDir, 'tasks/25-team-tickets/spec.md');
+});
+
+test('task add (backlog): unassigned, no delivery, confirmed as backlog', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'someday task' });
+  assert.strictEqual(f.one('t1').assignee, null);
+  assert.deepStrictEqual(f.gated, [], 'nothing delivered for a backlog ticket');
+  assert.ok(f.injected.some((x) => /ticket t1 \(backlog\)/.test(x)));
+});
+
+test('task add to a role with no live seat: minted, but the lead is warned it was not delivered', () => {
+  const f = mkTasks();
+  f.seat('lead'); // no team-hand live
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec' });
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'role is the durable assignee even with no live seat');
+  assert.deepStrictEqual(f.gated, [], 'no live seat → nothing delivered');
+  assert.ok(f.injected.some((x) => /no live seat for "hand"/.test(x)), 'lead warned spec not delivered');
+});
+
+test('task assign: a backlog ticket gets an assignee and the spec is delivered', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.strictEqual(f.one('t1').assignee, 'hand');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }]);
+  assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)));
+});
+
+test('task reassign: TWO deliveries — old-assignee notice ORDERED BEFORE new-assignee spec', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  assert.strictEqual(f.one('t1').assignee, 'reviewer', 'reassigned to the new role');
+  assert.strictEqual(f.gated.length, 2, 'exactly two deliveries');
+  assert.strictEqual(f.gated[0].target, 'team-hand', 'OLD assignee notice first');
+  assert.match(f.gated[0].body, /reassigned/);
+  assert.strictEqual(f.gated[1].target, 'team-reviewer-1', 'NEW assignee spec second');
+  assert.match(f.gated[1].body, /^\[ticket t1\] the spec/);
+});
+
+test('task reassign: a parked/dead OLD seat does not block the NEW delivery (independence)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+  // Old assignee's delivery errors; the new one must still go through.
+  let call = 0;
+  f.m._gatedDeliver = (target, sender, body) => {
+    call++; f.gated.push({ target, sender, body });
+    return call === 1 ? { error: 'old seat gone' } : { delivered: true };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  assert.strictEqual(f.gated.length, 2, 'both deliveries attempted despite the first erroring');
+  assert.strictEqual(f.gated[1].target, 'team-reviewer-1', 'new assignee still got the spec');
+});
+
+test('task self-assign (assignee == lead): confirm only, NO spec echo', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'lead', id: null, body: 'i will do this' });
+  assert.strictEqual(f.one('t1').assignee, 'lead');
+  assert.deepStrictEqual(f.gated, [], 'the lead just wrote it — no echo back to itself');
+  assert.ok(f.injected.some((x) => /ticket t1 → lead/.test(x)));
+});
+
+test('task done: assignee closes, report delivered to the lead BEFORE the state stamp', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  const t = f.one('t1');
+  assert.strictEqual(t.state, 'done');
+  assert.ok(typeof t.closedAt === 'number');
+  assert.deepStrictEqual(f.gated, [{ target: 'lead', sender: 'team-hand', body: '[ticket t1 done] shipped it' }],
+    'report delivered to the opener');
+});
+
+test('task done: a dead lead ({error}) keeps the ticket OPEN and bounces (MF3 parity)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  assert.strictEqual(f.one('t1').state, 'open', 'not closed — report went nowhere');
+  assert.ok(f.injected.some((x) => /report NOT delivered, ticket kept open/.test(x)));
+});
+
+test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('team-reviewer-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'not mine' });
+  assert.strictEqual(f.one('t1').state, 'open');
+  assert.deepStrictEqual(f.gated, []);
+  assert.ok(f.injected.some((x) => /only ticket t1's assignee \(hand\) can close it/.test(x)));
+});
+
+test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee kept', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the edge case' });
+  const t = f.one('t1');
+  assert.strictEqual(t.state, 'open', 'reopened');
+  assert.strictEqual(t.assignee, 'hand', 'assignee kept');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 rejected] fix the edge case' }]);
+});
+
+test('task reject: rejecting a non-DONE ticket is bounced', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'reason' });
+  assert.strictEqual(f.one('t1').state, 'open', 'unchanged');
+  assert.ok(f.injected.some((x) => /reject reopens a DONE ticket; t1 is open/.test(x)));
+});
+
+test('task cancel: works on an assigned ticket (reason to assignee) and a backlog ticket', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'assigned one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog one' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'not needed' });
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 cancelled] not needed' }]);
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
+  assert.strictEqual(f.one('t2').state, 'cancelled', 'backlog ticket cancels too');
+  assert.deepStrictEqual(f.gated, [], 'no reason + no live assignee → no delivery');
+});
+
+test('task: role-addressed ticket survives seat respawn (assignee stays the role)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  // The seat instance churns: kill team-hand, respawn a DIFFERENT collision-suffixed
+  // instance of the same role. The stored assignee is the ROLE, so it still resolves.
+  f.m.sessions.delete('team-hand');
+  f.seat('team-hand-2');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('team-hand-2'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done by the new instance' });
+  assert.strictEqual(f.one('t1').state, 'done', 'the new instance of the role can close it');
+  assert.deepStrictEqual(f.gated, [{ target: 'lead', sender: 'team-hand-2', body: '[ticket t1 done] done by the new instance' }]);
+});
+
+test('task guards: non-lead add/assign/cancel bounce; unknown id and assign-on-closed bounce', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // non-lead add
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'add', who: null, id: null, body: 'x' });
+  assert.ok(f.injected.some((x) => /only the team lead \(lead\) can open a ticket/.test(x)));
+  assert.deepStrictEqual(f.load(), [], 'no ticket minted by a non-lead');
+  // unknown id
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't9', who: 'hand', body: '' });
+  assert.ok(f.injected.some((x) => /no ticket t9 on team/.test(x)));
+  // assign on a closed ticket
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 's' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'd' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  assert.ok(f.injected.some((x) => /ticket t1 is done, not open — cannot assign/.test(x)));
+  // non-lead cancel
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 's2' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
+  assert.ok(f.injected.some((x) => /only the team lead \(lead\) can cancel a ticket/.test(x)));
+  assert.strictEqual(f.one('t2').state, 'open', 'unchanged by the non-lead cancel');
+});
+
+test('task list: one line per ticket (id, state, assignee, age, title), sorted by id', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first task' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'second task' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  const out = f.injected.find((x) => /tickets on team/.test(x));
+  assert.ok(out, 'a list summary was returned to the sender');
+  assert.match(out, /t1 \[open\] hand \d+\w+ — first task/);
+  assert.match(out, /t2 \[open\] — \d+\w+ — second task/, 'unassigned shows — for the assignee');
+  assert.ok(out.indexOf('t1') < out.indexOf('t2'), 'sorted by id');
+});
+
+test('task list: an empty registry says so', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  assert.ok(f.injected.some((x) => /no tickets on team/.test(x)));
+});
+
+test('list(): the assignee seat carries its open ticket id (sidebar badge seed)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const rows = Object.fromEntries(f.m.list().map((r) => [r.name, r]));
+  assert.strictEqual(rows['team-hand'].ticket, 't1', 'the role seat shows its open ticket');
+  assert.strictEqual(rows['lead'].ticket, null, 'a seat with no ticket shows null');
+});
+
+// --- watchdog: stall nudges the lead once per episode; backlog exempt ---------
+
+test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep is silent', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  // Age the ticket well past the default stall window.
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000; // 1h ago
+  tstore.save(f.teamDir, arr);
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  const nudges = f.gated.filter((g) => g.target === 'lead' && /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'exactly one nudge to the lead');
+  assert.ok(typeof f.one('t1').nudgedAt === 'number', 'ticket marked nudged');
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 0, 'no second nudge in the same episode');
+});
+
+test('watchdog: activity resets the stall episode (nudge fires again after a re-stall)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  let arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  tstore.save(f.teamDir, arr);
+  f.m._sweepTickets(Date.now());
+  assert.ok(f.one('t1').nudgedAt, 'nudged');
+  // A turn on the assignee seat resets the episode.
+  f.m._emitActivity('team-hand', 'thinking', false);
+  assert.strictEqual(f.one('t1').nudgedAt, null, 'activity cleared the nudge episode');
+  assert.ok(f.one('t1').lastActivityAt > Date.now() - 5000, 'lastActivityAt bumped to ~now');
+  // Re-stall and sweep → nudges again.
+  arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  tstore.save(f.teamDir, arr);
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
+});
+
+test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  tstore.save(f.teamDir, arr);
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [], 'backlog tickets never nudge');
+  assert.strictEqual(f.one('t1').nudgedAt, null);
+});
+
+test('watchdog: a per-team watchdogMs override tightens the stall window', () => {
+  const f = mkTasks();
+  f.team.watchdogMs = 1000; // 1s
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 5000; // 5s ago — past 1s, well within the 30m default
+  tstore.save(f.teamDir, arr);
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 'the tighter override fires the nudge');
 });
 
 // --- list(): team field (sidebar group-by-project reflects team identity) ---

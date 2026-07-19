@@ -151,6 +151,25 @@ test('loadManifest carries an optional role prompt through the shape', () => {
   assert.strictEqual(m.roles.dev.prompt, null);
 });
 
+test('loadManifest carries optional role tools + type through the shape (default null)', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    root, lead: 'lead', watchdogMs: 600000,
+    roles: {
+      lead: { template: 'fable-lead' }, // no tools/type → null
+      reviewer: { instantiate: 'subagent', tools: ['Read', 'Grep', 'Glob'], type: 'claude' },
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const m = tm.loadManifest('shop');
+  assert.deepStrictEqual(m.roles.reviewer.tools, ['Read', 'Grep', 'Glob'], 'tools allowlist carried');
+  assert.strictEqual(m.roles.reviewer.type, 'claude', 'type carried');
+  assert.strictEqual(m.roles.lead.tools, null, 'tools defaults to null when absent');
+  assert.strictEqual(m.roles.lead.type, null, 'type defaults to null when absent');
+  assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override carried');
+});
+
 test('loadManifest rejects bad shapes with pointed errors', () => {
   const home = mkHome();
   const tm = createTeamManifest({ fs, clodexHome: home });
@@ -170,6 +189,13 @@ test('loadManifest rejects bad shapes with pointed errors', () => {
     [{ root: '/p', lead: 'lead', roles: { lead: { template: 42 } } }, /template must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { prompt: 42 } } }, /prompt must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { brief: 42 } } }, /brief must be a string/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { tools: 'Read' } } }, /tools must be an array of strings/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { tools: ['Read', 7] } } }, /tools must be an array of strings/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { tools: [] } } }, /tools must not be empty/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { type: 42 } } }, /type must be a string/],
+    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: 'soon' }, /"watchdogMs" must be a positive number/],
+    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: 0 }, /"watchdogMs" must be a positive number/],
+    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: -5 }, /"watchdogMs" must be a positive number/],
   ]) {
     const name = `bad-${i++}`;
     mkTeam(home, name, manifest);

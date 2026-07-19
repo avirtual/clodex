@@ -17,6 +17,10 @@
 //            socket; the core validates (requester running, same project,
 //            no self-retire), archives (resumable), and confirms PASSIVELY.
 //            Success here is byte-silent — the confirmation DM is the ack.
+//   tickets — QUERY. Ground-truth read of the team's ticket registry
+//            (teams/<team>/tickets.json), one line per ticket (id, state,
+//            assignee, age, title). Mirrors the [agent:task list] intent but as
+//            an on-demand pull (Task 25). One replyStderr line (multi-line body).
 //
 // Spawn deliberately has no verb: [agent:spawn name:X template:Y] already
 // exists and duplicating it here would be ceremony.
@@ -138,6 +142,38 @@ function doRoster(payload) {
   say(`team ${team.name} (root ${team.root}) — roles: ${roles} (*=lead) — live: ${live.length ? live.sort().join(',') : '(none)'}`);
 }
 
+function humanizeAge(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+function doTickets(payload) {
+  const cwd = requesterCwd(payload);
+  if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
+  const team = resolveTeam(cwd);
+  if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  let tickets = [];
+  try {
+    const arr = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, team.name, 'tickets.json'), 'utf-8'));
+    if (Array.isArray(arr)) tickets = arr;
+  } catch { /* no registry yet — empty */ }
+  if (!tickets.length) say(`team ${team.name}: no tickets`);
+  tickets.sort((a, b) => {
+    const na = Number(String(a.id).replace(/^t/, '')) || 0;
+    const nb = Number(String(b.id).replace(/^t/, '')) || 0;
+    return na - nb;
+  });
+  const now = Date.now();
+  const lines = tickets.map((t) =>
+    `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
+  say(`team ${team.name} tickets:\n${lines.join('\n')}`);
+}
+
 async function doRetire(payload) {
   const target = payload.target;
   if (!target || !/^[a-zA-Z0-9._-]{1,64}$/.test(target)) die('retire needs "target": a session name');
@@ -171,6 +207,7 @@ async function doRetire(payload) {
   const { action, agent } = payload;
   if (!agent || !/^[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('payload needs "agent": your session name');
   if (action === 'roster') return doRoster(payload);
+  if (action === 'tickets') return doTickets(payload);
   if (action === 'retire') return doRetire(payload);
-  die(`unknown action "${action}" (roster|retire)`);
+  die(`unknown action "${action}" (roster|tickets|retire)`);
 })().catch((e) => die(e.message));

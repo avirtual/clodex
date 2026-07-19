@@ -199,6 +199,70 @@ test('shadowIntentKey: notify-user keys on body (no head discriminator)', () => 
   assert.notStrictEqual(shadowIntentKey('t3', a), shadowIntentKey('t3', c));
 });
 
+test('parseIntent: team-review / review-done capture a free-text body (dm-shaped)', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team-review] check the boot-race fix'),
+    { type: 'team-review', body: 'check the boot-race fix' });
+  assert.deepStrictEqual(parseIntent('[agent:team-review]'),
+    { type: 'team-review', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:review-done] VERDICT: ACCEPT'),
+    { type: 'review-done', body: 'VERDICT: ACCEPT' });
+  assert.deepStrictEqual(parseIntent('[agent:review-done] '),
+    { type: 'review-done', body: '' });
+});
+
+test('parseIntent: team-review / review-done bodies span multiple lines (s flag)', () => {
+  const r = parseIntent('[agent:review-done] VERDICT: REWORK\nMUST-FIX: foo.js:12');
+  assert.strictEqual(r.type, 'review-done');
+  assert.strictEqual(r.body, 'VERDICT: REWORK\nMUST-FIX: foo.js:12');
+});
+
+test('parseIntent: an escaped team-review is reported, not dispatched', () => {
+  assert.deepStrictEqual(parseIntent('\\[agent:team-review] scope'),
+    { type: 'escape', text: '[agent:team-review] scope' });
+});
+
+test('parseIntent: task add — bracket-arg optional (backlog vs mint+assign)', () => {
+  assert.deepStrictEqual(parseIntent('[agent:task add] build the widget'),
+    { type: 'task', sub: 'add', who: null, id: null, body: 'build the widget' });
+  assert.deepStrictEqual(parseIntent('[agent:task add hand] build the widget'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+});
+
+test('parseIntent: task assign / done / reject / cancel / list', () => {
+  assert.deepStrictEqual(parseIntent('[agent:task assign t7 hand]'),
+    { type: 'task', sub: 'assign', id: 't7', who: 'hand', body: '' });
+  // A missing token surfaces as null — the handler bounces with a precise message.
+  assert.deepStrictEqual(parseIntent('[agent:task assign t7]'),
+    { type: 'task', sub: 'assign', id: 't7', who: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:task done t7] shipped it'),
+    { type: 'task', sub: 'done', id: 't7', who: null, body: 'shipped it' });
+  assert.deepStrictEqual(parseIntent('[agent:task reject t7] needs rework'),
+    { type: 'task', sub: 'reject', id: 't7', who: null, body: 'needs rework' });
+  assert.deepStrictEqual(parseIntent('[agent:task cancel t7] nvm'),
+    { type: 'task', sub: 'cancel', id: 't7', who: null, body: 'nvm' });
+  assert.deepStrictEqual(parseIntent('[agent:task cancel t7]'),
+    { type: 'task', sub: 'cancel', id: 't7', who: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:task list]'),
+    { type: 'task', sub: 'list', id: null, who: null, body: '' });
+});
+
+test('parseIntent: task bodies span multiple lines (s flag)', () => {
+  const r = parseIntent('[agent:task add hand] line one\nline two');
+  assert.strictEqual(r.sub, 'add');
+  assert.strictEqual(r.body, 'line one\nline two');
+});
+
+test('parseIntent: an unknown task sub-verb is NOT an intent (falls to near-miss bounce)', () => {
+  assert.strictEqual(parseIntent('[agent:task foo] x'), null);
+  assert.strictEqual(parseIntent('[agent:task addx] typo'), null, 'closed alternation — addx is not add');
+  assert.strictEqual(parseIntent('[agent:task]'), null);
+});
+
+test('parseIntent: an escaped task is reported, not dispatched', () => {
+  assert.deepStrictEqual(parseIntent('\\[agent:task add] spec'),
+    { type: 'escape', text: '[agent:task add] spec' });
+});
+
 test('parseIntent: non-intent / blank lines return null', () => {
   assert.strictEqual(parseIntent(''), null);
   assert.strictEqual(parseIntent('just some prose'), null);

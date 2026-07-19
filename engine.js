@@ -1190,13 +1190,15 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    // kill() dropped the persistence record; re-seed the roster-sent stamp BEFORE
-    // create() reads existingEntry, so an in-place restart of an already-rostered
-    // seat doesn't re-inject the team roster + re-announce it into a --resume'd
-    // context (task 22 rework / MUST-FIX 2). No-op for a never-stamped seat.
-    // A FRESH restart starts a NEW conversation — the roster is NOT in that
-    // context, so the stamp must not carry over (create() must re-deliver).
-    if (!(opts && opts.fresh)) manager._preserveRosterStamp(name, entry);
+    // kill() dropped the persistence record; re-seed post-create fields BEFORE
+    // create() reads existingEntry (task 22/24 rework / MUST-FIX 2). A reviewer
+    // seat's ephemeral+reviewFor are seat IDENTITY (not conversation state), so
+    // they carry across ANY restart incl. fresh. The rosterSentAt stamp is
+    // conversation-scoped: a FRESH restart starts a NEW conversation with the
+    // roster NOT in it, so the stamp must NOT carry over (create() must re-deliver).
+    const preserveFields = ['ephemeral', 'reviewFor'];
+    if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
+    manager._preserveAcrossRestart(name, entry, preserveFields);
     const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null);
     // kill() removed the persistence entry (incl. stripLevel) and create()
     // re-wrote it from spawn args only — re-assert the session's OWN level so
@@ -1328,11 +1330,12 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    // kill() dropped the persistence record; re-seed the roster-sent stamp BEFORE
-    // create() reads existingEntry so an args-edit restart of an already-rostered
-    // seat doesn't re-inject the roster + re-announce it (task 22 rework /
-    // MUST-FIX 2). No-op for a never-stamped seat.
-    manager._preserveRosterStamp(name, beforeKill);
+    // kill() dropped the persistence record; re-seed post-create fields BEFORE
+    // create() reads existingEntry so an args-edit restart doesn't re-inject the
+    // roster (rosterSentAt) or lose a reviewer seat's identity (ephemeral/reviewFor)
+    // (task 22/24 rework / MUST-FIX 2). An args-edit restart keeps the same
+    // conversation (sessionId preserved), so it's never fresh — carry all three.
+    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor']);
     // Exec grants aren't editable in the args-edit dialog (no checklist there —
     // grants stay template/create-time), so thread the persisted value through
     // unchanged. Intents ARE owned by this dialog now: nextIntents came from the
@@ -1510,6 +1513,9 @@ const toolCache = createToolCache({ whichBin });
 
   proxyPoller.start();
   manager.startPendingPoll();
+  // Team ticket stall watchdog (Task 25): one 60s sweep, rearmed here at launch
+  // (the registry is on disk, so open tickets survive a restart).
+  manager.startTicketWatchdog();
 
 
   // Durable self-reminder scheduler: real clock + timers, the reminders store,

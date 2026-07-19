@@ -66,6 +66,29 @@ const { readJsonSafe } = require('./fs-util');
 // instance). Appended to the seat's prompt material at the assembly callsite in
 // create(), deliberately OUTSIDE ipc-prompt (that file is byte-pinned).
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
+// Built-in tool catalog (pure constants leaf, like catalogs' other consumers).
+// Used to INVERT a reviewer role's `tools` ALLOWLIST into the disabledTools
+// DENYLIST create() consumes (a Read/Grep/Glob-only seat disables the rest).
+const { CLAUDE_TOOLS } = require('./catalogs');
+// Team ticket registry (Task 25). Pure leaf (electron-free), required directly
+// like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
+// tickets.json (team-scoped, shared with the clodex-team exec).
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
+
+// Ticket stall watchdog default: a lead is nudged once when an open ASSIGNED
+// ticket's assignee has been quiet longer than this. Per-team override:
+// `watchdogMs` in team.json. 30 minutes (Bogdan design 07-20).
+const TICKET_STALL_MS = 30 * 60 * 1000;
+// Human-readable age for the list summary + the stall nudge ("34m", "2h", "3d").
+function humanizeAge(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -237,6 +260,11 @@ function createSessionManager(deps) {
   // re-arming. Injectable for tests; 10s in production.
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
+  // Team ticket registry, built over the class's injected fs/path (real modules in
+  // production; tests point teamDir at a temp dir). Tickets live on real disk under
+  // ~/.clodex/teams/<team>/ so the clodex-team exec can read them.
+  const ticketsStore = createTicketsStore({ fs, path });
+
   class SessionManager {
     constructor() {
       this.sessions = new Map();
@@ -255,6 +283,10 @@ function createSessionManager(deps) {
       // name -> last-broadcast parked-DM count, so the pending-count poll emits
       // deltas only (see startPendingPoll). Entry dropped when count returns to 0.
       this._lastPendingCounts = new Map();
+      // name -> { teamDir, role } for seats holding an open ticket (Task 25), so
+      // _emitActivity can cheaply bump lastActivityAt on the seat's tickets without
+      // an fs scan for every other seat. Refreshed by _reconcileTickets.
+      this._ticketWatch = new Map();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
@@ -1519,23 +1551,31 @@ function createSessionManager(deps) {
       if (p && typeof p.setRosterSent === 'function') p.setRosterSent(session.name);
     }
 
-    // Preserve the rosterSentAt stamp across a kill()+create restart (task 22
-    // rework / MUST-FIX 2). The APP-RELAUNCH restore path keeps the persistence
-    // record (never removed), so create()'s existingEntry carries the stamp and
-    // the roster is correctly skipped. But the IN-PLACE restart paths
+    // Re-seed post-create persistence fields across a kill()+create restart (task
+    // 22 rework / MUST-FIX 2, generalized in task 24 / MUST-FIX 2). The APP-RELAUNCH
+    // restore path keeps the persistence record (never removed), so create()'s
+    // existingEntry carries these fields. But the IN-PLACE restart paths
     // (engine.restartSession / applySessionArgs) route through kill(), which
-    // REMOVES the record — so by the time create() reads existingEntry it's null,
-    // and a stamped seat gets its roster re-injected + re-announced into a
-    // --resume'd context. Re-stamping AFTER create() is too late (the decision
-    // already fired), so the restart callers capture the pre-kill entry and call
-    // this AFTER kill, BEFORE create: it re-seeds JUST the stamp so create's
-    // existingEntry read sees it and skips. create's own upsert then spread-merges
-    // the full record over this stub, preserving the field. A never-stamped
-    // (genuinely fresh) prior entry seeds nothing → still gets its roster.
-    _preserveRosterStamp(name, priorEntry) {
-      if (!priorEntry || !priorEntry.rosterSentAt) return;
+    // REMOVES the record — so create() rebuilds it from spawn args ONLY, dropping
+    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (roster
+    // gate → re-injects the roster into a --resume'd context) and a reviewer seat's
+    // `ephemeral`/`reviewFor` (identity → review-done can no longer route/retire).
+    // Re-seeding AFTER create() is too late for the fields create() itself reads
+    // (rosterSentAt gates in create), so the restart callers capture the pre-kill
+    // entry and call this AFTER kill, BEFORE create: it re-seeds JUST the requested
+    // fields present on the prior entry, and create's own upsert then spread-merges
+    // the full record over this stub, preserving them. A prior entry lacking a
+    // field seeds nothing for it (a genuinely fresh seat gets its roster).
+    _preserveAcrossRestart(name, priorEntry, fields) {
+      if (!priorEntry || !Array.isArray(fields) || !fields.length) return;
+      const seed = { name };
+      let any = false;
+      for (const f of fields) {
+        if (priorEntry[f] !== undefined) { seed[f] = priorEntry[f]; any = true; }
+      }
+      if (!any) return;
       const p = getPersistence();
-      if (p && typeof p.upsert === 'function') p.upsert({ name, rosterSentAt: priorEntry.rosterSentAt });
+      if (p && typeof p.upsert === 'function') p.upsert(seed);
     }
 
     // Inject the one-time initial roster (sender `team`) into a freshly
@@ -1665,12 +1705,32 @@ function createSessionManager(deps) {
       // resolveTeam scans ~/.clodex/teams on each call and list() runs often, so
       // memoize by cwd within this single invocation.
       const teamByCwd = new Map();
-      const teamFor = (cwd) => {
+      const resolvedTeamFor = (cwd) => {
         if (!cwd) return null;
         if (teamByCwd.has(cwd)) return teamByCwd.get(cwd);
-        const name = this.teamNameFor(cwd);
-        teamByCwd.set(cwd, name);
-        return name;
+        let t = null;
+        try { t = resolveTeam(cwd); } catch { t = null; }
+        teamByCwd.set(cwd, t);
+        return t;
+      };
+      const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
+      // Tickets per team dir, memoized within this call (Task 25). The seat's open
+      // ticket id drives the sidebar badge; role-addressed tickets match via the
+      // seat's derived role.
+      const ticketsByDir = new Map();
+      const openTicketFor = (s) => {
+        // Best-effort like teamFor: a team without a resolvable file, or any read
+        // failure, just means no badge — never break the list over a ticket lookup.
+        try {
+          const t = resolvedTeamFor(s.cwd);
+          if (!t || !t.file) return null;
+          const dir = path.dirname(t.file);
+          if (!ticketsByDir.has(dir)) ticketsByDir.set(dir, ticketsStore.load(dir));
+          const role = matchSeatRole(t, s.name);
+          const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null
+            && (tk.assignee === s.name || tk.assignee === role));
+          return open ? open.id : null;
+        } catch { return null; }
       };
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
@@ -1681,6 +1741,9 @@ function createSessionManager(deps) {
         // Team name owning this cwd (or null) — the sidebar groups by it so seats
         // in the same team but different subdirs cluster under one header.
         team: teamFor(s.cwd),
+        // Open ticket id this seat holds (or null) — the sidebar ticket badge
+        // (Task 25). Restore/reattach seeds dataset.ticket from this.
+        ticket: s.agentType ? openTicketFor(s) : null,
         // Cloud backend ('bedrock'|'vertex'|null) driving the sidebar chip glyph.
         backend: s.backend || null,
         // Live turn state + dialog fact, so list() consumers (tray menu,
@@ -1944,6 +2007,9 @@ function createSessionManager(deps) {
       // turn's terminal wire receipt re-stamps it. Invariant: atPrompt holds
       // iff a turn completed more recently than anything else happened.
       if (s && state !== 'idle') s.lastMainStop = null;
+      // A seat holding an open ticket that's working resets its stall episode +
+      // bumps lastActivityAt (Task 25). Gated on the watch map → no-op for others.
+      if (state !== 'idle') this._touchTicketActivity(name);
       // A turn resuming also means any dialog was answered (the CLI can't run
       // and ask at the same time) — clear the needs-attention badge. Never
       // cleared on 'idle': the dialog notification often lands AFTER the
@@ -2309,11 +2375,18 @@ function createSessionManager(deps) {
         // body with the same multi-line capture semantics. `remind` carries the
         // reminder TEXT as its body (free text, greedy capture like dm) — the
         // exec JSON-terminator above does NOT apply to it. `notify-user` carries
-        // the inbox note as free text, greedy like dm.
+        // the inbox note as free text, greedy like dm. `team-review` (review
+        // scope) and `review-done` (verdict) both carry free text, greedy like dm.
+        // `task add/done/reject/cancel` carry a free-text body (spec/report/reason)
+        // greedy like dm; `task assign/list` carry NO body (empty on the intent
+        // line — they must stay OUT of this set or they'd swallow following prose).
         if (intent.type === 'dm'
           || intent.type === 'exec'
           || intent.type === 'remind'
           || intent.type === 'notify-user'
+          || intent.type === 'team-review'
+          || intent.type === 'review-done'
+          || (intent.type === 'task' && (intent.sub === 'add' || intent.sub === 'done' || intent.sub === 'reject' || intent.sub === 'cancel'))
           || (intent.type === 'memory' && intent.sub === 'remember')
           || (intent.type === 'context' && (intent.sub === 'compact' || intent.sub === 'reload'))) {
           const body = [];
@@ -2381,7 +2454,7 @@ function createSessionManager(deps) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
-            + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, end. '
+            + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, end. '
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
         this._broadcast('ipc-message', {
@@ -2672,6 +2745,27 @@ function createSessionManager(deps) {
           // only — bash can't process intents.
           if (!session || !session.agentType) break;
           this._handleNotifyUserIntent(session, intent.body || '');
+          break;
+        }
+        case 'team-review': {
+          // Team LEAD dispatching a cold review (Task 24). Agent sessions only;
+          // the lead-role guard is inside the handler (a non-lead is bounced).
+          if (!session || !session.agentType) break;
+          this._handleTeamReview(session, intent.body || '');
+          break;
+        }
+        case 'review-done': {
+          // Ephemeral reviewer seat returning its verdict (Task 24). Agent
+          // sessions only; the reviewer-seat guard is inside the handler.
+          if (!session || !session.agentType) break;
+          this._handleReviewDone(session, intent.body || '');
+          break;
+        }
+        case 'task': {
+          // Team ticket protocol (Task 25). Agent sessions only; per-verb sender
+          // guards (lead-only / assignee-only) live inside the handler.
+          if (!session || !session.agentType) break;
+          this._handleTask(session, intent);
           break;
         }
       }
@@ -3284,6 +3378,456 @@ function createSessionManager(deps) {
           reply(`error: ${err.message}`);
         }
       });
+    }
+
+    // [agent:team-review] <scope> — a team LEAD dispatches a cold review; clodex
+    // owns the machinery. Spawn an EPHEMERAL reviewer seat from the team's
+    // `reviewer` role, brief it, and inject the lead's scope as its first turn;
+    // the seat later returns its verdict via [agent:review-done] (below), which
+    // routes back to the lead and retires the seat. The lead writes ONLY the
+    // scope — no spawn/lifecycle boilerplate in its context. Guards: the sender
+    // must be its team's lead, and the team must define a `reviewer` role; a
+    // failure bounces to the lead and nothing is spawned.
+    _handleTeamReview(session, body) {
+      const reply = (msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true });
+      const scope = String(body == null ? '' : body).trim();
+      if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
+
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      if (team.lead !== session.name) {
+        reply(`error: only the team lead (${team.lead}) can request a review`);
+        return;
+      }
+      const def = team.roles && team.roles.reviewer;
+      if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
+
+      const type = def.type || 'claude';
+      const cwd = team.root;
+      // MUST-FIX 4: the tools allowlist is inverted into disabledTools and consumed
+      // ONLY by create()'s claude arm (the hook that enforces it). A codex reviewer
+      // with a `tools` restriction would spawn FULLY ARMED — a silently-unenforced
+      // security config. Refuse to spawn rather than warn: an unrestricted reviewer
+      // where the manifest asked for a restricted one is the failure, not a nuisance.
+      if (type !== 'claude' && Array.isArray(def.tools) && def.tools.length) {
+        reply(`error: the "reviewer" role restricts tools to [${def.tools.join(', ')}] but spawns as "${type}"; the allowlist is only enforced for claude seats — refusing to spawn an unrestricted ${type} reviewer (drop the tools restriction or set type to claude)`);
+        return;
+      }
+      // Role `tools` is an ALLOWLIST → invert into the disabledTools DENYLIST
+      // create() consumes: disable every catalog tool the role did NOT allow (a
+      // Read/Grep/Glob-only reviewer). Absent → no extra restriction ([]).
+      // NOTE: create()'s auto role-prompt path binds only the role `prompt`, NOT
+      // `tools`, so this inversion stays the seam that enforces the allowlist.
+      const disabledTools = (Array.isArray(def.tools) && def.tools.length)
+        ? CLAUDE_TOOLS.filter((t) => !def.tools.includes(t))
+        : [];
+
+      // Collision-free ephemeral seat name, N bumped past every live OR persisted
+      // name (Task 15 taken-name rule — an archived reviewer still reserves its slot).
+      // The `reviewer` stem MATCHES the role KEY, so create()'s name-driven auto
+      // role-prompt path (matchSeatRole → team.roles.reviewer.prompt) binds the
+      // reviewer briefing itself — no explicit prompt read here.
+      let n = 1;
+      let name;
+      do { name = `${team.name}-reviewer-${n++}`; } while (this.sessions.has(name) || getPersistence().get(name));
+
+      // MUST-FIX 1 (name-mint TOCTOU): a second [agent:team-review] in the SAME lead
+      // turn runs its taken-name loop synchronously, BEFORE either deferred create()
+      // has populated the sessions map — so both would mint -1 and collide. Reserve
+      // the name SYNCHRONOUSLY here: the ephemeral+reviewFor seed IS the reservation,
+      // so the second handler's getPersistence().get(name) sees it and bumps to -2.
+      // This also carries the seat's identity fields (drives review-done's guard +
+      // the team-retire discard disposition); create()'s own upsert spread-merges
+      // over this stub, and the restart-preserve seam re-seeds it after a kill().
+      getPersistence().upsert({ name, ephemeral: true, reviewFor: session.name });
+
+      // NIT 3 (unbriefed-reviewer trap): create() binds the role prompt best-effort
+      // and silently skips a missing file — a team that never installed the prompt
+      // gets a reviewer with NO briefing and no signal. Preflight the file so the
+      // lead's confirm line warns when it's absent. Best-effort: a read error here
+      // is treated as "present" (don't block on a stat hiccup).
+      let promptWarn = '';
+      if (def.prompt) {
+        try {
+          const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+          if (!fs.existsSync(promptFile)) {
+            promptWarn = ` — WARNING: role prompt "${def.prompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
+          }
+        } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
+      }
+
+      // Defer off the scan callback that fired us (same discipline as
+      // _handleSpawnIntent): never drive a PTY spawn synchronously from a watcher emit.
+      setImmediate(async () => {
+        try {
+          await this.create(
+            name, type, cwd, [], null, session.workspaceId || DEFAULT_WORKSPACE_ID,
+            null, false, session.proxy ?? null, [], [], disabledTools, [], [], null, [],
+          );
+          // Draw the sidebar tab/terminal (the intent path bypasses the renderer's
+          // create flow — reused verbatim from _handleSpawnIntent).
+          this._sendToSession(name, 'session:context-action', {
+            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
+          });
+          // Inject the lead's scope as the seat's first turn — active delivery
+          // through the quiet-gated inject queue, landing after boot.
+          this._deliverMessage(name, session.name, scope, 'dm');
+          this._broadcast('ipc-message', {
+            type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
+          });
+          log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${promptWarn}`);
+        } catch (err) {
+          // Spawn failed → free the reserved name so it doesn't linger as a phantom
+          // persisted seat that blocks the slot forever (MUST-FIX 1 reservation cleanup).
+          // Only when the seat isn't live: create() can throw AFTER sessions.set +
+          // its own full upsert (sentinel/watcher start), and removing the record
+          // out from under a live session would orphan its review-done guard.
+          if (!this.sessions.has(name)) getPersistence().remove(name);
+          log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
+          reply(`error: ${err.message}`);
+        }
+      });
+    }
+
+    // [agent:review-done] <verdict> — an ephemeral reviewer seat returns its
+    // verdict. Guard: the sender's record must carry ephemeral + reviewFor (set at
+    // team-review spawn); anything else bounces. Deliver the verdict to the
+    // reviewFor lead as a dm (normal parking / >500B-spill rules), THEN retire the
+    // seat by ARCHIVE (record KEPT + archivedAt — resumable for a targeted
+    // re-review), never delete. Delivery is fully enqueued into the LEAD's queue
+    // before the reviewer's PTY dies: the message lives in the lead's queue, not
+    // the reviewer's, so the reviewer's cleanup can't drop it (onExit-before-
+    // cleanup gotcha respected).
+    _handleReviewDone(session, body) {
+      const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
+      const verdict = String(body == null ? '' : body).trim();
+      if (!verdict) { reply('error: a verdict is required — [agent:review-done] <verdict>'); return; }
+
+      const rec = getPersistence().get(session.name);
+      if (!rec || !rec.ephemeral || !rec.reviewFor) {
+        reply('error: review-done is only for an ephemeral reviewer seat spawned by [agent:team-review]');
+        return;
+      }
+      const lead = rec.reviewFor;
+      // Deliver (enqueue) BEFORE retiring. MUST-FIX 3: check the return — an ABSENT
+      // or DEAD lead ({error}) means the verdict went nowhere; archiving anyway
+      // would strand it unrecoverably. Bounce to the reviewer and SKIP the archive
+      // so the seat stays LIVE and can retry [agent:review-done] once the lead is
+      // back. A HELD/parked delivery ({held}/{parked}) is accepted (the lead is
+      // real, just busy — the queue/park store carries it), so retire as normal.
+      const r = this._gatedDeliver(lead, session.name, verdict, false);
+      if (r && r.error) {
+        reply(`error: ${r.error} — verdict NOT delivered, seat kept live; re-fire [agent:review-done] once ${lead} is reachable`);
+        return;
+      }
+      this._broadcast('ipc-message', {
+        type: 'review-done', from: session.name, to: lead, body: `verdict → ${lead}`,
+      });
+      log.info('intent', `review-done ${session.name} → ${lead}; retiring (archive)`);
+      this.archive(session.name);
+    }
+
+    // ── Team ticket protocol (Task 25) ──────────────────────────────────────
+    // A team LEAD opens/directs tickets; an ASSIGNEE closes them; clodex owns the
+    // registry (~/.clodex/teams/<team>/tickets.json), lifecycle, and the stall
+    // watchdog. Reuses T24's lessons: body-intent parsing (intent-scanner), sender-
+    // role guards, and delivery-BEFORE-lifecycle ordering with the {error} bounce.
+    //
+    // Assignee model: an assignee is a manifest ROLE (durable — stored as the role
+    // key so instance churn/respawn never orphans the ticket; re-resolved to a live
+    // seat at delivery) or an explicit LIVE seat name. Backlog tickets have
+    // assignee=null (watchdog-exempt). REGISTRY-SHAPE NOTE: the ticket record also
+    // carries the full `spec` text (beyond the spec's listed fields) — reassign must
+    // redeliver the spec to the new assignee, which is impossible without storing it.
+
+    _handleTask(session, intent) {
+      const reply = (msg) => this._injectText(session, `[agent:task] ${msg}`, { parkable: true });
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      const teamDir = path.dirname(team.file);
+      switch (intent.sub) {
+        case 'add': this._taskAdd(session, team, teamDir, intent, reply); break;
+        case 'assign': this._taskAssign(session, team, teamDir, intent, reply); break;
+        case 'done': this._taskDone(session, team, teamDir, intent, reply); break;
+        case 'reject': this._taskReject(session, team, teamDir, intent, reply); break;
+        case 'cancel': this._taskCancel(session, team, teamDir, intent, reply); break;
+        case 'list': this._taskList(session, team, teamDir, intent, reply); break;
+      }
+    }
+
+    // Resolve an addressing token to a stored assignee: a ROLE key (durable, wins)
+    // or a LIVE seat name on this team. Unresolvable → null (caller bounces).
+    _resolveAssignee(team, who) {
+      if (!who) return null;
+      if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who; // role-addressed
+      if (this._teamLiveSeats(team.root).includes(who)) return who; // name-addressed (live seat)
+      return null;
+    }
+
+    // The live seat a stored assignee currently resolves to, or null. A role
+    // assignee re-resolves to whichever seat holds that role now (instance churn);
+    // a name assignee is that seat if it's still a live team member.
+    _ticketAssigneeSeat(team, ticket) {
+      const a = ticket && ticket.assignee;
+      if (!a) return null;
+      if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, a)) {
+        for (const name of this._teamLiveSeats(team.root)) {
+          if (matchSeatRole(team, name) === a) return name;
+        }
+        return null;
+      }
+      return this._teamLiveSeats(team.root).includes(a) ? a : null;
+    }
+
+    // Deliver a ticket's spec text to its current assignee seat. Returns
+    // { self } (assignee is the lead — skip the echo), { delivered }/{ parked }
+    // via the gated pipeline, or { undelivered } when no live seat resolves (a
+    // role with no seat, or a seat that died) — the caller warns the lead but the
+    // ticket (durable) stands.
+    _deliverTicketSpec(team, ticket, specText, fromName) {
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (!seat) return { undelivered: true };
+      if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
+      const r = this._gatedDeliver(seat, fromName, `[ticket ${ticket.id}] ${specText}`, false);
+      return (r && r.error) ? { undelivered: true } : { delivered: true };
+    }
+
+    _taskAdd(session, team, teamDir, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket`); return; }
+      const spec = String(intent.body == null ? '' : intent.body).trim();
+      if (!spec) { reply('error: a ticket needs spec text — [agent:task add [role|name]] <what to do>'); return; }
+      let assignee = null;
+      if (intent.who) {
+        assignee = this._resolveAssignee(team, intent.who);
+        if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
+      }
+      const tickets = ticketsStore.load(teamDir);
+      const now = Date.now();
+      const ticket = {
+        id: nextTicketId(tickets), title: ticketTitle(spec), spec,
+        assignee, opener: session.name, state: 'open',
+        openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
+      };
+      const taskDir = extractTaskDir(spec);
+      if (taskDir) ticket.taskDir = taskDir;
+      tickets.push(ticket);
+      ticketsStore.save(teamDir, tickets);
+      let suffix = '';
+      if (assignee) {
+        const d = this._deliverTicketSpec(team, ticket, spec, session.name);
+        if (d.undelivered) suffix = ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
+      }
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened` });
+      log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'})`);
+      reply(assignee ? `ticket ${ticket.id} → ${assignee}${suffix}` : `ticket ${ticket.id} (backlog)`);
+    }
+
+    _taskAssign(session, team, teamDir, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can assign a ticket`); return; }
+      if (!intent.id) { reply('error: assign needs a ticket id — [agent:task assign <id> <role|name>]'); return; }
+      if (!intent.who) { reply('error: assign needs an assignee — [agent:task assign <id> <role|name>]'); return; }
+      const tickets = ticketsStore.load(teamDir);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
+      const assignee = this._resolveAssignee(team, intent.who);
+      if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
+      const prev = ticket.assignee;
+      const reassigning = prev != null && prev !== assignee;
+      // Reassign: the OLD assignee's reassigned-notice is enqueued FIRST (ordering
+      // reads best in logs), the NEW assignee's spec SECOND. Each rides normal
+      // delivery INDEPENDENTLY — one target parked/dead must not block the other,
+      // so the old notice's outcome is never checked against the new delivery.
+      if (reassigning) {
+        const oldSeat = this._ticketAssigneeSeat(team, { assignee: prev });
+        if (oldSeat && oldSeat !== team.lead) {
+          this._gatedDeliver(oldSeat, session.name, `[ticket ${ticket.id} reassigned] this ticket moved to ${assignee}`, false);
+        }
+      }
+      ticket.assignee = assignee;
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null; // fresh assignment starts a new stall episode
+      ticketsStore.save(teamDir, tickets);
+      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name);
+      const suffix = d.undelivered ? ` — NOTE: no live seat for "${assignee}" yet; spec not delivered` : '';
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
+      log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'} → ${assignee}`);
+      reply(reassigning ? `ticket ${ticket.id}: ${prev} → ${assignee}${suffix}` : `ticket ${ticket.id} → ${assignee}${suffix}`);
+    }
+
+    _taskDone(session, team, teamDir, intent, reply) {
+      if (!intent.id) { reply('error: done needs a ticket id — [agent:task done <id>] <report>'); return; }
+      const report = String(intent.body == null ? '' : intent.body).trim();
+      if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
+      const tickets = ticketsStore.load(teamDir);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open`); return; }
+      // Assignee-only: the sender's seat resolves to the ticket's assignee (its
+      // role for a role-addressed ticket, or its name).
+      const myRole = matchSeatRole(team, session.name);
+      const isAssignee = ticket.assignee != null && (ticket.assignee === session.name || ticket.assignee === myRole);
+      if (!isAssignee) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) can close it`); return; }
+      // Deliver the report to the opener (lead) BEFORE stamping done — same
+      // ordering + {error} discipline as review-done (T24 MF3): an absent/dead lead
+      // means the report went nowhere, so keep the ticket OPEN and bounce so the
+      // assignee can retry, rather than closing it with the report stranded.
+      const lead = team.lead;
+      const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
+      if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable`); return; }
+      ticket.state = 'done';
+      ticket.closedAt = Date.now();
+      ticket.lastActivityAt = ticket.closedAt;
+      ticketsStore.save(teamDir, tickets);
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
+      log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
+      reply(`ticket ${ticket.id} closed (done) — report delivered to ${lead}`);
+    }
+
+    _taskReject(session, team, teamDir, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket`); return; }
+      if (!intent.id) { reply('error: reject needs a ticket id — [agent:task reject <id>] <reason>'); return; }
+      const reason = String(intent.body == null ? '' : intent.body).trim();
+      if (!reason) { reply('error: reject needs a reason — [agent:task reject <id>] <what to fix>'); return; }
+      const tickets = ticketsStore.load(teamDir);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}`); return; }
+      // The reopen is the lead's authoritative act (recorded regardless); the reason
+      // to the assignee is best-effort (skipped if no live seat) — unlike done, no
+      // sender is at risk, so there's nothing to keep alive for a retry.
+      ticket.state = 'open';
+      ticket.closedAt = null;
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null;
+      ticketsStore.save(teamDir, tickets);
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, false);
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
+      log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
+      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.assignee || 'unassigned'}`);
+    }
+
+    _taskCancel(session, team, teamDir, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket`); return; }
+      if (!intent.id) { reply('error: cancel needs a ticket id — [agent:task cancel <id>] [reason]'); return; }
+      const reason = String(intent.body == null ? '' : intent.body).trim();
+      const tickets = ticketsStore.load(teamDir);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel`); return; }
+      ticket.state = 'cancelled';
+      ticket.closedAt = Date.now();
+      ticket.lastActivityAt = ticket.closedAt;
+      ticketsStore.save(teamDir, tickets);
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
+      log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
+      reply(`ticket ${ticket.id} cancelled`);
+    }
+
+    _taskList(session, team, teamDir, intent, reply) {
+      const tickets = ticketsStore.load(teamDir).slice().sort((a, b) => {
+        const na = Number(String(a.id).replace(/^t/, '')) || 0;
+        const nb = Number(String(b.id).replace(/^t/, '')) || 0;
+        return na - nb;
+      });
+      if (!tickets.length) { reply(`no tickets on ${team.name}`); return; }
+      const now = Date.now();
+      const lines = tickets.map((t) =>
+        `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
+      reply(`tickets on ${team.name}:\n${lines.join('\n')}`);
+    }
+
+    // Recompute each live team seat's open-ticket id: refresh the activity-watch map
+    // (name → { teamDir, role } for seats holding an open ticket, so _emitActivity
+    // can cheaply bump lastActivityAt) and push a `session-ticket` badge event per
+    // live seat. Idempotent — the renderer just sets/clears dataset.ticket.
+    _reconcileTickets(team, teamDir) {
+      const tickets = ticketsStore.load(teamDir);
+      for (const name of this._teamLiveSeats(team.root)) {
+        const role = matchSeatRole(team, name);
+        const open = tickets.find((t) => t.state === 'open' && t.assignee != null
+          && (t.assignee === name || t.assignee === role));
+        if (open) this._ticketWatch.set(name, { teamDir, role });
+        else this._ticketWatch.delete(name);
+        this._broadcast('session-ticket', { name, ticket: open ? open.id : null });
+      }
+    }
+
+    // A seat with an open ticket had activity → bump its open tickets' lastActivityAt
+    // and clear any stall-nudge episode (activity resets it). Gated on the watch map
+    // so it's a no-op (no fs) for the overwhelming majority of seats. Called from
+    // _emitActivity on a non-idle transition.
+    _touchTicketActivity(name) {
+      const w = this._ticketWatch.get(name);
+      if (!w) return;
+      const tickets = ticketsStore.load(w.teamDir);
+      let changed = false;
+      const now = Date.now();
+      for (const t of tickets) {
+        if (t.state !== 'open') continue;
+        if (t.assignee === name || (w.role && t.assignee === w.role)) {
+          t.lastActivityAt = now;
+          if (t.nudgedAt) t.nudgedAt = null;
+          changed = true;
+        }
+      }
+      if (changed) ticketsStore.save(w.teamDir, tickets);
+    }
+
+    // Clodex-owned stall watchdog (replaces the lead's manual reminders). One
+    // periodic sweep; per open ASSIGNED ticket idle past the team's stall window,
+    // deliver ONE nudge to the lead and mark it nudged (activity clears the mark →
+    // one nudge per episode). Backlog/closed tickets are exempt. Survives app
+    // restart by construction — the registry is on disk and the sweep rearms here.
+    startTicketWatchdog(intervalMs = 60000) {
+      if (this._ticketWatchdogTimer) return;
+      this._ticketWatchdogTimer = setInterval(() => { try { this._sweepTickets(); } catch (e) { log.error('ticket', `watchdog sweep failed: ${e.message}`); } }, intervalMs);
+      if (this._ticketWatchdogTimer.unref) this._ticketWatchdogTimer.unref();
+    }
+
+    _sweepTickets(now = Date.now()) {
+      // Teams reachable from live sessions, deduped by team dir (a dead lead can't
+      // receive a nudge anyway, so bounding to live teams loses nothing).
+      const seen = new Set();
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
+        if (!team) continue;
+        const teamDir = path.dirname(team.file);
+        if (seen.has(teamDir)) continue;
+        seen.add(teamDir);
+        this._sweepTeamTickets(team, teamDir, now);
+        this._reconcileTickets(team, teamDir); // self-heal the watch map + badges post-restart
+      }
+    }
+
+    _sweepTeamTickets(team, teamDir, now) {
+      const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
+      const tickets = ticketsStore.load(teamDir);
+      let changed = false;
+      for (const t of tickets) {
+        if (t.state !== 'open' || t.assignee == null) continue; // backlog/closed exempt
+        const last = t.lastActivityAt || t.openedAt || now;
+        if (now - last < stallMs) continue;
+        if (t.nudgedAt) continue; // one nudge per stall episode
+        const r = this._gatedDeliver(team.lead, 'ticket-watchdog',
+          `[ticket ${t.id}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false);
+        // Mark nudged only when the nudge actually went somewhere — a dead lead
+        // must not consume the one nudge (retry when the lead is back).
+        if (!(r && r.error)) { t.nudgedAt = now; changed = true; }
+      }
+      if (changed) ticketsStore.save(teamDir, tickets);
     }
 
     // The CLI slash command each context sub-command maps to, per session type.

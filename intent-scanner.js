@@ -1,8 +1,8 @@
 // Intent Scanner (port of wb-wrap/scanner.py). Turns one line of assistant
 // output into a structured `[agent:…]` intent (or null). Pure string work — no
 // Electron, no main.js state — so the grammar (dm/who/name/context/memory/
-// spawn/file/resend/exec/remind/notify-user + the `\[agent:` escape) is
-// unit-testable in isolation.
+// spawn/file/resend/exec/remind/notify-user/team-review/review-done/task + the
+// `\[agent:` escape) is unit-testable in isolation.
 // Seam: plain named functions on raw strings; the caller owns column-1
 // anchoring by feeding it a single line at a time.
 // Gotcha: cleanLine strips a leading run of DECORATOR glyphs (bullets, box
@@ -123,6 +123,46 @@ function parseIntent(rawLine) {
   // empty-body bounce + 16KB cap live in the handler, not here.
   const notifyMatch = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
   if (notifyMatch) return { type: 'notify-user', body: notifyMatch[1] };
+
+  // `team-review` / `review-done` = the ephemeral cold-review handshake (Task
+  // 24). A team LEAD writes ONLY the review scope (`[agent:team-review] <scope>`)
+  // and clodex owns the machinery (spawn an ephemeral reviewer seat, brief it,
+  // inject the scope); the reviewer ends its pass with `[agent:review-done]
+  // <verdict>`, which clodex routes back to the lead and then retires the seat.
+  // Both carry a free-text body captured to the next col-1 intent exactly like dm
+  // (multi-line — both MUST join _extractIntents' allow-set or the body truncates
+  // at the first newline). Sender-role guards (lead-only / reviewer-only) + the
+  // spawn/retire lifecycle live in the handler, not here.
+  const teamReviewMatch = cleaned.match(/^\[agent:team-review\]\s*(.*)/s);
+  if (teamReviewMatch) return { type: 'team-review', body: teamReviewMatch[1] };
+
+  const reviewDoneMatch = cleaned.match(/^\[agent:review-done\]\s*(.*)/s);
+  if (reviewDoneMatch) return { type: 'review-done', body: reviewDoneMatch[1] };
+
+  // `task` = the team ticket protocol (Task 25). Six sub-verbs; a team LEAD opens
+  // and directs tickets, an ASSIGNEE closes them, and clodex owns the registry +
+  // lifecycle + stall watchdog. The sub-verb alternation is CLOSED (only the six):
+  // a typo like `[agent:task foo]` falls through to null → the near-miss bounce,
+  // exactly like a bad dm. Bracket-arg shapes per verb:
+  //   add            → optional <role|name> in the bracket (the mint+assign common
+  //                    case), plus the spec text as a free-text BODY (greedy like dm).
+  //   assign <id> <role|name> → no body (the spec lives on the ticket).
+  //   done   <id>    → report text BODY. reject <id> → reason BODY.
+  //   cancel <id>    → optional reason BODY. list → no args, no body.
+  // Body capture for add/done/reject/cancel is in _extractIntents' allow-set (like
+  // dm); assign/list deliberately carry no body. All guards + lifecycle live in the
+  // handler, not here.
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|list)\b([^\]]*)\]\s*(.*)/s);
+  if (taskMatch) {
+    const sub = taskMatch[1];
+    const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
+    const body = taskMatch[3];
+    if (sub === 'add') return { type: 'task', sub, who: argToks[0] || null, id: null, body };
+    if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
+    if (sub === 'list') return { type: 'task', sub, id: null, who: null, body: '' };
+    // done / reject / cancel — a single <id> arg + a free-text body.
+    return { type: 'task', sub, id: argToks[0] || null, who: null, body };
+  }
 
   const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
   if (spawnMatch) {

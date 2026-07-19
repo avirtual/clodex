@@ -2778,6 +2778,21 @@ window.api.onPendingCount((msg) => {
   if (msg && typeof msg.name === 'string') applyPendingBadge(msg.name, msg.count || 0);
 });
 
+// Team ticket badge (Task 25): a seat holding an open ticket carries its id on
+// data-ticket (a small dot via CSS; the id itself shows in the hovercard). Fed by
+// the main-process session-ticket broadcast (per mutation + watchdog sweep) and
+// seeded from session:list on first paint. null clears it.
+function applyTicketBadge(name, ticket) {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  if (ticket) el.dataset.ticket = ticket;
+  else delete el.dataset.ticket;
+}
+
+window.api.onSessionTicket((msg) => {
+  if (msg && typeof msg.name === 'string') applyTicketBadge(msg.name, msg.ticket || null);
+});
+
 // Peer touched-files count shadow: peer key -> count. Fed by the owner's
 // telemetry frames (count-only; the full list stays pull-on-demand via the
 // query endpoint). Lets a remote tab's 📄N badge tick live instead of only
@@ -5666,6 +5681,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         item.dataset.attention = entry.attention.kind;
         item.dataset.attentionMsg = entry.attention.message || '';
       }
+      if (entry.ticket) item.dataset.ticket = entry.ticket; // open ticket badge (Task 25)
     }
     if (entry.replay) terminal.write(entry.replay);
     if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
