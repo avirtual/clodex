@@ -45,6 +45,44 @@ function sandboxActionGate(detect) {
   };
 }
 
+// Element-treatment map for the sandbox MANAGEMENT dialog: given a
+// sandboxActionGate() result and the selected box's running state, decide which
+// controls to DISABLE and DIM, whether to raise the dominant docker banner, and
+// whether Stop stays live. Docker-down must be OBVIOUS (Task 13, Bogdan's field
+// report): a gated control is both disabled AND dimmed (greyRichFields precedent),
+// the notice reads at banner weight, and Stop stays enabled + undimmed so teardown
+// is always reachable — the contrast between a live Stop and dead everything-else
+// is the clarity. Start is gated ONLY when the toggle would START; a running box's
+// Stop is never gated. `gate` is a sandboxActionGate() return; `running` is the
+// box's compose running state. Pure decision leaf — renderer.js only plumbs it.
+function sandboxGateTreatment(gate, running) {
+  const g = gate || {};
+  const gated = !g.running;
+  const run = !!running;
+  return {
+    running: !!g.running,
+    notice: g.notice || detectNotice(null),
+    reason: g.reason || null,
+    gated,
+    banner: gated,                  // raise the dominant docker banner while gated
+    startDisabled: gated && !run,   // toggle-as-Start; a running box's Stop stays live
+    rebuildDisabled: gated,
+    boxCreateDisabled: gated,
+    dimStart: gated && !run,        // dim Start, never a live Stop
+    dimRebuild: gated,
+    dimBoxCreate: gated,
+    stopLive: gated && run,         // Stop is enabled + undimmed even while gated
+  };
+}
+
+// A box-list row's Start is gated when docker is down AND that row's box is stopped;
+// a running row's Stop is never gated. Separate from sandboxGateTreatment because
+// each row carries its own compose running state (the detail treatment uses the
+// selected box's).
+function boxRowStartGated(gateRunning, rowRunning) {
+  return !gateRunning && !rowRunning;
+}
+
 // Compose lifecycle state → the status line + whether Start/Stop should read as
 // running. absent (never created) and exited both present as "stopped" for the
 // button, but the copy differs so the user knows if there's anything to resume.
@@ -79,4 +117,4 @@ function portsLineText(effective) {
   return parts.join(' · ');
 }
 
-module.exports = { detectNotice, sandboxActionGate, statusNotice, openUrl, portsLineText };
+module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, openUrl, portsLineText };

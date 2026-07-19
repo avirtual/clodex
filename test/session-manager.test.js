@@ -1049,19 +1049,97 @@ test('_notifyComposition: teamless / dep-less session is a no-op, never throws i
   assert.deepStrictEqual(passive, [], 'no team dep → no deltas, no throw');
 });
 
-test('_injectRoster: delivers the initial roster from sender team, listing live seats', () => {
+test('_injectRoster: rides PASSIVELY (parked for organic drain, no active PTY typing at boot)', () => {
   const { m } = mkPark(teamDeps);
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
-  const delivered = [];
-  m._deliverMessage = (t, s, b, mt) => delivered.push({ t, s, b, mt });
+  const passive = [];
+  const active = [];
+  m._deliverPassive = (t, s, b, mt) => passive.push({ t, s, b, mt });
+  m._deliverMessage = (t, s, b, mt) => active.push({ t, s, b, mt });
   m._injectRoster(m.sessions.get('lead'), teamStub);
-  assert.strictEqual(delivered.length, 1);
-  assert.strictEqual(delivered[0].t, 'lead');
-  assert.strictEqual(delivered[0].s, 'team');
-  assert.match(delivered[0].b, /\[team team\] roster \(lead: lead\)/);
-  assert.match(delivered[0].b, /- lead \(session\) — the lead · live: lead/);
-  assert.match(delivered[0].b, /- dev \(session\) — the dev · live: team-dev/);
+  // The initial roster must NOT be actively typed — the trailing Enter got eaten
+  // by the still-booting TUI (field bug). It rides the seat's first hook drain.
+  assert.deepStrictEqual(active, [], 'roster is never delivered on the active path');
+  assert.strictEqual(passive.length, 1);
+  assert.strictEqual(passive[0].t, 'lead');
+  assert.strictEqual(passive[0].s, 'team');
+  assert.strictEqual(passive[0].mt, 'dm');
+  assert.match(passive[0].b, /\[team team\] roster \(lead: lead\)/);
+  assert.match(passive[0].b, /- lead \(session\) — the lead · live: lead/);
+  assert.match(passive[0].b, /- dev \(session\) — the dev · live: team-dev/);
+});
+
+// Codex has no passive park store, so _deliverPassive there falls back to an
+// ACTIVE PTY write — which at spawn types the roster into the still-booting TUI
+// and the Enter gets eaten (the field bug, scoped to codex). A codex seat DEFERS:
+// the roster is stashed and flushed on the seat's first observed output settle.
+test('_injectRoster: a CODEX seat DEFERS — no active AND no passive delivery at spawn, roster stashed', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('team-cx', { name: 'team-cx', agentType: 'codex', cwd: '/proj/b' });
+  const passive = [];
+  const active = [];
+  m._deliverPassive = (t, s, b, mt) => passive.push({ t, s, b, mt });
+  m._deliverMessage = (t, s, b, mt) => active.push({ t, s, b, mt });
+  m._injectRoster(m.sessions.get('team-cx'), teamStub);
+  // Nothing hits EITHER delivery path before the seat's first observed activity —
+  // a passive fallback here would be an active PTY write into a booting TUI.
+  assert.deepStrictEqual(active, [], 'codex roster is never actively typed at boot');
+  assert.deepStrictEqual(passive, [], 'and never passive (no park store) — it is stashed');
+  const body = m.sessions.get('team-cx')._pendingRoster;
+  assert.ok(body && /\[team team\] roster \(lead: lead\)/.test(body), 'roster stashed for a later flush');
+});
+
+test('_flushPendingRoster: delivers a stashed codex roster on the NORMAL path, once, dead-safe', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b', _pendingRoster: '[team team] roster (lead: lead)\n…' };
+  m.sessions.set('team-cx', s);
+  const active = [];
+  m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
+  m._flushPendingRoster(s);
+  assert.strictEqual(active.length, 1, 'flushed via the active (normal) path once the TUI is up');
+  assert.strictEqual(active[0].t, 'team-cx');
+  assert.strictEqual(active[0].sn, 'team');
+  assert.strictEqual(active[0].mt, 'dm');
+  assert.strictEqual(s._pendingRoster, null, 'pending cleared');
+  m._flushPendingRoster(s);                 // a late/second settle
+  assert.strictEqual(active.length, 1, 'once-only');
+  const dead = { name: 'd', agentType: 'codex', _dead: true, _pendingRoster: 'x' };
+  m._flushPendingRoster(dead);
+  assert.strictEqual(active.length, 1, 'no delivery into a dead session');
+});
+
+test('_armRosterFlush: output-gated settle re-arms on each chunk, flushes only after the LAST one', async () => {
+  const { m } = mkPark({ ...teamDeps, rosterSettleMs: 30, rosterMaxWaitMs: 10000 });
+  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
+    _pendingRoster: '[team team] roster (lead: lead)', _pendingRosterSince: Date.now() };
+  m.sessions.set('team-cx', s);
+  const active = [];
+  m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
+  m._armRosterFlush(s);                     // first output chunk (deadline ~30ms)
+  await new Promise((r) => setTimeout(r, 10));
+  m._armRosterFlush(s);                     // a later chunk before the settle → re-arm (deadline pushed out)
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepStrictEqual(active, [], 'not yet — the boot burst has not gone quiet');
+  await new Promise((r) => setTimeout(r, 45));
+  assert.strictEqual(active.length, 1, 'flushed once the output settled');
+  assert.strictEqual(active[0].t, 'team-cx');
+});
+
+test('_armRosterFlush: absolute-wait cap flushes despite continuous sub-settle repaints (no starvation)', async () => {
+  // settle 30ms, cap 60ms — a chunk every 10ms never lets the settle timer fire,
+  // so ONLY the cap can flush. Without the cap this would starve the roster forever
+  // (a codex spinner/clock repaint loop is exactly this shape).
+  const { m } = mkPark({ ...teamDeps, rosterSettleMs: 30, rosterMaxWaitMs: 60 });
+  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
+    _pendingRoster: '[team team] roster (lead: lead)', _pendingRosterSince: Date.now() };
+  m.sessions.set('team-cx', s);
+  const active = [];
+  m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
+  // Repaint faster than the settle interval, past the cap.
+  for (let i = 0; i < 9; i++) { m._armRosterFlush(s); await new Promise((r) => setTimeout(r, 10)); }
+  assert.strictEqual(active.length, 1, 'the cap forced a flush even though the settle never went quiet');
+  assert.strictEqual(s._pendingRoster, null, 'pending cleared by the capped flush');
 });
 
 // --- list(): team field (sidebar group-by-project reflects team identity) ---
@@ -1521,7 +1599,7 @@ test('session-exit: natural death sends expected:false with code and signal', as
   const { m, sent, broadcasts, exit } = mkExitProbe();
   await bashCreate(m, 'b-crash', null);
   exit({ exitCode: 1, signal: undefined });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-crash', 'session-exit', 'b-crash', 1, { expected: false, signal: null, agentType: null }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-crash', 'session-exit', 'b-crash', 1, { expected: false, signal: null, agentType: null, missingTool: null }]);
   // Unexpected exit, no signal → `code=1 unexpected`.
   assert.deepStrictEqual(exitLogOf(broadcasts), { type: 'exit', from: 'b-crash', to: 'exit', body: 'code=1 unexpected' });
 });
@@ -1534,7 +1612,7 @@ test('session-exit: a user-killed session (kill() flag) sends expected:true', as
   // from a test would hit whatever real process owns that pid.
   m.sessions.get('b-killed')._userKilled = true;
   exit({ exitCode: 1, signal: 15 });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-killed', 'session-exit', 'b-killed', 1, { expected: true, signal: 15, agentType: null }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-killed', 'session-exit', 'b-killed', 1, { expected: true, signal: 15, agentType: null, missingTool: null }]);
   // Expected exit with a signal → `code=1 signal=15` (no ` unexpected`).
   assert.strictEqual(exitLogOf(broadcasts).body, 'code=1 signal=15');
 });
@@ -1544,7 +1622,7 @@ test('session-exit: app-quit teardown (killAll) sends expected:true', async () =
   await bashCreate(m, 'b-quit', null);
   await m.killAll();
   exit({ exitCode: 0, signal: 15 });
-  assert.deepStrictEqual(exitEventOf(sent), ['b-quit', 'session-exit', 'b-quit', 0, { expected: true, signal: 15, agentType: null }]);
+  assert.deepStrictEqual(exitEventOf(sent), ['b-quit', 'session-exit', 'b-quit', 0, { expected: true, signal: 15, agentType: null, missingTool: null }]);
   assert.strictEqual(exitLogOf(broadcasts).body, 'code=0 signal=15');
 });
 

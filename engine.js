@@ -41,6 +41,50 @@ const { pathFor, runDirFor } = require('./clodex-paths');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { materializePotCli, materializeExecScripts } = require('./pot-bin');
 
+// The single source of truth for "is this install broken in a way that will fail
+// (or degrade) sessions?". Returns a short, user-facing string (or null when
+// fine) shared by the startup log, the thrown spawn error, and the UI banner.
+// Pure over `d` (a collectSystemDiagnostics() shape) and defined at MODULE level
+// — moved out of createEngine so its branches are unit-testable without
+// instantiating the engine (Task 12). No bare callers: every site passes `d`.
+function diagWarning(d = {}) {
+  // process.arch uses 'x64'; Mach-O reports 'x86_64'. Normalize to compare.
+  const expectedArch = process.arch === 'x64' ? 'x86_64' : process.arch;
+  // Fatal node-pty spawn-helper problems FIRST (darwin) — the helper is what
+  // posix_spawn actually launches, so any problem with it sinks EVERY session
+  // regardless of which CLIs are installed; these take priority.
+  if (d.platform === 'darwin') {
+    if (!d.helperExists) {
+      return 'node-pty spawn-helper is missing — sessions can\'t start. Fix: npx electron-rebuild';
+    }
+    if (!d.helperExecutable) {
+      return `node-pty spawn-helper is not executable — sessions can't start. Fix: chmod +x "${d.helperPath}"`;
+    }
+    if (!['universal', '32-bit'].includes(d.helperArch) && d.helperArch !== expectedArch) {
+      return `spawn-helper arch (${d.helperArch}) != app arch (${expectedArch}) — `
+        + 'every session fails with "posix_spawnp failed." Fix: npx electron-rebuild';
+    }
+    if (d.rosetta) {
+      return 'Running under Rosetta — rebuild native modules for the running arch: npx electron-rebuild';
+    }
+  }
+  // A failed login-shell PATH merge is the usual ROOT CAUSE of the missing-CLI
+  // case for a Finder-launched packaged app — name it before the symptom.
+  if (d.pathMergeFailed) {
+    return 'PATH merge from your login shell failed — CLIs installed there (claude/codex) '
+      + 'may be invisible to Clodex. Relaunch Clodex, or start it from a terminal.';
+  }
+  // Neither agent CLI on PATH → no agent session can start at all. A SINGLE missing
+  // CLI is handled precisely by the New Session dialog gate (and the enriched exit
+  // toast), so it's deliberately NOT raised as a global banner — nagging a user who
+  // uses only one CLI would be noise.
+  if (!d.claude && !d.codex) {
+    return 'Neither the claude nor codex CLI was found on PATH — no agent sessions can start. '
+      + 'Install one, e.g. npm i -g @anthropic-ai/claude-code';
+  }
+  return null;
+}
+
 function createEngine({ userDataPath, seams = {}, log }) {
   // Individual consts (not a destructure-with-defaults) so each seam name is
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
@@ -55,6 +99,12 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const refreshTrayMenu = seams.refreshTrayMenu || (() => {});
   const scheduleTrayRefresh = seams.scheduleTrayRefresh || (() => {});
   const restartHost = seams.restartHost || (() => {});
+  // The login-shell PATH merge (main.js/headless-main.js fixPathFromLoginShell)
+  // runs BEFORE the engine exists and used to fail SILENTLY to console.error. The
+  // host passes its outcome in as a seam so diagnostics can surface a failed merge
+  // as a first-class warning — a failed merge is the usual root cause of
+  // "claude/codex not on PATH" for a Finder-launched packaged app.
+  const pathMergeFailed = !!seams.pathMergeFailed;
 
   // Clodex-owned runtime dir (~/.clodex): registry, sockets, hooks, spilled
   // messages, memory. A home-derived constant, identical across hosts, so the
@@ -105,9 +155,6 @@ function machoArch(file) {
   } catch (e) { return `unreadable (${e.code || e.message})`; }
 }
 
-// process.arch uses 'x64'; Mach-O reports 'x86_64'. Normalize to compare.
-function expectedArch() { return process.arch === 'x64' ? 'x86_64' : process.arch; }
-
 // Mirror node-pty's helperPath resolution (incl. the asar.unpacked rewrites).
 // node-pty (lib/utils.js loadNativeModule) loads pty.node from the first of
 // build/Release, build/Debug, prebuilds/<platform>-<arch> that exists, and
@@ -143,6 +190,9 @@ function collectSystemDiagnostics() {
     platform: process.platform, procArch: process.arch, rosetta: detectRosetta(),
     electron: process.versions.electron, node: process.versions.node,
     claude: whichBin('claude'), codex: whichBin('codex'),
+    // pathMergeFailed is the host's fixPathFromLoginShell outcome (seam, read at
+    // the top of createEngine) — diagWarning promotes a failed merge to a banner.
+    pathMergeFailed,
     helperPath: helper, helperExists: fs.existsSync(helper),
     helperExecutable, helperArch: machoArch(helper),
   };
@@ -154,28 +204,9 @@ function diagSummary(d = collectSystemDiagnostics()) {
     + `electron=${d.electron} node=${d.node}`;
 }
 
-// The single source of truth for "is this install broken in a way that will
-// fail every spawn?". Returns a short, user-facing string (or null when fine)
-// shared by the startup log, the thrown spawn error, and the UI banner. The
-// node-pty spawn-helper is what posix_spawn actually launches, so any problem
-// with it — missing, non-executable, or wrong arch — sinks every session.
-function diagWarning(d = collectSystemDiagnostics()) {
-  if (d.platform !== 'darwin') return null;
-  if (!d.helperExists) {
-    return 'node-pty spawn-helper is missing — sessions can\'t start. Fix: npx electron-rebuild';
-  }
-  if (!d.helperExecutable) {
-    return `node-pty spawn-helper is not executable — sessions can't start. Fix: chmod +x "${d.helperPath}"`;
-  }
-  if (!['universal', '32-bit'].includes(d.helperArch) && d.helperArch !== expectedArch()) {
-    return `spawn-helper arch (${d.helperArch}) != app arch (${expectedArch()}) — `
-      + 'every session fails with "posix_spawnp failed." Fix: npx electron-rebuild';
-  }
-  if (d.rosetta) {
-    return 'Running under Rosetta — rebuild native modules for the running arch: npx electron-rebuild';
-  }
-  return null;
-}
+// diagWarning is defined at MODULE level (top of file) — it's a pure function of
+// `d`, moved out of the createEngine closure so its branches are unit-testable
+// without instantiating the engine (Task 12). See it above the requires block.
 
 function logStartupDiagnostics() {
   const d = collectSystemDiagnostics();
@@ -1443,6 +1474,13 @@ const sandboxManager = createSandboxManager({
   log,
 });
 
+// External-tool detection (Task 12): a TTL-cached probe of the CLIs the app
+// shells out to (claude/codex/git/gh/docker/ssh), so the New Session dialog can
+// gate Create on a missing CLI instead of letting the PTY fast-fail silently.
+// Reuses whichBin (the same PATH walk diagnostics use).
+const { createToolCache } = require('./tool-doctor');
+const toolCache = createToolCache({ whichBin });
+
   // ── Bootstrap — the electron-free part of the old app.whenReady body, in the
   // EXACT original order (stores → pollers → scheduler → log → wirescope +
   // watchdog → remote → peers → cleanup → sweep). ────────────────────────────
@@ -1624,6 +1662,11 @@ const sandboxManager = createSandboxManager({
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,
+    // External-tool doctor (Task 12): the New Session dialog's tools:check IPC
+    // reads this (TTL-cached); invalidate lets a "re-check after you install it"
+    // path force a fresh probe.
+    checkTools: () => toolCache.get(),
+    invalidateToolCache: () => toolCache.invalidate(),
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     restartSession, waitForSessionExit,
@@ -1636,4 +1679,4 @@ const sandboxManager = createSandboxManager({
   };
 }
 
-module.exports = { createEngine };
+module.exports = { createEngine, diagWarning };

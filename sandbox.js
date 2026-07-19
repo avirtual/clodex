@@ -24,6 +24,7 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
+const { createDetectCache } = require('./detect-cache');
 
 // Host-port defaults — Clodex's service neighborhood (web 7810, wirescope 7811,
 // peer wire 7820), matching docker/web/compose.yaml. Collision-bumped at
@@ -101,11 +102,6 @@ const RESERVED_BOX_IDS = new Set(['host']);
 
 // `docker info` guard — a hung daemon shouldn't wedge detection forever.
 const DETECT_TIMEOUT_MS = 4000;
-// How long a docker detection result is trusted before the next probe. The
-// state (installed / daemon up) changes rarely, so a coarse TTL keeps the
-// action-gating cheap (one `docker info` per window, not per click) while still
-// noticing a daemon that came up or went down within ~half a minute.
-const DETECT_CACHE_TTL_MS = 30000;
 // How far past each desired port to probe for a free one when bumping.
 const PORT_SCAN_WINDOW = 40;
 
@@ -451,28 +447,9 @@ function probeDocker(spawn) {
   });
 }
 
-// TTL cache + in-flight dedupe around a detection `probe`. get() returns the
-// cached result (stamped with `cachedAt`) while it's younger than ttlMs, folds
-// concurrent callers onto one in-flight probe, and re-probes past the TTL.
-// invalidate() drops the cache so the next get() re-probes immediately — used
-// after a late compose failure reveals the daemon died. `now` is injectable so
-// the TTL is unit-testable with a fake clock.
-function createDetectCache({ probe, now = Date.now, ttlMs = DETECT_CACHE_TTL_MS } = {}) {
-  let last = null;      // { result, ts } — the most recent settled probe
-  let inflight = null;  // the shared Promise while a probe is running
-  const stamp = (result, ts) => ({ ...result, cachedAt: ts });
-  function get() {
-    if (last && (now() - last.ts) < ttlMs) return Promise.resolve(stamp(last.result, last.ts));
-    if (inflight) return inflight;
-    inflight = Promise.resolve().then(probe).then(
-      (result) => { const ts = now(); last = { result, ts }; inflight = null; return stamp(result, ts); },
-      (err) => { inflight = null; throw err; },
-    );
-    return inflight;
-  }
-  function invalidate() { last = null; }
-  return { get, invalidate };
-}
+// createDetectCache lives in the shared detect-cache.js leaf now (Task 12) so
+// tool-doctor.js can reuse the same TTL+dedupe without depending on this whole
+// module. Re-exported below so this file's unit suite still imports it from here.
 
 // Operator-facing docker-remedy copy. KEEP IN SYNC with
 // renderer/lib/sandbox-view.js detectNotice — the dialog shows the same two

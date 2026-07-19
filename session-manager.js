@@ -80,6 +80,20 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
+// Missing-CLI exit heuristic (Task 12). node-pty's execvp failure in the forked
+// child is silent (no stderr) — it surfaces as a bare code-1 exit within a couple
+// seconds of spawn. Returns the unresolvable command to NAME in the exit toast, or
+// null when this isn't that case. Pure (whichBin injected) so it's unit-tested
+// directly rather than through a real spawn. Excludes deliberate exits, signals,
+// and anything past the fast-fail window (a later code-1 is a real crash, not a
+// missing binary — the CLI clearly launched).
+function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBin }) {
+  if (expected || exitCode !== 1 || signal) return null;
+  if (!(elapsedMs <= 5000)) return null;
+  const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
+  return resolved ? null : (cmd || null);
+}
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -189,6 +203,19 @@ function createSessionManager(deps) {
     // electron seam fns (see header)
     getUserDataPath, openPath, notifyOS, setAppQuitting,
   } = deps;
+
+  // A non-claude (codex) team seat's initial roster is deferred to the first quiet
+  // window AFTER its boot output — the settle delay from the LAST output chunk. It
+  // is armed/reset by real PTY output (not a blind spawn timer), so it fires when
+  // the boot render quiesces (the TUI at its prompt, safe to inject). Injectable
+  // for tests; 400ms in production.
+  const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
+  // Absolute-wait cap on the settle re-arm (inject-queue maxWaitMs precedent): a
+  // codex TUI with a sub-settle idle repaint (spinner / status clock) would push
+  // the deadline forever and starve the roster SILENTLY — worse than the original
+  // visible bug. Past this cap from stash time, flush immediately instead of
+  // re-arming. Injectable for tests; 10s in production.
+  const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
   class SessionManager {
     constructor() {
@@ -1000,6 +1027,9 @@ function createSessionManager(deps) {
 
       const session = {
         name, type, cwd, pty: ptyProc, transport, socketPath,
+        // Spawn timestamp — the enriched session-exit heuristic (Task 12) uses it
+        // to tell a fast "CLI not found on PATH" death from a later crash.
+        spawnedAt: Date.now(),
         agentType, lineBuffer: '', watcher: null,
         sessionId: resumeId || null,
         workspaceId,
@@ -1219,6 +1249,12 @@ function createSessionManager(deps) {
         if (!agentType) {
           this._scanPtyOutput(session, data);
         }
+
+        // A deferred initial roster (non-claude team seat) rides the FIRST quiet
+        // window after boot output — each chunk re-arms the settle timer, so it
+        // fires once the boot render quiesces (the TUI at its prompt). No-op once
+        // flushed. See _injectRoster / _armRosterFlush.
+        if (session._pendingRoster) this._armRosterFlush(session);
       });
 
       ptyProc.onExit(({ exitCode, signal }) => {
@@ -1233,10 +1269,20 @@ function createSessionManager(deps) {
         // own — the renderer uses that to surface it instead of silently
         // dropping the tab.
         const expected = !!(session._userKilled || session._shuttingDown || session._archived);
+        // Missing-CLI heuristic (Task 12, pure helper below): node-pty's execvp
+        // fails SILENTLY in the forked child (no stderr) — a bare code-1 exit
+        // within a few seconds of spawn. If the command still isn't resolvable on
+        // PATH, name it so the toast reads "the `claude` CLI wasn't found on PATH"
+        // instead of the generic "exited unexpectedly (code 1)". Computed main-side
+        // so headless benefits too. `cmd` is the spawn command in this closure.
+        const missingTool = missingToolOnExit({
+          expected, exitCode, signal,
+          elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
+        });
         // Send the exit event BEFORE cleanup so the renderer can still resolve
         // the session → workspace → window mapping. Otherwise the sidebar
         // tab sticks around as a "dead" entry.
-        this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null });
+        this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null, missingTool });
         // Exit observability: an always-on IPC-log entry (every exit, any type) so
         // a vanished tab leaves a forensic trace — grep-stable body: `code=N`
         // always, ` signal=X` / ` unexpected` only when applicable. Physically
@@ -1410,17 +1456,60 @@ function createSessionManager(deps) {
     // Inject the one-time initial roster (sender `team`) into a freshly
     // registered team seat — its first appended-context message (mechanism 2 in
     // the context architecture): roles, briefs, live seats, subagent-class
-    // roles. Delivered on the normal path so it lands in the seat's first turn,
-    // ahead of any task DM the lead sends over the socket next. Best-effort; the
-    // clodex-team roster pull is the blessed fallback (the identity line names
-    // it). `team` is a resolveTeam() result.
+    // roles. It must NEVER be actively typed into a still-booting TUI: this fires
+    // at spawn, and an active write typed the roster into the not-yet-ready input
+    // box where the trailing Enter got swallowed — an un-submitted draft the
+    // operator had to submit by hand.
+    //
+    // Claude seats park it PASSIVELY (the pending store drains on the seat's first
+    // organic hook turn — no PTY typing). Codex has no passive store, so
+    // _deliverPassive there falls back to an ACTIVE write — the same boot-race bug,
+    // scoped to codex. So a codex seat DEFERS: the body is stashed on the session
+    // and the onData settle timer (_armRosterFlush) delivers it on the normal path
+    // once the boot render quiesces (the TUI up, active injection safe — how mid-
+    // session DMs already work). Best-effort. `team` is a resolveTeam() result.
     _injectRoster(session, team) {
       try {
         const body = formatRoster(team, this._teamLiveSeats(team.root));
-        this._deliverMessage(session.name, 'team', body, 'dm');
+        if (session.agentType === 'claude') {
+          this._deliverPassive(session.name, 'team', body, 'dm');
+        } else {
+          session._pendingRoster = body;   // flushed by _armRosterFlush at first output settle
+          session._pendingRosterSince = Date.now();   // absolute-wait cap anchor
+        }
       } catch (e) {
         log.error('inject', `roster inject failed for ${session.name}: ${e.message}`);
       }
+    }
+
+    // Arm/re-arm the deferred-roster settle timer for a non-claude seat. Every
+    // output chunk pushes the deadline out, so the roster flushes only after the
+    // boot render goes quiet — an ACTIVITY-gated wait, not a blind spawn timer.
+    // But a TUI that repaints faster than the settle interval (spinner / status
+    // clock) would re-arm forever; past ROSTER_MAX_WAIT_MS from stash time, flush
+    // NOW rather than re-arm (inject-queue maxWaitMs precedent). No-op once
+    // flushed (_pendingRoster cleared).
+    _armRosterFlush(session) {
+      if (!session._pendingRoster) return;
+      if (Date.now() - (session._pendingRosterSince || 0) >= ROSTER_MAX_WAIT_MS) {
+        clearTimeout(session._rosterFlushTimer);
+        session._rosterFlushTimer = null;
+        this._flushPendingRoster(session);
+        return;
+      }
+      clearTimeout(session._rosterFlushTimer);
+      session._rosterFlushTimer = setTimeout(() => this._flushPendingRoster(session), ROSTER_SETTLE_MS);
+    }
+
+    // Deliver a deferred initial roster on the normal (active) path: the TUI is up
+    // now, so this is a safe mid-session-style inject (quiet-gate/busy-hold apply
+    // as for any DM). Once-only + dead-safe.
+    _flushPendingRoster(session) {
+      session._rosterFlushTimer = null;
+      const body = session._pendingRoster;
+      if (!body || session._dead) return;
+      session._pendingRoster = null;
+      this._deliverMessage(session.name, 'team', body, 'dm');
     }
 
     // Fan a passive composition delta (sender `team`) to every OTHER live seat
@@ -1571,6 +1660,7 @@ function createSessionManager(deps) {
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._compactValveTimer);
       clearTimeout(s._parkCapTimer);
+      clearTimeout(s._rosterFlushTimer);
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       // Drop any parked deliveries ONLY for a session going away for good — i.e. a
       // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
@@ -4076,4 +4166,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, isStaleRegistration };
+module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit };

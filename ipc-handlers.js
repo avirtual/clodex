@@ -51,7 +51,7 @@ function registerIpcHandlers(deps) {
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR, SKILL_REENABLE_CONFIRMED,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
     claudeProjectDir, collectSystemDiagnostics, createWindow, diagSummary,
-    diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
+    checkTools, diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager,
@@ -351,6 +351,16 @@ function registerIpcHandlers(deps) {
   handle('diagnostics:get', () => {
     const d = collectSystemDiagnostics();
     return { ...d, warning: diagWarning(d), summary: diagSummary(d) };
+  });
+
+  // External-tool presence for the New Session dialog gate (Task 12): TTL-cached
+  // report { byTool: { <tool>: { present, path, notice } }, list, cachedAt }. The
+  // renderer's tool-gate leaf maps the selected type → its report to allow/block
+  // Create. Best-effort — a probe throw falls back to an empty report (gate reads
+  // it as "unknown → not blocked", same as pre-probe).
+  handle('tools:check', async () => {
+    try { return await checkTools(); }
+    catch { return { byTool: {}, list: [] }; }
   });
 
   handle('templates:list', () => templates.list());

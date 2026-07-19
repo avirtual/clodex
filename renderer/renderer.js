@@ -9,7 +9,8 @@ const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { newSessionToolGate } = require('./lib/tool-gate');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
@@ -1358,6 +1359,43 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   }
 }
 
+// Tool-doctor gate (Task 12): the last tools:check payload, cached so a type-flip
+// applies instantly from it before the live re-probe lands.
+let lastToolCheck = null;
+const newSessionToolNotice = document.getElementById('new-session-tool-notice');
+
+// Apply a tool-gate decision to the dialog: show/hide the inline notice + toggle
+// Create. btnCreate is gated ONLY here in create mode, so re-enabling on ok is
+// safe. Reuses renderSandboxNotice for the docker-notice visual language.
+function applyNewSessionToolGate(gate) {
+  if (!newSessionToolNotice) return;
+  if (gate.disabled) {
+    renderSandboxNotice(newSessionToolNotice, gate.notice);
+    newSessionToolNotice.classList.remove('hidden');
+    btnCreate.disabled = true;
+    btnCreate.title = gate.notice ? gate.notice.text : '';
+  } else {
+    newSessionToolNotice.classList.add('hidden');
+    btnCreate.disabled = false;
+    btnCreate.title = '';
+  }
+}
+
+// Probe the selected type's CLI and gate Create. Template authoring and bash are
+// never gated (pass 'bash' to the leaf). Applies synchronously from the cached
+// check first (snappy on type-change), then re-applies from a fresh probe; guards
+// against the type changing during the await.
+async function refreshNewSessionToolGate() {
+  const typeAtCall = dialogMode === 'template' ? 'bash' : inputType.value;
+  applyNewSessionToolGate(newSessionToolGate(typeAtCall, lastToolCheck));
+  let check = null;
+  try { check = await window.api.toolsCheck(); } catch { check = null; }
+  lastToolCheck = check;
+  // The user may have flipped type / entered template mode during the await.
+  const typeNow = dialogMode === 'template' ? 'bash' : inputType.value;
+  applyNewSessionToolGate(newSessionToolGate(typeNow, check));
+}
+
 // Grey (disable + dim) or restore the rich rows for the current placement. When
 // greyed, `hintText` (if given) replaces the default hint copy so the reason is
 // specific (old box vs catalogs-unavailable). For a create2 sandbox the fields
@@ -1870,6 +1908,9 @@ async function openDialog(prefill = null) {
   // carries the id and drives the behavior.
   if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
+  // Gate Create on the selected type's CLI being on PATH (Task 12). Fire-and-
+  // forget: it applies from the cached check immediately, then the live probe.
+  refreshNewSessionToolGate();
   setTimeout(() => inputName.select(), 50);
 }
 
@@ -1893,6 +1934,7 @@ function populateHostCatalogs(settings, agentLib) {
 }
 
 inputType.addEventListener('change', () => applyTypeDefaults());
+inputType.addEventListener('change', () => refreshNewSessionToolGate());
 inputPlacement.addEventListener('change', () => applyPlacement());
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
 // so re-fetch when it changes.
@@ -2280,6 +2322,9 @@ function setDialogMode(mode) {
     // selector and drop any grey so the full field set is editable.
     placementRow.style.display = 'none';
     greyRichFields(false);
+    // Template authoring is never CLI-gated (you may author for a CLI you lack) —
+    // clear any tool-gate disable a prior create-mode open left on Create.
+    applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
   }
 }
 
@@ -2390,8 +2435,17 @@ window.api.onSessionExit((name, code, meta) => {
   // fast-fails at code≠0 would otherwise storm toasts. Every exit still lands in
   // the IPC log (main-side, all types) — narrowing the toast hides nothing.
   if (meta && meta.agentType && !meta.expected && (code !== 0 || meta.signal)) {
-    const why = meta.signal ? `signal ${meta.signal}` : `code ${code}`;
-    showToast(`${name} exited unexpectedly (${why}).`, { kind: 'error', duration: 15000 });
+    // Missing-CLI death (Task 12): a fast code-1 exit whose command still isn't on
+    // PATH — name the tool + the fix instead of the opaque generic message.
+    if (meta.missingTool) {
+      showToast(
+        `${name} couldn't start: the \`${meta.missingTool}\` CLI wasn't found on PATH. Install it and try again.`,
+        { kind: 'error', duration: 15000 },
+      );
+    } else {
+      const why = meta.signal ? `signal ${meta.signal}` : `code ${code}`;
+      showToast(`${name} exited unexpectedly (${why}).`, { kind: 'error', duration: 15000 });
+    }
   }
 });
 
@@ -4504,19 +4558,22 @@ const sbMountsRestart = document.getElementById('sandbox-mounts-restart');
 const sbBoxList = document.getElementById('sandbox-box-list');
 const sbBoxNewId = document.getElementById('sandbox-box-new-id');
 const sbBoxCreate = document.getElementById('sandbox-box-create');
+const sbBoxNew = document.getElementById('sandbox-box-new');   // the create-box row (dimmed while gated)
 const sbDetail = document.getElementById('sandbox-detail');
 const sbDetailLabel = document.getElementById('sandbox-detail-label');
 const sbDeleteBtn = document.getElementById('btn-sandbox-delete');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
-// Docker action gate (Task 8): the last-probed daemon availability + the reason
-// copy to show on the controls it disables. Default running:true so nothing is
-// gated before the first probe (the dialog probes on open); refreshSandboxStatus
-// and renderBoxList keep these fresh. Start/Rebuild/box-create are disabled while
-// docker is down; Stop is never gated.
-let sbDockerRunning = true;
-let sbGateReason = null;
+// Docker action gate (Task 8/13): the last-probed sandboxActionGate result
+// (running + notice + reason). Init PESSIMISTIC (running:false) so the markup
+// opens disabled — the probe can take seconds when the daemon is down, and an
+// optimistic paint (the old default running:true) would flash enabled Start/
+// Rebuild the user could click into a raw compose failure. refreshSandboxStatus
+// and renderBoxList replace this with a real probe on open and each poll; the
+// probe's catch{} falls back to this pessimistic gate rather than a stale good one.
+const SB_GATE_UNKNOWN = { running: false, notice: { kind: 'idle', text: 'Checking Docker…' }, reason: 'Checking Docker…' };
+let sbGate = SB_GATE_UNKNOWN;
 // The selected box's EFFECTIVE (last-generated, possibly bumped) host ports by
 // role — status.ports while running, null when stopped. Both the Open-in-browser
 // link and its click handler read the live web port from here, not the (disabled,
@@ -4571,21 +4628,29 @@ function applySandboxRunning(running, ports = null) {
   }
 }
 
-// Apply the docker action gate to the detail buttons + box-create, using the
-// last-probed daemon state (sbDockerRunning/sbGateReason). Start (#btn-sandbox-
-// toggle) is gated ONLY when it would Start — a running box's Stop is never
-// gated. sbBusy (a lifecycle op in flight) also disables, so this is safe to call
-// from a finally after sbBusy clears. The reason rides the title so a hover
-// explains the disabled control; the top notice line already states it in full.
+// Apply the docker action gate to the detail buttons + box-create from the
+// last-probed gate (sbGate) and the selected box's running state (sbRunning). The
+// per-element decisions live in the tested leaf (sandboxGateTreatment); this only
+// plumbs them into the DOM. Docker-down must be OBVIOUS (Task 13): a gated control
+// is disabled AND dimmed (`.sandbox-gated`, the greyRichFields precedent), the
+// docker row reads at banner weight (`.sandbox-docker-banner`), and Stop stays live
+// + undimmed. sbBusy (a lifecycle op in flight) also disables the toggle/rebuild,
+// so this is safe from a finally after sbBusy clears. The reason rides the title so
+// a hover explains a disabled control; the banner states it in full.
 function applyActionGate() {
-  const gated = !sbDockerRunning;
-  const startGated = gated && !sbRunning;   // Stop (running) stays enabled
-  sbToggleBtn.disabled = sbBusy || startGated;
-  sbRebuildBtn.disabled = sbBusy || gated;
-  sbBoxCreate.disabled = gated;
-  sbToggleBtn.title = startGated ? (sbGateReason || '') : '';
-  sbRebuildBtn.title = gated ? (sbGateReason || '') : '';
-  sbBoxCreate.title = gated ? (sbGateReason || '') : '';
+  const t = sandboxGateTreatment(sbGate, sbRunning);
+  sbToggleBtn.disabled = sbBusy || t.startDisabled;
+  sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled;
+  sbBoxCreate.disabled = t.boxCreateDisabled;
+  sbToggleBtn.title = t.startDisabled ? (t.reason || '') : '';
+  sbRebuildBtn.title = t.rebuildDisabled ? (t.reason || '') : '';
+  sbBoxCreate.title = t.boxCreateDisabled ? (t.reason || '') : '';
+  // Dim the gated action areas — never a live Stop.
+  sbToggleBtn.classList.toggle('sandbox-gated', t.dimStart);
+  sbRebuildBtn.classList.toggle('sandbox-gated', t.dimRebuild);
+  if (sbBoxNew) sbBoxNew.classList.toggle('sandbox-gated', t.dimBoxCreate);
+  // Raise the docker notice to banner weight while gated (dominant, not a quiet line).
+  sbDockerRow.classList.toggle('sandbox-docker-banner', t.banner);
 }
 
 async function refreshSandboxStatus() {
@@ -4594,26 +4659,40 @@ async function refreshSandboxStatus() {
       window.api.sandboxDetect(sbCurrentBox),
       window.api.sandboxStatus(sbCurrentBox),
     ]);
-    const gate = sandboxActionGate(detect);
-    sbDockerRunning = gate.running;
-    sbGateReason = gate.reason;
-    renderSandboxNotice(sbDockerRow, gate.notice);
-    applyActionGate();
+    sbGate = sandboxActionGate(detect);
+    renderSandboxNotice(sbDockerRow, sbGate.notice);
     const sn = sandboxStatusNotice(status && status.state);
     renderSandboxNotice(sbStatusRow, sn);
+    // Update sbRunning BEFORE applyActionGate — the gate's Start-vs-Stop decision
+    // reads sbRunning, and applying the gate on a stale value would mis-gate the
+    // toggle right after a state flip (defect #1).
     if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
+    applyActionGate();
     // The mounts restart-hint depends on running state — repaint it each poll.
     sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
-    // Keep the selected box's list row (dot + Start/Stop label) in step with the
-    // detail poll, so the row reflects the same state without its own docker call.
+    // Keep the selected box's list row (dot + Start/Stop label + Start gating) in
+    // step with the detail poll, so the row reflects the same state — including a
+    // docker-down row Start going dim/disabled — without its own docker call.
     const selRow = sbBoxList.querySelector('.sandbox-box-row.selected');
     if (selRow) {
       const dot = selRow.querySelector('.sandbox-dot');
       if (dot) dot.className = `sandbox-dot ${sn.kind}`;
       const tog = selRow.querySelector('.sandbox-box-toggle');
-      if (tog && !sbBusy) tog.textContent = sn.running ? 'Stop' : 'Start';
+      if (tog && !sbBusy) {
+        tog.textContent = sn.running ? 'Stop' : 'Start';
+        const rowGated = boxRowStartGated(sbGate.running, sn.running);
+        tog.disabled = rowGated;
+        tog.classList.toggle('sandbox-gated', rowGated);
+        tog.title = rowGated ? (sbGate.reason || '') : '';
+      }
     }
-  } catch { /* dialog closed mid-poll, or engine hiccup — next tick retries */ }
+  } catch {
+    // Probe/status failed (dialog closed mid-poll, or an engine hiccup). Fall back
+    // to the pessimistic gate so a stale GOOD probe can't leave Start/Rebuild/create
+    // enabled after docker goes away (defect #3); the next tick retries.
+    sbGate = SB_GATE_UNKNOWN;
+    applyActionGate();
+  }
 }
 
 // The token field is WRITE-ONLY (docs/sandbox-plan.md M4): the value never
@@ -4693,9 +4772,7 @@ async function renderBoxList() {
     Promise.all(boxes.map((b) =>
       window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice()))),
   ]);
-  const gate = sandboxActionGate(detect);
-  sbDockerRunning = gate.running;
-  sbGateReason = gate.reason;
+  sbGate = sandboxActionGate(detect);
   applyActionGate();
   sbBoxList.innerHTML = '';
   if (boxes.length === 0) {
@@ -4720,9 +4797,10 @@ async function renderBoxList() {
     tog.className = 'secondary sandbox-box-toggle';
     tog.textContent = sn.running ? 'Stop' : 'Start';
     // A row's Start is gated when docker is down; its Stop is never gated.
-    const rowStartGated = !sn.running && !gate.running;
+    const rowStartGated = boxRowStartGated(sbGate.running, sn.running);
     tog.disabled = rowStartGated;
-    if (rowStartGated) tog.title = gate.reason || '';
+    tog.classList.toggle('sandbox-gated', rowStartGated);
+    if (rowStartGated) tog.title = sbGate.reason || '';
     tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
     row.append(dot, label, tog);
     row.addEventListener('click', () => selectBox(b.id));

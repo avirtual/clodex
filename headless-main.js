@@ -74,8 +74,10 @@ const log = {
 // ── Login-shell PATH ── a service launcher (systemd, docker) inherits a minimal
 // PATH, so `claude`/`codex` from ~/.local/bin aren't resolvable. Always run
 // (cheap, idempotent) — unlike the Electron host there is no isPackaged gate.
+// Returns true when the merge was needed but FAILED (recorded into engine
+// diagnostics — see main.js twin). A clean or no-op merge is false.
 function fixPathFromLoginShell() {
-  if (process.platform === 'win32') return;
+  if (process.platform === 'win32') return false;
   const userShell = process.env.SHELL || '/bin/bash';
   try {
     const out = execSync(
@@ -83,13 +85,15 @@ function fixPathFromLoginShell() {
       { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
     const m = out.match(/__CLODEX_PATH__(.*?)__CLODEX_PATH__/);
-    if (!m || !m[1]) return;
+    if (!m || !m[1]) return false;
     const shellPath = m[1].split(':').filter(Boolean);
     const current = (process.env.PATH || '').split(':').filter(Boolean);
     process.env.PATH = [...new Set([...shellPath, ...current])].join(':');
-  } catch (e) { log.warn('startup', `fixPathFromLoginShell failed: ${e.message}`); }
+    return false;
+  } catch (e) { log.warn('startup', `fixPathFromLoginShell failed: ${e.message}`); return true; }
 }
-fixPathFromLoginShell();
+// Captured for the createEngine `pathMergeFailed` seam (see main.js twin).
+const pathMergeFailed = fixPathFromLoginShell();
 
 // ── Env self-decontamination ── strip inherited CLAUDE_* markers and an
 // agent-scoped ANTHROPIC_BASE_URL so PTY-spawned CLIs don't behave as nested
@@ -150,6 +154,7 @@ const engine = createEngine({
     openPath: (p) => log.info('seam', `openPath (headless no-op): ${p}`),
     notifyOS: (opts) => log.info('notify', `${(opts && opts.title) || ''}${opts && opts.body ? ` — ${opts.body}` : ''}`),
     setAppQuitting: (v) => { appQuitting = v; },
+    pathMergeFailed,   // login-shell PATH merge outcome → diagnostics banner (Task 12)
     // App-menu / tray refresh hooks default to no-ops (there is no menu here).
     // restartHost: shut down cleanly and exit 64 so a supervisor relaunches.
     restartHost: () => {

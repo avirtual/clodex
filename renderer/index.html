@@ -655,6 +655,10 @@
           <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched).</span>
         </label>
       </label>
+      <!-- Tool-doctor gate (Task 12): shown when the selected type's CLI isn't on
+           PATH — Create is disabled and this carries the install remedy. Ships
+           hidden; bash never trips it. Same visual language as the docker notice. -->
+      <div id="new-session-tool-notice" class="sandbox-row hidden"></div>
       <div class="dialog-actions">
         <button id="btn-save-template" class="secondary" type="button" title="Save these settings as a reusable template">Save as Template…</button>
         <div style="flex: 1;"></div>
@@ -933,7 +937,9 @@
       <div id="sandbox-box-list"></div>
       <div id="sandbox-box-new" class="sandbox-box-new-row">
         <input id="sandbox-box-new-id" type="text" spellcheck="false" autocomplete="off" maxlength="64" placeholder="new sandbox id (lowercase, dashes)" />
-        <button id="sandbox-box-create" class="secondary" type="button">Create Sandbox</button>
+        <!-- Starts disabled: pessimistic until the open probe confirms docker is up
+             (Task 13 defect #2 — no enabled flash before the probe resolves). -->
+        <button id="sandbox-box-create" class="secondary" type="button" disabled>Create Sandbox</button>
       </div>
       <div id="sandbox-detail">
       <div class="sandbox-detail-header">
@@ -972,8 +978,10 @@
       </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" href="#">Open in browser →</a></div>
       <div class="dialog-actions">
-        <button id="btn-sandbox-toggle">Start</button>
-        <button id="btn-sandbox-rebuild" class="secondary" title="Rebuild the container image on the current code and recreate the sandbox (its sessions resume automatically)">Rebuild</button>
+        <!-- Both start disabled: pessimistic until the open probe confirms docker
+             is up (Task 13 defect #2 — the probe can take seconds when down). -->
+        <button id="btn-sandbox-toggle" disabled>Start</button>
+        <button id="btn-sandbox-rebuild" class="secondary" disabled title="Rebuild the container image on the current code and recreate the sandbox (its sessions resume automatically)">Rebuild</button>
       </div>
       </div><!-- /#sandbox-detail -->
       <div class="dialog-actions">

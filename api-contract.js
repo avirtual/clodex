@@ -100,6 +100,7 @@ const API_CONTRACT = [
   { name: 'openUpdate', kind: 'invoke', channel: 'update:open' },
   { name: 'getVersion', kind: 'invoke', channel: 'app:getVersion' },
   { name: 'getDiagnostics', kind: 'invoke', channel: 'diagnostics:get' },
+  { name: 'toolsCheck', kind: 'invoke', channel: 'tools:check' },
   { name: 'onUpdateAvailable', kind: 'on', channel: 'update-available' },
   { name: 'onSessionContextAction', kind: 'on', channel: 'session:context-action' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },

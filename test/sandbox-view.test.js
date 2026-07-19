@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, sandboxActionGate, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
+const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -64,6 +64,68 @@ test('sandboxActionGate: missing/undefined detect reads as not installed (fully 
   assert.deepStrictEqual(sandboxActionGate(undefined).disabled, GATED);
   assert.deepStrictEqual(sandboxActionGate(null).disabled, GATED);
   assert.strictEqual(sandboxActionGate({}).running, false);
+});
+
+// ── sandboxGateTreatment: element-treatment map (Task 13) ───────────────────
+// Docker-down must be OBVIOUS: gated controls disabled AND dimmed, the notice at
+// banner weight, Stop always live + undimmed. Start is gated ONLY when the toggle
+// would START — a running box's Stop is never gated.
+
+test('sandboxGateTreatment: docker down + box stopped → Start/Rebuild/create all disabled+dimmed, banner up, Stop not live', () => {
+  const t = sandboxGateTreatment(sandboxActionGate({ present: true, running: false }), false);
+  assert.strictEqual(t.running, false);
+  assert.strictEqual(t.gated, true);
+  assert.strictEqual(t.startDisabled, true);
+  assert.strictEqual(t.dimStart, true);
+  assert.strictEqual(t.rebuildDisabled, true);
+  assert.strictEqual(t.dimRebuild, true);
+  assert.strictEqual(t.boxCreateDisabled, true);
+  assert.strictEqual(t.dimBoxCreate, true);
+  assert.strictEqual(t.banner, true);
+  assert.strictEqual(t.stopLive, false);          // nothing running → no Stop to keep live
+  assert.match(t.reason, /running/i);             // daemon-down remedy carried through
+});
+
+test('sandboxGateTreatment: docker down + box RUNNING → Stop stays live (not gated/dimmed), Rebuild/create still gated', () => {
+  const t = sandboxGateTreatment(sandboxActionGate({ present: false, running: false }), true);
+  assert.strictEqual(t.startDisabled, false, 'the toggle is Stop here — never gated');
+  assert.strictEqual(t.dimStart, false, 'a live Stop is never dimmed');
+  assert.strictEqual(t.stopLive, true);
+  assert.strictEqual(t.rebuildDisabled, true, 'Rebuild would recreate — still gated');
+  assert.strictEqual(t.dimRebuild, true);
+  assert.strictEqual(t.boxCreateDisabled, true);
+  assert.strictEqual(t.banner, true);
+  assert.match(t.reason, /installed/i);           // not-installed remedy carried through
+});
+
+test('sandboxGateTreatment: docker running → nothing gated/dimmed, no banner, reason null', () => {
+  for (const running of [false, true]) {
+    const t = sandboxGateTreatment(sandboxActionGate({ present: true, running: true }), running);
+    assert.strictEqual(t.gated, false);
+    assert.strictEqual(t.startDisabled, false);
+    assert.strictEqual(t.rebuildDisabled, false);
+    assert.strictEqual(t.boxCreateDisabled, false);
+    assert.strictEqual(t.dimStart, false);
+    assert.strictEqual(t.dimRebuild, false);
+    assert.strictEqual(t.dimBoxCreate, false);
+    assert.strictEqual(t.banner, false);
+    assert.strictEqual(t.reason, null);
+  }
+});
+
+test('sandboxGateTreatment: missing/undefined gate reads as gated (pessimistic), notice defined', () => {
+  const t = sandboxGateTreatment(undefined, false);
+  assert.strictEqual(t.gated, true);
+  assert.strictEqual(t.boxCreateDisabled, true);
+  assert.ok(t.notice && typeof t.notice.text === 'string', 'a notice is always present for the banner');
+});
+
+// ── boxRowStartGated: per-row Start gating (each row carries its own running) ──
+test('boxRowStartGated: docker down gates a STOPPED row Start, never a running row Stop', () => {
+  assert.strictEqual(boxRowStartGated(false, false), true, 'docker down + row stopped → Start gated');
+  assert.strictEqual(boxRowStartGated(false, true), false, 'docker down + row running → Stop stays live');
+  assert.strictEqual(boxRowStartGated(true, false), false, 'docker up → Start free');
+  assert.strictEqual(boxRowStartGated(true, true), false, 'docker up + running → Stop free');
 });
 
 test('statusNotice: running → ok + running true', () => {

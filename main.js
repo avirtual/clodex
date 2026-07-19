@@ -15,9 +15,13 @@ const { createEngine } = require('./engine');
 // /opt/homebrew/bin aren't resolvable. Pull PATH from the user's login shell
 // and merge it in. Only needed in packaged builds — dev mode inherits the
 // shell env already.
+// Returns true when the merge was NEEDED but FAILED (the login shell errored /
+// timed out) — recorded into engine diagnostics so a silently-broken PATH (the
+// usual root cause of "claude/codex not on PATH") surfaces as a banner instead of
+// only a console.error. A skipped merge (dev / win32) or a clean merge is false.
 function fixPathFromLoginShell() {
-  if (!app.isPackaged) return;
-  if (process.platform === 'win32') return;
+  if (!app.isPackaged) return false;
+  if (process.platform === 'win32') return false;
   const userShell = process.env.SHELL || '/bin/bash';
   try {
     const out = execSync(
@@ -25,15 +29,19 @@ function fixPathFromLoginShell() {
       { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
     const m = out.match(/__CLODEX_PATH__(.*?)__CLODEX_PATH__/);
-    if (!m || !m[1]) return;
+    if (!m || !m[1]) return false;
     const shellPath = m[1].split(':').filter(Boolean);
     const current = (process.env.PATH || '').split(':').filter(Boolean);
     process.env.PATH = [...new Set([...shellPath, ...current])].join(':');
+    return false;
   } catch (e) {
     console.error('fixPathFromLoginShell failed:', e.message);
+    return true;
   }
 }
-fixPathFromLoginShell();
+// Captured at module load (before the engine exists) and passed into createEngine
+// as the `pathMergeFailed` seam so diagnostics can warn on a silently-broken PATH.
+const pathMergeFailed = fixPathFromLoginShell();
 
 // Env self-decontamination. If Clodex was launched (or relaunched — including
 // app.relaunch() from the remote restart endpoint) from inside a Claude Code
@@ -424,6 +432,9 @@ app.whenReady().then(() => {
       setAppQuitting: (v) => { appQuitting = v; },
       appVersion: app.getVersion(),
       isPackaged: () => app.isPackaged,
+      // Login-shell PATH merge outcome (captured at module load) — diagnostics
+      // promotes a failed merge to a banner (Task 12).
+      pathMergeFailed,
       // App-menu refresh hooks SessionManager + peer-wiring fire on change.
       // Late-bound forwarders onto the module consts createAppMenus produced at
       // module scope; nothing fires them synchronously during createEngine (the
