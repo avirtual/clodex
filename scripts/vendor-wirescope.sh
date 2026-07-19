@@ -10,7 +10,7 @@
 #        WIRESCOPE_SRC=/path/to/checkout scripts/vendor-wirescope.sh v0.6.14
 set -euo pipefail
 
-REF="${1:-v0.6.14}"
+REF="${1:-v0.6.36}"
 SRC="${WIRESCOPE_SRC:-$HOME/projects/proxy-lab}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/vendor/wirescope"

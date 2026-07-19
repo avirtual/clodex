@@ -42,6 +42,11 @@ from proxylab import views as views_mod
 from proxylab import warmth as warmth_mod
 from proxylab import writer as writer_mod
 
+# (agent, marker_count) pairs already announced on console — the client-at-
+# marker-budget notice prints once per layout, not per request (the per-request
+# fact lives in the capture record as `client_markers_at_budget`).
+_CLIENT_MARKER_SEEN = set()
+
 def _record_openai_context(obj, *, session_id, base_path, upstream_path,
                            agent, model):
     """Record Codex request metadata used by /_status, /_admin, and /_session.
@@ -1077,6 +1082,20 @@ async def handler(request: Request) -> Response:
             cres = canary_mod._canary_check(obj, request.headers, n)
             if cres is not None:
                 record["canary"] = cres
+            # CLIENT AT/OVER MARKER BUDGET (pre-transform): the org-route CLI
+            # can ship 4 markers of its own (2 sys + 2 msg / a tools marker) —
+            # the layout that made relocate's blind bundle-stamp a 5-marker
+            # 400 on the vendored deploy (2026-07-19). Record every such
+            # request; print once per (agent, count) so a new layout is LOUD
+            # instead of discovered via someone's rejected turn.
+            ncm = len(transforms_mod._cache_markers(obj))
+            if ncm >= transforms_mod._CACHE_BREAKPOINT_BUDGET:
+                record["client_markers_at_budget"] = ncm
+                if (agent, ncm) not in _CLIENT_MARKER_SEEN:
+                    _CLIENT_MARKER_SEEN.add((agent, ncm))
+                    print(f"[markers] #{n} {agent} client ships {ncm} "
+                          f"cache markers (budget {transforms_mod._CACHE_BREAKPOINT_BUDGET}) — "
+                          f"proxy adders will migrate/skip, clamp armed", flush=True)
         # EXPERIMENTAL piggyback: mutate the outbound payload, forward modified bytes
         ws_display_name = None     # captured pre-strip below; passed to meta
         # Per-instance key (present iff subagent, stable across that instance's
@@ -1330,6 +1349,21 @@ async def handler(request: Request) -> Response:
                 record["scrap_tail_5m"] = dst
                 if dst.get("downshifted"):
                     changed = True
+            # MARKER-BUDGET INVARIANT (hard rule): never forward >4
+            # cache_control markers — the API hard-400s a 5th and kills the
+            # user's turn. Every adder is budget-aware upstream; this clamp
+            # is the unconditional backstop (drops lowest-value markers,
+            # placement metadata only — see transforms._enforce_marker_budget).
+            # LAST among the marker-touching transforms so it sees the final
+            # layout.
+            emb = transforms_mod._enforce_marker_budget(obj, agent_id=agent_id)
+            if emb:
+                record["marker_budget_clamp"] = emb
+                changed = True
+                print(f"[markers] #{n} {agent} OVER BUDGET "
+                      f"({emb['markers_before']} markers) — dropped "
+                      f"{emb['dropped']} to honor the 4-marker invariant",
+                      flush=True)
             # HOLD-WARM: /warm-cache sentinel turn -> arm/disarm + inject the
             # echo instruction; the turn then forwards like any other (the
             # model speaks the ack; this request becomes the replayable,

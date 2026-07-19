@@ -475,19 +475,46 @@ def _relocate_env_to_tail(obj):
     #    a ttl='1h' block AFTER a ttl='5m' one, so a bare {ephemeral}=5m marker here
     #    sitting before the CLI's 1h prompt/system markers -> 400. Copy the ttl from
     #    the nearest preceding (last system) marker.
+    #    BUDGET-AWARE (the vendored-clodex 5-marker 400, 2026-07-19): the org-route
+    #    CLI can legitimately ship 4 markers of its own (2 sys + 2 msg, or a tools
+    #    marker) — blindly stamping a 5th is a hard API reject. At full budget,
+    #    MIGRATE the earliest non-tail client MESSAGE marker onto the bundle
+    #    (placement metadata — moving it earlier only narrows a boundary, never
+    #    busts; pin re-anchors the settled region later in the chain anyway).
+    #    No such donor -> skip the marker (the relocation itself is still the win).
+    #    Never steal a system marker (cross-instance share anchors) or the
+    #    rolling tail (live-loop chaining).
     claudemd_ttl = None
+    bundle_marker = None
     if has_claudemd:
-        cc = {"type": "ephemeral"}
-        last_sys_ttl = next((b["cache_control"].get("ttl")
-                             for b in reversed(sysb)
-                             if isinstance(b, dict) and isinstance(b.get("cache_control"), dict)
-                             and b["cache_control"].get("ttl")), None)
-        if last_sys_ttl:
-            cc["ttl"] = last_sys_ttl
-        cmd["cache_control"] = cc
-        claudemd_ttl = cc.get("ttl")
+        if cmd.get("cache_control"):
+            bundle_marker = "already_marked"
+        else:
+            markers = _cache_markers(obj)
+            if len(markers) < _CACHE_BREAKPOINT_BUDGET:
+                cc = {"type": "ephemeral"}
+                last_sys_ttl = next((b["cache_control"].get("ttl")
+                                     for b in reversed(sysb)
+                                     if isinstance(b, dict) and isinstance(b.get("cache_control"), dict)
+                                     and b["cache_control"].get("ttl")), None)
+                if last_sys_ttl:
+                    cc["ttl"] = last_sys_ttl
+                cmd["cache_control"] = cc
+                bundle_marker = "added"
+            else:
+                last_mi = len(msgs) - 1
+                donor = next(((r, i, b) for r, i, b in markers
+                              if r == "messages" and i != last_mi and b is not cmd),
+                             None)
+                if donor is not None:
+                    cmd["cache_control"] = donor[2].pop("cache_control")
+                    bundle_marker = "migrated"
+                else:
+                    bundle_marker = "skipped_budget_full"
+        cc_now = cmd.get("cache_control")
+        claudemd_ttl = cc_now.get("ttl") if isinstance(cc_now, dict) else None
     return {"moved": moved, "stripped_date": stripped_date, "has_claudemd": has_claudemd,
-            "tail_chars": len(tail) if tail else 0,
+            "tail_chars": len(tail) if tail else 0, "bundle_marker": bundle_marker,
             "bundle_chars_after": len(cmd["text"]), "claudemd_ttl": claudemd_ttl}
 
 
@@ -2803,6 +2830,57 @@ def _pin_settled_breakpoint(obj, agent_id=None):
             "ttl": cc.get("ttl"), "converted_string": needs_convert,
             "markers_total": len(markers) + (1 if mode == "added" else 0),
             "total_messages": len(msgs)}
+
+
+# ---- MARKER-BUDGET INVARIANT (hard rule, 2026-07-19) -----------------------
+# NEVER forward more than 4 cache_control markers, period. The API hard-400s a
+# 5th and the whole user turn dies — the worst possible failure for a proxy
+# whose contract is "non-intrusive". Every marker-adding transform is budget-
+# aware on its own (relocate migrates-or-skips, pin migrates), but this final
+# clamp makes the invariant unconditional: any future transform bug or client
+# layout we haven't seen degrades to a slightly worse cache boundary (marker
+# removal is placement metadata, never a bust), not a rejected request.
+# Drop preference (lowest-value first): earliest non-tail MESSAGE markers
+# (their prefixes are re-anchored by pin / covered by deeper markers), then
+# TOOLS markers (the first system marker's cumulative prefix covers tools[]),
+# then earliest SYSTEM markers (keep the last — the full-prompt anchor).
+# The rolling tail (last message) is never dropped by preference; a final
+# unconditional pass guarantees <=4 even in pathological layouts.
+
+
+def _enforce_marker_budget(obj, agent_id=None):
+    """Final-chain clamp: forwarded requests carry at most
+    _CACHE_BREAKPOINT_BUDGET cache_control markers. Returns a log dict
+    {dropped:[{region,index}], markers_before} when it fired, else None."""
+    if not isinstance(obj, dict):
+        return None
+    markers = _cache_markers(obj)
+    over = len(markers) - _CACHE_BREAKPOINT_BUDGET
+    if over <= 0:
+        return None
+    msgs = obj.get("messages") or []
+    last_mi = len(msgs) - 1
+    dropped = []
+
+    def _drop(cand):
+        nonlocal over
+        cand[2].pop("cache_control", None)
+        dropped.append({"region": cand[0], "index": cand[1]})
+        over -= 1
+
+    msg_markers = [m for m in markers if m[0] == "messages" and m[1] != last_mi]
+    tool_markers = [m for m in markers if m[0] == "tools"]
+    sys_markers = [m for m in markers if m[0] == "system"]
+    for cand in msg_markers + tool_markers + sys_markers[:-1]:
+        if over <= 0:
+            break
+        _drop(cand)
+    if over > 0:                      # pathological (e.g. many tail-message blocks)
+        for cand in _cache_markers(obj)[:-1]:
+            if over <= 0:
+                break
+            _drop(cand)
+    return {"dropped": dropped, "markers_before": len(markers)}
 
 
 SCRAP_TAIL_5M = os.environ.get("SCRAP_TAIL_5M", "1") not in ("0", "no", "off", "false")
