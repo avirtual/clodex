@@ -27,6 +27,8 @@
 // superset of the real references — an unused dep would simply be inert.
 
 const { pathFor } = require('./clodex-paths');
+const { STOCK_ROLE_DEFS } = require('./team-manifest');
+const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -57,6 +59,7 @@ function registerIpcHandlers(deps) {
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
+    createTeam, addRole, resolveTeam, listTeams,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -79,33 +82,100 @@ function registerIpcHandlers(deps) {
     getSandbox, getSandboxManager,
   } = deps;
 
+  // Shared spawn body for session:create AND the team front door (team:create /
+  // team:join). All three end at the same manager.create + strip-seed; `p` is a
+  // plain params object so the team handlers can add a manifest write in front of
+  // it without duplicating the 18-arg spawn call.
+  async function spawnFromParams(e, p) {
+    const workspaceId = workspaceOfSender(e);
+    // Seed tool denies from the global "*" default when the caller passed none.
+    // The new-session dialog always pre-populates its checklist from the default
+    // and sends an explicit array (incl. [] for "deny nothing"), so this only
+    // fires for non-dialog callers — keeping new sessions on the shared, lean
+    // tools segment. An explicit array always wins (undefined === "untouched").
+    const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null);
+    // Strip level isn't a spawn arg (it's a proxy-side override the poller
+    // asserts once the session links), so persist it onto the entry after
+    // create() rather than threading it through the spawn path.
+    // Set at creation = the cold-cache path: the first re-write is tiny.
+    // An explicit dialog choice wins; otherwise seed from this agent name's
+    // standing default (set previously from the bottom-bar menu, kill-proof).
+    const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
+    if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
+    // NOTE: neither `execCommands` nor `intents` is seeded here — both are now
+    // spawn-time create() params (threaded in above), persisted by create()'s own
+    // upsert so they survive kill()+recreate. execCommands used to be a post-create
+    // seed here (and in the template path), which is exactly what dropped the grant
+    // on every restart. undefined → create's [] default (untouched); [] ≡ no grants.
+    return { ok: true, session };
+  }
+
   handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
     try {
-      const workspaceId = workspaceOfSender(e);
-      // Seed tool denies from the global "*" default when the caller passed none.
-      // The new-session dialog always pre-populates its checklist from the default
-      // and sends an explicit array (incl. [] for "deny nothing"), so this only
-      // fires for non-dialog callers — keeping new sessions on the shared, lean
-      // tools segment. An explicit array always wins (undefined === "untouched").
-      const seedTools = (disabledTools === undefined) ? agentDefaults.getDefaultDeny() : disabledTools;
-      const session = await manager.create(name, type, cwd, extraArgs, resumeId || null, workspaceId, systemPromptBody || null, !!fork, proxy ?? null, agents || [], denyBuiltins || [], seedTools || [], disabledSkills || [], injectSkills || [], systemPromptFile || null, appendPromptFiles || [], Array.isArray(execCommands) ? execCommands : [], Array.isArray(intents) ? intents : null);
-      // Strip level isn't a spawn arg (it's a proxy-side override the poller
-      // asserts once the session links), so persist it onto the entry after
-      // create() rather than threading it through the spawn path.
-      // Set at creation = the cold-cache path: the first re-write is tiny.
-      // An explicit dialog choice wins; otherwise seed from this agent name's
-      // standing default (set previously from the bottom-bar menu, kill-proof).
-      const seedStrip = (stripLevel === 1 || stripLevel === 2) ? stripLevel : agentDefaults.getStrip(name);
-      if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(name, seedStrip);
-      // NOTE: neither `execCommands` nor `intents` is seeded here — both are now
-      // spawn-time create() params (threaded in above), persisted by create()'s own
-      // upsert so they survive kill()+recreate. execCommands used to be a post-create
-      // seed here (and in the template path), which is exactly what dropped the grant
-      // on every restart. undefined → create's [] default (untouched); [] ≡ no grants.
-      return { ok: true, session };
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents });
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // Teams front door (docs/teams-design.md "Front door"). Both handlers write the
+  // manifest FIRST, then fall through to the normal spawn — the spawn resolves the
+  // (now-written) team and attaches the role prompt + initial roster. A write
+  // refusal (dup team, dup root, existing-role-with-different-def) surfaces as
+  // { ok:false, error } with the session NOT spawned.
+  //
+  // team:create — this session is adopted as the team's lead. `spec` is the full
+  // session-create params object plus `teamName` (the new team's name).
+  handle('team:create', async (e, spec) => {
+    try {
+      const { teamName, ...p } = spec || {};
+      createTeam({ name: teamName, root: p.cwd, lead: p.name });
+      return await spawnFromParams(e, p);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // team:join — join an existing team in a role. `spec` carries the session-create
+  // params plus `team` (the team name) and `role` (the role key: stock `hand` or a
+  // custom session-class role) and, for a custom role, `prompt` (the picked library
+  // system-prompt name). addRole no-ops when the role already exists identically
+  // (the second hand rides the shared entry) and refuses a divergent redefinition.
+  handle('team:join', async (e, spec) => {
+    try {
+      const { team, role, prompt, ...p } = spec || {};
+      const def = role === 'hand'
+        ? { ...STOCK_ROLE_DEFS.hand }
+        : { instantiate: 'session', prompt: prompt || null };
+      addRole(team, role, def);
+      return await spawnFromParams(e, p);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Existing team names — the create-mode dialog pre-checks for a duplicate and
+  // suggests a variant rather than letting createTeam bounce.
+  handle('team:names', () => {
+    try { return { ok: true, names: listTeams() }; }
+    catch (err) { return { ok: false, error: err.message, names: [] }; }
+  });
+
+  // Does this cwd already resolve to a team? Drives the dialog's create-vs-join
+  // mode + the "Join team <name>" label. Best-effort: a resolve hiccup → no team.
+  handle('team:forCwd', (_e, cwd) => {
+    try { const t = resolveTeam(cwd); return { team: t ? t.name : null, root: t ? t.root : null }; }
+    catch { return { team: null, root: null }; }
+  });
+
+  // Rail-filtered role-prompt options for the join picker: stock clodex-team-*
+  // deltas plus library system prompts whose front matter declares rail: append.
+  // Undeclared (replace-class) prompts are excluded — the picker attaches its
+  // pick to the append rail and must not blend a replace-class prompt onto it.
+  handle('team:rolePrompts', () => {
+    try { return { ok: true, prompts: appendRailPrompts(promptLibrary.list('system')) }; }
+    catch (err) { return { ok: false, error: err.message, prompts: [] }; }
   });
 
   // Opt-in git worktree for a new session. The renderer calls this BEFORE
@@ -680,11 +750,18 @@ function registerIpcHandlers(deps) {
       const meta = await sessionMeta.metaFor(sessions, { includePr });
       // Fold in the persisted created/archive stamps so one call feeds the whole
       // toolbar (the render engine merges these onto rows by name; archivedAt
-      // drives the status filter + the archived-row recency stand-in).
+      // drives the status filter + the archived-row recency stand-in). `team` is
+      // the sidebar's group-by-project key when the cwd resolves to a team — a
+      // derived, main-only fact, carried here like prState/branch so every row
+      // (live, reattached, restarted, archived) converges on one refresh. Memo
+      // by cwd — the teams dir scan is small but shared across sessions.
+      const teamByCwd = new Map();
       for (const s of list) {
         if (!meta[s.name]) meta[s.name] = {};
         meta[s.name].createdAt = s.createdAt || null;
         meta[s.name].archivedAt = s.archivedAt || null;
+        if (!teamByCwd.has(s.cwd)) teamByCwd.set(s.cwd, manager.teamNameFor(s.cwd));
+        meta[s.name].team = teamByCwd.get(s.cwd);
       }
       return { ok: true, meta };
     } catch (err) {

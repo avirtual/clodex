@@ -2,11 +2,16 @@
 // the ten on-disk stores and returns them; main.js calls it once in
 // app.whenReady() and destructures the result.
 //
-// DI seam: initStores(userDataPath, { log, registryDir }).
+// DI seam: initStores(userDataPath, { log, registryDir, resourcesDir }).
 //   - userDataPath  — app.getPath('userData'); the eight JSON stores live here.
 //   - registryDir   — ~/.clodex; the prompt/agent/skill libraries live under it
 //                     (passed in to keep a single REGISTRY_DIR source of truth
 //                     in main.js rather than re-deriving os.homedir() here).
+//   - resourcesDir  — the shipped library seed root (repo `resources/library/`),
+//                     __dirname-relative by default so it rides app.asar in a
+//                     packaged build; overridable for hermetic tests. Its tree
+//                     is copied into registryDir/library ONCE PER FILE, seed-if-
+//                     absent (see seedLibraryDefaults).
 //   - log           — reserved; the moved bodies keep their verbatim
 //                     console.error on save failure (move-only), so it is
 //                     currently unused.
@@ -328,7 +333,7 @@ function sanitizeBoxes(rawBoxes) {
   return out;
 }
 
-function initStores(userDataPath, { log, registryDir } = {}) {
+function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
@@ -1402,8 +1407,48 @@ function initStores(userDataPath, { log, registryDir } = {}) {
     return count;
   }
 
+  // Seed the shipped library defaults (e.g. the clodex-team-lead system prompt) into
+  // ~/.clodex/library on every launch, SEED-IF-ABSENT: a file the operator
+  // already has is never touched, so operator edits always win over an upgrade's
+  // shipped copy. The source tree rides app.asar (__dirname-relative), copied
+  // out because a packaged read lives sealed inside the asar — the same reason
+  // pot-bin materializes the pot CLI. Best-effort: a copy failure is logged and
+  // skipped, never thrown (a missing seed degrades a feature, it never blocks a
+  // launch). v2 GAP: this is presence-only — a version-STAMPED upgrade (overwrite
+  // an unedited shipped copy when the app ships a newer one) needs a per-file
+  // provenance marker and is deliberately out of v1.
+  const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
+  function seedLibraryDefaults() {
+    const destRoot = path.join(registryDir, 'library');
+    let src;
+    try { src = fs.statSync(SEED_SRC); } catch { return; } // no seed tree shipped
+    if (!src.isDirectory()) return;
+    const stack = [''];
+    while (stack.length) {
+      const rel = stack.pop();
+      const absSrc = path.join(SEED_SRC, rel);
+      let entries;
+      try { entries = fs.readdirSync(absSrc, { withFileTypes: true }); }
+      catch (e) { if (log) log.info?.('seed', `readdir skipped ${rel} (${e && e.message})`); continue; }
+      for (const ent of entries) {
+        const childRel = path.join(rel, ent.name);
+        if (ent.isDirectory()) { stack.push(childRel); continue; }
+        if (!ent.isFile()) continue;
+        const dest = path.join(destRoot, childRel);
+        if (fs.existsSync(dest)) continue; // seed-if-absent: never clobber
+        try {
+          ensureDir(path.dirname(dest));
+          fs.copyFileSync(path.join(SEED_SRC, childRel), dest);
+        } catch (e) {
+          if (log) log.info?.('seed', `copy skipped ${childRel} (${e && e.message})`);
+        }
+      }
+    }
+  }
+
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
   migrateTemplatesJson(); // one-shot: templates.json -> library/templates/*.json
+  seedLibraryDefaults(); // seed-if-absent: shipped library defaults -> ~/.clodex/library
 
   return {
     persistence, templates, workspaces, promptLibrary,

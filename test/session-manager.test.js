@@ -486,6 +486,70 @@ test('gate: the allowlist is read FRESH per fire — a toggle applies without re
   assert.strictEqual(injected[1], '[agent:who] the who intent is disabled for this session');
 });
 
+// --- exec dispatcher: machine-independent placeholder expansion (Task 10) ------
+// The seeded exec-defs carry `${CLODEX_BIN}/clodex-team.js` (no absolute repo
+// path), so the dispatcher must expand ${CLODEX_BIN} → <REGISTRY_DIR>/bin and
+// ${CLODEX_HOME} → <REGISTRY_DIR> in argv BEFORE spawn. This drives the real
+// _handleExecIntent with a fake childProcess capturing the argv/cwd it spawned.
+const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
+const { isFilenameToken, parseAndValidate } = require('../exec-schema');
+
+test('exec dispatcher: ${CLODEX_BIN}/${CLODEX_HOME} in argv + cwd expand before spawn', async () => {
+  const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-exec-'));
+  const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
+  fs.mkdirSync(execDir, { recursive: true });
+  // A def mirroring the seeded shape: placeholder argv, and (to prove cwd is
+  // expanded too) an explicit ${CLODEX_HOME} cwd.
+  fs.writeFileSync(path.join(execDir, 'clodex-team.json'), JSON.stringify({
+    argv: ['/usr/bin/env', 'node', '${CLODEX_BIN}/clodex-team.js', '--home=${CLODEX_HOME}'],
+    cwd: '${CLODEX_HOME}/work',
+    timeoutMs: 5000, maxBytes: 4096, replyStderr: true,
+    schema: {
+      type: 'object', additionalProperties: false, required: ['action', 'agent'],
+      properties: { action: { type: 'string', enum: ['roster'] }, agent: { type: 'string', maxLength: 64 } },
+    },
+  }));
+
+  const spawned = [];
+  const fakeChild = () => {
+    const ee = new (require('node:events').EventEmitter)();
+    ee.stdin = { write() {}, end() {} };
+    ee.stderr = new (require('node:events').EventEmitter)();
+    ee.kill = () => {};
+    setImmediate(() => ee.emit('exit', 0, null));   // clean success, no re-bill
+    return ee;
+  };
+  const m = mk({
+    REGISTRY_DIR,
+    isFilenameToken, parseAndValidate,
+    os, fs, path,
+    log: { warn() {}, info() {} },
+    getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['clodex-team'] }) }),
+    childProcess: { spawn: (cmd, args, opts) => { spawned.push({ cmd, args, opts }); return fakeChild(); } },
+  });
+  m._injectText = () => {};
+  m._broadcast = () => {};
+  const session = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/some/session/cwd' };
+
+  m._handleExecIntent(session, 'clodex-team', JSON.stringify({ action: 'roster', agent: 'a' }));
+  // spawn is deferred via setImmediate inside the handler; let it run.
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(spawned.length, 1, 'the command spawned once');
+  const { cmd, args, opts } = spawned[0];
+  const BIN = path.join(REGISTRY_DIR, 'bin');
+  assert.strictEqual(cmd, '/usr/bin/env');
+  assert.deepStrictEqual(args, ['node', `${BIN}/clodex-team.js`, `--home=${REGISTRY_DIR}`],
+    '${CLODEX_BIN} and ${CLODEX_HOME} expanded in every argv element');
+  assert.strictEqual(opts.cwd, `${REGISTRY_DIR}/work`, '${CLODEX_HOME} expanded in cwd too');
+  assert.ok(!args.some((a) => a.includes('${')), 'no placeholder survives into the spawn');
+
+  fs.rmSync(REGISTRY_DIR, { recursive: true, force: true });
+});
+
 // --- spawn with template: applies the template's config -----------------------
 // [agent:spawn name:X template:Y] resolves the template by name and threads its
 // config into create() (proxy/agents/tool+skill gating/extraArgs) plus the
@@ -694,15 +758,16 @@ test('spawn template: malformed JSON file errors, no spawn', async () => {
 // the idle-edge Node drain is the turn-end fallback for a pure-text (no-tool)
 // turn. Real pending-store fns + isDraftOpen injected over a temp PENDING_DIR;
 // _injectText captured (no PTY). One atomic rename-claim = exactly-once.
-const { parkDelivery, drainPending, hasPending } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending } = require('../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../proxy-util');
 
 function mkPark(overrides = {}) {
   const PENDING_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-pend-'));
   const injected = [];
   const m = mk({
-    PENDING_DIR, parkDelivery, drainPending, isDraftOpen: isDraftOpenReal,
+    PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
     INJECT_QUIET_MS: 4000, INJECT_QUIET_MAXWAIT: 3_600_000, // maxwait large: park cap won't fire mid-test
+    findProjectRoot: () => null, // teams: default = no project anywhere; retire tests override
     log: { info: () => {}, warn: () => {}, error: () => {} },
     ...overrides,
   });
@@ -760,6 +825,281 @@ test('_drainPendingAtIdle: exactly-once — a second drain (hook already claimed
   m._drainPendingAtIdle(session);            // first claim wins
   m._drainPendingAtIdle(session);            // dir gone → ENOENT → [] → no-op
   assert.deepStrictEqual(injected, ['[agent:from x] hi'], 'delivered once, not twice');
+});
+
+test('_drainPendingAtIdle: a passive-only store is left parked (no turn generated)', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  parkDelivery(PENDING_DIR, 'a', '[agent:from monitor] tick', '1', null, true);
+  m._drainPendingAtIdle({ name: 'a', agentType: 'claude' });
+  assert.deepStrictEqual(injected, [], 'passive ticks do not earn an idle-edge inject');
+  assert.ok(hasPending(PENDING_DIR, 'a'), 'they stay parked for an organic hook drain');
+});
+
+test('_drainPendingAtIdle: a mixed store drains fully — passives ride along with the active', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  parkDelivery(PENDING_DIR, 'a', '[agent:from monitor] tick', '1', null, true);
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] hi', '2');
+  m._drainPendingAtIdle({ name: 'a', agentType: 'claude' });
+  assert.deepStrictEqual(injected, ['[agent:from monitor] tick', '[agent:from x] hi'],
+    'the active DM justifies the turn; the passive rides with it, in order');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false);
+});
+
+test('_deliverPassive: parks passive for a live claude target, no inject, no wake', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  const target = { name: 'a', agentType: 'claude' };
+  m.sessions.set('a', target);
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('a', { from: 'monitor', body: 'tick 1', type: 'dm', delivery: 'passive' });
+  assert.deepStrictEqual(injected, [], 'no inject — passive never wakes');
+  assert.ok(hasPending(PENDING_DIR, 'a'), 'parked in the pending store');
+  assert.strictEqual(hasActivePending(PENDING_DIR, 'a'), false, 'parked as PASSIVE');
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'a', 't'), ['[agent:from monitor] tick 1']);
+});
+
+test('_deliverPassive: a codex target falls back to the normal wake path (never dropped)', () => {
+  const { m, PENDING_DIR } = mkPark();
+  const target = { name: 'c', agentType: 'codex' };
+  m.sessions.set('c', target);
+  const delivered = [];
+  m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
+  m._onIncoming('c', { from: 'monitor', body: 'tick', type: 'dm', delivery: 'passive' });
+  assert.deepStrictEqual(delivered, [{ name: 'c', sender: 'monitor', body: 'tick', mtype: 'dm' }]);
+  assert.strictEqual(hasPending(PENDING_DIR, 'c'), false, 'nothing parked for codex');
+});
+
+test('_onIncoming: an unknown delivery value falls through to the normal path (old-core compat shape)', () => {
+  const { m } = mkPark();
+  const delivered = [];
+  m._deliverMessage = (name, sender, body) => delivered.push(body);
+  m._onIncoming('a', { from: 'x', body: 'hi', type: 'dm', delivery: 'someday-class' });
+  assert.deepStrictEqual(delivered, ['hi']);
+});
+
+// --- team-retire (docs/teams-design.md): socket envelope → archive|discard --
+
+function mkRetire(rootByName, rolesByRoot) {
+  // rootByName: cwd → project root map for the stub findProjectRoot.
+  // rolesByRoot: root → { role: def } map for the stub resolveTeam (drives the
+  // archive-vs-discard disposition). Defaults to a team where lead + dev are
+  // both persistent (ephemeral:false) so existing archive tests are unchanged.
+  const roles = (root) => rolesByRoot?.[root] ?? { lead: {}, dev: {} };
+  const normalize = (defs) => Object.fromEntries(
+    Object.entries(defs).map(([r, d]) => [r, { ephemeral: d.ephemeral === true, template: d.template ?? null, instantiate: d.instantiate ?? 'session', standing: d.standing ?? null }]),
+  );
+  const { m, PENDING_DIR, injected } = mkPark({
+    findProjectRoot: (cwd) => rootByName[cwd] ?? null,
+    resolveTeam: (cwd) => {
+      const root = rootByName[cwd];
+      if (!root) return null;
+      return { name: 'team', root, lead: 'lead', roles: normalize(roles(root)), file: `${root}/team.json` };
+    },
+  });
+  const archived = [];
+  const killed = [];
+  const contextActions = [];
+  const delivered = [];
+  m.archive = async (name) => { archived.push(name); };
+  m.kill = async (name) => { killed.push(name); };
+  m._sendToSession = (name, channel, payload) => contextActions.push({ name, channel, payload });
+  m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body });
+  return { m, PENDING_DIR, injected, archived, killed, contextActions, delivered };
+}
+
+test('team-retire: persistent role → archives, signals the window first, confirms passively', async () => {
+  // 'team-dev' binds (role-keyed) to the persistent (ephemeral:false default)
+  // 'dev' role via the <team>-<role> convention → archive path.
+  const { m, PENDING_DIR, archived, killed, contextActions, delivered } = mkRetire({ '/proj/a': '/proj', '/proj/b': '/proj' });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(archived, ['team-dev'], 'persistent role archives');
+  assert.deepStrictEqual(killed, [], 'never killed on the archive path');
+  assert.deepStrictEqual(contextActions.map((c) => [c.name, c.payload.action, c.payload.disposition]),
+    [['team-dev', 'retired', 'archive']], 'window signalled archive before the kill');
+  assert.deepStrictEqual(delivered, [], 'no waking DM on success');
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.match(parked[0], /resumable from the sidebar/, 'archive confirmation wording');
+});
+
+test('team-retire: an ephemeral role → kill (discard), drops the record, no archived row', async () => {
+  // 'team-runner' binds to the ephemeral:true 'runner' role → discard path:
+  // kill() (drops the record), the window is signalled disposition:discard so
+  // the row vanishes like a delete.
+  const { m, PENDING_DIR, archived, killed, contextActions, delivered } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: { ephemeral: true } } },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(killed, ['team-runner'], 'ephemeral role is killed (record dropped)');
+  assert.deepStrictEqual(archived, [], 'never archived on the discard path');
+  assert.deepStrictEqual(contextActions.map((c) => [c.name, c.payload.action, c.payload.disposition]),
+    [['team-runner', 'retired', 'discard']], 'window signalled discard → row removed like a delete');
+  assert.deepStrictEqual(delivered, [], 'no waking DM on success');
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.match(parked[0], /discarded — state lives in its task artifact/, 'discard confirmation wording');
+});
+
+test('team-retire: an OFF-manifest seat (matches no role) → kill (discard)', async () => {
+  // 'stray' shares the project cwd but matches no manifest role → discard.
+  const { m, PENDING_DIR, archived, killed, contextActions } = mkRetire(
+    { '/proj/a': '/proj', '/proj/s': '/proj' },
+    { '/proj': { lead: {}, dev: {} } },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('stray', { name: 'stray', agentType: 'claude', cwd: '/proj/s' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('stray', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(killed, ['stray'], 'off-manifest seat is killed (record dropped)');
+  assert.deepStrictEqual(archived, [], 'never archived');
+  assert.strictEqual(contextActions[0].payload.disposition, 'discard');
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.match(parked[0], /discarded/, 'discard confirmation wording');
+});
+
+test('team-retire: refusals wake the requester and never archive', async () => {
+  // different projects
+  {
+    const { m, archived, delivered } = mkRetire({ '/p1/x': '/p1', '/p2/y': '/p2' });
+    m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/p1/x' });
+    m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p2/y' });
+    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
+    assert.deepStrictEqual(archived, []);
+    assert.match(delivered[0].body, /not in the same project/);
+  }
+  // requester not running
+  {
+    const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
+    m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p/x' });
+    m._onIncoming('dev', { from: 'ghost', body: '', type: 'team-retire' });
+    assert.deepStrictEqual(archived, []);
+    assert.match(delivered[0].body, /not a running session/);
+  }
+  // self-retire
+  {
+    const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
+    m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p/x' });
+    m._onIncoming('dev', { from: 'dev', body: '', type: 'team-retire' });
+    assert.deepStrictEqual(archived, []);
+    assert.match(delivered[0].body, /self-retire/);
+  }
+  // no project root at all (bare sessions, no team.json anywhere)
+  {
+    const { m, archived, delivered } = mkRetire({});
+    m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/a' });
+    m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/b' });
+    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
+    assert.deepStrictEqual(archived, []);
+    assert.match(delivered[0].body, /not in the same project/);
+  }
+});
+
+test('team-retire: absent target is a silent no-op (socket outlived the session)', () => {
+  const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/p/x' });
+  m._onIncoming('gone', { from: 'lead', body: '', type: 'team-retire' });
+  assert.deepStrictEqual(archived, []);
+  assert.deepStrictEqual(delivered, []);
+});
+
+// --- teams composition wiring: initial roster + passive deltas ---------------
+// The context architecture (docs/teams-design.md): a seat's composition rides as
+// DATA, never the system prompt. _injectRoster delivers the one-time initial
+// roster (sender `team`); _notifyComposition fans a passive delta to the OTHER
+// live seats on spawn / archive / retire. Both funnel every seat-lifecycle
+// event, so testing them directly covers the spawn/archive/retire chokepoints.
+
+const teamStub = { name: 'team', root: '/proj', lead: 'lead',
+  roles: { lead: { instantiate: 'session', brief: 'the lead' }, dev: { instantiate: 'session', brief: 'the dev' } } };
+const teamDeps = {
+  resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? teamStub : null),
+  findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj'
+    : (cwd && cwd.startsWith('/other') ? '/other' : null)),
+};
+
+test('_notifyComposition: passive delta fans to the OTHER live team seats only', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+  m.sessions.set('outsider', { name: 'outsider', agentType: 'claude', cwd: '/other/x' }); // other team
+  m.sessions.set('shell', { name: 'shell', agentType: null, cwd: '/proj/c' });            // bash — excluded
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('team-dev'), 'retired');
+  assert.strictEqual(passive.length, 1, 'only the one other live team seat is notified');
+  assert.strictEqual(passive[0].t, 'lead');
+  assert.strictEqual(passive[0].s, 'team', 'sender is the team channel');
+  assert.match(passive[0].b, /\[team team\] seat team-dev retired \(role: dev\)/);
+});
+
+test('_notifyComposition: teamless / dep-less session is a no-op, never throws into teardown', () => {
+  const { m } = mkPark(); // no resolveTeam dep at all (archive/kill call this)
+  m.sessions.set('a', { name: 'a', agentType: 'claude', cwd: '/x' });
+  m.sessions.set('b', { name: 'b', agentType: 'claude', cwd: '/x' });
+  const passive = [];
+  m._deliverPassive = (...args) => passive.push(args);
+  assert.doesNotThrow(() => m._notifyComposition(m.sessions.get('a'), 'spawned'));
+  assert.deepStrictEqual(passive, [], 'no team dep → no deltas, no throw');
+});
+
+test('_injectRoster: delivers the initial roster from sender team, listing live seats', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+  const delivered = [];
+  m._deliverMessage = (t, s, b, mt) => delivered.push({ t, s, b, mt });
+  m._injectRoster(m.sessions.get('lead'), teamStub);
+  assert.strictEqual(delivered.length, 1);
+  assert.strictEqual(delivered[0].t, 'lead');
+  assert.strictEqual(delivered[0].s, 'team');
+  assert.match(delivered[0].b, /\[team team\] roster \(lead: lead\)/);
+  assert.match(delivered[0].b, /- lead \(session\) — the lead · live: lead/);
+  assert.match(delivered[0].b, /- dev \(session\) — the dev · live: team-dev/);
+});
+
+// --- list(): team field (sidebar group-by-project reflects team identity) ---
+// list() rows carry a `team` name (the injected resolveTeam by cwd, or null),
+// which the renderer groups by. A fake session shape is enough — list() only
+// reads name/type/pty.pid/cwd/workspaceId/backend/activity/attention/agentType.
+
+function fakeSession(name, cwd) {
+  return { name, type: 'codex', agentType: 'codex', pty: { pid: 1 }, cwd,
+    workspaceId: 'w', backend: null, activityState: 'idle', needsAttention: null };
+}
+
+test('list: each row carries the team name for a cwd-in-team, null otherwise', () => {
+  const m = mk({ resolveTeam: (cwd) => (cwd === '/proj/sub' ? { name: 'shop' } : null) });
+  m.sessions.set('a', fakeSession('a', '/proj/sub'));
+  m.sessions.set('b', fakeSession('b', '/elsewhere'));
+  const byName = Object.fromEntries(m.list().map((r) => [r.name, r]));
+  assert.strictEqual(byName.a.team, 'shop', 'a cwd inside a team root gets the team name');
+  assert.strictEqual(byName.b.team, null, 'a teamless cwd gets null');
+});
+
+test('list: resolveTeam is memoized per cwd within one call (seats sharing a dir share one scan)', () => {
+  let calls = 0;
+  const m = mk({ resolveTeam: (cwd) => { calls++; return cwd.startsWith('/proj') ? { name: 'shop' } : null; } });
+  m.sessions.set('a', fakeSession('a', '/proj/x'));
+  m.sessions.set('b', fakeSession('b', '/proj/x')); // same cwd as a
+  m.sessions.set('c', fakeSession('c', '/proj/y')); // distinct cwd
+  const rows = m.list();
+  assert.ok(rows.every((r) => r.team === 'shop'), 'all three resolve to the team');
+  assert.strictEqual(calls, 2, 'resolveTeam runs once per DISTINCT cwd, not once per session');
+});
+
+test('list: a resolveTeam throw degrades to team:null, never breaks the list', () => {
+  const m = mk({ resolveTeam: () => { throw new Error('teams dir unreadable'); } });
+  m.sessions.set('a', fakeSession('a', '/proj/x'));
+  const rows = m.list();
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].team, null, 'best-effort — a resolve failure is null, not a throw');
 });
 
 test('_drainPendingAtIdle: a non-claude target is skipped (pending is a Claude-hook store)', () => {

@@ -26,7 +26,13 @@ const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
 
-function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings }) {
+function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }) {
+  // The interpreter every generated hook shells out to: the app's own Electron
+  // binary run as Node (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`), baked absolute
+  // so a Finder/Dock-launched packaged .app never depends on an ambient python3
+  // or on launchd's stripped PATH (Task 9). Electron honors the env var;
+  // plain node ignores it, so the same bytes run under node in tests.
+  const INTERP = `ELECTRON_RUN_AS_NODE=1 "${nodeInterp}"`;
   function writeClaudeDigestFile(name) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const digest = composeDigest(memoryStore.list(name));
@@ -74,12 +80,12 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings }) {
     const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
-TPATH="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('transcript_path',''))" 2>/dev/null || true)"
+TPATH="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).transcript_path||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
 [ -z "$TPATH" ] && exit 0
 TMPLINK="${linkPath}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "${linkPath}"
-SRC="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('source',''))" 2>/dev/null || true)"
+SRC="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).source||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
 if [ "$SRC" = "startup" ] || [ "$SRC" = "clear" ]; then
   cat "${digestPath}"
 else
@@ -113,15 +119,16 @@ printf '%s\\n' "$IN" >> "${attnPath}"
     const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
 [ -s "${ackPath}" ] || exit 0
-python3 - "${ackPath}" <<'PYEOF'
-import json, sys
-with open(sys.argv[1], 'r+') as f:
-    body = f.read().strip()
-    f.seek(0); f.truncate()
-if body:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit", "additionalContext": body}}))
-PYEOF
+${INTERP} - "${ackPath}" <<'JSEOF'
+const fs = require('fs');
+const p = process.argv[2];
+const body = fs.readFileSync(p, 'utf8').trim();
+fs.truncateSync(p, 0);
+if (body) {
+  console.log(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit", additionalContext: body } }));
+}
+JSEOF
 `, { mode: 0o700 });
 
     // Layer-3 delivery parking drain (see pending-store.js). Deliveries parked
@@ -147,73 +154,74 @@ PYEOF
     fs.writeFileSync(pendingScriptPath, `#!/bin/bash
 [ -d "${pendingDir}" ] || exit 0
 IN="$(cat)"
-python3 - "${pendingDir}" "$IN" "${msgDir}" <<'PYEOF'
-import json, os, sys, glob, shutil, re
-d = sys.argv[1]
-ev = 'UserPromptSubmit'
-try:
-    _in = json.loads(sys.argv[2])
-    ev = _in.get('hook_event_name') or ev
-    # A subagent's tool calls fire the PARENT session's PostToolUse hook, but the
-    # additionalContext returned lands in the SUBAGENT's context, not the main
-    # agent's — so a consuming rename-claim here would deliver the parked DM into
-    # the subagent and lose it on exit. Subagent hook inputs carry agent_id; a
-    # main-agent call never does. Bail before the claim so the messages drain at
-    # the next main-context event instead (deferred, never lost).
-    if _in.get('agent_id'):
-        sys.exit(0)
-except Exception:
-    pass                          # stdin absent/unparseable => safe default
-# Inline a spilled-message @-pointer at drain time. The '@\${path}' form in a
-# parked delivery is a PTY-stdin affordance (Claude expands @ only when TYPED
-# into the prompt); arriving here as additionalContext it is inert text and the
-# recipient burns a Read call per message. So when the SAME text drains through
-# the hook, inline small files and downgrade large ones to a plain read-pointer.
-# The idle-edge PTY drain keeps the @ form untouched (expansion works there).
-# Fail-open: any stat/read/containment problem leaves the text byte-unchanged.
-msgroot = os.path.realpath(sys.argv[3]) if len(sys.argv) > 3 else ''
-def inline_spill(t):
-    m = re.search(r'attached: @(\\S+)', t)
-    if not m:
-        return t                  # no spill pointer => nothing to inline
-    p = m.group(1)
-    try:
-        rp = os.path.realpath(p)
-        # containment: only ever inline files under ~/.clodex/messages/ — never
-        # an arbitrary path that happens to follow an @.
-        if not msgroot or (rp != msgroot and not rp.startswith(msgroot + os.sep)):
-            return t
-        if os.stat(rp).st_size <= 10240:
-            with open(rp, encoding='utf-8', errors='replace') as f:
-                body = f.read().rstrip('\\n')
-            head = t[:m.start()].rstrip()
-            trailer = t[m.end():].strip()
-            out = head + '\\n--- attached file: ' + p + ' ---\\n' + body + '\\n--- end attached file ---'
-            return out + ('\\n' + trailer if trailer else '')
-        # too large to inline: strip the @, reword to the plain read-pointer form
-        return t[:m.start()] + 'saved to ' + p + ' — read it with your Read tool.' + t[m.end():]
-    except Exception:
-        return t                  # fail-open: recipient can still Read the file
-claim = d + '.draining.hook.' + str(os.getpid())
-try:
-    os.rename(d, claim)          # atomic claim; ENOENT => nothing to drain / lost the race
-except OSError:
-    sys.exit(0)
-texts = []
-for fp in sorted(glob.glob(os.path.join(claim, '*.json'))):
-    try:
-        with open(fp) as f:
-            obj = json.load(f)
-        if isinstance(obj.get('text'), str):
-            texts.append(inline_spill(obj['text']))
-    except Exception:
-        pass                      # skip a corrupt entry, never abort the drain
-shutil.rmtree(claim, ignore_errors=True)
-if texts:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": ev,
-        "additionalContext": "\\n\\n".join(texts)}}))
-PYEOF
+${INTERP} - "${pendingDir}" "$IN" "${msgDir}" <<'JSEOF'
+const fs = require('fs'), path = require('path');
+const d = process.argv[2];
+let ev = 'UserPromptSubmit';
+try {
+  const _in = JSON.parse(process.argv[3]);
+  ev = _in.hook_event_name || ev;
+  // A subagent's tool calls fire the PARENT session's PostToolUse hook, but the
+  // additionalContext returned lands in the SUBAGENT's context, not the main
+  // agent's — so a consuming rename-claim here would deliver the parked DM into
+  // the subagent and lose it on exit. Subagent hook inputs carry agent_id; a
+  // main-agent call never does. Bail before the claim so the messages drain at
+  // the next main-context event instead (deferred, never lost).
+  if (_in.agent_id) process.exit(0);
+} catch (e) {}                    // stdin absent/unparseable => safe default
+// Inline a spilled-message @-pointer at drain time. The '@\${path}' form in a
+// parked delivery is a PTY-stdin affordance (Claude expands @ only when TYPED
+// into the prompt); arriving here as additionalContext it is inert text and the
+// recipient burns a Read call per message. So when the SAME text drains through
+// the hook, inline small files and downgrade large ones to a plain read-pointer.
+// The idle-edge PTY drain keeps the @ form untouched (expansion works there).
+// Fail-open: any stat/read/containment problem leaves the text byte-unchanged.
+// os.path.realpath never throws on a missing path; fs.realpathSync does, so this
+// helper preserves the non-throwing contract for the top-level msgroot compute.
+function realpath(p) { try { return fs.realpathSync(p); } catch (e) { return path.resolve(p); } }
+const msgroot = process.argv[4] ? realpath(process.argv[4]) : '';
+function inline_spill(t) {
+  const m = t.match(/attached: @(\\S+)/);
+  if (!m) return t;               // no spill pointer => nothing to inline
+  const p = m[1];
+  try {
+    const rp = fs.realpathSync(p);
+    // containment: only ever inline files under ~/.clodex/messages/ — never
+    // an arbitrary path that happens to follow an @.
+    if (!msgroot || (rp !== msgroot && !rp.startsWith(msgroot + path.sep))) return t;
+    if (fs.statSync(rp).size <= 10240) {
+      const body = fs.readFileSync(rp, { encoding: 'utf8' }).replace(/\\n+$/, '');
+      const head = t.slice(0, m.index).replace(/\\s+$/, '');
+      const trailer = t.slice(m.index + m[0].length).trim();
+      const out = head + '\\n--- attached file: ' + p + ' ---\\n' + body + '\\n--- end attached file ---';
+      return out + (trailer ? '\\n' + trailer : '');
+    }
+    // too large to inline: strip the @, reword to the plain read-pointer form
+    return t.slice(0, m.index) + 'saved to ' + p + ' — read it with your Read tool.' + t.slice(m.index + m[0].length);
+  } catch (e) {
+    return t;                     // fail-open: recipient can still Read the file
+  }
+}
+const claim = d + '.draining.hook.' + process.pid;
+try {
+  fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
+} catch (e) {
+  process.exit(0);
+}
+const texts = [];
+for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.json'); }).sort()) {
+  try {
+    const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
+    if (typeof obj.text === 'string') texts.push(inline_spill(obj.text));
+  } catch (e) {}                  // skip a corrupt entry, never abort the drain
+}
+fs.rmSync(claim, { recursive: true, force: true });
+if (texts.length) {
+  console.log(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: ev,
+    additionalContext: texts.join('\\n\\n') } }));
+}
+JSEOF
 `, { mode: 0o700 });
 
     // High-context reminder drain (see ctx-reminder.js). main.js writes a
@@ -226,14 +234,14 @@ PYEOF
     const ctxwarnScriptPath = pathFor(REGISTRY_DIR, name, 'ctxwarnScript');
     fs.writeFileSync(ctxwarnScriptPath, `#!/bin/bash
 [ -s "${ctxwarnPath}" ] || exit 0
-python3 - "${ctxwarnPath}" <<'PYEOF'
-import json, sys
-with open(sys.argv[1]) as f:
-    body = f.read().strip()
-if body:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit", "additionalContext": body}}))
-PYEOF
+${INTERP} - "${ctxwarnPath}" <<'JSEOF'
+const fs = require('fs');
+const body = fs.readFileSync(process.argv[2], 'utf8').trim();
+if (body) {
+  console.log(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit", additionalContext: body } }));
+}
+JSEOF
 `, { mode: 0o700 });
 
     // Settings JSON
@@ -350,7 +358,7 @@ set -euo pipefail
 NAME="\${WB_WRAP_NAME:-}"
 [ -z "$NAME" ] && exit 0
 INPUT="$(cat)"
-TPATH="$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('transcript_path',''))" 2>/dev/null || true)"
+TPATH="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).transcript_path||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
 [ -z "$TPATH" ] && exit 0
 RUNDIR="${REGISTRY_DIR}/run/\${NAME}"
 mkdir -p "$RUNDIR"

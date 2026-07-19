@@ -46,6 +46,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
       manager.sessions.set(name, { backend: 'claude-code' });
     },
     pendingCountFor: () => 0,
+    teamNameFor: (cwd) => (cwd === '/w/a' ? 'shop' : null), // cwd-in-team resolves
   };
   const persistence = fakePersistence([
     { name: 'alpha', type: 'claude', cwd: '/w/a', label: 'A', sessionId: 'sid-1' },
@@ -63,7 +64,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
   assert.strictEqual(created[0].name, 'alpha');
   assert.deepStrictEqual(out, [{
     name: 'alpha', type: 'claude', cwd: '/w/a', label: 'A',
-    backend: 'claude-code', createdAt: null, ctx: 5, proxy: { pct: 12 },
+    backend: 'claude-code', team: 'shop', createdAt: null, ctx: 5, proxy: { pct: 12 },
   }]);
   // No persistence mutation on the happy path.
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']]);
@@ -77,6 +78,7 @@ test('skips an already-running session — no re-spawn, flushes buffered replay'
     sessions: new Map([['beta', running]]),
     async create(name) { created.push(name); },
     pendingCountFor: () => 3,
+    teamNameFor: (cwd) => (cwd === '/w/b' ? 'shop' : null),
   };
   const persistence = fakePersistence([
     { name: 'beta', type: 'codex', cwd: '/w/b', label: null },
@@ -94,6 +96,7 @@ test('skips an already-running session — no re-spawn, flushes buffered replay'
   assert.strictEqual(out[0].attention, 'permission');
   assert.strictEqual(out[0].pendingCount, 3);
   assert.strictEqual(out[0].backend, 'codex');
+  assert.strictEqual(out[0].team, 'shop', 'a reattached row carries its team key');
   assert.ok(!('failed' in out[0]));
 });
 
@@ -103,6 +106,7 @@ test('archived session is NOT spawned and comes back archived:true', async () =>
     sessions: new Map(),
     async create(name) { created.push(name); },
     pendingCountFor: () => 0,
+    teamNameFor: (cwd) => (cwd === '/w/z' ? 'shop' : null),
   };
   const persistence = fakePersistence([
     { name: 'zed', type: 'claude', cwd: '/w/z', label: 'Z', archivedAt: 1234, createdAt: 1000 },
@@ -117,6 +121,7 @@ test('archived session is NOT spawned and comes back archived:true', async () =>
   assert.strictEqual(out[0].archived, true);
   assert.strictEqual(out[0].archivedAt, 1234);
   assert.strictEqual(out[0].createdAt, 1000);
+  assert.strictEqual(out[0].team, 'shop', 'an archived row still carries its team key');
   assert.ok(!('replay' in out[0]), 'no PTY, no replay');
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']], 'store untouched');
 });
@@ -126,6 +131,7 @@ test('keeps a failed spawn in persistence and returns failed:true', async () => 
     sessions: new Map(),
     async create() { throw new Error('boom: spawn refused'); },
     pendingCountFor: () => 0,
+    teamNameFor: () => null, // teamless failed entry
   };
   const persistence = fakePersistence([
     { name: 'gamma', type: 'claude', cwd: '/w/g', label: 'G', sessionId: 'sid-g' },
@@ -139,7 +145,7 @@ test('keeps a failed spawn in persistence and returns failed:true', async () => 
   assert.strictEqual(out.length, 1);
   assert.deepStrictEqual(out[0], {
     name: 'gamma', type: 'claude', cwd: '/w/g', label: 'G',
-    failed: true, error: 'boom: spawn refused',
+    team: null, failed: true, error: 'boom: spawn refused',
   });
   // And the store was NEVER mutated — no upsert/remove/delete. Silently wiping a
   // failed entry was the "agents vanish after upgrade" bug (CLAUDE.md gotcha).
@@ -155,6 +161,7 @@ test('mixed batch — one running, one restored, one failed — order preserved'
       manager.sessions.set(name, { backend: 'claude-code' });
     },
     pendingCountFor: () => 0,
+    teamNameFor: () => null,
   };
   const persistence = fakePersistence([
     { name: 'run', type: 'claude', cwd: '/w/r' },

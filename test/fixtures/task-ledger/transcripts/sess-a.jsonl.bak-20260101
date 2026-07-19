@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_bak","message":{"id":"m_bak","model":"claude-opus-4-8","usage":{"input_tokens":999999,"output_tokens":999999,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"tbak","name":"Read","input":{"file_path":"/home/u/.clodex/teams/proj/tasks/task-1/spec.md"}}]},"uuid":"bak1","sessionId":"sess-a"}

@@ -262,4 +262,8 @@ Plain `node --test` (480 at the end of the refactor). Notable guards:
   once hid real leaks (multi-line declarations, template interpolations,
   control-flow heads, nested backticks).
 - `test/cli-hooks.test.js` — pins generated hook-script bytes (heredoc
-  terminators at column 0, python unindented).
+  terminators at column 0, interpreter body first line at column 0). The
+  drains shell out to the app's own Electron-as-node
+  (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`, baked absolute at generation), not
+  an ambient `python3` — so a Finder-launched packaged `.app` on launchd's
+  stripped PATH still drains transcripts/intents/parked-DMs.

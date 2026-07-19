@@ -163,7 +163,7 @@ call sites only; self-intents are never parkable.
 - Parked files: `<seq>.json` or `<seq>.<id>.json` — the id segment is
   matched *structurally* (4 vs 3 segments), never by suffix, so a
   counter-shaped seq can't be claimed as an id.
-- **Two park types, both land in this store** (the distinction is *why* a DM
+- **Three park types, all land in this store** (the distinction is *why* a DM
   parked, and whether the sender is told):
   1. **Cost/dialog hold-park** (`_parkHeldDelivery`, from `_gatedDeliver`) —
      the target is idle-and-cold (`DM_HOLD_IDLE_MS`, 30min) or dialog-blocked.
@@ -175,6 +175,17 @@ call sites only; self-intents are never parkable.
      draft-splice protection, not a cost hold; the SENDER is NOT told (the DM
      was accepted, not refused). Arms the 5min cap, so it self-drains even if
      the target never takes a turn.
+  3. **Passive park** (`_deliverPassive`, socket envelope `delivery:'passive'`)
+     — ride-along notifications (clodex-monitor status ticks; see
+     docs/exec-tools.md). Marked in the filename (`<seq>.passive.json` — the
+     7-char literal can't collide with 5/10-char minted resend ids). Drained by
+     the organic carriers only: the hooks, or any whole-dir claim that was
+     happening anyway. The turn-GENERATING idle-edge drain gates on
+     `hasActivePending` — a passive-only store never earns a turn; a mixed
+     store drains fully (the active justifies the turn, passives ride along).
+     Never arms the cap, takes no resend id, no session-mention badge. Claude
+     targets only; Codex and absent-park-failure fall back to a normal wake
+     (degraded to noisy, never dropped).
 - **Resend**: cost/cold-hold parks mint a 5-char base36 id (unique across
   all pending dirs) and the bounce notice teaches `[agent:resend <id>]`.
   Resend claims by single-file rename (ENOENT = already delivered = success)

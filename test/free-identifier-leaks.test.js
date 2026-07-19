@@ -44,6 +44,7 @@ const SCANNED_MODULES = [
   'statusline.js',
   'intent-scanner.js',
   'intent-catalog.js',
+  'prompt-rails.js',
   'exec-schema.js',
   'remind-schedule.js',
   'remind-scheduler.js',

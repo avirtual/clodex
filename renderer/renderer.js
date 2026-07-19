@@ -9,7 +9,7 @@ const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
@@ -92,6 +92,25 @@ const worktreeBaseList = document.getElementById('worktree-base-list');
 const worktreeFields = document.getElementById('worktree-fields');
 const worktreeRow = document.getElementById('worktree-row');
 const cwdSuggestionsList = document.getElementById('cwd-suggestions');
+// Teams front door (docs/teams-design.md): the New Session dialog's team section.
+// Its form depends on whether the cwd already resolves to a team — create mode
+// (no team) adopts this session as lead; join mode (cwd inside a team root) adds
+// a seat in a picked role. dialogTeamMode tracks which; dialogTeamName is the
+// resolved team in join mode.
+const teamRow = document.getElementById('team-row');
+const teamToggle = document.getElementById('input-team-toggle');
+const teamToggleLabel = document.getElementById('team-toggle-label');
+const teamFields = document.getElementById('team-fields');
+const teamCreateFields = document.getElementById('team-create-fields');
+const teamJoinFields = document.getElementById('team-join-fields');
+const teamNameInput = document.getElementById('input-team-name');
+const teamRoleSelect = document.getElementById('input-team-role');
+const teamRolePromptRow = document.getElementById('team-role-prompt-row');
+const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
+let dialogTeamMode = null;   // 'create' | 'join' | null (not an agent / authoring)
+let dialogTeamName = null;   // resolved team name in join mode
+let dialogTeamNames = [];    // existing team names, for the create dup pre-check
+let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
 // New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
 // Host + one entry per registered sandbox box. The selected <option>'s value is the
 // placement: 'host' or a box id.
@@ -321,6 +340,7 @@ function addFailedSessionToSidebar(entry) {
   item.dataset.cwd = entry.cwd || '';
   item.dataset.type = entry.type;
   item.dataset.failed = '1';
+  if (entry.team) item.dataset.team = entry.team; // group-by-project team key
   // The hover card (session-hovercard.js) shows the restore error + type/cwd —
   // no title attributes on the row; the small close control keeps its own.
   if (entry.error) item.dataset.error = entry.error;
@@ -348,7 +368,7 @@ function addFailedSessionToSidebar(entry) {
     // Reload this item: remove the failed placeholder and add a real one
     item.remove();
     createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
     switchSession(entry.name);
   });
 
@@ -375,6 +395,7 @@ function addArchivedSessionToSidebar(entry) {
   item.dataset.cwd = entry.cwd || '';
   item.dataset.type = entry.type;
   if (entry.backend) item.dataset.backend = entry.backend;
+  if (entry.team) item.dataset.team = entry.team; // group-by-project team key
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -397,7 +418,7 @@ function addArchivedSessionToSidebar(entry) {
     item.remove();
     sidebarMeta.delete(entry.name);
     createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -440,6 +461,7 @@ async function archiveSessionRow(name) {
     cwd: item.dataset.cwd || '',
     label: displayed && displayed !== name ? displayed : null,
     backend: item.dataset.backend || null,
+    team: item.dataset.team || null, // carry the group-by-project key onto the archived row
     archivedAt: Date.now(),
     createdAt: meta.createdAt || null,
   });
@@ -462,13 +484,18 @@ async function deleteSessionRow(name) {
   }
 }
 
-function addSessionToSidebar(name, type, cwd, label, backend = null) {
+function addSessionToSidebar(name, type, cwd, label, backend = null, team = null) {
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
   item.dataset.cwd = cwd || '';
   item.dataset.type = type;
   if (backend) item.dataset.backend = backend;
+  // Team name owning this cwd (main-resolved): the group-by-project key so seats
+  // in one team cluster under a single header regardless of subdir. Absent for
+  // teamless sessions; kept fresh by the sidebar-meta refresh (groupFor also
+  // falls back to meta.team) so reattach/restart rows converge too.
+  if (team) item.dataset.team = team;
   const displayName = label || name;
   // Second line shows the cwd basename only; type + full path (and the live
   // stats) live in the hover card (session-hovercard.js), so the row carries
@@ -547,6 +574,7 @@ function restartSessionWithReattach(name) {
   const snapType = item ? item.dataset.type || null : null;
   const snapCwd = item ? item.dataset.cwd : null;
   const snapBackend = item ? item.dataset.backend || null : null;
+  const snapTeam = item ? item.dataset.team || null : null; // cwd is unchanged by a restart → team persists
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
@@ -556,13 +584,13 @@ function restartSessionWithReattach(name) {
       createTerminal(name);
       // The respawn recomputed backend authoritatively; prefer it over the row
       // snapshot so a pre-detection session's chip heals on restart.
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam);
       switchSession(name);
     }
   });
 }
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, disposition }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -599,6 +627,34 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend }) => {
     case 'kill': // right-click "Delete Session…" — the real delete (confirm + worktree)
       deleteSessionRow(name);
       break;
+    case 'retired': {
+      // Main-side team-retire (clodex-team exec). Two dispositions:
+      //  - 'discard' (ephemeral / off-manifest seat): main kill()'d and dropped
+      //    the record. Do NOT stash — onSessionExit finds no archivingSessions
+      //    entry and removes the row like a delete (the kill is expected, so no
+      //    crash toast either).
+      //  - 'archive' (persistent role, or an older core that omits the field):
+      //    main archived and is killing the PTY — this signal arrives BEFORE the
+      //    exit, so stash the row identity exactly like archiveSessionRow (minus
+      //    the API call) and onSessionExit rebuilds the row as archived.
+      if (disposition === 'discard') break;
+      const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+      if (!item) break;
+      const nameEl = item.querySelector('.session-name');
+      const displayed = nameEl ? nameEl.textContent : name;
+      const meta = sidebarMeta.get(name) || {};
+      archivingSessions.set(name, {
+        name,
+        type: item.dataset.type,
+        cwd: item.dataset.cwd || '',
+        label: displayed && displayed !== name ? displayed : null,
+        backend: item.dataset.backend || null,
+        team: item.dataset.team || null, // carry the group-by-project key onto the archived row
+        archivedAt: Date.now(),
+        createdAt: meta.createdAt || null,
+      });
+      break;
+    }
     case 'export':
       window.api.exportSessionMarkdown(name).then((res) => {
         if (!res.ok && res.error !== 'cancelled') {
@@ -743,7 +799,14 @@ const PR_ORDER = ['open', 'merged', 'closed', 'none', 'no PR / unknown'];
 function groupFor(item) {
   const meta = sidebarMeta.get(item.dataset.name) || {};
   switch (sidebarView.group) {
-    case 'project': return projectLabel(item.dataset.cwd);
+    case 'project': {
+      // Team identity wins over the cwd basename: seats in one team cluster under
+      // a single header regardless of subdir. dataset.team is set at row-creation
+      // (immediate); meta.team is the sidebar-meta catch-all (reattach, refresh).
+      // A "▸ " prefix reads it as a team, distinct from a "parent/dir" cwd label.
+      const team = item.dataset.team || meta.team;
+      return team ? `▸ ${team}` : projectLabel(item.dataset.cwd);
+    }
     case 'state': return stateOf(item);
     case 'date': return dateBucket(meta.lastActivityTs || meta.createdAt);
     case 'pr': return meta.prState ? meta.prState : 'no PR / unknown';
@@ -1284,6 +1347,15 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     if (worktreeFields) worktreeFields.style.display = 'none';
     if (!authoring) refreshWorktreeForCwd();
   }
+  // Team section: hidden first (a type flip to bash / template authoring hides it),
+  // then refreshTeamForCwd re-reveals it in create/join shape for agent+host.
+  if (teamRow) {
+    teamRow.style.display = 'none';
+    if (teamToggle) teamToggle.checked = false;
+    if (teamFields) teamFields.style.display = 'none';
+    lastTeamAutoName = null;
+    if (!authoring) refreshTeamForCwd();
+  }
 }
 
 // Grey (disable + dim) or restore the rich rows for the current placement. When
@@ -1346,6 +1418,8 @@ function populatePlacementOptions(boxes) {
 async function applyPlacement() {
   const placement = currentPlacement();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
+  // Teams are host-local — a flip to/from a box shows/hides the team section.
+  refreshTeamForCwd();
   if (placement !== 'host') { await applySandboxState(); return; }
   greyRichFields(false);
   await restoreHostCatalogs();
@@ -1360,6 +1434,14 @@ async function applyPlacement() {
 async function applySandboxState() {
   const placement = currentPlacement();
   if (placement === 'host') { greyRichFields(false); return; }
+  // Docker down/absent → no box can run at all; grey with the docker remedy
+  // (same greyed treatment as an offline box, but the reason is Docker itself,
+  // not "Start it first"). The probe is TTL-cached main-side, so this is cheap.
+  let dockerDetect = null;
+  try { dockerDetect = await window.api.sandboxDetect(placement); } catch { dockerDetect = null; }
+  if (currentPlacement() !== placement) return;   // user flipped during the probe
+  const dockerGate = sandboxActionGate(dockerDetect);
+  if (!dockerGate.running) { greyRichFields(true, dockerGate.reason); return; }
   // Box placement. An offline box has no catalogs to fetch and create will be
   // blocked — grey with a start-it-first hint rather than the old-box copy.
   if (!boxPeerOnline(placement)) { greyRichFields(true, PLACEMENT_HINT_BOX_OFFLINE); return; }
@@ -1590,6 +1672,115 @@ async function refreshWorktreeForCwd() {
   inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
 }
 
+// --- Teams front door (docs/teams-design.md) -------------------------------
+
+// Slugify a dir basename into a team/seat-name-legal token (session charset).
+function slugifyTeamName(s) {
+  const slug = String(s || '').trim().toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return slug || 'team';
+}
+function pathBasename(p) {
+  return String(p || '').replace(/\/+$/, '').split('/').pop() || '';
+}
+// Is a session name already used in THIS window's sidebar? Best-effort for the
+// collision suffix — the server enforces the global namespace on create.
+function sessionNameTaken(name) {
+  return !!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+}
+// The role KEY a join binds to: stock `hand`, or (custom) derived from the picked
+// prompt name — strip a leading clodex-team- and clamp to the role charset.
+function roleKeyForJoin() {
+  if (!teamRoleSelect || teamRoleSelect.value === 'hand') return 'hand';
+  const p = (teamRolePromptSelect && teamRolePromptSelect.value) || '';
+  const key = p.replace(/^clodex-team-/, '').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  return key || 'member';
+}
+
+// Show/hide + shape the team section for the current cwd. Agent types only (a
+// team is meaningless for bash), host placement only (teams are local in v1),
+// and never while authoring a template. Resolves the cwd's team to pick create
+// vs join mode. A token guards a slow response from an earlier cwd.
+let teamForCwdToken = 0;
+async function refreshTeamForCwd() {
+  if (!teamRow) return;
+  const authoring = dialogMode === 'template';
+  const type = inputType.value;
+  const agentType = type === 'claude' || type === 'codex';
+  const hide = () => {
+    teamRow.style.display = 'none';
+    if (teamToggle) teamToggle.checked = false;
+    if (teamFields) teamFields.style.display = 'none';
+    dialogTeamMode = null;
+    dialogTeamName = null;
+  };
+  if (!agentType || authoring || currentPlacement() !== 'host') { hide(); return; }
+  const cwd = expandPath(inputCwd.value.trim()) || homeDir;
+  const token = ++teamForCwdToken;
+  let res;
+  try { res = await window.api.teamForCwd(cwd); } catch { res = null; }
+  if (token !== teamForCwdToken) return; // a newer cwd won the race
+  teamRow.style.display = '';
+  if (res && res.team) {
+    // JOIN mode — the cwd is inside an existing team root.
+    dialogTeamMode = 'join';
+    dialogTeamName = res.team;
+    if (teamToggleLabel) teamToggleLabel.textContent = `Join team ${res.team}`;
+    if (teamCreateFields) teamCreateFields.style.display = 'none';
+    if (teamJoinFields) teamJoinFields.style.display = '';
+    await populateTeamRolePrompts();
+    if (teamRolePromptRow) teamRolePromptRow.style.display = teamRoleSelect.value === 'custom' ? '' : 'none';
+    if (teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
+  } else {
+    // CREATE mode — no team owns this cwd; this session would be the lead.
+    dialogTeamMode = 'create';
+    dialogTeamName = null;
+    if (teamToggleLabel) teamToggleLabel.textContent = 'Create a team here — this session becomes its lead.';
+    if (teamJoinFields) teamJoinFields.style.display = 'none';
+    if (teamCreateFields) teamCreateFields.style.display = '';
+    try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
+    if (teamNameInput && !teamNameInput.value.trim()) {
+      teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+    }
+  }
+}
+
+// Suggest a free team name (append -2, -3, … past an existing one).
+function dedupeTeamName(base) {
+  if (!dialogTeamNames.includes(base)) return base;
+  let n = 2;
+  while (dialogTeamNames.includes(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}
+
+// Populate the join role-prompt picker from the rail-filtered library list.
+async function populateTeamRolePrompts() {
+  if (!teamRolePromptSelect) return;
+  let res;
+  try { res = await window.api.teamRolePrompts(); } catch { res = null; }
+  const prompts = (res && res.prompts) || [];
+  teamRolePromptSelect.innerHTML = '';
+  for (const name of prompts) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    teamRolePromptSelect.appendChild(opt);
+  }
+}
+
+// Auto-suggest the seat name `<team>-<role>` (with -N collision suffix) for a
+// join, unless the operator has typed their own name.
+function updateTeamJoinNameSuggestion() {
+  if (dialogTeamMode !== 'join' || !dialogTeamName) return;
+  if (inputName.value && inputName.value !== lastTeamAutoName) return; // user-owned
+  const base = `${dialogTeamName}-${roleKeyForJoin()}`;
+  let name = base;
+  let n = 2;
+  while (sessionNameTaken(name)) name = `${base}-${n++}`;
+  inputName.value = name;
+  lastTeamAutoName = name;
+}
+
 // Working Directory datalist: recently-picked dirs (MRU) first, then the most-
 // popular cwds across live sessions (labelled with their session count). Deduped
 // so a dir that's both recent and active shows once.
@@ -1633,6 +1824,14 @@ async function openDialog(prefill = null) {
     inputWorktreeBase.value = '';
     if (worktreeFields) worktreeFields.style.display = 'none';
   }
+  // Reset the team section (a prior open's team name / mode must not leak).
+  if (teamToggle) teamToggle.checked = false;
+  if (teamNameInput) teamNameInput.value = '';
+  if (teamRoleSelect) teamRoleSelect.value = 'hand';
+  if (teamFields) teamFields.style.display = 'none';
+  dialogTeamMode = null;
+  dialogTeamName = null;
+  lastTeamAutoName = null;
   refreshCwdSuggestions();
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
@@ -1705,6 +1904,25 @@ inputCwd.addEventListener('change', () => refreshNewSessionTools());
 // reveals/hides. Change-only (matches the skill/tool refreshes above) so a path
 // field doesn't shell out to git on every keystroke.
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
+inputCwd.addEventListener('change', () => refreshTeamForCwd());
+
+// Team section wiring: the toggle reveals the create/join fields; the role
+// select reveals the custom prompt picker and re-suggests the seat name.
+if (teamToggle) {
+  teamToggle.addEventListener('change', () => {
+    if (teamFields) teamFields.style.display = teamToggle.checked ? '' : 'none';
+    if (teamToggle.checked && dialogTeamMode === 'join') updateTeamJoinNameSuggestion();
+  });
+}
+if (teamRoleSelect) {
+  teamRoleSelect.addEventListener('change', () => {
+    if (teamRolePromptRow) teamRolePromptRow.style.display = teamRoleSelect.value === 'custom' ? '' : 'none';
+    updateTeamJoinNameSuggestion();
+  });
+}
+if (teamRolePromptSelect) {
+  teamRolePromptSelect.addEventListener('change', () => updateTeamJoinNameSuggestion());
+}
 
 inputProxyMode.addEventListener('change', () => {
   inputProxyUrl.style.display = inputProxyMode.value === 'custom' ? '' : 'none';
@@ -1950,7 +2168,23 @@ async function doCreate() {
   // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
   // could abandon the managed wirescope when the port stops matching).
   if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
-  const result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+  // Teams front door: when the team box is checked (agent + host placement only),
+  // route through team:create / team:join — each writes the manifest first, then
+  // spawns down the same path. Otherwise the plain createSession. The seat params
+  // are identical across all three; the team calls add the team fields.
+  const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
+  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents };
+  let result;
+  if (teamOn && dialogTeamMode === 'create') {
+    const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
+    result = await window.api.teamCreate({ teamName, ...seatParams });
+  } else if (teamOn && dialogTeamMode === 'join') {
+    const role = roleKeyForJoin();
+    const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
+    result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
+  } else {
+    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+  }
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
     alert(`Create session failed: ${result.error || 'unknown error'}`);
@@ -1963,7 +2197,7 @@ async function doCreate() {
   if (worktree) window.api.markSessionWorktree(name, worktree);
 
   createTerminal(name);
-  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null);
+  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null);
   switchSession(name);
 
   // Non-fatal spawn warnings (e.g. an injected skill references a subagent this
@@ -4276,6 +4510,13 @@ const sbDeleteBtn = document.getElementById('btn-sandbox-delete');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
+// Docker action gate (Task 8): the last-probed daemon availability + the reason
+// copy to show on the controls it disables. Default running:true so nothing is
+// gated before the first probe (the dialog probes on open); refreshSandboxStatus
+// and renderBoxList keep these fresh. Start/Rebuild/box-create are disabled while
+// docker is down; Stop is never gated.
+let sbDockerRunning = true;
+let sbGateReason = null;
 // The selected box's EFFECTIVE (last-generated, possibly bumped) host ports by
 // role — status.ports while running, null when stopped. Both the Open-in-browser
 // link and its click handler read the live web port from here, not the (disabled,
@@ -4330,13 +4571,34 @@ function applySandboxRunning(running, ports = null) {
   }
 }
 
+// Apply the docker action gate to the detail buttons + box-create, using the
+// last-probed daemon state (sbDockerRunning/sbGateReason). Start (#btn-sandbox-
+// toggle) is gated ONLY when it would Start — a running box's Stop is never
+// gated. sbBusy (a lifecycle op in flight) also disables, so this is safe to call
+// from a finally after sbBusy clears. The reason rides the title so a hover
+// explains the disabled control; the top notice line already states it in full.
+function applyActionGate() {
+  const gated = !sbDockerRunning;
+  const startGated = gated && !sbRunning;   // Stop (running) stays enabled
+  sbToggleBtn.disabled = sbBusy || startGated;
+  sbRebuildBtn.disabled = sbBusy || gated;
+  sbBoxCreate.disabled = gated;
+  sbToggleBtn.title = startGated ? (sbGateReason || '') : '';
+  sbRebuildBtn.title = gated ? (sbGateReason || '') : '';
+  sbBoxCreate.title = gated ? (sbGateReason || '') : '';
+}
+
 async function refreshSandboxStatus() {
   try {
     const [detect, status] = await Promise.all([
       window.api.sandboxDetect(sbCurrentBox),
       window.api.sandboxStatus(sbCurrentBox),
     ]);
-    renderSandboxNotice(sbDockerRow, sandboxDetectNotice(detect));
+    const gate = sandboxActionGate(detect);
+    sbDockerRunning = gate.running;
+    sbGateReason = gate.reason;
+    renderSandboxNotice(sbDockerRow, gate.notice);
+    applyActionGate();
     const sn = sandboxStatusNotice(status && status.state);
     renderSandboxNotice(sbStatusRow, sn);
     if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
@@ -4424,8 +4686,17 @@ sbMountsAdd.addEventListener('click', async () => {
 // the Start/Stop button toggles that box without selecting it.
 async function renderBoxList() {
   const boxes = sbBoxes;
-  const notices = await Promise.all(boxes.map((b) =>
-    window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice())));
+  // Probe docker alongside the per-box statuses so a row's Start can be gated the
+  // same as the detail Start. Cheap: the main-side probe is TTL-cached + deduped.
+  const [detect, notices] = await Promise.all([
+    window.api.sandboxDetect(sbCurrentBox).catch(() => null),
+    Promise.all(boxes.map((b) =>
+      window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice()))),
+  ]);
+  const gate = sandboxActionGate(detect);
+  sbDockerRunning = gate.running;
+  sbGateReason = gate.reason;
+  applyActionGate();
   sbBoxList.innerHTML = '';
   if (boxes.length === 0) {
     const empty = document.createElement('p');
@@ -4448,6 +4719,10 @@ async function renderBoxList() {
     tog.type = 'button';
     tog.className = 'secondary sandbox-box-toggle';
     tog.textContent = sn.running ? 'Stop' : 'Start';
+    // A row's Start is gated when docker is down; its Stop is never gated.
+    const rowStartGated = !sn.running && !gate.running;
+    tog.disabled = rowStartGated;
+    if (rowStartGated) tog.title = gate.reason || '';
     tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
     row.append(dot, label, tog);
     row.addEventListener('click', () => selectBox(b.id));
@@ -4601,8 +4876,7 @@ sbToggleBtn.addEventListener('click', async () => {
     showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     sbBusy = false;
-    sbToggleBtn.disabled = false;
-    sbRebuildBtn.disabled = false;
+    applyActionGate();   // re-apply the docker gate (not a blanket enable)
     await refreshSandboxStatus();
   }
 });
@@ -4631,9 +4905,8 @@ sbRebuildBtn.addEventListener('click', async () => {
     showToast(`Sandbox rebuild failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     sbBusy = false;
-    sbToggleBtn.disabled = false;
-    sbRebuildBtn.disabled = false;
     sbRebuildBtn.textContent = 'Rebuild';
+    applyActionGate();   // re-apply the docker gate (not a blanket enable)
     await refreshSandboxStatus();
   }
 });
@@ -5073,7 +5346,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       continue;
     }
     const { terminal } = createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     // Seed the dot from the reattach snapshot — activity/attention events
     // fired while this window was detached were dropped, and the next live

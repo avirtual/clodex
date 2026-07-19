@@ -23,6 +23,17 @@
 
 const API_CONTRACT = [
   { name: 'createSession', kind: 'invoke', channel: 'session:create' },
+  // Teams front door (docs/teams-design.md): write the team manifest, then spawn.
+  // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
+  { name: 'teamCreate', kind: 'invoke', channel: 'team:create' },
+  { name: 'teamJoin', kind: 'invoke', channel: 'team:join' },
+  // Does a cwd already resolve to a team? Drives the dialog's create-vs-join mode.
+  { name: 'teamForCwd', kind: 'invoke', channel: 'team:forCwd' },
+  // Existing team names for the create-mode duplicate pre-check.
+  { name: 'teamNames', kind: 'invoke', channel: 'team:names' },
+  // Rail-filtered role-prompt picker source for the join flow (stock clodex-team-*
+  // deltas + library prompts whose front matter declares rail: append).
+  { name: 'teamRolePrompts', kind: 'invoke', channel: 'team:rolePrompts' },
   // Opt-in git worktree at spawn + working-dir suggestions for the New Session
   // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
   // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.

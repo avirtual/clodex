@@ -39,7 +39,7 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
-const { materializePotCli } = require('./pot-bin');
+const { materializePotCli, materializeExecScripts } = require('./pot-bin');
 
 function createEngine({ userDataPath, seams = {}, log }) {
   // Individual consts (not a destructure-with-defaults) so each seam name is
@@ -486,7 +486,13 @@ const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-uti
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById } = require('./pending-store');
+const { createTeamManifest } = require('./team-manifest');
+// Teams (docs/teams-design.md): project resolution is pure cwd+fs math. Core
+// consumes findProjectRoot (the team-retire authorization check, string root)
+// and the rich resolveTeam (spawn-time team-context injection, session-manager);
+// the front door's team:create / team:join IPC handlers call createTeam / addRole.
+const { findProjectRoot, resolveTeam, createTeam, addRole, listTeams } = createTeamManifest({ fs });
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled } = require('./intent-catalog');
@@ -737,11 +743,15 @@ function readSessionMeta(file) {
 // the conversation unmarked so units saved later still reach it).
 // Per-session CLI hook wiring lives in cli-hooks.js (M3). REGISTRY_DIR +
 // memoryStore injected by value; uiSettings via getter (assigned in whenReady).
+// nodeInterp = the app's own Electron binary run as Node (ELECTRON_RUN_AS_NODE),
+// baked ABSOLUTE into every generated hook so the scripts never depend on an
+// ambient python3 / PATH (Task 9 — the packaged-.app memory-save bug). Injected
+// here so cli-hooks.js stays free of the `process` global (leak-scanner seam).
 const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
   cleanupClaudeHook, cleanupCodexHook,
-} = createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings });
+} = createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath });
 
 // JsonlWatcher lives in jsonl-watcher.js (M3). REGISTRY_DIR injected; text +
 // file-touch extraction delegated to transcript.js / file-touch.js.
@@ -859,7 +869,13 @@ const SessionManager = createSessionManager({
     enqueueOutbox,
     ensureDir,
     execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
+    findProjectRoot,
+    resolveTeam,
+    createTeam,
+    addRole,
+    listTeams,
     fs,
+    hasActivePending,
     intentEnabled,
     isAlive,
     isDigested,
@@ -1437,6 +1453,10 @@ const sandboxManager = createSandboxManager({
   // Materialize the boiling-pot CLI closure into ~/.clodex/bin/ (grok skill reads
   // it from there; the app's own copy is sealed in app.asar). Overwrite-always.
   try { materializePotCli({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
+  // Same for the exec-intent helper scripts (clodex-team/clodex-monitor): the
+  // seeded exec-defs invoke `node "${CLODEX_BIN}/clodex-team.js"`, so bin/ must
+  // hold them on every launch, dev and packaged alike (Task 10 portability).
+  try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
   manager.startPendingPoll();
@@ -1597,6 +1617,10 @@ const sandboxManager = createSandboxManager({
     getSandbox: (boxId) => sandboxManager.get(boxId),
     getSandboxManager: () => sandboxManager,
     // ── ipc-handlers consumers (helper surface) ──
+    // Teams front door: the manifest writers + resolvers the team:* IPC handlers
+    // call. Exposed on the ENGINE seam (not just the SessionManager deps) — this
+    // is the object ipc-handlers destructures via main.js's `{...engine}` spread.
+    createTeam, addRole, resolveTeam, listTeams,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,

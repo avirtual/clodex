@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_d1","message":{"id":"m_d1","model":"claude-sonnet-5","usage":{"input_tokens":2,"output_tokens":2,"cache_read_input_tokens":20,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"td1","name":"Bash","input":{"command":"cat /home/u/.clodex/teams/proj/tasks/task-99/spec.md"}}]},"uuid":"d1","sessionId":"sess-d"}

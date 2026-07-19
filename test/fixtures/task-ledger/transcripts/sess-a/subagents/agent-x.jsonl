@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"subtask"},"uuid":"su1","sessionId":"sess-a"}
+{"type":"assistant","isSidechain":true,"requestId":"req_s1","message":{"id":"m_s1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":5,"output_tokens":40,"cache_read_input_tokens":20,"cache_creation_input_tokens":4},"content":[{"type":"tool_use","id":"st1","name":"Write","input":{"file_path":"/home/u/.clodex/teams/proj/tasks/task-1/report.md","content":"x"}}]},"uuid":"sa1","sessionId":"sess-a"}

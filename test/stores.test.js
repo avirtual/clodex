@@ -10,11 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const { initStores } = require('../stores');
 
-// Fresh temp userData + registry dirs, and a stores bundle over them.
+// Fresh temp userData + registry dirs, and a stores bundle over them. Seeding is
+// disabled here (resourcesDir → a path that doesn't exist) so the shipped library
+// defaults don't pollute the per-store assertions below; the seed step has its
+// own dedicated tests that exercise it explicitly.
 function freshStores() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
   const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
-  const stores = initStores(userData, { log: console, registryDir });
+  const stores = initStores(userData, { log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__') });
   return { userData, registryDir, stores,
     cleanup() {
       fs.rmSync(userData, { recursive: true, force: true });
@@ -416,6 +419,95 @@ test('templates: migration explodes templates.json → per-file, renames the blo
     // Second init is a no-op (blob already renamed) — no re-run, no dup.
     const stores2 = initStores(userData, { registryDir });
     assert.strictEqual(stores2.templates.list().length, 2);
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+// --- seedLibraryDefaults: ship library defaults into ~/.clodex/library --------
+// The clodex-team-lead system prompt (and any future shipped default) is copied out of
+// the repo `resources/library/` tree into registryDir/library on construction,
+// SEED-IF-ABSENT: a file the operator already has is never overwritten. The
+// source defaults to __dirname/resources/library (rides app.asar packaged); the
+// resourcesDir DI seam lets these tests supply a hermetic source tree.
+
+const REPO_TEAMLEAD = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system', 'clodex-team-lead.md');
+
+test('seed: ships the clodex-team-lead system prompt into a fresh registry (byte-exact)', () => {
+  // The DEFAULT source (__dirname/resources/library) is exercised here — no
+  // resourcesDir override — so this pins the real shipped tree, not a fixture.
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    const stores = initStores(userData, { registryDir });
+    const dest = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-lead.md');
+    assert.ok(fs.existsSync(dest), 'clodex-team-lead.md seeded on construction');
+    // Byte-for-byte the shipped copy (the reviewed draft is the source of truth).
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), fs.readFileSync(REPO_TEAMLEAD, 'utf-8'));
+    // And it surfaces through the prompt library as a system prompt.
+    const seeded = stores.promptLibrary.list().find((p) => p.name === 'clodex-team-lead' && p.kind === 'system');
+    assert.ok(seeded, 'seeded prompt is listed as a system prompt');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed: never clobbers an operator-edited copy already on disk', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    // Operator has already edited their clodex-team-lead prompt BEFORE this launch.
+    const dest = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-lead.md');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, 'MY EDITED PROMPT');
+    initStores(userData, { registryDir }); // runs the seed step
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'MY EDITED PROMPT',
+      'operator edit wins over the shipped default (seed-if-absent)');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed: walks a nested source tree, seeding absent files and skipping present ones', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-res-'));
+  try {
+    // A shipped tree with nesting across two library kinds.
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, 'prompts', 'system', 'lead.md'), 'LEAD');
+    fs.writeFileSync(path.join(resourcesDir, 'prompts', 'system', 'worker.md'), 'WORKER');
+    fs.writeFileSync(path.join(resourcesDir, 'exec', 'tool.json'), '{"argv":["x"]}');
+    // The operator already has one of them, edited.
+    const kept = path.join(registryDir, 'library', 'prompts', 'system', 'worker.md');
+    fs.mkdirSync(path.dirname(kept), { recursive: true });
+    fs.writeFileSync(kept, 'EDITED WORKER');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const libRoot = path.join(registryDir, 'library');
+    assert.strictEqual(fs.readFileSync(path.join(libRoot, 'prompts', 'system', 'lead.md'), 'utf-8'), 'LEAD', 'absent file seeded');
+    assert.strictEqual(fs.readFileSync(path.join(libRoot, 'exec', 'tool.json'), 'utf-8'), '{"argv":["x"]}', 'nested absent file seeded');
+    assert.strictEqual(fs.readFileSync(kept, 'utf-8'), 'EDITED WORKER', 'present file left untouched');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+    fs.rmSync(resourcesDir, { recursive: true, force: true });
+  }
+});
+
+test('seed: a missing source tree is a no-op, not a throw', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    // Point at a source that does not exist — construction must still succeed.
+    const stores = initStores(userData, { registryDir, resourcesDir: path.join(registryDir, 'no-such-seed') });
+    assert.strictEqual(typeof stores.promptLibrary, 'object');
+    assert.strictEqual(fs.existsSync(path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-lead.md')), false);
   } finally {
     fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(registryDir, { recursive: true, force: true });

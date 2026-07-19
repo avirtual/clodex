@@ -26,7 +26,7 @@
       <div class="sidebar-filterbar-row">
         <select id="sidebar-group" class="sidebar-select" data-tip="Group sessions by">
           <option value="none">No grouping</option>
-          <option value="project">Group: Project</option>
+          <option value="project">Group: Project / Team</option>
           <option value="state">Group: State</option>
           <option value="date">Group: Date</option>
           <option value="pr">Group: PR status</option>
@@ -540,6 +540,31 @@
             <datalist id="worktree-base-list"></datalist>
             <span class="hint-text" style="margin: 0;">The branch/ref the new worktree branches off. Defaults to the repo's default branch.</span>
           </label>
+        </div>
+      </label>
+      <label id="team-row" style="display:none;">Team
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="input-team-toggle" style="margin: 0;">
+          <span id="team-toggle-label" class="hint-text" style="margin: 0;">Create a team here — this session becomes its lead.</span>
+        </label>
+        <div id="team-fields" style="display:none; margin-top:4px;">
+          <div id="team-create-fields">
+            <input type="text" id="input-team-name" placeholder="team name" spellcheck="false" autocomplete="off">
+            <span id="team-name-hint" class="hint-text" style="margin: 0;">A new team rooted at the working directory above. Adds a reviewer role (a subagent) out of the box.</span>
+          </div>
+          <div id="team-join-fields" style="display:none;">
+            <label style="margin-top:4px; font-weight: normal;">Role
+              <select id="input-team-role">
+                <option value="hand">hand (implementer)</option>
+                <option value="custom">custom…</option>
+              </select>
+            </label>
+            <label id="team-role-prompt-row" style="display:none; margin-top:4px; font-weight: normal;">Role prompt
+              <select id="input-team-role-prompt"></select>
+              <span class="hint-text" style="margin: 0;">An append-rail prompt from your library — the seat's role contract.</span>
+            </label>
+            <span id="team-join-hint" class="hint-text" style="margin: 0;">Joins as a seat on this team; the session name suggests <code>&lt;team&gt;-&lt;role&gt;</code>.</span>
+          </div>
         </div>
       </label>
       <label id="system-prompt-row">System prompt

@@ -1,0 +1,30 @@
+{
+  "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-monitor.js"],
+  "timeoutMs": 15000,
+  "maxBytes": 8192,
+  "replyStderr": true,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["action", "agent"],
+    "properties": {
+      "action": { "type": "string", "enum": ["start", "stop", "list"] },
+      "agent": { "type": "string", "maxLength": 64 },
+      "command": { "type": "string", "maxLength": 4000 },
+      "ws": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "maxLength": 2000 },
+          "protocols": { "type": "string", "maxLength": 400 }
+        }
+      },
+      "wake": { "type": "boolean" },
+      "description": { "type": "string", "maxLength": 200 },
+      "persistent": { "type": "boolean" },
+      "timeout_ms": { "type": "number", "minimum": 1000, "maximum": 3600000 },
+      "id": { "type": "string", "maxLength": 40 }
+    }
+  }
+}

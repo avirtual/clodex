@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pending-test-'));
@@ -206,4 +206,40 @@ test('re-park under the same id after a claim is findable again (dialog-hold re-
   // Target still dialog-held → re-park under the same id.
   parkDelivery(root, 'a', 'blocked', SEQ(2), 'dup44');
   assert.deepStrictEqual(claimParkedById(root, 'dup44'), { name: 'a', text: 'blocked' });
+});
+
+// --- passive delivery class (ride-along notifications) ---
+
+test('passive park uses the .passive.json marker and still drains in order', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'tick 1', '1736900000000.000000001', null, true);
+  parkDelivery(root, 'a', 'real dm', '1736900000000.000000002');
+  const files = fs.readdirSync(agentDir(root, 'a')).sort();
+  assert.deepStrictEqual(files, ['1736900000000.000000001.passive.json', '1736900000000.000000002.json']);
+  // The drain is oblivious to the marker: both come out, arrival order kept.
+  assert.deepStrictEqual(drainPending(root, 'a', 't'), ['tick 1', 'real dm']);
+});
+
+test('hasActivePending: false for passive-only, true for mixed, false when empty', () => {
+  const root = tmpRoot();
+  assert.strictEqual(hasActivePending(root, 'a'), false);
+  parkDelivery(root, 'a', 'tick', '0001', null, true);
+  assert.strictEqual(hasActivePending(root, 'a'), false);   // passive-only → no turn
+  assert.strictEqual(hasPending(root, 'a'), true);          // but not invisible
+  parkDelivery(root, 'a', 'dm', '0002');
+  assert.strictEqual(hasActivePending(root, 'a'), true);    // an active justifies the claim
+  drainPending(root, 'a', 't');
+  assert.strictEqual(hasActivePending(root, 'a'), false);
+});
+
+test('id-tagged parks are active; the passive marker never matches a minted resend id', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'held dm', '1736900000000.000000001', 'ab12c');
+  assert.strictEqual(hasActivePending(root, 'a'), true);
+  // Structural guard: a passive filename has "passive" in the id segment slot,
+  // which parkFileHasId can only match for the literal id "passive" — minted
+  // ids are 5 or 10 chars, so no resend can claim a passive park.
+  parkDelivery(root, 'a', 'tick', '1736900000000.000000002', null, true);
+  assert.strictEqual(parkIdInUse(root, 'ab12c'), true);
+  assert.strictEqual(claimParkedById(root, 'ab12c').text, 'held dm');
 });

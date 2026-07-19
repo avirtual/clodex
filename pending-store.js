@@ -58,9 +58,18 @@ function parkFileHasId(f, id) {
 // drainPending) is oblivious to it, while claimParkedById can find the file by
 // id for an [agent:resend]. Returns the published basename. Retries once into a
 // fresh dir if the store was claimed away mid-publish (drains next turn, not lost).
-function parkDelivery(root, name, text, seq, id = null) {
+function parkDelivery(root, name, text, seq, id = null, passive = false) {
   const dir = agentDir(root, name);
-  const base = id ? `${seq}.${id}.json` : `${seq}.json`;
+  // Passive parks are ride-along notifications (monitor ticks etc.): drained by
+  // the organic carriers (hook drains, or any claim that was happening anyway)
+  // but never worth a turn of their own — the turn-generating drains gate on
+  // hasActivePending below. Marked in the FILENAME so the gate is a cheap peek;
+  // the drains themselves stay oblivious (still `*.json`, still seq-sorted).
+  // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
+  // parkFileHasId collisions because minted resend ids are 5 or 10 base36
+  // chars, never the 7-char literal "passive". Passive parks take no id: they
+  // are not conversational deliveries, so there is nothing to [agent:resend].
+  const base = passive ? `${seq}.passive.json` : (id ? `${seq}.${id}.json` : `${seq}.json`);
   const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
   const payload = JSON.stringify(id ? { text, id } : { text });
@@ -105,6 +114,21 @@ function drainPending(root, name, claimTag) {
   }
   try { fs.rmSync(claim, { recursive: true, force: true }); } catch {}
   return texts;
+}
+
+// Cheap peek (not a claim): does `name` have any NON-passive parked delivery?
+// The gate for turn-GENERATING drains (idle edge): a store holding only passive
+// notifications isn't worth a turn — leave them for an organic carrier (a hook
+// drain riding a turn that happens anyway). Mixed stores return true, and the
+// subsequent whole-dir claim sweeps the passives along with the actives — which
+// is exactly the ride-along semantics passive wants.
+function hasActivePending(root, name) {
+  try {
+    return fs.readdirSync(agentDir(root, name))
+      .some((f) => f.endsWith('.json') && !f.startsWith('.') && !f.endsWith('.passive.json'));
+  } catch {
+    return false;
+  }
 }
 
 // Cheap peek (not a claim): does `name` have any parked deliveries right now?
@@ -183,4 +207,4 @@ function claimParkedById(root, id) {
   return null;
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, countPending, parkIdInUse, claimParkedById, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById, agentDir };

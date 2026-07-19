@@ -60,6 +60,12 @@ const {
 // Pure electron-free leaves, required directly like ./claude-env — no dep seam.
 const { createFileHeat, aggregateStates, normalizeState, foldRedundancy } = require('./file-heat');
 const { readJsonSafe } = require('./fs-util');
+// Spawn-time team-context block (docs/teams-design.md). Pure string formatting —
+// no fs — so it's required directly like relay-protocol/file-heat; the fs-backed
+// resolveTeam that feeds it crosses as an injected dep (engine's manifest
+// instance). Appended to the seat's prompt material at the assembly callsite in
+// create(), deliberately OUTSIDE ipc-prompt (that file is byte-pinned).
+const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -124,7 +130,10 @@ function createSessionManager(deps) {
     enqueueOutbox,
     ensureDir,
     execBodyCap,
+    findProjectRoot,
+    resolveTeam,
     fs,
+    hasActivePending,
     intentEnabled,
     isAlive,
     isDigested,
@@ -672,6 +681,41 @@ function createSessionManager(deps) {
         proxyAgent = resolveProxyAgentId({ name, fork, existing: getPersistence().get(name), taken });
       }
 
+      // Spawn-time team context: if this agent's cwd sits inside a team's root,
+      // append a small team block to its system-prompt material so the seat knows
+      // its team, role, lead, and roster tool. Agent sessions only (bash is
+      // private, never on a team). Derived from cwd on EVERY spawn, so a resumed
+      // session picks it up through the same file-regeneration path — present now
+      // even for agents that spawned before this landed. Empty string when the
+      // cwd is on no team, so the concatenations below are no-ops then.
+      // When the seat's matched role names a `prompt` (a system-prompt library
+      // entry), append that prompt's content AFTER the team block — order is
+      // "who you're with" (team block) then "how you operate" (role prompt).
+      // Best-effort read from ~/.clodex/library/prompts/system/<name>.md: a
+      // missing/unreadable file is skipped silently, the team block still stands.
+      let teamBlock = '';
+      let teamName = null;
+      let resolvedTeam = null; // kept for the post-spawn roster/delta wiring below
+      if (agentType) {
+        try {
+          const team = resolveTeam(cwd);
+          if (team) {
+            resolvedTeam = team;
+            teamName = team.name;
+            teamBlock = formatTeamBlock(team, name);
+            const role = matchSeatRole(team, name);
+            const def = role ? team.roles[role] : null;
+            if (def && def.prompt) {
+              try {
+                const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+                const rolePrompt = fs.readFileSync(promptFile, 'utf-8');
+                if (rolePrompt) teamBlock = `${teamBlock}\n\n${rolePrompt}`;
+              } catch { /* missing/unreadable role prompt — skip, team block still stands */ }
+            }
+          }
+        } catch { /* resolution is best-effort — never block a spawn on it */ }
+      }
+
       switch (type) {
         case 'claude': {
           cmd = 'claude';
@@ -826,7 +870,8 @@ function createSessionManager(deps) {
             args.push('--system-prompt-file', sysFile);
           }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-          fs.writeFileSync(promptPath, append, { mode: 0o600 });
+          // Team block rides the append channel (persistent across resume/clear).
+          fs.writeFileSync(promptPath, teamBlock ? `${append}\n\n${teamBlock}\n` : append, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
           break;
         }
@@ -853,7 +898,10 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const instructionsPath = pathFor(REGISTRY_DIR, name, 'instructions');
-          fs.writeFileSync(instructionsPath, merged, { mode: 0o600 });
+          // Codex folds everything into one instructions channel; the team block
+          // is a cheap string concat here, so Codex seats get it too (they speak
+          // the same [agent:exec clodex-team] intent).
+          fs.writeFileSync(instructionsPath, teamBlock ? `${merged}\n\n${teamBlock}\n` : merged, { mode: 0o600 });
           args.push('-c', `model_instructions_file=${instructionsPath}`);
           // Optional API proxy routing (skip if the user already set one in args)
           if (proxyBase && !args.some(a => a.startsWith('openai_base_url='))) {
@@ -918,7 +966,7 @@ function createSessionManager(deps) {
         await transport.start();
 
         try {
-          registry.register(name, socketPath);
+          registry.register(name, socketPath, cwd);
         } catch (e) {
           // If a stale registration with a dead PID is blocking us, force-clean it
           if (e.code === 'EEXIST') {
@@ -932,7 +980,7 @@ function createSessionManager(deps) {
               if (isStaleRegistration(existing.pid, process.pid, isAlive)) {
                 registry.unregister(name);
                 try { fs.unlinkSync(existing.socket); } catch {}
-                registry.register(name, socketPath);
+                registry.register(name, socketPath, cwd);
               } else {
                 await transport.stop();
                 throw new Error(
@@ -1218,7 +1266,16 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      return { name, type, pid: ptyProc.pid, backend, ...(warnings.length ? { warnings } : {}) };
+      // Teams context architecture (docs/teams-design.md): composition rides as
+      // DATA, never the system prompt. A seat born on a team gets one initial
+      // roster message (sender `team`) as its first appended context, and every
+      // OTHER live seat of the team gets a passive "spawned" delta. Best-effort:
+      // both are wrapped so a resolution hiccup never fails the spawn.
+      if (resolvedTeam) {
+        this._injectRoster(session, resolvedTeam);
+        this._notifyComposition(session, 'spawned');
+      }
+      return { name, type, pid: ptyProc.pid, backend, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
     write(name, data) {
@@ -1292,6 +1349,11 @@ function createSessionManager(deps) {
       // with Delete Workspace, the only path that drops a record; ✕ / ⌘W archive
       // instead (archive() keeps it). The delete handler removes any worktree.
       s._userKilled = true;
+      // Composition delta BEFORE teardown (the seat is still in the map, so its
+      // team + role still resolve): a kill drops the seat, so the other live
+      // seats learn it retired. Covers the retire-discard path and the Delete
+      // Session gesture alike — a single chokepoint on the teardown primitive.
+      this._notifyComposition(s, 'retired');
       getPersistence().remove(name);
       try { s.pty.kill(); } catch {}
       setTimeout(() => {
@@ -1311,6 +1373,9 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${s.pty.pid}`);
+      // Composition delta BEFORE teardown (team + role still resolve): archiving
+      // scales the team down, so the other live seats learn it archived.
+      this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
       try { s.pty.kill(); } catch {}
@@ -1319,13 +1384,87 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
+    // Team name owning `cwd` (or null). Thin, best-effort wrapper over the
+    // injected resolveTeam — a resolve failure or a teamless cwd is null, never
+    // a throw. Callers that resolve many cwds (list, sidebar meta) should memo;
+    // the teams dir is small, but resolveTeam does an fs scan per call.
+    teamNameFor(cwd) {
+      if (!cwd) return null;
+      try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
+    }
+
+    // Live agent seats whose cwd belongs to project `teamRoot` (the team's
+    // membership at this instant). Best-effort per seat — a resolve failure or a
+    // teamless cwd just excludes that seat. Used to compose the roster and to
+    // fan out composition deltas.
+    _teamLiveSeats(teamRoot) {
+      const names = [];
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
+        if (root && root === teamRoot) names.push(s.name);
+      }
+      return names;
+    }
+
+    // Inject the one-time initial roster (sender `team`) into a freshly
+    // registered team seat — its first appended-context message (mechanism 2 in
+    // the context architecture): roles, briefs, live seats, subagent-class
+    // roles. Delivered on the normal path so it lands in the seat's first turn,
+    // ahead of any task DM the lead sends over the socket next. Best-effort; the
+    // clodex-team roster pull is the blessed fallback (the identity line names
+    // it). `team` is a resolveTeam() result.
+    _injectRoster(session, team) {
+      try {
+        const body = formatRoster(team, this._teamLiveSeats(team.root));
+        this._deliverMessage(session.name, 'team', body, 'dm');
+      } catch (e) {
+        log.error('inject', `roster inject failed for ${session.name}: ${e.message}`);
+      }
+    }
+
+    // Fan a passive composition delta (sender `team`) to every OTHER live seat
+    // of `session`'s team when its membership changes — `verb` is
+    // spawned|archived|retired. Passive class: rides each seat's next organic
+    // turn, no wake, no cache impact (the roster pull is ground truth, so a
+    // missed or double delta is harmless). No-op for non-agent sessions,
+    // teamless cwds, or when team resolution is unavailable (e.g. tests without
+    // the injected dep) — wrapped so it never throws into a teardown.
+    _notifyComposition(session, verb) {
+      if (!session || !session.agentType) return;
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { return; }
+      if (!team) return;
+      const role = matchSeatRole(team, session.name);
+      const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead || s.name === session.name) continue;
+        let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
+        if (root && root === team.root) this._deliverPassive(s.name, 'team', body, 'dm');
+      }
+    }
+
     list() {
+      // Team name per cwd (sidebar group-by-project reflects team identity).
+      // resolveTeam scans ~/.clodex/teams on each call and list() runs often, so
+      // memoize by cwd within this single invocation.
+      const teamByCwd = new Map();
+      const teamFor = (cwd) => {
+        if (!cwd) return null;
+        if (teamByCwd.has(cwd)) return teamByCwd.get(cwd);
+        const name = this.teamNameFor(cwd);
+        teamByCwd.set(cwd, name);
+        return name;
+      };
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
         pid: s.pty.pid,
         cwd: s.cwd,
         workspaceId: s.workspaceId,
+        // Team name owning this cwd (or null) — the sidebar groups by it so seats
+        // in the same team but different subdirs cluster under one header.
+        team: teamFor(s.cwd),
         // Cloud backend ('bedrock'|'vertex'|null) driving the sidebar chip glyph.
         backend: s.backend || null,
         // Live turn state + dialog fact, so list() consumers (tray menu,
@@ -1829,6 +1968,12 @@ function createSessionManager(deps) {
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       if (isDraftOpen(session)) return;                 // don't splice an open draft
+      // Passive-only stores don't earn a turn: leave ride-along notifications
+      // (monitor ticks) parked for an organic carrier — a hook drain during a
+      // turn that happens anyway, or a mixed claim once an active DM lands.
+      // Peek-then-claim race (an active park landing between the two) is
+      // benign: the next idle edge or hook drain picks it up.
+      if (!hasActivePending(PENDING_DIR, session.name)) return;
       let texts = [];
       try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`); } catch {}
       if (!texts.length) return;                        // hook already drained, or nothing parked
@@ -2472,8 +2617,17 @@ function createSessionManager(deps) {
 
       // 5) Run it — argv wholly from the registry, payload only via stdin (or an
       // opt-in temp file). Detached, timeout-killed. Defer off the watcher scan.
-      const argv = entry.argv.map(String);
-      const runCwd = entry.cwd ? String(entry.cwd) : (session.cwd || os.homedir());
+      // Expand the machine-independent placeholders the seeded exec-defs carry so
+      // the argv holds no absolute path baked at author time: ${CLODEX_BIN} → the
+      // materialized helper-script dir (run/bin), ${CLODEX_HOME} → the ~/.clodex
+      // root. Applied to every argv element (and cwd, if a def ever sets one).
+      // Still a plain string array afterwards, so validateExecDef is unaffected.
+      const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
+      const expandVars = (s) => String(s)
+        .split('${CLODEX_BIN}').join(CLODEX_BIN)
+        .split('${CLODEX_HOME}').join(REGISTRY_DIR);
+      const argv = entry.argv.map(expandVars);
+      const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());
       const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
       const payloadJson = JSON.stringify(v.value);
 
@@ -3802,7 +3956,120 @@ function createSessionManager(deps) {
       const sender = msg.from || '?';
       const body = msg.body || '';
       const mtype = msg.type || 'dm';
+      // Passive delivery class (socket envelope opt-in, `delivery:'passive'`):
+      // ride-along notifications — monitor ticks and other telemetry-grade
+      // traffic that should reach the agent WITH its next organic turn (hook
+      // drains) but never generate a turn of its own. Anything else falls
+      // through to the normal wake path. Unknown values also fall through, so
+      // an old core paired with a newer tool degrades to today's behavior.
+      if (msg.delivery === 'passive') {
+        this._deliverPassive(targetName, sender, body, mtype);
+        return;
+      }
+      // Teams control envelope (docs/teams-design.md): retire = archive the
+      // session this socket belongs to, requested by a teammate via the
+      // clodex-team exec command. Routed here (not a new intent) because the
+      // socket already identifies the target and the exec grant already gates
+      // who can send. `from` is self-supplied in v1 (same documented limitation
+      // as clodex-monitor's agent field).
+      if (mtype === 'team-retire') {
+        this._handleTeamRetire(targetName, sender);
+        return;
+      }
       this._deliverMessage(targetName, sender, body, mtype);
+    }
+
+    // Retire, requested over the target's socket. Authorization: requester
+    // session must exist and share the target's project (both cwds resolve to
+    // the SAME team.json root — the cwd-join rule). Message discipline: success
+    // confirms PASSIVELY to the requester (it asked; confirmation is not news),
+    // failures wake it.
+    //
+    // Disposition depends on the target's MANIFEST ROLE (resolveTeam +
+    // matchSeatRole against its own name): a persistent role (ephemeral:false,
+    // the default) archives — a resumable scale-down that keeps the record and
+    // rebuilds an archived sidebar row. An OFF-manifest seat (matches no role)
+    // or a role marked ephemeral:true is discarded — kill() drops the record so
+    // ephemeral workers don't pile up as archived rows we never resume; their
+    // durable output lives in the task artifact. These seats share the project
+    // cwd (no dedicated worktree), and kill() never touches a worktree anyway
+    // (that's the session:kill IPC handler's job, which we bypass here) — so a
+    // discard removes the record + PTY and nothing else. On any ambiguity
+    // (resolution throws) we DEFAULT TO ARCHIVE — never discard on doubt.
+    _handleTeamRetire(targetName, requesterName) {
+      const fail = (why) => {
+        log.warn('intent', `team-retire ${requesterName} → ${targetName} refused: ${why}`);
+        this._deliverMessage(requesterName, 'clodex-team', `retire ${targetName} refused: ${why}`, 'dm');
+      };
+      const target = this.sessions.get(targetName);
+      const requester = this.sessions.get(requesterName);
+      if (!target) return; // socket outlived the session; nothing to retire
+      if (!requester) { fail(`requester "${requesterName}" is not a running session`); return; }
+      if (targetName === requesterName) { fail('self-retire is not allowed'); return; }
+      const targetRoot = findProjectRoot(target.cwd);
+      const requesterRoot = findProjectRoot(requester.cwd);
+      if (!requesterRoot || requesterRoot !== targetRoot) {
+        fail(`"${requesterName}" and "${targetName}" are not in the same project (no shared team.json root)`);
+        return;
+      }
+      // Positively identify off-manifest / ephemeral seats; anything else (incl.
+      // a resolution failure) stays on the safe, recoverable archive path.
+      let discard = false;
+      try {
+        const team = resolveTeam(target.cwd);
+        if (team) {
+          const role = matchSeatRole(team, targetName);
+          const def = role ? team.roles[role] : null;
+          discard = !def || def.ephemeral === true;
+        }
+      } catch { discard = false; }
+      const disposition = discard ? 'discard' : 'archive';
+      // Tell the owning window BEFORE the teardown so the renderer can route the
+      // row: archive → stash + rebuild as an archived row when the exit lands
+      // (mirrors the ✕ path's archivingSessions choreography); discard → let the
+      // exit remove the row like a delete (no archived placeholder).
+      this._sendToSession(targetName, 'session:context-action', { action: 'retired', name: targetName, disposition });
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: requesterName, to: targetName, kind: 'retire',
+        body: `retire → ${targetName} (${disposition}, project ${targetRoot})`,
+      });
+      log.info('intent', `team-retire ${requesterName} → ${targetName} (${disposition}, project ${targetRoot})`);
+      const teardown = discard ? this.kill(targetName) : this.archive(targetName);
+      const confirm = discard
+        ? `retired ${targetName} (discarded — state lives in its task artifact)`
+        : `retired ${targetName} (resumable from the sidebar or on next project open)`;
+      teardown.then(() => {
+        this._deliverPassive(requesterName, 'clodex-team', confirm, 'dm');
+      }).catch((err) => fail(err.message));
+    }
+
+    // Park a passive notification for an organic hook drain instead of waking
+    // the target. Claude-only (pending is a Claude-hook store) — Codex targets
+    // fall back to the normal wake path rather than dropping. Same drop-if-
+    // absent rule as _deliverMessage (a passive tick for a dead session has no
+    // one to ride with). No session-mention badge — passive means "no
+    // attention needed" — but the IPC drawer still logs it (observability).
+    // Park failure falls back to a normal delivery: degraded to noisy beats
+    // dropped.
+    _deliverPassive(targetName, senderName, body, mtype) {
+      const target = this.sessions.get(targetName);
+      if (!target) return;
+      if (target.agentType !== 'claude' || target._dead) {
+        this._deliverMessage(targetName, senderName, body, mtype);
+        return;
+      }
+      const finalText = this._buildDeliveryText(target, senderName, body, mtype);
+      try {
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, true);
+      } catch (e) {
+        log.error('inject', `passive park failed for ${target.name}: ${e.message} — delivering normally`);
+        this._deliverMessage(targetName, senderName, body, mtype);
+        return;
+      }
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: senderName, to: targetName, kind: 'passive',
+        body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      });
     }
   }
 

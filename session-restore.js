@@ -37,6 +37,8 @@ async function restoreSessionsForWorkspace({
         cwd: entry.cwd,
         label: entry.label || null,
         backend: entry.backend || null,
+        // Team name owning this cwd (sidebar group-by-project key), or null.
+        team: manager.teamNameFor(entry.cwd),
         archived: true,
         archivedAt: entry.archivedAt,
         createdAt: entry.createdAt || null,
@@ -55,6 +57,7 @@ async function restoreSessionsForWorkspace({
         cwd: entry.cwd,
         label: entry.label || null,
         backend: session.backend || null,
+        team: manager.teamNameFor(entry.cwd),
         replay,
         // Seed the sidebar dot with the CURRENT state — activity events
         // while detached were dropped, so without this a busy or blocked
@@ -101,6 +104,7 @@ async function restoreSessionsForWorkspace({
         cwd: entry.cwd,
         label: entry.label || null,
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
+        team: manager.teamNameFor(entry.cwd),
         createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
@@ -116,6 +120,7 @@ async function restoreSessionsForWorkspace({
         type: entry.type,
         cwd: entry.cwd,
         label: entry.label || null,
+        team: manager.teamNameFor(entry.cwd),
         failed: true,
         error: err.message,
       });

@@ -53,8 +53,11 @@
     },
     "files": [
       "*.js",
+      "scripts/clodex-team.js",
+      "scripts/clodex-monitor.js",
       "wire/**/*",
       "renderer/**/*",
+      "resources/**/*",
       "build/tray-iconTemplate.png",
       "build/tray-iconTemplate@2x.png",
       "node_modules/**/*"

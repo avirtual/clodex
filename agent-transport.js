@@ -45,10 +45,13 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
   }
 
   const registry = {
-    register(name, socketPath) {
+    register(name, socketPath, cwd = null) {
       ensureDir(runDirFor(REGISTRY_DIR, name));
       const regPath = pathFor(REGISTRY_DIR, name, 'registry');
-      const data = JSON.stringify({ name, socket: socketPath, pid: process.pid });
+      // cwd is additive (readers ignore unknown fields): it lets external
+      // tools (exec commands, teams roster) map an agent to its project by
+      // directory without a channel into the main process.
+      const data = JSON.stringify({ name, socket: socketPath, pid: process.pid, ...(cwd ? { cwd } : {}) });
       const tmpPath = `${regPath}.tmp.${process.pid}`;
       fs.writeFileSync(tmpPath, data, { mode: 0o600 });
       try {

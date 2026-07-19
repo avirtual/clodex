@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_c1","message":{"id":"m_c1","model":"claude-opus-4-8","usage":{"input_tokens":3,"output_tokens":3,"cache_read_input_tokens":30,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"tc1","name":"Read","input":{"file_path":"/home/u/proj/src/other.js"}}]},"uuid":"c1","sessionId":"sess-c"}

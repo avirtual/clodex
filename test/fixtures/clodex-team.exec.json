@@ -1,0 +1,18 @@
+{
+  "argv": ["/usr/bin/env", "node", "scripts/clodex-team.js"],
+  "cwd": ".",
+  "timeoutMs": 10000,
+  "maxBytes": 4096,
+  "replyStderr": true,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["action", "agent"],
+    "properties": {
+      "action": { "type": "string", "enum": ["roster", "retire"] },
+      "agent": { "type": "string", "maxLength": 64 },
+      "target": { "type": "string", "maxLength": 64 },
+      "cwd": { "type": "string", "maxLength": 1000 }
+    }
+  }
+}
