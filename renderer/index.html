@@ -6,6 +6,23 @@
   <title>Clodex</title>
   <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
+  <script>
+    // Pre-paint sidebar width (Task 17): apply the persisted width BEFORE first
+    // paint so the sidebar doesn't flash from the 220px CSS default. localStorage
+    // is the per-machine mirror of uiSettings.sidebarWidth; renderer.js reconciles
+    // it against the canonical store on load. Clamped through the shared leaf so a
+    // stale/corrupt value can't reach the layout. nodeIntegration makes require()
+    // available here; failure is swallowed (default var stands).
+    try {
+      const { clampSidebarWidth } = require('../sidebar-width');
+      // getItem's null must NOT reach Number(): Number(null)===0 → clamp→160,
+      // flashing every FRESH profile at 160px. No stored value → CSS default.
+      const s = localStorage.getItem('clodex-sidebar-width');
+      if (s !== null) {
+        document.documentElement.style.setProperty('--sidebar-width', clampSidebarWidth(Number(s)) + 'px');
+      }
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <div id="sidebar">
@@ -58,6 +75,9 @@
     <div id="diag-banner" class="hidden" data-tip="Spawn diagnostics — click to copy details">
       <span class="diag-dot">▲</span>
       <span id="diag-text">Sessions can't start</span>
+      <!-- Install buttons (Task 18) appear here only when a missing agent CLI is
+           the warning's actual cause (cliMissingIsCause). -->
+      <span id="diag-actions"></span>
     </div>
     <div id="sidebar-footer">
       <button id="btn-workbench" data-tip="Workbench files, source control, and worktrees for a session" type="button">
@@ -70,6 +90,9 @@
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
     </div>
+    <!-- Drag handle to resize the sidebar (Task 17). Thin hit area pinned to the
+         right edge; renderer.js drives the --sidebar-width var from pointer moves. -->
+    <div id="sidebar-resizer" data-tip="Drag to resize · double-click to reset"></div>
   </div>
 
   <!-- Prompts library drawer -->
@@ -664,6 +687,21 @@
         <div style="flex: 1;"></div>
         <button id="btn-cancel" class="secondary">Cancel</button>
         <button id="btn-create">Create</button>
+      </div>
+    </div>
+    <!-- Missing-CLI prominence overlay (Task 18): a dominant "popover on the
+         popover" raised over the dialog when the selected type's CLI isn't
+         installed — the inline notice above is easy to miss below the fold.
+         Ships hidden; renderer fills the headline/buttons and toggles it.
+         "Continue anyway" drops to the inline treatment (bash is still
+         creatable, the type dropdown stays reachable underneath). -->
+    <div id="new-session-tool-overlay" class="hidden">
+      <div class="tool-overlay-panel">
+        <div class="tool-overlay-icon">▲</div>
+        <h3 id="tool-overlay-headline"></h3>
+        <p id="tool-overlay-remedy" class="tool-overlay-remedy"></p>
+        <div id="tool-overlay-actions" class="tool-overlay-actions"></div>
+        <button id="tool-overlay-dismiss" class="secondary" type="button">Continue anyway</button>
       </div>
     </div>
   </div>

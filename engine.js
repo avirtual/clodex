@@ -80,7 +80,7 @@ function diagWarning(d = {}) {
   // uses only one CLI would be noise.
   if (!d.claude && !d.codex) {
     return 'Neither the claude nor codex CLI was found on PATH — no agent sessions can start. '
-      + 'Install one, e.g. npm i -g @anthropic-ai/claude-code';
+      + 'Install one, e.g. curl -fsSL https://claude.ai/install.sh | bash';
   }
   return null;
 }

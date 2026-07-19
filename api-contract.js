@@ -58,6 +58,7 @@ const API_CONTRACT = [
   { name: 'fsRead', kind: 'invoke', channel: 'fs:read' },
   { name: 'fsWrite', kind: 'invoke', channel: 'fs:write' },
   { name: 'listSessions', kind: 'invoke', channel: 'session:list' },
+  { name: 'reservedSessionNames', kind: 'invoke', channel: 'session:reservedNames' },
   { name: 'killSession', kind: 'invoke', channel: 'session:kill' },
   { name: 'archiveSession', kind: 'invoke', channel: 'session:archive' },
   { name: 'unarchiveSession', kind: 'invoke', channel: 'session:unarchive' },

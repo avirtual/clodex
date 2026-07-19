@@ -10,7 +10,7 @@
 // left to integration + Bogdan's GUI smoke test.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createSessionManager, isStaleRegistration } = require('../session-manager');
+const { createSessionManager, isStaleRegistration, nameConflict } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { intentEnabled } = require('../intent-catalog');
 
@@ -125,6 +125,27 @@ test('create: rejects a duplicate session name before any spawn', async () => {
   const m = mk();
   m.sessions.set('dup', { name: 'dup' });
   await assert.rejects(() => m.create('dup', 'claude', '/tmp'), /already exists/);
+});
+
+// create()'s own guard is live-only ON PURPOSE (Task 15): the resume paths
+// (restore-on-launch, unarchive→retry, restart/reload) re-create a name that IS in
+// persistence, and must pass. The mint-front-door guard that rejects persisted
+// names lives in ipc-handlers spawnFromParams (nameConflict), not here — so a
+// create() with a persisted-but-not-live name spawns (proving resume safety).
+test('create: a persisted-but-not-live name is NOT rejected at the create layer (resume safety)', async () => {
+  // Persistence "has" the name, but it isn't live → create() must proceed past the
+  // dup guard. It then fails on the (missing) cwd, proving it got PAST the guard.
+  const m = mk({ getPersistence: () => ({ list: () => [], get: () => ({ name: 'foo' }) }) });
+  await assert.rejects(() => m.create('foo', 'claude', '/no/such/dir/anywhere'), /does not exist/);
+});
+
+// The pure mint-collision decision (Task 15, GH#9) — the truth table the
+// spawnFromParams guard consumes. live wins over persisted (distinct error copy).
+test('nameConflict: live | persisted | free truth table', () => {
+  assert.strictEqual(nameConflict({ liveHas: true, persistedHas: false }), 'live');
+  assert.strictEqual(nameConflict({ liveHas: false, persistedHas: true }), 'persisted', 'archived/saved record blocks a mint');
+  assert.strictEqual(nameConflict({ liveHas: true, persistedHas: true }), 'live', 'live wins (error says "already exists")');
+  assert.strictEqual(nameConflict({ liveHas: false, persistedHas: false }), null, 'free name mints');
 });
 
 test('create: rejects a nonexistent or non-directory cwd before any spawn', async () => {

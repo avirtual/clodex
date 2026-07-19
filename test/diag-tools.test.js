@@ -29,6 +29,10 @@ test('diagWarning: BOTH agent CLIs missing → warns "no agent sessions can star
   const w = diagWarning({ ...healthyHelper, claude: null, codex: null });
   assert.match(w, /Neither the claude nor codex CLI/);
   assert.match(w, /no agent sessions can start/);
+  // Same remedy discipline as tool-doctor's claude spec: the native installer,
+  // not npm — this audience (fresh account/machine) usually lacks npm too.
+  assert.match(w, /claude\.ai\/install\.sh/);
+  assert.doesNotMatch(w, /npm i -g @anthropic-ai/);
 });
 
 test('diagWarning: a failed PATH merge is a first-class warning (root cause, over the symptom)', () => {

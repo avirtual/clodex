@@ -27,6 +27,7 @@
 // superset of the real references — an unused dep would simply be inert.
 
 const { pathFor } = require('./clodex-paths');
+const { nameConflict } = require('./session-manager');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
@@ -88,6 +89,25 @@ function registerIpcHandlers(deps) {
   // it without duplicating the 18-arg spawn call.
   async function spawnFromParams(e, p) {
     const workspaceId = workspaceOfSender(e);
+    // Name-collision guard for the MINT front door (Task 15, GH#9). This is the
+    // single chokepoint for every mint transport — session:create, team:create,
+    // team:join, and the web-host WS mirror all funnel here — while the resume
+    // paths (restore-on-launch, unarchive→retry, restart/reload) reach
+    // manager.create WITHOUT passing through spawnFromParams, so they legitimately
+    // re-create a persisted name. Reject a mint over any existing record: live
+    // (create() also backstops this) OR merely persisted/archived (archive keeps
+    // the record — minting over it would overwrite the entry and split the name
+    // across two sidebar rows, the reported bug). resumeId is NOT the discriminator
+    // (an "adopt" mint carries one but must still be blocked from clobbering a
+    // record) — the front-door-vs-restore-path split is.
+    const conflict = nameConflict({
+      liveHas: manager.sessions.has(p.name),
+      persistedHas: !!persistence.get(p.name),
+    });
+    if (conflict === 'live') throw new Error(`Session "${p.name}" already exists`);
+    if (conflict === 'persisted') {
+      throw new Error(`A session named "${p.name}" is archived or saved — unarchive it or pick another name.`);
+    }
     // Seed tool denies from the global "*" default when the caller passed none.
     // The new-session dialog always pre-populates its checklist from the default
     // and sends an explicit array (incl. [] for "deny nothing"), so this only
@@ -298,6 +318,16 @@ function registerIpcHandlers(deps) {
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:listAll', () => manager.list());
+  // Reserved names = every GLOBALLY taken session name: live (all workspaces, the
+  // Map is process-global) UNION persisted (incl. archived, all workspaces). The
+  // dialog's auto-suffix flows consult this so they bump past a persisted/archived
+  // name instead of suggesting one the mint guard would reject (Task 15). A DOM
+  // query alone misses cross-workspace + not-yet-rendered records.
+  handle('session:reservedNames', () => {
+    const names = new Set(manager.sessions.keys());
+    for (const s of persistence.list()) names.add(s.name);
+    return { ok: true, names: [...names] };
+  });
   // session:kill is now the DELETE action (right-click "Delete Session…"): it
   // forgets the record and, for a worktree-backed session, removes the checkout
   // too — grabbed BEFORE the kill (kill removes the record), awaited AFTER the
@@ -350,7 +380,14 @@ function registerIpcHandlers(deps) {
   // post-launch `electron-rebuild` clears the warning on the next poll.
   handle('diagnostics:get', () => {
     const d = collectSystemDiagnostics();
-    return { ...d, warning: diagWarning(d), summary: diagSummary(d) };
+    const warning = diagWarning(d);
+    // Is a missing agent CLI the SOLE cause of the warning? The both-missing branch
+    // is engine.diagWarning's lowest priority, so if pretending both CLIs are
+    // present clears the warning, installing one is the actionable fix — and the
+    // diag banner should offer Install buttons (Task 18). Single-sources engine's
+    // own branch precedence rather than duplicating it in the renderer.
+    const cliMissingIsCause = !!warning && !diagWarning({ ...d, claude: 'present', codex: 'present' });
+    return { ...d, warning, summary: diagSummary(d), cliMissingIsCause };
   });
 
   // External-tool presence for the New Session dialog gate (Task 12): TTL-cached
@@ -939,6 +976,7 @@ function registerIpcHandlers(deps) {
       compactOnResume: s.compactOnResume,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
+      sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
       // Operator wire token is WRITE-ONLY: the dialog sees only this derived
@@ -1064,7 +1102,13 @@ function registerIpcHandlers(deps) {
   handle('peer:deployFix', async (e, sshHost, port, label, logText) => {
     const host = typeof sshHost === 'string' ? sshHost : '';
     const p = Number.isInteger(port) ? port : (uiSettings.get().remotePort || 7900);
-    const name = fixSessionName(label || host || 'peer', new Set(manager.sessions.keys()));
+    // Auto-suffix against LIVE and PERSISTED names (Task 15): the mint guard now
+    // rejects a name that matches an archived/saved record, so the fix-session
+    // namer must dodge those too — otherwise a `fix-<label>` that collides with a
+    // persisted entry would bounce instead of bumping to `-2`.
+    const taken = new Set(manager.sessions.keys());
+    for (const s of persistence.list()) taken.add(s.name);
+    const name = fixSessionName(label || host || 'peer', taken);
     const wsId = workspaceOfSender(e);
     const dir = os.homedir();
     try {

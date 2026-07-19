@@ -1,10 +1,12 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, Notification, Tray, nativeImage } = require('electron');
 const https = require('https');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const os = require('os');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
+const { isExternallyOpenable } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
 
@@ -300,6 +302,24 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 
   manager.registerWindow(workspaceId, win);
 
+  // External-link hardening (Task 16 / GH#6). This window runs
+  // nodeIntegration:true, so a link that opens a child window or navigates the
+  // frame away from our index.html would land REMOTE content in a privileged
+  // context. Route http/https to the system browser and deny everything else
+  // without opening it.
+  const ownIndexUrl = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternallyOpenable(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => {
+    // Allow reloading our own page (Cmd+R re-navigates to the same file URL);
+    // block any navigation away from it and hand http/https to the browser.
+    if (url === ownIndexUrl) return;
+    e.preventDefault();
+    if (isExternallyOpenable(url)) shell.openExternal(url);
+  });
+
   // Save bounds when the user resizes/moves the window
   const saveBounds = () => {
     if (win.isDestroyed()) return;
@@ -378,6 +398,14 @@ function openWirescopeWindow(url, backgroundColor) {
     backgroundColor: bg,
     title: 'wirescope',
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+  });
+  // A link inside the remote page should open in the system browser, not a
+  // nested child window. No will-navigate guard here: this window is SUPPOSED
+  // to navigate between wirescope URLs (unlike the main window, which only ever
+  // loads our own index.html).
+  wirescopeWindow.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (isExternallyOpenable(u)) shell.openExternal(u);
+    return { action: 'deny' };
   });
   wirescopeWindow.on('closed', () => { wirescopeWindow = null; });
   wirescopeWindow.loadURL(url);

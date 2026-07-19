@@ -107,6 +107,25 @@ html, body {
   z-index: 10;
 }
 
+/* Sidebar resize handle (Task 17). A thin col-resize hit area pinned to the
+   sidebar's right edge, straddling the border so it's easy to grab. Sits above
+   sidebar content but below #main (z-index:11) so overlays still paint over it.
+   The drag is driven by renderer.js setting --sidebar-width. */
+#sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 12;
+  -webkit-app-region: no-drag;
+}
+#sidebar-resizer:hover,
+#sidebar-resizer.dragging {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 #sidebar-header {
   display: flex;
   align-items: center;
@@ -2917,6 +2936,46 @@ html, body {
 /* "Install <tool>…" button on the missing-CLI notice (Task 14): spawns the
    visible bash installer. Compact, sits to the right of the remedy text. */
 .tool-install-btn { margin-left: auto; flex: none; padding: 2px 10px; font-size: 12px; }
+
+/* Install buttons on the diag banner (Task 18): shown only when a missing agent
+   CLI is the banner's actual cause. Push to the right; stop the banner's copy-on-
+   click from firing (renderer stops propagation). Reset the auto-margin that the
+   dialog-notice variant uses so multiple buttons sit together. */
+#diag-actions { margin-left: auto; display: flex; gap: 6px; flex: none; }
+#diag-actions .tool-install-btn { margin-left: 0; }
+
+/* Missing-CLI prominence overlay (Task 18): the "popover on the popover". Covers
+   the New Session dialog with a dim + a centered, accent-bordered panel so a
+   can't-start-anything state is impossible to miss. NOT display:none-gated on
+   anything holding an xterm (no terminals here; the global rule stands anyway). */
+#new-session-tool-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 12px; /* match #dialog's corners */
+}
+#new-session-tool-overlay.hidden { display: none; }
+.tool-overlay-panel {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 24px 28px;
+  max-width: 440px;
+  text-align: center;
+  box-shadow: 0 10px 48px rgba(0, 0, 0, 0.5);
+}
+.tool-overlay-icon { color: #f0ad4e; font-size: 20px; line-height: 1; margin-bottom: 8px; }
+.tool-overlay-panel h3 { margin: 0 0 10px; font-size: 15px; }
+.tool-overlay-remedy { margin: 0 0 16px; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.tool-overlay-actions { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.tool-overlay-actions .tool-install-btn { margin-left: 0; }
+.tool-overlay-tool { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.tool-overlay-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; user-select: all; max-width: 320px; overflow-x: auto; white-space: nowrap; }
 
 .diag-dot {
   color: #f0ad4e;

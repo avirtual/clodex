@@ -5,7 +5,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { newSessionToolGate, installSessionParams } = require('../renderer/lib/tool-gate');
+const {
+  newSessionToolGate, installSessionParams,
+  newSessionOverlayPlan, shouldRaiseOverlay, agentInstallButtons,
+} = require('../renderer/lib/tool-gate');
 
 const check = {
   byTool: {
@@ -101,4 +104,90 @@ test('installSessionParams: builds bash session params from a gate install descr
 test('installSessionParams: null/empty install → null (nothing to spawn)', () => {
   assert.strictEqual(installSessionParams(null, '/Users/x'), null);
   assert.strictEqual(installSessionParams({ sessionName: 'install-x', command: '' }, '/Users/x'), null);
+});
+
+// ── Prominence overlay plan (Task 18) ────────────────────────────────────────
+const claudeCmd = 'curl -fsSL https://claude.ai/install.sh | bash';
+const codexCmd = 'npm i -g @openai/codex';
+const bothMissing = {
+  byTool: {
+    claude: { present: false, install: claudeCmd },
+    codex: { present: false, install: codexCmd },
+  },
+};
+const onlyClaudeMissing = {
+  byTool: {
+    claude: { present: false, install: claudeCmd },
+    codex: { present: true, install: codexCmd },
+  },
+};
+
+test('overlay: selected type missing (other present) → show, single tool, tool-specific headline', () => {
+  const p = newSessionOverlayPlan('claude', onlyClaudeMissing);
+  assert.strictEqual(p.show, true);
+  assert.match(p.headline, /claude CLI isn't installed/);
+  assert.strictEqual(p.tools.length, 1);
+  assert.strictEqual(p.tools[0].tool, 'claude');
+  assert.strictEqual(p.tools[0].install.sessionName, 'install-claude');
+  assert.strictEqual(p.tools[0].install.label, 'Install claude…');
+});
+
+test('overlay: BOTH missing → show, both tools, both-missing headline', () => {
+  const p = newSessionOverlayPlan('claude', bothMissing);
+  assert.strictEqual(p.show, true);
+  assert.match(p.headline, /No agent CLI is installed/);
+  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['claude', 'codex']);
+  assert.ok(p.tools.every((t) => t.install));
+  // Same both-missing overlay regardless of which missing type is selected.
+  assert.deepStrictEqual(newSessionOverlayPlan('codex', bothMissing).tools.map((t) => t.tool), ['claude', 'codex']);
+});
+
+test('overlay: selected type PRESENT → never show (even if the other is missing)', () => {
+  assert.strictEqual(newSessionOverlayPlan('codex', onlyClaudeMissing).show, false);
+});
+
+test('overlay: null / unknown check → never show (unknown is not missing)', () => {
+  assert.strictEqual(newSessionOverlayPlan('claude', null).show, false);
+  assert.strictEqual(newSessionOverlayPlan('claude', { byTool: {} }).show, false);
+  assert.strictEqual(newSessionOverlayPlan('claude', { byTool: { claude: { present: true } } }).show, false);
+});
+
+test('overlay: bash / template(bash) / unknown type → never show', () => {
+  assert.strictEqual(newSessionOverlayPlan('bash', bothMissing).show, false);
+  assert.strictEqual(newSessionOverlayPlan('mystery', bothMissing).show, false);
+});
+
+test('overlay: missing tool WITHOUT an install line → shown but install null', () => {
+  const p = newSessionOverlayPlan('claude', { byTool: { claude: { present: false } } });
+  assert.strictEqual(p.show, true);
+  assert.strictEqual(p.tools[0].install, null);
+});
+
+// ── Dismiss / re-raise policy (Task 18) ──────────────────────────────────────
+test('shouldRaiseOverlay: raises when plan.show and not dismissed', () => {
+  assert.strictEqual(shouldRaiseOverlay({ show: true }, false), true);
+});
+test('shouldRaiseOverlay: suppressed once dismissed (no re-pop within an open)', () => {
+  assert.strictEqual(shouldRaiseOverlay({ show: true }, true), false);
+});
+test('shouldRaiseOverlay: never raises a non-showing plan, or a null plan', () => {
+  assert.strictEqual(shouldRaiseOverlay({ show: false }, false), false);
+  assert.strictEqual(shouldRaiseOverlay(null, false), false);
+});
+
+// ── Diag banner install buttons (Task 18) ────────────────────────────────────
+test('agentInstallButtons: both missing → both descriptors, in claude/codex order', () => {
+  const btns = agentInstallButtons(bothMissing);
+  assert.deepStrictEqual(btns.map((b) => b.tool), ['claude', 'codex']);
+  assert.deepStrictEqual(btns.map((b) => b.sessionName), ['install-claude', 'install-codex']);
+});
+test('agentInstallButtons: only the missing agent CLI (present one excluded)', () => {
+  assert.deepStrictEqual(agentInstallButtons(onlyClaudeMissing).map((b) => b.tool), ['claude']);
+});
+test('agentInstallButtons: null check / no byTool → empty', () => {
+  assert.deepStrictEqual(agentInstallButtons(null), []);
+  assert.deepStrictEqual(agentInstallButtons({}), []);
+});
+test('agentInstallButtons: missing but no install line → excluded', () => {
+  assert.deepStrictEqual(agentInstallButtons({ byTool: { claude: { present: false } } }), []);
 });

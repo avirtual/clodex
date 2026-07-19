@@ -171,6 +171,14 @@ test('fixSessionName suffixes on collision (Set or array), staying under 64 char
   assert.match(got, NAME_RE);
 });
 
+test('fixSessionName auto-suffixes past an ARCHIVED/persisted name in the taken set (Task 15)', () => {
+  // The deploy-fix caller now unions LIVE + PERSISTED names into `taken` so a
+  // generated fix-name dodges an archived record the mint guard would reject —
+  // fixSessionName just has to bump past whatever set it's handed.
+  const taken = new Set(['fix-box']); // e.g. an archived `fix-box` still on record
+  assert.equal(fixSessionName('box', taken), 'fix-box-2');
+});
+
 test('buildDeployFixBriefing names the box, the hello check, the log, and the playbook', () => {
   const b = buildDeployFixBriefing({
     sshHost: 'user@box', port: 7911, label: 'box',

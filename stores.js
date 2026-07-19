@@ -37,6 +37,7 @@ const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { parseAgentFrontmatter } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
 const { visibleTo } = require('./scope-util');
+const { clampSidebarWidth } = require('./sidebar-width');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
@@ -131,6 +132,10 @@ const DEFAULT_UI_SETTINGS = {
   // View > Theme menu can show the right radio; the renderer mirrors it to
   // localStorage for instant pre-paint application.
   theme: 'midnight',
+  // Sidebar width in px (Task 17, GH#7). The drag handle writes it here; every
+  // window applies it at startup. Clamped to [160, 560] on read AND write via
+  // clampSidebarWidth — a corrupt/out-of-range value can never reach the layout.
+  sidebarWidth: 220,
   // Remote access: phone-friendly web UI served on 127.0.0.1 only. OFF by
   // default — it's a door into every agent session, so the user opens it
   // deliberately and pairs it with `tailscale serve` (or an SSH tunnel) for
@@ -1321,6 +1326,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : DEFAULT_UI_SETTINGS.recentCwds,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
+          sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
           peers: sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers,
@@ -1353,6 +1359,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
+        sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,

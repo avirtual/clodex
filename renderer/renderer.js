@@ -1,6 +1,9 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
+const { WebLinksAddon } = require('@xterm/addon-web-links');
+const { isExternallyOpenable } = require('../external-link');
+const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
@@ -10,7 +13,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
-const { newSessionToolGate, installSessionParams } = require('./lib/tool-gate');
+const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -59,6 +62,81 @@ let activeSession = null;
 // takes the sessions Map as a factory param. currentXtermTheme is destructured
 // out for createSession to read at terminal creation.
 const { currentXtermTheme } = initThemes({ sessions });
+
+// ---------------------------------------------------------------------------
+// Resizable sidebar (Task 17, GH#7). The drag handle drives the --sidebar-width
+// var; #main and the docked drawers already key off it, so setting the var
+// reflows everything and each terminal refits via its ResizeObserver (no
+// display:none, per the xterm gotcha). Width is clamped through the shared leaf,
+// persisted to uiSettings.sidebarWidth (canonical) + localStorage (the pre-paint
+// mirror index.html reads), and double-click resets to the default. Per-move
+// paints are rAF-throttled to keep the drag smooth.
+// ---------------------------------------------------------------------------
+(function initSidebarResize() {
+  const resizer = document.getElementById('sidebar-resizer');
+  if (!resizer) return;
+  const root = document.documentElement;
+  const LS_KEY = 'clodex-sidebar-width';
+
+  const applyWidth = (px) => root.style.setProperty('--sidebar-width', clampSidebarWidth(px) + 'px');
+  const persist = (px) => {
+    const w = clampSidebarWidth(px);
+    try { localStorage.setItem(LS_KEY, String(w)); } catch {}
+    // uiSettings write goes through settings:set (the existing renderer→uiSettings
+    // path). Fires once per drag-end, not per move.
+    try { window.api.setSettings({ sidebarWidth: w }); } catch {}
+  };
+
+  // Reconcile against the canonical store on load: the pre-paint script applied
+  // the localStorage mirror; settings is authoritative (e.g. changed in another
+  // window), so re-apply + re-mirror once it arrives.
+  window.api.getSettings().then((s) => {
+    if (s && typeof s.sidebarWidth === 'number') {
+      applyWidth(s.sidebarWidth);
+      try { localStorage.setItem(LS_KEY, String(clampSidebarWidth(s.sidebarWidth))); } catch {}
+    }
+  }).catch(() => {});
+
+  let dragging = false;
+  let pendingPx = null;
+  let rafId = 0;
+  const flush = () => { rafId = 0; if (pendingPx != null) applyWidth(pendingPx); };
+
+  resizer.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    resizer.classList.add('dragging');
+    try { resizer.setPointerCapture(e.pointerId); } catch {}
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  resizer.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    // The sidebar is pinned to the window's left edge, so its width IS the
+    // pointer's x-coordinate.
+    pendingPx = e.clientX;
+    if (!rafId) rafId = requestAnimationFrame(flush);
+  });
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    try { resizer.releasePointerCapture(e.pointerId); } catch {}
+    document.body.style.userSelect = '';
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    const finalPx = pendingPx != null ? pendingPx : e.clientX;
+    pendingPx = null;
+    applyWidth(finalPx);
+    persist(finalPx);
+  };
+  resizer.addEventListener('pointerup', endDrag);
+  resizer.addEventListener('pointercancel', endDrag);
+
+  resizer.addEventListener('dblclick', () => {
+    applyWidth(SIDEBAR_WIDTH_DEFAULT);
+    persist(SIDEBAR_WIDTH_DEFAULT);
+  });
+})();
 
 // DOM refs
 const sessionList = document.getElementById('session-list');
@@ -112,6 +190,7 @@ const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
 let dialogTeamMode = null;   // 'create' | 'join' | null (not an agent / authoring)
 let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
+let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
 // New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
 // Host + one entry per registered sandbox box. The selected <option>'s value is the
@@ -1091,6 +1170,15 @@ function createTerminal(name, peer = null) {
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
 
+  // Make http/https URLs in terminal output clickable → system browser (Task
+  // 16 / GH#6). Custom handler (not the addon's default window.open, which this
+  // nodeIntegration renderer must never expose) gated by the shared scheme
+  // filter; the addon still underlines/hovers only what it recognizes as a URL.
+  const webLinksAddon = new WebLinksAddon((event, uri) => {
+    if (isExternallyOpenable(uri)) window.api.openExternal(uri);
+  });
+  terminal.loadAddon(webLinksAddon);
+
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -1365,6 +1453,63 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
 let lastToolCheck = null;
 const newSessionToolNotice = document.getElementById('new-session-tool-notice');
 
+// Missing-CLI prominence overlay (Task 18): the "popover on the popover". Raised
+// when the selected type's CLI is missing (the inline notice is easy to miss below
+// the fold). `overlayDismissed` is the per-open flag — reset false in openDialog,
+// set true by "Continue anyway"; once dismissed, switching to another missing type
+// re-uses the inline treatment (no re-pop) until a fresh open.
+let overlayDismissed = false;
+const toolOverlay = document.getElementById('new-session-tool-overlay');
+const toolOverlayHeadline = document.getElementById('tool-overlay-headline');
+const toolOverlayRemedy = document.getElementById('tool-overlay-remedy');
+const toolOverlayActions = document.getElementById('tool-overlay-actions');
+const toolOverlayDismiss = document.getElementById('tool-overlay-dismiss');
+
+// Raise / hide the prominence overlay from a plan (the pure newSessionOverlayPlan
+// decision), respecting the per-open dismiss flag. The inline notice + disabled
+// Create are applied independently by applyNewSessionToolGate, so they remain
+// underneath when the overlay is dismissed. Install buttons reuse openInstallSession
+// (the same visible-bash-installer path as the inline button, Task 14).
+function applyNewSessionToolOverlay(plan) {
+  if (!toolOverlay) return;
+  if (!shouldRaiseOverlay(plan, overlayDismissed)) {
+    toolOverlay.classList.add('hidden');
+    return;
+  }
+  toolOverlayHeadline.textContent = plan.headline;
+  toolOverlayRemedy.textContent = plan.tools.length > 1
+    ? 'Install one below to start agent sessions. Clodex runs the official installer in a visible terminal so you can watch it and answer any prompt.'
+    : `Clodex will run the official ${plan.tools[0].tool} installer in a visible terminal — watch it and answer any prompt it raises.`;
+  toolOverlayActions.textContent = '';
+  for (const entry of plan.tools) {
+    if (!entry.install) continue;
+    const col = document.createElement('div');
+    col.className = 'tool-overlay-tool';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-install-btn';
+    btn.textContent = entry.install.label;
+    btn.title = `Run: ${entry.install.command}`;
+    btn.addEventListener('click', () => openInstallSession(entry.install));
+    col.appendChild(btn);
+    // Show the literal command on sight (copyable) for users who won't click.
+    const cmd = document.createElement('code');
+    cmd.className = 'tool-overlay-cmd';
+    cmd.textContent = entry.install.command;
+    col.appendChild(cmd);
+    toolOverlayActions.appendChild(col);
+  }
+  toolOverlay.classList.remove('hidden');
+}
+
+// "Continue anyway" drops to today's inline treatment for the rest of this open.
+if (toolOverlayDismiss) {
+  toolOverlayDismiss.addEventListener('click', () => {
+    overlayDismissed = true;
+    if (toolOverlay) toolOverlay.classList.add('hidden');
+  });
+}
+
 // Apply a tool-gate decision to the dialog: show/hide the inline notice + toggle
 // Create. btnCreate is gated ONLY here in create mode, so re-enabling on ok is
 // safe. Reuses renderSandboxNotice for the docker-notice visual language. When the
@@ -1431,12 +1576,14 @@ async function openInstallSession(install) {
 async function refreshNewSessionToolGate() {
   const typeAtCall = dialogMode === 'template' ? 'bash' : inputType.value;
   applyNewSessionToolGate(newSessionToolGate(typeAtCall, lastToolCheck));
+  applyNewSessionToolOverlay(newSessionOverlayPlan(typeAtCall, lastToolCheck));
   let check = null;
   try { check = await window.api.toolsCheck(); } catch { check = null; }
   lastToolCheck = check;
   // The user may have flipped type / entered template mode during the await.
   const typeNow = dialogMode === 'template' ? 'bash' : inputType.value;
   applyNewSessionToolGate(newSessionToolGate(typeNow, check));
+  applyNewSessionToolOverlay(newSessionOverlayPlan(typeNow, check));
 }
 
 // Grey (disable + dim) or restore the rich rows for the current placement. When
@@ -1764,9 +1911,13 @@ function slugifyTeamName(s) {
 function pathBasename(p) {
   return String(p || '').replace(/\/+$/, '').split('/').pop() || '';
 }
-// Is a session name already used in THIS window's sidebar? Best-effort for the
-// collision suffix — the server enforces the global namespace on create.
+// Is a session name already taken? Checks THIS window's sidebar (live + archived
+// rows carry data-name) AND the prefetched global reserved set (live + persisted
+// across every workspace — Task 15), so the auto-suffix bumps past an archived or
+// cross-workspace name the mint guard would otherwise reject. The server still
+// enforces the global namespace on create; this just keeps the suggestion clean.
 function sessionNameTaken(name) {
+  if (dialogReservedNames.has(name)) return true;
   return !!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
 }
 // The role KEY a join binds to: stock `hand`, or (custom) derived from the picked
@@ -1889,6 +2040,8 @@ async function refreshCwdSuggestions() {
 // the SAME create() path (resumeId set = resume the conversation).
 async function openDialog(prefill = null) {
   editingTemplateId = null;
+  overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
+  if (toolOverlay) toolOverlay.classList.add('hidden');
   setDialogMode('create'); // reset chrome if the last use was a template edit
   sessionCounter++;
   inputName.value = (prefill && prefill.name) || `session-${sessionCounter}`;
@@ -1927,13 +2080,17 @@ async function openDialog(prefill = null) {
   }
   applyTypeDefaults();
   inputName.style.borderColor = '';
-  const [, , settings, agentLib, boxes] = await Promise.all([
+  const [, , settings, agentLib, boxes, reserved] = await Promise.all([
     refreshTemplatesDropdown(),
     refreshSystemPromptDropdown(),
     window.api.getSettings(),
     window.api.listAgents(),
     window.api.sandboxListBoxes(),
+    window.api.reservedSessionNames(),
   ]);
+  // Global reserved-name set for the auto-suffix flows (Task 15) — live +
+  // persisted/archived across every workspace, beyond this window's DOM.
+  dialogReservedNames = new Set((reserved && reserved.names) || []);
   // Capture the host catalogs so a flip box→Host restores them without a re-fetch
   // race (M5 swaps the caches to box truth while on a box).
   dialogHostSettings = settings;
@@ -3688,9 +3845,11 @@ if (window.__CLODEX_WEB__) {
 // Banners (update + spawn diagnostics)
 // ---------------------------------------------------------------------------
 
-// Self-contained (window.api / navigator only). refreshDiagBanner is
+// Mostly self-contained (window.api / navigator); openInstallSession is injected
+// so the diag banner's both-CLIs-missing case can offer Install buttons (Task 18,
+// the same visible-bash-installer path as the dialog). refreshDiagBanner is
 // destructured out for createSession's spawn-error path to re-run.
-const { refreshDiagBanner } = initBanners();
+const { refreshDiagBanner } = initBanners({ openInstallSession });
 
 // Tray-triggered actions (the drawer-open handlers live in library-drawers.js)
 window.api.onRequestSwitchSession((name) => switchSession(name));

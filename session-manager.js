@@ -94,6 +94,26 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
   return resolved ? null : (cmd || null);
 }
 
+// Name-collision decision for MINTING a new session (Task 15, GH#9). The name is
+// the primary key everywhere (run/<name>/ dir, agent.sock, [agent:dm] bus,
+// renderer Map, DOM data-name), so minting over any existing record — live OR
+// merely persisted/archived (archive KEEPS the record, stamped archivedAt) —
+// would overwrite it and split a name across two sidebar rows. This guards the
+// mint FRONT DOOR only (the session:create / team:create / team:join IPC, all via
+// spawnFromParams); the resume paths (restore-on-launch, unarchive→retry,
+// restart/reload) re-create a persisted name legitimately and DELIBERATELY bypass
+// this — that's the whole --resume design, and the mint-vs-resume axis is the
+// front-door-vs-restore-path distinction, NOT resumeId (an "adopt" mint carries a
+// resumeId but is still a mint; a persisted entry with no sessionId resumes with
+// resumeId=null). Pure → unit-tested directly. Returns null (allow) | 'live' |
+// 'persisted' so the caller can word the error (live: "already exists"; persisted:
+// "archived/saved record — unarchive or rename").
+function nameConflict({ liveHas, persistedHas }) {
+  if (liveHas) return 'live';
+  if (persistedHas) return 'persisted';
+  return null;
+}
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -4166,4 +4186,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit };
+module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit, nameConflict };

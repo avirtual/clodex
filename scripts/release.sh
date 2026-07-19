@@ -117,6 +117,13 @@ gh release create "$TAG" "$DMG" \
   --notes-file "$NOTES" \
   || die "gh release create failed (tag/commit are already pushed — fix and re-run just the gh step)"
 
+# --- prune old release assets ---------------------------------------------
+# Keep the DMG pile bounded: only the newest KEEP releases retain binaries
+# (tags + notes always survive; old versions stay buildable from source).
+# Non-fatal — the release itself is already published.
+step "Pruning old release assets (keep newest ${KEEP:-5})"
+"$(dirname "$0")/prune-releases.sh" --delete || echo "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
+
 step "Done"
 echo "released $TAG"
 gh release view "$TAG" --json url -q .url

@@ -52,7 +52,7 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
     manager: fakeManager(created),
     createTeam: (arg) => { writes.push(['createTeam', arg]); return { name: arg.name }; },
     agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
-    persistence: { setStripLevel: () => {} },
+    persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
   const res = await handlers['team:create']({}, { teamName: 'shop', name: 'clodex', type: 'claude', cwd: '/proj' });
@@ -70,7 +70,7 @@ test('team:join reaches addRole (hand = stock def) then spawns', async () => {
     manager: fakeManager(created),
     addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
     agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
-    persistence: { setStripLevel: () => {} },
+    persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
   const res = await handlers['team:join']({}, { team: 'shop', role: 'hand', name: 'shop-hand', type: 'claude', cwd: '/proj/sub' });
@@ -89,7 +89,7 @@ test('team:join custom role forwards the picked prompt into the role def', async
     manager: fakeManager(created),
     addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
     agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
-    persistence: { setStripLevel: () => {} },
+    persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
   await handlers['team:join']({}, { team: 'shop', role: 'analyst', prompt: 'my-analyst', name: 'shop-analyst', type: 'claude', cwd: '/proj/sub' });
@@ -125,7 +125,7 @@ test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
     manager: fakeManager(created),
     createTeam: () => { throw new Error('team "shop" already exists'); },
     agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
-    persistence: { setStripLevel: () => {} },
+    persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
   const res = await handlers['team:create']({}, { teamName: 'shop', name: 'clodex', type: 'claude', cwd: '/proj' });
