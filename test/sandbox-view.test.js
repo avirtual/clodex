@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
+const { detectNotice, sandboxActionGate, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -28,6 +28,42 @@ test('detectNotice: running → ok', () => {
 test('detectNotice: missing/undefined input reads as not installed', () => {
   assert.strictEqual(detectNotice(undefined).kind, 'error');
   assert.strictEqual(detectNotice({}).kind, 'error');
+});
+
+// ── sandboxActionGate: the docker action gate (Task 8) ──────────────────────
+// Stop must NEVER be gated (cleanup stays reachable), so 'stop' is absent from
+// the disabled set in every state; Start/Rebuild/box-row-Start/box-create are
+// gated whenever docker is not running.
+const GATED = ['start', 'rebuild', 'boxStart', 'boxCreate'];
+
+test('sandboxActionGate: docker not installed → all start/build actions disabled, Stop free', () => {
+  const g = sandboxActionGate({ present: false, running: false });
+  assert.strictEqual(g.running, false);
+  assert.deepStrictEqual(g.disabled, GATED);
+  assert.strictEqual(g.disabled.includes('stop'), false, 'Stop is never gated');
+  assert.match(g.reason, /installed/i);           // the not-installed remedy
+  assert.strictEqual(g.notice.kind, 'error');
+});
+
+test('sandboxActionGate: daemon down → same disabled set, daemon-down reason', () => {
+  const g = sandboxActionGate({ present: true, running: false });
+  assert.strictEqual(g.running, false);
+  assert.deepStrictEqual(g.disabled, GATED);
+  assert.match(g.reason, /running/i);             // start-the-daemon remedy
+  assert.strictEqual(g.notice.kind, 'warn');
+});
+
+test('sandboxActionGate: docker running → nothing disabled, no reason', () => {
+  const g = sandboxActionGate({ present: true, running: true });
+  assert.strictEqual(g.running, true);
+  assert.deepStrictEqual(g.disabled, []);
+  assert.strictEqual(g.reason, null);
+});
+
+test('sandboxActionGate: missing/undefined detect reads as not installed (fully gated)', () => {
+  assert.deepStrictEqual(sandboxActionGate(undefined).disabled, GATED);
+  assert.deepStrictEqual(sandboxActionGate(null).disabled, GATED);
+  assert.strictEqual(sandboxActionGate({}).running, false);
 });
 
 test('statusNotice: running → ok + running true', () => {

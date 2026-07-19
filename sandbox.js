@@ -101,6 +101,11 @@ const RESERVED_BOX_IDS = new Set(['host']);
 
 // `docker info` guard — a hung daemon shouldn't wedge detection forever.
 const DETECT_TIMEOUT_MS = 4000;
+// How long a docker detection result is trusted before the next probe. The
+// state (installed / daemon up) changes rarely, so a coarse TTL keeps the
+// action-gating cheap (one `docker info` per window, not per click) while still
+// noticing a daemon that came up or went down within ~half a minute.
+const DETECT_CACHE_TTL_MS = 30000;
 // How far past each desired port to probe for a free one when bumping.
 const PORT_SCAN_WINDOW = 40;
 
@@ -411,6 +416,86 @@ function parseComposeState(stdout) {
   return 'exited';
 }
 
+// ── Docker detection: probe + cache + error mapping ─────────────────────────
+
+// Raw `docker info` probe (the old inline detect body, hoisted so the manager's
+// cache can drive it with one shared `spawn`). `docker info` distinguishes "not
+// installed" (spawn ENOENT → present:false) from "daemon not running" (CLI runs,
+// non-zero exit → present:true, running:false) from healthy (exit 0 →
+// running:true). A hung daemon trips DETECT_TIMEOUT_MS and reads as
+// present-but-not-running. Never rejects.
+function probeDocker(spawn) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('docker', ['info', '--format', '{{.ServerVersion}}'],
+        { stdio: ['ignore', 'ignore', 'ignore'] });
+    } catch {
+      resolve({ present: false, running: false });
+      return;
+    }
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already gone */ }
+      done({ present: true, running: false, timedOut: true });
+    }, DETECT_TIMEOUT_MS);
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      done({ present: e && e.code !== 'ENOENT', running: false });
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      done({ present: true, running: code === 0 });
+    });
+  });
+}
+
+// TTL cache + in-flight dedupe around a detection `probe`. get() returns the
+// cached result (stamped with `cachedAt`) while it's younger than ttlMs, folds
+// concurrent callers onto one in-flight probe, and re-probes past the TTL.
+// invalidate() drops the cache so the next get() re-probes immediately — used
+// after a late compose failure reveals the daemon died. `now` is injectable so
+// the TTL is unit-testable with a fake clock.
+function createDetectCache({ probe, now = Date.now, ttlMs = DETECT_CACHE_TTL_MS } = {}) {
+  let last = null;      // { result, ts } — the most recent settled probe
+  let inflight = null;  // the shared Promise while a probe is running
+  const stamp = (result, ts) => ({ ...result, cachedAt: ts });
+  function get() {
+    if (last && (now() - last.ts) < ttlMs) return Promise.resolve(stamp(last.result, last.ts));
+    if (inflight) return inflight;
+    inflight = Promise.resolve().then(probe).then(
+      (result) => { const ts = now(); last = { result, ts }; inflight = null; return stamp(result, ts); },
+      (err) => { inflight = null; throw err; },
+    );
+    return inflight;
+  }
+  function invalidate() { last = null; }
+  return { get, invalidate };
+}
+
+// Operator-facing docker-remedy copy. KEEP IN SYNC with
+// renderer/lib/sandbox-view.js detectNotice — the dialog shows the same two
+// messages for a down/absent daemon, and a late compose failure (daemon died
+// between probe and click) must surface the SAME copy rather than raw stderr.
+const DOCKER_ABSENT_MSG = 'Docker isn’t installed — sandboxes need Docker Desktop.';
+const DOCKER_DOWN_MSG = 'Docker daemon isn’t running — start Docker Desktop.';
+
+// Map a compose stderr / spawn-error string to the friendly docker-unavailable
+// copy, or null when the failure is a genuine compose error (which keeps its own
+// stderr). Callers that get a non-null result also invalidate the detect cache so
+// the dialog reflects the daemon that just went away.
+function dockerUnavailableError(stderr) {
+  const s = String(stderr || '');
+  if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon is not running|error during connect/i.test(s)) {
+    return DOCKER_DOWN_MSG;
+  }
+  if (/\bENOENT\b|spawn docker|command not found|executable file not found|docker: not found|not recognized as/i.test(s)) {
+    return DOCKER_ABSENT_MSG;
+  }
+  return null;
+}
+
 // ── Factory ─────────────────────────────────────────────────────────────────
 
 function createSandbox(deps = {}) {
@@ -426,6 +511,12 @@ function createSandbox(deps = {}) {
   const repoRoot = deps.repoRoot || __dirname;
   const isPortInUse = deps.isPortInUse || defaultIsPortInUse;
   const log = deps.log || { info() {}, error() {} };
+  // Docker detection + cache-invalidation seams. The manager injects the shared
+  // (cached, docker-wide) probe so s.detect() returns the stamped payload and a
+  // late compose failure can invalidate it. A BARE createSandbox() (unit tests,
+  // standalone) falls back to the raw uncached probe and a no-op invalidate.
+  const detect = deps.detect || (() => probeDocker(spawn));
+  const invalidateDetect = deps.invalidateDetect || (() => {});
   // Host ~/.clodex root — the source of the read-only library binds. Injected by
   // engine.js as REGISTRY_DIR; defaults to ~/.clodex for standalone/test use.
   const registryDir = deps.registryDir || path.join(os.homedir(), '.clodex');
@@ -580,37 +671,6 @@ function createSandbox(deps = {}) {
     return tok;
   }
 
-  // Detection: `docker info` distinguishes "not installed" (spawn ENOENT →
-  // present:false) from "daemon not running" (CLI runs, non-zero exit →
-  // present:true, running:false) from healthy (exit 0 → running:true). A hung
-  // daemon trips DETECT_TIMEOUT_MS and reads as present-but-not-running.
-  function detect() {
-    return new Promise((resolve) => {
-      let child;
-      try {
-        child = spawn('docker', ['info', '--format', '{{.ServerVersion}}'],
-          { stdio: ['ignore', 'ignore', 'ignore'] });
-      } catch {
-        resolve({ present: false, running: false });
-        return;
-      }
-      let settled = false;
-      const done = (r) => { if (!settled) { settled = true; resolve(r); } };
-      const timer = setTimeout(() => {
-        try { child.kill(); } catch { /* already gone */ }
-        done({ present: true, running: false, timedOut: true });
-      }, DETECT_TIMEOUT_MS);
-      child.on('error', (e) => {
-        clearTimeout(timer);
-        done({ present: e && e.code !== 'ENOENT', running: false });
-      });
-      child.on('exit', (code) => {
-        clearTimeout(timer);
-        done({ present: true, running: code === 0 });
-      });
-    });
-  }
-
   // Probe each desired port (and a small window above it) so resolvePorts' sync
   // predicate is a plain Set lookup. Best-effort; a probe error reads as free.
   // `ownPorts` (the ports the existing compose.yaml already publishes) are
@@ -706,7 +766,13 @@ function createSandbox(deps = {}) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
       const r = await runSteps(gen);
-      if (!r.ok) return { ok: false, error: r.stderr.trim() || `docker compose ${label} exited ${r.code}` };
+      if (!r.ok) {
+        // Daemon died between the probe and this click → surface the friendly
+        // docker copy (not raw compose stderr) and drop the stale detect cache.
+        const gone = dockerUnavailableError(r.stderr);
+        if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
+        return { ok: false, error: r.stderr.trim() || `docker compose ${label} exited ${r.code}` };
+      }
       registerPeer(gen.ports.wire);
       log.info('sandbox', `${id} ${label} — wire peer http://127.0.0.1:${gen.ports.wire}`);
       return { ok: true, ports: gen.ports };
@@ -740,7 +806,13 @@ function createSandbox(deps = {}) {
   // start it again later, so down never touches the peers list.
   async function down() {
     const r = await runCompose(['down']);
-    if (!r.ok) return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
+    if (!r.ok) {
+      // Stop is never capability-gated, but if it fails because docker is gone we
+      // still give the friendly copy + invalidate the cache (same as up/rebuild).
+      const gone = dockerUnavailableError(r.stderr);
+      if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
+      return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
+    }
     return { ok: true };
   }
 
@@ -836,6 +908,16 @@ function createSandboxManager(deps = {}) {
   const listBoxes = deps.listBoxes
     || (() => { try { return getUiSettings().get().boxes || []; } catch { return []; } });
 
+  // One docker-wide detection cache shared by every box (detect is `docker info`
+  // — no per-box state). Warmed once here at launch so the first dialog open /
+  // action gate reads a fresh result without a cold spawn; boxes get its get/
+  // invalidate as seams so s.detect() returns the stamped payload and a late
+  // compose failure invalidates it.
+  const managerSpawn = deps.spawn || cp.spawn;
+  const now = deps.now || Date.now;
+  const detectCache = createDetectCache({ probe: () => probeDocker(managerSpawn), now });
+  detectCache.get().catch(() => {});
+
   const instances = new Map();
   // One promise chain shared by every instance's bringUp — serialized so N boxes
   // coming up together (e.g. autostart) can't read each other's mid-probe ports.
@@ -856,6 +938,9 @@ function createSandboxManager(deps = {}) {
       label: box.label || boxId,
       subdir: subdirFor(boxId),
       serialize,
+      // Shared docker-wide detect cache (every box probes the same daemon).
+      detect: () => detectCache.get(),
+      invalidateDetect: () => detectCache.invalidate(),
       // Config seam onto this box's row in the registry — read fresh each time so
       // an external settings write (or another instance) is always reflected.
       readBoxConfig: () => {
@@ -938,7 +1023,9 @@ function createSandboxManager(deps = {}) {
     return { ok: true, downError };
   }
 
-  return { get, list, create, remove };
+  // detect/invalidateDetect are docker-wide (not box-scoped) — exposed so a
+  // caller can probe/refresh without resolving a box instance.
+  return { get, list, create, remove, detect: () => detectCache.get(), invalidateDetect: () => detectCache.invalidate() };
 }
 
 // Best-effort sync-ish port probe: a 127.0.0.1 connect that succeeds means
@@ -958,6 +1045,7 @@ function defaultIsPortInUse(port) {
 module.exports = {
   createSandbox, createSandboxManager,
   // Pure parts, exported for the unit suite.
+  createDetectCache, dockerUnavailableError,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,

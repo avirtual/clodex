@@ -17,6 +17,7 @@ process.on('exit', () => { try { fs.rmSync(TMP_USERDATA, { recursive: true, forc
 
 const {
   createSandbox, createSandboxManager,
+  createDetectCache, dockerUnavailableError,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState,
   normalizeMounts, translatePath, composeProjectName,
@@ -512,6 +513,100 @@ test('detect: healthy (exit 0) → present and running', async () => {
   assert.deepStrictEqual(await sb.detect(), { present: true, running: true });
 });
 
+// ── detect cache: TTL + in-flight dedupe (fake clock / injected probe) ──────
+
+test('createDetectCache: caches within the TTL, re-probes past it', async () => {
+  let clock = 1000;
+  let probes = 0;
+  const cache = createDetectCache({
+    now: () => clock,
+    ttlMs: 30000,
+    probe: async () => { probes++; return { present: true, running: probes === 1 }; },
+  });
+  const a = await cache.get();
+  assert.strictEqual(a.running, true);
+  assert.strictEqual(a.cachedAt, 1000, 'result is stamped with the probe time');
+  assert.strictEqual(probes, 1);
+
+  clock += 29999;                     // still inside the TTL → cached, no new probe
+  const b = await cache.get();
+  assert.strictEqual(b.running, true);
+  assert.strictEqual(b.cachedAt, 1000);
+  assert.strictEqual(probes, 1);
+
+  clock += 2;                         // now past the TTL → re-probe (running flips)
+  const c = await cache.get();
+  assert.strictEqual(c.running, false);
+  assert.strictEqual(probes, 2);
+});
+
+test('createDetectCache: concurrent callers fold onto ONE in-flight probe', async () => {
+  let probes = 0;
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const cache = createDetectCache({
+    now: () => 0,
+    probe: async () => { probes++; await gate; return { present: true, running: true }; },
+  });
+  const p1 = cache.get();
+  const p2 = cache.get();            // arrives while the first probe is still pending
+  release();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.strictEqual(probes, 1, 'the two callers shared a single probe');
+  assert.deepStrictEqual(r1, r2);
+});
+
+test('createDetectCache: invalidate() forces the next get() to re-probe', async () => {
+  let probes = 0;
+  const cache = createDetectCache({ now: () => 0, probe: async () => { probes++; return { present: true, running: true }; } });
+  await cache.get();
+  assert.strictEqual(probes, 1);
+  await cache.get();                 // cached
+  assert.strictEqual(probes, 1);
+  cache.invalidate();
+  await cache.get();                 // forced re-probe
+  assert.strictEqual(probes, 2);
+});
+
+// ── late-failure mapping: docker-gone stderr → friendly copy ────────────────
+
+test('dockerUnavailableError: daemon-down signatures → the daemon-down message', () => {
+  assert.match(dockerUnavailableError('Cannot connect to the Docker daemon at unix:///…'), /daemon isn.t running/);
+  assert.match(dockerUnavailableError('error during connect: ... is the docker daemon running?'), /daemon isn.t running/);
+});
+
+test('dockerUnavailableError: not-installed signatures → the not-installed message', () => {
+  assert.match(dockerUnavailableError('spawn docker ENOENT'), /isn.t installed/);
+  assert.match(dockerUnavailableError('docker: command not found'), /isn.t installed/);
+});
+
+test('dockerUnavailableError: a genuine compose error is NOT a docker-availability one', () => {
+  assert.strictEqual(dockerUnavailableError('service "clodex" failed to build'), null);
+  assert.strictEqual(dockerUnavailableError('port is already allocated'), null);
+  assert.strictEqual(dockerUnavailableError(''), null);
+  assert.strictEqual(dockerUnavailableError(null), null);
+});
+
+// ── manager wires the shared cache into each box (cachedAt + dedupe) ─────────
+
+test('manager: box detect() returns the shared cached payload (stamped, deduped)', async () => {
+  let probes = 0;
+  const settings = fakeSettings({ boxes: [{ id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_CONFIG } }] });
+  const mgr = createSandboxManager({
+    getUiSettings: () => settings,
+    now: () => 4242,
+    spawn: () => { probes++; return fakeSpawn({ code: 0 })(); },
+  });
+  const box = mgr.get('sandbox');
+  const d = await box.detect();
+  assert.strictEqual(d.running, true);
+  assert.strictEqual(d.cachedAt, 4242, 'box detect() carries the cache timestamp');
+  // The manager warm-probe at creation + this call share one cached result.
+  await box.detect();
+  await mgr.detect();
+  assert.strictEqual(probes, 1, 'the warm probe served every later reader from cache');
+});
+
 // ── factory: idempotent peer registration (settings mocked) ─────────────────
 
 // A minimal ui-settings double: shallow-merge set, matching stores.js semantics
@@ -580,17 +675,35 @@ test('up: writes compose, brings it up, registers the peer', async () => {
   assert.ok(fs.existsSync(sb.composePath()));
 });
 
-test('up: a compose failure surfaces stderr and does NOT register the peer', async () => {
+test('up: a non-docker compose failure surfaces raw stderr and does NOT register the peer', async () => {
   const settings = fakeSettings();
   const sb = createSandbox({
-    spawn: fakeSpawn({ code: 1, stderr: 'Cannot connect to the Docker daemon' }),
+    spawn: fakeSpawn({ code: 1, stderr: 'network timeout pulling layer sha256:abc' }),
     getUiSettings: () => settings,
     getUserDataPath: () => TMP_USERDATA,
     isPortInUse: () => Promise.resolve(false),
   });
   const r = await sb.up();
   assert.strictEqual(r.ok, false);
-  assert.match(r.error, /Cannot connect to the Docker daemon/);
+  assert.match(r.error, /network timeout pulling layer/);   // genuine compose error keeps its stderr
+  assert.strictEqual(settings._state().peers.length, 0);
+});
+
+test('up: a docker-gone failure maps to the friendly message, invalidates the cache, no register', async () => {
+  const settings = fakeSettings();
+  let invalidated = 0;
+  const sb = createSandbox({
+    spawn: fakeSpawn({ code: 1, stderr: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock' }),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    invalidateDetect: () => { invalidated++; },
+  });
+  const r = await sb.up();
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /Docker daemon isn.t running/);     // friendly copy, not raw stderr
+  assert.doesNotMatch(r.error, /unix:\/\//);                // raw stderr suppressed
+  assert.strictEqual(invalidated, 1, 'late failure invalidates the detect cache');
   assert.strictEqual(settings._state().peers.length, 0);
 });
 

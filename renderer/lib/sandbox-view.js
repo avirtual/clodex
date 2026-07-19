@@ -8,17 +8,41 @@
 // test/free-identifier-leaks.test.js RENDERER_SCANNED_MODULES — that guard gates
 // move-only extractions, not fresh leaves.
 
-// Docker detection → the dialog's top line. The install-vs-start distinction is
-// the whole reason detect() separates present from running: the remedy differs.
+// Docker detection → the dialog's top line, and the stated reason the disabled
+// actions carry (sandboxActionGate reuses this copy). The install-vs-start
+// distinction is the whole reason detect() separates present from running: the
+// remedy differs. KEEP the two remedy strings in sync with sandbox.js
+// DOCKER_ABSENT_MSG / DOCKER_DOWN_MSG — a late compose failure surfaces the same
+// copy for the same daemon state.
 function detectNotice(detect) {
   const d = detect || {};
   if (!d.present) {
-    return { kind: 'error', text: 'Docker isn’t installed. Install Docker Desktop to use the sandbox.' };
+    return { kind: 'error', text: 'Docker isn’t installed — sandboxes need Docker Desktop.' };
   }
   if (!d.running) {
-    return { kind: 'warn', text: 'Docker is installed but the daemon isn’t running. Start Docker Desktop, then reopen this dialog.' };
+    return { kind: 'warn', text: 'Docker daemon isn’t running — start Docker Desktop.' };
   }
   return { kind: 'ok', text: 'Docker is running.' };
+}
+
+// Action gate: given a detect payload, which lifecycle controls the dialog must
+// disable and the reason to show. Docker not running (absent OR daemon down)
+// gates everything that STARTS or BUILDS — Start, Rebuild, a box row's Start,
+// and box-create — because they all fail with raw compose stderr otherwise. Stop
+// is NEVER gated (cleanup/teardown must always be reachable), so it is absent
+// from the disabled set by construction. `reason` is the detectNotice text while
+// gated, null when docker is running.
+const GATED_ACTIONS = ['start', 'rebuild', 'boxStart', 'boxCreate'];
+function sandboxActionGate(detect) {
+  const d = detect || {};
+  const notice = detectNotice(d);
+  const running = !!d.running;
+  return {
+    running,
+    notice,
+    reason: running ? null : notice.text,
+    disabled: running ? [] : GATED_ACTIONS.slice(),
+  };
 }
 
 // Compose lifecycle state → the status line + whether Start/Stop should read as
@@ -55,4 +79,4 @@ function portsLineText(effective) {
   return parts.join(' · ');
 }
 
-module.exports = { detectNotice, statusNotice, openUrl, portsLineText };
+module.exports = { detectNotice, sandboxActionGate, statusNotice, openUrl, portsLineText };
