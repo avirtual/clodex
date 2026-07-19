@@ -86,8 +86,11 @@ test('a narrow seat (dm+who+name only) documents exactly those intents', () => {
   assert.ok(p.includes('[agent:name]'));
   // Absent (gated off):
   for (const line of [
+    // `[agent:file view PATH]` now appears in the always-present HOW TO
+    // COMMUNICATE example, so probe the file GRAMMAR block's absence via its
+    // `open` line, which lives only in GRAMMAR_LINES.
     '[agent:context compact]', '[agent:memory list]', '[agent:spawn name:X',
-    '[agent:file view PATH]', '[agent:remind every', '[agent:notify-user]',
+    '[agent:file open PATH]', '[agent:remind every', '[agent:notify-user]',
   ]) {
     assert.ok(!p.includes(line), `${line} should be gated out`);
   }
