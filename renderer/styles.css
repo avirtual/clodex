@@ -108,13 +108,18 @@ html, body {
 }
 
 /* Sidebar resize handle (Task 17). A thin col-resize hit area pinned to the
-   sidebar's right edge, straddling the border so it's easy to grab. Sits above
-   sidebar content but below #main (z-index:11) so overlays still paint over it.
-   The drag is driven by renderer.js setting --sidebar-width. */
+   sidebar's right edge. It must stay INSIDE the sidebar: #main (position:fixed,
+   left:var(--sidebar-width), z-index:11) begins exactly at the sidebar's right
+   edge and, as a higher sibling stacking context, paints over anything the
+   sidebar's own children reach — so an overhang past the edge (an earlier
+   right:-3px) landed under #main and was unclickable, halving the 6px grab area.
+   Sitting fully within the sidebar keeps all 6px grabbable (z-index:12 lifts it
+   above sidebar content). The drag is driven by renderer.js setting
+   --sidebar-width. */
 #sidebar-resizer {
   position: absolute;
   top: 0;
-  right: -3px;
+  right: 0;
   width: 6px;
   height: 100%;
   cursor: col-resize;

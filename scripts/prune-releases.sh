@@ -17,7 +17,17 @@ KEEP="${KEEP:-5}"
 MODE="dry-run"
 [[ "${1:-}" == "--delete" ]] && MODE="delete"
 
-# Newest-first list of releases with their assets. --paginate walks past 100.
+# KEEP must be a positive integer — a typo (KEEP=abc) or KEEP=0 would otherwise
+# keep zero releases and delete every asset. Die loudly rather than nuke assets.
+[[ "$KEEP" =~ ^[1-9][0-9]*$ ]] || {
+  echo "error: KEEP must be a positive integer (got '$KEEP')" >&2; exit 2; }
+
+# Newest-first list of releases with their assets. NOTE: under --paginate the
+# --jq filter runs PER response page, so sort_by|reverse sorts within each page,
+# not globally across pages. That's cosmetic here: the GitHub API already returns
+# releases newest-first, and with <100 releases they all land on one per_page=100
+# page. A true cross-page global sort isn't worth the jq gymnastics unless/until
+# we exceed 100 releases.
 rows=$(gh api "repos/$REPO/releases?per_page=100" --paginate \
   --jq 'sort_by(.created_at) | reverse | .[] |
         {tag: .tag_name, assets: [.assets[] | {id, name, size}]} | @json')
@@ -26,6 +36,7 @@ total_bytes=0
 total_assets=0
 i=0
 while IFS= read -r row; do
+  [[ -z "$row" ]] && continue   # no releases → empty $rows is one blank line; skip it
   i=$((i + 1))
   tag=$(jq -r '.tag' <<<"$row")
   if (( i <= KEEP )); then

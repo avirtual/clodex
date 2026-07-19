@@ -45,12 +45,24 @@ function initBanners({ openInstallSession } = {}) {
   // engine.diagWarning's precedence). A helper/arch/PATH warning gets no buttons:
   // installing a CLI wouldn't fix it. Best-effort — a probe throw leaves the
   // banner as text-only.
+  //
+  // Latest-wins serialization (matching renderer's token pattern): two
+  // overlapping refreshDiagBanner calls each await toolsCheck; without a guard
+  // their clear/append could interleave and briefly duplicate buttons. A stale
+  // run bails after its await WITHOUT touching the DOM, so only the newest call
+  // clears + rebuilds #diag-actions.
+  let diagInstallToken = 0;
   async function refreshDiagInstallButtons(cliMissingIsCause) {
     if (!diagActions) return;
-    diagActions.textContent = '';
-    if (!cliMissingIsCause || typeof openInstallSession !== 'function') return;
+    const token = ++diagInstallToken;
+    if (!cliMissingIsCause || typeof openInstallSession !== 'function') {
+      diagActions.textContent = '';
+      return;
+    }
     let check = null;
     try { check = await window.api.toolsCheck(); } catch { check = null; }
+    if (token !== diagInstallToken) return; // a newer refresh superseded us
+    diagActions.textContent = '';
     for (const install of agentInstallButtons(check)) {
       const btn = document.createElement('button');
       btn.type = 'button';

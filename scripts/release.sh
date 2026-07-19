@@ -121,7 +121,9 @@ gh release create "$TAG" "$DMG" \
 # Keep the DMG pile bounded: only the newest KEEP releases retain binaries
 # (tags + notes always survive; old versions stay buildable from source).
 # Non-fatal — the release itself is already published.
-step "Pruning old release assets (keep newest ${KEEP:-5})"
+# The retention count lives in prune-releases.sh (KEEP, default 5); don't
+# duplicate the number here — the prune script reports its own effective KEEP.
+step "Pruning old release assets"
 "$(dirname "$0")/prune-releases.sh" --delete || echo "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
 
 step "Done"

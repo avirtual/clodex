@@ -14,6 +14,7 @@ const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
+const { bumpDefaultName } = require('./lib/name-suggest');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -2044,7 +2045,8 @@ async function openDialog(prefill = null) {
   if (toolOverlay) toolOverlay.classList.add('hidden');
   setDialogMode('create'); // reset chrome if the last use was a template edit
   sessionCounter++;
-  inputName.value = (prefill && prefill.name) || `session-${sessionCounter}`;
+  const defaultName = `session-${sessionCounter}`;
+  inputName.value = (prefill && prefill.name) || defaultName;
   inputType.value = (prefill && prefill.type) || 'claude';
   inputCwd.value = (prefill && prefill.cwd) || homeDir;
   inputTemplate.value = '';
@@ -2091,6 +2093,12 @@ async function openDialog(prefill = null) {
   // Global reserved-name set for the auto-suffix flows (Task 15) — live +
   // persisted/archived across every workspace, beyond this window's DOM.
   dialogReservedNames = new Set((reserved && reserved.names) || []);
+  // The default `session-N` suggestion was minted before this set landed; bump
+  // it past a collision so the first Create doesn't bounce (Task 19). Only when
+  // it's still the untouched default — never clobber a typed name or a prefill.
+  if (!prefill && inputName.value === defaultName) {
+    inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
+  }
   // Capture the host catalogs so a flip box→Host restores them without a re-fetch
   // race (M5 swaps the caches to box truth while on a box).
   dialogHostSettings = settings;
