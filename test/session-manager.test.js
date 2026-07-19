@@ -856,14 +856,47 @@ test('_drainPendingAtIdle: a passive-only store is left parked (no turn generate
   assert.ok(hasPending(PENDING_DIR, 'a'), 'they stay parked for an organic hook drain');
 });
 
-test('_drainPendingAtIdle: a mixed store drains fully — passives ride along with the active', () => {
+test('_drainPendingAtIdle: a mixed store drains fully as ONE batched inject — passives ride along, in order', () => {
   const { m, PENDING_DIR, injected } = mkPark();
   parkDelivery(PENDING_DIR, 'a', '[agent:from monitor] tick', '1', null, true);
   parkDelivery(PENDING_DIR, 'a', '[agent:from x] hi', '2');
   m._drainPendingAtIdle({ name: 'a', agentType: 'claude' });
-  assert.deepStrictEqual(injected, ['[agent:from monitor] tick', '[agent:from x] hi'],
-    'the active DM justifies the turn; the passive rides with it, in order');
+  // Batched: N parked texts become ONE injection (blank-line separator, park
+  // order) — a sequential per-text drain stranded the tail in the TUI turn-start.
+  assert.deepStrictEqual(injected, ['[agent:from monitor] tick\n\n[agent:from x] hi'],
+    'the active DM justifies the turn; the passive rides with it in one body, in order');
   assert.strictEqual(hasPending(PENDING_DIR, 'a'), false);
+});
+
+test('_drainPendingAtIdle: a single parked DM injects unchanged (no stray separator)', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] solo', '1');
+  m._drainPendingAtIdle({ name: 'a', agentType: 'claude' });
+  assert.deepStrictEqual(injected, ['[agent:from x] solo'], 'one text → one body, no separator appended');
+});
+
+// _flushParkedNow: the operator ✉-click / park-cap forced drain. Must deliver the
+// WHOLE parked pile as ONE injection — a forced flush is non-parkable (resend-
+// recursion fix), so a text stranded by a sequential drain just SITS (the field
+// bug: 2 parked, click ✉, one delivered + one stuck in stdin). Blank-line
+// separator + park order, matching the hook drain (cli-hooks.js texts.join).
+test('_flushParkedNow: 2+ parked texts → exactly ONE _injectText, both in park order, blank-line separated', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] first', '1');
+  parkDelivery(PENDING_DIR, 'a', '[agent:from y] second', '2');
+  const r = m._flushParkedNow({ name: 'a', agentType: 'claude' }, 'flush.test');
+  assert.strictEqual(injected.length, 1, 'the whole drain is ONE injection, not N');
+  assert.strictEqual(injected[0], '[agent:from x] first\n\n[agent:from y] second', 'both texts, park order, \\n\\n between');
+  assert.deepStrictEqual(r, { ok: true, count: 2 }, 'reports the batched count');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false, 'store drained');
+});
+
+test('_flushParkedNow: a single parked text flushes as one body with no stray separator', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] only', '1');
+  const r = m._flushParkedNow({ name: 'a', agentType: 'claude' }, 'flush.test');
+  assert.deepStrictEqual(injected, ['[agent:from x] only'], 'one text → one body, no separator');
+  assert.strictEqual(r.count, 1);
 });
 
 test('_deliverPassive: parks passive for a live claude target, no inject, no wake', () => {
@@ -1060,6 +1093,158 @@ test('_notifyComposition: passive delta fans to the OTHER live team seats only',
   assert.match(passive[0].b, /\[team team\] seat team-dev retired \(role: dev\)/);
 });
 
+// Boot-race coalesce (task 20 + task-22 rework): _notifyComposition shares the
+// codex active-fallback that task 11 fixed for the initial roster. A target codex
+// seat still inside its boot-settle window (_bootSettling) would get the delta
+// ACTIVE-typed into its unsubmitted TUI. We coalesce — DROP it — keying on the
+// boot-settle FLAG (armed for every codex seat at create), NOT on a stashed
+// roster: a resumed/stamped seat has no roster to stash yet still boots (MUST-FIX
+// 1). No second timer.
+test('_notifyComposition: a still-booting codex seat COALESCES — delta dropped, not typed', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  // codex teammate mid-boot: boot window open (fresh mint also stashed its roster).
+  m.sessions.set('team-cx', { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
+    _bootSettling: true, _pendingRoster: teamStub });
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('lead'), 'spawned');
+  // The booting codex seat is skipped; no other live seat to notify.
+  assert.deepStrictEqual(passive, [], 'no delta delivered to a seat still in its boot-settle window');
+});
+
+// MUST-FIX 1 (task 22 reopened task 20's window for RESUMED seats): a resumed
+// codex seat skips its roster (stamped → no _pendingRoster) yet still boots and
+// would ACTIVE-type a delta into its booting TUI. The boot-settle flag guards it
+// regardless of roster. Contract: DROP (the seat's resumed context + on-demand
+// roster pull is ground truth; a missed one-line delta is harmless).
+test('_notifyComposition: a RESUMED-stamped codex seat mid-boot (no stashed roster) still coalesces', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  // resumed seat: booting, but its roster was skipped (stamped) → NO _pendingRoster.
+  m.sessions.set('cx-resumed', { name: 'cx-resumed', agentType: 'codex', cwd: '/proj/b',
+    _bootSettling: true });
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('lead'), 'spawned');
+  assert.deepStrictEqual(passive, [], 'delta dropped while the resumed seat is still booting (nothing typed)');
+  // Once its boot settles (_bootSettling cleared), a later delta lands normally.
+  m.sessions.get('cx-resumed')._bootSettling = false;
+  m._notifyComposition(m.sessions.get('lead'), 'archived');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['cx-resumed'], 'after settle the delta delivers on the normal path');
+});
+
+test('_notifyComposition: delta + booting seat coalesce — booted seat wins, delta never double-delivered', () => {
+  // A single fan over a mixed set: cx-boot is mid-boot (window open → must be
+  // dropped/coalesced), cx-live is booted (must receive). Proves the skip is
+  // selective, not a blanket suppression, and that no seat is delivered twice.
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });               // source
+  m.sessions.set('cx-boot', { name: 'cx-boot', agentType: 'codex', cwd: '/proj/b', _bootSettling: true, _pendingRoster: teamStub });
+  m.sessions.set('cx-live', { name: 'cx-live', agentType: 'codex', cwd: '/proj/c' });          // booted
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('lead'), 'spawned');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['cx-live'],
+    'the booting seat coalesces; the booted seat gets exactly one delta');
+  // Once cx-boot settles (_bootSettling cleared), a later delta lands.
+  m.sessions.get('cx-boot')._bootSettling = false;
+  m._notifyComposition(m.sessions.get('lead'), 'archived');
+  assert.deepStrictEqual(passive.slice(1).map((p) => p.t).sort(), ['cx-boot', 'cx-live'],
+    'after boot the once-coalesced seat takes deltas promptly, still no double delivery');
+});
+
+test('_notifyComposition: a LIVE codex seat (no stashed roster) is delivered promptly', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-cx', { name: 'team-cx', agentType: 'codex', cwd: '/proj/b' }); // booted: no _pendingRoster
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('lead'), 'spawned');
+  assert.strictEqual(passive.length, 1, 'a booted codex seat gets the delta on the normal (passive) path');
+  assert.strictEqual(passive[0].t, 'team-cx');
+  assert.match(passive[0].b, /\[team team\] seat lead spawned \(role: lead\)/);
+});
+
+test('_notifyComposition: a Claude seat still parks passively even mid-boot (boot-safe regardless)', () => {
+  const { m } = mkPark(teamDeps);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // claude: never stashes a roster
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('lead'), 'spawned');
+  assert.strictEqual(passive.length, 1, 'claude target parks passively (no active PTY write to race)');
+  assert.strictEqual(passive[0].t, 'team-dev');
+});
+
+// Task 22: the one-time team wiring (initial roster + the seat's own 'spawned'
+// delta) fires ONLY on a genuine first spawn, gated by a persisted rosterSentAt
+// stamp read PRE-upsert (existingEntry). A resume/restart already carries the
+// roster in its restored context; reinjecting is noise and N seats each re-
+// announcing at app relaunch is N×N delta spam for an unchanged team. The stamp
+// is written at DELIVERY so a crash-before-delivery seat retries (self-heal).
+test('_maybeInjectComposition: FRESH mint (no rosterSentAt) → injects roster + fires spawned delta', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'lead', agentType: 'claude', cwd: '/proj/a' };
+  m.sessions.set('lead', s);
+  const injected = [];
+  const deltas = [];
+  m._injectRoster = (sess, team) => injected.push({ sess, team });
+  m._notifyComposition = (sess, verb) => deltas.push({ sess, verb });
+  m._maybeInjectComposition(s, teamStub, null);   // no persisted entry at all
+  assert.strictEqual(injected.length, 1, 'roster injected on a genuine first spawn');
+  assert.strictEqual(injected[0].team, teamStub);
+  assert.deepStrictEqual(deltas, [{ sess: s, verb: 'spawned' }], 'and the seat is announced to teammates');
+});
+
+test('_maybeInjectComposition: RESUME (record carries rosterSentAt) → NO roster, NO spawned delta', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'lead', agentType: 'claude', cwd: '/proj/a' };
+  m.sessions.set('lead', s);
+  const injected = [];
+  const deltas = [];
+  m._injectRoster = (...a) => injected.push(a);
+  m._notifyComposition = (...a) => deltas.push(a);
+  m._maybeInjectComposition(s, teamStub, { name: 'lead', rosterSentAt: 123 });
+  assert.deepStrictEqual(injected, [], 'a restore never re-injects the roster');
+  assert.deepStrictEqual(deltas, [], 'a restore never re-announces the seat to teammates');
+});
+
+test('_maybeInjectComposition: crashed-before-delivery (entry, NO stamp) → retries next spawn', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'cx', agentType: 'codex', cwd: '/proj/b' };
+  m.sessions.set('cx', s);
+  const injected = [];
+  m._injectRoster = (...a) => injected.push(a);
+  m._notifyComposition = () => {};
+  // Persisted record exists (prior spawn) but roster never landed → no stamp.
+  m._maybeInjectComposition(s, teamStub, { name: 'cx' });
+  assert.strictEqual(injected.length, 1, 'a seat that never received its roster retries');
+});
+
+test('_injectRoster: a claude delivery STAMPS rosterSent (so a later restart skips re-inject)', () => {
+  const stamped = [];
+  const { m } = mkPark({ ...teamDeps,
+    getPersistence: () => ({ list: () => [], get: () => null, setRosterSent: (n) => stamped.push(n) }) });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m._deliverPassive = () => {};
+  m._injectRoster(m.sessions.get('lead'), teamStub);
+  assert.deepStrictEqual(stamped, ['lead'], 'the claude roster park stamps rosterSent at delivery');
+});
+
+test('_injectRoster/_settleBoot: a codex seat stamps only at the settle (delivery), not the stash', () => {
+  const stamped = [];
+  const { m } = mkPark({ ...teamDeps,
+    getPersistence: () => ({ list: () => [], get: () => null, setRosterSent: (n) => stamped.push(n) }) });
+  const s = { name: 'cx', agentType: 'codex', cwd: '/proj/b' };
+  m.sessions.set('cx', s);
+  m._injectRoster(s, teamStub);   // stashes the team ref — must NOT stamp yet
+  assert.deepStrictEqual(stamped, [], 'the stash does not stamp — a seat dying pre-settle retries');
+  m._deliverMessage = () => {};
+  m._settleBoot(s);               // actual delivery at boot-settle
+  assert.deepStrictEqual(stamped, ['cx'], 'the settle stamps rosterSent');
+});
+
 test('_notifyComposition: teamless / dep-less session is a no-op, never throws into teardown', () => {
   const { m } = mkPark(); // no resolveTeam dep at all (archive/kill call this)
   m.sessions.set('a', { name: 'a', agentType: 'claude', cwd: '/x' });
@@ -1107,60 +1292,121 @@ test('_injectRoster: a CODEX seat DEFERS — no active AND no passive delivery a
   // a passive fallback here would be an active PTY write into a booting TUI.
   assert.deepStrictEqual(active, [], 'codex roster is never actively typed at boot');
   assert.deepStrictEqual(passive, [], 'and never passive (no park store) — it is stashed');
-  const body = m.sessions.get('team-cx')._pendingRoster;
-  assert.ok(body && /\[team team\] roster \(lead: lead\)/.test(body), 'roster stashed for a later flush');
+  // The stash holds the TEAM REF, not a pre-rendered body: the roster is recomputed
+  // FRESH at flush so a teammate spawning during boot still appears (task 20b).
+  assert.strictEqual(m.sessions.get('team-cx')._pendingRoster, teamStub, 'team ref stashed for a fresh-at-flush render');
 });
 
-test('_flushPendingRoster: delivers a stashed codex roster on the NORMAL path, once, dead-safe', () => {
+test('_settleBoot: recomputes the roster FRESH at delivery — a boot-time-spawned seat is listed', () => {
   const { m } = mkPark(teamDeps);
-  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b', _pendingRoster: '[team team] roster (lead: lead)\n…' };
+  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b', _bootSettling: true, _pendingRoster: teamStub };
   m.sessions.set('team-cx', s);
+  // A teammate that spawned AFTER team-cx's roster was stashed (i.e. during its
+  // boot). A spawn-time snapshot would omit it; the fresh render must include it.
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'codex', cwd: '/proj/c' });
   const active = [];
   m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
-  m._flushPendingRoster(s);
-  assert.strictEqual(active.length, 1, 'flushed via the active (normal) path once the TUI is up');
+  m._settleBoot(s);
+  assert.strictEqual(active.length, 1, 'delivered via the active (normal) path once the TUI is up');
   assert.strictEqual(active[0].t, 'team-cx');
   assert.strictEqual(active[0].sn, 'team');
   assert.strictEqual(active[0].mt, 'dm');
+  assert.match(active[0].b, /\[team team\] roster \(lead: lead\)/);
+  assert.match(active[0].b, /- dev \(session\) — the dev · live: team-dev/,
+    'the teammate that spawned during boot appears in the fresh-at-delivery roster');
   assert.strictEqual(s._pendingRoster, null, 'pending cleared');
-  m._flushPendingRoster(s);                 // a late/second settle
+  assert.strictEqual(s._bootSettling, false, 'boot window closed');
+  m._settleBoot(s);                         // a late/second settle
   assert.strictEqual(active.length, 1, 'once-only');
-  const dead = { name: 'd', agentType: 'codex', _dead: true, _pendingRoster: 'x' };
-  m._flushPendingRoster(dead);
+  const dead = { name: 'd', agentType: 'codex', _dead: true, _bootSettling: true, _pendingRoster: teamStub };
+  m._settleBoot(dead);
   assert.strictEqual(active.length, 1, 'no delivery into a dead session');
+  assert.strictEqual(dead._bootSettling, false, 'a dead seat still has its window closed (state clean)');
 });
 
-test('_armRosterFlush: output-gated settle re-arms on each chunk, flushes only after the LAST one', async () => {
+// MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes
+// the boot window (re-opening the seat to deltas), delivering nothing.
+test('_settleBoot: a resumed seat (no stashed roster) closes the window, delivers nothing', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'cx-resumed', agentType: 'codex', cwd: '/proj/b', _bootSettling: true };
+  m.sessions.set('cx-resumed', s);
+  const active = [];
+  m._deliverMessage = (...a) => active.push(a);
+  m._settleBoot(s);
+  assert.strictEqual(s._bootSettling, false, 'boot window closed so later deltas deliver');
+  assert.deepStrictEqual(active, [], 'no roster to deliver for a resumed seat');
+});
+
+// NIT (task 22 rework): _settleBoot runs from a setTimeout callback, so a throw
+// in the render/deliver path would be an uncaughtException in main. It must be
+// swallowed — and the boot window still closed (state stays clean).
+test('_settleBoot: a throw in the render/deliver path is swallowed, window still closes', () => {
+  const { m } = mkPark(teamDeps);
+  const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b', _bootSettling: true, _pendingRoster: teamStub };
+  m.sessions.set('team-cx', s);
+  m._deliverMessage = () => { throw new Error('boom'); };
+  assert.doesNotThrow(() => m._settleBoot(s), 'never throws out of the settle callback');
+  assert.strictEqual(s._bootSettling, false, 'boot window still closed despite the throw');
+});
+
+test('_armBootSettle: output-gated settle re-arms on each chunk, closes only after the LAST one', async () => {
   const { m } = mkPark({ ...teamDeps, rosterSettleMs: 30, rosterMaxWaitMs: 10000 });
   const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
-    _pendingRoster: '[team team] roster (lead: lead)', _pendingRosterSince: Date.now() };
+    _bootSettling: true, _bootSettleSince: Date.now(), _pendingRoster: teamStub };
   m.sessions.set('team-cx', s);
   const active = [];
   m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
-  m._armRosterFlush(s);                     // first output chunk (deadline ~30ms)
+  m._armBootSettle(s);                      // first output chunk (deadline ~30ms)
   await new Promise((r) => setTimeout(r, 10));
-  m._armRosterFlush(s);                     // a later chunk before the settle → re-arm (deadline pushed out)
+  m._armBootSettle(s);                      // a later chunk before the settle → re-arm (deadline pushed out)
   await new Promise((r) => setTimeout(r, 10));
   assert.deepStrictEqual(active, [], 'not yet — the boot burst has not gone quiet');
   await new Promise((r) => setTimeout(r, 45));
-  assert.strictEqual(active.length, 1, 'flushed once the output settled');
+  assert.strictEqual(active.length, 1, 'delivered once the output settled');
   assert.strictEqual(active[0].t, 'team-cx');
 });
 
-test('_armRosterFlush: absolute-wait cap flushes despite continuous sub-settle repaints (no starvation)', async () => {
+test('_armBootSettle: absolute-wait cap closes despite continuous sub-settle repaints (no starvation)', async () => {
   // settle 30ms, cap 60ms — a chunk every 10ms never lets the settle timer fire,
-  // so ONLY the cap can flush. Without the cap this would starve the roster forever
-  // (a codex spinner/clock repaint loop is exactly this shape).
+  // so ONLY the cap can close it. Without the cap this would starve the roster
+  // forever (a codex spinner/clock repaint loop is exactly this shape).
   const { m } = mkPark({ ...teamDeps, rosterSettleMs: 30, rosterMaxWaitMs: 60 });
   const s = { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
-    _pendingRoster: '[team team] roster (lead: lead)', _pendingRosterSince: Date.now() };
+    _bootSettling: true, _bootSettleSince: Date.now(), _pendingRoster: teamStub };
   m.sessions.set('team-cx', s);
   const active = [];
   m._deliverMessage = (t, sn, b, mt) => active.push({ t, sn, b, mt });
   // Repaint faster than the settle interval, past the cap.
-  for (let i = 0; i < 9; i++) { m._armRosterFlush(s); await new Promise((r) => setTimeout(r, 10)); }
-  assert.strictEqual(active.length, 1, 'the cap forced a flush even though the settle never went quiet');
-  assert.strictEqual(s._pendingRoster, null, 'pending cleared by the capped flush');
+  for (let i = 0; i < 9; i++) { m._armBootSettle(s); await new Promise((r) => setTimeout(r, 10)); }
+  assert.strictEqual(active.length, 1, 'the cap forced a close even though the settle never went quiet');
+  assert.strictEqual(s._pendingRoster, null, 'pending cleared by the capped settle');
+  assert.strictEqual(s._bootSettling, false, 'boot window closed by the cap');
+});
+
+// MUST-FIX 2: an in-place restart routes through kill() (drops the persistence
+// record), so create()'s existingEntry would be null and re-inject the roster.
+// _preserveRosterStamp (called by engine.restartSession / applySessionArgs after
+// kill, before create) re-seeds JUST the stamp so create's read skips.
+test('_preserveRosterStamp: re-seeds a stamped seat across the kill+create restart seam', () => {
+  const store = [];
+  const persistence = {
+    list: () => store,
+    get: (n) => store.find((e) => e.name === n) || null,
+    upsert: (e) => {
+      const i = store.findIndex((x) => x.name === e.name);
+      if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
+    },
+  };
+  const { m } = mkPark({ ...teamDeps, getPersistence: () => persistence });
+  // kill() has already dropped the record; the store is empty for this name.
+  m._preserveRosterStamp('cx', { name: 'cx', rosterSentAt: 999, createdAt: 1 });
+  assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'the stamp is re-seeded so create() skips re-inject');
+  // create()'s own upsert then spread-merges the full record over the stub, keeping the stamp.
+  persistence.upsert({ name: 'cx', type: 'codex', cwd: '/proj/b', createdAt: 5 });
+  assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'survives create()\'s rebuild upsert');
+  // A never-stamped (genuinely fresh) prior entry seeds nothing → still gets its roster.
+  m._preserveRosterStamp('fresh', { name: 'fresh' });
+  assert.strictEqual(persistence.get('fresh'), null, 'a fresh seat is not seeded');
 });
 
 // --- list(): team field (sidebar group-by-project reflects team identity) ---
@@ -2235,14 +2481,17 @@ test('flushPending: dialog-blocked target refuses WITHOUT draining (leaves durab
   assert.strictEqual(m._injected.length, 0);
 });
 
-test('flushPending: happy path claims with a flush.<pid> tag and injects each parked message', () => {
+test('flushPending: happy path claims with a flush.<pid> tag and injects the parked pile as ONE batched message', () => {
   const m = mkFlush({ _texts: ['m1', 'm2'] });
   m.sessions.set('a', { name: 'a', agentType: 'claude', activityState: 'idle' });
   const r = m.flushPending('a');
   assert.deepStrictEqual(r, { ok: true, count: 2 });
   assert.strictEqual(m._drained.length, 1);
   assert.match(m._drained[0].tag, /^flush\./, 'operator flush uses a flush.<pid> claim tag');
-  assert.deepStrictEqual(m._injected.map(x => x.text), ['m1', 'm2']);
+  // Batched: N parked texts land as ONE injection (blank-line separator, park
+  // order) — a per-text drain stranded the tail in the CLI's turn-start (field bug).
+  assert.strictEqual(m._injected.length, 1, 'one injection for the whole drain, not N');
+  assert.strictEqual(m._injected[0].text, 'm1\n\nm2');
 });
 
 test('flushPending: injects NON-parkable (the resend-recursion guard) and clears the badge', () => {

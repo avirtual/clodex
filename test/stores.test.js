@@ -162,6 +162,30 @@ test('persistence: setHoldUntil round-trips and clears to an ABSENT key', () => 
   } finally { cleanup(); }
 });
 
+test('persistence: setRosterSent stamps a one-time marker that survives upserts', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    // Absent on a fresh entry → create() treats it as a genuine first spawn.
+    assert.strictEqual('rosterSentAt' in stores.persistence.get('a'), false);
+    // Stamp at delivery: an epoch-ms marker lands.
+    stores.persistence.setRosterSent('a');
+    const ts = stores.persistence.get('a').rosterSentAt;
+    assert.ok(typeof ts === 'number' && ts > 0, 'stamped with an epoch-ms timestamp');
+    // Survives an unrelated upsert (spread-merge keeps the field) — this is what
+    // makes a restart's create()-upsert NOT wipe the "already delivered" signal.
+    stores.persistence.upsert({ name: 'a', label: 'x' });
+    assert.strictEqual(stores.persistence.get('a').rosterSentAt, ts);
+    // No-op on an unknown name (never creates an entry).
+    stores.persistence.setRosterSent('ghost');
+    assert.strictEqual(stores.persistence.get('ghost'), null);
+    // Delete drops the whole record → a re-created 'a' is a genuine first spawn.
+    stores.persistence.remove('a');
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    assert.strictEqual('rosterSentAt' in stores.persistence.get('a'), false);
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {

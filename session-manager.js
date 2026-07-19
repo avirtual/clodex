@@ -1270,11 +1270,13 @@ function createSessionManager(deps) {
           this._scanPtyOutput(session, data);
         }
 
-        // A deferred initial roster (non-claude team seat) rides the FIRST quiet
+        // A booting codex team seat's boot-settle window rides the FIRST quiet
         // window after boot output — each chunk re-arms the settle timer, so it
-        // fires once the boot render quiesces (the TUI at its prompt). No-op once
-        // flushed. See _injectRoster / _armRosterFlush.
-        if (session._pendingRoster) this._armRosterFlush(session);
+        // closes once the boot render quiesces (the TUI at its prompt). Closing
+        // it delivers any stashed initial roster and re-opens the seat to
+        // actively-typed deltas. No-op once settled. See _armBootSettle /
+        // _settleBoot.
+        if (session._bootSettling) this._armBootSettle(session);
       });
 
       ptyProc.onExit(({ exitCode, signal }) => {
@@ -1335,11 +1337,27 @@ function createSessionManager(deps) {
       // Teams context architecture (docs/teams-design.md): composition rides as
       // DATA, never the system prompt. A seat born on a team gets one initial
       // roster message (sender `team`) as its first appended context, and every
-      // OTHER live seat of the team gets a passive "spawned" delta. Best-effort:
-      // both are wrapped so a resolution hiccup never fails the spawn.
+      // OTHER live seat of the team gets a passive "spawned" delta — but ONLY on
+      // a genuine first spawn, never on a resume/restart (existingEntry is the
+      // PRE-upsert record; a rosterSentAt stamp means this seat already got its
+      // roster). Best-effort: wrapped so a resolution hiccup never fails spawn.
       if (resolvedTeam) {
-        this._injectRoster(session, resolvedTeam);
-        this._notifyComposition(session, 'spawned');
+        this._maybeInjectComposition(session, resolvedTeam, existingEntry);
+        // Boot-settle window (task 22 rework / MUST-FIX 1): a codex seat has no
+        // passive store, so ANYTHING delivered while its TUI is still booting is
+        // ACTIVE-typed into an unsubmitted input box (the task-11 boot race). That
+        // hazard is independent of whether this seat stashed an initial roster —
+        // a RESUMED (stamped) seat skips the roster above yet still boots, and a
+        // composition delta fanned to it mid-boot would race the same way. So the
+        // boot-settle signal is armed for EVERY codex team seat here, NOT inside
+        // _injectRoster: the settle machinery (_armBootSettle → _settleBoot,
+        // re-armed by onData) closes the window, and _pendingRoster only decides
+        // WHAT (if anything) delivers at close. Claude seats never type at boot
+        // (passive park), so they need no window.
+        if (session.agentType !== 'claude') {
+          session._bootSettling = true;
+          session._bootSettleSince = Date.now();   // absolute-wait cap anchor
+        }
       }
       return { name, type, pid: ptyProc.pid, backend, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
     }
@@ -1473,6 +1491,53 @@ function createSessionManager(deps) {
       return names;
     }
 
+    // Gate the one-time team-context wiring (initial roster + the seat's own
+    // 'spawned' delta to teammates) on a genuine FIRST spawn. On a resume/restart
+    // the seat's restored context already holds its roster, so reinjecting is pure
+    // noise — and N restored seats each re-firing 'spawned' at app relaunch is
+    // N×N delta spam for a team whose composition never changed. `existingEntry`
+    // is the PRE-upsert persistence record; a rosterSentAt stamp on it means this
+    // seat received its roster on a prior spawn. resumeId's VALUE is deliberately
+    // NOT the signal (task 15's lesson: a persisted no-sessionId entry resumes
+    // with resumeId=null, an adopt-mint carries one — value is not the mint-vs-
+    // restore axis; the stamp is). The stamp is written at DELIVERY, so a seat
+    // that died before its roster landed (no stamp) retries on the next spawn
+    // (self-heal). 'retired'/'archived' deltas are unaffected — they fire from
+    // the archive/kill paths on genuine membership changes, not here.
+    _maybeInjectComposition(session, team, existingEntry) {
+      if (existingEntry && existingEntry.rosterSentAt) return;
+      this._injectRoster(session, team);
+      this._notifyComposition(session, 'spawned');
+    }
+
+    // Stamp the initial-roster delivery on the persistence record (best-effort;
+    // a persistence stub without the method — some tests — is a clean no-op).
+    // Called from the delivery points, not the decision, so the stamp reflects
+    // an actually-delivered roster (self-heal: no delivery → no stamp → retry).
+    _markRosterSent(session) {
+      const p = getPersistence();
+      if (p && typeof p.setRosterSent === 'function') p.setRosterSent(session.name);
+    }
+
+    // Preserve the rosterSentAt stamp across a kill()+create restart (task 22
+    // rework / MUST-FIX 2). The APP-RELAUNCH restore path keeps the persistence
+    // record (never removed), so create()'s existingEntry carries the stamp and
+    // the roster is correctly skipped. But the IN-PLACE restart paths
+    // (engine.restartSession / applySessionArgs) route through kill(), which
+    // REMOVES the record — so by the time create() reads existingEntry it's null,
+    // and a stamped seat gets its roster re-injected + re-announced into a
+    // --resume'd context. Re-stamping AFTER create() is too late (the decision
+    // already fired), so the restart callers capture the pre-kill entry and call
+    // this AFTER kill, BEFORE create: it re-seeds JUST the stamp so create's
+    // existingEntry read sees it and skips. create's own upsert then spread-merges
+    // the full record over this stub, preserving the field. A never-stamped
+    // (genuinely fresh) prior entry seeds nothing → still gets its roster.
+    _preserveRosterStamp(name, priorEntry) {
+      if (!priorEntry || !priorEntry.rosterSentAt) return;
+      const p = getPersistence();
+      if (p && typeof p.upsert === 'function') p.upsert({ name, rosterSentAt: priorEntry.rosterSentAt });
+    }
+
     // Inject the one-time initial roster (sender `team`) into a freshly
     // registered team seat — its first appended-context message (mechanism 2 in
     // the context architecture): roles, briefs, live seats, subagent-class
@@ -1482,54 +1547,79 @@ function createSessionManager(deps) {
     // operator had to submit by hand.
     //
     // Claude seats park it PASSIVELY (the pending store drains on the seat's first
-    // organic hook turn — no PTY typing). Codex has no passive store, so
+    // organic hook turn — no PTY typing) with the roster formatted NOW (immediate
+    // delivery, no staleness window). Codex has no passive store, so
     // _deliverPassive there falls back to an ACTIVE write — the same boot-race bug,
-    // scoped to codex. So a codex seat DEFERS: the body is stashed on the session
-    // and the onData settle timer (_armRosterFlush) delivers it on the normal path
-    // once the boot render quiesces (the TUI up, active injection safe — how mid-
-    // session DMs already work). Best-effort. `team` is a resolveTeam() result.
+    // scoped to codex. So a codex seat DEFERS: the TEAM REF is stashed on the
+    // session (not a pre-rendered body) and the boot-settle machinery
+    // (_armBootSettle → _settleBoot, armed at create for every codex seat)
+    // recomputes + delivers on the normal path once the boot render quiesces (the
+    // TUI up, active injection safe — how mid-session DMs already work). Stashing
+    // the ref rather than a snapshot body is deliberate:
+    // a teammate that spawns DURING this seat's boot must appear in the roster it
+    // finally receives (task 20's dropped-delta contract leans on exactly this —
+    // the pending roster supersedes the coalesced delta, so it must be fresh at
+    // delivery). Best-effort. `team` is a resolveTeam() result.
     _injectRoster(session, team) {
       try {
-        const body = formatRoster(team, this._teamLiveSeats(team.root));
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', body, 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root)), 'dm');
+          this._markRosterSent(session);   // parked = delivered for claude; stamp so a restart won't re-inject
         } else {
-          session._pendingRoster = body;   // flushed by _armRosterFlush at first output settle
-          session._pendingRosterSince = Date.now();   // absolute-wait cap anchor
+          session._pendingRoster = team;   // team ref; body recomputed FRESH by _settleBoot at boot-settle
+          // The boot-settle window + its cap anchor (_bootSettling/_bootSettleSince)
+          // are armed by create() for EVERY codex seat, not here — a resumed seat
+          // that skips the roster still needs the window (MUST-FIX 1). The codex
+          // stamp is deferred to _settleBoot (actual delivery) — a seat that dies
+          // before the flush keeps no stamp and retries next spawn.
         }
       } catch (e) {
         log.error('inject', `roster inject failed for ${session.name}: ${e.message}`);
       }
     }
 
-    // Arm/re-arm the deferred-roster settle timer for a non-claude seat. Every
-    // output chunk pushes the deadline out, so the roster flushes only after the
-    // boot render goes quiet — an ACTIVITY-gated wait, not a blind spawn timer.
-    // But a TUI that repaints faster than the settle interval (spinner / status
-    // clock) would re-arm forever; past ROSTER_MAX_WAIT_MS from stash time, flush
-    // NOW rather than re-arm (inject-queue maxWaitMs precedent). No-op once
-    // flushed (_pendingRoster cleared).
-    _armRosterFlush(session) {
-      if (!session._pendingRoster) return;
-      if (Date.now() - (session._pendingRosterSince || 0) >= ROSTER_MAX_WAIT_MS) {
-        clearTimeout(session._rosterFlushTimer);
-        session._rosterFlushTimer = null;
-        this._flushPendingRoster(session);
+    // Arm/re-arm the boot-settle timer for a non-claude seat. Every output chunk
+    // pushes the deadline out, so the window closes only after the boot render
+    // goes quiet — an ACTIVITY-gated wait, not a blind spawn timer. But a TUI that
+    // repaints faster than the settle interval (spinner / status clock) would
+    // re-arm forever; past ROSTER_MAX_WAIT_MS from arm time, close NOW rather than
+    // re-arm (inject-queue maxWaitMs precedent). No-op once settled
+    // (_bootSettling cleared).
+    _armBootSettle(session) {
+      if (!session._bootSettling) return;
+      if (Date.now() - (session._bootSettleSince || 0) >= ROSTER_MAX_WAIT_MS) {
+        clearTimeout(session._bootSettleTimer);
+        session._bootSettleTimer = null;
+        this._settleBoot(session);
         return;
       }
-      clearTimeout(session._rosterFlushTimer);
-      session._rosterFlushTimer = setTimeout(() => this._flushPendingRoster(session), ROSTER_SETTLE_MS);
+      clearTimeout(session._bootSettleTimer);
+      session._bootSettleTimer = setTimeout(() => this._settleBoot(session), ROSTER_SETTLE_MS);
     }
 
-    // Deliver a deferred initial roster on the normal (active) path: the TUI is up
-    // now, so this is a safe mid-session-style inject (quiet-gate/busy-hold apply
-    // as for any DM). Once-only + dead-safe.
-    _flushPendingRoster(session) {
-      session._rosterFlushTimer = null;
-      const body = session._pendingRoster;
-      if (!body || session._dead) return;
+    // Close a codex seat's boot-settle window: the TUI is up now, so it re-opens
+    // to actively-typed deltas (_bootSettling cleared) AND delivers any stashed
+    // initial roster on the normal (active) path — a safe mid-session-style inject
+    // (quiet-gate/busy-hold apply as for any DM). A RESUMED seat has no stashed
+    // roster (_pendingRoster null): the window just closes, nothing is delivered.
+    // The roster body is rendered HERE, at delivery, from the stashed team ref +
+    // current live seats — so it lists any teammate that spawned during this seat's
+    // boot (fresh-at-delivery, not a spawn-time snapshot). Once-only + dead-safe.
+    // The render/deliver is wrapped: this runs from a setTimeout callback, so a
+    // throw would be an uncaughtException in main — the roster path is
+    // best-effort-never-throws (task 22 rework NIT).
+    _settleBoot(session) {
+      session._bootSettleTimer = null;
+      session._bootSettling = false;   // boot window closed → deltas deliver normally now
+      const team = session._pendingRoster;
+      if (!team || session._dead) return;
       session._pendingRoster = null;
-      this._deliverMessage(session.name, 'team', body, 'dm');
+      try {
+        this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root)), 'dm');
+        this._markRosterSent(session);   // delivered now → stamp so a restart won't re-inject
+      } catch (e) {
+        log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
+      }
     }
 
     // Fan a passive composition delta (sender `team`) to every OTHER live seat
@@ -1539,6 +1629,22 @@ function createSessionManager(deps) {
     // missed or double delta is harmless). No-op for non-agent sessions,
     // teamless cwds, or when team resolution is unavailable (e.g. tests without
     // the injected dep) — wrapped so it never throws into a teardown.
+    //
+    // Boot-race coalesce (task 20 + task-22 rework): a target codex seat still
+    // inside its boot-settle window (_bootSettling) would have _deliverPassive
+    // fall back to an ACTIVE PTY write and type the delta into the unsubmitted
+    // TUI — the task-11 boot-race, narrower trigger (near-simultaneous spawns /
+    // an app restart that mints a seat while others reboot). So we COALESCE
+    // rather than queue a second timer: DROP the delta. The guard keys on the
+    // boot-settle FLAG, not on a stashed roster — a RESUMED (stamped) seat skips
+    // its roster (no _pendingRoster) yet still boots, and MUST be suppressed just
+    // the same (MUST-FIX 1); keying on _pendingRoster alone would let a delta
+    // race into a resumed seat's booting TUI. Dropping (vs deliver-at-settle) is
+    // the T20 harmless-miss contract: the seat's resumed context + its on-demand
+    // roster pull are ground truth and supersede the one-line delta, and a missed
+    // delta is harmless by this fn's contract above. Claude seats park passively
+    // regardless (boot-safe, never _bootSettling), and a settled codex seat (TUI
+    // up) takes the delta on the normal path.
     _notifyComposition(session, verb) {
       if (!session || !session.agentType) return;
       let team;
@@ -1548,6 +1654,7 @@ function createSessionManager(deps) {
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
+        if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
         if (root && root === team.root) this._deliverPassive(s.name, 'team', body, 'dm');
       }
@@ -1680,7 +1787,7 @@ function createSessionManager(deps) {
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._compactValveTimer);
       clearTimeout(s._parkCapTimer);
-      clearTimeout(s._rosterFlushTimer);
+      clearTimeout(s._bootSettleTimer);
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       // Drop any parked deliveries ONLY for a session going away for good — i.e. a
       // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
@@ -2088,9 +2195,15 @@ function createSessionManager(deps) {
       try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`); } catch {}
       if (!texts.length) return;                        // hook already drained, or nothing parked
       // Parkable: if a draft opens before the queue writes, the fire-time divert
-      // re-parks each text instead of splicing (best-effort — falls through to a
+      // re-parks the body instead of splicing (best-effort — falls through to a
       // normal inject on park failure, never dropping a DM).
-      for (const t of texts) this._injectText(session, t, { parkable: true });
+      // ONE injection for the whole drain (matching _flushParkedNow + the hook's
+      // texts.join('\\n\\n')): N sequential injects race the TUI turn-start and
+      // strand the tail. Batching changes re-park granularity — a divert re-parks
+      // the combined body as ONE entry, which then re-delivers as one next turn.
+      // That's the same shape a single hook drain would have produced, so it's a
+      // consistency win, not a regression. drainPending returns park order.
+      this._injectText(session, texts.join('\n\n'), { parkable: true });
     }
 
     // --- JSONL text scanning (agent mode) ---
@@ -3937,7 +4050,14 @@ function createSessionManager(deps) {
         : `flushed ${texts.length} parked deliver${plural} (operator)`;
       log.warn('inject', `${kind} for ${target.name} — draining ${texts.length} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
-      for (const t of texts) this._injectText(target, t);
+      // ONE injection for the whole drain, not N. N sequential _injectText calls
+      // raced: #1's Enter starts a CLI turn and #2 landed in the turn-start churn
+      // where its Enter got swallowed → stranded draft. A forced flush is non-
+      // parkable (resend-recursion fix), so a stranded text just sits. Join into a
+      // single body with the SAME blank-line separator the out-of-process hook
+      // drain uses (cli-hooks.js: texts.join('\\n\\n')), so a seat sees the same
+      // combined shape whichever drainer won. drainPending returns park order.
+      this._injectText(target, texts.join('\n\n'));
       return { ok: true, count: texts.length };
     }
 

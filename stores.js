@@ -487,6 +487,23 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
+    // Teams: stamp the one-time initial-roster DELIVERY. create() reads this
+    // pre-upsert to gate the team-context wiring: present → this seat already
+    // got its roster on a prior spawn, so a resume/restart must NOT re-inject it
+    // (the resumed context already carries it) or re-announce the seat to
+    // teammates (N seats each re-firing 'spawned' on app restart = N×N delta
+    // spam for a team that never changed). Written at delivery (not decision) so
+    // a seat that died before its roster landed carries no stamp and retries next
+    // spawn. Delete drops the whole record, so a delete+recreate is a genuine
+    // first spawn again. Absence, not value, is the signal — see the mint-vs-
+    // resume note in create() (resumeId's VALUE is not the axis; task 15).
+    setRosterSent(name) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      entry.rosterSentAt = Date.now();
+      this._save(all);
+    },
     setProxy(name, proxy) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
