@@ -2913,7 +2913,10 @@ html, body {
 /* New Session tool-doctor gate notice (Task 12): shown when the selected type's
    CLI isn't on PATH. Ships hidden; the .sandbox-dot inside colors it error. */
 #new-session-tool-notice.hidden { display: none; }
-#new-session-tool-notice { color: var(--error, #d9534f); }
+#new-session-tool-notice { color: var(--error, #d9534f); display: flex; align-items: center; gap: 8px; }
+/* "Install <tool>…" button on the missing-CLI notice (Task 14): spawns the
+   visible bash installer. Compact, sits to the right of the remedy text. */
+.tool-install-btn { margin-left: auto; flex: none; padding: 2px 10px; font-size: 12px; }
 
 .diag-dot {
   color: #f0ad4e;

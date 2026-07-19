@@ -18,7 +18,11 @@ const { createDetectCache } = require('./detect-cache');
 // the notice. python3 is intentionally ABSENT from the probed set — wirescope
 // surfaces its own python error; it's listed in FUTURE_TOOLS, not probed here.
 const TOOL_SPECS = [
-  { name: 'claude', bins: ['claude'], neededFor: 'Claude sessions', install: 'npm i -g @anthropic-ai/claude-code' },
+  // The native installer, not npm: the audience for this remedy is a fresh
+  // account/machine that quite likely lacks npm too — curl+bash always exist on
+  // macOS, and the native install is what Anthropic recommends (installs to
+  // ~/.local/bin, no Node needed, auto-updates).
+  { name: 'claude', bins: ['claude'], neededFor: 'Claude sessions', install: 'curl -fsSL https://claude.ai/install.sh | bash' },
   { name: 'codex',  bins: ['codex'],  neededFor: 'Codex sessions',  install: 'npm i -g @openai/codex' },
   { name: 'git',    bins: ['git'],    neededFor: 'worktrees & version control' },
   { name: 'gh',     bins: ['gh'],     neededFor: 'GitHub releases',  install: 'brew install gh' },
@@ -48,6 +52,30 @@ function specFor(name, specs = TOOL_SPECS) {
   return specs.find((s) => s.name === name) || null;
 }
 
+// ── Install sessions (Task 14) ─────────────────────────────────────────────
+// The "Install <tool>…" button spawns a PLAIN BASH session that runs the spec's
+// `install` line VISIBLY (transparency — the user watches the official installer
+// and answers any prompt it raises). Its name follows a single convention so the
+// exit→invalidate decision below can recognize it without a side registry.
+const INSTALL_SESSION_PREFIX = 'install-';
+
+// Canonical name for a tool's install session (global namespace; the session is a
+// private bash shell — no registry/socket).
+function installSessionName(tool) {
+  return `${INSTALL_SESSION_PREFIX}${tool}`;
+}
+
+// Does a session name denote a tool-install session whose completion should bust
+// the tool cache? True only for `install-<tool>` where <tool> is a probed spec
+// that carries an install line — so a user's own `install-foo` bash shell never
+// triggers a needless cache invalidation. Pure decision (Task 14), unit-tested in
+// lieu of the exit→invalidate IPC.
+function isToolInstallSession(name, specs = TOOL_SPECS) {
+  if (typeof name !== 'string' || !name.startsWith(INSTALL_SESSION_PREFIX)) return false;
+  const spec = specFor(name.slice(INSTALL_SESSION_PREFIX.length), specs);
+  return !!(spec && spec.install);
+}
+
 // Pure UI copy for a tool's presence: {kind,text}, mirroring sandbox-view's
 // detectNotice shape so the dialog renders it identically. Present → ok. Missing →
 // error with the install remedy when the spec carries one.
@@ -70,7 +98,9 @@ function createToolCache({ whichBin, specs = TOOL_SPECS, now, ttlMs } = {}) {
     const byTool = {};
     for (const r of list) {
       const spec = specFor(r.tool, specs);
-      byTool[r.tool] = { ...r, notice: toolNotice(r, spec) };
+      // `install` is surfaced as a structured field (not just buried in the notice
+      // text) so the dialog can render an Install button off it (Task 14).
+      byTool[r.tool] = { ...r, notice: toolNotice(r, spec), install: (spec && spec.install) || null };
     }
     return { list, byTool };
   };
@@ -78,6 +108,7 @@ function createToolCache({ whichBin, specs = TOOL_SPECS, now, ttlMs } = {}) {
 }
 
 module.exports = {
-  TOOL_SPECS, FUTURE_TOOLS,
+  TOOL_SPECS, FUTURE_TOOLS, INSTALL_SESSION_PREFIX,
   probeTool, probeTools, specFor, toolNotice, createToolCache,
+  installSessionName, isToolInstallSession,
 };

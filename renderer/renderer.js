@@ -10,7 +10,8 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
-const { newSessionToolGate } = require('./lib/tool-gate');
+const { newSessionToolGate, installSessionParams } = require('./lib/tool-gate');
+const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
@@ -1366,11 +1367,22 @@ const newSessionToolNotice = document.getElementById('new-session-tool-notice');
 
 // Apply a tool-gate decision to the dialog: show/hide the inline notice + toggle
 // Create. btnCreate is gated ONLY here in create mode, so re-enabling on ok is
-// safe. Reuses renderSandboxNotice for the docker-notice visual language.
+// safe. Reuses renderSandboxNotice for the docker-notice visual language. When the
+// missing tool has an install remedy, append an "Install <tool>…" button that
+// spawns the visible bash installer (Task 14).
 function applyNewSessionToolGate(gate) {
   if (!newSessionToolNotice) return;
   if (gate.disabled) {
     renderSandboxNotice(newSessionToolNotice, gate.notice);
+    if (gate.install) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tool-install-btn';
+      btn.textContent = gate.install.label;
+      btn.title = `Run: ${gate.install.command}`;
+      btn.addEventListener('click', () => openInstallSession(gate.install));
+      newSessionToolNotice.appendChild(btn);
+    }
     newSessionToolNotice.classList.remove('hidden');
     btnCreate.disabled = true;
     btnCreate.title = gate.notice ? gate.notice.text : '';
@@ -1379,6 +1391,37 @@ function applyNewSessionToolGate(gate) {
     btnCreate.disabled = false;
     btnCreate.title = '';
   }
+}
+
+// Kick off a tool install in a VISIBLE bash session (Task 14). Transparency is the
+// point: the user watches the official installer and answers any prompt it raises
+// — no hidden exec of a remote script. Name collision (names are global): if the
+// install session already exists, just focus it rather than erroring [FLAGGED
+// choice: focus-existing over suffixing, so repeat clicks don't spawn a pile of
+// dead installers]. The dialog closes so the terminal is front-and-center; the
+// tool cache is busted on that session's exit (onSessionExit below), which
+// re-enables Create by itself once the CLI lands.
+async function openInstallSession(install) {
+  const params = installSessionParams(install, homeDir);
+  if (!params) return;
+  closeDialog();
+  if (sessions.has(params.name)) { switchSession(params.name); return; }
+  const result = await window.api.createSession(
+    params.name, params.type, params.cwd, [], null, null, false, null,
+    [], [], [], [], [], undefined, null, [], [], null,
+  );
+  if (!result || !result.ok) {
+    alert(`Couldn't start the installer: ${(result && result.error) || 'unknown error'}`);
+    return;
+  }
+  createTerminal(params.name);
+  addSessionToSidebar(params.name, params.type, params.cwd, null,
+    (result.session && result.session.backend) || null, null);
+  switchSession(params.name);
+  // Run the install line via the inject-queue (quiet-gate + atomic Ctrl-U/Enter),
+  // the same path operator app-panel messages take — a bash PTY is ready almost
+  // immediately, but going through the queue keeps the write atomic and gated.
+  window.api.injectPrompt(params.name, params.command);
 }
 
 // Probe the selected type's CLI and gate Create. Template authoring and bash are
@@ -2414,6 +2457,20 @@ window.api.onPtyData((name, data) => {
 });
 
 window.api.onSessionExit((name, code, meta) => {
+  // Install session finished (Task 14): the CLI it fetched may now be on PATH, so
+  // bust the tool-doctor cache and — if the New Session dialog is still open —
+  // re-run the gate so Create re-enables itself once the tool landed. Invalidate
+  // FIRST (awaited) so the refresh's re-probe sees the fresh PATH, not the stale
+  // cache. `isToolInstallSession` is the pure decision (tool-doctor leaf). This
+  // runs BEFORE the archivedEntry early return below: closing the installer tab
+  // (✕/⌘W/retire) stamps archivingSessions, so the natural end gesture would
+  // otherwise skip the bust entirely and lean on the 30s TTL alone.
+  if (isToolInstallSession(name)) {
+    (async () => {
+      try { await window.api.invalidateToolCache(); } catch {}
+      if (!dialogOverlay.classList.contains('hidden')) refreshNewSessionToolGate();
+    })();
+  }
   // Archive in flight (✕ / ⌘W): this exit IS the archive. Drop the live tab +
   // terminal, then rebuild the row as an archived placeholder in place — no app
   // restart needed — and stay silent (an archive exit is expected).

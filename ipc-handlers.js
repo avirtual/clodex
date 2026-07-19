@@ -51,7 +51,7 @@ function registerIpcHandlers(deps) {
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR, SKILL_REENABLE_CONFIRMED,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
     claudeProjectDir, collectSystemDiagnostics, createWindow, diagSummary,
-    checkTools, diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
+    checkTools, invalidateToolCache, diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager,
@@ -361,6 +361,15 @@ function registerIpcHandlers(deps) {
   handle('tools:check', async () => {
     try { return await checkTools(); }
     catch { return { byTool: {}, list: [] }; }
+  });
+
+  // Bust the tool-doctor cache so the next tools:check re-probes PATH (Task 14):
+  // an Install session just finished, so the freshly-landed CLI must be seen. This
+  // is engine.invalidateToolCache's only caller (closes the task-12 dead-export
+  // nit). Best-effort — a throw here must never break the exit-driven refresh.
+  handle('tools:invalidate', () => {
+    try { invalidateToolCache(); return { ok: true }; }
+    catch { return { ok: false }; }
   });
 
   handle('templates:list', () => templates.list());

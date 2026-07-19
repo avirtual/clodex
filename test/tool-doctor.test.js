@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   TOOL_SPECS, FUTURE_TOOLS, probeTool, probeTools, specFor, toolNotice, createToolCache,
+  installSessionName, isToolInstallSession,
 } = require('../tool-doctor');
 
 // A fake whichBin over a present-set: returns a plausible path for a present bin.
@@ -42,7 +43,7 @@ test('probeTools: reports every default spec, in spec order', () => {
 });
 
 test('specs: claude/codex carry an install remedy; python3 is future, NOT probed', () => {
-  assert.match(specFor('claude').install, /claude-code/);
+  assert.match(specFor('claude').install, /claude\.ai\/install\.sh/, 'native installer, not npm (fresh machines often lack npm too)');
   assert.ok(specFor('codex').install, 'codex has an install line');
   assert.strictEqual(specFor('python3'), null, 'python3 is not a probed spec');
   assert.ok(FUTURE_TOOLS.includes('python3'), 'python3 is listed as future');
@@ -53,20 +54,42 @@ test('toolNotice: present → ok; missing with install → error + remedy; missi
   const miss = toolNotice({ tool: 'claude', present: false }, specFor('claude'));
   assert.strictEqual(miss.kind, 'error');
   assert.match(miss.text, /not found on PATH/);
-  assert.match(miss.text, /install: npm i -g @anthropic-ai\/claude-code/);
+  assert.match(miss.text, /install: curl -fsSL https:\/\/claude\.ai\/install\.sh \| bash/);
   const bare = toolNotice({ tool: 'git', present: false }, specFor('git'));
   assert.strictEqual(bare.kind, 'error');
   assert.doesNotMatch(bare.text, /install:/, 'no remedy when the spec carries none');
 });
 
-test('createToolCache: byTool carries each report + its precomputed notice', async () => {
+test('createToolCache: byTool carries each report + its precomputed notice + install', async () => {
   const cache = createToolCache({ whichBin: whichFrom(new Set(['codex'])), now: () => 0 });
   const res = await cache.get();
   assert.strictEqual(res.byTool.codex.present, true);
   assert.strictEqual(res.byTool.codex.notice.kind, 'ok');
   assert.strictEqual(res.byTool.claude.present, false);
   assert.match(res.byTool.claude.notice.text, /not found on PATH/);
+  // Structured install remedy (Task 14): present for claude/codex, null for git.
+  assert.match(res.byTool.claude.install, /claude\.ai\/install\.sh/);
+  assert.strictEqual(res.byTool.git.install, null);
   assert.ok(Array.isArray(res.list), 'the flat list is also present');
+});
+
+// ── Install-session helpers (Task 14) ────────────────────────────────────────
+test('installSessionName: canonical install-<tool> name', () => {
+  assert.strictEqual(installSessionName('claude'), 'install-claude');
+  assert.strictEqual(installSessionName('codex'), 'install-codex');
+});
+
+test('isToolInstallSession: only install-<tool> for a spec that has an install line', () => {
+  assert.strictEqual(isToolInstallSession('install-claude'), true);
+  assert.strictEqual(isToolInstallSession('install-codex'), true);
+  // git is a probed spec but carries NO install line → not an install session.
+  assert.strictEqual(isToolInstallSession('install-git'), false);
+  // unknown tool, non-install name, empty/non-string → false.
+  assert.strictEqual(isToolInstallSession('install-nope'), false);
+  assert.strictEqual(isToolInstallSession('my-agent'), false);
+  assert.strictEqual(isToolInstallSession('install-'), false);
+  assert.strictEqual(isToolInstallSession(''), false);
+  assert.strictEqual(isToolInstallSession(null), false);
 });
 
 test('createToolCache: caches within the TTL, re-probes past it (shared detect-cache)', async () => {

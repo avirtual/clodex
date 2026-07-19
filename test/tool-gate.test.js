@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { newSessionToolGate } = require('../renderer/lib/tool-gate');
+const { newSessionToolGate, installSessionParams } = require('../renderer/lib/tool-gate');
 
 const check = {
   byTool: {
@@ -51,4 +51,54 @@ test('a report with no notice still blocks with a sensible fallback', () => {
   const g = newSessionToolGate('claude', { byTool: { claude: { present: false } } });
   assert.strictEqual(g.disabled, true);
   assert.match(g.notice.text, /claude CLI not found on PATH/);
+});
+
+// ── Install button (Task 14) ─────────────────────────────────────────────────
+const installCheck = {
+  byTool: {
+    claude: { present: false, notice: { kind: 'error', text: 'claude CLI not found on PATH — install: …' }, install: 'curl -fsSL https://claude.ai/install.sh | bash' },
+    codex: { present: true, notice: { kind: 'ok', text: 'codex found' }, install: 'npm i -g @openai/codex' },
+    git: { present: false, notice: { kind: 'error', text: 'git CLI not found on PATH' }, install: null },
+  },
+};
+
+test('missing tool WITH an install remedy → gate carries an install button descriptor', () => {
+  const g = newSessionToolGate('claude', installCheck);
+  assert.ok(g.install, 'install descriptor present');
+  assert.strictEqual(g.install.tool, 'claude');
+  assert.strictEqual(g.install.label, 'Install claude…');
+  assert.strictEqual(g.install.sessionName, 'install-claude');
+  assert.match(g.install.command, /claude\.ai\/install\.sh/);
+});
+
+test('present tool → no install button (nothing to install)', () => {
+  assert.strictEqual(newSessionToolGate('codex', installCheck).install, null);
+});
+
+test('missing tool WITHOUT an install line → no button, notice only', () => {
+  const g = newSessionToolGate('git', installCheck);
+  // git isn't a gated type (only claude/codex), so it's never disabled — but even
+  // a gated type with install:null yields no button. Assert the null-install case
+  // directly for a gated type:
+  assert.strictEqual(newSessionToolGate('claude', { byTool: { claude: { present: false, install: null } } }).install, null);
+  assert.strictEqual(g.install, null);
+});
+
+test('bash/null-check gates carry no install button', () => {
+  assert.strictEqual(newSessionToolGate('bash', installCheck).install, null);
+  assert.strictEqual(newSessionToolGate('claude', null).install, null);
+});
+
+test('installSessionParams: builds bash session params from a gate install descriptor + home', () => {
+  const g = newSessionToolGate('claude', installCheck);
+  const p = installSessionParams(g.install, '/Users/x');
+  assert.deepStrictEqual(p, {
+    name: 'install-claude', type: 'bash', cwd: '/Users/x',
+    command: 'curl -fsSL https://claude.ai/install.sh | bash',
+  });
+});
+
+test('installSessionParams: null/empty install → null (nothing to spawn)', () => {
+  assert.strictEqual(installSessionParams(null, '/Users/x'), null);
+  assert.strictEqual(installSessionParams({ sessionName: 'install-x', command: '' }, '/Users/x'), null);
 });
