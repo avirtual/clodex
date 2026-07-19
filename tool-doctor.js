@@ -23,7 +23,7 @@ const TOOL_SPECS = [
   // macOS, and the native install is what Anthropic recommends (installs to
   // ~/.local/bin, no Node needed, auto-updates).
   { name: 'claude', bins: ['claude'], neededFor: 'Claude sessions', install: 'curl -fsSL https://claude.ai/install.sh | bash' },
-  { name: 'codex',  bins: ['codex'],  neededFor: 'Codex sessions',  install: 'npm i -g @openai/codex' },
+  { name: 'codex',  bins: ['codex'],  neededFor: 'Codex sessions',  install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh' },
   { name: 'git',    bins: ['git'],    neededFor: 'worktrees & version control' },
   { name: 'gh',     bins: ['gh'],     neededFor: 'GitHub releases',  install: 'brew install gh' },
   { name: 'docker', bins: ['docker'], neededFor: 'sandboxes' },

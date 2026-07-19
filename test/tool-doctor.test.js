@@ -44,7 +44,8 @@ test('probeTools: reports every default spec, in spec order', () => {
 
 test('specs: claude/codex carry an install remedy; python3 is future, NOT probed', () => {
   assert.match(specFor('claude').install, /claude\.ai\/install\.sh/, 'native installer, not npm (fresh machines often lack npm too)');
-  assert.ok(specFor('codex').install, 'codex has an install line');
+  assert.match(specFor('codex').install, /chatgpt\.com\/codex\/install\.sh/, 'native installer, not npm (fresh machines often lack npm too)');
+  assert.doesNotMatch(specFor('codex').install, /npm i -g/, 'npm remedy fails without npm');
   assert.strictEqual(specFor('python3'), null, 'python3 is not a probed spec');
   assert.ok(FUTURE_TOOLS.includes('python3'), 'python3 is listed as future');
 });
