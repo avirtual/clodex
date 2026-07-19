@@ -284,7 +284,9 @@ def snapshot(days=RETENTION_DAYS):
         totals["redundant_tokens"] += rt
         frm = mn if frm is None else min(frm, mn)
     files.sort(key=lambda x: -x["redundant_tokens"])
-    return {"product": "logproxy", "version": core_mod.VERSION,
+    # "wirescope" since 2026-07-19, matching /_identity (was "logproxy" from
+    # before the rename; clodex confirmed its consumer keys only on files[]).
+    return {"product": "wirescope", "version": core_mod.VERSION,
             "window": {"from": frm, "to": datetime.date.today().isoformat(),
                        "days": days},
             "totals": totals, "files": files}

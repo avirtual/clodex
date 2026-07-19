@@ -413,7 +413,7 @@ def _sweep_state(now=None):
         _transforms_mod._ws_forget(sid)   # sticky wirescope spawn memory
         _fold_mod._forget(sid)            # fold maps + override
         meta_mod.writer_mod._forget_session_fp(sid)   # main-line fingerprint
-    purged = heads = 0
+    purged = heads = lr_aged = busts = 0
     try:
         con = store_mod.db()
         with store_mod.LOCK:
@@ -430,11 +430,28 @@ def _sweep_state(now=None):
                 con.executemany(
                     "DELETE FROM last_request WHERE owner=? AND session_id=?",
                     [(store_mod.OWNER, s) for s in stale])
+            # DEAD-OWNER debris (2026-07-19): the mirror delete above only ever
+            # tracks THIS owner's in-memory drops, so rows from a LOG_DIR that
+            # never boots again (scratch arms, A/B runs) are unreachable by any
+            # purge and accrete full request bodies forever. Age on ts IS safe
+            # at purge-slack scale, despite the mirror comment above: pings can
+            # keep a prefix warm at most ~13h past its last organic turn (12h
+            # hold cap + 1h TTL), and ts is that turn — 7d-old rows are cold
+            # for every owner, live or dead. A live owner's in-memory entry is
+            # unaffected (its next persist re-inserts). session_bust rides the
+            # same age purge: the sweeper reaps session_head but used to orphan
+            # its bust pair; last_ts is stamped on every upsert.
+            lr_aged = con.execute("DELETE FROM last_request WHERE ts < ?",
+                                  (now - _WARMTH_PURGE_SLACK,)).rowcount
+            busts = con.execute(
+                "DELETE FROM session_bust WHERE COALESCE(last_ts, 0) < ?",
+                (now - _WARMTH_PURGE_SLACK,)).rowcount
             con.commit()
     except Exception:
         pass
     return {"last_request_dropped": len(stale), "warmth_purged": purged,
-            "session_heads_dropped": heads,
+            "session_heads_dropped": heads, "last_request_aged": lr_aged,
+            "session_busts_dropped": busts,
             "last_request_size": len(_LAST_REQUEST)}
 
 
@@ -443,9 +460,12 @@ def _sweeper_loop():
         time.sleep(max(30, WARMTH_SWEEP_INTERVAL))
         try:
             res = _sweep_state()
-            if res["last_request_dropped"] or res["warmth_purged"] or res["session_heads_dropped"]:
+            if (res["last_request_dropped"] or res["warmth_purged"]
+                    or res["session_heads_dropped"] or res["last_request_aged"]
+                    or res["session_busts_dropped"]):
                 print(f"[sweep] dropped lr={res['last_request_dropped']} "
                       f"purged={res['warmth_purged']} heads={res['session_heads_dropped']} "
+                      f"aged_lr={res['last_request_aged']} busts={res['session_busts_dropped']} "
                       f"(lr={res['last_request_size']})", flush=True)
         except Exception:
             pass

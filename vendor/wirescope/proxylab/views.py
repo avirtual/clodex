@@ -369,7 +369,7 @@ def _load_last_request_disk(session_id, subkey=None):
     (never handed to the pinger). Main line = parent/unknown role, preferring
     real turns (n_tools > 0) over title/probe side-calls; subkey = a subagent
     instance (agent_id, fallback role — same key the /_status rows use)."""
-    d = core_mod.LOG_DIR / session_id
+    d = core_mod._session_dir(session_id)
     try:
         files = sorted(d.glob("*.request.json"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
@@ -471,7 +471,7 @@ def _load_request_by_index(session_id, i):
     nav.update({"i": i, "seq": t["seq"], "ts": t["ts"],
                 "prev": i - 1 if i > 0 else None,
                 "next": i + 1 if i < n - 1 else None})
-    d = core_mod.LOG_DIR / session_id
+    d = core_mod._session_dir(session_id)
     rf = d / (t["stem"] + ".request.json")
     try:
         rec = json.loads(rf.read_text())

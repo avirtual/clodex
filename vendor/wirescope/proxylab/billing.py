@@ -144,11 +144,10 @@ PRICES = {
     # legacy opus 4.0 / 4.1 (also catches their dated full ids)
     "claude-opus-4":   {"in": 15.0, "out": 75.0, "cache_write_5m": 18.75, "cache_write_1h": 30.0, "cache_read": 1.50},
     "claude-sonnet-4": {"in": 3.0,  "out": 15.0, "cache_write_5m": 3.75,  "cache_write_1h": 6.0,  "cache_read": 0.30},
-    # sonnet-5 has TIME-DEPENDENT pricing: INTRODUCTORY ($2/$10) is in effect
-    # through 2026-08-31; STANDARD ($3/$15, == sonnet-4) starts 2026-09-01.
-    # Entry below is the INTRO rate (correct for all captures + live traffic
-    # until the cutover). ⚠️ FLIP ON 2026-09-01 to in:3/out:15/w5m:3.75/
-    # w1h:6.0/read:0.30 (or make _price_for date-aware — see note to fable).
+    # sonnet-5 has TIME-DEPENDENT pricing: INTRODUCTORY ($2/$10) through
+    # 2026-08-31; STANDARD ($3/$15, == sonnet-4) from 2026-09-01. Entry below
+    # is the INTRO rate; the cutover is applied automatically by _price_for
+    # via PRICES_DATED (priced at receipt time = time of traffic).
     # Distinct model id (newer tokenizer, ~30% more tokens; wire counts already
     # reflect it, so no per-token adjustment — only the $/token rate differs).
     "claude-sonnet-5": {"in": 2.0,  "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
@@ -208,17 +207,40 @@ def _since_start():
 
 _UNPRICED_WARNED = set()
 
+# Scheduled repricings, applied automatically by _price_for: prefix -> list of
+# (effective_from "YYYY-MM-DD", price dict), later dates last. Live traffic is
+# priced at receipt time (= time of traffic), so no manual flip is needed —
+# but note captures store billing at write time: a receipt priced under the
+# old rate is NOT retro-repriced (that's correct — it reflects what was billed).
+PRICES_DATED = {
+    # sonnet-5 intro rate ends 2026-08-31; standard (== sonnet-4) after.
+    "claude-sonnet-5": [("2026-09-01", {"in": 3.0, "out": 15.0,
+                                        "cache_write_5m": 3.75,
+                                        "cache_write_1h": 6.0,
+                                        "cache_read": 0.30})],
+}
 
-def _price_for(model, table=None):
+
+def _price_for(model, table=None, now=None):
     """Longest-prefix match (the old first-dict-hit walk silently shadowed
-    "claude-opus-4-8" with the legacy "claude-opus-4" entry). None = unpriced."""
+    "claude-opus-4-8" with the legacy "claude-opus-4" entry). None = unpriced.
+    Scheduled repricings (PRICES_DATED) overlay the base PRICES table once
+    their effective date is reached; `now` is injectable for tests."""
     if not model:
         return None
     best = None
     for pfx, p in (PRICES if table is None else table).items():
         if model.startswith(pfx) and (best is None or len(pfx) > len(best[0])):
             best = (pfx, p)
-    return best[1] if best else None
+    if best is None:
+        return None
+    pfx, p = best
+    if table is None and pfx in PRICES_DATED:
+        today = time.strftime("%Y-%m-%d", time.localtime(now))
+        for eff, dated in PRICES_DATED[pfx]:
+            if today >= eff:
+                p = dated
+    return p
 
 
 def _warn_unpriced(model, table_name):
@@ -382,7 +404,7 @@ def _accumulate(bill, session_key, stop=None, line=None):
     # deep-copy the session snapshot: by_line nests dicts, and the writer
     # thread serializes AFTER we return — a shallow dict() would let the next
     # turn's bump race the json.dumps (dict-changed-during-iteration).
-    writer_mod._enqueue_json(core_mod.LOG_DIR / session_key / "_session.json",
+    writer_mod._enqueue_json(core_mod._session_dir(session_key) / "_session.json",
                              json.loads(json.dumps(sess)))
     return snap
 

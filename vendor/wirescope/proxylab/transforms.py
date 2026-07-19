@@ -29,6 +29,8 @@ from proxylab import writer as writer_mod
 # forwarder: the server skips the ENTIRE request-mutation chain (inject /
 # shortcircuit / relocate / strip / wirescope omit+tools+hint / sort /
 # compact-strip / hold-echo), so the forwarded bytes equal the received bytes.
+# The RESPONSE side is covered too: _resp_mutating/_relay_active return False
+# and the server's SHORTCIRCUIT local-answer path is skipped under this flag.
 # Capture, billing, warmth-ledger and the subscriber feed still run (they read,
 # never mutate). This is the CONTROL arm for measuring what wirescope's
 # transforms actually buy vs a transparent logging proxy — one flag instead of
@@ -91,7 +93,9 @@ RESP_REPLACE = os.environ.get("RESP_REPLACE")
 
 
 def _resp_mutating():
-    return bool(RESP_APPEND or RESP_REPLACE)
+    # PASSTHROUGH must silence the RESPONSE side too — a control arm with a
+    # copied treatment env would otherwise still mutate what the client sees.
+    return (not PASSTHROUGH) and bool(RESP_APPEND or RESP_REPLACE)
 
 # --- SHORTCIRCUIT: elide the post-tool "wrap-up" round trip -------------------
 # The Messages protocol forces a round trip after every tool_use: a response
@@ -160,7 +164,8 @@ _SC_FIRED_CAP = 512
 
 
 def _relay_active():
-    return bool(SHORTCIRCUIT_DONE and SHORTCIRCUIT_RELAY)
+    # Gated off under PASSTHROUGH (same reason as _resp_mutating).
+    return (not PASSTHROUGH) and bool(SHORTCIRCUIT_DONE and SHORTCIRCUIT_RELAY)
 
 
 # STANDING PROTOCOL INSTRUCTION (UX): so the user types a NORMAL prompt and never
@@ -1411,11 +1416,15 @@ def _sidecall_sys_texts(obj):
 
 def _sidecall_kind(obj):
     """'webfetch' | 'websearch' | None — strict shape match on the two known
-    utility-call families (see block comment above)."""
-    if "thinking" in obj or "cache_control" in json.dumps(obj):
-        return None
+    utility-call families (see block comment above). Cheapest rejects first:
+    this runs on EVERY main-line request (downshift is first in the chain),
+    and the one-message check kills ~all of them before any deep look. The
+    marker check walks the structure (_cache_markers) instead of substring-
+    probing a full json.dumps of a 100k-token body."""
     first = _sidecall_first_text(obj)
     if first is None:
+        return None
+    if "thinking" in obj or _cache_markers(obj):
         return None
     tools = obj.get("tools") or []
     sys_texts = _sidecall_sys_texts(obj)
@@ -1796,26 +1805,17 @@ def _compact_history_warmth(obj):
     return "absent", hashes.get(len(msgs) - 1), len(msgs) - 1
 
 
-def _compact_condition_met(obj):
-    """Is it SAFE to strip the discarded history marker? TWO-STATE: strip iff the
-    history prefix is NOT warm. On a warm cache that history is a 0.10x cache READ
-    and stripping forces a 1.0x re-ship (~10x worse on that chunk) — decline. On
-    'cold'/'absent' the marker only buys an orphaned write at the premium — strip
-    (with a durable receipt-stamped store, absence ≈ expiry; the residual loss
-    case is one bounded overpay on a one-shot compact). 'off'/'error' decline:
-    absence is evidence, a disabled or broken store is not.
-    Override for experiments: STRIP_COMPACT_FORCE=0/1."""
-    force = os.environ.get("STRIP_COMPACT_FORCE")
-    if force is not None:
-        return force in ("1", "yes", "on", "true")
-    return _compact_history_warmth(obj)[0] in ("cold", "absent")
-
-
 def _strip_compact_cache(obj):
     """If this is a compaction request AND the history prefix is NOT warm, remove
     cache_control from MESSAGE blocks only (keep system markers). Returns a log dict
     or None (not a compact request / declined / nothing to strip). Two-state gate:
-    'warm' keeps the marker; 'cold'/'absent' strip; 'off'/'error' decline."""
+    'warm' keeps the marker; 'cold'/'absent' strip; 'off'/'error' decline.
+    WHY not-warm only: on a warm cache that history is a 0.10x cache READ and
+    stripping forces a 1.0x re-ship (~10x worse on that chunk); on cold/absent
+    the marker only buys an orphaned write at the premium (absence ≈ expiry
+    with a durable receipt-stamped store). 'off'/'error' decline: absence is
+    evidence, a disabled or broken store is not. STRIP_COMPACT_FORCE=0/1
+    overrides for experiments."""
     if not STRIP_COMPACT_CACHE or not isinstance(obj, dict):
         return None
     if not _is_compact_request(obj):
@@ -1950,10 +1950,11 @@ ERROR_CALL_STUB = {"_elided": "prior failed call, superseded"}
 # on|off]` directive (rides the same per-agent body/spawn channel as omit/tools)
 # OR the POST /_strip endpoint. STICKY per session_id: once a directive is seen
 # we remember it so it persists across the session's later (directive-less) turns.
-# transforms OWNS + mutates this; the pinger sweep drops it via _ws_forget. In
-# memory only (a directive-driven override self-heals on the next directive turn;
-# the endpoint re-asserts after a restart). session_id -> int LEVEL (0/1/2; see
-# STRIP LEVELS above). Legacy bool persistence reads back as 0/1, fully compatible.
+# transforms OWNS + mutates this; the pinger sweep drops it via _ws_forget.
+# NOT in-memory-only: mirrored to the strip_override table below and reloaded
+# at boot (restore._restore_strip_overrides) — a restart dropping it would flip
+# strip against a warm cache (the 95k–261k-tok bust). session_id -> int LEVEL
+# (0/1/2; see STRIP LEVELS above). Legacy bool rows read back as 0/1.
 _STRIP_OVERRIDE = {}
 
 # PERSISTENCE (restart-amnesia / anti-flap): the per-session strip decision is

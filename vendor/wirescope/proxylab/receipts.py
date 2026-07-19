@@ -22,6 +22,7 @@ import time
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
+from proxylab import core as core_mod
 from proxylab import meta as meta_mod
 from proxylab import subs as subs_mod
 from proxylab import warmth as warmth_mod
@@ -115,7 +116,7 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
          "status_code": status_code,
          # full headers Anthropic returned — request-id,
          # anthropic-ratelimit-*, billing/tier hints, etc.
-         "response_headers": resp_headers,
+         "response_headers": core_mod._safe_headers(resp_headers),
          "billing": bill,        # formatted per-request billing
          "cumulative": cum,      # process-lifetime running total
          "usage": usage,         # flat back-compat view (messages only)
@@ -195,7 +196,7 @@ def openai(blob, *, n, ts, agent, model, session_id, session_key,
         {"seq": n, "agent": agent, "provider": "openai",
          "model": model, "session_id": session_id,
          "endpoint": "responses", "status_code": status_code,
-         "response_headers": resp_headers,
+         "response_headers": core_mod._safe_headers(resp_headers),
          "billing": bill, "cumulative": cum,
          "usage": u, "meta": meta})
     subs_mod.emit_turn_completed_openai(

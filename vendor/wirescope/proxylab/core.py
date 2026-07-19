@@ -54,6 +54,20 @@ UPSTREAM = "https://api.anthropic.com"
 LOG_DIR = Path(os.environ.get("LOG_DIR", "/tmp/proxyclone/logs"))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _session_dir(session):
+    """LOG_DIR/<session>, traversal-confined. Endpoint `session=` params reach
+    filesystem globs (/_report, /_timeline, /_session, /_context&utilization),
+    so a traversal-shaped id ('../..', absolute, or anything with a separator)
+    must not escape the capture root. Real ids are single path components
+    (UUIDs / the NO_SESSION bucket). Invalid ids map to a reserved never-created
+    name so every caller's existing is_dir()/OSError guard fails closed — no
+    call-site changes, no new error paths."""
+    s = str(session or "")
+    if not s or "/" in s or "\\" in s or s in (".", ".."):
+        return LOG_DIR / "_invalid-session-id"
+    return LOG_DIR / s
+
 # hop-by-hop + accept-encoding (we want an uncompressed SSE stream we can read)
 _HOP = {"host", "content-length", "connection", "transfer-encoding",
         "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
@@ -103,9 +117,19 @@ _ROUTE = re.compile(r"^/agent/(?P<name>[A-Za-z0-9_.-]+)/anthropic(?P<rest>/.*)?$
 # calling CLI process/build/account (the "who sent this" the metadata omits).
 # Secrets are redacted — never write the caller's API key to disk.
 _SECRET_HEADERS = {"authorization", "x-api-key", "cookie", "proxy-authorization",
-                   "chatgpt-account-id", "openai-api-key"}
+                   "chatgpt-account-id", "openai-api-key",
+                   # response-side: upstream CDNs (Cloudflare on the codex
+                   # backend) set live session cookies — never persist them
+                   "set-cookie"}
 
 
 def _safe_headers(headers):
     return {k: ("<redacted>" if k.lower() in _SECRET_HEADERS else v)
             for k, v in headers.items()}
+
+
+# Process-wide error counters (server increments, /_status reads — lives here
+# because core is the one module everyone may import). A nonzero
+# transform_errors means OUR chain crashed on some shape and the request
+# forwarded fail-open with degraded capture — loud, not silent.
+ERROR_COUNTS = {"transform_errors": 0, "meta_errors": 0}

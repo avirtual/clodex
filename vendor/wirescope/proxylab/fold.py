@@ -272,7 +272,7 @@ def _discover(msgs, last_user, folded_reads, folded_edits, processed, error_ids)
 
     for i in range(last_user):
         m = msgs[i]
-        if writer_mod_is_real_user_turn(m):
+        if _real_user_turn(m):
             commit()
             cur = {}
             pending = {}
@@ -376,7 +376,7 @@ def _apply(msgs, folded_reads, folded_edits):
 
 # `_is_real_user_turn` lives in transforms; import lazily to avoid a heavy
 # import cycle at module load (transforms pulls in warmth/etc.). Bound once.
-def writer_mod_is_real_user_turn(m):
+def _real_user_turn(m):
     global _IRUT
     try:
         return _IRUT(m)
@@ -414,8 +414,9 @@ def fold_read_edits(obj, agent_id=None):
     folded_edits = _FOLDED_EDITS.setdefault(sid, {})
     processed = _PROCESSED_READS.setdefault(sid, set())
 
-    last_user = max((i for i, m in enumerate(msgs)
-                     if writer_mod_is_real_user_turn(m)), default=-1)
+    # THE shared settled/current-turn detector — never inline this computation
+    # (see _settled_boundary's docstring; inspect-enforced in the test suite).
+    last_user = _t._settled_boundary(msgs)
     if last_user > 0:
         error_ids = _error_edit_ids(msgs, last_user)
         _discover(msgs, last_user, folded_reads, folded_edits, processed, error_ids)

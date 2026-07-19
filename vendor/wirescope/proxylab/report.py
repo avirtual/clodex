@@ -113,7 +113,7 @@ def _iter_pairs(session):
     *before* its pre-restart ones — which scrambles the cache-miss detector's
     chronological state (established/last_ts) and can hide a real idle-gap miss.
     Timestamps are restart-stable; seq is only a sub-second tiebreaker."""
-    d = core_mod.LOG_DIR / session
+    d = core_mod._session_dir(session)
     if not d.is_dir():
         return []
     out = []
@@ -182,7 +182,7 @@ def codex_ws_transcript(session):
     unchanged; None when the session has no codex-ws turns on disk (caller then
     falls back to the normal last-request entry). Disk-heavy (reads every
     `.response.sse`) → on-demand /_session only, like the rest of this module."""
-    d = core_mod.LOG_DIR / session
+    d = core_mod._session_dir(session)
     if not d.is_dir():
         return None
     bodies = sorted(d.glob("*codex-ws*.request.body.json"),

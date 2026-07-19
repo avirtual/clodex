@@ -22,9 +22,9 @@ from proxylab import (core, store, codex, transforms, canary, writer, warmth,  #
                       subs, meta, pinger, hold, billing, receipts, report, pot,
                       prune, restore, status, views, server)
 
-# Fixed search order for __getattr__ (original file order, server last-but-first
-# tried since it owns the handler). Names duplicated across modules are only
-# by-name imports of the same object, so any hit is the right object.
+# Fixed search order for __getattr__ (original file order; server last). Names
+# duplicated across modules are only by-name imports of the same object, so any
+# hit is the right object and the order rarely matters.
 _SUBMODULES = (core, store, codex, transforms, canary, writer, warmth, subs,
                meta, pinger, hold, billing, receipts, report, pot, prune,
                restore, status, views, server)
