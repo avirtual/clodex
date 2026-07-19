@@ -2938,11 +2938,14 @@ html, body {
 .tool-install-btn { margin-left: auto; flex: none; padding: 2px 10px; font-size: 12px; }
 
 /* Install buttons on the diag banner (Task 18): shown only when a missing agent
-   CLI is the banner's actual cause. Push to the right; stop the banner's copy-on-
-   click from firing (renderer stops propagation). Reset the auto-margin that the
+   CLI is the banner's actual cause. Full-width row BELOW the text — inline-right
+   overflows the 220px sidebar and gets covered by #main (z-above). Empty span
+   collapses (no stray gap when there are no buttons). Reset the auto-margin the
    dialog-notice variant uses so multiple buttons sit together. */
-#diag-actions { margin-left: auto; display: flex; gap: 6px; flex: none; }
-#diag-actions .tool-install-btn { margin-left: 0; }
+#diag-banner { flex-wrap: wrap; }
+#diag-actions { flex-basis: 100%; display: flex; gap: 6px; }
+#diag-actions:empty { display: none; }
+#diag-actions .tool-install-btn { margin-left: 0; margin-top: 2px; }
 
 /* Missing-CLI prominence overlay (Task 18): the "popover on the popover". Covers
    the New Session dialog with a dim + a centered, accent-bordered panel so a
