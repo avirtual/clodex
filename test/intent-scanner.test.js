@@ -277,6 +277,48 @@ test('parseIntent: an escaped task is reported, not dispatched', () => {
     { type: 'escape', text: '[agent:task add] spec' });
 });
 
+// --- [agent:team <verb>] — T29 team metadata mutation ----------------------
+test('parseIntent: team role-add — brief BODY + optional prompt/template key:val tokens', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team role-add worker] does the widgets'),
+    { type: 'team', sub: 'role-add', name: 'worker', prompt: null, template: null, body: 'does the widgets' });
+  assert.deepStrictEqual(parseIntent('[agent:team role-add worker prompt:my-p template:tpl] the brief'),
+    { type: 'team', sub: 'role-add', name: 'worker', prompt: 'my-p', template: 'tpl', body: 'the brief' });
+});
+
+test('parseIntent: team role-set — same shape as role-add', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team role-set worker prompt:new-p] new brief'),
+    { type: 'team', sub: 'role-set', name: 'worker', prompt: 'new-p', template: null, body: 'new brief' });
+});
+
+test('parseIntent: team role-rm / role-rename / watchdog carry no body', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team role-rm worker]'),
+    { type: 'team', sub: 'role-rm', name: 'worker', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team role-rename worker builder]'),
+    { type: 'team', sub: 'role-rename', name: 'worker', to: 'builder', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team watchdog 600000]'),
+    { type: 'team', sub: 'watchdog', ms: 600000, body: '' });
+  // A non-numeric watchdog arg → ms null (the handler bounces).
+  assert.deepStrictEqual(parseIntent('[agent:team watchdog soon]'),
+    { type: 'team', sub: 'watchdog', ms: null, body: '' });
+});
+
+test('parseIntent: team role-add brief spans multiple lines (s flag)', () => {
+  const r = parseIntent('[agent:team role-add worker] line one\nline two');
+  assert.strictEqual(r.sub, 'role-add');
+  assert.strictEqual(r.body, 'line one\nline two');
+});
+
+test('parseIntent: an unknown team verb is NOT an intent (near-miss bounce)', () => {
+  assert.strictEqual(parseIntent('[agent:team foo] x'), null);
+  assert.strictEqual(parseIntent('[agent:team role-addx] typo'), null, 'closed alternation — role-addx is not role-add');
+  assert.strictEqual(parseIntent('[agent:team]'), null);
+});
+
+test('parseIntent: an escaped team is reported, not dispatched', () => {
+  assert.deepStrictEqual(parseIntent('\\[agent:team role-rm worker]'),
+    { type: 'escape', text: '[agent:team role-rm worker]' });
+});
+
 test('parseIntent: non-intent / blank lines return null', () => {
   assert.strictEqual(parseIntent(''), null);
   assert.strictEqual(parseIntent('just some prose'), null);

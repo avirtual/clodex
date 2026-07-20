@@ -193,9 +193,9 @@ test('loadManifest rejects bad shapes with pointed errors', () => {
     [{ root: '/p', lead: 'lead', roles: { lead: { tools: ['Read', 7] } } }, /tools must be an array of strings/],
     [{ root: '/p', lead: 'lead', roles: { lead: { tools: [] } } }, /tools must not be empty/],
     [{ root: '/p', lead: 'lead', roles: { lead: { type: 42 } } }, /type must be a string/],
-    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: 'soon' }, /"watchdogMs" must be a positive number/],
-    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: 0 }, /"watchdogMs" must be a positive number/],
-    [{ root: '/p', lead: 'lead', roles: { lead: {} }, watchdogMs: -5 }, /"watchdogMs" must be a positive number/],
+    // NOTE: watchdogMs no longer THROWS on a bad value — it's CLAMPED at consume
+    // (T29 C3): a hand-written bad value must never break a team's resolution.
+    // See the dedicated clamp test below.
   ]) {
     const name = `bad-${i++}`;
     mkTeam(home, name, manifest);
@@ -455,6 +455,175 @@ test('addRole appends a new role, no-ops on an identical def, refuses a divergen
   assert.throws(() => tm.addRole('shop', 'runner', { brief: 42 }), /brief must be a string/);
   // Adding to a missing team throws.
   assert.throws(() => tm.addRole('nope', 'hand', {}), /no team manifest/);
+});
+
+// --- addRole guards: C1 (MF1) never mints an operator-owned key; C4 (MF2) ----
+// pins template to a bare NAME. The join path re-rides the stock reviewer def
+// (no-op-if-equal), but an absent reserved key must never be CREATED by a
+// lead-supplied def — the spec's C1 attack via a hand-deleted key.
+test('addRole refuses to MINT lead/reviewer when the key is absent (C1), no-ops a matching stock re-join', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+
+  // A re-join of the stock reviewer def that's ALREADY on disk is a no-op (the
+  // existing-and-equal branch), NOT a mint — must not be blocked by the C1 guard.
+  const stockReviewer = { ...STOCK_ROLE_DEFS.reviewer, tools: ['Read', 'Grep', 'Glob'] };
+  assert.doesNotThrow(() => tm.addRole('shop', 'reviewer', stockReviewer));
+
+  // Hand-delete the reviewer key (team.json is agent-writable; loadManifest only
+  // REQUIRES `lead`), then a lead-authored role-add tries to forge it → REFUSED.
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  delete raw.roles.reviewer;
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+  assert.throws(
+    () => tm.addRole('shop', 'reviewer', { prompt: 'rubber-stamp' }),
+    /operator-owned topology/,
+    'minting an absent reviewer key is the C1 attack — refused',
+  );
+  // Symmetric guard on lead (a hand-deleted lead already fails loadManifest, but
+  // the mint refusal is symmetric). Re-load a manifest missing lead is invalid,
+  // so re-add lead to a fresh team and prove the mint refusal fires the same way.
+  const raw2 = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  raw2.roles.reviewer = stockReviewer; // restore so loadManifest is valid again
+  delete raw2.roles.lead;              // ...but now lead is gone
+  fs.writeFileSync(file, JSON.stringify(raw2, null, 2));
+  // loadManifest itself now throws (required lead) — addRole surfaces that first.
+  assert.throws(() => tm.addRole('shop', 'lead', { prompt: 'x' }), /roles must include a "lead" role|operator-owned topology/);
+});
+
+test('addRole (C4/MF2) rejects a template that is not a bare library-template NAME', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  // A path-shaped template (what the \S+ scanner token would let through) is refused.
+  assert.throws(() => tm.addRole('shop', 'runner', { template: '/tmp/evil.json' }), /template must be a library-template name/);
+  assert.throws(() => tm.addRole('shop', 'runner', { template: 'bad name!' }), /template must be a library-template name/);
+  // A bare NAME is accepted.
+  const team = tm.addRole('shop', 'runner', { template: 'fable-lead', brief: 'r' });
+  assert.strictEqual(team.roles.runner.template, 'fable-lead');
+});
+
+// --- setRole / removeRole / renameRole: T29 Layer A metadata mutators -------
+// Pure JSON edits with the C1/C4/C6 guards. C5 (seat fail-close) is Slice 2.
+test('setRole edits descriptive fields, strips tools/type (C6), preserves unmodeled raw', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { prompt: 'old-runner', brief: 'old brief' });
+  // Hand-author a field the module doesn't model, to prove re-read-raw preserves it.
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  const raw0 = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  raw0.roles.runner.customField = 'keepme';
+  fs.writeFileSync(file, JSON.stringify(raw0, null, 2));
+
+  // Edit brief + prompt; also echo tools/type (C6 must STRIP them, not write).
+  const team = tm.setRole('shop', 'runner', {
+    brief: 'new brief', prompt: 'new-runner', tools: ['Bash'], type: 'codex',
+  });
+  assert.strictEqual(team.roles.runner.brief, 'new brief', 'brief edited');
+  assert.strictEqual(team.roles.runner.prompt, 'new-runner', 'prompt edited');
+  assert.strictEqual(team.roles.runner.tools, null, 'C6: tools NOT written (stripped)');
+  assert.strictEqual(team.roles.runner.type, null, 'C6: type NOT written (stripped)');
+  // Confirm on-disk raw carries neither the stripped authority fields nor lost the unmodeled one.
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(!('tools' in onDisk.roles.runner), 'tools absent on disk');
+  assert.ok(!('type' in onDisk.roles.runner), 'type absent on disk');
+  assert.strictEqual(onDisk.roles.runner.customField, 'keepme', 'unmodeled raw field preserved');
+});
+
+test('setRole: C1 refuses reviewer + lead, C4 validates template, throws on missing role', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' }); // scaffold has lead+hand+reviewer
+  // C1: operator-owned topology keys are refused.
+  assert.throws(() => tm.setRole('shop', 'reviewer', { brief: 'x' }), /operator-owned topology/);
+  assert.throws(() => tm.setRole('shop', 'lead', { brief: 'x' }), /operator-owned topology/);
+  // A non-existent role points at addRole.
+  assert.throws(() => tm.setRole('shop', 'ghost', { brief: 'x' }), /not found on team "shop" — use addRole/);
+  // C4: garbage template rejected; a valid NAME accepted and written (resolved nowhere).
+  assert.throws(() => tm.setRole('shop', 'hand', { template: 42 }), /template must be a library-template name/);
+  assert.throws(() => tm.setRole('shop', 'hand', { template: 'bad name!' }), /template must be a library-template name/);
+  const team = tm.setRole('shop', 'hand', { template: 'fable-lead' });
+  assert.strictEqual(team.roles.hand.template, 'fable-lead', 'valid template name accepted');
+});
+
+test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on missing', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { prompt: 'r' });
+  const team = tm.removeRole('shop', 'runner');
+  assert.ok(!('runner' in team.roles), 'runner removed');
+  assert.throws(() => tm.removeRole('shop', 'lead'), /operator-owned topology/);
+  assert.throws(() => tm.removeRole('shop', 'reviewer'), /operator-owned topology/);
+  assert.throws(() => tm.removeRole('shop', 'ghost'), /not found on team "shop"/);
+});
+
+test('renameRole renames a normal role, refuses lead/reviewer either direction, guards collisions', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { prompt: 'r', brief: 'the runner' });
+  const team = tm.renameRole('shop', 'runner', 'worker');
+  assert.ok(!('runner' in team.roles) && team.roles.worker, 'runner → worker');
+  assert.strictEqual(team.roles.worker.prompt, 'r', 'def carried across the rename');
+  // C1/C5: reserved keys refused in EITHER direction.
+  assert.throws(() => tm.renameRole('shop', 'lead', 'boss'), /cannot be renamed/);
+  assert.throws(() => tm.renameRole('shop', 'reviewer', 'checker'), /cannot be renamed/);
+  assert.throws(() => tm.renameRole('shop', 'worker', 'reviewer'), /cannot be renamed/);
+  assert.throws(() => tm.renameRole('shop', 'worker', 'lead'), /cannot be renamed/);
+  // Bad target charset / missing source / collision.
+  assert.throws(() => tm.renameRole('shop', 'worker', 'bad name'), /must match/);
+  assert.throws(() => tm.renameRole('shop', 'ghost', 'x'), /not found on team "shop"/);
+  assert.throws(() => tm.renameRole('shop', 'worker', 'hand'), /already exists on team "shop"/);
+});
+
+test('watchdogMs is CLAMPED at consume (C3): below min → min, above max → max, mid unchanged, junk → null', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const mk = (name, watchdogMs) => {
+    mkTeam(home, name, { root: `/p/${name}`, lead: 'lead', watchdogMs, roles: { lead: {} } });
+    return tm.loadManifest(name).watchdogMs;
+  };
+  assert.strictEqual(mk('a', 1), 5 * 60 * 1000, 'below min clamps up to 5min');
+  assert.strictEqual(mk('b', 1e12), 7 * 24 * 60 * 60 * 1000, 'above max clamps down to 7d');
+  assert.strictEqual(mk('c', 600000), 600000, 'a valid mid value is unchanged');
+  assert.strictEqual(mk('d', 0), null, 'non-positive → null (no throw)');
+  assert.strictEqual(mk('e', -5), null, 'negative → null (no throw)');
+  assert.strictEqual(mk('f', 'soon'), null, 'non-number → null (no throw)');
+  // absent → null (falls back to the caller default).
+  mkTeam(home, 'g', { root: '/p/g', lead: 'lead', roles: { lead: {} } });
+  assert.strictEqual(tm.loadManifest('g').watchdogMs, null, 'absent → null');
+});
+
+test('setTeamWatchdog writes a finite ms, clears on null, rejects non-finite, round-trips clamped', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  // Write a valid value → carried, round-trips through the consume clamp unchanged.
+  let team = tm.setTeamWatchdog('shop', 600000);
+  assert.strictEqual(team.watchdogMs, 600000, 'valid ms written and read back');
+  // A below-floor value is WRITTEN raw but READ clamped (the clamp is at consume).
+  team = tm.setTeamWatchdog('shop', 1);
+  assert.strictEqual(team.watchdogMs, 5 * 60 * 1000, 'a below-min value reads back clamped to the floor');
+  const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.strictEqual(onDisk.watchdogMs, 1, 'the raw value is on disk — the clamp is a read-time guard, not a write mutation');
+  // null clears the field (back to the caller default).
+  team = tm.setTeamWatchdog('shop', null);
+  assert.strictEqual(team.watchdogMs, null, 'null clears the override');
+  assert.ok(!('watchdogMs' in JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'))), 'field removed from disk');
+  // Non-finite is rejected (ergonomics — the clamp would neutralize it anyway).
+  assert.throws(() => tm.setTeamWatchdog('shop', 'soon'), /must be a finite number or null/);
+  assert.throws(() => tm.setTeamWatchdog('shop', Infinity), /must be a finite number or null/);
 });
 
 // --- formatRoster: the initial-roster message ------------------------------

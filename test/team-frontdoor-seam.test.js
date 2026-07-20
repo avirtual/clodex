@@ -134,6 +134,74 @@ test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
   assert.strictEqual(created.length, 0, 'a refused write never spawns the session');
 });
 
+// --- T29 Layer A Slice 2: the metadata-mutation IPC handlers (GUI backend) ---
+// Operator-driven (no lead-gate here — the renderer IS the operator). removeRole/
+// renameRole run manager._roleInUse (C5) BEFORE the mutator and return
+// {ok:false, blockedBy} when a seat/ticket references the role.
+test('team:setRole / team:setWatchdog forward to their mutators and return the reloaded team', () => {
+  const writes = [];
+  const handlers = registerWith({
+    setRole: (t, r, patch) => { writes.push(['setRole', t, r, patch]); return { name: t, roles: {} }; },
+    setTeamWatchdog: (t, ms) => { writes.push(['setTeamWatchdog', t, ms]); return { name: t, watchdogMs: ms }; },
+  });
+  const r1 = handlers['team:setRole']({}, 'shop', 'runner', { brief: 'new' });
+  assert.deepStrictEqual(writes[0], ['setRole', 'shop', 'runner', { brief: 'new' }]);
+  assert.strictEqual(r1.ok, true);
+  assert.ok(r1.team, 'returns the reloaded manifest');
+  const r2 = handlers['team:setWatchdog']({}, 'shop', 600000);
+  assert.deepStrictEqual(writes[1], ['setTeamWatchdog', 'shop', 600000]);
+  assert.strictEqual(r2.ok, true);
+});
+
+test('team:removeRole runs the C5 guard: free role removes, a referenced role returns {ok:false, blockedBy}', () => {
+  const writes = [];
+  let inUse = { seats: [], tickets: [] };
+  const handlers = registerWith({
+    loadManifest: (t) => ({ name: t, roles: {} }),
+    manager: { _roleInUse: () => inUse },
+    removeRole: (t, r) => { writes.push(['removeRole', t, r]); return { name: t, roles: {} }; },
+  });
+  // Free role → removeRole reached, ok.
+  const ok = handlers['team:removeRole']({}, 'shop', 'runner');
+  assert.deepStrictEqual(writes, [['removeRole', 'shop', 'runner']]);
+  assert.strictEqual(ok.ok, true);
+  // Referenced role → blocked, mutator NOT called, blockedBy carried.
+  writes.length = 0;
+  inUse = { seats: ['shop-runner-1'], tickets: ['t3'] };
+  const blocked = handlers['team:removeRole']({}, 'shop', 'runner');
+  assert.deepStrictEqual(writes, [], 'removeRole not called when blocked');
+  assert.strictEqual(blocked.ok, false);
+  assert.deepStrictEqual(blocked.blockedBy, { seats: ['shop-runner-1'], tickets: ['t3'] });
+});
+
+test('team:renameRole runs the C5 guard on the from-role and forwards when free', () => {
+  const writes = [];
+  let inUse = { seats: [], tickets: [] };
+  const handlers = registerWith({
+    loadManifest: (t) => ({ name: t, roles: {} }),
+    manager: { _roleInUse: () => inUse },
+    renameRole: (t, from, to) => { writes.push(['renameRole', t, from, to]); return { name: t, roles: {} }; },
+  });
+  const ok = handlers['team:renameRole']({}, 'shop', 'runner', 'builder');
+  assert.deepStrictEqual(writes, [['renameRole', 'shop', 'runner', 'builder']]);
+  assert.strictEqual(ok.ok, true);
+  writes.length = 0;
+  inUse = { seats: ['shop-runner-1'], tickets: [] };
+  const blocked = handlers['team:renameRole']({}, 'shop', 'runner', 'builder');
+  assert.deepStrictEqual(writes, [], 'renameRole not called when the from-role is in use');
+  assert.strictEqual(blocked.ok, false);
+  assert.deepStrictEqual(blocked.blockedBy, { seats: ['shop-runner-1'], tickets: [] });
+});
+
+test('team:setRole surfaces a mutator refusal as {ok:false}', () => {
+  const handlers = registerWith({
+    setRole: () => { throw new Error('the "reviewer" role is operator-owned topology'); },
+  });
+  const res = handlers['team:setRole']({}, 'shop', 'reviewer', { brief: 'x' });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /operator-owned topology/);
+});
+
 // The regression guard proper. The handler tests above inject the writer as a
 // dep directly, so they prove the handler FORWARDS to it — but not that engine
 // actually populates that dep. The original bug lived in engine's RETURN

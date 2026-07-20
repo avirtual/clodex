@@ -523,7 +523,10 @@ const { createTeamManifest } = require('./team-manifest');
 // consumes findProjectRoot (the team-retire authorization check, string root)
 // and the rich resolveTeam (spawn-time team-context injection, session-manager);
 // the front door's team:create / team:join IPC handlers call createTeam / addRole.
-const { findProjectRoot, resolveTeam, createTeam, addRole, listTeams } = createTeamManifest({ fs });
+const {
+  findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
+  setRole, removeRole, renameRole, setTeamWatchdog,
+} = createTeamManifest({ fs });
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled, withoutPrivilegedIntents } = require('./intent-catalog');
@@ -905,6 +908,10 @@ const SessionManager = createSessionManager({
     createTeam,
     addRole,
     listTeams,
+    setRole,
+    removeRole,
+    renameRole,
+    setTeamWatchdog,
     fs,
     hasActivePending,
     intentEnabled,
@@ -1688,7 +1695,8 @@ const toolCache = createToolCache({ whichBin });
     // Teams front door: the manifest writers + resolvers the team:* IPC handlers
     // call. Exposed on the ENGINE seam (not just the SessionManager deps) — this
     // is the object ipc-handlers destructures via main.js's `{...engine}` spread.
-    createTeam, addRole, resolveTeam, listTeams,
+    createTeam, addRole, resolveTeam, listTeams, loadManifest,
+    setRole, removeRole, renameRole, setTeamWatchdog,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,

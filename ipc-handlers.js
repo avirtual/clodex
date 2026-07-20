@@ -60,7 +60,8 @@ function registerIpcHandlers(deps) {
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    createTeam, addRole, resolveTeam, listTeams,
+    createTeam, addRole, resolveTeam, listTeams, loadManifest,
+    setRole, removeRole, renameRole, setTeamWatchdog,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -173,6 +174,43 @@ function registerIpcHandlers(deps) {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // Team metadata mutation (T29 Layer A Slice 2) — the GUI's backend (Slice 3
+  // calls these). Operator-driven via the trusted renderer, so NO lead-gate here
+  // (the renderer IS the operator); the reviewer/lead-key protection (C1) and the
+  // tools/type strip (C6) still come from the mutators themselves. removeRole /
+  // renameRole run the stateful C5 seat/ticket fail-close (manager._roleInUse)
+  // BEFORE the pure mutator, returning the blocking seats/tickets so the GUI can
+  // offer migrate. Same shape as team:join — {ok:false, error} on throw.
+  handle('team:setRole', (_e, team, role, patch) => {
+    try { return { ok: true, team: setRole(team, role, patch) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:removeRole', (_e, team, role) => {
+    try {
+      const blocked = manager._roleInUse(loadManifest(team), role);
+      if (blocked.seats.length || blocked.tickets.length) {
+        return { ok: false, error: `role "${role}" is in use`, blockedBy: blocked };
+      }
+      return { ok: true, team: removeRole(team, role) };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:renameRole', (_e, team, from, to) => {
+    try {
+      const blocked = manager._roleInUse(loadManifest(team), from);
+      if (blocked.seats.length || blocked.tickets.length) {
+        return { ok: false, error: `role "${from}" is in use`, blockedBy: blocked };
+      }
+      return { ok: true, team: renameRole(team, from, to) };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:setWatchdog', (_e, team, ms) => {
+    try { return { ok: true, team: setTeamWatchdog(team, ms) }; }
+    catch (err) { return { ok: false, error: err.message }; }
   });
 
   // Existing team names — the create-mode dialog pre-checks for a duplicate and

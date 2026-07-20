@@ -213,6 +213,11 @@ function createSessionManager(deps) {
     execBodyCap,
     findProjectRoot,
     resolveTeam,
+    addRole,
+    setRole,
+    removeRole,
+    renameRole,
+    setTeamWatchdog,
     fs,
     hasActivePending,
     intentEnabled,
@@ -2405,6 +2410,8 @@ function createSessionManager(deps) {
         // `task add/done/reject/cancel` carry a free-text body (spec/report/reason)
         // greedy like dm; `task assign/list` carry NO body (empty on the intent
         // line — they must stay OUT of this set or they'd swallow following prose).
+        // `team role-add/role-set` carry a free-text brief BODY (greedy like dm);
+        // `team role-rm/role-rename/watchdog` carry NO body (keep them OUT).
         if (intent.type === 'dm'
           || intent.type === 'exec'
           || intent.type === 'remind'
@@ -2412,6 +2419,7 @@ function createSessionManager(deps) {
           || intent.type === 'team-review'
           || intent.type === 'review-done'
           || (intent.type === 'task' && (intent.sub === 'add' || intent.sub === 'done' || intent.sub === 'reject' || intent.sub === 'cancel'))
+          || (intent.type === 'team' && (intent.sub === 'role-add' || intent.sub === 'role-set'))
           || (intent.type === 'memory' && intent.sub === 'remember')
           || (intent.type === 'context' && (intent.sub === 'compact' || intent.sub === 'reload'))) {
           const body = [];
@@ -2796,6 +2804,14 @@ function createSessionManager(deps) {
           // guards (lead-only / assignee-only) live inside the handler.
           if (!session || !session.agentType) break;
           this._handleTask(session, intent);
+          break;
+        }
+        case 'team': {
+          // Team metadata mutation (T29 Layer A): a LEAD edits roles / watchdog.
+          // Agent sessions only; the lead-only (D2) gate + per-verb guards live
+          // inside the handler.
+          if (!session || !session.agentType) break;
+          this._handleTeam(session, intent);
           break;
         }
         case 'reboot': {
@@ -3568,6 +3584,49 @@ function createSessionManager(deps) {
       });
     }
 
+    // C5 (T29 Slice 2): the stateful fail-close the pure removeRole/renameRole
+    // mutators deferred (an electron-free module can't see live/persisted seats or
+    // tickets). A role is IN USE — and must not be removed or renamed away — when a
+    // seat encodes its key or an active ticket is addressed to it. Returns a
+    // structured { seats, tickets } of what blocks (empty arrays → free to mutate).
+    // Both checks enforce at CONSUME (the live sessions map + on-disk persistence /
+    // tickets), never a stale snapshot. Seat names encode the ROLE key
+    // (`<team>-<role>-N`) so matchSeatRole derives membership; a rename orphans a
+    // persisted seat's role-prompt binding on resume just as a remove does, so BOTH
+    // callers run this first.
+    _roleInUse(team, roleKey) {
+      const seats = new Set();
+      // LIVE seats (this.sessions) whose derived role is roleKey.
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        if (matchSeatRole(team, s.name) === roleKey) seats.add(s.name);
+      }
+      // PERSISTED/ARCHIVED seats (records that resume with the role binding).
+      // FAIL-CLOSED (C5): a read error means we CAN'T prove the role is free, so
+      // we block with a reason rather than wave the mutation through.
+      try {
+        for (const e of getPersistence().list()) {
+          if (e && e.name && matchSeatRole(team, e.name) === roleKey) seats.add(e.name);
+        }
+      } catch { seats.add('<persisted-seat check unavailable>'); }
+      // OPEN tickets ADDRESSED to the role key block (an open ticket is live work
+      // the role owns). done/cancelled are NON-blocking: done tickets are retained
+      // for history, so blocking on them would make any role that ever did work
+      // permanently un-removable (spec §settled: the bar is "no OPEN ticket
+      // assigned"). KNOWN MINOR EDGE (deferred to the GUI / a reject-time guard, not
+      // this slice): a done ticket rejected back to open AFTER its role was removed
+      // orphans its assignee. A ticket-store read error FAILS CLOSED (C5): can't
+      // verify → block with a reason.
+      const tickets = [];
+      try {
+        const teamDir = path.dirname(team.file);
+        for (const tk of ticketsStore.load(teamDir)) {
+          if (tk && tk.assignee === roleKey && tk.state === 'open') tickets.push(tk.id);
+        }
+      } catch { tickets.push('<ticket check unavailable>'); }
+      return { seats: [...seats], tickets };
+    }
+
     // [agent:team-review] <scope> — a team LEAD dispatches a cold review; clodex
     // owns the machinery. Spawn an EPHEMERAL reviewer seat from the team's
     // `reviewer` role, brief it, and inject the lead's scope as its first turn;
@@ -3591,17 +3650,22 @@ function createSessionManager(deps) {
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
-      const type = def.type || 'claude';
+      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude, regardless of
+      // the manifest's `type`. team.json is agent-writable and enforcement is at
+      // CONSUME, not at a write op (the C3 twin): only create()'s claude arm
+      // consumes disabledTools (via setupClaudeHook), so a `type: codex` reviewer
+      // would spawn UNCAPPED — codex ignores the denylist entirely, so the T29a
+      // tools cap silently evaporates. Forcing claude here is the choke point that
+      // makes the cap real however the manifest was written. (This supersedes the
+      // old MF4 "refuse a codex reviewer that declares tools" bounce — force+notice
+      // is strictly safer than refuse: it also catches the no-tools codex reviewer
+      // that MF4 let through fully armed.) The requested type is kept only to warn.
+      const requestedType = def.type || 'claude';
+      const type = 'claude';
       const cwd = team.root;
-      // MUST-FIX 4: the tools allowlist is inverted into disabledTools and consumed
-      // ONLY by create()'s claude arm (the hook that enforces it). A codex reviewer
-      // with a `tools` restriction would spawn FULLY ARMED — a silently-unenforced
-      // security config. Refuse to spawn rather than warn: an unrestricted reviewer
-      // where the manifest asked for a restricted one is the failure, not a nuisance.
-      if (type !== 'claude' && Array.isArray(def.tools) && def.tools.length) {
-        reply(`error: the "reviewer" role restricts tools to [${def.tools.join(', ')}] but spawns as "${type}"; the allowlist is only enforced for claude seats — refusing to spawn an unrestricted ${type} reviewer (drop the tools restriction or set type to claude)`);
-        return;
-      }
+      const typeWarn = requestedType !== 'claude'
+        ? ` — NOTE: manifest requested reviewer type "${requestedType}", but cold reviewers always spawn as claude (a non-claude seat can't enforce the tools cap); ignoring`
+        : '';
       // Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP,
       // NOT an authority source — team.json is agent-writable, so a lead cannot be
       // trusted to widen its own reviewer. The effective allowlist is the
@@ -3609,8 +3673,8 @@ function createSessionManager(deps) {
       // absent/empty manifest → the cap as-is. A manifest asking for tools BEYOND
       // the cap is spawned CAPPED (a review beats no review) with a loud
       // operator-approval line to the lead. This inversion into the disabledTools
-      // DENYLIST is still the seam create()'s claude arm enforces — its auto
-      // role-prompt path binds only the role `prompt`, never `tools`.
+      // DENYLIST is the seam create()'s claude arm enforces — its auto role-prompt
+      // path binds only the role `prompt`, never `tools`.
       const manifestTools = (Array.isArray(def.tools) && def.tools.length) ? def.tools : null;
       const effectiveTools = manifestTools
         ? REVIEWER_TOOL_CAP.filter((t) => manifestTools.includes(t))
@@ -3618,14 +3682,9 @@ function createSessionManager(deps) {
       const beyondCap = manifestTools
         ? manifestTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
         : [];
-      // Only a claude seat consumes disabledTools (via setupClaudeHook); a codex
-      // reviewer's arm ignores it, so a non-empty denylist in its persisted record
-      // would be a cosmetic lie. Keep the record honest — [] for non-claude. (MF4
-      // above already refuses a codex reviewer that DECLARES a tools restriction;
-      // this only covers the no-tools codex seat that reaches the cap block.)
-      const disabledTools = type === 'claude'
-        ? CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t))
-        : [];
+      // type is force-claude (above), so the denylist is ALWAYS live — no dead
+      // non-claude branch. Disable every catalog tool outside the effective cap.
+      const disabledTools = CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t));
       // A manifest that reached beyond the cap gets a loud line in the lead's
       // confirm: it spawned, but capped — the widening it asked for needs an
       // operator, not a self-grant.
@@ -3699,7 +3758,7 @@ function createSessionManager(deps) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${promptWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${typeWarn}${promptWarn}`);
         } catch (err) {
           // Spawn failed → free the reserved name so it doesn't linger as a phantom
           // persisted seat that blocks the slot forever (MUST-FIX 1 reservation cleanup).
@@ -3749,6 +3808,107 @@ function createSessionManager(deps) {
       });
       log.info('intent', `review-done ${session.name} → ${lead}; retiring (archive)`);
       this.archive(session.name);
+    }
+
+    // [agent:team <verb>] — a team LEAD edits its own metadata (T29 Layer A): the
+    // role map (role-add/role-set/role-rm/role-rename) and the stall watchdog
+    // (watchdog). The agent transport for Slice 1's pure mutators; the IPC handlers
+    // are the operator/GUI transport. D2 gating: LEAD-ONLY for every verb (a role
+    // edit repoints prompt bindings — a mild trust event, and Layer A has no finer
+    // per-role grant). The reviewer/lead KEY protection (C1) lives one layer down in
+    // the mutators (operator-owned topology), so a lead's `role-rm reviewer` gets
+    // the mutator's error surfaced verbatim — correct. role-rm/role-rename also run
+    // the C5 seat/ticket fail-close FIRST. These mint no authority (C6 strips tools/
+    // type at the mutator), so the verb is ORDINARY (not privileged) — lead-gated,
+    // not allowlist-gated.
+    _handleTeam(session, intent) {
+      const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      if (team.lead !== session.name) {
+        reply(`error: only the team lead (${team.lead}) can edit team metadata`);
+        return;
+      }
+      const name = intent.name || null;
+      // Cap the free-text brief body (matches the dm-spill discipline): a role
+      // brief is a one-liner, and this is lead-gated, but an absurd body is cheap
+      // to refuse here rather than write into team.json.
+      const BRIEF_MAX = 500;
+      try {
+        switch (intent.sub) {
+          case 'role-add': {
+            if (!name) { reply('error: role-add needs a role name — [agent:team role-add <name>] <brief>'); return; }
+            const brief = String(intent.body == null ? '' : intent.body).trim();
+            if (brief.length > BRIEF_MAX) { reply(`error: brief too long (${brief.length} > ${BRIEF_MAX} chars)`); return; }
+            const def = {
+              instantiate: 'session',
+              prompt: intent.prompt || null,
+              template: intent.template || null,
+              brief: brief || null,
+            };
+            addRole(team.name, name, def);
+            reply(`role "${name}" added to ${team.name}`);
+            return;
+          }
+          case 'role-set': {
+            if (!name) { reply('error: role-set needs a role name — [agent:team role-set <name>] <brief>'); return; }
+            const brief = String(intent.body == null ? '' : intent.body).trim();
+            if (brief.length > BRIEF_MAX) { reply(`error: brief too long (${brief.length} > ${BRIEF_MAX} chars)`); return; }
+            const patch = {};
+            if (brief) patch.brief = brief;
+            if (intent.prompt) patch.prompt = intent.prompt;
+            if (intent.template) patch.template = intent.template;
+            setRole(team.name, name, patch);
+            reply(`role "${name}" updated on ${team.name}`);
+            return;
+          }
+          case 'role-rm': {
+            if (!name) { reply('error: role-rm needs a role name — [agent:team role-rm <name>]'); return; }
+            const used = this._roleInUse(team, name);
+            if (used.seats.length || used.tickets.length) {
+              const parts = [];
+              if (used.seats.length) parts.push(`seat(s): ${used.seats.join(', ')}`);
+              if (used.tickets.length) parts.push(`open ticket(s): ${used.tickets.join(', ')}`);
+              reply(`error: role "${name}" is in use — ${parts.join('; ')}; reassign/retire them first`);
+              return;
+            }
+            removeRole(team.name, name);
+            reply(`role "${name}" removed from ${team.name}`);
+            return;
+          }
+          case 'role-rename': {
+            const from = intent.name || null;
+            const to = intent.to || null;
+            if (!from || !to) { reply('error: role-rename needs <from> <to> — [agent:team role-rename <from> <to>]'); return; }
+            const used = this._roleInUse(team, from);
+            if (used.seats.length || used.tickets.length) {
+              const parts = [];
+              if (used.seats.length) parts.push(`seat(s): ${used.seats.join(', ')}`);
+              if (used.tickets.length) parts.push(`open ticket(s): ${used.tickets.join(', ')}`);
+              reply(`error: role "${from}" is in use — ${parts.join('; ')}; reassign/retire them first`);
+              return;
+            }
+            renameRole(team.name, from, to);
+            reply(`role "${from}" renamed to "${to}" on ${team.name}`);
+            return;
+          }
+          case 'watchdog': {
+            if (intent.ms == null || !Number.isFinite(intent.ms)) {
+              reply('error: watchdog needs a millisecond number — [agent:team watchdog <ms>]');
+              return;
+            }
+            const m = setTeamWatchdog(team.name, intent.ms);
+            const clamp = m.watchdogMs !== intent.ms ? ` (clamped from ${intent.ms})` : '';
+            reply(`watchdog set to ${m.watchdogMs}ms on ${team.name}${clamp}`);
+            return;
+          }
+          default:
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | watchdog`);
+        }
+      } catch (err) {
+        reply(`error: ${err.message}`);
+      }
     }
 
     // ── Team ticket protocol (Task 25) ──────────────────────────────────────

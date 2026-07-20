@@ -1920,10 +1920,11 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
   assert.strictEqual(persistence.get('team-reviewer-2').reviewFor, 'lead');
 });
 
-// MUST-FIX 4: a codex reviewer with a tools restriction would spawn FULLY ARMED
-// (disabledTools is consumed only in create()'s claude arm) — refuse rather than
-// silently unenforce the security config.
-test('team-review: a codex reviewer carrying a tools allowlist is REFUSED, nothing spawned', async () => {
+// C2 (T29 Slice 2): a cold reviewer ALWAYS spawns as claude — a codex seat can't
+// enforce the tools cap (codex ignores disabledTools). The old MF4 REFUSAL of a
+// codex-with-tools reviewer is superseded: force-claude + a loud notice is strictly
+// safer (it also catches the no-tools codex reviewer MF4 let through fully armed).
+test('team-review C2: a manifest codex reviewer WITH tools spawns as CLAUDE + capped, with the force-claude notice', async () => {
   const { m, injected, created } = mkReview({
     reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
       tools: ['Read', 'Grep', 'Glob'], type: 'codex', template: null, standing: null, ephemeral: false },
@@ -1931,21 +1932,42 @@ test('team-review: a codex reviewer carrying a tools allowlist is REFUSED, nothi
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.deepStrictEqual(created, [], 'no seat spawned for a tools-restricted codex reviewer');
-  assert.ok(injected.some((t) => /only enforced for claude seats/.test(t)), 'bounced with the unenforceable-restriction reason');
+  assert.strictEqual(created.length, 1, 'the reviewer still spawns');
+  assert.strictEqual(created[0][1], 'claude', 'forced to claude regardless of the manifest type');
+  const disabledTools = created[0][11];
+  assert.ok(disabledTools.includes('Bash') && !disabledTools.includes('Read'),
+    'the cap is live on the forced-claude seat (Read/Grep/Glob kept, rest disabled)');
+  assert.ok(injected.some((t) => /manifest requested reviewer type "codex", but cold reviewers always spawn as claude/.test(t)),
+    'the lead gets the force-claude notice naming the ignored type');
 });
 
-// A codex reviewer WITHOUT a tools restriction is fine — nothing to unenforce.
-test('team-review: a codex reviewer with NO tools restriction spawns normally', async () => {
-  const { m, created } = mkReview({
+// A codex reviewer WITHOUT a tools restriction ALSO force-spawns as claude now (the
+// hole MF4 left: it only bounced codex WITH tools, so a no-tools codex reviewer
+// spawned fully armed). C2 closes it — capped claude + the same notice.
+test('team-review C2: a no-tools codex reviewer force-spawns as CLAUDE + capped (MF4 hole closed)', async () => {
+  const { m, injected, created } = mkReview({
     reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
       tools: null, type: 'codex', template: null, standing: null, ephemeral: false },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 1, 'an unrestricted codex reviewer spawns');
-  assert.strictEqual(created[0][1], 'codex', 'spawns as codex');
+  assert.strictEqual(created.length, 1, 'the reviewer spawns');
+  assert.strictEqual(created[0][1], 'claude', 'forced to claude even with no manifest tools');
+  const disabledTools = created[0][11];
+  assert.ok(disabledTools.includes('Bash') && !disabledTools.includes('Read'),
+    'the default cap (Read/Grep/Glob) is applied to the forced-claude seat');
+  assert.ok(injected.some((t) => /always spawn as claude/.test(t)), 'force-claude notice present');
+});
+
+// A claude reviewer (the normal case) spawns with NO force-claude notice.
+test('team-review C2: a claude reviewer spawns with no force-claude notice', async () => {
+  const { m, injected, created } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created[0][1], 'claude');
+  assert.ok(!injected.some((t) => /always spawn as claude/.test(t)), 'no notice when the manifest already asked for claude');
 });
 
 // --- Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
@@ -2380,6 +2402,165 @@ test('watchdog: a per-team watchdogMs override tightens the stall window', () =>
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 'the tighter override fires the nudge');
+});
+
+// --- [agent:team <verb>] — T29 Layer A Slice 2 metadata mutation ------------
+// Lead-gated (D2) role/watchdog edits. The pure mutators (setRole/removeRole/
+// renameRole/setTeamWatchdog) are STUBBED here (capturing calls) — their JSON
+// behavior + C1/C4/C6 guards are covered in team-manifest.test.js; this exercises
+// _handleTeam's orchestration (lead-gate, verb routing, the C5 seat/ticket
+// fail-close, mutator-error surfacing). Uses a real temp teamDir so _roleInUse's
+// ticketsStore.load round-trips.
+function mkTeamMut(extra = {}) {
+  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-teammut-'));
+  const team = {
+    name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
+    file: pathReal.join(teamDir, 'team.json'),
+    roles: {
+      lead: { instantiate: 'session', brief: 'the lead' },
+      hand: { instantiate: 'session', brief: 'the hand' },
+      reviewer: { instantiate: 'subagent', brief: 'the reviewer' },
+      runner: { instantiate: 'session', brief: 'the runner' },
+    },
+  };
+  const calls = [];
+  const overrides = {
+    fs: fsReal, path: pathReal,
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+    addRole: (t, r, def) => { calls.push(['addRole', t, r, def]); return team; },
+    setRole: (t, r, patch) => { calls.push(['setRole', t, r, patch]); return team; },
+    removeRole: (t, r) => { calls.push(['removeRole', t, r]); return team; },
+    renameRole: (t, f, to) => { calls.push(['renameRole', t, f, to]); return team; },
+    setTeamWatchdog: (t, ms) => {
+      calls.push(['setTeamWatchdog', t, ms]);
+      return { ...team, watchdogMs: Math.max(300000, Math.min(604800000, ms)) };
+    },
+    ...extra,
+  };
+  const { m, injected } = mkPark(overrides);
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = (name, cwd = '/proj', props = {}) => {
+    m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, activityState: 'idle', ...props });
+    return m.sessions.get(name);
+  };
+  return { m, injected, calls, team, teamDir, seat };
+}
+
+test('team: lead role-add / role-set call the mutators with the parsed def/patch', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', prompt: 'p1', template: 't1', body: 'builds things' });
+  assert.deepStrictEqual(f.calls[0], ['addRole', 'team', 'builder',
+    { instantiate: 'session', prompt: 'p1', template: 't1', brief: 'builds things' }], 'role-add → addRole with the def');
+  f.calls.length = 0;
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-set', name: 'runner', prompt: 'p2', body: 'new brief' });
+  assert.deepStrictEqual(f.calls[0], ['setRole', 'team', 'runner', { brief: 'new brief', prompt: 'p2' }], 'role-set → setRole with only the present fields');
+  assert.ok(f.injected.some((t) => /role "runner" updated/.test(t)), 'confirm line');
+});
+
+test('team: a NON-lead is bounced for every verb (D2 lead-gate)', () => {
+  const f = mkTeamMut();
+  f.seat('team-hand');
+  f.m._handleTeam(f.seat('team-hand'), { type: 'team', sub: 'role-add', name: 'x', body: 'b' });
+  assert.deepStrictEqual(f.calls, [], 'no mutator called for a non-lead');
+  assert.ok(f.injected.some((t) => /only the team lead \(lead\) can edit team metadata/.test(t)), 'bounced with the lead-only reason');
+});
+
+test('team: a teamless sender is bounced', () => {
+  const f = mkTeamMut();
+  const solo = f.seat('solo', '/elsewhere');
+  f.m._handleTeam(solo, { type: 'team', sub: 'watchdog', ms: 600000 });
+  assert.deepStrictEqual(f.calls, []);
+  assert.ok(f.injected.some((t) => /not on a team/.test(t)));
+});
+
+test('team: role-rm of a free role removes it; a role with a LIVE seat fails closed (C5)', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  // No runner seat → free to remove.
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rm', name: 'runner' });
+  assert.deepStrictEqual(f.calls[0], ['removeRole', 'team', 'runner'], 'free role removed');
+  // A live runner seat blocks the removal (C5) — mutator NOT called.
+  f.calls.length = 0; f.injected.length = 0;
+  f.seat('team-runner-1');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rm', name: 'runner' });
+  assert.deepStrictEqual(f.calls, [], 'blocked — removeRole not called');
+  assert.ok(f.injected.some((t) => /role "runner" is in use.*seat\(s\): team-runner-1/.test(t)), 'names the blocking seat');
+});
+
+test('team: role-rename fails closed on a PERSISTED (archived) seat of the from-role (C5)', () => {
+  const persisted = [{ name: 'team-runner-1', archivedAt: 1 }]; // archived seat still encodes the role
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => persisted, get: (n) => persisted.find((e) => e.name === n) || null }) });
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rename', name: 'runner', to: 'builder' });
+  assert.deepStrictEqual(f.calls, [], 'blocked — renameRole not called');
+  assert.ok(f.injected.some((t) => /role "runner" is in use.*team-runner-1/.test(t)), 'archived seat blocks the rename');
+});
+
+test('team: role-rename of a free role calls renameRole', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rename', name: 'runner', to: 'builder' });
+  assert.deepStrictEqual(f.calls[0], ['renameRole', 'team', 'runner', 'builder']);
+  assert.ok(f.injected.some((t) => /renamed to "builder"/.test(t)));
+});
+
+test('team: role-rm reviewer surfaces the mutator operator-owned error verbatim (C1)', () => {
+  const f = mkTeamMut({
+    removeRole: () => { throw new Error('the "reviewer" role is operator-owned topology; remove it via the app, not an intent/mutator (/x/team.json)'); },
+  });
+  f.seat('lead');
+  // reviewer has no live/persisted seat here, so C5 passes and the mutator's C1 throws.
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rm', name: 'reviewer' });
+  assert.ok(f.injected.some((t) => /operator-owned topology/.test(t)), 'mutator error surfaced verbatim');
+});
+
+test('team: watchdog writes via setTeamWatchdog and reports the clamped value', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'watchdog', ms: 1 });
+  assert.deepStrictEqual(f.calls[0], ['setTeamWatchdog', 'team', 1]);
+  assert.ok(f.injected.some((t) => /watchdog set to 300000ms/.test(t)), 'reports the clamped value (1 → 5min floor)');
+});
+
+test('team: a bad watchdog ms is bounced without calling the mutator', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'watchdog', ms: null });
+  assert.deepStrictEqual(f.calls, []);
+  assert.ok(f.injected.some((t) => /watchdog needs a millisecond number/.test(t)));
+});
+
+test('_roleInUse: matches live + persisted seats and role-addressed open tickets, ignores unrelated', () => {
+  const persisted = [{ name: 'team-runner-1', archivedAt: 1 }, { name: 'team-hand', archivedAt: 2 }];
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => persisted, get: (n) => persisted.find((e) => e.name === n) || null }) });
+  f.seat('team-runner-2');   // live runner seat
+  f.seat('team-hand-1');     // live hand seat (unrelated to `runner`)
+  // Role-addressed to runner: an OPEN ticket (blocks) + a done one (NON-blocking,
+  // kept for history) + a cancelled one (NON-blocking) + a hand ticket (unrelated).
+  tstore.save(f.teamDir, [
+    { id: 't1', assignee: 'runner', state: 'open' },
+    { id: 't2', assignee: 'runner', state: 'cancelled' },
+    { id: 't3', assignee: 'hand', state: 'open' },
+    { id: 't4', assignee: 'runner', state: 'done' },
+  ]);
+  const used = f.m._roleInUse(f.team, 'runner');
+  assert.deepStrictEqual(used.seats.sort(), ['team-runner-1', 'team-runner-2'], 'live + persisted runner seats');
+  assert.deepStrictEqual(used.tickets, ['t1'], 'ONLY the OPEN role-addressed ticket blocks (done + cancelled + other-role ignored)');
+  // An unrelated role with no seats/tickets is free.
+  const free = f.m._roleInUse(f.team, 'builder');
+  assert.deepStrictEqual(free, { seats: [], tickets: [] }, 'a role with nothing referencing it is free');
+});
+
+test('_roleInUse: a persistence read error FAILS CLOSED — blocks with a reason (C5)', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => { throw new Error('store unreadable'); } }) });
+  const used = f.m._roleInUse(f.team, 'runner');
+  // Can't prove the role is free → a sentinel seat blocks the mutation rather
+  // than the old fail-OPEN (which returned an empty set and let it through).
+  assert.ok(used.seats.includes('<persisted-seat check unavailable>'), 'unreadable persistence blocks');
+  assert.ok(used.seats.length > 0, 'blocked, not waved through');
 });
 
 // --- list(): team field (sidebar group-by-project reflects team identity) ---

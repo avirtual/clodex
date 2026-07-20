@@ -51,6 +51,25 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 const INSTANTIATE = new Set(['session', 'subagent']);
 
+// Operator-owned topology (T29 C1): these role KEYS are integrity roles the
+// metadata mutators REFUSE to create, destroy, or rename (either direction).
+// _handleTeamReview selects the reviewer purely by the `reviewer` KEY and trusts
+// whatever prompt/tools/type sits under it; loadManifest REQUIRES a `lead` role.
+// team.json is agent-writable, so an agent-driven mutator must never touch these
+// keys — only the operator GUI/approval may mint or replace them. (v1 hardcodes
+// the pair; a per-role operator flag is the future generalization — spec Q1.)
+const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
+
+// watchdogMs bounds (T29 C3). Consumed at READ (loadManifest), not at a write
+// op: team.json is agent-writable, so a hand-written watchdogMs:1 (a 1ms stall
+// watchdog = a self-inflicted nudge storm) is only neutralized at the choke
+// point every consumer passes through. A positive finite value clamps into
+// [5min, 7d]; anything else reads as absent (caller falls back to its default).
+// A future set-op is ergonomics only — this clamp makes any value safe
+// regardless of how it reached the file.
+const WATCHDOG_MIN_MS = 5 * 60 * 1000;
+const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
 // Stock role definitions the front door mints: createTeam writes lead+reviewer
 // into the default manifest; the join flow's `hand` (and the ipc handler) reads
 // its canonical def here so every team speaks the same role vocabulary. Each
@@ -211,13 +230,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`lead role "lead" must have instantiate: session (${file})`);
     }
     // `watchdogMs` (optional) overrides the ticket stall watchdog's default STALL_MS
-    // for this team (Task 25). A positive number of milliseconds; absent → the
-    // handler's default. Additive/back-compat — an older manifest is unchanged.
-    const watchdogMs = m.watchdogMs;
-    if (watchdogMs != null && (typeof watchdogMs !== 'number' || !Number.isFinite(watchdogMs) || watchdogMs <= 0)) {
-      throw new Error(`team.json "watchdogMs" must be a positive number (${file})`);
-    }
-    return { name, root: path.resolve(root), lead, roles, file, watchdogMs: watchdogMs ?? null };
+    // for this team (Task 25). CONSUME-TIME enforcement (T29 C3): a positive finite
+    // value is CLAMPED into [WATCHDOG_MIN_MS, WATCHDOG_MAX_MS]; anything else
+    // (non-number, non-finite, non-positive, absent) reads as null so the caller
+    // falls back to its default. We DON'T throw on a bad value — a hand-written
+    // watchdogMs must never break the whole team's resolution; the clamp is the
+    // security boundary, not a validation gate.
+    const rawWatchdog = m.watchdogMs;
+    const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
+      ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
+      : null;
+    return { name, root: path.resolve(root), lead, roles, file, watchdogMs };
   }
 
   // A session (by cwd) belongs to project `root` iff its cwd is root or under
@@ -322,7 +345,28 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
     }
     const normalized = normalizeRoleDef(roleName, def, team.file);
+    // C4 (T29 MF2): pin `template` to a bare library-template NAME (setRole
+    // enforces the same). The role-add intent's scanner token is \S+, so
+    // `template:/tmp/evil.json` parses — validate here so a FUTURE template
+    // consumer can't inherit path authority from this write. Stock defs carry
+    // `prompt`, not `template`, so the no-op re-join path is unaffected.
+    if (normalized.template != null && !NAME_RE.test(normalized.template)) {
+      throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
+    }
     const existing = team.roles[roleName];
+    // C1 (T29 MF1): addRole must NEVER MINT an operator-owned key. The team.json
+    // is agent-writable and loadManifest only REQUIRES `lead`, so an attacker who
+    // hand-deletes the `reviewer` key could otherwise `role-add reviewer` a
+    // lead-authored def that _handleTeamReview then binds to the next cold review
+    // (spec's verbatim C1 attack). The `!existing` carve-out preserves team:join's
+    // no-op-if-deep-equal re-ride of a stock lead/reviewer def already on disk
+    // (handled by the `existing` branch below); only CREATING an absent reserved
+    // key is the attack. Redefinition of a present reserved key is already blocked
+    // by the differs→throw branch. `lead` guarded for symmetry (a missing
+    // roles.lead already fails loadManifest, so it isn't independently exploitable).
+    if (RESERVED_ROLE_KEYS.has(roleName) && !existing) {
+      throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
+    }
     if (existing) {
       if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
@@ -336,9 +380,118 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  // Edit an EXISTING role's DESCRIPTIVE fields — the metadata op that replaces
+  // hand-editing team.json. Guards (T29): C1 refuses the operator-owned
+  // `lead`/`reviewer` keys; C6 strips the authority-bearing `tools`/`type`
+  // silently (a well-meaning caller may echo a full def — drop, don't throw);
+  // C4 validates `template` as a bare library-template NAME and resolves NOTHING.
+  // Merges the sanitized patch over the raw role, validates, writes atomically,
+  // returns the reloaded manifest.
+  function setRole(teamName, roleName, patch) {
+    const team = loadManifest(teamName); // throws if the team is missing
+    if (RESERVED_ROLE_KEYS.has(roleName)) {
+      throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator (${team.file})`);
+    }
+    if (!team.roles[roleName]) {
+      throw new Error(`role "${roleName}" not found on team "${teamName}" — use addRole (${team.file})`);
+    }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new Error(`setRole patch must be an object (${team.file})`);
+    }
+    // Only DESCRIPTIVE fields are editable. C6: tools/type are authority-bearing —
+    // dropped by NOT being in this whitelist (silent, per spec). Anything else a
+    // caller echoes (e.g. ephemeral) is likewise ignored — this op edits metadata,
+    // it doesn't redefine a role's class.
+    const EDITABLE = ['brief', 'prompt', 'template', 'standing', 'instantiate'];
+    const clean = {};
+    for (const k of EDITABLE) {
+      if (k in patch) clean[k] = patch[k];
+    }
+    // C4: `template` is DESCRIPTIVE-ONLY in this slice — validated as a NAME here
+    // and resolved NOWHERE. Any FUTURE consumption MUST resolve NAMED library
+    // templates through the normal spawn gate (H3), validated at consume; do NOT
+    // wire this field into auto-instantiate without that gate.
+    if ('template' in clean && (typeof clean.template !== 'string' || !NAME_RE.test(clean.template))) {
+      throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
+    }
+    // Re-read raw to preserve hand-authored fields/formatting we don't model,
+    // merge the sanitized patch over the existing role, validate the merged def
+    // through the shared schema (throws on a bad field BEFORE writing), write.
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.roles = raw.roles || {};
+    raw.roles[roleName] = { ...raw.roles[roleName], ...clean };
+    normalizeRoleDef(roleName, raw.roles[roleName], team.file);
+    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    return loadManifest(teamName);
+  }
+
+  // Delete a NON-reserved role. C1 refuses lead/reviewer. Pure JSON removal — the
+  // live/persisted-seat fail-close (C5) is the CALLER's job in Slice 2: this
+  // electron-free module has no sessions map / persistence store to check, so a
+  // caller that can orphan a live seat must gate this behind its own bar.
+  function removeRole(teamName, roleName) {
+    const team = loadManifest(teamName);
+    if (RESERVED_ROLE_KEYS.has(roleName)) {
+      throw new Error(`the "${roleName}" role is operator-owned topology; remove it via the app, not an intent/mutator (${team.file})`);
+    }
+    if (!team.roles[roleName]) {
+      throw new Error(`role "${roleName}" not found on team "${teamName}" (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    if (raw.roles) delete raw.roles[roleName];
+    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    return loadManifest(teamName);
+  }
+
+  // Rename a NON-reserved role key. C1/C5: refuses lead/reviewer in EITHER
+  // direction — renaming lead away fails loadManifest's required-lead check, and
+  // renaming INTO reviewer forges the integrity role _handleTeamReview trusts.
+  // Pure key move; the persisted/archived-seat orphan fail-close (C5 — seat names
+  // encode the OLD role key, so a rename loses their role-prompt binding on
+  // resume) is the CALLER's job in Slice 2.
+  function renameRole(teamName, fromName, toName) {
+    const team = loadManifest(teamName);
+    if (RESERVED_ROLE_KEYS.has(fromName) || RESERVED_ROLE_KEYS.has(toName)) {
+      throw new Error(`the "lead"/"reviewer" roles are operator-owned topology and cannot be renamed (${team.file})`);
+    }
+    if (!ROLE_RE.test(toName)) {
+      throw new Error(`role name "${toName}" must match ${ROLE_RE} (${team.file})`);
+    }
+    if (!team.roles[fromName]) {
+      throw new Error(`role "${fromName}" not found on team "${teamName}" (${team.file})`);
+    }
+    if (team.roles[toName]) {
+      throw new Error(`role "${toName}" already exists on team "${teamName}" (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.roles = raw.roles || {};
+    raw.roles[toName] = raw.roles[fromName];
+    delete raw.roles[fromName];
+    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    return loadManifest(teamName);
+  }
+
+  // Write the team-level `watchdogMs` override (T29 Slice 2 — the GUI/intent
+  // set-op the pure clamp deliberately lacked). The consume-time clamp in
+  // loadManifest (C3) makes ANY written value safe, so this only needs a finite
+  // number; a null/undefined ms CLEARS the field (back to the caller default).
+  // Re-reads raw to preserve unmodeled fields, writes, returns the reloaded manifest.
+  function setTeamWatchdog(teamName, ms) {
+    const team = loadManifest(teamName); // throws if the team is missing
+    if (ms != null && (typeof ms !== 'number' || !Number.isFinite(ms))) {
+      throw new Error(`watchdogMs must be a finite number or null (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    if (ms == null) delete raw.watchdogMs;
+    else raw.watchdogMs = ms;
+    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, addRole, teamsDir, TEAM_FILE,
+    createTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog,
+    teamsDir, TEAM_FILE,
   };
 }
 

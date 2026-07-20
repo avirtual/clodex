@@ -172,6 +172,40 @@ function parseIntent(rawLine) {
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
+  // `team` = team metadata mutation (T29 Layer A). Five sub-verbs; a team LEAD
+  // edits the role map + the stall watchdog (the lead-gate lives in the handler).
+  // CLOSED alternation (only the five): a typo like `[agent:team foo]` falls
+  // through to null → the near-miss bounce, exactly like a bad task/dm. Bracket
+  // shapes per verb, modeled on the `task` family + spawn's `key:val` tokens:
+  //   role-add <name>    → the brief as a free-text BODY (greedy like dm); prompt/
+  //                        template as key:val tokens in the bracket (like spawn:).
+  //   role-set <name>    → same shape (edit an existing role's descriptive fields).
+  //   role-rm   <name>   → no body.
+  //   role-rename <from> <to> → no body.
+  //   watchdog <ms>      → no body.
+  // Body capture for role-add/role-set is in _extractIntents' allow-set; the other
+  // three carry no body (like task assign/list). Guards + the mutators live in the
+  // handler, not here.
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog)\b([^\]]*)\]\s*(.*)/s);
+  if (teamMatch) {
+    const sub = teamMatch[1];
+    const argStr = teamMatch[2];
+    const body = teamMatch[3];
+    // key:val tokens (prompt:, template:) — whitespace-free by construction (\S+),
+    // like spawn's template:. Positional tokens are those WITHOUT a `key:` prefix.
+    const promptM = argStr.match(/\bprompt:(\S+)/);
+    const templateM = argStr.match(/\btemplate:(\S+)/);
+    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+    if (sub === 'role-add' || sub === 'role-set') {
+      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
+    }
+    if (sub === 'role-rm') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
+    // watchdog <ms> — a single numeric arg; a non-number → null (handler bounces).
+    const ms = positional[0] != null ? Number(positional[0]) : null;
+    return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
+  }
+
   const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
   if (spawnMatch) {
     const argstr = spawnMatch[1];
