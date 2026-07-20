@@ -6,6 +6,9 @@
 //   - esc() uses the global `document` (HTML-escape via a detached node); it
 //     works at renderer runtime but must not be CALLED under node --test (no
 //     document). Requiring the module is fine; the tests exercise the others.
+//     textContent→innerHTML escapes & < > but NOT quotes, so esc() ALSO escapes
+//     " and ' explicitly — quote-escaping is safe in both text and attribute
+//     contexts, closing attribute-injection for any interpolation into value="…".
 //   - shortPath() replaces $HOME with ~, so it needs homeDir. It derives its
 //     own copy here (identical to renderer.js's `require('os').homedir()`),
 //     keeping the moved body byte-identical instead of threading a param.
@@ -15,7 +18,7 @@ const homeDir = require('os').homedir();
 function esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
-  return d.innerHTML;
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Shorten a path by replacing $HOME with ~ and showing only the last 2 segments

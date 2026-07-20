@@ -202,6 +202,47 @@ test('team:setRole surfaces a mutator refusal as {ok:false}', () => {
   assert.match(res.error, /operator-owned topology/);
 });
 
+// --- T29 Layer A Slice 3: the GUI read side (team:get) + the add-role IPC front.
+test('team:get returns the loaded manifest (full role map) or {ok:false} on a bad name', () => {
+  const handlers = registerWith({
+    loadManifest: (name) => {
+      if (name === 'shop') return { name: 'shop', lead: 'clodex', roles: { lead: {}, runner: {} }, watchdogMs: null };
+      throw new Error(`no team manifest at ${name}`);
+    },
+  });
+  const ok = handlers['team:get']({}, 'shop');
+  assert.strictEqual(ok.ok, true);
+  assert.deepStrictEqual(Object.keys(ok.team.roles), ['lead', 'runner'], 'full role map returned for the popover');
+  const bad = handlers['team:get']({}, 'ghost');
+  assert.strictEqual(bad.ok, false);
+  assert.match(bad.error, /no team manifest/);
+});
+
+test('team:addRole forwards to addRole, succeeds on an ordinary role, surfaces the guard errors', () => {
+  const writes = [];
+  const handlers = registerWith({
+    addRole: (team, role, def) => {
+      writes.push([team, role, def]);
+      if (role === 'reviewer') throw new Error('the "reviewer" role is operator-owned topology');
+      if (def && def.template === '/tmp/evil.json') throw new Error('template must be a library-template name matching');
+      return { name: team, roles: { [role]: def } };
+    },
+  });
+  // Ordinary role → reaches addRole, ok, reloaded manifest returned.
+  const ok = handlers['team:addRole']({}, 'shop', 'runner', { instantiate: 'session', brief: 'r' });
+  assert.deepStrictEqual(writes[0], ['shop', 'runner', { instantiate: 'session', brief: 'r' }]);
+  assert.strictEqual(ok.ok, true);
+  assert.ok(ok.team.roles.runner, 'reloaded manifest carries the new role');
+  // C1 mint refusal surfaced verbatim.
+  const reserved = handlers['team:addRole']({}, 'shop', 'reviewer', { instantiate: 'session' });
+  assert.strictEqual(reserved.ok, false);
+  assert.match(reserved.error, /operator-owned topology/);
+  // C4 template refusal surfaced verbatim.
+  const badTpl = handlers['team:addRole']({}, 'shop', 'runner', { template: '/tmp/evil.json' });
+  assert.strictEqual(badTpl.ok, false);
+  assert.match(badTpl.error, /library-template name/);
+});
+
 // The regression guard proper. The handler tests above inject the writer as a
 // dep directly, so they prove the handler FORWARDS to it — but not that engine
 // actually populates that dep. The original bug lived in engine's RETURN

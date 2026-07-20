@@ -182,7 +182,8 @@ function registerIpcHandlers(deps) {
   // tools/type strip (C6) still come from the mutators themselves. removeRole /
   // renameRole run the stateful C5 seat/ticket fail-close (manager._roleInUse)
   // BEFORE the pure mutator, returning the blocking seats/tickets so the GUI can
-  // offer migrate. Same shape as team:join — {ok:false, error} on throw.
+  // name what must be reassigned/retired first — v1 is fail-closed, NO migrate
+  // (spec Q3). Same shape as team:join — {ok:false, error} on throw.
   handle('team:setRole', (_e, team, role, patch) => {
     try { return { ok: true, team: setRole(team, role, patch) }; }
     catch (err) { return { ok: false, error: err.message }; }
@@ -225,6 +226,25 @@ function registerIpcHandlers(deps) {
   handle('team:forCwd', (_e, cwd) => {
     try { const t = resolveTeam(cwd); return { team: t ? t.name : null, root: t ? t.root : null }; }
     catch { return { team: null, root: null }; }
+  });
+
+  // team:get — the full loaded manifest by team NAME (T29 Slice 3 GUI read side).
+  // team:forCwd only returns the name; the management popover needs the whole role
+  // map + watchdogMs to render its rows. Reuses loadManifest (no new read path);
+  // a missing/invalid manifest → {ok:false, error} so the popover shows nothing.
+  handle('team:get', (_e, name) => {
+    try { return { ok: true, team: loadManifest(name) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // team:addRole — the GUI's create-a-custom-role path (T29 Slice 3). The intent
+  // and team:create/join already call addRole; this is its own IPC front so the
+  // popover's "Add role" affordance can reach it. addRole owns the guards (C1
+  // reserved-key mint refusal + C4 template NAME_RE) — surfaced verbatim as
+  // {ok:false, error}. Same shape as team:setRole.
+  handle('team:addRole', (_e, team, role, def) => {
+    try { return { ok: true, team: addRole(team, role, def) }; }
+    catch (err) { return { ok: false, error: err.message }; }
   });
 
   // Rail-filtered role-prompt options for the join picker: stock clodex-team-*

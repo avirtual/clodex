@@ -34,6 +34,15 @@ const API_CONTRACT = [
   // Rail-filtered role-prompt picker source for the join flow (stock clodex-team-*
   // deltas + library prompts whose front matter declares rail: append).
   { name: 'teamRolePrompts', kind: 'invoke', channel: 'team:rolePrompts' },
+  // Team-management GUI (T29 Layer A Slice 3): read the full manifest, and the
+  // metadata mutators the management popover drives. addRole owns the C1/C4
+  // guards; set/remove/rename/watchdog are the Slice-2 backend handlers.
+  { name: 'teamGet', kind: 'invoke', channel: 'team:get' },
+  { name: 'teamAddRole', kind: 'invoke', channel: 'team:addRole' },
+  { name: 'teamSetRole', kind: 'invoke', channel: 'team:setRole' },
+  { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
+  { name: 'teamRenameRole', kind: 'invoke', channel: 'team:renameRole' },
+  { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
   // Opt-in git worktree at spawn + working-dir suggestions for the New Session
   // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
   // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.

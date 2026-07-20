@@ -399,6 +399,28 @@
         <button id="intents-popover-apply" type="button">Apply</button>
       </div>
     </div>
+    <div id="team-roles-popover" class="hidden">
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="team-roles-list" class="team-roles-list"></div>
+      <div class="popover-subhead">Add Role</div>
+      <div class="team-roles-add">
+        <input type="text" id="team-roles-add-name" placeholder="role name">
+        <input type="text" id="team-roles-add-brief" placeholder="brief — what it's for">
+        <select id="team-roles-add-prompt" title="system-prompt delta"></select>
+        <input type="text" id="team-roles-add-template" placeholder="template (optional)">
+        <button type="button" id="team-roles-add-btn">Add</button>
+      </div>
+      <div class="popover-subhead">Stall Watchdog</div>
+      <div class="team-roles-watchdog">
+        <input type="number" id="team-roles-watchdog-ms" placeholder="ms — blank = default">
+        <button type="button" id="team-roles-watchdog-set">Set</button>
+        <button type="button" id="team-roles-watchdog-clear" class="secondary">Clear</button>
+      </div>
+      <span class="hint-text" id="team-roles-status"></span>
+      <div class="popover-actions">
+        <button id="team-roles-popover-done" type="button">Done</button>
+      </div>
+    </div>
     <div id="peer-select-popover" class="hidden">
       <div class="popover-title"><span>Show Sessions — <span id="peer-select-popover-name"></span></span><button type="button" class="popover-close" id="peer-select-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>

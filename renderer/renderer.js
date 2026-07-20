@@ -42,6 +42,7 @@ const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
+const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
 const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
@@ -877,6 +878,11 @@ const DATE_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'U
 const STATE_ORDER = ['needs attention', 'working', 'idle', 'archived'];
 const PR_ORDER = ['open', 'merged', 'closed', 'none', 'no PR / unknown'];
 
+// Prefix marking a project-mode group key as a TEAM cluster (vs a plain
+// cwd-basename project group). Single-sourced so the group-header contextmenu
+// (team-management popover) can detect + strip it to recover the team name.
+const TEAM_GROUP_PREFIX = '▸ ';
+
 // The group key + display label a row falls into for the current group mode.
 function groupFor(item) {
   const meta = sidebarMeta.get(item.dataset.name) || {};
@@ -887,7 +893,7 @@ function groupFor(item) {
       // (immediate); meta.team is the sidebar-meta catch-all (reattach, refresh).
       // A "▸ " prefix reads it as a team, distinct from a "parent/dir" cwd label.
       const team = item.dataset.team || meta.team;
-      return team ? `▸ ${team}` : projectLabel(item.dataset.cwd);
+      return team ? `${TEAM_GROUP_PREFIX}${team}` : projectLabel(item.dataset.cwd);
     }
     case 'state': return stateOf(item);
     case 'date': return dateBucket(meta.lastActivityTs || meta.createdAt);
@@ -1064,6 +1070,17 @@ function makeGroupHeader(key, count) {
     if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
     refreshSidebarView();
   });
+  // Right-click a TEAM group header → the team-management popover (T29 Slice 3).
+  // Only project-mode team groups carry the "▸ " prefix (groupFor: `▸ <team>`);
+  // plain cwd-basename project clusters don't, so the prefix is the reliable team
+  // discriminator. Strip it to the team name; teamGet inside the opener confirms
+  // (a non-team / unreadable name renders nothing). Collapse-on-click stays intact.
+  if (key.startsWith(TEAM_GROUP_PREFIX)) {
+    h.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openTeamRolesPopover(key.slice(TEAM_GROUP_PREFIX.length), h);
+    });
+  }
   return h;
 }
 
@@ -3533,6 +3550,11 @@ function routeSessionAction(act, anchor) {
 const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession,
 });
+
+// Team-management popover (T29 Layer A Slice 3): right-click a team's sidebar
+// group header → edit its roles with zero hand-editing of team.json. Self-
+// contained local editor (popovers/team-roles-popover.js) driven by window.api.team*.
+const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
 
 // --- Context-breakdown popover — self-contained island (popovers/context-popover.js).
 // The core popover plumbing it shares stays here: popoverApi (the local-vs-peer
