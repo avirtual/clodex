@@ -1506,6 +1506,101 @@ test('_notifyComposition: a Claude seat still parks passively even mid-boot (boo
   assert.strictEqual(passive[0].t, 'team-dev');
 });
 
+// --- T34: an EPHEMERAL subject seat's delta fans to the LEAD only ------------
+// A reviewer spawning/archiving is lead↔seat business; other seats (a hand)
+// shouldn't burn wakeups on it. The subject is ephemeral when its role DEF says so
+// OR its persistence record does — and for a real reviewer only the persistence
+// record holds (the reviewer role def carries no ephemeral:true; _handleTeamReview
+// seeds ephemeral:true onto the seat's record at spawn). Persistent seats keep the
+// full fan. A team with a reviewer role (no ephemeral flag on the def, mirroring
+// team.json) so the persistence-marker path is what's exercised.
+const teamStubReviewer = { name: 'team', root: '/proj', lead: 'lead',
+  roles: {
+    lead: { instantiate: 'session', brief: 'the lead' },
+    dev: { instantiate: 'session', brief: 'the dev' },
+    reviewer: { instantiate: 'subagent', brief: 'the reviewer', ephemeral: false }, // NOT ephemeral on the def (mirrors team.json)
+  } };
+const teamReviewerDeps = {
+  resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? teamStubReviewer : null),
+  findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj'
+    : (cwd && cwd.startsWith('/other') ? '/other' : null)),
+};
+
+test('_notifyComposition (T34): an ephemeral reviewer seat delta reaches ONLY the lead, not a bystander hand', () => {
+  // The persistence record carries ephemeral:true (the reviewer marker that
+  // actually holds — the role def does NOT). Delta must skip the hand bystander.
+  const { m } = mkPark({
+    ...teamReviewerDeps,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'team-reviewer-1' ? { name: n, ephemeral: true, reviewFor: 'lead' } : null) }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-hand', { name: 'team-hand', agentType: 'claude', cwd: '/proj/b' });        // bystander
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj/c' }); // the subject
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('team-reviewer-1'), 'archived');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
+    'ephemeral subject delta fans to the lead only — the hand is spared the noise');
+  assert.match(passive[0].b, /\[team team\] seat team-reviewer-1 archived \(role: reviewer\)/);
+});
+
+test('_notifyComposition (T34): a PERSISTENT seat delta still reaches bystanders (full fan preserved)', () => {
+  // team-dev is a persistent role (no ephemeral marker on def OR record) — a hand
+  // learning a second dev arrived/left IS durable topology, so the full fan stays.
+  const { m } = mkPark({
+    ...teamReviewerDeps,
+    getPersistence: () => ({ list: () => [], get: () => null }), // no ephemeral record for anyone
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-hand', { name: 'team-hand', agentType: 'claude', cwd: '/proj/b' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/c' }); // the persistent subject
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.deepStrictEqual(passive.map((p) => p.t).sort(), ['lead', 'team-hand'],
+    'persistent subject keeps the full team fan — lead AND the hand bystander');
+});
+
+test('_notifyComposition (T34): an ephemeral subject is still self-skipped even when it IS the lead-eligible loop', () => {
+  // Belt-and-braces: the subject seat never notifies itself, and the ephemeral
+  // lead-only restriction composes with the existing self-skip. Here the ONLY
+  // other same-project seat is the lead, so exactly one delivery, never to self.
+  const { m } = mkPark({
+    ...teamReviewerDeps,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'team-reviewer-1' ? { name: n, ephemeral: true } : null) }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj/c' });
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('team-reviewer-1'), 'spawned');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'], 'delivered to the lead, never to the subject itself');
+});
+
+// T34: ephemeral via the ROLE DEF (future-proofing) — a role explicitly marked
+// ephemeral:true on the manifest also fans lead-only, even with no persistence
+// record. Proves the belt-and-braces predicate honors BOTH markers.
+test('_notifyComposition (T34): a role-def-ephemeral seat also fans lead-only (no persistence record needed)', () => {
+  const teamStubEphRole = { name: 'team', root: '/proj', lead: 'lead',
+    roles: {
+      lead: { instantiate: 'session', brief: 'the lead' },
+      runner: { instantiate: 'subagent', brief: 'the runner', ephemeral: true }, // ephemeral ON the def
+    } };
+  const { m } = mkPark({
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? teamStubEphRole : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+    getPersistence: () => ({ list: () => [], get: () => null }), // NO ephemeral record — the def carries it
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-hand', { name: 'team-hand', agentType: 'claude', cwd: '/proj/b' });
+  m.sessions.set('team-runner-1', { name: 'team-runner-1', agentType: 'claude', cwd: '/proj/c' });
+  const passive = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._notifyComposition(m.sessions.get('team-runner-1'), 'retired');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
+    'role-def ephemeral is honored even without a persistence marker');
+});
+
 // Task 22: the one-time team wiring (initial roster + the seat's own 'spawned'
 // delta) fires ONLY on a genuine first spawn, gated by a persisted rosterSentAt
 // stamp read PRE-upsert (existingEntry). A resume/restart already carries the

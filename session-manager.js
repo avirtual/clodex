@@ -1754,9 +1754,27 @@ function createSessionManager(deps) {
       if (!team) return;
       const role = matchSeatRole(team, session.name);
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
+      // An EPHEMERAL subject seat's lifecycle (a reviewer spawning/archiving) is
+      // lead↔seat business, not durable team topology — fanning it to every seat
+      // burns bystanders' wakeups/context on noise (T34, field-promoted from a T29
+      // fast-follow). Restrict those deltas to the LEAD; persistent-role seats keep
+      // the full fan (a second hand or the lead arriving/leaving IS topology every
+      // seat should learn). Two markers, belt-and-braces: the role DEF's ephemeral
+      // flag (matchSeatRole → team.roles[role].ephemeral) OR the persistence record's
+      // ephemeral — and for a reviewer seat only the LATTER actually holds: the
+      // reviewer role def in team.json carries no ephemeral:true (normalizeRoleDef
+      // defaults it false), while _handleTeamReview seeds ephemeral:true onto the
+      // seat's persistence record at spawn. Guarding on both is future-proofing for
+      // an explicitly-ephemeral role def.
+      const roleDef = role ? (team.roles && team.roles[role]) : null;
+      let rec = null; try { rec = getPersistence().get(session.name); } catch { rec = null; }
+      const ephemeral = (roleDef && roleDef.ephemeral === true) || (rec && rec.ephemeral === true);
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
         if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
+        // Ephemeral subject → lead-only. team.lead absent/dead just means nobody
+        // matches (loop shape handles absence naturally — no throw).
+        if (ephemeral && s.name !== team.lead) continue;
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
         if (root && root === team.root) this._deliverPassive(s.name, 'team', body, 'dm');
       }
