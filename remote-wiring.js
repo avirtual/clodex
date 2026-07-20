@@ -22,6 +22,7 @@ const { pathFor } = require('./clodex-paths');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants } = require('./session-args');
+const { withoutPrivilegedIntents } = require('./intent-catalog');
 
 function createRemoteWiring(deps) {
   const {
@@ -211,7 +212,11 @@ function createRemoteWiring(deps) {
               b.systemPromptFile || null,
               b.appendPromptFiles || [],
               [],              // execCommands — never cross the wire
-              Array.isArray(b.intents) ? b.intents : null,
+              // Privileged intents (reboot) are stripped over the wire (Task 27):
+              // a remote viewer isn't the box's local operator, so it can't grant a
+              // box session an app-relaunch capability — mirror of the exec-grant
+              // wire strip above. null passes through untouched.
+              withoutPrivilegedIntents(Array.isArray(b.intents) ? b.intents : null),
             );
             // stripLevel isn't a create() param (it's a proxy-side override the
             // poller asserts once the session links) — seed it onto the entry after
@@ -319,7 +324,13 @@ function createRemoteWiring(deps) {
           // box's local exec allowlist (the renderer already omits it on a peer edit;
           // this is the belt-and-suspenders backstop). withoutExecGrants drops the key
           // entirely, so the resolver sees it as undefined = the box's grants untouched.
-          const out = await applySessionArgs(name, withoutExecGrants(patch || {}), wsId);
+          // Same for PRIVILEGED intents (reboot, Task 27): a remote viewer can't grant
+          // an app-relaunch capability over the wire, so filter them off the requested
+          // allowlist before the resolver sees it (a non-privileged intents edit still
+          // applies; an absent/null intents key stays untouched).
+          const safePatch = withoutExecGrants(patch || {});
+          if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntents(safePatch.intents);
+          const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
           return out;

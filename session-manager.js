@@ -43,6 +43,21 @@
 // runaway turn can't bloat the UI-rendered-wholesale notifications store.
 const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
+// Rate-limit window for [agent:reboot] (Task 27). A honored reboot stamps
+// uiSettings.lastRebootAt; a second reboot inside this window is refused. The
+// backstop against a reboot loop — even though the jsonl-watcher seeks to EOF
+// on resume (so historical intents never re-fire), this guards the edge where a
+// CLI replays a last turn into a fresh transcript, or an agent re-emits.
+const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
+
+// Age cap for the one-shot post-reboot notice (Task 28). A notice that keeps
+// failing to deliver (store/inject error) is RETAINED for a retry on the next
+// launch — but not forever: past this age it's stale-beyond-useful and gets
+// dropped with a log line. Only bounds the retain-on-error path; a healthy
+// delivery/park/gone clears immediately regardless of age (a relaunch that never
+// returned still delivers on the next manual launch — that's the crash-safety).
+const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
 // Tee-blind backend detection (Bedrock/Vertex). Pure fs/os/path leaf, required
 // directly like ./wire-intents — it's stateless and electron-free, so it needs
 // no dep seam. See the wire-intent cutover gate in create().
@@ -67,9 +82,18 @@ const { readJsonSafe } = require('./fs-util');
 // create(), deliberately OUTSIDE ipc-prompt (that file is byte-pinned).
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 // Built-in tool catalog (pure constants leaf, like catalogs' other consumers).
-// Used to INVERT a reviewer role's `tools` ALLOWLIST into the disabledTools
-// DENYLIST create() consumes (a Read/Grep/Glob-only seat disables the rest).
+// Used to derive a cold reviewer's disabledTools DENYLIST from REVIEWER_TOOL_CAP
+// (below): everything the effective allowlist does NOT grant is disabled.
 const { CLAUDE_TOOLS } = require('./catalogs');
+// Cold-reviewer tool cap (Task 29a). The [agent:team-review] reviewer is SOLD as
+// independent verification against a confused lead — but team.json is
+// agent-writable, so a lead could widen its own reviewer to every tool. This
+// code-level constant is the ceiling: the reviewer's effective allowlist is the
+// INTERSECTION of this cap and any manifest `tools`. A manifest may NARROW below
+// the cap; it can never widen past it. Not an authority source — a narrowing
+// hint. (Until an operator-owned surface exists — T29 GUI may later widen
+// per-team from operator clicks.)
+const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 // Team ticket registry (Task 25). Pure leaf (electron-free), required directly
 // like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
 // tickets.json (team-scoped, shared with the clodex-team exec).
@@ -197,6 +221,7 @@ function createSessionManager(deps) {
     isDraftOpen,
     isFilenameToken,
     isHumanPtyInput,
+    withoutPrivilegedIntents,
     isInjectInFlight,
     canFireCompact,
     lastTranscriptWrite,
@@ -244,7 +269,7 @@ function createSessionManager(deps) {
     // getter deps (whenReady-assigned; see header)
     getPersistence, getTemplates, getUiSettings, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     // electron seam fns (see header)
-    getUserDataPath, openPath, notifyOS, setAppQuitting,
+    getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
 
   // A non-claude (codex) team seat's initial roster is deferred to the first quiet
@@ -2454,7 +2479,7 @@ function createSessionManager(deps) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
-            + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, end. '
+            + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, reboot, end. '
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
         this._broadcast('ipc-message', {
@@ -2474,7 +2499,12 @@ function createSessionManager(deps) {
       // them. `exec` that passes here still hits its finer per-command grant in
       // _handleExecIntent (the two gates are coarse + fine, both must allow).
       if (!intentEnabled(intent.type, getPersistence().get(senderName)?.intents)) {
-        if (session) {
+        // agentType guard mirrors the unknown-intent bounce above: bash panes
+        // reach here too (_scanPtyOutput → _handleIntent with any KNOWN type),
+        // and since `reboot` is gate-disabled on every default seat, cat'ing a
+        // doc that quotes [agent:reboot] would otherwise TYPE this bounce into
+        // the operator's live shell.
+        if (session && session.agentType) {
           // resend has no prompt line — its instruction rides the dm park-bounce
           // notice — so an agent with dm-on/resend-off will be told to emit a
           // handle that then lands here. Spell out that the fallback is a DELAY
@@ -2768,6 +2798,13 @@ function createSessionManager(deps) {
           this._handleTask(session, intent);
           break;
         }
+        case 'reboot': {
+          // Operator-gated full app relaunch (Task 27). Agent sessions only; the
+          // allowlist + rate-limit gates live inside the handler.
+          if (!session || !session.agentType) break;
+          this._handleRebootIntent(session, intent.body || '');
+          break;
+        }
       }
     }
 
@@ -2814,6 +2851,153 @@ function createSessionManager(deps) {
       } catch {}
       this._broadcast('ipc-message', { type: 'notify', from: who, to: 'user', body: preview });
       log.info('intent', `notify-user by ${who}: ${rec.id}`);
+    }
+
+    // [agent:reboot] [reason] — operator-gated full app relaunch (Task 27). Lets
+    // the clodex lead restart Clodex itself to field-test restart-window behaviors
+    // overnight without the operator. AUTHORIZATION is the per-session `intents`
+    // allowlist: `reboot` is a PRIVILEGED intent (intent-catalog), so the fire-time
+    // gate in _handleIntent already bounced any seat that wasn't explicitly granted
+    // it — this handler only runs for an authorized seat. That grant is
+    // operator-owned: an agent-initiated spawn/template or a peer-wire edit is
+    // stripped of privileged intents (withoutPrivilegedIntents), so only a local
+    // GUI grant lands it. The one remaining gate here is the rate limit: refuse if a
+    // reboot happened < REBOOT_MIN_INTERVAL ago (persisted lastRebootAt stamp) — a
+    // loop backstop. On success: stamp, log to the ipc broadcast (sender + reason),
+    // confirm to the sender, then fire the injected relaunchApp() seam. Normal quit
+    // lifecycle applies — killAll() keeps sessions.json entries, restore-on-launch
+    // --resumes them (the T22/T23 machinery). The confirm mostly matters for the
+    // transcript/log: the sender's process dies with the app.
+    _handleRebootIntent(session, body) {
+      const reply = (msg) => this._injectText(session, `[agent:reboot] ${msg}`, { parkable: true });
+      const who = session.name;
+      const reason = String(body == null ? '' : body).trim();
+      const store = getUiSettings && getUiSettings();
+      const settings = store ? store.get() : {};
+
+      const now = Date.now();
+      const last = Number.isFinite(settings.lastRebootAt) ? settings.lastRebootAt : 0;
+      const sinceMs = now - last;
+      if (last && sinceMs < REBOOT_MIN_INTERVAL) {
+        const waitS = Math.ceil((REBOOT_MIN_INTERVAL - sinceMs) / 1000);
+        reply(`rate-limited — a reboot happened ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
+        this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `REFUSED (rate-limited): ${reason || '(no reason)'}` });
+        return;
+      }
+
+      // Stamp BEFORE the relaunch fires — intentional: if relaunchApp throws
+      // or wedges, the 5-min lockout still holds, so a broken relaunch can't
+      // become a rapid retry loop from a confused agent re-emitting. Alongside
+      // the stamp, arm the one-shot post-reboot notice (Task 28): the requester's
+      // process dies with the app, so its [agent:reboot] confirm never lands —
+      // this durable flag replays "relaunch complete" to it once the app comes
+      // back and a workspace restore runs (maybeDeliverRebootNotice), closing the
+      // "did it actually reboot, or did relaunchApp fail?" ambiguity.
+      // A settings-write failure here is best-effort: the reboot is the command,
+      // the notice is a convenience — proceed with the relaunch, just log (Task 28).
+      try { store.set({ lastRebootAt: now, pendingRebootNotice: { name: who, at: now, reason } }); }
+      catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
+      this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
+      log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
+      reply('rebooting — sessions resume on relaunch');
+      try {
+        if (relaunchApp) relaunchApp();
+      } catch (e) {
+        // relaunchApp threw — the process did NOT die. The notice was armed
+        // pre-relaunch (so it survives the process dying); but since we're still
+        // alive, a persisted "Clodex is running after your reboot" would become a
+        // FALSE success on the next real launch. Clear it. The lastRebootAt stamp
+        // stays — a broken relaunch must not open a rapid-retry window (T27).
+        log.error('intent', `reboot relaunch failed: ${e.message}`);
+        reply(`relaunch failed: ${e.message}`);
+        try { store.set({ pendingRebootNotice: null }); }
+        catch (e2) { log.error('intent', `reboot notice clear failed: ${e2.message}`); }
+      }
+    }
+
+    // Task 28 — deliver the one-shot post-reboot notice armed by [agent:reboot],
+    // called AFTER a workspace restore runs (engine.restoreSessionsForWorkspace).
+    // The requester's process died with the app, so its own confirm never landed;
+    // this tells the seat the app came BACK (vs a silently-failed relaunchApp), a
+    // non-actionable status line that explicitly does NOT re-grant reboot.
+    //
+    // Resolve the requester by its PERSISTED record + normal parking (NOT by
+    // "first workspace restore finished") so it lands whichever workspace restores
+    // it. Three outcomes clear the one-shot flag: LIVE (delivered) / OFFLINE-but-
+    // resumable incl. failed-restore (parked by name; drains on its next prompt) /
+    // truly GONE (no persisted entry — deleted while down). A TRANSIENT store or
+    // inject error RETAINS the flag for a retry next launch (bounded by
+    // REBOOT_NOTICE_MAX_AGE, so a persistently-failing notice can't stick forever).
+    maybeDeliverRebootNotice() {
+      const store = getUiSettings && getUiSettings();
+      if (!store) return;
+      let settings;
+      try { settings = store.get(); } catch { return; }
+      const notice = settings && settings.pendingRebootNotice;
+      if (!notice || !notice.name) return;
+
+      const clear = () => {
+        try { store.set({ pendingRebootNotice: null }); }
+        catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
+      };
+      // Transient-error path: keep the flag for a retry unless it's stale-beyond-
+      // useful, in which case drop it (an at=0/junk stamp reads as infinitely old).
+      const retainOrExpire = (why) => {
+        const at = Number.isFinite(notice.at) ? notice.at : 0;
+        const age = at ? Date.now() - at : Infinity;
+        if (age > REBOOT_NOTICE_MAX_AGE) {
+          log.error('intent', `reboot notice for ${notice.name} DROPPED (stale >7d) after ${why}`);
+          clear();
+        } else {
+          log.error('intent', `reboot notice for ${notice.name} RETAINED after ${why} — retry next launch`);
+        }
+      };
+
+      // Copy: never "relaunch complete" (the flag is written BEFORE relaunchApp
+      // fires, so on a crash + later manual launch that would be a false success).
+      // A timestamped "the app is running again", plus the explicit non-grant line.
+      // No inner [agent:reboot] prefix — delivery already stamps [agent:from reboot],
+      // so the seat reads a single clean prefix (a doubled one is only redundant).
+      const at = Number.isFinite(notice.at) ? notice.at : 0;
+      const when = at ? new Date(at).toISOString() : 'an earlier time';
+      // Cap + de-newline the echoed reason (it round-trips from a settings file an
+      // operator could hand-edit, and rides into an injected line).
+      const reason = (typeof notice.reason === 'string' ? notice.reason : '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      const body = `notice: Clodex is running after your reboot request at ${when}${reason ? `: ${reason}` : ''}. This does not grant reboot permission.`;
+
+      const target = this.sessions.get(notice.name);
+      if (target && target.agentType) {
+        // LIVE — normal DM inject (sender tag 'reboot' → no reply trailer, like
+        // 'reminder': it's a system notice, not a dm to answer).
+        try {
+          this._deliverMessage(notice.name, 'reboot', body, 'dm');
+          log.info('intent', `reboot notice delivered to ${notice.name} (live)`);
+          clear();
+        } catch (e) {
+          retainOrExpire(`live deliver failed: ${e.message}`);
+        }
+        return;
+      }
+      const entry = getPersistence().get(notice.name);
+      if (!entry) {
+        // GONE — truly no persisted entry (seat deleted while down). A failed
+        // restore KEEPS its entry ({failed:true}), so it does NOT land here — it's
+        // resumable and parks below until retry succeeds or the entry is deleted.
+        log.info('intent', `reboot notice for ${notice.name} dropped — no persisted entry (seat deleted)`);
+        clear();
+        return;
+      }
+      // OFFLINE but resumable (incl. failed-restore) — park by name so it drains on
+      // the seat's next UserPromptSubmit after its workspace restores it (start()'s
+      // catch-up runs before windows/sessions restore, so a park placed here is caught).
+      try {
+        const finalText = this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm');
+        parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq());
+        log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume`);
+        clear();
+      } catch (e) {
+        retainOrExpire(`park failed: ${e.message}`);
+      }
     }
 
     // [agent:remind <spec>] text — schedule/manage a durable self-reminder. The
@@ -3351,8 +3535,12 @@ function createSessionManager(deps) {
             Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [],
             // `[]` intents (everything gated) is a real value that must apply; an
             // absent key (all-enabled template) passes null → create() omits it →
-            // the seat keeps the living all-enabled default.
-            Array.isArray(tpl && tpl.intents) ? tpl.intents : null,
+            // the seat keeps the living all-enabled default. PRIVILEGED intents are
+            // STRIPPED here (Task 27): this is an AGENT-INITIATED mint, so a template
+            // carrying `reboot` (a file path the spawner authored, or a saved
+            // template) can't self-grant the capability — only an operator's local
+            // GUI create/edit may. null passes through untouched.
+            withoutPrivilegedIntents(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
           );
           // stripLevel + autoCompact are NOT create() params — the poller asserts
           // strip on relink and reads autoCompact from persistence. Apply post-
@@ -3414,14 +3602,36 @@ function createSessionManager(deps) {
         reply(`error: the "reviewer" role restricts tools to [${def.tools.join(', ')}] but spawns as "${type}"; the allowlist is only enforced for claude seats — refusing to spawn an unrestricted ${type} reviewer (drop the tools restriction or set type to claude)`);
         return;
       }
-      // Role `tools` is an ALLOWLIST → invert into the disabledTools DENYLIST
-      // create() consumes: disable every catalog tool the role did NOT allow (a
-      // Read/Grep/Glob-only reviewer). Absent → no extra restriction ([]).
-      // NOTE: create()'s auto role-prompt path binds only the role `prompt`, NOT
-      // `tools`, so this inversion stays the seam that enforces the allowlist.
-      const disabledTools = (Array.isArray(def.tools) && def.tools.length)
-        ? CLAUDE_TOOLS.filter((t) => !def.tools.includes(t))
+      // Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP,
+      // NOT an authority source — team.json is agent-writable, so a lead cannot be
+      // trusted to widen its own reviewer. The effective allowlist is the
+      // INTERSECTION of the cap and the manifest (in cap order for determinism);
+      // absent/empty manifest → the cap as-is. A manifest asking for tools BEYOND
+      // the cap is spawned CAPPED (a review beats no review) with a loud
+      // operator-approval line to the lead. This inversion into the disabledTools
+      // DENYLIST is still the seam create()'s claude arm enforces — its auto
+      // role-prompt path binds only the role `prompt`, never `tools`.
+      const manifestTools = (Array.isArray(def.tools) && def.tools.length) ? def.tools : null;
+      const effectiveTools = manifestTools
+        ? REVIEWER_TOOL_CAP.filter((t) => manifestTools.includes(t))
+        : REVIEWER_TOOL_CAP.slice();
+      const beyondCap = manifestTools
+        ? manifestTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
         : [];
+      // Only a claude seat consumes disabledTools (via setupClaudeHook); a codex
+      // reviewer's arm ignores it, so a non-empty denylist in its persisted record
+      // would be a cosmetic lie. Keep the record honest — [] for non-claude. (MF4
+      // above already refuses a codex reviewer that DECLARES a tools restriction;
+      // this only covers the no-tools codex seat that reaches the cap block.)
+      const disabledTools = type === 'claude'
+        ? CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t))
+        : [];
+      // A manifest that reached beyond the cap gets a loud line in the lead's
+      // confirm: it spawned, but capped — the widening it asked for needs an
+      // operator, not a self-grant.
+      const capWarn = beyondCap.length
+        ? ` — requested [${beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${effectiveTools.join(', ')}]`
+        : '';
 
       // Collision-free ephemeral seat name, N bumped past every live OR persisted
       // name (Task 15 taken-name rule — an archived reviewer still reserves its slot).
@@ -3457,12 +3667,24 @@ function createSessionManager(deps) {
         } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
       }
 
+      // Permission posture: inherit the LEAD's, same as _handleSpawnIntent (F5). A
+      // cold reviewer spawned WITHOUT the lead's --dangerously-skip-permissions
+      // blocks on its first tool permission prompt — and with no operator awake
+      // (the whole point of an autonomous overnight review) that dialog strands the
+      // seat forever, so it never delivers [agent:review-done]. A sandboxed lead
+      // spawns a sandboxed reviewer; a prompt-gated lead spawns a prompt-gated one.
+      // The reviewer is already tool-capped (Read/Grep/Glob), so inheriting skip is
+      // not a widening — it only removes the interactive gate on those read tools.
+      const leadArgs = (getPersistence().get(session.name)?.extraArgs) || [];
+      const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
+        ? ['--dangerously-skip-permissions'] : [];
+
       // Defer off the scan callback that fired us (same discipline as
       // _handleSpawnIntent): never drive a PTY spawn synchronously from a watcher emit.
       setImmediate(async () => {
         try {
           await this.create(
-            name, type, cwd, [], null, session.workspaceId || DEFAULT_WORKSPACE_ID,
+            name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
             null, false, session.proxy ?? null, [], [], disabledTools, [], [], null, [],
           );
           // Draw the sidebar tab/terminal (the intent path bypasses the renderer's
@@ -3477,7 +3699,7 @@ function createSessionManager(deps) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${promptWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${promptWarn}`);
         } catch (err) {
           // Spawn failed → free the reserved name so it doesn't linger as a phantom
           // persisted seat that blocks the slot forever (MUST-FIX 1 reservation cleanup).

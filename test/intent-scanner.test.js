@@ -221,6 +221,20 @@ test('parseIntent: an escaped team-review is reported, not dispatched', () => {
     { type: 'escape', text: '[agent:team-review] scope' });
 });
 
+test('parseIntent: reboot — bodyless or optional free-text reason', () => {
+  assert.deepStrictEqual(parseIntent('[agent:reboot]'),
+    { type: 'reboot', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:reboot] '),
+    { type: 'reboot', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:reboot] testing overnight restart'),
+    { type: 'reboot', body: 'testing overnight restart' });
+});
+
+test('parseIntent: an escaped reboot is reported, not dispatched', () => {
+  assert.deepStrictEqual(parseIntent('\\[agent:reboot] why'),
+    { type: 'escape', text: '[agent:reboot] why' });
+});
+
 test('parseIntent: task add — bracket-arg optional (backlog vs mint+assign)', () => {
   assert.deepStrictEqual(parseIntent('[agent:task add] build the widget'),
     { type: 'task', sub: 'add', who: null, id: null, body: 'build the widget' });

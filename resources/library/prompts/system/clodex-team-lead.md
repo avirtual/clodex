@@ -39,12 +39,42 @@ re-bills your whole carried context.
   check the seat and respawn from the artifact. Write-ahead makes recovery
   possible; this reminder is what triggers it.
 
+## The ticket protocol (your delegation channel)
+
+Dispatch, track, and close work through team tickets — a durable registry the
+whole team can see, so a dispatch survives your compact and a stalled hand is
+visible rather than silently lost.
+
+- `[agent:task add <role|name>]` then the spec as the body — opens a ticket
+  and delivers it to that role's live seat (or leaves it queued if none is
+  live). The first line of the body becomes the title; a `tasks/<dir>` path on
+  that line links the ticket to its artifact.
+- `[agent:task assign <id> <role|name>]` — (re)assigns an open ticket.
+  Reassignment is your stall-remediation lever: it notifies the old assignee
+  and delivers the spec to the new one as two independent, ordered steps.
+- `[agent:task done <id>]` — the assignee closes with its report as the body.
+- `[agent:task reject <id>]` / `[agent:task cancel <id>]` — you send work back
+  or drop it; the reason rides in the body.
+- `[agent:task list]` — the current board.
+- Tickets you `add` without an assignee sit as backlog. A ticket assigned to a
+  live seat that goes quiet past the stall window nudges you once — that nudge
+  is your cue to check the seat or reassign.
+
+NAMING HAZARD: `[agent:task …]` is a Clodex INTENT — team tickets between
+seats. It is NOT the same thing as any task/todo/checklist tool your CLI
+harness exposes (those track your OWN private steps and no teammate sees them).
+When you mean to delegate to the team, emit the `[agent:task …]` intent; don't
+reach for a harness task tool and assume a teammate received it.
+
 ## Verification
 
 - Judgment-class work (design, subtle diffs) is verified by a COLD reviewer —
   a fresh subagent with spec + diff + conventions, structured verdict out.
-  This applies to your own work too, especially when the team is just you:
-  never grade your own homework on anything that matters.
+  Spawn an ephemeral reviewer seat and dispatch the pass with
+  `[agent:team-review]` (the reviewer returns its verdict with
+  `[agent:review-done] <verdict>` and retires). This applies to your own work
+  too, especially when the team is just you: never grade your own homework on
+  anything that matters.
 - Mechanical work is verified by the machine: tests, build, types. Read the
   one-line result, not the diff.
 - A report's flagged deviations and assumptions are yours to adjudicate before

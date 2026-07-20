@@ -51,6 +51,46 @@ test('persistence: setSessionId accumulates a dedup move-to-end history', () => 
   } finally { cleanup(); }
 });
 
+test('uiSettings: reboot rate-limit stamp ships at 0 and round-trips (Task 27)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    // Fresh install: never rebooted. (Auth is the per-session intents gate, NOT a
+    // settings key — nothing else to seed here.)
+    assert.strictEqual(uiSettings.get().lastRebootAt, 0);
+    // The handler stamps a reboot; it persists and survives an unrelated save.
+    uiSettings.set({ lastRebootAt: 1234567890 });
+    assert.strictEqual(uiSettings.get().lastRebootAt, 1234567890);
+    uiSettings.set({ theme: uiSettings.get().theme }); // unrelated write
+    assert.strictEqual(uiSettings.get().lastRebootAt, 1234567890);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: pendingRebootNotice ships null, round-trips, sanitizes, and clears (Task 28)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    // Fresh install: no notice armed.
+    assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
+    // Arming persists the full shape and survives an unrelated save.
+    uiSettings.set({ pendingRebootNotice: { name: 'clodex', at: 1234567890, reason: 'nightly' } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly' });
+    uiSettings.set({ theme: uiSettings.get().theme }); // unrelated write
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly' });
+    // A malformed at/reason is coerced (finite ms | 0, string | ''); a nameless
+    // value is rejected to null.
+    uiSettings.set({ pendingRebootNotice: { name: 'x', at: 'soon', reason: 42 } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'x', at: 0, reason: '' });
+    uiSettings.set({ pendingRebootNotice: { at: 5 } }); // no name
+    assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
+    // Explicit null is a real clear (one-shot), not "keep".
+    uiSettings.set({ pendingRebootNotice: { name: 'y', at: 1, reason: '' } });
+    assert.ok(uiSettings.get().pendingRebootNotice);
+    uiSettings.set({ pendingRebootNotice: null });
+    assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
+  } finally { cleanup(); }
+});
+
 test('uiSettings: peer relayAllowed + disabled survive the sanitize round-trip (presence-encoded)', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -555,6 +595,60 @@ test('seed: a missing source tree is a no-op, not a throw', () => {
     fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(registryDir, { recursive: true, force: true });
   }
+});
+
+// --- T26: all three default team role prompts ship + brief the live protocols
+const TEAM_ROLE_PROMPTS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'];
+const REPO_SYSTEM_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
+
+test('seed: ships all three default team role prompts into a fresh registry', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    const stores = initStores(userData, { registryDir });
+    for (const name of TEAM_ROLE_PROMPTS) {
+      const dest = path.join(registryDir, 'library', 'prompts', 'system', `${name}.md`);
+      assert.ok(fs.existsSync(dest), `${name}.md seeded on construction`);
+      const seeded = stores.promptLibrary.list().find((p) => p.name === name && p.kind === 'system');
+      assert.ok(seeded, `${name} surfaces as a system prompt`);
+    }
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed: an operator-edited team prompt survives while the other two seed', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    // Operator has hand-installed their own hand prompt before this launch.
+    const edited = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-hand.md');
+    fs.mkdirSync(path.dirname(edited), { recursive: true });
+    fs.writeFileSync(edited, 'MY HAND PROMPT');
+    initStores(userData, { registryDir });
+    assert.strictEqual(fs.readFileSync(edited, 'utf-8'), 'MY HAND PROMPT', 'edited hand prompt preserved');
+    // The other two still seed from the shipped tree.
+    for (const name of ['clodex-team-lead', 'clodex-team-reviewer']) {
+      const dest = path.join(registryDir, 'library', 'prompts', 'system', `${name}.md`);
+      assert.ok(fs.existsSync(dest), `${name}.md seeded alongside the preserved edit`);
+    }
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed: shipped team prompts brief their load-bearing protocol verbs', () => {
+  // Cheap content sanity — keeps the seeds honest under future edits. Greps the
+  // repo source directly (no seeding needed).
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /task add/, 'lead prompt briefs the ticket protocol (task add)');
+  assert.match(lead, /team-review/, 'lead prompt briefs cold review (team-review)');
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  assert.match(hand, /task done/, 'hand prompt briefs reporting via task done');
+  const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
+  assert.match(reviewer, /review-done/, 'reviewer prompt briefs the review-done closing intent');
 });
 
 test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () => {

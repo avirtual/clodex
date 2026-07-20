@@ -365,17 +365,23 @@ test('createTeam writes the default manifest and adopts the lead seat', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   const tm = createTeamManifest({ fs, clodexHome: home });
   const team = tm.createTeam({ name: 'shop', root, lead: 'clodex' });
-  // Returned manifest: lead SEAT adopted, default lead + reviewer roles present.
+  // Returned manifest: lead SEAT adopted, default lead + hand + reviewer roles
+  // present (T26 scaffold — a fresh team is briefed out of the box).
   assert.strictEqual(team.name, 'shop');
   assert.strictEqual(team.root, path.resolve(root));
   assert.strictEqual(team.lead, 'clodex');
   assert.strictEqual(team.roles.lead.prompt, 'clodex-team-lead');
   assert.strictEqual(team.roles.lead.instantiate, 'session');
   assert.ok(team.roles.lead.brief, 'lead gets a stock brief');
+  assert.strictEqual(team.roles.hand.prompt, 'clodex-team-hand');
+  assert.strictEqual(team.roles.hand.instantiate, 'session');
   assert.strictEqual(team.roles.reviewer.instantiate, 'subagent');
   assert.strictEqual(team.roles.reviewer.prompt, 'clodex-team-reviewer');
-  // The lead SEAT binds to the lead role; a <team>-reviewer seat binds reviewer.
+  assert.deepStrictEqual(team.roles.reviewer.tools, ['Read', 'Grep', 'Glob'],
+    'stock reviewer is a read-only subagent');
+  // The lead SEAT binds to the lead role; <team>-<role> seats bind hand/reviewer.
   assert.strictEqual(matchSeatRole(team, 'clodex'), 'lead');
+  assert.strictEqual(matchSeatRole(team, 'shop-hand'), 'hand');
   assert.strictEqual(matchSeatRole(team, 'shop-reviewer'), 'reviewer');
   // On-disk it's valid JSON and re-loads identically (atomic write left no tmp).
   const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
@@ -384,6 +390,26 @@ test('createTeam writes the default manifest and adopts the lead seat', () => {
     fs.readdirSync(path.join(home, 'teams', 'shop')).filter((f) => f.startsWith('.')),
     [], 'no leftover .tmp file after the atomic rename',
   );
+});
+
+test('createTeam honors caller-supplied roles over the default scaffold', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  // A caller passing its own non-empty roles map wins — the scaffold defaults
+  // (hand + reviewer tools) must NOT be merged in.
+  const team = tm.createTeam({
+    name: 'shop', root, lead: 'clodex',
+    roles: { lead: { prompt: 'my-lead' }, runner: { instantiate: 'subagent', prompt: 'my-runner' } },
+  });
+  assert.strictEqual(team.roles.lead.prompt, 'my-lead');
+  assert.strictEqual(team.roles.runner.prompt, 'my-runner');
+  assert.ok(!('hand' in team.roles), 'scaffold hand not injected when caller supplies roles');
+  assert.ok(!('reviewer' in team.roles), 'scaffold reviewer not injected when caller supplies roles');
+  // An empty roles map falls back to the default scaffold (not honored as "no roles").
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex', roles: {} });
+  assert.strictEqual(team2.roles.hand.prompt, 'clodex-team-hand', 'empty roles → default scaffold');
 });
 
 test('createTeam refuses a duplicate name, a duplicate exact root, and a bad name', () => {

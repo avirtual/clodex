@@ -526,7 +526,7 @@ const { createTeamManifest } = require('./team-manifest');
 const { findProjectRoot, resolveTeam, createTeam, addRole, listTeams } = createTeamManifest({ fs });
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
-const { intentEnabled } = require('./intent-catalog');
+const { intentEnabled, withoutPrivilegedIntents } = require('./intent-catalog');
 const { isFilenameToken, parseAndValidate, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
@@ -908,6 +908,7 @@ const SessionManager = createSessionManager({
     fs,
     hasActivePending,
     intentEnabled,
+    withoutPrivilegedIntents,
     isAlive,
     isDigested,
     isDraftOpen,
@@ -974,6 +975,11 @@ const SessionManager = createSessionManager({
   openPath,
   notifyOS,
   setAppQuitting,
+  // Full app relaunch for the operator-gated [agent:reboot] intent (Task 27).
+  // The SAME seam the phone endpoint / File menu / tray already relaunch
+  // through (restartClodex → app.relaunch(); app.quit()); the handler's auth
+  // gate + rate limit live in session-manager, the electron call stays here.
+  relaunchApp: restartHost,
 });
 const manager = new SessionManager();
 const proxyPoller = new ProxyPoller(manager);
@@ -1238,11 +1244,17 @@ const readCtxFor = (name) => {
 // this closure just binds the main.js module globals it needs. Defined here (the
 // restartSession precedent) and injected into ipc-handlers so its handler is a
 // one-liner; engine.js inherits this exact seam in Phase 3.
-function restoreSessionsForWorkspace(workspaceId) {
-  return restoreSessionsCore({
+async function restoreSessionsForWorkspace(workspaceId) {
+  const restored = await restoreSessionsCore({
     workspaceId, persistence, manager, proxyPoller,
     maybeCompactBeforeResume, readCtxFor, log,
   });
+  // Task 28 — after this workspace's seats are back, deliver any armed post-reboot
+  // notice (idempotent one-shot; parks by name if the target lives in a workspace
+  // not yet restored). Fires per workspace restore, but self-clears on the first
+  // call so it can't double-deliver. Never let a notice hiccup fail the restore.
+  try { manager.maybeDeliverRebootNotice(); } catch (e) { log.error('intent', `reboot notice delivery failed: ${e.message}`); }
+  return restored;
 }
 
 // The scope context for a session: its own name + its workspace's DISPLAY name

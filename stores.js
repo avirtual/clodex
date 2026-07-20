@@ -174,6 +174,19 @@ const DEFAULT_UI_SETTINGS = {
   // (id 'sandbox') so the panel isn't empty; the user can rename/delete/add from
   // there. Deleting every box yields a genuinely empty list (not re-seeded).
   boxes: [{ id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_SANDBOX_CONFIG } }],
+  // Timestamp (ms epoch) of the last honored [agent:reboot] (Task 27). Rate-limit
+  // backstop: a reboot inside REBOOT_MIN_INTERVAL of this is refused, so a
+  // confused resumed transcript can't loop the app. 0 = never rebooted. (Auth is
+  // the per-session `intents` allowlist, NOT a key here — Bogdan's call: reuse the
+  // existing gate rather than invent a parallel settings surface.)
+  lastRebootAt: 0,
+  // The one-shot post-reboot notice (Task 28): stamped by [agent:reboot] just
+  // before relaunch, delivered to the requesting seat once the app comes back
+  // and a workspace restore runs, then cleared. { name, at, reason } or null.
+  // Crash-safe by construction: it only fires if the app actually returned; a
+  // relaunch that never comes back leaves it set for the next manual launch
+  // (the requested-at time in the body self-explains a late one).
+  pendingRebootNotice: null,
 };
 
 // `prior` (optional) is the CURRENT peers array — used to carry a peer's auth
@@ -336,6 +349,23 @@ function sanitizeBoxes(rawBoxes) {
     out.push({ id, label, config });
   }
   return out;
+}
+
+// The one-shot post-reboot notice (Task 28). null unless a well-formed object
+// with a string seat name; `at` coerces to a finite ms stamp (0 if junk) and
+// `reason` to a string (''), so a delivered notice can always format its
+// requested-at time and optional reason. A missing/malformed value → null (no
+// notice pending), which is also the cleared state.
+function sanitizeRebootNotice(v) {
+  if (!v || typeof v !== 'object' || typeof v.name !== 'string' || !v.name) return null;
+  return {
+    name: v.name,
+    at: Number.isFinite(v.at) ? v.at : 0,
+    // Bound the stored reason so an unbounded settings write (or a hand-edited
+    // ui-settings.json) can't park a huge blob. Delivery still de-newlines and
+    // trims to its own 200-char display bound; this is just a storage sanity cap.
+    reason: (typeof v.reason === 'string' ? v.reason : '').slice(0, 500),
+  };
 }
 
 function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
@@ -1354,6 +1384,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           // A present-but-empty `boxes: []` (user deleted every box) is preserved;
           // a MISSING key (fresh install / pre-M6b file) falls to the default seed.
           boxes: sanitizeBoxes(raw?.boxes) ?? DEFAULT_UI_SETTINGS.boxes,
+          lastRebootAt: Number.isFinite(raw?.lastRebootAt) ? raw.lastRebootAt : DEFAULT_UI_SETTINGS.lastRebootAt,
+          pendingRebootNotice: sanitizeRebootNotice(raw?.pendingRebootNotice),
         };
       } catch { return DEFAULT_UI_SETTINGS; }
     },
@@ -1384,6 +1416,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
         peerControlled: sanitizePeerControlled(partial?.peerControlled) ?? cur.peerControlled,
         boxes: sanitizeBoxes(partial?.boxes ?? cur.boxes) ?? cur.boxes,
+        lastRebootAt: Number.isFinite(partial?.lastRebootAt) ? partial.lastRebootAt : cur.lastRebootAt,
+        // null is a REAL value here (the one-shot clear), so undefined-means-keep
+        // can't use the Number.isFinite pattern — key the merge on presence.
+        pendingRebootNotice: (partial && 'pendingRebootNotice' in partial)
+          ? sanitizeRebootNotice(partial.pendingRebootNotice)
+          : cur.pendingRebootNotice,
       };
       try {
         atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));

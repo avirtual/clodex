@@ -23,6 +23,7 @@ function mk(overrides = {}) {
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
     intentEnabled, // real pure leaf — the fire-time gate needs it on every _handleIntent
+    withoutPrivilegedIntents: require('../intent-catalog').withoutPrivilegedIntents, // real leaf — _handleSpawnIntent strips privileged grants
     fencedLines: require('../intent-scanner').fencedLines, // real pure leaf — _extractIntents maps fences unconditionally
     fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
     ...overrides,
@@ -468,6 +469,292 @@ test('gate: exec disabled → coarse bounce before the per-command grant is cons
   await m._handleIntent('a', { type: 'exec', cmd: 'bridge-reply', body: '{}' });
   assert.strictEqual(ran, false); // never reached the per-command layer
   assert.strictEqual(injected[0], '[agent:exec] the exec intent is disabled for this session');
+});
+
+// [agent:reboot] (Task 27): operator-gated app relaunch. AUTH is the per-session
+// `intents` allowlist — reboot is a PRIVILEGED intent (intent-catalog), so the
+// generic fire-time gate at the top of _handleIntent bounces any seat not granted
+// it BEFORE the handler runs. `intents` here is the value persisted under 'a'
+// (['reboot'] = granted; undefined/absent = the default, which excludes privileged).
+// The handler's own gate is the rate limit (lastRebootAt in a mutable uiSettings
+// fake); the relaunchApp seam is captured, never fired for real.
+function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = false, setThrows = false } = {}) {
+  const state = { lastRebootAt };
+  const relaunches = [];
+  const injected = [];
+  const broadcasts = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    getUiSettings: () => ({
+      get: () => ({ ...state }),
+      set: (partial) => {
+        if (setThrows) throw new Error('disk full');
+        Object.assign(state, partial); return { ...state };
+      },
+    }),
+    relaunchApp: () => { if (relaunchThrows) throw new Error('relaunch boom'); relaunches.push(Date.now()); },
+    log: { info: () => {}, error: () => {} },
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = (_ch, msg) => broadcasts.push(msg);
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  return { m, state, relaunches, injected, broadcasts };
+}
+
+test('reboot: a seat granted the reboot intent → seam fires once, confirm injected, stamp written', async () => {
+  const { m, state, relaunches, injected, broadcasts } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'overnight restart-window test' });
+  assert.strictEqual(relaunches.length, 1, 'relaunchApp fired exactly once');
+  assert.strictEqual(injected[0], '[agent:reboot] rebooting — sessions resume on relaunch');
+  assert.ok(state.lastRebootAt > 0, 'lastRebootAt stamped');
+  const b = broadcasts.find((x) => x.type === 'reboot');
+  assert.ok(b && /rebooting: overnight restart-window test/.test(b.body), 'ipc log carries reason');
+});
+
+test('reboot: DEFAULT-OFF — an all-enabled seat cannot reboot (generic gate bounce, no seam)', async () => {
+  const { m, state, relaunches, injected } = mkReboot({ intents: null }); // absent = all-enabled default
+  await m._handleIntent('a', { type: 'reboot', body: '' });
+  assert.strictEqual(relaunches.length, 0, 'the default posture does not grant reboot');
+  assert.strictEqual(injected[0], '[agent:reboot] the reboot intent is disabled for this session');
+  assert.strictEqual(state.lastRebootAt, 0, 'the handler never ran, so no stamp');
+});
+
+test('reboot: a seat granted OTHER intents but not reboot is still gated', async () => {
+  const { m, relaunches, injected } = mkReboot({ intents: ['dm', 'who'] }); // no reboot
+  await m._handleIntent('a', { type: 'reboot', body: '' });
+  assert.strictEqual(relaunches.length, 0);
+  assert.strictEqual(injected[0], '[agent:reboot] the reboot intent is disabled for this session');
+});
+
+test('reboot: inside the rate-limit window → refused, seam NOT fired, stamp untouched', async () => {
+  const recent = Date.now() - 10_000; // 10s ago, inside the 5min window
+  const { m, state, relaunches, injected } = mkReboot({ intents: ['reboot'], lastRebootAt: recent });
+  await m._handleIntent('a', { type: 'reboot', body: '' });
+  assert.strictEqual(relaunches.length, 0, 'no relaunch inside the rate-limit window');
+  assert.match(injected[0], /^\[agent:reboot\] rate-limited/);
+  assert.strictEqual(state.lastRebootAt, recent, 'stamp not rewritten on a refusal');
+});
+
+test('reboot: an UNGRANTED bash pane gets neither relaunch nor a bounce typed into its shell', async () => {
+  // Bash panes reach _handleIntent via _scanPtyOutput with any KNOWN type, and
+  // reboot is gate-disabled on every default seat — so the gate bounce would
+  // fire here for something as innocent as cat'ing a doc that quotes the
+  // intent. The agentType guard on the gate bounce is what this pins.
+  const { m, relaunches, injected } = mkReboot({ intents: ['reboot'] });
+  m.sessions.set('sh', { name: 'sh', workspaceId: 'ws1' }); // no agentType, no persisted entry
+  await m._handleIntent('sh', { type: 'reboot', body: '' });
+  assert.strictEqual(relaunches.length, 0, 'gate stops the relaunch');
+  assert.strictEqual(injected.length, 0, 'gate bounce must NOT be typed into a live shell');
+});
+
+test('reboot: even a GRANTED bash name never relaunches (case-level agentType guard)', async () => {
+  const state = { lastRebootAt: 0 };
+  const relaunches = [];
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'sh' ? { intents: ['reboot'] } : null) }),
+    getUiSettings: () => ({
+      get: () => ({ ...state }),
+      set: (partial) => { Object.assign(state, partial); return { ...state }; },
+    }),
+    relaunchApp: () => { relaunches.push(Date.now()); },
+    log: { info: () => {}, error: () => {} },
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('sh', { name: 'sh', workspaceId: 'ws1' }); // bash: no agentType
+  await m._handleIntent('sh', { type: 'reboot', body: '' });
+  assert.strictEqual(relaunches.length, 0, 'bash panes are filtered inside the reboot case even when granted');
+  assert.strictEqual(injected.length, 0, 'no reply typed into the shell either');
+});
+
+test('reboot: appears in the near-miss valid-intents bounce copy', async () => {
+  const injected = [];
+  const m = mk({ getPersistence: () => ({ list: () => [], get: () => ({ intents: null }) }) });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  await m._handleIntent('a', { type: 'unknown', text: '[agent:rebot]', more: 0 });
+  assert.match(injected[0], /Valid intents:.*\breboot\b/);
+});
+
+test('reboot: an agent [agent:spawn] from a template STRIPS privileged intents (no self-grant)', async () => {
+  let createdIntents = 'UNSET';
+  const m = mk({
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
+    getTemplates: () => ({ list: () => [{ name: 'rebooter', type: 'claude', cwd: '/tmp/spawn-x', intents: ['dm', 'reboot'] }] }),
+    ensureDir: () => {},
+    os: require('node:os'),
+    path: require('node:path'),
+    log: { info: () => {}, error: () => {} },
+  });
+  m._injectText = () => {};
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  // Capture create()'s intents arg (last positional, index 17).
+  m.create = async (...args) => { createdIntents = args[17]; return { name: args[0], type: args[1] }; };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
+  m.sessions.set('a', spawner);
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: '/tmp/spawn-x', template: 'rebooter' });
+  // _handleSpawnIntent defers the spawn into setImmediate(async …) — drain two ticks.
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(createdIntents, ['dm'],
+    'reboot filtered out of the template grant at the agent-spawn boundary');
+});
+
+// ── Task 28: the one-shot post-reboot notice ────────────────────────────────
+// [agent:reboot] arms uiSettings.pendingRebootNotice just before relaunch; on the
+// next launch, engine.restoreSessionsForWorkspace calls maybeDeliverRebootNotice()
+// after a workspace restore. Three delivery cases (mirror _deliverReminder): the
+// requester is LIVE in the just-restored workspace, OFFLINE-but-resumable in one
+// not yet restored (park by name), or GONE (deleted while down). Always one-shot:
+// the flag clears on the first call regardless of outcome.
+
+test('reboot notice: [agent:reboot] arms pendingRebootNotice (name/at/reason) alongside the stamp', async () => {
+  const { m, state } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'overnight restart-window test' });
+  assert.ok(state.pendingRebootNotice, 'notice armed');
+  assert.strictEqual(state.pendingRebootNotice.name, 'a');
+  assert.strictEqual(state.pendingRebootNotice.reason, 'overnight restart-window test');
+  assert.ok(state.pendingRebootNotice.at > 0, 'requested-at stamped');
+});
+
+// Build a manager whose uiSettings carries a pending notice, capturing live
+// deliveries (_deliverMessage) and offline parks (the parkDelivery dep).
+function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false } = {}) {
+  const state = { pendingRebootNotice: notice };
+  const delivered = [];
+  const parks = [];
+  const m = mk({
+    getUiSettings: () => ({
+      get: () => ({ ...state }),
+      set: (partial) => { Object.assign(state, partial); return { ...state }; },
+    }),
+    getPersistence: () => ({ list: () => [], get: (n) => (n === (notice && notice.name) ? persisted : null) }),
+    parkDelivery: (_dir, name, text) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text }); },
+    PENDING_DIR: '/tmp/pending-x',
+    log: { info: () => {}, error: () => {} },
+  });
+  m._deliverMessage = (name, sender, body) => { if (deliverThrows) throw new Error('inject boom'); delivered.push({ name, sender, body }); };
+  if (live) m.sessions.set(notice.name, { name: notice.name, agentType: 'claude', workspaceId: 'ws1' });
+  return { m, state, delivered, parks };
+}
+
+test('reboot notice: a LIVE requester gets the notice injected, then the flag clears', () => {
+  const at = Date.now();
+  const { m, state, delivered, parks } = mkNotice({
+    notice: { name: 'a', at, reason: 'nightly' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 1, 'delivered once to the live seat');
+  assert.strictEqual(delivered[0].name, 'a');
+  assert.strictEqual(delivered[0].sender, 'reboot', 'system sender tag → no reply trailer');
+  // Copy: NEVER "relaunch complete" (flag is written pre-relaunch); a timestamped
+  // "is running again" + the explicit non-grant line.
+  // No inner [agent:reboot] prefix — delivery adds [agent:from reboot], so a single clean prefix.
+  assert.match(delivered[0].body, /^notice: Clodex is running after your reboot request at .+: nightly\. This does not grant reboot permission\.$/);
+  assert.doesNotMatch(delivered[0].body, /relaunch complete/);
+  assert.strictEqual(parks.length, 0, 'live path does not park');
+  assert.strictEqual(state.pendingRebootNotice, null, 'one-shot flag cleared');
+});
+
+test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag clears', () => {
+  const { m, state, delivered, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' },
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 0, 'no live inject — seat not in the map');
+  assert.strictEqual(parks.length, 1, 'parked for the resumable seat');
+  assert.strictEqual(parks[0].name, 'a');
+  // Parked text is the full delivery form — a single clean [agent:from reboot] prefix, no doubling.
+  assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex is running after your reboot request/);
+  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
+});
+
+test('reboot notice: a GONE requester (no persisted entry) drops, flag still clears', () => {
+  const { m, state, delivered, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: null,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 0);
+  assert.strictEqual(parks.length, 0, 'nothing to deliver to a deleted seat');
+  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared even on a drop (never sticky)');
+});
+
+test('reboot notice: no armed notice → a clean no-op (no deliver, no park, no clear write)', () => {
+  const { m, delivered, parks } = mkNotice({ notice: null });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 0);
+  assert.strictEqual(parks.length, 0);
+});
+
+// ── Task 28 amendment (contrarian review) ───────────────────────────────────
+
+test('reboot notice: relaunchApp throwing CLEARS the armed flag (no false success later)', async () => {
+  const { m, state, relaunches } = mkReboot({ intents: ['reboot'], relaunchThrows: true });
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  assert.strictEqual(relaunches.length, 0, 'relaunch threw');
+  assert.strictEqual(state.pendingRebootNotice, null, 'notice cleared — the process did not die');
+  assert.ok(state.lastRebootAt > 0, 'rate-limit stamp still holds (no rapid-retry window)');
+});
+
+test('reboot notice: a settings-write failure at reboot time does NOT abort the relaunch', async () => {
+  const { m, relaunches } = mkReboot({ intents: ['reboot'], setThrows: true });
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  assert.strictEqual(relaunches.length, 1, 'reboot proceeds — the notice is best-effort');
+});
+
+test('reboot notice: a transient LIVE-inject error RETAINS the flag (retry next launch)', () => {
+  const { m, state } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: true, deliverThrows: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.ok(state.pendingRebootNotice, 'flag survives a transient inject failure');
+});
+
+test('reboot notice: a transient PARK error RETAINS the flag (retry next launch)', () => {
+  const { m, state } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, parkThrows: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.ok(state.pendingRebootNotice, 'flag survives a transient park failure');
+});
+
+test('reboot notice: a stale (>7d) notice that errors is DROPPED, not retained forever', () => {
+  const eightDays = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  const { m, state } = mkNotice({
+    notice: { name: 'a', at: eightDays, reason: '' }, live: true, deliverThrows: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(state.pendingRebootNotice, null, 'stale-beyond-useful notice cleared on error');
+});
+
+test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + cleared', () => {
+  // A {failed:true} persisted entry still HAS a record — it's recoverable, so the
+  // notice parks by name (drains on a successful retry) rather than being dropped.
+  const { m, state, delivered, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude', failed: true },
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 0);
+  assert.strictEqual(parks.length, 1, 'parked, not dropped — a failed restore is not gone');
+  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared on a successful park');
+});
+
+test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', () => {
+  const { m, delivered } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'line one\nline two\t' + 'x'.repeat(400) }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  const echoed = delivered[0].body.split('request at ')[1]; // ISO + ": <reason>. This does not..."
+  assert.doesNotMatch(echoed, /\n/, 'newlines collapsed');
+  // Reason sits after the (space-free ISO) timestamp: "request at <ISO>: <reason>.
+  // This does not grant …". Anchor on the ISO so the earlier "notice:" colon can't
+  // swallow the capture.
+  const reason = delivered[0].body.match(/request at \S+: (.*)\. This does not grant reboot permission\.$/)[1];
+  assert.ok(reason.length <= 200, `reason capped (${reason.length})`);
 });
 
 test('gate: exec enabled → passes the coarse gate, reaching the per-command grant', async () => {
@@ -1498,6 +1785,29 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
 });
 
+test('team-review: reviewer inherits the lead permission posture (--dangerously-skip-permissions) so it never strands on a prompt', async () => {
+  // A cold reviewer spawned WITHOUT the lead's skip-permissions posture blocks on
+  // its first tool prompt; with no operator awake (the point of an overnight review)
+  // that dialog strands the seat forever and no [agent:review-done] ever lands. Same
+  // F5 inheritance the spawn path already does; the reviewer is tool-capped anyway.
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  persistence.upsert({ name: 'lead', extraArgs: ['--dangerously-skip-permissions'] });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created[0][3], ['--dangerously-skip-permissions'],
+    'reviewer carries ONLY the lead posture flag — not a full extraArgs copy');
+});
+
+test('team-review: a prompt-gated lead spawns a prompt-gated reviewer (no posture flag inherited)', async () => {
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  persistence.upsert({ name: 'lead', extraArgs: ['--model', 'opus'] }); // no skip flag → nothing inherited
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created[0][3], [], 'only the skip flag is inheritable; absent → [] (F5 parity)');
+});
+
 test('team-review: name bumps past an existing team-reviewer-1 (live or persisted)', async () => {
   const { m, created, persistence } = mkReview();
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
@@ -1636,6 +1946,61 @@ test('team-review: a codex reviewer with NO tools restriction spawns normally', 
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(created.length, 1, 'an unrestricted codex reviewer spawns');
   assert.strictEqual(created[0][1], 'codex', 'spawns as codex');
+});
+
+// --- Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
+// team.json is agent-writable, so a lead must not be able to WIDEN its own cold
+// reviewer past the code-level cap (Read/Grep/Glob). Effective = intersection.
+test('team-review: a manifest WIDER than the cap spawns CAPPED with a loud operator-approval line', async () => {
+  const { m, injected, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit'], type: null, template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'a widened manifest still spawns — a capped review beats no review');
+  const disabledTools = created[0][11];
+  // The widening (Bash, Edit) is disabled despite the manifest asking for it; the cap holds.
+  assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'),
+    'tools beyond the cap are disabled even though the manifest requested them');
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'the capped allowlist (Read/Grep/Glob) is NOT disabled');
+  assert.ok(injected.some((t) => /requested \[Bash, Edit\] beyond the reviewer cap \[Read, Grep, Glob\] — requires operator approval; spawned with \[Read, Grep, Glob\]/.test(t)),
+    'the lead gets a loud line naming the beyond-cap tools and the operator-approval requirement');
+});
+
+test('team-review: a manifest NARROWER than the cap is honored (narrows, no warning)', async () => {
+  const { m, injected, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read'], type: null, template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'narrowed reviewer spawns');
+  const disabledTools = created[0][11];
+  assert.ok(!disabledTools.includes('Read'), 'the narrowed-to Read stays enabled');
+  assert.ok(disabledTools.includes('Grep') && disabledTools.includes('Glob'),
+    'cap tools the manifest dropped are disabled — narrowing below the cap is honored');
+  assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)), 'no operator-approval line when nothing exceeds the cap');
+});
+
+test('team-review: an ABSENT manifest tools list applies the cap as-is', async () => {
+  const { m, injected, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: null, type: null, template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'a reviewer with no manifest tools spawns');
+  const disabledTools = created[0][11];
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'the cap (Read/Grep/Glob) is the effective allowlist when the manifest is silent');
+  assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
+    'everything outside the cap is disabled');
+  assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)), 'no operator-approval line for a silent manifest');
 });
 
 // NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.

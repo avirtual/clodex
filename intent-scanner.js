@@ -1,8 +1,8 @@
 // Intent Scanner (port of wb-wrap/scanner.py). Turns one line of assistant
 // output into a structured `[agent:…]` intent (or null). Pure string work — no
 // Electron, no main.js state — so the grammar (dm/who/name/context/memory/
-// spawn/file/resend/exec/remind/notify-user/team-review/review-done/task + the
-// `\[agent:` escape) is unit-testable in isolation.
+// spawn/file/resend/exec/remind/notify-user/team-review/review-done/task/reboot
+// + the `\[agent:` escape) is unit-testable in isolation.
 // Seam: plain named functions on raw strings; the caller owns column-1
 // anchoring by feeding it a single line at a time.
 // Gotcha: cleanLine strips a leading run of DECORATOR glyphs (bullets, box
@@ -138,6 +138,14 @@ function parseIntent(rawLine) {
 
   const reviewDoneMatch = cleaned.match(/^\[agent:review-done\]\s*(.*)/s);
   if (reviewDoneMatch) return { type: 'review-done', body: reviewDoneMatch[1] };
+
+  // `reboot` = operator-gated full app relaunch (Task 27). Bodyless-or-body like
+  // notify-user: the optional body is a free-text REASON (logged only). The
+  // handler owns the allowlist + rate-limit gates; the scanner just parses. NOT
+  // in _extractIntents' multi-line allow-set — the reason is a single line, so a
+  // following line stays its own intent (like who/name/file).
+  const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
+  if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
   // `task` = the team ticket protocol (Task 25). Six sub-verbs; a team LEAD opens
   // and directs tickets, an ASSIGNEE closes them, and clodex owns the registry +

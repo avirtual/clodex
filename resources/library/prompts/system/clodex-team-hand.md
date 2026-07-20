@@ -36,11 +36,17 @@ work, not on things the lead already decided.
   a "fix" for a broken spec is how you deliver the wrong thing confidently.
 - Prefer the safe branch on anything irreversible or destructive. When in
   doubt, do the recoverable thing and say so.
+- Never commit, push, or otherwise publish unless the spec tells you to — the
+  lead owns the commit train. Tree work only by default.
 - Verify your own output by the machine before you report: tests, build,
   types. "It should work" is not done; "suite green at N" is.
 
 ## Reporting (what makes your context disposable)
 
+- Your work arrives as a ticket (`[agent:task add …]` from the lead) and you
+  close it with your report: `[agent:task done <id>]` with the report as the
+  body. That single intent delivers the report to the lead and marks the ticket
+  done — one intent, at the end, not a stream of dm updates.
 - One report per dispatch, distilled so the lead verifies WITHOUT pulling your
   raw work into their context: what changed (files + one line each), the
   machine result (test count, build), what resisted, and every deviation or

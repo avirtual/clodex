@@ -266,7 +266,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   // deepest-root rule disambiguates) but an EXACT duplicate makes resolution
   // ambiguous; (3) `name` off the session-name charset (it becomes both a
   // directory and the `<team>-` seat prefix). Returns the loaded manifest.
-  function createTeam({ name, root, lead } = {}) {
+  function createTeam({ name, root, lead, roles } = {}) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new Error(`team name "${name}" must match ${NAME_RE}`);
     }
@@ -290,13 +290,22 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
       }
     }
+    // Default roles scaffold: lead + hand + reviewer, so a fresh team is
+    // briefed out of the box (T26) — each seat carries its stock role prompt,
+    // and the reviewer is a read-only subagent (Read/Grep/Glob). A caller may
+    // pass its own non-empty `roles` map to override; caller-supplied roles win
+    // and are never overwritten by the scaffold.
+    const defaultRoles = {
+      lead: { ...STOCK_ROLE_DEFS.lead },
+      hand: { ...STOCK_ROLE_DEFS.hand },
+      reviewer: { ...STOCK_ROLE_DEFS.reviewer, tools: ['Read', 'Grep', 'Glob'] },
+    };
+    const callerRoles = roles && typeof roles === 'object' && !Array.isArray(roles) && Object.keys(roles).length
+      ? roles : null;
     const manifest = {
       lead,
       root: resolvedRoot,
-      roles: {
-        lead: { ...STOCK_ROLE_DEFS.lead },
-        reviewer: { ...STOCK_ROLE_DEFS.reviewer },
-      },
+      roles: callerRoles || defaultRoles,
     };
     atomicWrite(file, JSON.stringify(manifest, null, 2));
     return loadManifest(name);
