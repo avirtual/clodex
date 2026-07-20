@@ -2921,8 +2921,8 @@ function createSessionManager(deps) {
       } catch (e) {
         // relaunchApp threw — the process did NOT die. The notice was armed
         // pre-relaunch (so it survives the process dying); but since we're still
-        // alive, a persisted "Clodex is running after your reboot" would become a
-        // FALSE success on the next real launch. Clear it. The lastRebootAt stamp
+        // alive, a persisted "Clodex restarted and is running again" would become
+        // a FALSE success on the next real launch. Clear it. The lastRebootAt stamp
         // stays — a broken relaunch must not open a rapid-retry window (T27).
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
@@ -2971,23 +2971,44 @@ function createSessionManager(deps) {
 
       // Copy: never "relaunch complete" (the flag is written BEFORE relaunchApp
       // fires, so on a crash + later manual launch that would be a false success).
-      // A timestamped "the app is running again", plus the explicit non-grant line.
-      // No inner [agent:reboot] prefix — delivery already stamps [agent:from reboot],
-      // so the seat reads a single clean prefix (a doubled one is only redundant).
+      // A plain, timestamped "restarted and is running again", written for a general
+      // user reading it in the sidebar. The old belt-and-suspenders "This does not
+      // grant reboot permission." line was dropped (T30): it enforced nothing — the
+      // real gate is the per-session intents allowlist at fire time — and only
+      // confused the operator. No inner [agent:reboot] prefix — delivery already
+      // stamps [agent:from reboot], so the seat reads a single clean prefix.
       const at = Number.isFinite(notice.at) ? notice.at : 0;
       const when = at ? new Date(at).toISOString() : 'an earlier time';
       // Cap + de-newline the echoed reason (it round-trips from a settings file an
       // operator could hand-edit, and rides into an injected line).
       const reason = (typeof notice.reason === 'string' ? notice.reason : '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      const body = `notice: Clodex is running after your reboot request at ${when}${reason ? `: ${reason}` : ''}. This does not grant reboot permission.`;
+      const body = `notice: Clodex restarted and is running again (reboot requested at ${when}${reason ? `: ${reason}` : ''}).`;
 
       const target = this.sessions.get(notice.name);
       if (target && target.agentType) {
-        // LIVE — normal DM inject (sender tag 'reboot' → no reply trailer, like
-        // 'reminder': it's a system notice, not a dm to answer).
+        // LIVE. But a just-restored seat is mid-boot (banner, resume replay,
+        // alt-screen setup); an ACTIVE inject (text + trailing Enter) races the
+        // booting TUI and the \r is SWALLOWED — the operator finds the notice sitting
+        // unsubmitted in stdin (field bug T30). This is the same boot race the initial
+        // roster already dodges. A CLAUDE seat has a passive store, so PARK the notice
+        // exactly like the OFFLINE branch below: it drains on the seat's first organic
+        // hook turn (no PTY typing) — the boot-safe path _injectRoster takes. A CODEX
+        // seat has no passive store (parking would strand the message), so it keeps the
+        // active deliver — a codex reboot-requester mid-boot is the narrower,
+        // out-of-scope T20-codex race. Sender tag 'reboot' → no reply trailer, like
+        // 'reminder': it's a system notice, not a dm to answer. The park stays inside
+        // this try so a park throw still RETAINS the flag (T28), same as the offline
+        // branch — that's why this doesn't route through _deliverPassive (whose park-
+        // failure fallback would silently degrade to an active deliver + clear).
         try {
-          this._deliverMessage(notice.name, 'reboot', body, 'dm');
-          log.info('intent', `reboot notice delivered to ${notice.name} (live)`);
+          if (target.agentType === 'claude') {
+            const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
+            parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq());
+            log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe)`);
+          } else {
+            this._deliverMessage(notice.name, 'reboot', body, 'dm');
+            log.info('intent', `reboot notice delivered to ${notice.name} (live codex)`);
+          }
           clear();
         } catch (e) {
           retainOrExpire(`live deliver failed: ${e.message}`);

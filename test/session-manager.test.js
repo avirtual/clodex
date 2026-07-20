@@ -621,8 +621,10 @@ test('reboot notice: [agent:reboot] arms pendingRebootNotice (name/at/reason) al
   assert.ok(state.pendingRebootNotice.at > 0, 'requested-at stamped');
 });
 
-// Build a manager whose uiSettings carries a pending notice, capturing live
-// deliveries (_deliverMessage) and offline parks (the parkDelivery dep).
+// Build a manager whose uiSettings carries a pending notice, capturing active
+// deliveries (_deliverMessage) and parks (the parkDelivery dep). Note: a LIVE
+// CLAUDE seat now PARKS (T30 boot-safety) — it shows up in `parks`, not
+// `delivered`; a live CODEX seat and the offline path behave as before.
 function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false } = {}) {
   const state = { pendingRebootNotice: notice };
   const delivered = [];
@@ -642,22 +644,43 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
   return { m, state, delivered, parks };
 }
 
-test('reboot notice: a LIVE requester gets the notice injected, then the flag clears', () => {
+test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe), then the flag clears', () => {
   const at = Date.now();
   const { m, state, delivered, parks } = mkNotice({
-    notice: { name: 'a', at, reason: 'nightly' }, live: true,
+    notice: { name: 'a', at, reason: 'nightly' }, live: true, // mkNotice's live seat is claude
   });
   m.maybeDeliverRebootNotice();
-  assert.strictEqual(delivered.length, 1, 'delivered once to the live seat');
-  assert.strictEqual(delivered[0].name, 'a');
-  assert.strictEqual(delivered[0].sender, 'reboot', 'system sender tag → no reply trailer');
-  // Copy: NEVER "relaunch complete" (flag is written pre-relaunch); a timestamped
-  // "is running again" + the explicit non-grant line.
-  // No inner [agent:reboot] prefix — delivery adds [agent:from reboot], so a single clean prefix.
-  assert.match(delivered[0].body, /^notice: Clodex is running after your reboot request at .+: nightly\. This does not grant reboot permission\.$/);
-  assert.doesNotMatch(delivered[0].body, /relaunch complete/);
-  assert.strictEqual(parks.length, 0, 'live path does not park');
+  // T30: a just-restored claude seat is mid-boot; an active inject would have its
+  // trailing Enter swallowed (the notice would strand in stdin). So the notice
+  // PARKS (drains on the seat's first organic hook turn, no PTY typing) — the same
+  // boot-safe path the initial roster uses — instead of live-injecting.
+  assert.strictEqual(delivered.length, 0, 'no active inject into a booting claude TUI');
+  assert.strictEqual(parks.length, 1, 'parked for the live claude seat');
+  assert.strictEqual(parks[0].name, 'a');
+  // New copy: no "relaunch complete" (flag is pre-relaunch), and the confusing
+  // "does not grant reboot permission" line is gone — a plain, timestamped
+  // "restarted and is running again". Parked text carries a single clean
+  // [agent:from reboot] prefix (delivery adds it; no doubled prefix).
+  assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex restarted and is running again \(reboot requested at .+: nightly\)\.$/);
+  assert.doesNotMatch(parks[0].text, /relaunch complete/);
+  assert.doesNotMatch(parks[0].text, /does not grant/);
   assert.strictEqual(state.pendingRebootNotice, null, 'one-shot flag cleared');
+});
+
+test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive store to park into)', () => {
+  const { m, state, delivered, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: true,
+  });
+  // Flip the live seat to codex: it has no pending store, so a park would never
+  // drain — it keeps the active delivery. The codex mid-boot race stays its own,
+  // out-of-scope case (T30 scope is the notice; the field bug is a claude seat).
+  m.sessions.get('a').agentType = 'codex';
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 1, 'codex live seat still actively delivered');
+  assert.strictEqual(delivered[0].sender, 'reboot', 'system sender tag → no reply trailer');
+  assert.match(delivered[0].body, /^notice: Clodex restarted and is running again \(reboot requested at /);
+  assert.strictEqual(parks.length, 0, 'not parked — codex has no passive drain');
+  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
 });
 
 test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag clears', () => {
@@ -669,7 +692,7 @@ test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag 
   assert.strictEqual(parks.length, 1, 'parked for the resumable seat');
   assert.strictEqual(parks[0].name, 'a');
   // Parked text is the full delivery form — a single clean [agent:from reboot] prefix, no doubling.
-  assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex is running after your reboot request/);
+  assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex restarted and is running again \(reboot requested at/);
   assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
 });
 
@@ -706,10 +729,22 @@ test('reboot notice: a settings-write failure at reboot time does NOT abort the 
   assert.strictEqual(relaunches.length, 1, 'reboot proceeds — the notice is best-effort');
 });
 
-test('reboot notice: a transient LIVE-inject error RETAINS the flag (retry next launch)', () => {
+test('reboot notice: a transient LIVE-park error (claude) RETAINS the flag (retry next launch)', () => {
+  // Live claude now parks; a park throw must reach retainOrExpire (the park stays
+  // inside the live branch's try, NOT routed through _deliverPassive's silent
+  // fallback), so the flag survives for a retry next launch.
+  const { m, state } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: true, parkThrows: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.ok(state.pendingRebootNotice, 'flag survives a transient park failure on the live claude path');
+});
+
+test('reboot notice: a transient LIVE-inject error (codex) RETAINS the flag (retry next launch)', () => {
   const { m, state } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: '' }, live: true, deliverThrows: true,
   });
+  m.sessions.get('a').agentType = 'codex'; // codex keeps the active deliver
   m.maybeDeliverRebootNotice();
   assert.ok(state.pendingRebootNotice, 'flag survives a transient inject failure');
 });
@@ -725,7 +760,7 @@ test('reboot notice: a transient PARK error RETAINS the flag (retry next launch)
 test('reboot notice: a stale (>7d) notice that errors is DROPPED, not retained forever', () => {
   const eightDays = Date.now() - 8 * 24 * 60 * 60 * 1000;
   const { m, state } = mkNotice({
-    notice: { name: 'a', at: eightDays, reason: '' }, live: true, deliverThrows: true,
+    notice: { name: 'a', at: eightDays, reason: '' }, live: true, parkThrows: true, // live claude parks
   });
   m.maybeDeliverRebootNotice();
   assert.strictEqual(state.pendingRebootNotice, null, 'stale-beyond-useful notice cleared on error');
@@ -744,16 +779,18 @@ test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + c
 });
 
 test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', () => {
-  const { m, delivered } = mkNotice({
+  // Live claude parks → read the parked text (the reason sanitize/cap is identical
+  // on both the park and active-deliver paths; it happens before the body is built).
+  const { m, parks } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: 'line one\nline two\t' + 'x'.repeat(400) }, live: true,
   });
   m.maybeDeliverRebootNotice();
-  const echoed = delivered[0].body.split('request at ')[1]; // ISO + ": <reason>. This does not..."
-  assert.doesNotMatch(echoed, /\n/, 'newlines collapsed');
-  // Reason sits after the (space-free ISO) timestamp: "request at <ISO>: <reason>.
-  // This does not grant …". Anchor on the ISO so the earlier "notice:" colon can't
-  // swallow the capture.
-  const reason = delivered[0].body.match(/request at \S+: (.*)\. This does not grant reboot permission\.$/)[1];
+  const text = parks[0].text; // "[agent:from reboot] notice: … (reboot requested at <ISO>: <reason>)."
+  assert.doesNotMatch(text, /\n/, 'newlines collapsed');
+  // Reason sits after the (space-free ISO) timestamp, inside the trailing parens:
+  // "reboot requested at <ISO>: <reason>).". Anchor on the ISO so an earlier colon
+  // can't swallow the capture.
+  const reason = text.match(/reboot requested at \S+: (.*)\)\.$/)[1];
   assert.ok(reason.length <= 200, `reason capped (${reason.length})`);
 });
 

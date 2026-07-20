@@ -90,7 +90,7 @@ function initTeamRolesPopover({ promptText } = {}) {
           `<span class="team-role-inst">${esc(row.instantiate)}</span></div>` +
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
-          `<label class="team-role-field"><span>prompt</span><input type="text" data-f="prompt" placeholder="system-prompt name from the library, sets how this teammate behaves"></label>` +
+          `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
           `<div class="team-role-actions">` +
           `<button type="button" data-act="save">Save</button>` +
@@ -98,7 +98,29 @@ function initTeamRolesPopover({ promptText } = {}) {
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
         el.querySelector('input[data-f="brief"]').value = row.brief;
-        el.querySelector('input[data-f="prompt"]').value = row.prompt;
+        // Prompt is a picker (must be a library prompt name — free text just
+        // fails at spawn time; matches the Add Role form). Options come from the
+        // same rail-filtered list; a stored prompt missing from the library still
+        // has to display, so it's appended as a marked option rather than
+        // silently blanking. Values/labels set by PROPERTY (agent-writable).
+        const sel = el.querySelector('select[data-f="prompt"]');
+        {
+          const none = document.createElement('option');
+          none.value = ''; none.textContent = '(no prompt)';
+          sel.appendChild(none);
+          for (const p of promptNames) {
+            const opt = document.createElement('option');
+            opt.value = p; opt.textContent = p;
+            sel.appendChild(opt);
+          }
+          if (row.prompt && !promptNames.includes(row.prompt)) {
+            const missing = document.createElement('option');
+            missing.value = row.prompt;
+            missing.textContent = `${row.prompt} (missing from library)`;
+            sel.appendChild(missing);
+          }
+          sel.value = row.prompt;
+        }
         el.querySelector('input[data-f="template"]').value = row.template;
       }
       listEl.appendChild(el);
@@ -131,11 +153,15 @@ function initTeamRolesPopover({ promptText } = {}) {
   }
 
   // Populate the add-role prompt picker from the same rail-filtered source the
-  // New Session dialog's join flow uses.
+  // New Session dialog's join flow uses. The list is cached module-side so
+  // renderRows (also hit on post-mutation refresh) can build per-row pickers
+  // without re-fetching.
+  let promptNames = [];
   async function populatePromptOptions() {
     let res;
     try { res = await window.api.teamRolePrompts(); } catch { res = null; }
     const prompts = (res && res.prompts) || [];
+    promptNames = prompts;
     addPrompt.innerHTML = '<option value="">(no prompt)</option>';
     for (const p of prompts) {
       const opt = document.createElement('option');
@@ -176,7 +202,8 @@ function initTeamRolesPopover({ promptText } = {}) {
     const act = btn.dataset.act;
     if (act === 'save') {
       const val = (f) => {
-        const inp = rowEl.querySelector(`input[data-f="${f}"]`);
+        // prompt is a <select>, the rest are <input>s — match on data-f alone.
+        const inp = rowEl.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value : '';
       };
       // buildSavePatch sends brief/prompt (blank clears) but OMITS a blank
