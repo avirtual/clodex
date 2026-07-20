@@ -215,21 +215,81 @@ function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-// Menu/tray front door: confirm with the live session count first (the
-// remote page fronts its own confirm; direct callers skip none).
+// T32: the busy/idle classifier + sustained-idle waiter live in a pure, injected
+// leaf (restart-waiter.js) so the window logic is unit-tested with a fake clock;
+// this is the thin shell that binds the real dialog / setTimeout / Notification.
+const { classifyRestart, createIdleWaiter } = require('./restart-waiter');
+const idleWaiter = createIdleWaiter({
+  getSessions: () => Array.from(manager.sessions.values()),
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h),
+  restart: () => restartClodex(),
+  // Cap reached (30 min never quiet): give up the wait, don't force a restart.
+  notify: () => {
+    try {
+      if (Notification.isSupported()) new Notification({
+        title: 'Restart canceled',
+        body: 'Sessions stayed busy for 30 minutes — the pending restart was dropped. Try again when work settles.',
+      }).show();
+    } catch {}
+  },
+});
+
+// Menu/tray front door. "Running" here means MID-TURN, not merely alive: idle
+// seats --resume cleanly, so only mid-turn agents are counted as interruptions.
+// busy > 0 offers "Restart When Idle" (arm the waiter) alongside "Restart Now".
+// A second invocation while a wait is pending manages that wait instead. The
+// remote page fronts its own confirm; direct callers skip none.
 async function confirmRestartClodex() {
-  const n = Array.from(manager.sessions.values()).filter(s => !s._dead).length;
+  // Already waiting for idle? Manage the pending wait rather than stacking another.
+  if (idleWaiter.isArmed()) {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Restart Now', 'Cancel Pending Restart', 'Keep Waiting'],
+      defaultId: 2,
+      cancelId: 2,
+      message: 'A restart is already pending.',
+      detail: 'Clodex will restart once every session is idle. Restart now anyway, cancel the pending restart, or keep waiting?',
+    });
+    if (response === 0) { idleWaiter.disarm(); restartClodex(); }
+    else if (response === 1) idleWaiter.disarm();
+    return;
+  }
+
+  const { busy, idle } = classifyRestart(Array.from(manager.sessions.values()));
+
+  // Nothing mid-turn — restart is immediate; idle seats just resume.
+  if (busy === 0) {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Restart', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Restart Clodex?',
+      detail: idle
+        // "restored", not "resume": the idle count includes bash panes, which
+        // reopen as fresh shells — only agent seats resume with context.
+        ? `${idle} idle session${idle === 1 ? '' : 's'} will be restored after the restart.`
+        : 'The app will quit and reopen.',
+    });
+    if (response === 0) restartClodex();
+    return;
+  }
+
+  // Mid-turn work in flight — offer to wait for it to settle.
   const { response } = await dialog.showMessageBox({
     type: 'question',
-    buttons: ['Restart', 'Cancel'],
+    buttons: ['Restart When Idle', 'Restart Now', 'Cancel'],
     defaultId: 0,
-    cancelId: 1,
+    cancelId: 2,
     message: 'Restart Clodex?',
-    detail: n
-      ? `${n} running session${n === 1 ? '' : 's'} will be interrupted and resumed after the restart.`
-      : 'The app will quit and reopen.',
+    detail: `${busy} session${busy === 1 ? ' is' : 's are'} mid-turn`
+      + (idle ? `; ${idle} idle session${idle === 1 ? '' : 's'} will be restored cleanly` : '')
+      + '. Restart When Idle waits until work settles; Restart Now interrupts.',
   });
-  if (response === 0) restartClodex();
+  if (response === 0) idleWaiter.arm();
+  else if (response === 1) restartClodex();
 }
 
 // ---------------------------------------------------------------------------
@@ -578,5 +638,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  idleWaiter.disarm(); // T32: don't let a pending idle-wait poll outlive the app
   if (engine) engine.shutdown();
 });
