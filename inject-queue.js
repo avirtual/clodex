@@ -42,6 +42,19 @@ function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWa
   return now - (lastHumanInputAt || 0) < quietMs;          // still inside the typing window
 }
 
+// Pure decision: should the drainer keep waiting for the seat to signal BOOT
+// readiness before injecting? True = wait more. On a freshly spawned CLI seat
+// the input loop may not be up yet — bytes written pre-raw-mode get buffered and
+// read as ONE paste-like chunk, so the trailing Enter lands as content and the
+// message never submits (T35). Waits while `ready` is false, but never past
+// maxWaitMs from when THIS item began waiting (never strand a delivery on a CLI
+// build that doesn't emit the readiness edge). Default ready ⇒ true, so this is
+// a no-op for bash/codex and every non-claude path.
+function shouldWaitForReady({ now, waitingSince, ready, maxWaitMs }) {
+  if (now - waitingSince >= maxWaitMs) return false;       // cap reached — inject anyway
+  return !ready;                                           // not ready yet — wait
+}
+
 // Pure predicate for the compact in-flight guard: a self-compact is "in flight"
 // while its LATCH is set (pending, awaiting a terminal stop to fire), its guard
 // is armed, OR its continuation is still stashed (awaiting the summary). A
@@ -85,7 +98,21 @@ class InjectQueue {
   //   bracketedPaste()      live "does the CLI have paste mode 2004 on right
   //                         now?" (sniffed from PTY output via pasteModeSignal)
   //                         — gates the multi-line paste-wrap; default off
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste }) {
+  //   ready()               boot-readiness gate (T35): a fresh CLI seat's input
+  //                         loop may not be up yet — an item waits until this
+  //                         returns true (default () => true = pass-through, so
+  //                         bash/codex and every existing path are unaffected).
+  //                         Latched by the caller: a BOOT gate, not a liveness
+  //                         gate. Capped by readyMaxWaitMs.
+  //   readyMaxWaitMs        cap on the boot-readiness wait — inject anyway after
+  //                         this long so a CLI that never signals ready can't
+  //                         strand a delivery (default Infinity; irrelevant when
+  //                         ready defaults to true and never blocks).
+  //   readyPollMs           poll slice for the boot-readiness loop (default 250)
+  //   onReadyCapFire(text)  optional: readiness cap forced this item through
+  //                         before the seat ever signalled ready — surfaced for
+  //                         observability, never changes behavior
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire }) {
     this._write = write;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
@@ -97,6 +124,10 @@ class InjectQueue {
     this._onCapFire = onCapFire || null;
     this._ctrlUSettleMs = Number.isFinite(ctrlUSettleMs) ? ctrlUSettleMs : CTRLU_SETTLE_MS;
     this._bracketedPaste = bracketedPaste || (() => false);
+    this._ready = ready || (() => true);
+    this._readyMaxWaitMs = Number.isFinite(readyMaxWaitMs) ? readyMaxWaitMs : Infinity;
+    this._readyPollMs = Number.isFinite(readyPollMs) ? readyPollMs : 250;
+    this._onReadyCapFire = onReadyCapFire || null;
     this._chain = Promise.resolve();
     this._length = 0;
   }
@@ -121,6 +152,31 @@ class InjectQueue {
   }
 
   async _drain(text, divert = null) {
+    // Boot-readiness gate (T35): a freshly spawned CLI seat's input loop may not
+    // be up when the first item drains — bytes written pre-raw-mode are buffered
+    // and read as ONE paste-like chunk, so the trailing Enter lands as content
+    // and the message sits unsubmitted in the composer. Wait for the seat's
+    // readiness signal (Claude's mode-2004 edge, latched by the caller), capped
+    // by readyMaxWaitMs so a build that never emits it still injects rather than
+    // stranding the delivery. Default ready ⇒ () => true, so bash/codex and every
+    // existing path fall straight through this loop. Runs BEFORE the quiet-gate:
+    // a virgin seat has no human draft to protect, but it may not accept input.
+    const readySince = this._now();
+    let readyDeferred = false;
+    while (!this._isDead()
+      && shouldWaitForReady({
+        now: this._now(), waitingSince: readySince,
+        ready: !!this._ready(), maxWaitMs: this._readyMaxWaitMs,
+      })) {
+      readyDeferred = true;
+      await this._sleep(Math.min(this._readyMaxWaitMs, this._readyPollMs));
+    }
+    if (this._isDead()) return;
+    // Cap-fire: we waited and gave up while the seat still hadn't signalled ready
+    // — the item injects anyway (never strand it). Surface for observability.
+    if (readyDeferred && !this._ready() && this._onReadyCapFire) {
+      try { this._onReadyCapFire(text); } catch {}
+    }
     const waitingSince = this._now();
     let deferred = false;
     // Quiet-gate: poll in short slices so a keystroke landing mid-wait extends
@@ -187,4 +243,4 @@ class InjectQueue {
   }
 }
 
-module.exports = { InjectQueue, shouldDeferInject, isInjectInFlight, canFireCompact };
+module.exports = { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact };

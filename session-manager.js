@@ -168,6 +168,7 @@ function createSessionManager(deps) {
     COMPACT_INFLIGHT_TIMEOUT,
     DEFAULT_COMPACT_CONTINUATION,
     DEFAULT_WORKSPACE_ID,
+    INJECT_BOOT_MAXWAIT,
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
@@ -1325,6 +1326,12 @@ function createSessionManager(deps) {
         // it only runs on the rare chunk that carries the sequence at all.
         if (data.includes('\x1b[?2004')) {
           session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
+          // Boot-readiness latch (T35): the FIRST time 2004 goes on, the CLI's
+          // composer is actually accepting input — latch it so the InjectQueue's
+          // boot gate opens. This is a BOOT gate, not a liveness gate: 2004 keeps
+          // toggling around dialogs/teardown for the paste-wrap decision, but
+          // _bootReadySeen never un-sets once true.
+          if (session._pasteModeOn) session._bootReadySeen = true;
         }
 
         // In agent mode, PTY output is pass-through (intents come from JSONL)
@@ -5176,6 +5183,14 @@ function createSessionManager(deps) {
     // draft too, for free (no separate timestamp needed).
     _injectQueueFor(session) {
       if (!session._injectPtyQueue) {
+        // Boot-readiness gate (T35): the first inject into a freshly spawned
+        // claude seat races CLI boot — text+Enter written before the raw-mode
+        // input loop is up read as one paste-like chunk and the Enter lands as
+        // content, so the message never submits. Gate claude agent seats on the
+        // latched mode-2004 edge (_bootReadySeen), capped by INJECT_BOOT_MAXWAIT.
+        // Bash/codex pass through (default ready ⇒ true): codex has its own
+        // boot-settle machinery and must not be coupled to this.
+        const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
           write: (bytes) => { try { session.pty.write(bytes); } catch {} },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
@@ -5187,6 +5202,16 @@ function createSessionManager(deps) {
           // teardown, so the wrap decision must track the CURRENT state, not
           // the state when the item was enqueued.
           bracketedPaste: () => !!session._pasteModeOn,
+          // Boot-readiness seam: claude seats wait for the latched 2004 edge;
+          // everything else passes straight through (undefined ⇒ () => true).
+          ready: isClaude ? () => !!session._bootReadySeen : undefined,
+          readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
+          // Observability: the boot cap forced an inject before the seat ever
+          // signalled ready (a CLI build that doesn't emit 2004, or a boot slower
+          // than the cap). Never suppress the inject — surface it and proceed.
+          onReadyCapFire: isClaude ? () => {
+            log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
+          } : null,
           // Observability: the quiet-gate cap forced an inject through active
           // typing (splice risk). Should drop to ~zero once parking handles DMs
           // during composition — this line validates that.

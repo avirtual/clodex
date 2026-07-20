@@ -327,6 +327,14 @@ const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
 // file instead of injecting while typing), cap-fires should drop to ~zero.
 const INJECT_QUIET_MS = 2 * 1000;
 const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
+// Boot-readiness cap (T35): the first inject into a freshly spawned claude seat
+// waits for the seat to signal it's accepting input (Claude's mode-2004 edge)
+// before writing — text+Enter written before the CLI's raw-mode input loop is up
+// get read as one paste-like chunk and the Enter lands as content, so the message
+// never submits. This caps that wait: after 20s with no readiness signal the item
+// injects anyway (mirror of INJECT_QUIET_MAXWAIT's starvation fallback — never
+// strand a delivery on a CLI build that doesn't emit 2004).
+const INJECT_BOOT_MAXWAIT = 20 * 1000;
 
 
 // ---------------------------------------------------------------------------
@@ -860,6 +868,7 @@ const SessionManager = createSessionManager({
     COMPACT_INFLIGHT_TIMEOUT,
     DEFAULT_COMPACT_CONTINUATION,
     DEFAULT_WORKSPACE_ID,
+    INJECT_BOOT_MAXWAIT,
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,

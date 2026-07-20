@@ -4015,3 +4015,170 @@ test('context: an unknown sub-command bounces to the agent, not just console.war
   assert.match(injected[0], /unknown or unsupported sub-command "compress"/);
   assert.match(injected[0], /compact\|clear\|reload/);
 });
+
+// --- T35: boot-readiness gate wiring (_injectQueueFor + the 2004 latch) -------
+// The first inject into a freshly spawned CLAUDE seat races CLI boot: text+Enter
+// written before the raw-mode input loop is up read as one paste-like chunk and
+// the Enter lands as content, so the message never submits. _injectQueueFor
+// gates claude agent seats on the latched mode-2004 edge (_bootReadySeen);
+// bash/codex pass straight through. (Behavioral gate mechanics — hold, cap, dead,
+// latch — are pinned deterministically in test/inject-queue.test.js; here we pin
+// the session-manager wiring: which seats get gated, and the latch predicate.)
+function mkBoot() {
+  return mk({
+    InjectQueue: require('../inject-queue').InjectQueue,   // real queue — we drive real seams
+    INJECT_BOOT_MAXWAIT: 20_000,
+    INJECT_QUIET_MS: 0,
+    INJECT_QUIET_MAXWAIT: 0,
+    LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
+  });
+}
+function bootSession(over = {}) {
+  const writes = [];
+  const s = {
+    name: 'seat', agentType: 'claude', _dead: false,
+    _pasteModeOn: false, _bootReadySeen: false,
+    lastUserInputTs: 0,
+    pty: { write: (b) => writes.push(b) },
+    ...over,
+  };
+  return { s, writes };
+}
+
+test('T35 wiring: a claude seat with the boot latch already set injects immediately', async () => {
+  const m = mkBoot();
+  const { s, writes } = bootSession({ _bootReadySeen: true });
+  await m._injectQueueFor(s).enqueue('scope');
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
+});
+
+test('T35 wiring: a claude seat still booting holds the write until the latch flips', async () => {
+  const m = mkBoot();
+  const { s, writes } = bootSession({ _bootReadySeen: false });
+  const p = m._injectQueueFor(s).enqueue('scope');
+  // Wait out more than one real poll cycle (readyPollMs default 250) so the
+  // drain has actually spun the ready-gate loop at least once — a genuine hold,
+  // not merely "enqueue didn't write on the same microtask". Nothing may reach
+  // the pane while the seat is still booting (the race that swallowed the Enter).
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepStrictEqual(writes, [], 'still nothing written after a poll cycle — the gate holds');
+  // Simulate the CLI turning bracketed-paste on (composer accepting input) →
+  // latch opens; the next poll picks it up and the item drains.
+  s._bootReadySeen = true;
+  await p;
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
+});
+
+test('T35 wiring: a bash seat is NOT gated (ready pass-through, injects immediately)', async () => {
+  const m = mkBoot();
+  // agentType null = bash; _bootReadySeen never set — must still inject at once.
+  const { s, writes } = bootSession({ agentType: null, _bootReadySeen: false });
+  const t0 = Date.now();
+  await m._injectQueueFor(s).enqueue('cmd');
+  // No-gate-wait: a wrongly-engaged boot gate would burn a poll cycle (≥250ms)
+  // waiting on a never-set latch; pass-through drains on microtasks only.
+  assert.ok(Date.now() - t0 < 200, 'bash inject did not wait on the boot gate');
+  assert.deepStrictEqual(writes, ['\x15', 'cmd', '\r']);
+});
+
+test('T35 wiring: a codex seat is NOT gated (own boot-settle machinery, pass-through)', async () => {
+  const m = mkBoot();
+  const { s, writes } = bootSession({ agentType: 'codex', _bootReadySeen: false });
+  const t0 = Date.now();
+  await m._injectQueueFor(s).enqueue('cmd');
+  // Same no-gate-wait guard: codex must never touch the claude boot gate.
+  assert.ok(Date.now() - t0 < 200, 'codex inject did not wait on the boot gate');
+  assert.deepStrictEqual(writes, ['\x15', 'cmd', '\r']);
+});
+
+test('T35 latch: the boot gate reads the latch live, and the latch never un-sets', async () => {
+  // The queue re-reads _bootReadySeen each drain, so a second item on an
+  // already-ready seat drains with no extra waiting — and because the caller's
+  // latch never un-sets (2004 toggling around dialogs doesn't clear it), a later
+  // item can't be re-blocked by the boot gate.
+  const m = mkBoot();
+  const { s, writes } = bootSession({ _bootReadySeen: true });
+  const q = m._injectQueueFor(s);
+  await q.enqueue('one');
+  // 2004 goes off around a dialog (paste-mode flips) — but the boot latch holds.
+  s._pasteModeOn = false;
+  await q.enqueue('two');
+  assert.deepStrictEqual(writes, ['\x15', 'one', '\r', '\x15', 'two', '\r']);
+});
+
+// --- T35 REWORK (MUST-FIX): the PRODUCTION latch path (ptyProc.onData) --------
+// The prior T35 tests hand-set _bootReadySeen, so deleting the sniff-site latch
+// line (session-manager.js:1334 `if (session._pasteModeOn) _bootReadySeen=true`)
+// would leave the suite green while production regresses to a 20s cap-delay and
+// the same swallowed Enter. These drive the REAL ptyProc.onData closure captured
+// from a real create() and assert the latch flips on a genuine mode-2004 chunk.
+//
+// The latch line runs for EVERY session type (it's before the `if (!agentType)`
+// scan branch), so a cheap BASH create() — already scaffolded elsewhere — drives
+// the exact production line without a heavy claude create() (Transport/wire/
+// hooks). The gate itself (_injectQueueFor's isClaude arm) reads session.agentType
+// at queue-BUILD time; test (c) relabels the seat 'claude' before building the
+// queue so the real onData latch, the real ready() seam, and the real InjectQueue
+// drain compose end-to-end. Only the relabel is a test artifact.
+function mkOnDataProbe() {
+  let onDataCb = null;
+  const fakePty = {
+    spawn: () => ({ onData(cb) { onDataCb = cb; }, onExit() {}, kill() {}, pid: 777 }),
+  };
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {},
+    }),
+    resolveProxyBase: () => null,
+    lastTranscriptWrite: () => null,
+    pty: fakePty,
+    os: osReal,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    // T35 gate deps (mk() omits them) — a real InjectQueue for the end-to-end drain.
+    InjectQueue: require('../inject-queue').InjectQueue,
+    INJECT_BOOT_MAXWAIT: 20_000,
+    INJECT_QUIET_MS: 0, INJECT_QUIET_MAXWAIT: 0,
+    LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
+  });
+  m._sendToSession = () => {};
+  m._scanPtyOutput = () => {};        // bash onData scans pty output — silence it
+  return { m, fireData: (d) => onDataCb(d), getSession: (n) => m.sessions.get(n) };
+}
+
+test('T35 latch (production onData): a real mode-2004h chunk flips _bootReadySeen', async () => {
+  const { m, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-a', null);
+  const s = getSession('boot-a');
+  assert.strictEqual(!!s._bootReadySeen, false, 'not ready before any 2004 output');
+  fireData('\x1b[?2004h');            // CLI turns bracketed paste on = composer live
+  assert.strictEqual(s._bootReadySeen, true, 'latch flipped by the real onData handler');
+});
+
+test('T35 latch (production onData): the latch never un-sets on a later 2004l chunk', async () => {
+  const { m, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-b', null);
+  const s = getSession('boot-b');
+  fireData('\x1b[?2004h');            // boot: composer accepting input
+  assert.strictEqual(s._bootReadySeen, true);
+  fireData('\x1b[?2004l');            // 2004 off around a dialog/teardown
+  assert.strictEqual(s._pasteModeOn, false, 'paste-mode tracks the live toggle');
+  assert.strictEqual(s._bootReadySeen, true, 'but the BOOT latch stays set (not a liveness gate)');
+});
+
+test('T35 latch (production onData): a claude-gated delivery holds until the real latch flips, then drains', async () => {
+  const { m, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-c', null);
+  const s = getSession('boot-c');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };   // capture the queue's PTY writes
+  s.agentType = 'claude';                      // gate reads this at queue-build time
+  const p = m._injectQueueFor(s).enqueue('scope message');
+  // Booting: no 2004 seen yet → the real ready() seam (reads _bootReadySeen)
+  // holds the write past a full poll cycle. This is the swallowed-Enter race made
+  // impossible: nothing reaches the pane while the input loop may not be up.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepStrictEqual(writes, [], 'delivery held while the claude seat boots');
+  fireData('\x1b[?2004h');                     // real onData latches _bootReadySeen
+  await p;
+  assert.deepStrictEqual(writes, ['\x15', 'scope message', '\r'], 'drained once ready');
+});

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { InjectQueue, shouldDeferInject, isInjectInFlight, canFireCompact } = require('../inject-queue');
+const { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact } = require('../inject-queue');
 
 // --- isInjectInFlight: compact dup-drop truth table --------------------------
 // The dup-drop guard fires when a self-compact is already in flight (LATCH set,
@@ -335,4 +335,154 @@ test('InjectQueue: bracketedPaste is read at WRITE time, not enqueue time', asyn
   // the queue read late — pin the second item, the unambiguous case.
   assert.strictEqual(writes.filter((w) => w.startsWith(PASTE_START)).length >= 1, true);
   assert.strictEqual(writes.at(-2), `${PASTE_START}c\rd${PASTE_END}`);
+});
+
+// --- shouldWaitForReady: boot-readiness gate decision ------------------------
+// The first inject into a fresh CLI seat must wait until the seat signals it's
+// accepting input (else text+Enter read as one paste-like chunk, Enter swallowed).
+test('shouldWaitForReady: not ready yet, cap not reached → wait', () => {
+  assert.strictEqual(shouldWaitForReady({
+    now: 1_000, waitingSince: 1_000, ready: false, maxWaitMs: 20_000,
+  }), true);
+});
+
+test('shouldWaitForReady: ready → go immediately', () => {
+  assert.strictEqual(shouldWaitForReady({
+    now: 1_000, waitingSince: 1_000, ready: true, maxWaitMs: 20_000,
+  }), false);
+});
+
+test('shouldWaitForReady: cap reached overrides not-ready (inject anyway)', () => {
+  assert.strictEqual(shouldWaitForReady({
+    now: 21_001, waitingSince: 1_000, ready: false, maxWaitMs: 20_000,
+  }), false);
+});
+
+// --- InjectQueue: boot-readiness gate ----------------------------------------
+// Default (no ready seam) is pass-through — a virgin call injects immediately.
+// This is the invariant that keeps every bash/codex path and existing test green.
+test('InjectQueue: no ready seam → injects immediately (pass-through default)', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('boot');
+  assert.deepStrictEqual(writes, ['\x15', 'boot', '\r']);
+});
+
+test('InjectQueue: boot gate holds the write until ready flips true', async () => {
+  const writes = [];
+  let clock = 0;
+  let ready = false;               // seat still booting
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    now: () => clock,
+    // Each poll advances the clock; the seat becomes ready after ~1s of boot.
+    sleep: (ms) => { clock += ms; if (clock >= 1_000) ready = true; return Promise.resolve(); },
+    ready: () => ready,
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+  });
+  const p = q.enqueue('scope');
+  assert.deepStrictEqual(writes, [], 'nothing written while the seat is still booting');
+  await p;
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
+  assert.ok(clock >= 1_000, `waited for readiness, clock=${clock}`);
+});
+
+test('InjectQueue: boot cap forces the write through a seat that never signals ready', async () => {
+  const writes = [];
+  const capFired = [];
+  let clock = 0;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    now: () => clock,
+    sleep: (ms) => { clock += ms; return Promise.resolve(); },
+    ready: () => false,            // never signals ready (e.g. a CLI without 2004)
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+    onReadyCapFire: (t) => capFired.push(t),
+  });
+  await q.enqueue('scope');
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r'], 'injected anyway after the cap');
+  assert.ok(clock >= 20_000, `waited out the cap, clock=${clock}`);
+  assert.deepStrictEqual(capFired, ['scope'], 'cap-fire surfaced for observability');
+});
+
+test('InjectQueue: boot cap does NOT fire when the seat becomes ready in time', async () => {
+  const capFired = [];
+  let clock = 0;
+  let ready = false;
+  const q = new InjectQueue({
+    write: () => {},
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    now: () => clock,
+    sleep: (ms) => { clock += ms; if (clock >= 500) ready = true; return Promise.resolve(); },
+    ready: () => ready,
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+    onReadyCapFire: (t) => capFired.push(t),
+  });
+  await q.enqueue('scope');
+  assert.deepStrictEqual(capFired, [], 'ready in time → no cap-fire warning');
+});
+
+test('InjectQueue: a seat that dies while booting abandons the item (no write)', async () => {
+  const writes = [];
+  let dead = false;
+  let clock = 0;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => dead,
+    now: () => clock,
+    sleep: (ms) => { clock += ms; if (clock >= 500) dead = true; return Promise.resolve(); },
+    ready: () => false,            // never ready — but the seat dies first
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+  });
+  await q.enqueue('scope');
+  assert.deepStrictEqual(writes, [], 'died mid-boot → nothing written into a closed fd');
+});
+
+test('InjectQueue: once ready, a subsequent item never re-blocks (latch is the caller\'s job)', async () => {
+  // The queue re-reads ready() each drain; the LATCH lives in the caller (a
+  // never-un-setting flag). Here ready() stays true after boot, so item two
+  // drains with zero extra waiting even though the gate is still wired.
+  const writes = [];
+  let clock = 0;
+  let ready = true;                // already booted (latched true upstream)
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 0,          // zero settle so the clock only moves if a GATE waits
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    now: () => clock,
+    sleep: (ms) => { clock += ms; return Promise.resolve(); },
+    ready: () => ready,
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+  });
+  await q.enqueue('one');
+  await q.enqueue('two');
+  assert.deepStrictEqual(writes, ['\x15', 'one', '\r', '\x15', 'two', '\r']);
+  assert.strictEqual(clock, 0, 'ready seat waits zero ticks (boot gate never blocks) on either item');
 });
