@@ -1126,6 +1126,55 @@ html, body {
 .team-roles-watchdog { display: flex; gap: 6px; align-items: center; }
 .team-roles-watchdog input { flex: 1; min-width: 0; }
 #team-roles-status.warn { color: var(--danger, #e06c75); }
+
+/* Slice 4 — popover clarity: page intro, "?" help panel, section hints, and the
+   read-only "teach the lock" rows + editable-row affordance. */
+.popover-title-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.popover-help-btn {
+  background: none;
+  border: 1px solid var(--border, #333);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+}
+.popover-help-btn:hover { color: var(--text); border-color: var(--accent); }
+.popover-intro { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+.popover-help {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border, #333);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.popover-help p { margin: 0 0 6px; }
+.popover-help p:last-child { margin-bottom: 0; }
+#team-roles-help.hidden { display: none; }
+.team-roles-hint { margin: 0 0 6px; display: block; }
+/* Read-only reserved rows explain themselves rather than reading as half-built. */
+.team-role-lock-note { font-size: 11px; color: var(--text); margin-bottom: 6px; }
+.team-role-ro-field { display: flex; gap: 6px; font-size: 11px; margin: 2px 0; }
+.team-role-ro-field span:first-child { flex: 0 0 56px; color: var(--text-dim); text-align: right; }
+.team-role-ro-field .ro-val { flex: 1; min-width: 0; color: var(--text-dim); word-break: break-word; }
+/* Editable rows announce themselves. */
+.team-role-editcap {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+/* Draggable-by-title affordance (shared helper). */
+.draggable-title { cursor: move; }
+.draggable-title button { cursor: pointer; }
+.draggable-title.dragging { cursor: grabbing; }
 #tools-popover .popover-title,
 #skills-popover .popover-title,
 #agents-popover .popover-title,

@@ -77,6 +77,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/render-html.js',
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
+  'renderer/lib/popover-drag.js',
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',

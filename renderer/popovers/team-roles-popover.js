@@ -19,7 +19,11 @@
 // lib/team-roles.js are tested instead; wire fidelity is the guarantee here.
 
 const { esc } = require('../lib/format');
-const { teamRoleRows, validateAddRole, buildSavePatch, formatBlockedBy } = require('../lib/team-roles');
+const {
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
+  parseDuration, formatDuration, formatBlockedBy,
+} = require('../lib/team-roles');
+const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 
 // `promptText` is the in-app text-input modal from renderer.js — window.prompt()
 // is a no-op in Electron, so rename MUST route through it (threaded in as a dep,
@@ -37,6 +41,8 @@ function initTeamRolesPopover({ promptText } = {}) {
   const watchdogSet = document.getElementById('team-roles-watchdog-set');
   const watchdogClear = document.getElementById('team-roles-watchdog-clear');
   const statusEl = document.getElementById('team-roles-status');
+  const helpBtn = document.getElementById('team-roles-help-btn');
+  const helpPanel = document.getElementById('team-roles-help');
 
   const setStatus = (msg, warn = false) => {
     statusEl.textContent = msg || '';
@@ -48,8 +54,10 @@ function initTeamRolesPopover({ promptText } = {}) {
     popover.dataset.name = '';
   }
 
-  // Render one row per role. Reserved rows are a read-only display + badge;
-  // ordinary rows carry three edit inputs + Save/Rename/Remove (delegated below).
+  // Render one row per role. Reserved rows TEACH their lock (read-only brief +
+  // prompt, a "managed by Clodex" badge, and a one-line why); ordinary rows read
+  // as editable — an "Edit this role" caption + three hinted inputs +
+  // Save/Rename/Remove (delegated below).
   function renderRows(manifest) {
     listEl.innerHTML = '';
     for (const row of teamRoleRows(manifest)) {
@@ -57,25 +65,33 @@ function initTeamRolesPopover({ promptText } = {}) {
       el.className = 'team-role-row';
       el.dataset.role = row.key;
       if (row.readOnly) {
+        // Reserved (lead/reviewer): explained-and-locked. brief + prompt are shown
+        // read-only. SECURITY: these are agent-writable strings — rendered as
+        // ESCAPED TEXT between tags (never into an attribute), same rule as the
+        // editable branch. The lock note is a fixed, newcomer-facing string.
         el.classList.add('read-only');
         el.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
           `<span class="team-role-inst">${esc(row.instantiate)}</span>` +
-          `<span class="team-role-badge" title="Operator-owned topology — edit via the app config, not here">operator-owned</span></div>` +
-          `<div class="team-role-ro-meta">${esc(row.brief || '—')}</div>`;
+          `<span class="team-role-badge" title="Managed by Clodex — you don't need to change anything here">managed by Clodex</span></div>` +
+          `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
+          `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
+          `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
       } else {
         // SECURITY: brief/prompt/template are agent-writable unconstrained strings
         // (only role KEYS are charset-gated). NEVER interpolate them into a
         // value="…" attribute — a `" onfocus="…` payload would break out of the
         // attribute and execute in this nodeIntegration renderer. Build the inputs
         // WITHOUT value attrs, then assign each `.value` by property below (a
-        // property assignment can't escape an attribute context).
+        // property assignment can't escape an attribute context). Placeholders +
+        // the caption are fixed strings — they signal this row is editable (C3).
         el.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
           `<span class="team-role-inst">${esc(row.instantiate)}</span></div>` +
-          `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief"></label>` +
-          `<label class="team-role-field"><span>prompt</span><input type="text" data-f="prompt"></label>` +
-          `<label class="team-role-field"><span>template</span><input type="text" data-f="template"></label>` +
+          `<div class="team-role-editcap">Edit this role</div>` +
+          `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
+          `<label class="team-role-field"><span>prompt</span><input type="text" data-f="prompt" placeholder="system-prompt name from the library, sets how this teammate behaves"></label>` +
+          `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
           `<div class="team-role-actions">` +
           `<button type="button" data-act="save">Save</button>` +
           `<button type="button" data-act="rename" class="secondary">Rename</button>` +
@@ -94,7 +110,8 @@ function initTeamRolesPopover({ promptText } = {}) {
     if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
     nameEl.textContent = res.team.name;
     renderRows(res.team);
-    watchdogInput.value = res.team.watchdogMs != null ? String(res.team.watchdogMs) : '';
+    // Show the stored (read-clamped) watchdog back in friendly units, not raw ms.
+    watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : '';
     return true;
   }
 
@@ -129,6 +146,8 @@ function initTeamRolesPopover({ promptText } = {}) {
 
   async function openTeamRolesPopover(name, anchorEl) {
     setStatus('');
+    helpPanel.classList.add('hidden'); // help starts collapsed on every open
+    resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
     await populatePromptOptions();
     addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = '';
     popover.dataset.name = name;
@@ -197,16 +216,25 @@ function initTeamRolesPopover({ promptText } = {}) {
   watchdogSet.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
-    const raw = watchdogInput.value.trim();
-    const ms = Number(raw);
-    if (!raw || !Number.isFinite(ms) || ms <= 0) { setStatus('watchdog needs a positive millisecond number', true); return; }
+    // MF-1 (Slice-4 review): every hint promises "blank = default", so blank+Set
+    // must BE Clear — not a parse error contradicting the hint the user just read.
+    if (!watchdogInput.value.trim()) {
+      const res = await window.api.teamSetWatchdog(name, null);
+      await afterMutation(res, 'watchdog cleared (back to default)');
+      return;
+    }
+    // Friendly units: "30m", "2h", "90s", or a bare number (minutes). parseDuration
+    // gives the ms the backend wants; the raw-ms field is gone.
+    const parsed = parseDuration(watchdogInput.value);
+    if (!parsed.ok) { setStatus(parsed.error, true); return; }
+    const ms = parsed.ms;
     const res = await window.api.teamSetWatchdog(name, ms);
     // watchdogMs is consume-clamped into [5min, 7d] at read (loadManifest), so the
-    // reloaded value can differ from what was typed — say so rather than silently
-    // reporting a different number.
+    // reloaded value can differ from what was typed — say so, in friendly units,
+    // rather than silently reporting a different number.
     const applied = res && res.ok ? res.team.watchdogMs : ms;
     const clamped = res && res.ok && applied !== ms ? ' (clamped to the 5min–7d range)' : '';
-    await afterMutation(res, `watchdog set to ${applied}ms${clamped}`);
+    await afterMutation(res, `watchdog set to ${formatDuration(applied)}${clamped}`);
   });
 
   watchdogClear.addEventListener('click', async () => {
@@ -215,6 +243,15 @@ function initTeamRolesPopover({ promptText } = {}) {
     const res = await window.api.teamSetWatchdog(name, null);
     await afterMutation(res, 'watchdog cleared (back to default)');
   });
+
+  // "?" help toggle. The reusable pattern: a `data-help` panel in the popover +
+  // this one-line toggle; other input popovers can adopt it later (wired here
+  // only for now, per the slice's scope).
+  helpBtn.addEventListener('click', () => helpPanel.classList.toggle('hidden'));
+
+  // Draggable by its title bar (shared helper). resetDrag on every open keeps the
+  // anchor positioning authoritative.
+  makeDraggable(popover);
 
   document.getElementById('team-roles-popover-close').addEventListener('click', closeTeamRolesPopover);
   document.getElementById('team-roles-popover-done').addEventListener('click', closeTeamRolesPopover);

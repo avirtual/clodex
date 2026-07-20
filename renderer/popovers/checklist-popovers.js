@@ -28,6 +28,7 @@ const {
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
+const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
 // Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
@@ -64,6 +65,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     toolsPopoverRestart.checked = false;
     toolsPopoverName.textContent = name;
     toolsPopover.dataset.name = name;
+    resetDrag(toolsPopover); // a fresh open re-anchors; drop any prior drag offset
     toolsPopover.classList.remove('hidden');
     // Anchor above the button, clamped to the viewport.
     const r = anchorBtn.getBoundingClientRect();
@@ -154,6 +156,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     skillsPopoverRestart.checked = false;
     skillsPopoverName.textContent = name;
     skillsPopover.dataset.name = name;
+    resetDrag(skillsPopover); // a fresh open re-anchors; drop any prior drag offset
     skillsPopover.classList.remove('hidden');
     const r = anchorBtn.getBoundingClientRect();
     const w = skillsPopover.offsetWidth;
@@ -258,6 +261,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     agentsPopoverRestart.checked = false;
     agentsPopoverName.textContent = name;
     agentsPopover.dataset.name = name;
+    resetDrag(agentsPopover); // a fresh open re-anchors; drop any prior drag offset
     agentsPopover.classList.remove('hidden');
     const r = anchorBtn.getBoundingClientRect();
     const w = agentsPopover.offsetWidth;
@@ -387,6 +391,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     intentsPopoverRestart.checked = false;
     intentsPopoverName.textContent = name;
     intentsPopover.dataset.name = name;
+    resetDrag(intentsPopover); // a fresh open re-anchors; drop any prior drag offset
     intentsPopover.classList.remove('hidden');
     const r = anchorBtn.getBoundingClientRect();
     const w = intentsPopover.offsetWidth;
@@ -448,6 +453,13 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   // in-section above). A tall popover can push outside-click/Escape out of reach.
   document.getElementById('tools-popover-close').addEventListener('click', closeToolsPopover);
   document.getElementById('skills-popover-close').addEventListener('click', closeSkillsPopover);
+
+  // Draggable by their shared .popover-title (Slice 4 C5). resetDrag on each open
+  // (above) keeps the anchor positioning authoritative on reopen.
+  makeDraggable(toolsPopover);
+  makeDraggable(skillsPopover);
+  makeDraggable(agentsPopover);
+  makeDraggable(intentsPopover);
 
   return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover };
 }

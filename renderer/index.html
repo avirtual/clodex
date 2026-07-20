@@ -400,19 +400,28 @@
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
+      <div class="popover-help hidden" id="team-roles-help" data-help>
+        <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
+        <p><strong>Editing a role.</strong> Change its short description ("brief"), its behavior ("prompt"), or an optional spawn template, then press Save. Add a new kind of teammate with the Add Role form.</p>
+        <p><strong>Why lead and reviewer are locked.</strong> Every team has a <em>lead</em> that runs it and a <em>reviewer</em> that independently checks the lead's work. Clodex manages these two so a lead can never rewrite the reviewer that checks it — a safety property you don't need to configure.</p>
+        <p><strong>Stall Watchdog.</strong> If a teammate sits idle on an assigned task too long, the lead gets a nudge. Blank uses the default (30m).</p>
+      </div>
       <div id="team-roles-list" class="team-roles-list"></div>
-      <div class="popover-subhead">Add Role</div>
+      <div class="popover-subhead" title="Define a new kind of teammate for this team">Add Role</div>
+      <div class="hint-text team-roles-hint">Define a new kind of teammate for this team.</div>
       <div class="team-roles-add">
-        <input type="text" id="team-roles-add-name" placeholder="role name">
-        <input type="text" id="team-roles-add-brief" placeholder="brief — what it's for">
-        <select id="team-roles-add-prompt" title="system-prompt delta"></select>
-        <input type="text" id="team-roles-add-template" placeholder="template (optional)">
+        <input type="text" id="team-roles-add-name" placeholder="role name (e.g. researcher)">
+        <input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for">
+        <select id="team-roles-add-prompt" title="System-prompt name from the library — sets how this teammate behaves"></select>
+        <input type="text" id="team-roles-add-template" placeholder="optional: spawn template name">
         <button type="button" id="team-roles-add-btn">Add</button>
       </div>
-      <div class="popover-subhead">Stall Watchdog</div>
+      <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
+      <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
       <div class="team-roles-watchdog">
-        <input type="number" id="team-roles-watchdog-ms" placeholder="ms — blank = default">
+        <input type="text" id="team-roles-watchdog-ms" placeholder="e.g. 30m, 2h, or 45 (minutes) — blank = default">
         <button type="button" id="team-roles-watchdog-set">Set</button>
         <button type="button" id="team-roles-watchdog-clear" class="secondary">Clear</button>
       </div>
