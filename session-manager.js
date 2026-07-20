@@ -3004,7 +3004,15 @@ function createSessionManager(deps) {
           if (target.agentType === 'claude') {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
             parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq());
-            log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe)`);
+            // A park alone can strand: every drain trigger (hooks, idle EDGE)
+            // needs the seat to earn a turn, and a restored-then-idle requester
+            // never does — the notice sat in the ✉ inbox forever (field bug,
+            // second round). Arm the starvation cap: forced drain via the normal
+            // inject queue after INJECT_QUIET_MAXWAIT, by which time boot has
+            // long settled (no Enter-swallow). An earlier organic turn still
+            // wins the atomic claim and the cap-fire no-ops.
+            this._armParkCap(target);
+            log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed)`);
           } else {
             this._deliverMessage(notice.name, 'reboot', body, 'dm');
             log.info('intent', `reboot notice delivered to ${notice.name} (live codex)`);

@@ -665,6 +665,11 @@ test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe),
   assert.doesNotMatch(parks[0].text, /relaunch complete/);
   assert.doesNotMatch(parks[0].text, /does not grant/);
   assert.strictEqual(state.pendingRebootNotice, null, 'one-shot flag cleared');
+  // T30 round 2 (field): a park alone strands on a seat that stays idle — every
+  // drain trigger needs the seat to earn a turn. The starvation cap must be
+  // armed so a forced drain lands within INJECT_QUIET_MAXWAIT.
+  assert.ok(m.sessions.get('a')._parkCapTimer, 'starvation cap armed for the parked notice');
+  clearTimeout(m.sessions.get('a')._parkCapTimer);
 });
 
 test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive store to park into)', () => {
