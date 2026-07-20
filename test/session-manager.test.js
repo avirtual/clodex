@@ -1788,15 +1788,20 @@ function mkReview(extra = {}) {
   const delivered = [];
   const gated = [];
   const archived = [];
-  const order = []; // shared recorder — proves deliver happens BEFORE archive (NIT 4)
+  const killed = [];
+  const contextActions = [];
+  const order = []; // shared recorder — proves deliver happens BEFORE the discard (NIT 4)
   m.create = async (...args) => { created.push(args); };
   m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
   // Default: delivery succeeds. A test can reassign m._gatedDeliver to return
   // { error } (dead/absent lead) to drive MUST-FIX 3's bounce-and-keep-live arm.
   m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { delivered: true }; };
   m.archive = async (name) => { archived.push(name); order.push('archive'); };
-  m._sendToSession = () => {};
-  return { m, injected, created, delivered, gated, archived, order, persistence, team };
+  // T31: review-done now DISCARDS (kill) instead of archiving. kill() drops the
+  // persistence record — mirror that here so the sweep/record assertions see it.
+  m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
+  m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
+  return { m, injected, created, delivered, gated, archived, killed, contextActions, order, persistence, team };
 }
 
 test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope injected', async () => {
@@ -1887,62 +1892,98 @@ test('team-review: a teamless sender is bounced', async () => {
   assert.ok(injected.some((t) => /not on a team/.test(t)));
 });
 
-test('review-done: an ephemeral reviewer delivers its verdict to the lead, THEN archives (record kept)', async () => {
-  const { m, gated, archived, order, persistence } = mkReview();
+test('review-done (T31): an ephemeral reviewer delivers its verdict to the lead, THEN discards (record removed, no archived row)', async () => {
+  const { m, gated, archived, killed, contextActions, order, persistence } = mkReview();
   persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
   m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
   m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
   assert.deepStrictEqual(gated, [{ target: 'lead', sender: 'team-reviewer-1', body: 'VERDICT: ACCEPT' }],
     'verdict delivered to the reviewFor lead (dm-style, parking/spill)');
-  assert.deepStrictEqual(archived, ['team-reviewer-1'], 'seat archived (record kept, not deleted)');
+  assert.deepStrictEqual(killed, ['team-reviewer-1'], 'seat DISCARDED (kill), not archived');
+  assert.deepStrictEqual(archived, [], 'never archived on the discard path');
+  assert.strictEqual(persistence.get('team-reviewer-1'), null, 'record REMOVED — no archived corpse left behind');
+  // The renderer must be told disposition:'discard' BEFORE teardown so it removes
+  // the row like a delete instead of building an archived placeholder.
+  const ca = contextActions.find((c) => c.channel === 'session:context-action');
+  assert.deepStrictEqual(ca, { name: 'team-reviewer-1', channel: 'session:context-action',
+    payload: { action: 'retired', name: 'team-reviewer-1', disposition: 'discard' } },
+    'discard context-action broadcast to the owning window');
   // NIT 4: the ordering is load-bearing (onExit-before-cleanup) — assert it for real,
-  // not just that both happened. Deliver must ENQUEUE before archive kills the seat.
-  assert.deepStrictEqual(order, ['deliver', 'archive'], 'verdict enqueued to the lead BEFORE the seat is archived');
+  // not just that both happened. Deliver must ENQUEUE before the discard kills the
+  // seat, and the context-action must reach the window before the kill lands (the
+  // choreography the code comment sells; pinned so a reorder can't pass silently).
+  assert.deepStrictEqual(order, ['deliver', 'context-action', 'discard'],
+    'verdict enqueued, THEN discard context-action, THEN the kill');
 });
 
-test('review-done: a NON-reviewer seat is bounced (no delivery, no archive)', () => {
-  const { m, injected, gated, archived, persistence } = mkReview();
+test('review-done: a NON-reviewer seat is bounced (no delivery, no teardown)', () => {
+  const { m, injected, gated, archived, killed, persistence } = mkReview();
   persistence.upsert({ name: 'plain', workspaceId: 'default' }); // no ephemeral/reviewFor
   m.sessions.set('plain', { name: 'plain', agentType: 'claude', cwd: '/proj' });
   m._handleReviewDone(m.sessions.get('plain'), 'VERDICT: ACCEPT');
   assert.deepStrictEqual(gated, [], 'nothing delivered');
   assert.deepStrictEqual(archived, [], 'nothing archived');
+  assert.deepStrictEqual(killed, [], 'nothing discarded');
   assert.ok(injected.some((t) => /only for an ephemeral reviewer seat/.test(t)));
 });
 
 test('review-done: an empty verdict is bounced', () => {
-  const { m, injected, gated, archived, persistence } = mkReview();
+  const { m, injected, gated, archived, killed, persistence } = mkReview();
   persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
   m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
   m._handleReviewDone(m.sessions.get('team-reviewer-1'), '  ');
   assert.deepStrictEqual(gated, []);
   assert.deepStrictEqual(archived, []);
+  assert.deepStrictEqual(killed, [], 'nothing discarded');
   assert.ok(injected.some((t) => /a verdict is required/.test(t)));
 });
 
 // MUST-FIX 3: an absent/dead lead makes _gatedDeliver return { error }. The verdict
-// went nowhere, so archiving would strand it — bounce to the reviewer and KEEP the
-// seat live so it can retry once the lead is back.
-test('review-done: a dead/absent lead ({error}) bounces and does NOT archive (seat kept live to retry)', () => {
-  const { m, injected, archived, persistence } = mkReview();
+// went nowhere, so discarding would strand it — bounce to the reviewer and KEEP the
+// seat live (record intact) so it can retry once the lead is back.
+test('review-done (T31): a dead/absent lead ({error}) bounces and does NOT discard (seat kept live, record intact)', () => {
+  const { m, injected, archived, killed, contextActions, persistence } = mkReview();
   m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
   persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
   m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
   m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
-  assert.deepStrictEqual(archived, [], 'seat NOT archived — stays live for a retry');
+  assert.deepStrictEqual(killed, [], 'seat NOT discarded — stays live for a retry');
+  assert.deepStrictEqual(archived, [], 'seat NOT archived either');
+  assert.ok(persistence.get('team-reviewer-1'), 'record intact — the discard did NOT happen');
+  assert.deepStrictEqual(contextActions, [], 'no teardown context-action on the bounce path');
   assert.ok(injected.some((t) => /verdict NOT delivered, seat kept live/.test(t)), 'reviewer bounced with a retry hint');
 });
 
 // A HELD/parked delivery ({held}/{parked}) is a REAL lead just busy — accepted; the
-// queue/park store carries the verdict, so the seat retires as normal.
-test('review-done: a HELD delivery is accepted and the seat still archives', () => {
-  const { m, archived, order, persistence } = mkReview();
+// queue/park store carries the verdict, so the seat retires (discards) as normal.
+test('review-done (T31): a HELD delivery is accepted and the seat still discards', () => {
+  const { m, archived, killed, order, persistence } = mkReview();
   m._gatedDeliver = () => { order.push('deliver'); return { held: 'busy' }; };
   persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
   m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
   m._handleReviewDone(m.sessions.get('team-reviewer-1'), 'VERDICT: ACCEPT');
-  assert.deepStrictEqual(archived, ['team-reviewer-1'], 'a held (not errored) delivery still retires the seat');
-  assert.deepStrictEqual(order, ['deliver', 'archive'], 'held delivery still enqueues before archive');
+  assert.deepStrictEqual(killed, ['team-reviewer-1'], 'a held (not errored) delivery still retires the seat');
+  assert.deepStrictEqual(archived, [], 'never archived');
+  assert.deepStrictEqual(order, ['deliver', 'context-action', 'discard'], 'held delivery still enqueues before the discard');
+});
+
+// T31 launch-time sweep: drop persisted ephemeral+reviewFor+archivedAt corpses (the
+// old ARCHIVE-retire graveyard). The three-marker guard is the doubt-guard — a
+// record missing ANY marker stays.
+test('sweepReviewerGraveyard (T31): drops archived ephemeral reviewer corpses, keeps everything else', () => {
+  const { m, persistence } = mkReview();
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead', archivedAt: 111 }); // swept
+  persistence.upsert({ name: 'team-reviewer-2', ephemeral: true, reviewFor: 'lead', archivedAt: 222 }); // swept
+  persistence.upsert({ name: 'team-reviewer-3', ephemeral: true, reviewFor: 'lead' });                  // kept — live reservation, not archived
+  persistence.upsert({ name: 'plain-agent', archivedAt: 333 });                                          // kept — plain archived agent (no ephemeral)
+  persistence.upsert({ name: 'odd', reviewFor: 'lead', archivedAt: 444 });                               // kept — no ephemeral marker
+  const swept = m.sweepReviewerGraveyard();
+  assert.deepStrictEqual(swept.sort(), ['team-reviewer-1', 'team-reviewer-2'], 'only the three-marker corpses are swept');
+  assert.strictEqual(persistence.get('team-reviewer-1'), null, 'archived corpse removed');
+  assert.strictEqual(persistence.get('team-reviewer-2'), null, 'archived corpse removed');
+  assert.ok(persistence.get('team-reviewer-3'), 'a not-yet-archived ephemeral reservation stays');
+  assert.ok(persistence.get('plain-agent'), 'a plain archived agent stays');
+  assert.ok(persistence.get('odd'), 'an archived reviewFor record without ephemeral stays');
 });
 
 // MUST-FIX 1 (name-mint TOCTOU): two [agent:team-review] in one lead turn run their

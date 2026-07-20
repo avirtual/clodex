@@ -1530,6 +1530,38 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
+    // Launch-time sweep of the reviewer graveyard (T31): drop every persisted
+    // record carrying ALL THREE of ephemeral + reviewFor + archivedAt. The ONLY
+    // writer of ephemeral+reviewFor is the team-review spawn seed (_handleTeamReview's
+    // pre-spawn upsert), and an
+    // archivedAt on such a seat means a pre-T31 review concluded via the old
+    // ARCHIVE retire path (now discard) — either way the recovery is a fresh cold
+    // spawn, never a resume, so these are corpses. The three-marker guard is the
+    // doubt-guard: a record missing any one marker (a plain archived agent, or a
+    // still-live ephemeral+reviewFor reservation not yet archived) STAYS. Runs once
+    // at launch, before windows restore archived rows, so the existing
+    // <team>-reviewer-N rows clear with no manual clicking. Reviewers share the
+    // project cwd (no worktree) and no path removes the run/{name}/ dir on delete,
+    // so — like the discard retire — this drops the record only. Returns the swept
+    // names for the caller's log + test visibility.
+    sweepReviewerGraveyard() {
+      const swept = [];
+      // Snapshot the names first — remove() mutates the store, and a fake/store
+      // whose list() returns the LIVE array (not a fresh copy) would skip entries
+      // if we removed mid-iteration.
+      const corpses = getPersistence().list()
+        .filter((e) => e && e.ephemeral === true && e.reviewFor && e.archivedAt)
+        .map((e) => e.name);
+      for (const name of corpses) {
+        getPersistence().remove(name);
+        swept.push(name);
+      }
+      if (swept.length) {
+        log.info('migrate', `swept ${swept.length} archived reviewer seat(s): ${swept.join(', ')}`);
+      }
+      return swept;
+    }
+
     // Team name owning `cwd` (or null). Thin, best-effort wrapper over the
     // injected resolveTeam — a resolve failure or a teamless cwd is null, never
     // a throw. Callers that resolve many cwds (list, sidebar meta) should memo;
@@ -3805,11 +3837,17 @@ function createSessionManager(deps) {
     // verdict. Guard: the sender's record must carry ephemeral + reviewFor (set at
     // team-review spawn); anything else bounces. Deliver the verdict to the
     // reviewFor lead as a dm (normal parking / >500B-spill rules), THEN retire the
-    // seat by ARCHIVE (record KEPT + archivedAt — resumable for a targeted
-    // re-review), never delete. Delivery is fully enqueued into the LEAD's queue
-    // before the reviewer's PTY dies: the message lives in the lead's queue, not
-    // the reviewer's, so the reviewer's cleanup can't drop it (onExit-before-
-    // cleanup gotcha respected).
+    // seat by DISCARD (kill() drops the record — no archived row), never archive.
+    // Reviewer seats are ephemeral: the old ARCHIVE retire piled one dimmed
+    // "click to resume" corpse per completed review into the team group (the
+    // reviewer-graveyard) — and we never resume one, a targeted re-review is a
+    // fresh cold spawn (better anyway, per cold-review doctrine). The verdict is
+    // fully enqueued into the LEAD's queue before the reviewer's PTY dies (it lives
+    // in the lead's queue, not the reviewer's, so the reviewer's cleanup can't drop
+    // it — onExit-before-cleanup gotcha respected), so discard loses nothing
+    // durable. Mirrors _handleTeamRetire's ephemeral discard branch (:5174-5228).
+    // MUST-FIX 3 preserved: a delivery failure keeps the seat LIVE (no discard) so
+    // it can retry once the lead is reachable.
     _handleReviewDone(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
       const verdict = String(body == null ? '' : body).trim();
@@ -3835,8 +3873,19 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', {
         type: 'review-done', from: session.name, to: lead, body: `verdict → ${lead}`,
       });
-      log.info('intent', `review-done ${session.name} → ${lead}; retiring (archive)`);
-      this.archive(session.name);
+      log.info('intent', `review-done ${session.name} → ${lead}; retiring (discard)`);
+      // Tell the owning window BEFORE the teardown so the renderer removes the row
+      // like a delete instead of building an archived placeholder (same choreography
+      // as _handleTeamRetire's discard branch, :5212-5216). The renderer already
+      // routes disposition:'discard' from team-retire — no renderer change needed.
+      this._sendToSession(session.name, 'session:context-action', {
+        action: 'retired', name: session.name, disposition: 'discard',
+      });
+      // kill() drops the persistence record unconditionally (getPersistence().remove
+      // at :1503) — so the seat leaves no archived corpse. Reviewers share the
+      // project cwd (no worktree), and kill() never touches a worktree, so discard
+      // removes the record + PTY and nothing else.
+      this.kill(session.name);
     }
 
     // [agent:team <verb>] — a team LEAD edits its own metadata (T29 Layer A): the

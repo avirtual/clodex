@@ -1652,6 +1652,10 @@ const toolCache = createToolCache({ whichBin });
     log.info('migrate', `legacy sweep skipped (${e && e.message})`);
   }
 
+  // T31: clear the reviewer graveyard — drop persisted ephemeral+reviewFor+archivedAt
+  // seats (the old ARCHIVE-retire corpses) before any window restores archived rows.
+  try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }
+
   // Idempotent teardown — the Electron before-quit / window-all-closed paths and
   // the headless SIGTERM/SIGINT paths all funnel here. Mirrors the old before-quit
   // (remote/peer/tunnel stop + killAll) and additionally clears the engine's own
