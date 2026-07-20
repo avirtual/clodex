@@ -80,11 +80,11 @@ function reservedRoleNote(key) {
 const DURATION_UNITS = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
 function parseDuration(input) {
   const s = String(input == null ? '' : input).trim().toLowerCase();
-  if (!s) return { ok: false, error: 'enter a duration like 30m or 2h' };
+  if (!s) return { ok: false, error: 'enter a duration — e.g. 30s, 5m, 2h, or 500ms' };
   // NB: "ms" must precede "m"/"s" in the alternation or it can never match
   // (this is what lets formatDuration's `${ms}ms` fallback round-trip).
   const m = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/.exec(s);
-  if (!m) return { ok: false, error: 'use a number with s, m, h, or d — e.g. 30m, 2h' };
+  if (!m) return { ok: false, error: 'use a number with a unit ms, s, m, h, or d — e.g. 30s, 5m, 2h, 500ms' };
   const ms = Math.round(parseFloat(m[1]) * DURATION_UNITS[m[2] || 'm']);
   if (!(ms > 0)) return { ok: false, error: 'duration must be greater than zero' };
   return { ok: true, ms };

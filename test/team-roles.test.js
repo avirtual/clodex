@@ -96,6 +96,10 @@ test('parseDuration: friendly units → ms; bare number = minutes; rejects junk/
   assert.strictEqual(parseDuration('0m').ok, false, 'zero rejected');
   assert.strictEqual(parseDuration('-30m').ok, false, 'negative rejected');
   assert.deepStrictEqual(parseDuration('300500ms'), { ok: true, ms: 300500 }, 'ms unit accepted');
+  // T33 item 3: the reject copy enumerates the accepted forms incl. ms, so a
+  // raw-number typer learns ms is valid instead of getting an opaque bounce.
+  assert.match(parseDuration('soon').error, /500ms/, 'junk-reject copy enumerates ms');
+  assert.match(parseDuration('').error, /500ms/, 'blank-reject copy enumerates ms');
 });
 
 test('formatDuration: friendliest exact unit; round-trips parseDuration; empty for invalid', () => {
