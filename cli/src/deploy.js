@@ -1,0 +1,1029 @@
+// deploy.js — `clodexctl deploy <user@host>`: the CLI twin of the GUI's
+// add-peer deploy wizard. Drives the SAME battle-tested installer
+// (peering/clodex-deploy.sh, copied to cli/deploy/ for the published package)
+// over the system ssh binary, streams its ::marker progress, verifies the wire
+// through an ssh tunnel, and upserts a ready-to-use context.
+//
+// STANDALONE by construction: node:* + the CLI's own sibling modules only,
+// never an app require(). The env mechanism, the marker grammar and the ssh
+// runner are reimplemented here from their documented contracts (the same
+// standalone rule import.js follows) — ipc-handlers.js / ssh-run.js /
+// peer-deploy.js are the reference, not a dependency.
+//
+// NO TOKEN anywhere: the deploy path has none (loopback bind + ssh tunnel is
+// the auth boundary, same posture as the GUI's peers), and we keep it so.
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { spawn, execFile } = require('child_process');
+const { promisify } = require('util');
+const { CliError, EXIT } = require('./errors');
+const { openTransport } = require('./transport');
+const { WireClient } = require('./client');
+const contexts = require('./contexts');
+
+const execFileP = promisify(execFile);
+
+const DEFAULT_REPO = 'https://github.com/avirtual/clodex';
+const DEFAULT_BRANCH = 'master';
+const DEFAULT_PORT = 7900;
+const DEPLOY_TIMEOUT_MS = 15 * 60 * 1000;   // a cold clone+install+rebuild is minutes
+const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+// A strict git-ref / repo-URL charset for values interpolated into the SSM
+// wrapper. Covers https + git@ URLs and normal branch/tag names; REJECTS
+// whitespace, newlines and shell/heredoc metachars — the single-quote escaping
+// in buildPreamble does NOT neutralize a newline, and a newline can smuggle a
+// heredoc-terminator line into the outer root wrapper (validate before interp).
+const REF_RE = /^[A-Za-z0-9._:/@+~-]{1,256}$/;
+
+// docker flavor (deploy docker <name>): birth a container node from the
+// published, self-configuring image. The image bakes CLODEX_REMOTE_ENABLE/HOST
+// + the headless CMD, so one `docker run` = one node (docker/web/Dockerfile).
+const DOCKER_IMAGE_REPO = 'ghcr.io/avirtual/clodex';
+const DOCKER_DEFAULT_TAG = 'latest';
+const CONTAINER_PREFIX = 'clodexctl-';
+const CONTAINER_WIRE_PORT = 7900;           // the wire's in-container port (baked)
+const DOCKER_VERIFY_TIMEOUT_MS = 60 * 1000; // pull already happened in `run`; boot is seconds
+const DOCKER_VERIFY_POLL_MS = 1000;
+
+// ssh posture mirrors ssh-run.js: key-auth only (BatchMode), bounded dial,
+// TOFU first contact, keepalives so a wedged step is caught. No shell string —
+// argv is spawned directly.
+const SSH_DEPLOY_ARGS = [
+  '-o', 'BatchMode=yes',
+  '-o', 'ConnectTimeout=10',
+  '-o', 'StrictHostKeyChecking=accept-new',
+  '-o', 'ServerAliveInterval=15',
+  '-o', 'ServerAliveCountMax=2',
+];
+const SSH_EXIT = 255;  // ssh's own connect/auth failure code
+
+// Single-quote a value for POSIX sh: wrap in '…', escape embedded quotes. One
+// safe literal word (peer-deploy.js:shSingleQuote, reimplemented).
+function shSingleQuote(v) {
+  return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
+}
+
+// Resolve the packaged script relative to THIS module (cli/src/deploy.js →
+// cli/deploy/clodex-deploy.sh). Works for `npm i -g` and in-repo runs both.
+function scriptPath() {
+  return path.join(__dirname, '..', 'deploy', 'clodex-deploy.sh');
+}
+function readScript() {
+  try { return fs.readFileSync(scriptPath(), 'utf8'); }
+  catch (e) { throw new CliError(EXIT.SERVER, `deploy script unreadable at ${scriptPath()}: ${e.message}`); }
+}
+
+// Build the export preamble the remote bash inherits (params ride the
+// environment, NOT the shell command). Each value single-quote-escaped so a
+// quote/space in a repo URL or path can't break out. CLODEX_SRC only when set —
+// otherwise the script's own $HOME/wb-wrap-ui default stands (one source of
+// truth). Returns a string ending in '\n', prepend it to the script.
+function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null } = {}) {
+  let line = `export PORT=${shSingleQuote(port)} REPO_URL=${shSingleQuote(repo)} BRANCH=${shSingleQuote(branch)}`;
+  if (src) line += ` CLODEX_SRC=${shSingleQuote(src)}`;
+  return line + '\n';
+}
+
+// Parse ONE line of the deploy script's ::marker stdout into a structured
+// event. Fresh minimal parse of the documented grammar (spec: do NOT fork
+// peer-deploy.js). Non-marker lines → { type:'log' }.
+function parseMarker(rawLine) {
+  const line = String(rawLine == null ? '' : rawLine);
+  const m = line.match(/^::(\S+)\s?(.*)$/);
+  if (!m) return { type: 'log', text: line };
+  const rest = m[2];
+  switch (m[1]) {
+    case 'step': return { type: 'step', name: rest.trim() };
+    case 'ok': return { type: 'ok', name: rest.trim() };
+    case 'fail': {
+      const sp = rest.indexOf(' ');
+      const name = (sp >= 0 ? rest.slice(0, sp) : rest).trim();
+      const reason = sp >= 0 ? rest.slice(sp + 1).trim() : '';
+      return { type: 'fail', name, reason };
+    }
+    case 'need-sudo': return { type: 'need-sudo', what: rest.trim() };
+    case 'sudo-cmd': return { type: 'sudo-cmd', command: rest.trim() };
+    case 'done': return { type: 'done' };
+    default: return { type: 'log', text: line };
+  }
+}
+
+// The ssh argv for the deploy run: `ssh <opts> <extra> <host> 'bash -s'`.
+// sshOpts is the repeatable raw --ssh-opt passthrough (typed strings only).
+function sshDeployArgs(host, sshOpts = []) {
+  return [...SSH_DEPLOY_ARGS, ...sshOpts, host, 'bash -s'];
+}
+
+// Derive a context name from an ssh destination: the bare host's short name,
+// sanitized to the ctx-name charset. `user@host.example.com` → `host`.
+function deriveCtxName(dest) {
+  const host = String(dest || '').split('@').pop() || '';
+  const short = host.split(':')[0].split('.')[0];
+  const stem = short.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  return NAME_RE.test(stem) ? stem : '';
+}
+
+// Run the script on the box over ssh, streaming stdout line-by-line to onLine
+// (the marker stream) and stderr to onStderr (the script's human detail
+// channel). Resolves { code, timedOut } — a non-zero/42 exit is a normal
+// outcome the caller classifies, not a throw. Only a spawn failure (no ssh
+// binary) rejects. Mirrors ssh-run.js; spawnFn is the test seam.
+function runDeploy({ host, sshOpts = [], stdin, spawnFn = spawn, onLine = null, onStderr = null, timeoutMs = DEPLOY_TIMEOUT_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawnFn('ssh', sshDeployArgs(host, sshOpts), { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) { return reject(e); }
+
+    let lineBuf = '';
+    let timedOut = false;
+    let done = false;
+    const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch {} }, timeoutMs);
+
+    const emitLines = (chunk) => {
+      lineBuf += chunk;
+      let idx;
+      while ((idx = lineBuf.indexOf('\n')) >= 0) {
+        const l = lineBuf.slice(0, idx);
+        lineBuf = lineBuf.slice(idx + 1);
+        if (onLine) { try { onLine(l); } catch {} }
+      }
+    };
+
+    if (child.stdout) child.stdout.on('data', (c) => emitLines(c.toString()));
+    if (child.stderr) child.stderr.on('data', (c) => { if (onStderr) { try { onStderr(c.toString()); } catch {} } });
+    child.on('error', (e) => { if (done) return; done = true; clearTimeout(timer); reject(e); });
+    child.on('exit', (code) => {
+      if (done) return; done = true; clearTimeout(timer);
+      if (onLine && lineBuf.length) { try { onLine(lineBuf); } catch {} }   // flush trailing partial
+      resolve({ code: timedOut ? null : code, timedOut });
+    });
+
+    try { if (child.stdin) { child.stdin.write(stdin); child.stdin.end(); } } catch {}
+  });
+}
+
+// Probe the freshly-deployed wire through an ssh tunnel (the existing
+// openTransport ssh path, remotePort = the deploy port). Returns the hello
+// payload, or throws a coded CliError. spawnFn is the tunnel's test seam.
+async function probeHello(dest, port, { spawnFn } = {}) {
+  const t = await openTransport({ ssh: dest, remotePort: port }, { spawnFn });
+  try {
+    const client = new WireClient(t.baseUrl, null);   // no token — tunnel is the boundary
+    return await client.get('/api/peer/hello', 'deploy (verify)');
+  } finally {
+    try { t.close(); } catch {}
+  }
+}
+
+// An ssh destination is the same charset the GUI's classifyPeerDest accepts:
+// user@host / bare host / IPv4 / ssh-config alias. No spaces, no scheme.
+const DEST_RE = /^[a-zA-Z0-9._@-]{1,128}$/;
+
+function parsePortOr(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) throw new CliError(EXIT.USAGE, '--port must be a port number (1-65535)');
+  return n;
+}
+
+// deploy verb — orchestration. Throws CliError (caught by main.run's try). io
+// carries the injectable seams: spawnFn (ssh child, for both the deploy run and
+// the verify tunnel), probeHello (verify override for tests), contextsFile.
+//
+// --json emits an NDJSON stream: one object per marker line, then a final
+// { type:'verify'|'context'|'error' } object — the machine binding for a deploy.
+async function deployVerb({ printer, flags, args, io = {} }) {
+  const dest = args[0];
+  if (!dest) throw new CliError(EXIT.USAGE, 'deploy needs an ssh destination (e.g. user@host)');
+  if (!DEST_RE.test(dest)) throw new CliError(EXIT.USAGE, `bad ssh destination "${dest}" — use user@host / host / IP (set a port in ~/.ssh/config, not host:port)`);
+
+  const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
+  const repo = flags.repo ? String(flags.repo) : DEFAULT_REPO;
+  const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
+  const src = flags.src ? String(flags.src) : null;
+  const sshOpts = Array.isArray(flags['ssh-opt']) ? flags['ssh-opt'] : (flags['ssh-opt'] ? [String(flags['ssh-opt'])] : []);
+  const script = readScript();
+  const preamble = buildPreamble({ port, repo, branch, src });
+  const stdin = preamble + script;
+  const ctxName = flags.name ? String(flags.name) : deriveCtxName(dest);
+  const json = !!flags.json;
+  const emit = (obj) => printer.json(obj);
+
+  // --dry-run: describe, run nothing.
+  if (flags['dry-run']) {
+    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
+    printer.line([
+      `dry-run — would deploy to ${dest}:`,
+      `  port    ${port}`,
+      `  repo    ${repo}`,
+      `  branch  ${branch}`,
+      src ? `  src     ${src}` : null,
+      `  script  ${script.length} bytes (${scriptPath()})`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName || '(none — pass --name)'}`,
+    ].filter(Boolean).join('\n'));
+    return;
+  }
+
+  // Stream the marker run. Human mode renders a live step list; --json emits one
+  // object per marker line. Script stderr passes through to our stderr.
+  const sudoCmds = [];
+  let sawDone = false;
+  const writeErr = io.stderr || ((s) => process.stderr.write(s));
+  const onLine = (raw) => {
+    const ev = parseMarker(raw);
+    if (json) { emit(ev); }
+    else {
+      switch (ev.type) {
+        case 'step': printer.line(`→ ${ev.name} …`); break;
+        case 'ok': printer.line(`  ${ev.name} ok`); break;
+        case 'fail': printer.line(`  ${ev.name} FAILED${ev.reason ? ` — ${ev.reason}` : ''}`); break;
+        case 'need-sudo': printer.line(`  needs sudo: ${ev.what}`); break;
+        case 'sudo-cmd': printer.line(`    ${ev.command}`); break;
+        case 'done': /* summarized below */ break;
+        default: if (ev.text) printer.line(`  ${ev.text}`); break;
+      }
+    }
+    if (ev.type === 'sudo-cmd') sudoCmds.push(ev.command);
+    if (ev.type === 'done') sawDone = true;
+  };
+
+  let res;
+  try {
+    res = await runDeploy({ host: dest, sshOpts, stdin, spawnFn: io.spawnFn, onLine, onStderr: (s) => writeErr(s) });
+  } catch (e) {
+    throw new CliError(EXIT.CONNECT, `deploy could not start ssh: ${e.message}`);
+  }
+
+  if (res.timedOut) throw new CliError(EXIT.SERVER, `deploy timed out on ${dest} — re-run to resume (the script is idempotent)`);
+  if (res.code === SSH_EXIT) throw new CliError(EXIT.CONNECT, `ssh could not connect to ${dest} (auth/host/network) — check \`ssh ${dest}\` works`);
+
+  // exit 42 = the script needs root it can't get non-interactively. Surface the
+  // exact commands and stop — the operator runs them on the box, then re-runs.
+  if (res.code === 42) {
+    if (json) { emit({ type: 'error', reason: 'need-sudo', sudoCmds }); }
+    else {
+      printer.line('');
+      printer.line(`deploy needs root on ${dest}. Run these on the box, then re-run \`clodexctl deploy ${dest}\`:`);
+      for (const c of sudoCmds) printer.line(`  ${c}`);
+    }
+    throw new CliError(EXIT.SERVER, `deploy incomplete — ${sudoCmds.length} sudo command(s) must be run on ${dest} first`);
+  }
+  if (res.code !== 0 || !sawDone) {
+    if (json) emit({ type: 'error', reason: 'failed', code: res.code });
+    throw new CliError(EXIT.SERVER, `deploy failed on ${dest} (exit ${res.code == null ? '?' : res.code})`);
+  }
+
+  // Verify the wire through an ssh tunnel — deploy is not "done" until it answers.
+  let hello;
+  try {
+    const probe = io.probeHello || probeHello;
+    hello = await probe(dest, port, { spawnFn: io.spawnFn });
+  } catch (e) {
+    if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
+    else printer.line(`installed, but the wire did not answer through the tunnel: ${e.message}`);
+    throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `deploy verify failed: ${e.message}`);
+  }
+  if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
+  else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${dest}:${port}`);
+
+  // Upsert the context (no token — tunnel is the auth boundary). Collision:
+  // skip+warn unless --force. --no-ctx opts out.
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+    return;
+  }
+  if (!ctxName) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: 'no valid name — pass --name' });
+    else printer.line(`(no context saved — could not derive a name from ${dest}; pass --name)`);
+    return;
+  }
+  const store = safeLoadContexts(io);
+  const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
+  if (exists && !flags.force) {
+    if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
+    else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${ctxName} sessions`);
+    return;
+  }
+  store.contexts[ctxName] = { ssh: dest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}) };
+  if (!store.current) store.current = ctxName;
+  contexts.save(store, io.contextsFile);
+  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName });
+  else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+}
+
+// Tolerant contexts load (an absent/garbled file → empty store; deploy still
+// wrote a live node, so never fail the whole deploy over the local ctx file).
+function safeLoadContexts(io) {
+  try { return contexts.load(io.contextsFile, { warn: () => {} }); }
+  catch { return { current: null, contexts: {} }; }
+}
+
+// ── docker flavor: `clodexctl deploy docker <name>` ──────────────────────────
+//
+// A CLI-owned container node is the MINIMAL box — one `docker run` of the
+// published, self-configuring image (NOT the GUI's managed sandbox: no compose,
+// no registry row, no library binds; a plain peer named clodexctl-<name>). The
+// system `docker` binary is the operator's tool, spawned argv-direct like ssh —
+// zero SDKs, never a shell. Secrets only ride the operator's --env-file, passed
+// straight through by PATH; we never read or print it.
+
+// Normalize a --host value into a DOCKER_HOST URL. Bare `user@box` is sugar for
+// `ssh://user@box` (docker's own ssh transport). A value that already carries a
+// scheme (ssh:// tcp:// unix://) is passed through untouched.
+function normalizeDockerHost(h) {
+  const s = String(h == null ? '' : h).trim();
+  if (!s) return '';
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `ssh://${s}`;
+}
+
+// Derive the ssh destination (user@host) for our verify tunnel from a
+// ssh://user@host[:port][/path] DOCKER_HOST. Only ssh:// hosts are tunnel-able;
+// a non-ssh DOCKER_HOST (tcp/unix) returns '' (no ssh verify path).
+function dockerHostToSshDest(dockerHost) {
+  const s = String(dockerHost || '');
+  const m = s.match(/^ssh:\/\/([^/]+)/i);
+  if (!m) return '';
+  return m[1].replace(/:\d+$/, '');   // strip a trailing :port — belongs in ~/.ssh/config
+}
+
+// Compose the `docker run` argv (pure — leaf-tested). Loopback publish is the
+// trust boundary; --hostname is the engine's SELF_LABEL on the peer wire (must
+// be unique per node or DM routing collides). --env-file and extra -v ride
+// straight through in the operator's order.
+function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volumes = [] } = {}) {
+  const cname = CONTAINER_PREFIX + name;
+  const argv = [
+    'run', '-d',
+    '--name', cname,
+    '--hostname', name,
+    '--restart', 'unless-stopped',
+    '-p', `127.0.0.1:${port}:${CONTAINER_WIRE_PORT}`,
+    '-v', `${cname}-data:/data`,
+  ];
+  if (envFile) argv.push('--env-file', envFile);
+  for (const v of volumes) { argv.push('-v', v); }
+  argv.push(image);
+  return argv;
+}
+
+// Run the system docker binary argv-direct. DOCKER_HOST rides the child env when
+// remote (docker handles its own ssh). stdout is captured (the container id);
+// stderr streams through onStderr (pull progress, errors). Resolves
+// { code, stdout } on exit; rejects only on a spawn failure (e.g. no docker
+// binary → ENOENT) so the caller can render a clear "is docker installed?".
+// spawnFn is the test seam.
+function runDocker({ args, env = null, spawnFn = spawn, onStderr = null } = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    const opts = { stdio: ['ignore', 'pipe', 'pipe'] };
+    if (env) opts.env = env;
+    try {
+      child = spawnFn('docker', args, opts);
+    } catch (e) { return reject(e); }
+
+    let stdout = '';
+    let done = false;
+    if (child.stdout) child.stdout.on('data', (c) => { stdout += c.toString(); });
+    if (child.stderr) child.stderr.on('data', (c) => { if (onStderr) { try { onStderr(c.toString()); } catch {} } });
+    child.on('error', (e) => { if (done) return; done = true; reject(e); });
+    child.on('exit', (code) => { if (done) return; done = true; resolve({ code, stdout: stdout.trim() }); });
+  });
+}
+
+// Poll the freshly-run node's wire until it answers or the deadline lapses.
+// ctx is a transport descriptor ({url} local / {ssh,remotePort} remote) with NO
+// token — we never saw one. A 200 hello → { ok:true, hello }. A 401/403 (the
+// image was seeded a CLODEX_REMOTE_TOKEN via --env-file) → { ok:true,
+// tokenGated:true } and we STOP: the node is up, auth is the operator's setting.
+// A connect/other failure retries to the deadline; timeout → coded CliError.
+async function pollHello(ctx, { spawnFn, timeoutMs = DOCKER_VERIFY_TIMEOUT_MS, pollMs = DOCKER_VERIFY_POLL_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
+  for (;;) {
+    let t = null;
+    try {
+      t = await openTransport(ctx, { spawnFn });
+      const client = new WireClient(t.baseUrl, null);   // no token — probe unauthenticated
+      const hello = await client.get('/api/peer/hello', 'deploy docker (verify)');
+      return { ok: true, hello };
+    } catch (e) {
+      if (e instanceof CliError && e.exitCode === EXIT.AUTH) return { ok: true, tokenGated: true };
+      lastErr = e;
+    } finally {
+      if (t) { try { t.close(); } catch {} }
+    }
+    if (Date.now() >= deadline) {
+      throw new CliError(EXIT.SERVER, `container is up but its wire did not answer within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+// deploy docker <name> — orchestration. Same io seams as deployVerb, plus
+// io.pollHello (verify override for tests). Throws CliError (caught by main.run).
+async function deployDockerVerb({ printer, flags, args, io = {} }) {
+  const name = args[0];
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy docker needs a node name (e.g. deploy docker mybox)');
+  if (!NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — use ${NAME_RE.source}`);
+
+  const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
+  const tag = flags.tag ? String(flags.tag) : DOCKER_DEFAULT_TAG;
+  const image = flags.image ? String(flags.image) : `${DOCKER_IMAGE_REPO}:${tag}`;
+  const envFile = flags['env-file'] ? String(flags['env-file']) : null;
+  const volumes = Array.isArray(flags.volume) ? flags.volume : (flags.volume ? [String(flags.volume)] : []);
+  const dockerHost = flags.host ? normalizeDockerHost(flags.host) : '';
+  const sshDest = dockerHost ? dockerHostToSshDest(dockerHost) : '';
+  const json = !!flags.json;
+  const emit = (obj) => printer.json(obj);
+
+  const runArgs = dockerRunArgs({ name, port, image, envFile, volumes });
+
+  // --dry-run: describe the exact argv (secrets never appear — the env-file is a
+  // PATH, its contents are docker's to read), run nothing.
+  if (flags['dry-run']) {
+    if (json) { emit({ type: 'dry-run', name, container: CONTAINER_PREFIX + name, port, image, dockerHost: dockerHost || null, argv: runArgs, envFile: envFile || null }); return; }
+    printer.line([
+      `dry-run — would run docker to birth "${name}":`,
+      dockerHost ? `  DOCKER_HOST=${dockerHost}` : null,
+      `  docker ${runArgs.join(' ')}`,
+      envFile ? `  (env-file ${envFile} passed to docker unread)` : '  (no --env-file — loopback, no token)',
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name}`,
+    ].filter(Boolean).join('\n'));
+    return;
+  }
+
+  // Spawn docker argv-direct. DOCKER_HOST in the child env when remote.
+  const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
+  const writeErr = io.stderr || ((s) => process.stderr.write(s));
+  let res;
+  try {
+    res = await runDocker({ args: runArgs, env: childEnv, spawnFn: io.spawnFn, onStderr: (s) => { if (!json) writeErr(s); } });
+  } catch (e) {
+    // ENOENT-shape spawn failure = docker isn't installed / not on PATH. Not a
+    // usage error (the argv was fine) nor a wire-connect failure — it's an
+    // environment/server-side failure with a pointed hint. (journal choice #2)
+    if (e && (e.code === 'ENOENT' || /ENOENT|not found/i.test(e.message || ''))) {
+      throw new CliError(EXIT.SERVER, `could not run docker: ${e.message} — is docker installed and on PATH?`);
+    }
+    throw new CliError(EXIT.SERVER, `could not run docker: ${e.message}`);
+  }
+  if (res.code !== 0) {
+    if (json) emit({ type: 'error', reason: 'docker-run-failed', code: res.code });
+    throw new CliError(EXIT.SERVER, `docker run failed (exit ${res.code == null ? '?' : res.code}) — see docker's output above`);
+  }
+  const containerId = res.stdout ? res.stdout.split('\n').pop().trim() : '';
+  if (!json) printer.line(`started container ${CONTAINER_PREFIX + name}${containerId ? ` (${containerId.slice(0, 12)})` : ''}`);
+
+  // Verify: poll hello. Local → direct url. Remote → ssh tunnel to the box's
+  // loopback (only ssh:// DOCKER_HOSTs are tunnel-able).
+  let ctx;
+  if (sshDest) ctx = { ssh: sshDest, remotePort: port };
+  else ctx = { url: `http://127.0.0.1:${port}` };
+
+  let probe;
+  try {
+    const poll = io.pollHello || pollHello;
+    probe = await poll(ctx, { spawnFn: io.spawnFn });
+  } catch (e) {
+    if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
+    else printer.line(`container started, but the wire did not answer: ${e.message}`);
+    throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `verify failed: ${e.message}`);
+  }
+
+  if (probe.tokenGated) {
+    if (json) emit({ type: 'verify', ok: true, tokenGated: true });
+    else printer.line('node is up and token-gated (401) — add the context with your token: clodexctl ctx add …');
+  } else {
+    const hello = probe.hello || {};
+    if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
+    else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'}`);
+  }
+
+  // Upsert the context (no token — we never saw the operator's env-file).
+  // Local → {url}; remote → {ssh, remotePort}. Collision skip unless --force.
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+    return;
+  }
+  const store = safeLoadContexts(io);
+  const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+  if (exists && !flags.force) {
+    if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
+    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
+    return;
+  }
+  const entry = sshDest
+    ? { ssh: sshDest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}) }
+    : { url: `http://127.0.0.1:${port}` };
+  store.contexts[name] = entry;
+  if (!store.current) store.current = name;
+  contexts.save(store, io.contextsFile);
+  const hint = probe.tokenGated ? ' (token-gated — add your token: clodexctl ctx add …)' : '';
+  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, tokenGated: !!probe.tokenGated });
+  else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'}${hint} — you can now: clodexctl --ctx ${name} sessions`);
+}
+
+// ── ssm flavor: `clodexctl deploy ssm <name> --target i-INSTANCE` ────────────
+//
+// The OS flavor (NOT docker) over AWS SSM RunCommand — no ssh, no open ports.
+// The agent is a first-class citizen of the box: a dedicated `clodex` host user
+// running the SAME systemd --user service the ssh flavor installs (docker adds
+// no real security on an instance we already own; the boundary is SSM/IAM).
+//
+// SSM has no clean stdin/stdout exec pipe (send-command is async, output polled,
+// 24KB capped), so the interactive git-clone-over-ssh path can't ride it. Since
+// RunCommand runs as ROOT, the exit-42 "needs sudo" dance INVERTS: one root
+// wrapper installs prereqs itself, mints the clodex user, then runs the PINNED
+// clodex-deploy.sh (byte-for-byte the drift-gated installer) as that user via
+// `sudo -iu clodex bash -s`. Streaming loss is accepted: send one command, poll
+// status, relay the ^:: marker trail (pseudo-streamed as partial output grows).
+//
+// Zero AWS SDK: we shell out to the operator's own `aws` binary argv-direct
+// (execFn seam, same pattern as transport.js:resolveEcsTarget), never a shell.
+// The wire is always token-gated (a minted CLODEX_REMOTE_TOKEN). The installer
+// itself is TOKENLESS (ssh flavor = tunnel-is-auth); the token is injected AFTER
+// it runs, via a systemd --user drop-in the app reads through its native env
+// precedence (CLODEX_REMOTE_TOKEN wins) — so the installer bytes stay identical
+// (the drift test is the gate; we never fork it). That token rides inside the
+// send-command parameters → visible in the account's SSM history/CloudTrail;
+// acceptable ONLY because the port never leaves loopback (reaching it needs
+// ssm:StartSession on the same account) — say it out loud in the docs, and
+// "re-run deploy to rotate" is the mitigation.
+const SSM_DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;  // a cold clone+install+rebuild is minutes
+const SSM_POLL_MS = 5000;                       // get-command-invocation cadence
+const SSM_PREPOLL_MS = 2000;                    // let SSM register the invocation before the first poll
+const SSM_SEND_RETRY_MS = 2000;                 // backoff between send-command retries
+const SSM_SEND_RETRIES = 3;                     // InvalidInstanceId is eventually-consistent post-registration
+
+// A no-op-in-tests sleep seam (injected via io.sleepFn; real setTimeout by default).
+const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Build the root wrapper script for AWS-RunShellScript — pure and test-pinned.
+// port is int and token is hex by construction; repo/branch are validated
+// against REF_RE by the caller (deploySsmVerb) before they reach here, so no
+// interpolated value can carry a newline. Defense-in-depth: the two embedding
+// heredocs use a per-run RANDOM nonce delimiter (CLODEX_EOF_<hex>), so even a
+// field that slipped validation could not guess the terminator line. No
+// `set -e`: each load-bearing step gates explicitly with
+// `|| { echo "::fail …"; exit 1; }` (mirrors the installer's discipline),
+// best-effort steps use `|| true`.
+//
+// Five steps, each emitting a ::step marker so the relayed trail reads like the
+// ssh flavor's; the installer's own ^:: markers are filtered in from its log.
+function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH } = {}) {
+  // preamble + the byte-identical installer, fed verbatim to the clodex user's
+  // bash. The installer bytes are the SAME readScript() the drift test pins —
+  // the token is NOT here (installer is tokenless); it's injected in step 4.
+  const embedded = buildPreamble({ port, repo, branch }) + readScript();
+  // Unguessable per-run heredoc delimiters (hex can't contain the delimiter, and
+  // a validated repo/branch can't either — this is the belt to validation's
+  // suspenders).
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const INSTALL_EOF = `CLODEX_EOF_${nonce}`;
+  const TOKEN_EOF = `CLODEX_TOKEN_EOF_${nonce}`;
+  return [
+    '#!/bin/sh',
+    '# clodex deploy ssm wrapper — runs as root via AWS-RunShellScript. Emits',
+    '# ::step/::ok/::fail markers on stdout; the pinned installer runs as the',
+    '# clodex user and its own marker trail is filtered in from its log.',
+    '',
+    '# 1. prereqs (root): git, curl, node>=20, npm + the node-pty build toolchain —',
+    '#    best-effort, PER-PACKAGE so one conflicting package (e.g. full curl vs',
+    '#    curl-minimal on AL2023) cannot take down the rest of the transaction. A',
+    '#    package whose command already exists is skipped (curl-minimal already',
+    '#    provides curl(1), avoiding the conflict). The toolchain (compiler+make+',
+    '#    python3) is what the pinned installer needs to rebuild node-pty for the',
+    "#    Node ABI — it's family-named (rpm: gcc-c++; apt: build-essential).",
+    'echo "::step prereqs"',
+    'PM= ; TOOLCHAIN=',
+    'if command -v dnf >/dev/null 2>&1; then PM="dnf install -y"; TOOLCHAIN="gcc-c++ make python3"',
+    'elif command -v yum >/dev/null 2>&1; then PM="yum install -y"; TOOLCHAIN="gcc-c++ make python3"',
+    'elif command -v apt-get >/dev/null 2>&1; then apt-get update >&2 || true; PM="apt-get install -y"; TOOLCHAIN="build-essential python3"',
+    'fi',
+    'if [ -n "$PM" ]; then',
+    '  for pkg in git curl nodejs npm $TOOLCHAIN; do',
+    '    case "$pkg" in',
+    '      nodejs) cmd=node ;;',
+    '      gcc-c++|build-essential) cmd=g++ ;;',
+    '      *) cmd=$pkg ;;',
+    '    esac',
+    '    command -v "$cmd" >/dev/null 2>&1 && continue',
+    '    $PM "$pkg" >&2 || true',
+    '  done',
+    'fi',
+    "NODE_MAJOR=$(node -p 'process.versions.node.split(\".\")[0]' 2>/dev/null || echo 0)",
+    'if [ "$NODE_MAJOR" -lt 20 ] 2>/dev/null; then',
+    '  # packaged node too old/missing — NodeSource setup_20.x fallback per family.',
+    '  if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then',
+    '    curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - >&2 || true',
+    '    { dnf install -y nodejs >&2 || yum install -y nodejs >&2; } || true',
+    '  elif command -v apt-get >/dev/null 2>&1; then',
+    '    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >&2 || true',
+    '    apt-get install -y nodejs >&2 || true',
+    '  fi',
+    "  NODE_MAJOR=$(node -p 'process.versions.node.split(\".\")[0]' 2>/dev/null || echo 0)",
+    'fi',
+    '[ "$NODE_MAJOR" -ge 20 ] 2>/dev/null || { echo "::fail prereqs node-missing-or-too-old-need-20+"; exit 1; }',
+    'command -v git >/dev/null 2>&1 || { echo "::fail prereqs git-not-found"; exit 1; }',
+    'command -v npm >/dev/null 2>&1 || { echo "::fail prereqs npm-not-found"; exit 1; }',
+    'echo "::ok prereqs"',
+    '',
+    '# 2. user (root): a dedicated clodex user + linger so the --user service runs loginless.',
+    'echo "::step user"',
+    'id clodex >/dev/null 2>&1 || useradd -m clodex >&2 || { echo "::fail user useradd-failed"; exit 1; }',
+    'loginctl enable-linger clodex >/dev/null 2>&1 || true',
+    'echo "::ok user"',
+    '',
+    '# 3. installer (as clodex): the PINNED clodex-deploy.sh, byte-for-byte. Full',
+    '#    output is parked in a log; only its ^:: marker lines are surfaced (24KB cap).',
+    'echo "::step install"',
+    'CLODEX_LOG=/home/clodex/clodex-deploy.log',
+    `sudo -iu clodex bash -s > "$CLODEX_LOG" 2>&1 <<'${INSTALL_EOF}'`,
+    embedded,
+    INSTALL_EOF,
+    'rc=$?',
+    "grep -E '^::' \"$CLODEX_LOG\" 2>/dev/null || true",
+    'echo "::log $CLODEX_LOG"',
+    '[ "$rc" = "0" ] || { echo "::fail install installer-rc=$rc"; exit 1; }',
+    'echo "::ok install"',
+    '',
+    '# 4. token (as clodex): inject the minted wire token into the --user service',
+    '#    environment via a systemd drop-in, then reload+restart to pick it up.',
+    'echo "::step token"',
+    `sudo -iu clodex bash -s <<'${TOKEN_EOF}'`,
+    'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+    'DROPIN_DIR="$HOME/.config/systemd/user/clodex.service.d"',
+    'DROPIN="$DROPIN_DIR/remote-token.conf"',
+    'mkdir -p "$DROPIN_DIR" || exit 1',
+    'chmod 700 "$DROPIN_DIR" || exit 1',
+    'umask 077',
+    'cat > "$DROPIN" <<\'CONF\'',
+    '[Service]',
+    `Environment=CLODEX_REMOTE_TOKEN=${token}`,
+    'CONF',
+    'chmod 600 "$DROPIN" || exit 1',
+    'systemctl --user daemon-reload || exit 1',
+    'systemctl --user restart clodex.service || exit 1',
+    TOKEN_EOF,
+    'rc=$?',
+    '[ "$rc" = "0" ] || { echo "::fail token drop-in-rc=$rc"; exit 1; }',
+    'echo "::ok token"',
+    '',
+    '# 5. verify (root): bounded on-box hello WITH the token → a parseable marker.',
+    '#    Laptop-side verify through the real SSM tunnel is the authoritative gate,',
+    '#    so this marker is NON-FATAL: ::ok verify only on 200, else ::fail verify',
+    '#    (distinguishes "node never came up" from "tunnel/IAM problem").',
+    'echo "::step verify"',
+    'code=000',
+    'i=0',
+    'while [ "$i" -lt 30 ]; do',
+    `  code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${token}" http://127.0.0.1:${port}/api/peer/hello 2>/dev/null || echo 000)`,
+    '  [ "$code" = "200" ] && break',
+    '  i=$((i+1)); sleep 1',
+    'done',
+    'echo "::verify http=$code"',
+    'if [ "$code" = "200" ]; then echo "::ok verify"; else echo "::fail verify http=$code"; fi',
+    'echo "::done"',
+  ].join('\n') + '\n';
+}
+
+// The `aws` base flags in the SAME order as transport.js:resolveEcsTarget
+// (profile before region) so a reader compares them one-to-one.
+function awsBase({ region, profile } = {}) {
+  return [
+    ...(profile ? ['--profile', profile] : []),
+    ...(region ? ['--region', region] : []),
+  ];
+}
+
+// argv builders — full argv (leading 'aws') so they double as the single source
+// for both execution and --dry-run display. --parameters is real JSON built
+// with JSON.stringify (never string-pasted), same discipline as ssmArgv.
+function ssmDescribeArgs({ target, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ssm', 'describe-instance-information',
+    '--filters', `Key=InstanceIds,Values=${target}`,
+    '--output', 'json'];
+}
+function ssmSendCommandArgs({ target, region, profile, script } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ssm', 'send-command',
+    '--document-name', 'AWS-RunShellScript',
+    '--instance-ids', target,
+    '--parameters', JSON.stringify({ commands: [script] }),
+    '--query', 'Command.CommandId', '--output', 'text'];
+}
+function ssmGetInvocationArgs({ commandId, target, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ssm', 'get-command-invocation',
+    '--command-id', commandId,
+    '--instance-id', target,
+    '--output', 'json'];
+}
+
+// Run an aws argv through the injectable execFn (default promisified execFile —
+// NEVER a shell). ENOENT → the "is aws installed?" hint; any other failure →
+// a coded CliError with aws's own stderr relayed. Returns trimmed stdout.
+async function runAws(execFn, argv, what, code = EXIT.CONNECT) {
+  try {
+    const { stdout } = await execFn(argv[0], argv.slice(1));
+    return String(stdout).trim();
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || ''))) {
+      throw new CliError(EXIT.CONNECT, 'aws CLI not found — is it installed and on PATH?');
+    }
+    const stderr = ((e && (e.stderr || e.message)) || '').toString().trim();
+    throw new CliError(code, `aws ${what} failed${stderr ? `: ${stderr}` : ''}`);
+  }
+}
+
+// Preflight: the instance must be registered with SSM and online, or the
+// RunCommand will silently never arrive. describe-instance-information returns
+// an InstanceInformationList; empty → not registered; PingStatus!=Online →
+// offline. Both are EXIT.CONNECT with a pointed hint.
+async function ssmPreflight({ target, region, profile }, { execFn = execFileP } = {}) {
+  const out = await runAws(execFn, ssmDescribeArgs({ target, region, profile }), 'describe-instance-information');
+  let list = [];
+  try { list = (JSON.parse(out || '{}').InstanceInformationList) || []; } catch { list = []; }
+  const info = list.find((x) => x && x.InstanceId === target) || list[0];
+  if (!info) {
+    throw new CliError(EXIT.CONNECT,
+      `instance ${target} is not registered with SSM — install/start the SSM agent and attach the AmazonSSMManagedInstanceCore role`);
+  }
+  if (info.PingStatus && info.PingStatus !== 'Online') {
+    throw new CliError(EXIT.CONNECT, `instance ${target} is registered but ${info.PingStatus} (SSM agent not reporting)`);
+  }
+  return info;
+}
+
+// Fire the RunShellScript. Returns the CommandId (send-command --query yields
+// the bare id via --output text). InvalidInstanceId is eventually-consistent
+// right after the SSM agent registers (preflight saw it Online, but send-command
+// can still 400 for a beat) — retry a bounded few times with a short backoff.
+async function ssmSendCommand({ target, region, profile, script }, { execFn = execFileP, retries = SSM_SEND_RETRIES, retryMs = SSM_SEND_RETRY_MS, sleepFn = defaultSleep } = {}) {
+  let attempt = 0;
+  for (;;) {
+    try {
+      const id = await runAws(execFn, ssmSendCommandArgs({ target, region, profile, script }), 'send-command', EXIT.SERVER);
+      const commandId = id.split('\n').pop().trim();
+      if (!commandId) throw new CliError(EXIT.SERVER, 'send-command returned no CommandId');
+      return commandId;
+    } catch (e) {
+      if (attempt++ < retries && e instanceof CliError && /InvalidInstanceId/.test(e.message || '')) {
+        await sleepFn(retryMs);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// Pseudo-streaming: get-command-invocation returns PARTIAL
+// StandardOutputContent while InProgress, so we surface NEW ::marker lines as
+// they appear. Keep a rendered cursor (count of ^:: lines already emitted); each
+// tick, diff the current output's ^:: lines against it and fire onMarker only for
+// the fresh ones. A line rendered mid-run never re-fires when the final superset
+// arrives (the trail is monotonic: partial output is a prefix that only grows).
+//
+// Only lines TERMINATED by a newline count: a poll that catches output mid-echo
+// (a partial trailing `::ok prer`) must not fire a truncated marker that the
+// cursor would then swallow when the real line arrives. The final invocation's
+// output is newline-terminated by the wrapper's `echo`s, so no marker is lost.
+function ssmMarkerLines(stdout) {
+  const s = String(stdout || '');
+  const nl = s.lastIndexOf('\n');
+  if (nl < 0) return [];
+  return s.slice(0, nl).split('\n').filter((l) => /^::/.test(l));
+}
+
+// Poll get-command-invocation until a terminal status or the budget lapses.
+// A freshly-issued command 404s as InvocationDoesNotExist for a beat — tolerate
+// it until the deadline. onStatus fires on each observed (changed) status;
+// onMarker fires once per fresh ^:: line as partial output grows. Returns
+// { status, responseCode, stdout, stderr, markersStreamed }. Deadline → a
+// synthetic TimedOut (the caller maps non-Success → EXIT.SERVER).
+const SSM_TERMINAL = new Set(['Success', 'Failed', 'Cancelled', 'TimedOut']);
+async function ssmPoll({ commandId, target, region, profile }, { execFn = execFileP, timeoutMs = SSM_DEPLOY_TIMEOUT_MS, pollMs = SSM_POLL_MS, prePollMs = SSM_PREPOLL_MS, sleepFn = defaultSleep, onStatus = null, onMarker = null } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  let cursor = 0;   // count of ^:: lines already handed to onMarker
+  if (prePollMs) await sleepFn(prePollMs);   // let SSM register the invocation
+  const drainMarkers = (out) => {
+    if (!onMarker || !out) return;
+    const lines = ssmMarkerLines(out.StandardOutputContent);
+    for (let i = cursor; i < lines.length; i++) onMarker(lines[i]);
+    if (lines.length > cursor) cursor = lines.length;
+  };
+  for (;;) {
+    let out = null;
+    try {
+      const { stdout } = await execFn('aws', ssmGetInvocationArgs({ commandId, target, region, profile }).slice(1));
+      out = JSON.parse(String(stdout) || '{}');
+    } catch (e) {
+      if (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || ''))) {
+        throw new CliError(EXIT.CONNECT, 'aws CLI not found — is it installed and on PATH?');
+      }
+      const stderr = ((e && (e.stderr || e.message)) || '').toString();
+      // The invocation isn't registered for a moment right after send-command.
+      if (!/InvocationDoesNotExist/.test(stderr) && Date.now() >= deadline) {
+        throw new CliError(EXIT.SERVER, `aws get-command-invocation failed: ${stderr.trim()}`);
+      }
+      out = null;
+    }
+    if (out) {
+      drainMarkers(out);
+      const status = out.Status || 'Pending';
+      if (status !== last) { last = status; if (onStatus) onStatus(status); }
+      if (SSM_TERMINAL.has(status)) {
+        return {
+          status,
+          responseCode: out.ResponseCode != null ? out.ResponseCode : null,
+          stdout: out.StandardOutputContent || '',
+          stderr: out.StandardErrorContent || '',
+          markersStreamed: cursor,
+        };
+      }
+    }
+    if (Date.now() >= deadline) {
+      return { status: 'TimedOut', responseCode: null, stdout: (out && out.StandardOutputContent) || '', stderr: (out && out.StandardErrorContent) || '', markersStreamed: cursor };
+    }
+    await sleepFn(pollMs);
+  }
+}
+
+// Pull the http code the on-box verify loop echoed (`::verify http=NNN`)
+// — informational; the authoritative verify is the laptop-side tunnel probe.
+function parseHelloMarker(stdout) {
+  const m = String(stdout || '').match(/::verify\s+http=(\d{3})/);
+  return m ? m[1] : null;
+}
+
+// Verify from the laptop through the REAL ssm tunnel the user will use: open the
+// typed-ssm transport and GET hello with the minted token. io.probeSsm overrides
+// for unit tests. Returns the hello payload or throws a coded CliError.
+async function ssmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
+  const t = await openTransport(entry, { spawnFn, execFn });
+  try {
+    const client = new WireClient(t.baseUrl, token);
+    return await client.get('/api/peer/hello', 'deploy ssm (verify)');
+  } finally {
+    try { t.close(); } catch {}
+  }
+}
+
+// deploy ssm <name> — orchestration. io seams: execFn (aws child), spawnFn
+// (verify tunnel child), probeSsm (verify override for tests), contextsFile.
+// Throws CliError (caught by main.run). --json emits NDJSON events.
+async function deploySsmVerb({ printer, flags, args, io = {} }) {
+  const name = args[0];
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy ssm needs a node name (e.g. deploy ssm mybox --target i-…)');
+  if (!NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — use ${NAME_RE.source}`);
+  const target = flags.target ? String(flags.target) : null;
+  if (!target) throw new CliError(EXIT.USAGE, 'deploy ssm needs --target i-INSTANCE');
+
+  const region = flags.region ? String(flags.region) : null;
+  const profile = flags.profile ? String(flags.profile) : null;
+  const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
+  // repo/branch are interpolated into the SSM wrapper (embedded via heredoc), so
+  // they MUST be newline-/metachar-free before they reach buildSsmScript — a
+  // newline could smuggle a heredoc-terminator line into the root wrapper. Hold
+  // them to a strict git-ref / URL charset (the wrapper's random-nonce delimiter
+  // is the belt to this suspenders).
+  const repo = flags.repo ? String(flags.repo) : DEFAULT_REPO;
+  const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
+  if (!REF_RE.test(repo)) throw new CliError(EXIT.USAGE, `bad --repo "${repo}" — use a git URL/ref (${REF_RE.source})`);
+  if (!REF_RE.test(branch)) throw new CliError(EXIT.USAGE, `bad --branch "${branch}" — use a git ref name (${REF_RE.source})`);
+  const json = !!flags.json;
+  const emit = (obj) => printer.json(obj);
+  const execFn = io.execFn;   // undefined → runAws/ssm* default to execFileP
+  const sleepFn = io.sleepFn;  // undefined → real setTimeout; tests inject a no-op
+  const sd = { target, region, profile };
+
+  // The typed ssm ctx entry this deploy will save/verify against (remotePort
+  // only when non-default, matching the ssm kind's port convention).
+  const entry = {
+    ssm: { target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) },
+    ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
+  };
+
+  // Render one ^:: marker line from the relayed trail. Human = a live step list
+  // like the ssh flavor; --json = one NDJSON object per marker (mirrors deployVerb).
+  const renderMarker = (raw) => {
+    const ev = parseMarker(raw);
+    if (json) { emit(ev); return; }
+    switch (ev.type) {
+      case 'step': printer.line(`→ ${ev.name} …`); break;
+      case 'ok': printer.line(`  ${ev.name} ok`); break;
+      case 'fail': printer.line(`  ${ev.name} FAILED${ev.reason ? ` — ${ev.reason}` : ''}`); break;
+      case 'done': break;
+      default: if (ev.text) printer.line(`  ${ev.text}`); break;
+    }
+  };
+
+  // --dry-run: describe the exact argv + wrapper + would-be ctx; the minted token
+  // must NOT appear — print a placeholder.
+  if (flags['dry-run']) {
+    const script = buildSsmScript({ port, token: '<minted-token>', repo, branch });
+    const sendArgv = ssmSendCommandArgs({ target, region, profile, script });
+    if (json) { emit({ type: 'dry-run', name, target, region, profile, port, repo, branch, sendArgv, script, ctxName: flags['no-ctx'] ? null : name }); return; }
+    printer.line([
+      `dry-run — would deploy "${name}" to ${target} over SSM (OS flavor):`,
+      `  user       clodex (host user + systemd --user service)`,
+      `  port       127.0.0.1:${port} (loopback on the box)`,
+      `  repo       ${repo}`,
+      `  branch     ${branch}`,
+      region ? `  region     ${region}` : null,
+      profile ? `  profile    ${profile}` : null,
+      `  send-command  aws ${sendArgv.slice(1).join(' ')}`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (ssm)`,
+      '  --- wrapper ---',
+      script.replace(/^/gm, '  '),
+    ].filter((l) => l != null).join('\n'));
+    return;
+  }
+
+  // 1. Mint a fresh wire token locally (always token-gated).
+  const token = crypto.randomBytes(24).toString('hex');
+  const script = buildSsmScript({ port, token, repo, branch });
+
+  // 2. Preflight — instance registered + online.
+  const info = await ssmPreflight(sd, { execFn });
+  if (json) emit({ type: 'preflight', ok: true, target, pingStatus: info.PingStatus || null, platform: info.PlatformName || null });
+  else printer.line(`instance ${target} online${info.PlatformName ? ` (${info.PlatformName})` : ''} — sending install command…`);
+
+  // 3. send-command (bounded retry on eventually-consistent InvalidInstanceId).
+  const commandId = await ssmSendCommand({ ...sd, script }, { execFn, sleepFn });
+  if (json) emit({ type: 'command', commandId });
+  else printer.line(`running remote install (SSM command ${commandId})…`);
+
+  // 4. Poll to a terminal status, pseudo-streaming the marker trail as it grows.
+  let streamed = 0;
+  const result = await ssmPoll({ commandId, ...sd }, {
+    execFn, sleepFn,
+    onStatus: (s) => { if (json) emit({ type: 'status', status: s }); },
+    onMarker: (raw) => { streamed++; renderMarker(raw); },
+  });
+  if (result.status !== 'Success') {
+    // Distinct terminal statuses (all → EXIT.SERVER, distinct message).
+    const why = result.status === 'TimedOut'
+      ? `remote install timed out on ${target} after ${Math.round(SSM_DEPLOY_TIMEOUT_MS / 60000)}min — re-run to resume (the installer is idempotent)`
+      : result.status === 'Cancelled'
+        ? `remote install was cancelled on ${target} (SSM command ${commandId})`
+        : `remote install failed on ${target} (SSM command ${commandId})`;
+    const tail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    if (json) emit({ type: 'error', reason: 'command-failed', status: result.status, responseCode: result.responseCode, output: tail });
+    else if (tail) printer.line(tail.replace(/^/gm, '  '));
+    throw new CliError(EXIT.SERVER, why);
+  }
+  // Fallback: if partial output never surfaced (streamed 0), render the final
+  // trail now so a marker-less pseudo-stream still shows the step list.
+  if (streamed === 0) { for (const l of ssmMarkerLines(result.stdout)) renderMarker(l); }
+  const helloCode = parseHelloMarker(result.stdout);
+  if (!json) printer.line(`  remote install ok${helloCode ? ` (on-box hello ${helloCode})` : ''}`);
+
+  // 5. Verify from the laptop through the REAL ssm tunnel.
+  let hello;
+  try {
+    const probe = io.probeSsm || ssmVerifyHello;
+    hello = await probe(entry, token, { spawnFn: io.spawnFn, execFn });
+  } catch (e) {
+    if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
+    else printer.line(`installed, but the wire did not answer through the SSM tunnel: ${e.message}`);
+    throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `deploy ssm verify failed: ${e.message}`);
+  }
+  if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
+  else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${target}:${port}`);
+
+  // 6. ctx upsert (typed ssm kind + minted token). Collision skip unless --force.
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+    return;
+  }
+  const store = safeLoadContexts(io);
+  const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+  if (exists && !flags.force) {
+    if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
+    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
+    return;
+  }
+  store.contexts[name] = { ...entry, token };
+  if (!store.current) store.current = name;
+  contexts.save(store, io.contextsFile);
+  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name });
+  else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+}
+
+module.exports = {
+  DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
+  shSingleQuote, scriptPath, readScript, buildPreamble, parseMarker, sshDeployArgs, deriveCtxName,
+  runDeploy, probeHello, deployVerb,
+  DOCKER_IMAGE_REPO, DOCKER_DEFAULT_TAG, CONTAINER_PREFIX, CONTAINER_WIRE_PORT,
+  DOCKER_VERIFY_TIMEOUT_MS, DOCKER_VERIFY_POLL_MS,
+  normalizeDockerHost, dockerHostToSshDest, dockerRunArgs, runDocker, pollHello, deployDockerVerb,
+  SSM_DEPLOY_TIMEOUT_MS, SSM_POLL_MS, SSM_PREPOLL_MS, SSM_SEND_RETRIES, SSM_SEND_RETRY_MS,
+  buildSsmScript, awsBase, ssmDescribeArgs, ssmSendCommandArgs, ssmGetInvocationArgs,
+  runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
+};

@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "clodexctl": "file:cli",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1"

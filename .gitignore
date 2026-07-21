@@ -7,6 +7,10 @@ web-dist/
 HANDOFF.local.md
 # personal infra (ingress/tunnel manifests) — generic Clodex just serves 7900
 deploy/
+# …but the clodexctl package's copy of the deploy script MUST ship (npm can't
+# reach ../peering); a drift test pins it byte-equal to peering/clodex-deploy.sh.
+!cli/deploy/
+!cli/deploy/clodex-deploy.sh
 
 # Python droppings from running/import-checking the vendored wirescope in place
 __pycache__/

@@ -1,0 +1,402 @@
+# clodexctl
+
+A text client — kubectl-for-Clodex — for the Clodex engine's `remote.js`
+HTTP+SSE wire. Wire-only, forever: it never touches ipcMain or the engine's
+local stores, so it works identically against localhost, a LAN peer, a Fargate
+task, or a k8s pod. Plain Node ≥20, zero runtime dependencies (built-in
+`fetch` + `node:*`).
+
+Contexts, transports, the read/write verbs, `run` (command→result), `attach`
+(a live terminal on any session), and `logs -f` (follow) are all here — the
+whole client.
+
+## A live terminal on a container in Fargate, from your laptop
+
+Three commands take you from "a task is running somewhere in a customer's VPC"
+to a real keyboard on the agent inside it — no ssh, no inbound ports, no VPN:
+
+```sh
+clodexctl ctx add cust --ssm-ecs my-cluster/clodex --token <wire-token>
+clodexctl --ctx cust spawn worker --type claude --cwd /home/clodex/work
+clodexctl --ctx cust attach worker
+```
+
+`attach` is ssh-for-agents: it streams the session's screen (best-effort
+scrollback replay, then live output) and forwards your keystrokes, over
+whatever transport the context uses (SSM, kubectl, IAP, Bastion, ssh, or a
+direct URL). **Ctrl-\\** detaches. Type `run` to ask and wait; type `attach`
+to *be there* — watch a build scroll, answer a permission dialog, drive a bash
+shell. It reconnects itself if the tunnel hiccups (full re-replay on
+reconnect). Caveats: the replay is best-effort recent scrollback, **not** exact
+terminal state; `Ctrl-\` can't be typed through to the remote (it's the detach
+escape); use `--read-only` to mirror without taking control (shoulder-surfing).
+
+## Install
+
+This is just a thin HTTP client with **zero dependencies** — there is nothing
+to build, so running the file straight from a checkout is a first-class path,
+not a fallback. Pick whichever fits your box:
+
+1. **Zero-install (run it in place).** Works as-is from any checkout:
+
+   ```
+   node cli/bin/clodexctl.js sessions
+   # optional one-line alias:
+   alias clodexctl='node /path/to/clodex/cli/bin/clodexctl.js'
+   ```
+
+2. **User-prefix install (no root needed).** Lands the `clodexctl` bin under a
+   prefix you own — good when the global npm prefix isn't writable:
+
+   ```
+   npm i -g --prefix ~/.local ./cli    # bin → ~/.local/bin/clodexctl
+   # ensure it's on PATH:  export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+3. **Global install** — *if your global prefix is writable*:
+
+   ```
+   npm i -g ./cli
+   ```
+
+The desktop app's packaged DMG does **not** include `cli/` — it is a
+standalone package, installable on a box that has never seen Clodex.
+
+## Contexts (the kubeconfig)
+
+Stored in `~/.clodex/cli/contexts.json`, created `0600` (it holds tokens; a
+loose mode warns on read). Every transport rides one mechanism — a `{port}`
+tunnel spawned argv-direct — whether it's `ssh`, a typed cloud kind, or a raw
+`--tunnel`:
+
+```
+clodexctl ctx add home --url http://127.0.0.1:7900 --token <T>
+clodexctl ctx add work --ssh user@box --token <T>              # remotePort default 7900
+clodexctl ctx add k8s  --token <T> --tunnel kubectl port-forward pod/clodex-0 {port}:7900
+clodexctl ctx use home
+clodexctl ctx list        # * marks the current
+clodexctl ctx show home   # token redacted
+clodexctl ctx import      # seed contexts from THIS machine's Clodex GUI stores
+clodexctl ctx test        # open the transport + GET hello; relays child stderr verbatim
+```
+
+### `ctx import` — seed from the local GUI
+
+"I shouldn't have to add my own laptop from my laptop." The desktop app already
+knows every connection; `ctx import` reads its userData **read-only** and offers
+context entries:
+
+- the local engine itself → `local` (`http://127.0.0.1:<remotePort>` + the
+  `remote.env` token; warns if the wire is off in Preferences),
+- each peer in the GUI's peers list → an `ssh`/`url` context by label
+  (disabled peers reported as skipped; a tokenless peer imports fine),
+- each managed sandbox box → a `url` context to its wire port + the box's
+  `auth.env` token (a box with no wire token is skipped with a reason).
+
+```
+clodexctl ctx import [--data-dir DIR] [--dry-run] [--force]
+```
+
+`--data-dir` overrides userData discovery (else `CLODEX_DATA_DIR`, else the
+platform default for `Clodex`/`clodex`). Collisions **skip** unless `--force`;
+`current` is never touched; `--dry-run` writes nothing. Tokens flow file→file
+and are never printed — report lines say `(token set)` / `(no token)`. Imported
+entries only ever carry `url`/`ssh` + token, never a tunnel argv.
+
+- **`--url`** — direct. Speak fetch straight at it.
+- **`--ssh HOST`** — the CLI shells out to the system `ssh` binary
+  (`ssh -N -o BatchMode=yes … -L <free>:127.0.0.1:<remotePort> HOST`); your
+  `~/.ssh/config`, keys, and jump hosts all apply. It is a built-in template of
+  the tunnel mechanism.
+- **`--tunnel argv… {port}…`** — the cloud generalization. `{port}` is
+  substituted with a free local port; the argv is spawned directly (never a
+  shell), waited on until the port accepts, then the wire is spoken through it,
+  and the child's **process group** is reaped on exit. Covers
+  `kubectl port-forward`, `aws ssm start-session`,
+  `gcloud compute start-iap-tunnel`, `cloudflared access tcp`, … — no cloud
+  SDKs in our code. The `--tunnel` flag is greedy: it must be **last**, since
+  it consumes the rest of the command line as its argv.
+
+#### Cloud transports — templates over the tunnel mechanism
+
+A raw `--tunnel` argv is **code**, which is why `ctx import` never shares it. The
+four typed cloud kinds are **data** — safe to `ctx import`, to commit to a shared
+team contexts file, to paste in Slack — each a built-in `{port}`-tunnel template
+around the operator's own vendor CLI (no AWS/GCP/Azure SDKs, ever; we spawn
+`aws`/`kubectl`/`gcloud`/`az` argv-direct and relay their stderr):
+
+| Flag | Stored kind | Expands to (the vendor CLI we spawn) |
+|---|---|---|
+| `--ssm TARGET [--region R] [--profile P]` | `ssm` | `aws … ssm start-session --target TARGET --document-name AWS-StartPortForwardingSession --parameters {…}` |
+| `--ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]` | `ssm` (`ecs`) | resolves the **running** task's SSM target at connect time (see below), then the same `aws ssm start-session` |
+| `--kubectl POD_OR_SVC [--namespace NS] [--kube-context C]` | `kubectl` | `kubectl [--context C] [-n NS] port-forward POD_OR_SVC {port}:7900` |
+| `--gcloud-iap INSTANCE [--zone Z] [--project P]` | `gcloud` | `gcloud compute start-iap-tunnel INSTANCE 7900 --local-host-port=localhost:{port} [--zone Z] [--project P]` |
+| `--az-bastion NAME --az-resource-group G --az-target ID` | `az` | `az network bastion tunnel --name NAME --resource-group G --target-resource-id ID --resource-port 7900 --port {port}` |
+
+`remotePort` is a top-level sibling (default `7900`), same as `--ssh`. `--ssm`
+and `--ssm-ecs` are mutually exclusive; `az` requires all three of its fields.
+
+**`--ssm-ecs` resolves at connect time.** Fargate task ids are ephemeral — a
+stored `ecs:…` target goes stale on every redeploy — so a `--ssm-ecs
+CLUSTER/FAMILY` context does two `aws ecs` reads when you open it (`list-tasks`
+for the running task, `describe-tasks` for its container `runtimeId`), composes
+the concrete `ecs:CLUSTER_<taskId>_<runtimeId>` target, and tunnels to that. No
+running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
+
+> **Honesty caveat.** The `gcloud`/`az` templates follow the vendors' documented
+> CLI syntax but have **not** been exercised against live GCP/Azure —
+> `ctx test --verbose` relays the vendor CLI's own stderr, which is the diagnosis
+> surface. The `ssm`/`kubectl` shapes are the same tunnel mechanism `--ssh` uses
+> and are verifiable in shape the same way. Missing a vendor binary surfaces as
+> the usual tunnel-failed error with an "is `<cli>` installed?" hint.
+
+### One-shot / CI
+
+No file needed: `clodexctl --url … --token … sessions`. Env sits between file
+and flags (flags win): `CLODEX_URL` / `CLODEX_TOKEN`. `--ctx NAME` overrides
+the current context. `--url` and `--ssh` are mutually exclusive per call.
+(`--ssh` also works as a one-shot flag; `--tunnel` and the typed cloud kinds
+are `ctx add`-only — they're not in the one-shot flag layer by design: a
+persistent context is the product for a cloud node, and the one-shot layer
+already has `--url` for the rare ad-hoc case.)
+
+The token travels **only** as an `Authorization: Bearer` header from
+in-process fetch — never in argv (ps-visible), never in a URL, never logged.
+
+## Verbs
+
+Read (all support `--json` — stable raw wire payload):
+
+| Verb | Route |
+|---|---|
+| `info` | `GET /api/peer/hello` (also a connectivity test) |
+| `sessions` | `GET /api/sessions` |
+| `logs <name> [--tail N] [-f\|--follow]` | `GET /api/transcript/:name?limit=N` (+ `GET /api/events` when `-f`) |
+| `query <name> <kind>` | `POST /api/query/:name` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
+| `args get <name>` | `GET /api/session-args/:name` |
+| `skills <name>` | `GET /api/skill-catalog/:name` |
+
+**`run` — the one verb.** For "make this session do something and show me the
+result", reach for `run` — it looks up the session's type and picks the right
+path for you:
+
+| Verb | Route | Notes |
+|---|---|---|
+| `run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--json]` | `GET /api/sessions` (type lookup) → send-wait **or** exec | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `--json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
+
+`run` adds one `GET /api/sessions` round-trip to learn the type — the engine's
+session list is **authoritative**, so a bash session named like an agent (or the
+reverse) can't misroute. An unknown name is the usual not-found (exit `5`), and
+lists the running session names to help.
+
+**`attach` — be there.** Where `run` asks and waits, `attach` opens a live
+terminal:
+
+| Verb | Route | Notes |
+|---|---|---|
+| `attach <name> [--read-only]` | `GET /api/attach/:name` + control + `POST /api/input`/`resize` | streams scrollback replay then live output; forwards keystrokes (acquires control, pushes your terminal geometry); **Ctrl-\\** detaches and is never forwarded. Needs a TTY. `--read-only` mirrors without control. Auto-reconnects with full re-replay + re-acquire |
+
+`attach` is type-agnostic on purpose — a human at a keyboard is the right
+consumer of a raw TTY for bash *and* agent sessions (no `run`-style guardrail).
+It requires a real terminal on both stdin and stdout (exit `2` otherwise — use
+`run`/`logs` for scripting). Replay is best-effort scrollback, **not** exact
+terminal state (the client resets its screen and re-applies on every connect);
+`Ctrl-\` is unavailable to the remote; and the geometry you attach with becomes
+the session's (controller wins, matching the GUI's take-control). If the stream
+goes silent for 60s or drops, it reconnects (1s/2s/4s, three tries) and
+re-replays; exhausted → exit `3`. Keystrokes are forwarded as UTF-8 text (the
+same channel the GUI's xterm and `exec` use) — arrow keys, ESC sequences, and
+any ASCII control input work; raw non-UTF-8 byte streams are not guaranteed to
+round-trip losslessly.
+
+**`logs -f` — follow.** Print the tail, then stream new transcript entries as
+each turn lands (subscribes to `/api/events`, refetches the delta on an activity
+for your session). `--json` emits **NDJSON** (one object per new entry), so
+`clodexctl logs bob -f --json | jq` is the point. Ctrl-C exits `0` — it's a
+pager, not a failure — and a non-TTY stdout is fine (pipe it into `grep`). Same
+60s staleness watchdog + bounded reconnect as `attach`; a reconnect re-snapshots
+silently (no duplicate lines).
+
+Write:
+
+| Verb | Route | Notes |
+|---|---|---|
+| `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs` |
+| `kill <name> [--force]` | `POST /api/kill/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `--json`) |
+| `restart <name> [--fresh]` | `POST /api/restart-session/:name` | |
+| `args set <name> [--arg X…] [--proxy URL] [--restart]` | `POST /api/session-args/:name` | |
+| `restart-app [--force]` | `POST /api/restart` | relaunches the whole engine |
+
+Plumbing (**prefer `run`** — these are the raw paths it routes over, kept for
+scripting and explicit control):
+
+| Verb | Route | Notes |
+|---|---|---|
+| `send <name> <text…> [--wait [--timeout N]]` | `POST /api/send` | **fire-and-forget** by default (scripting). `--wait` blocks until the agent's turn ends and prints the new entries (default 300s) — `run` on an agent **is** this path |
+| `input <name> <text…> [--no-enter]` | `POST /api/input/:name` | raw keystrokes, **no wait**; acquires + releases control; sends Enter by default (`--no-enter` posts raw). The deliberate low-level channel — **no agent guardrail** |
+| `exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty]` | `GET /api/attach/:name` + control + `POST /api/input/:name` | run one command in the PTY and print what the terminal produced; waits for quiet (default 750ms) or `--timeout` caps (default 30s); ANSI stripped unless `--raw`. On an **agent** it refuses without `--pty` — `run` on bash **is** this path |
+
+**`exec` — exit status is about DELIVERY, not the remote command.** Screen bytes
+carry no exit code, so `exec` exits `0` when the command was typed and the output
+went quiet — it says nothing about whether the command itself succeeded. The
+echoed command and re-printed prompt are part of the printed output (honest
+terminal truth, not stripped). A timeout prints the partial output and exits `1`.
+Pass `--` before a command containing dashes so they aren't parsed as flags.
+
+**`exec` on an agent needs `--pty`.** Typing into a claude/codex session paints
+its raw TUI screen (scary, and rarely what you want) — so `exec` on an agent
+**warns and refuses** unless you pass `--pty`. Typing into an agent's TUI is
+legitimate (answering a permission dialog, say), but it must be chosen, not
+stumbled into. For "make the agent do something", use `run`. (`input` is the
+explicit raw-keystroke channel and carries no such guardrail — that's its job.)
+
+**`send --wait` — "idle", not "done".** `--wait` returns when the agent's *turn
+ends* (it went idle after your message), which is not the same as the agent
+declaring the work finished — a long task that parks mid-work still ends its
+turn. The printed entries are the transcript rows newer than a pre-send snapshot,
+from the first assistant entry on (your echoed message is excluded). The stronger
+contract (task ids, completion events) is T38.
+
+## Deploy a node
+
+| Verb | Transport | Notes |
+|---|---|---|
+| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box, streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context |
+| `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
+| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context |
+
+`deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
+idempotent installer** the GUI uses, so **re-running `deploy` on the same host is
+the update path**. Deploy params ride the remote environment (`PORT`, `REPO_URL`,
+`BRANCH`, `CLODEX_SRC`); the default repo is the public Clodex repo, default
+branch `master`, default port `7900`.
+
+- **ssh-reachable boxes only.** Fargate/k8s nodes have no box to script — they
+  stay recipe-based (see `docs/deployment-plan.md`).
+- **No token is stored.** The node binds loopback and is reached over an ssh
+  tunnel; the tunnel is the auth boundary (same posture as the GUI's peers).
+- On success a context is saved (name defaults to the host's short name, or
+  `--name N`); a name collision is **kept** unless `--force`. `--no-ctx` opts out.
+  Deploy ends with `clodexctl --ctx <name> sessions`, not just an installed service.
+- **Exit 42 from the script = needs root.** The script prints the exact `sudo`
+  commands it couldn't run non-interactively; run them on the box, then re-run
+  `deploy`. `--dry-run` prints what would run and does nothing.
+
+The `cli/deploy/clodex-deploy.sh` shipped in the package is a **byte-for-byte
+copy** of `peering/clodex-deploy.sh` (the source of truth); a test pins them
+equal so drift fails the suite.
+
+### `deploy docker <name>` — a container node
+
+`deploy docker` births a node with **one `docker run`** of the published,
+self-configuring image (`docker/web/Dockerfile` bakes `CLODEX_REMOTE_ENABLE=1`,
+`CLODEX_REMOTE_HOST=0.0.0.0` and the headless `CMD`, so the wire comes up on
+`7900` in-container with no toggle to reach). One `docker run` = one node.
+
+```
+clodexctl deploy docker mybox                 # local docker, image :latest
+clodexctl deploy docker edge --host user@box  # docker on a remote box over ssh
+clodexctl deploy docker ci --tag v0.14.2 --env-file ./auth.env
+```
+
+- **Not a GUI sandbox.** A CLI container is the *minimal* box — a plain peer
+  named `clodexctl-<name>`, **not** a managed GUI sandbox (no compose, no
+  registry row, no library binds). The desktop app won't list it as a sandbox;
+  it's just a peer/context like any other deploy target.
+- **`docker` is the operator's tool** (system binary, like `ssh`/`kubectl`) —
+  spawned argv-direct, never through a shell, zero docker SDKs. Nonzero exit
+  relays docker's own stderr; a missing `docker` binary is a server-side
+  failure (exit `1`) with an "is docker installed?" hint.
+- **Loopback publish is the trust boundary.** The wire publishes on
+  `127.0.0.1:<port>:7900` — local host → only this machine reaches it; a remote
+  `--host` → only that box's loopback, reached via the ssh tunnel the saved
+  context opens.
+- **`--host ssh://user@box`** (bare `user@box` is accepted and prefixed) sets
+  `DOCKER_HOST` for the spawned `docker` — docker handles its own ssh transport.
+  A non-standard ssh port for the *verify tunnel* belongs in `~/.ssh/config`.
+- **Secrets ride only `--env-file`.** That file is passed straight to docker's
+  own `--env-file` (by path — we never read or print it). The two keys the image
+  understands: `CLAUDE_CODE_OAUTH_TOKEN` (the agent's auth) and, optionally,
+  `CLODEX_REMOTE_TOKEN` (gates the wire). The verb works with **no** env-file at
+  all (loopback + no token = localhost trust, same posture as the dev sandbox).
+- **Verify + context.** After `run`, hello is polled until healthy (~60s;
+  the pull already happened inside `run`). A saved `CLODEX_REMOTE_TOKEN` means
+  the probe gets a **401 — that counts as success**: the node is up and
+  token-gated, so the context is saved (transport only) and you add your token
+  with `clodexctl ctx add`/edit. No token is ever stored (we never saw it).
+  Local → `{url}`; remote → `{ssh, remotePort}`. Collision kept unless `--force`;
+  `--no-ctx` opts out. A **version-pinned `--tag`** is the reproducible choice.
+- **Lifecycle is the operator's docker.** Stop/remove with
+  `docker stop clodexctl-<name>` / `docker rm clodexctl-<name>`; the
+  `clodexctl-<name>-data` volume survives `rm` and carries the node's sessions.
+  (`clodexctl` adds no container lifecycle verbs.)
+
+### `deploy ssm <name> --target i-INSTANCE` — a node with no ssh, no open ports
+
+The **OS flavor over AWS SSM RunCommand** — the *same* node the ssh flavor
+installs (a dedicated `clodex` host user running the systemd --user service), not
+a container. SSM has no clean stdin/stdout exec pipe (send-command is async,
+output polled, 24 KB-capped), so the interactive git-clone-over-ssh path can't
+ride it. But RunCommand runs as **root**, so the exit-42 "needs sudo" dance
+inverts: one root wrapper installs the prereqs itself, mints the user, then runs
+the pinned installer as that user and relays its `::` marker trail.
+
+```
+clodexctl deploy ssm mybox --target i-0123456789abcdef0 --region us-west-2 --profile prod
+clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the argv + wrapper, run nothing
+```
+
+- **The sequence.** Mint a wire token locally → `describe-instance-information`
+  preflight (registered + `Online`, or a pointed `EXIT.CONNECT` hint about the
+  SSM agent + the `AmazonSSMManagedInstanceCore` role) → `send-command` (a root
+  `AWS-RunShellScript`: prereqs incl. **node ≥ 20** → the pinned installer as the
+  `clodex` user → the token drop-in → an on-box `curl` hello loop) →
+  `get-command-invocation` poll (5 s cadence, **10 min budget**;
+  `StandardOutputContent` is read partial each tick, so the marker trail
+  **pseudo-streams** as it grows) → verify from your laptop **through the real
+  SSM port-forward** with the token → save a typed
+  `{ssm:{target,region,profile}, token}` context (`remotePort` when `--port` ≠
+  7900). `Failed`/`Cancelled`/`TimedOut` each relay the invocation's output tail
+  with a distinct message and exit `1` (`TimedOut` says "re-run to resume").
+- **`aws` is the operator's tool** — spawned argv-direct (the same `execFn` seam
+  the `--ssm` transport uses), never a shell, **zero AWS SDKs**. A missing `aws`
+  binary is the "is aws installed?" hint. A newly-registered instance can be
+  eventually-consistent, so `send-command` retries a bounded few times on
+  `InvalidInstanceId` and the poll waits ~2 s before its first tick.
+- **A first-class node, not a container.** The `clodex` user's home holds the
+  clone and the systemd --user service, the wire bound on `127.0.0.1:<port>`
+  **on the box** — it never leaves the instance's loopback. Re-running is the
+  update path (the installer, `useradd`, and linger steps are all idempotent).
+- **The installer is byte-for-byte the pinned `clodex-deploy.sh`** — the wrapper
+  embeds it verbatim (a drift test gates it equal to `peering/clodex-deploy.sh`)
+  and runs it under `sudo -iu clodex bash -s`, its full log parked at
+  `/home/clodex/clodex-deploy.log` and surfaced as a `::log` marker.
+- **Always token-gated.** A fresh `CLODEX_REMOTE_TOKEN` is minted every deploy.
+  The installer itself is **tokenless** (the ssh flavor's tunnel-is-auth posture),
+  so the wrapper injects the token *after* it runs, via a systemd --user drop-in
+  (`~/.config/systemd/user/clodex.service.d/remote-token.conf`, mode `0600`) that
+  the app reads through its native env precedence (`CLODEX_REMOTE_TOKEN` wins) —
+  the installer bytes are never touched.
+- **Token visibility (say it out loud).** That token rides inside the
+  `send-command` parameters, so it is visible in the account's **SSM command
+  history / CloudTrail** to anyone with `ssm:GetCommandInvocation`. This is an
+  acceptable posture **only because the port never leaves loopback** — reaching
+  the wire at all requires `ssm:StartSession` on the same account. To rotate the
+  token, **re-run `deploy ssm`** (it mints a new one, rewrites the drop-in and
+  restarts the service, then updates the context).
+- **Model credentials** belong on the **instance role** (Bedrock) or seeded
+  manually on the box — the same guidance as the ssh flavor.
+- **ssh-reachable boxes** should prefer plain `deploy <user@host>`; **`deploy ssm`
+  is for instances you reach only through SSM**. A host literally named `ssm`
+  still works via `deploy ssh ssm`.
+
+## Exit codes (contract)
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | server error (5xx, or an `ok:false` the server chose) |
+| 2 | usage error — unknown verb, bad/missing args or flags |
+| 3 | connect failure — couldn't reach the wire (DNS / refused / dead tunnel) |
+| 4 | auth — 401/403 (missing/wrong token, or not the control holder) |
+| 5 | not found — 404 (unknown session/route) |

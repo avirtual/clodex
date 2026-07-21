@@ -201,7 +201,7 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
     ``,
     (logText && String(logText).trim()) || '(no log captured)',
     ``,
-    `HOW TO FIX: read ${readme} (the full manual playbook) and ${script} (the idempotent installer — env params REPO_URL, BRANCH, PORT, CLODEX_SRC). If those paths aren't readable, both live in the peering/ folder of ${repo}. Re-running the script is SAFE and idempotent (re-run = update); it emits ::step/::ok/::fail markers, and when it needs root it can't get, it prints the exact sudo commands and stops. You can ssh ${host} directly to inspect and run steps by hand. Common snags: apt packages needing sudo, Node < 20, the Chromium chrome-sandbox SUID bits, or XDG_RUNTIME_DIR missing for systemctl --user.`,
+    `HOW TO FIX: read ${readme} (the full manual playbook) and ${script} (the idempotent installer — env params REPO_URL, BRANCH, PORT, CLODEX_SRC). If those paths aren't readable, both live in the peering/ folder of ${repo}. Re-running the script is SAFE and idempotent (re-run = update); it emits ::step/::ok/::fail markers, and when it needs root it can't get, it prints the exact sudo commands and stops. You can ssh ${host} directly to inspect and run steps by hand. Common snags: system packages needing sudo, Node < 20, the node-pty native rebuild, or XDG_RUNTIME_DIR missing for systemctl --user.`,
     ``,
     `When the hello curl returns "app":"clodex", you're done — report back.`,
   ].join('\n');

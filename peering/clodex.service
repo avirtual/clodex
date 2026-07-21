@@ -1,5 +1,5 @@
 [Unit]
-Description=Clodex (headless, Xvfb) — visual multi-agent PTY manager
+Description=Clodex (headless engine) — visual multi-agent PTY manager
 After=network-online.target
 Wants=network-online.target
 
@@ -7,17 +7,13 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/wb-wrap-ui
 # claude CLI lives in the user-global npm prefix; put it on PATH for spawns.
+# node itself is resolved off this PATH by /usr/bin/env below (NodeSource drops
+# it at /usr/bin/node; a nvm/local install stays reachable via ~/.npm-global etc).
 Environment=PATH=%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=ELECTRON_DISABLE_SECURITY_WARNINGS=true
-# xvfb-run -a auto-picks a free display number, so a stale lock from a crashed
-# run never blocks the restart. npm start = electron . (see package.json).
-# --no-sandbox: Chromium's zygote sandbox needs CAP_SYS_ADMIN to build its
-# namespace, which a hardened container (docker/run.sh drops it to close a
-# release_agent escape) does not grant — without this flag Electron FATALs on
-# boot there. Safe everywhere because Clodex runs nodeIntegration + no
-# contextIsolation, so that sandbox was never a security boundary for it. Kept
-# HERE (not just in the image) so the peer-update deploy can't strip it.
-ExecStart=/usr/bin/xvfb-run -a /usr/bin/npm start -- --no-sandbox
+# The remote node runs the HEADLESS engine (plain Node, no Electron/Xvfb): a peer
+# node needs only the engine + node-pty, never the desktop GUI. headless-main.js
+# stands up the same engine the Electron app hosts and answers the peer wire.
+ExecStart=/usr/bin/env node headless-main.js
 Restart=always
 RestartSec=5
 # Give the app time to release its single-instance lock + unix sockets on stop
