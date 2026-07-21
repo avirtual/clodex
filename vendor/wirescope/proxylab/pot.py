@@ -33,8 +33,6 @@ restart lose redundancy-vs-pre-restart-reads (a small, CONSERVATIVE under-count
 of the share — never an over-claim — that self-heals next compact). Main-line
 only (subagents share the parent's session_id and never advance its head).
 """
-import json
-import time
 import datetime
 
 from . import core as core_mod

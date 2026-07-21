@@ -1,24 +1,9 @@
-import asyncio
-import atexit
 import collections
 import hashlib
-import html
-import itertools
 import json
 import os
-import queue
 import re
-import sqlite3
-import threading
 import time
-import uuid
-from pathlib import Path
-
-import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
 
 from proxylab import store as store_mod
 from proxylab import warmth as warmth_mod
@@ -2524,6 +2509,731 @@ def _strip_prior_thinking(obj, agent_id=None):
             "earliest_idx": earliest,     # edit-ack strip rides this bust point
             "boundary_idx": last_user, "total_messages": len(msgs)}
 
+
+# MID-TURN THINKING STRIP — part of how the L-levels WORK (no separate tier):
+# an L1+ session strips thinking inside the current turn too, one round after
+# each block is CONSUMED (the API's signature requirement binds on the LAST
+# assistant message only — wire-proven 2026-07-20 on sonnet-5/opus-4-8/
+# fable-5 incl. interleaved-thinking; the moment a later assistant message
+# exists, a block is deletable). Deletion only, never signature edits.
+# Paired with the MARKER GATE below (Bogdan's placement rule, 2026-07-20,
+# REPLACING the op-1 pin): doomed thinking is never cached in the first
+# place, so stripping it never invalidates anything — which also retires the
+# sparse-texture ROI gate (the 30x-negative case only existed because the
+# doomed block had been written at premium before the strip busted it).
+# `STRIP_MIDTURN_THINKING` is a KILL SWITCH (default on; real gate = the
+# per-session strip level, same as the settled-region strip): set =0 to
+# revert L-level sessions to settled-only stripping.
+STRIP_MIDTURN_THINKING = os.environ.get("STRIP_MIDTURN_THINKING", "1") not in ("0", "no", "off", "false")
+
+
+def _midturn_strip_active(obj, agent_id=None):
+    """ONE gate for the mid-turn strip AND its pin (they must agree): kill
+    switch on, session at L1+, and not durably latched no-strip (a latched
+    no-strip session keeps its unstripped lineage everywhere — mid-turn
+    deletions would desync the current turn from the settled region's
+    decision). No latch yet (fresh/cold session) does not block: the current
+    turn's rounds are the freshest bytes on the wire."""
+    if not STRIP_MIDTURN_THINKING or not isinstance(obj, dict):
+        return False
+    if not _strip_thinking_enabled(obj, agent_id):
+        return False
+    sid = (writer_mod._session_ids(obj) or [None])[0]
+    if sid and _STRIP_GUARD_LATCH.get(sid) is False:
+        return False
+    return True
+
+# MID-TURN MARKER GATE — Bogdan's placement rule (2026-07-20), REPLACING the
+# op-1 pin and its whole donor/ladder apparatus. The insight: the CLI's own
+# rolling tail marker is the only mobile marker the turn needs; the proxy's
+# job is a single per-request placement decision, not marker management.
+#   - Last assistant message carries thinking (a DOOMED block — it is
+#     stripped the moment it stops being last): letting the tail marker
+#     stand would cache that block at write premium one round before we
+#     delete it, and the deletion then invalidates the entry and re-writes
+#     the span (the AB2 churn: T4 reqs 056-059 carried the kept block at 5m
+#     for three rounds, then re-wrote 34..39 when the strip fired). Instead
+#     RELOCATE the tail marker to the last STABLE message, just below the
+#     doomed block: the skeleton delta is written once at 5m, the doomed
+#     thinking is read exactly once at 1x, and nothing is ever invalidated.
+#   - Last assistant message clean: everything below the tail is post-strip
+#     skeleton, byte-stable next round -> the CLI's marker stands untouched
+#     (byte-stock wire).
+# No second marker, no donors, no TTL ladder: the budget can only shrink, so
+# the anchor-steal / budget_full / 1h-after-5m defect class is structurally
+# unreachable. The relocated marker KEEPS the CLI's own ttl (2026-07-20
+# correction: no 5m anywhere — scrap pricing only made sense when the old
+# cross-turn strip discarded the whole frontier; in-turn stripping discards
+# nothing, the span below the marker is durable, so the marker is simply the
+# CLI's 1h marker advanced or held back a step — the no-strip layout).
+# Skeleton entries survive INTO the turn transition:
+# the final doomed block was never cached, so the transition request hits the
+# last relocated entry exactly. Gate predicate depends only on the LAST
+# assistant message, which the strip never touches -> strip/gate ordering
+# cannot desync (the 4a0521e bug class needs no strip_rec plumbing here).
+MIDTURN_MARKER_GATE = os.environ.get("MIDTURN_MARKER_GATE", "1") not in (
+    "0", "no", "off", "false")
+# Sub-switch (default on) for the CLI-omitted-tail FALLBACK only — the rest of
+# the gate (relocate/drop) is unaffected. `=0` isolates the fallback for the A/B
+# control arm (860b059 gate WITH vs WITHOUT the seq092 fix, single variable).
+MIDTURN_TAIL_FALLBACK = os.environ.get("MIDTURN_TAIL_FALLBACK", "1") not in (
+    "0", "no", "off", "false")
+# OWNED MOBILE MARKER (2026-07-21, Bogdan's "the marker position should be a
+# wirescope decision, not an accident of what the CLI sent"). When on, REPLACES
+# the reactive _midturn_marker_gate: wirescope computes the mobile marker's
+# position itself (deepest safe frontier), PERSISTS it per session in SQLite, and
+# re-places it at the same content-anchor next request / after a restart — so the
+# still-warm API entry is an EXACT re-hit instead of a cold read of content we
+# could have kept cached. Default OFF so the reactive gate stays the A/B control.
+# See scratchpad_marker_design.md for the full rationale.
+OWN_MOBILE_MARKER = os.environ.get("OWN_MOBILE_MARKER", "0") not in (
+    "0", "no", "off", "false")
+
+
+def _last_assistant_idx(msgs):
+    """Index of the LAST assistant message (or None). The 'live frontier' pivot
+    shared by the current-turn strips + the marker gate: thinking is LIVE only
+    at this index (the API signature requirement binds here and only here); an
+    error is LIVE only AFTER this index (a frontier tool_result the model hasn't
+    reacted to yet). Everything below it is CONSUMED — a later assistant message
+    exists, so it has already had its reaction and is deletable/stubbable. Shared
+    helper (no inline `max((i for` recompute) so the strips and the gate agree on
+    the frontier by construction."""
+    return max((i for i in range(len(msgs))
+                if isinstance(msgs[i], dict) and msgs[i].get("role") == "assistant"),
+               default=None)
+
+
+def _midturn_targets(msgs, boundary):
+    """(targets, protected_idx, think_idx) for the current turn. think_idx =
+    thinking-bearing assistant messages after the settled boundary;
+    protected_idx = the LAST assistant message of the turn iff it carries
+    thinking (the API's signature requirement binds there and ONLY there —
+    wire-proven 2026-07-20); targets = every other thinking-bearing message:
+    consumed the moment a later assistant message exists, deletable one round
+    after they were paid for. No texture gate (2026-07-20 redesign): the
+    marker gate keeps doomed thinking out of cache entirely, so a strip never
+    invalidates a cached span and sparse-texture ROI cannot go negative.
+    Eligibility 'no longer the last assistant message' is monotone (once
+    outrun, forever outrun) -> deterministic re-strip across rounds."""
+    last_asst = max((i for i in range(boundary + 1, len(msgs))
+                     if msgs[i].get("role") == "assistant"), default=None)
+    think_idx = [i for i in range(boundary + 1, len(msgs))
+                 if msgs[i].get("role") == "assistant" and _msg_thinking_chars(msgs[i])]
+    protected = last_asst if last_asst in think_idx else None
+    targets = [i for i in think_idx if i != last_asst]
+    return targets, protected, think_idx
+
+
+def _strip_midturn_thinking(obj, agent_id=None):
+    """Inside the CURRENT turn (at/after the settled boundary), delete
+    thinking blocks from every consumed thinking-bearing assistant message —
+    everything except the last assistant message (_midturn_targets). Prior
+    turns untouched (that's _strip_prior_thinking's region). Whole-block
+    deletion only — signatures never edited. Gated per-session via
+    _midturn_strip_active (L1+, same channel as the settled strip). Returns a
+    log dict or None."""
+    if not _midturn_strip_active(obj, agent_id):
+        return None
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    boundary = _settled_boundary(msgs)
+    targets, protected, think_idx = _midturn_targets(msgs, boundary)
+    if not targets:
+        return None                       # nothing consumed yet
+    removed = stripped_chars = touched = 0
+    for i in targets:
+        c = msgs[i].get("content")
+        if not isinstance(c, list):
+            continue
+        kept = [b for b in c if not (isinstance(b, dict)
+                and b.get("type") in ("thinking", "redacted_thinking"))]
+        if kept and len(kept) < len(c):   # never leave an empty content array
+            stripped_chars += _msg_thinking_chars(msgs[i])
+            removed += len(c) - len(kept)
+            msgs[i]["content"] = kept
+            touched += 1
+    if not removed:
+        return None
+    return {"stripped": True, "removed_thinking_blocks": removed,
+            "touched_messages": touched, "stripped_chars": stripped_chars,
+            "protected_idx": protected, "boundary_idx": boundary,
+            "current_turn_thinking_msgs": len(think_idx),
+            "total_messages": len(msgs)}
+
+
+def _plant_fallback_marker(obj, msgs, target_idx, boundary):
+    """Place a cache_control marker on msgs[target_idx]'s last block — used when
+    the CLI OMITTED its rolling tail marker (both the clean-tail and live-tail
+    fallbacks share this). `target_idx` is the last STABLE / byte-final message
+    the marker should ride (the frontier on a clean tail; halt = just below the
+    lowest live block on a live tail). At full budget, FREE a slot by migrating
+    the shallowest MESSAGE marker strictly ABOVE the settled boundary (the msg0
+    bundle / cross-instance anchor — redundant here since the pin anchor at the
+    boundary is a deeper superset for THIS session's reads; "#3 should follow #4
+    or not be there", Bogdan 2026-07-21). Never touches a system marker (share
+    anchors) or the pin anchor (idx == boundary, the resume entry). Returns
+    (placed_bool, info) — info carries ttl/donor_idx/converted_string on success
+    or {reason} on decline. Idempotent envelope: ttl mirrors the deepest existing
+    marker (cache order forbids 1h after 5m and ours is the deepest block)."""
+    tgt = msgs[target_idx]
+    c = tgt.get("content")
+    needs_convert = isinstance(c, str) and bool(c)
+    markable = needs_convert or (
+        isinstance(c, list) and c and isinstance(c[-1], dict)
+        and not c[-1].get("cache_control"))
+    if not markable:
+        return False, {"reason": "unmarkable"}
+    all_markers = _cache_markers(obj)
+    ttl = "5m"
+    if all_markers:
+        lastcc = all_markers[-1][2].get("cache_control")
+        if isinstance(lastcc, dict) and lastcc.get("ttl"):
+            ttl = lastcc["ttl"]
+    donor_idx = None
+    if len(all_markers) >= _CACHE_BREAKPOINT_BUDGET:
+        # Free a slot from a MESSAGE marker strictly ABOVE the settled boundary
+        # (never a system marker = cross-instance share anchor; never the pin,
+        # which sits AT the boundary). The msg0 bundle IS the cross-instance
+        # CLAUDE.md share anchor, so make it the LAST RESORT (clodex 2026-07-21):
+        # prefer any OTHER below-boundary message marker; only sacrifice msg0 when
+        # it is the sole donor. In today's layout (2 sys + msg0 + pin) msg0 is the
+        # only candidate, so this is future-proofing — but it guarantees we never
+        # drop the share anchor while a redundant donor exists.
+        cands = [i for r, i, blk in all_markers if r == "messages" and i < boundary]
+        donor_idx = next((i for i in cands if i != 0), None)
+        if donor_idx is None:
+            donor_idx = next((i for i in cands if i == 0), None)
+        if donor_idx is None:
+            return False, {"reason": "budget_full_no_donor"}
+        donor_blk = next(blk for r, i, blk in all_markers
+                         if r == "messages" and i == donor_idx)
+        donor_blk.pop("cache_control", None)
+    if needs_convert:
+        tgt["content"] = [{"type": "text", "text": c}]
+    tgt["content"][-1]["cache_control"] = {"type": "ephemeral", "ttl": ttl}
+    return True, {"ttl": ttl, "donor_idx": donor_idx,
+                  "converted_string": needs_convert}
+
+
+def _live_blocks(obj, msgs, boundary, agent_id):
+    """The CURRENT turn's LIVE block indices — blocks the model still owes a
+    reaction to, which a later turn will delete or stub, so a cache marker must
+    never anchor them. Single source of truth shared by _midturn_marker_gate AND
+    _own_mobile_marker (they MUST agree — a mismatch is exactly how a raw block
+    gets marker-anchored then busted). Three classes (2026-07-20 generalization):
+    (a) THINKING in the last assistant message; (b) the lowest frontier is_error
+    tool_result after it (only when the error strip is active); (c) the lowest
+    frontier EDIT-ACK tool_result after it that _strip_consumed_edit_acks will
+    collapse (SAME predicate as the strip). Returns
+    (last_asst_idx | None, live_sorted, live_err_idx | None, live_ack_idx | None);
+    live is lowest-first."""
+    last_asst = max((i for i in range(boundary + 1, len(msgs))
+                     if msgs[i].get("role") == "assistant"), default=None)
+    if last_asst is None:
+        return None, [], None, None       # transition / turn-first: stock wire
+    live = []
+    live_err_idx = live_ack_idx = None
+    if _msg_thinking_chars(msgs[last_asst]):
+        live.append(last_asst)            # (a) protected thinking
+    if STRIP_PRIOR_TOOL_ERRORS or _strip_l2_enabled(obj, agent_id):
+        # (b) frontier error: the lowest user tool_result AFTER last_asst that
+        # carries an is_error (only meaningful when the error strip is active —
+        # otherwise nothing will stub it, so there is nothing to protect).
+        for j in range(last_asst + 1, len(msgs)):
+            m = msgs[j]
+            if (isinstance(m, dict) and m.get("role") == "user"
+                    and isinstance(m.get("content"), list)
+                    and any(isinstance(b, dict) and b.get("type") == "tool_result"
+                            and b.get("is_error") for b in m["content"])):
+                live.append(j)
+                live_err_idx = j
+                break
+    if STRIP_PRIOR_EDIT_ACKS or _strip_l2_enabled(obj, agent_id):
+        # (c) frontier EDIT-ACK: the lowest user tool_result AFTER last_asst that
+        # _strip_consumed_edit_acks WILL collapse to "ok" once it is consumed.
+        # SAME predicate as the strip (edit_ids pairing + fragment match) so gate
+        # and strip never disagree — a mismatch is exactly how the raw ack gets
+        # marker-anchored then busted. Only meaningful when the ack strip is active.
+        _eids = _edit_result_ids(msgs)
+        if _eids:
+            for j in range(last_asst + 1, len(msgs)):
+                m = msgs[j]
+                if not (isinstance(m, dict) and m.get("role") == "user"
+                        and isinstance(m.get("content"), list)):
+                    continue
+                if any(isinstance(b, dict) and b.get("type") == "tool_result"
+                       and b.get("tool_use_id") in _eids
+                       and not b.get("is_error")
+                       and isinstance(b.get("content"), str)
+                       and b["content"] != EDIT_ACK_MARKER
+                       and any(f in b["content"] for f in _EDIT_ACK_FRAGMENTS)
+                       for b in m["content"]):
+                    live.append(j)
+                    live_ack_idx = j
+                    break
+    return last_asst, sorted(live), live_err_idx, live_ack_idx
+
+
+def _midturn_marker_gate(obj, agent_id=None):
+    """The placement decision (see block comment above): never let the CLI's
+    rolling tail marker cache a LIVE block — one the model still owes a reaction
+    to and that a later turn will therefore delete or stub. Three live classes
+    (2026-07-20 generalization, Bogdan): (a) THINKING in the last assistant
+    message (stripped the moment it stops being last), (b) a frontier ERROR
+    tool_result AFTER the last assistant message (stubbed the moment the model
+    reacts to it), and (c) a frontier EDIT-ACK tool_result after the last
+    assistant message (collapsed to "ok" the moment it is consumed) —
+    'if current_block is thinking or error or edit-ack, don't write marker'.
+    (c) added 2026-07-20 after a live read-drop trace: the CLI's rolling marker
+    lands on the fresh frontier ack, caches it RAW, and the next turn's collapse
+    mutates the block that marker anchors -> the whole segment behind it busts
+    (seq10->11: msg17 ack, read 46,191->38,980, 7.2k tok lost).
+    Pull the tail marker back to the last stable message below the LOWEST live
+    block (or drop it on the turn's first round, where the boundary anchor
+    already covers everything stable). Clean-tail rounds and transition requests
+    return None — byte-stock. Every message marker ABOVE the halt point is
+    removed (any would cache a doomed byte). Returns a log dict or None."""
+    if not MIDTURN_MARKER_GATE or not _midturn_strip_active(obj, agent_id):
+        return None
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    boundary = _settled_boundary(msgs)
+    last_asst, live, live_err_idx, live_ack_idx = _live_blocks(
+        obj, msgs, boundary, agent_id)
+    if last_asst is None:
+        return None                       # transition / turn-first: stock wire
+    if not live:
+        # CLEAN TAIL: normally the CLI's rolling marker sits on the last message
+        # and we leave it (byte-stock). But the CLI sometimes OMITS its rolling
+        # tail marker on a clean tail too (seen live 2026-07-21, arm-a seq26/seq39:
+        # full budget = 2 sys + msg0 bundle + pin@boundary, NO rolling tail -> the
+        # consumed in-turn rounds ABOVE the settled boundary re-read UNCACHED,
+        # in=3354/5775). Same class as the live-tail fallback below, clean variant.
+        # Fix (Bogdan 2026-07-21, "#3 should follow #4 inside the current turn or
+        # not be there"): plant a marker on the last message = where the CLI's
+        # rolling marker would have gone. The whole tail is consumed/byte-final on
+        # a clean tail (no live thinking/error/ack by construction), so it never
+        # mutates-after-caching. When full budget, SACRIFICE the msg0 bundle marker
+        # (the cross-instance share anchor -> redundant here: the pin anchor at the
+        # boundary is a deeper superset for THIS session's reads) by migrating it
+        # forward. Never steal a system marker or the pin anchor.
+        if not MIDTURN_TAIL_FALLBACK:
+            return None
+        msg_mark_idxs = [i for r, i, b in _cache_markers(obj) if r == "messages"]
+        deepest = max(msg_mark_idxs) if msg_mark_idxs else -1
+        if deepest > boundary:
+            return None                   # CLI's rolling tail is present -> stands
+        tail_idx = len(msgs) - 1
+        if tail_idx <= boundary:
+            return None                   # settled anchor already covers everything
+        ok, info = _plant_fallback_marker(obj, msgs, tail_idx, boundary)
+        if not ok:
+            return {"acted": False, "reason": "clean_tail_" + info["reason"],
+                    "last_asst_idx": last_asst, "boundary_idx": boundary}
+        return {"acted": True, "mode": "clean_tail_fallback", "tail_idx": tail_idx,
+                "last_asst_idx": last_asst, "boundary_idx": boundary,
+                "total_messages": len(msgs), **info}
+    lowest_live = min(live)
+    marked = [(i, blk) for i, m in enumerate(msgs) if isinstance(m, dict)
+              for blk in (m.get("content") if isinstance(m.get("content"), list) else [])
+              if isinstance(blk, dict) and blk.get("cache_control")]
+    halt = lowest_live - 1                # >= boundary by construction
+    if not marked or marked[-1][0] <= boundary:
+        # The CLI shipped NO rolling tail marker in the current turn (seen live
+        # 2026-07-21: ~1/32 turns the CLI just omits it, for whatever reason).
+        # With pin_settled also declined (boundary at msg0, still one user-turn),
+        # nothing anchors the turn's STABLE consumed prefix -> the cache floor
+        # collapses to msg0 and the whole in-turn tail re-reads cold (seq092:
+        # read 44.5k->37.5k, 8.2k tail uncached, self-heals next turn when the
+        # CLI resumes marking). FALLBACK (Bogdan 2026-07-21, "if the CLI omits
+        # it, for whatever reason, we shouldn't [leave the tail uncached]"): if
+        # there IS a stable message below the lowest live block, PLACE our own
+        # marker there (halt) -- exactly where the CLI marker would have sat.
+        # halt is consumed + byte-final (the consumed strips ran before us) so it
+        # never mutates-after-caching = no bust. When budget is full (env's msg0
+        # bundle + a pin anchor both present, e.g. arm-a seq46 in=4796), free a
+        # slot by migrating the msg0 bundle forward (see _plant_fallback_marker).
+        # Decline when halt is at/below the boundary anchor (already covered),
+        # unmarkable, or no donor at full budget.
+        if MIDTURN_TAIL_FALLBACK and halt > boundary:
+            ok, info = _plant_fallback_marker(obj, msgs, halt, boundary)
+            if ok:
+                return {"acted": True, "mode": "tail_fallback", "halt_idx": halt,
+                        "protected_idx": last_asst, "lowest_live_idx": lowest_live,
+                        "boundary_idx": boundary,
+                        "live_error": live_err_idx is not None,
+                        "live_edit_ack": live_ack_idx is not None,
+                        "total_messages": len(msgs), **info}
+        return {"acted": False, "reason": "no_inturn_tail_marker",
+                "protected_idx": last_asst, "lowest_live_idx": lowest_live,
+                "boundary_idx": boundary}
+    if marked[-1][0] <= halt:
+        # marker already sits below the lowest live block — nothing live is
+        # cached; leave placement alone.
+        return {"acted": False, "reason": "tail_below_protected",
+                "tail_idx": marked[-1][0], "protected_idx": last_asst,
+                "lowest_live_idx": lowest_live}
+    tail_ttl = (marked[-1][1].get("cache_control") or {}).get("ttl") or "5m"
+    dropped = 0
+    for i, blk in marked:
+        if i > halt:
+            blk.pop("cache_control", None)
+            dropped += 1
+    log = {"acted": True, "tail_idx": marked[-1][0], "halt_idx": halt,
+           "protected_idx": last_asst, "lowest_live_idx": lowest_live,
+           "live_error": live_err_idx is not None,
+           "live_edit_ack": live_ack_idx is not None, "boundary_idx": boundary,
+           "markers_dropped": dropped, "total_messages": len(msgs)}
+    if halt <= boundary:
+        # first round of the turn: the boundary anchor (settled pin, advanced)
+        # already covers the stable prefix — dropping the tail is the whole job.
+        log["mode"] = "dropped"
+        return log
+    tgt = msgs[halt]
+    c = tgt.get("content")
+    needs_convert = isinstance(c, str) and bool(c)
+    if not needs_convert and (
+            not isinstance(c, list) or not c or not isinstance(c[-1], dict)):
+        log["mode"], log["reason"] = "dropped", "unmarkable_halt"
+        return log
+    if not needs_convert and c[-1].get("cache_control"):
+        log["mode"], log["reason"] = "dropped", "halt_already_marked"
+        return log
+    if needs_convert:
+        tgt["content"] = [{"type": "text", "text": c}]
+    # the CLI's own marker, moved — its ttl travels with it (no 5m of ours)
+    tgt["content"][-1]["cache_control"] = {"type": "ephemeral", "ttl": tail_ttl}
+    log["mode"], log["ttl"] = "relocated", tail_ttl
+    log["converted_string"] = needs_convert
+    return log
+
+
+# ---- OWNED MOBILE MARKER (2026-07-21) --------------------------------------
+# Placement of the mobile message-tier marker becomes a WIRESCOPE decision, not
+# a per-request read of where the CLI happened to put its rolling marker (which
+# it sometimes omits -> the read collapses up to the msg0 bundle, sometimes 18k
+# deep = "an accident, not a strategy", Bogdan). We compute the deepest SAFE
+# frontier ourselves (deepest consumed block that survives our own strips = just
+# above the lowest live block; the whole tail on a clean round), strip every CLI
+# message marker in the volatile region, and place OUR marker there.
+#
+# PLACEMENT IS A PURE FUNCTION of the request bytes (frontier = just above the
+# lowest live block; live/consumed is monotone within a lineage) -> it is
+# deterministic, so a restart re-places the marker at the SAME spot with no
+# persistence needed, and cache_control is not hashed so a marker move never
+# busts. That means persistence is NOT a placement input (contrarian #1,
+# 2026-07-21: an "advance-or-hold ratchet" that holds an anchor DEEPER than the
+# fresh frontier would by definition cache a block the fresh computation just
+# judged live -> unsafe; there is no safe hold, and consumed-monotonicity already
+# gives "never retreat within a lineage" for free). What persistence DOES buy:
+# (a) HONEST cold-read accounting — a partial compact can preserve the anchored
+# message verbatim while rewriting earlier messages, so anchor identity matches
+# but the warm entry behind it is cold; a persisted PREFIX FINGERPRINT tells
+# "same lineage, entry survived" from "prefix changed, it did not" (contrarian
+# #3); and (b) the seed for the future session-cloning role Bogdan flagged for
+# the demoted msg0 bundle. Lineage classes: same (fingerprint matches) / changed
+# (compact/edit rewrote the prefix) / new (no row: /clear rotated the id).
+_MARKER_STATE = {}                       # (owner, session_id) -> state dict
+_MARKER_STATE_MAX = 4096
+
+store_mod.register_schema(
+    "CREATE TABLE IF NOT EXISTS marker_state ("
+    "owner TEXT NOT NULL, session_id TEXT NOT NULL, "
+    "sig TEXT NOT NULL, idx INTEGER NOT NULL, ttl TEXT, "
+    "msgs INTEGER NOT NULL, pfp TEXT, set_at REAL NOT NULL, "
+    "PRIMARY KEY (owner, session_id))",
+    "ALTER TABLE marker_state ADD COLUMN pfp TEXT")
+
+
+def _msg_identity(m):
+    """A stable content signature for a message, IGNORING cache_control (which we
+    move around freely) AND representation-invariant across the CLI's own
+    string<->text-block rewrite. Used to re-find a remembered anchor after
+    indices renumber (strips delete blocks/messages) and across a restart.
+    CRITICAL (contrarian #2, 2026-07-21): the CLI ships a user prompt as a marked
+    text BLOCK while it is the tail, then rewrites it to a bare STRING once it is
+    history (wire-proven, our own hard facts: string ≡ [{type:text}] for cache
+    identity). We convert bare strings to a text block before placing our marker,
+    so if identity hashed the raw representation the SAME semantic message would
+    hash differently turn-to-turn and look like anchor_gone — exactly where we
+    need it stable. So canonicalize: a bare string and a singleton text block
+    both reduce to their text payload (matching the API's own canonicalization).
+    Role + canonical content hash."""
+    if not isinstance(m, dict):
+        return None
+    try:
+        c = m.get("content")
+        if isinstance(c, str):
+            payload = "text\x00" + c            # bare string
+        elif (isinstance(c, list) and len(c) == 1 and isinstance(c[0], dict)
+              and c[0].get("type") == "text"):
+            payload = "text\x00" + (c[0].get("text") or "")   # singleton text block
+        elif isinstance(c, list):
+            blocks = [{k: v for k, v in b.items() if k != "cache_control"}
+                      if isinstance(b, dict) else b for b in c]
+            payload = json.dumps(blocks, sort_keys=True, default=str)
+        else:
+            payload = json.dumps(c, sort_keys=True, default=str)
+        return hashlib.sha1(
+            (str(m.get("role")) + "\x00" + payload).encode("utf-8", "replace")
+        ).hexdigest()
+    except Exception:
+        return None
+
+
+def _prefix_fingerprint(msgs, upto):
+    """A lightweight fingerprint of the message identities AT AND BELOW `upto` —
+    the cumulative prefix our anchor's cache entry actually depends on (contrarian
+    #3, 2026-07-21). A partial compact/edit can preserve the anchored message
+    byte-for-byte while rewriting EARLIER messages, so anchor identity alone can
+    match while the warm entry behind it is cold. Comparing this fingerprint tells
+    an honest 'same lineage' from a 'prefix changed, warm entry did not survive'."""
+    h = hashlib.sha1()
+    for i in range(min(upto + 1, len(msgs))):
+        sig = _msg_identity(msgs[i]) or ""
+        h.update(sig.encode("ascii", "replace"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _marker_state_load(session_id):
+    """The remembered anchor for a session: in-memory hot, SQLite on a cold miss
+    (survives restart). Never a DB hit once cached. Keyed by (OWNER, session_id)
+    in memory too (contrarian #4) so the hot cache can't alias across owners
+    (residual today — one process = one OWNER — but free and matches the DB key).
+    Returns the state dict or None."""
+    if not session_id:
+        return None
+    key = (store_mod.OWNER, session_id)
+    st = _MARKER_STATE.get(key)
+    if st is not None:
+        return st
+    try:
+        con = store_mod.db()
+        with store_mod.LOCK:
+            row = con.execute(
+                "SELECT sig, idx, ttl, msgs, pfp FROM marker_state "
+                "WHERE owner=? AND session_id=?",
+                (store_mod.OWNER, session_id)).fetchone()
+        if row:
+            st = {"sig": row[0], "idx": row[1], "ttl": row[2], "msgs": row[3],
+                  "pfp": row[4]}
+            _MARKER_STATE[key] = st
+            return st
+    except Exception as e:
+        print(f"[marker] load failed for {str(session_id)[:12]}…: {e}", flush=True)
+    return None
+
+
+def _marker_state_save(session_id, sig, idx, ttl, msgs_len, pfp):
+    """Write-through the placed anchor + prefix fingerprint (memory + SQLite). A
+    store failure degrades to in-memory-only, same as the strip/hint override
+    twins."""
+    if not session_id:
+        return
+    key = (store_mod.OWNER, session_id)
+    st = {"sig": sig, "idx": idx, "ttl": ttl, "msgs": msgs_len, "pfp": pfp}
+    _MARKER_STATE[key] = st
+    if len(_MARKER_STATE) > _MARKER_STATE_MAX:
+        # evict the oldest by nothing-more-precise-than insertion order (dict)
+        _MARKER_STATE.pop(next(iter(_MARKER_STATE)), None)
+    try:
+        con = store_mod.db()
+        with store_mod.LOCK:
+            con.execute(
+                "INSERT INTO marker_state(owner, session_id, sig, idx, ttl, "
+                "msgs, pfp, set_at) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(owner, session_id) DO UPDATE SET "
+                "sig=excluded.sig, idx=excluded.idx, ttl=excluded.ttl, "
+                "msgs=excluded.msgs, pfp=excluded.pfp, set_at=excluded.set_at",
+                (store_mod.OWNER, session_id, sig, idx, ttl, msgs_len, pfp,
+                 time.time()))
+            con.commit()
+    except Exception as e:
+        print(f"[marker] persist failed for {str(session_id)[:12]}…: {e}", flush=True)
+
+
+def _marker_state_forget(session_id):
+    """Drop remembered anchor (memory + SQLite) — session end / lineage break."""
+    if not session_id:
+        return
+    _MARKER_STATE.pop((store_mod.OWNER, session_id), None)
+    try:
+        con = store_mod.db()
+        with store_mod.LOCK:
+            con.execute("DELETE FROM marker_state WHERE owner=? AND session_id=?",
+                        (store_mod.OWNER, session_id))
+            con.commit()
+    except Exception as e:
+        print(f"[marker] forget failed for {str(session_id)[:12]}…: {e}", flush=True)
+
+
+def _own_mobile_marker(obj, agent_id=None, session_id=None):
+    """Wirescope-OWNED mobile marker (OWN_MOBILE_MARKER; REPLACES the reactive
+    _midturn_marker_gate when on). Placement is a PURE FUNCTION of the request
+    bytes: strip every CLI message marker in the volatile region, then plant OUR
+    marker at the deepest SAFE frontier (just above the lowest live block; the
+    whole tail on a clean round). The FLOOR marker (pin@settled boundary) is
+    placed upstream by _pin_settled_breakpoint and is never touched; the msg0
+    bundle is demoted. This transform is BUDGET-AWARE ON ITS OWN (contrarian #5):
+    after placing, if >budget, it drops the lowest-value message marker ITSELF
+    (msg0 bundle / a stray CLI marker below the boundary), NEVER the floor pin or
+    our mobile marker — it does not lean on the final clamp to pick correctly.
+    Persistence is observational only (lineage class via prefix fingerprint), not
+    a placement input. Returns a log dict or None."""
+    if not OWN_MOBILE_MARKER or not _midturn_strip_active(obj, agent_id):
+        return None
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    boundary = _settled_boundary(msgs)
+    last_asst, live, live_err_idx, live_ack_idx = _live_blocks(
+        obj, msgs, boundary, agent_id)
+    if last_asst is None:
+        return None                       # transition / turn-first: pin covers it
+    lowest_live = min(live) if live else None
+    # frontier = deepest consumed + strip-final message (never a live block)
+    frontier = (lowest_live - 1) if lowest_live is not None else len(msgs) - 1
+    # LINEAGE CLASS (observational; NOT a placement input — placement is pure).
+    # The question is "did the warm entry behind the PREVIOUS anchor survive?", so
+    # compare the remembered fingerprint to the prefix AT THE SAME DEPTH — re-find
+    # the remembered anchor by sig and fingerprint up to IT, NOT up to the new
+    # frontier (contrarian #2: a legitimate frontier advance grows the prefix, so
+    # comparing at the new frontier would false-alarm `changed` every time the
+    # frontier moves). Classes: new (no row) / anchor_gone (remembered anchor no
+    # longer present = compact summarized it away or /clear) / prefix_changed
+    # (anchor present but earlier context rewritten = partial compact, old entry
+    # cold) / same (prefix intact; +advanced flag if the frontier moved deeper).
+    st = _marker_state_load(session_id)
+    lineage = "new"
+    advanced = False
+    if st:
+        want_sig = st.get("sig")
+        want_pfp = st.get("pfp")
+        remembered = st.get("idx", -1)
+        found = None
+        for i, m in enumerate(msgs):
+            if _msg_identity(m) == want_sig:
+                if found is None or abs(i - remembered) < abs(found - remembered):
+                    found = i
+        if found is None:
+            lineage = "anchor_gone"
+        elif not want_pfp:
+            # a legacy row (persisted before the pfp column) has no fingerprint to
+            # compare — don't mis-report the first post-migration request as
+            # prefix_changed (contrarian, msg-154 #1); classify legacy_unknown and
+            # the save below overwrites it with a real fingerprint.
+            lineage = "legacy_unknown"
+        else:
+            now_pfp = _prefix_fingerprint(msgs, found)
+            if want_pfp == now_pfp:
+                lineage = "same"
+                advanced = frontier > found
+            else:
+                lineage = "prefix_changed"
+    # Capture the CLI's rolling tail ttl BEFORE we strip it, so our marker keeps
+    # the SAME ttl the CLI chose (cost-neutral vs the reactive relocate — no
+    # silent upgrade to a deeper 1h system marker's ttl, contrarian open-Q).
+    cli_tail_ttl = None
+    for r, i, blk in _cache_markers(obj):
+        if r == "messages" and i > boundary:
+            cc = blk.get("cache_control")
+            if isinstance(cc, dict) and cc.get("ttl"):
+                cli_tail_ttl = cc["ttl"]
+    # Strip every CLI message marker STRICTLY ABOVE the settled boundary (the
+    # rolling tail + any live-block marker); the pin (<= boundary) and the msg0
+    # bundle (idx 0) are left in place. Then plant ours at the frontier.
+    stripped = 0
+    for i, m in enumerate(msgs):
+        if i <= boundary:
+            continue                      # protect pin anchor + msg0 bundle region
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.pop("cache_control", None) is not None:
+                    stripped += 1
+    log = {"mode": None, "frontier_idx": frontier, "boundary_idx": boundary,
+           "last_asst_idx": last_asst, "lowest_live_idx": lowest_live,
+           "live_error": live_err_idx is not None,
+           "live_edit_ack": live_ack_idx is not None,
+           "cli_markers_stripped": stripped, "lineage": lineage,
+           "advanced": advanced, "total_messages": len(msgs)}
+    if frontier <= boundary:
+        # nothing consumed beyond the pin -> the floor already covers everything.
+        # Record state (fingerprint at the boundary) so a later real placement can
+        # still classify lineage; no message marker of ours to place.
+        log["mode"] = "floor_only"
+        _marker_state_save(
+            session_id,
+            _msg_identity(msgs[boundary]) if boundary >= 0 else None,
+            boundary, None, len(msgs),
+            _prefix_fingerprint(msgs, boundary) if boundary >= 0 else None)
+        return log
+    tgt = msgs[frontier]
+    c = tgt.get("content")
+    needs_convert = isinstance(c, str) and bool(c)
+    if not needs_convert and (
+            not isinstance(c, list) or not c or not isinstance(c[-1], dict)):
+        # can't mark the frontier -> discard any stale row so we don't repeat a
+        # dead lookup every request (contrarian #6), then decline.
+        _marker_state_forget(session_id)
+        log["mode"], log["reason"] = "declined", "unmarkable_frontier"
+        return log
+    # ttl: keep the CLI tail's own ttl if we saw one; else mirror the deepest
+    # surviving marker (ordering-legal — our frontier is the deepest block, and
+    # cache order forbids a longer ttl after a shorter one upstream).
+    ttl = cli_tail_ttl or "5m"
+    if not cli_tail_ttl:
+        existing = _cache_markers(obj)
+        if existing:
+            lastcc = existing[-1][2].get("cache_control")
+            if isinstance(lastcc, dict) and lastcc.get("ttl"):
+                ttl = lastcc["ttl"]
+    if needs_convert:
+        tgt["content"] = [{"type": "text", "text": c}]
+    tgt["content"][-1]["cache_control"] = {"type": "ephemeral", "ttl": ttl}
+    log["mode"], log["ttl"] = "placed", ttl
+    log["converted_string"] = needs_convert
+    # SELF BUDGET-AWARENESS (contrarian #5): with 2 sys + msg0 bundle + pin +
+    # our mobile = 5, free a slot by dropping the LOWEST-value MESSAGE marker
+    # ourselves — msg0 (the demoted bundle) or a stray CLI marker at/below the
+    # boundary — NEVER the floor pin (at boundary) or our mobile (at frontier,
+    # the two deepest). Repeat until within budget; the final clamp becomes a
+    # pure backstop, not the thing that decides which marker dies.
+    demoted = []
+    markers = _cache_markers(obj)
+    while len(markers) > _CACHE_BREAKPOINT_BUDGET:
+        # droppable = message markers strictly below the pin boundary (msg0 +
+        # any stray CLI marker), lowest index first. pin (==boundary) and mobile
+        # (==frontier) are never in this set.
+        cand = next(((r, i, b) for r, i, b in markers
+                     if r == "messages" and i < boundary), None)
+        if cand is None:
+            break                         # only pin+mobile+system left — clamp handles it
+        cand[2].pop("cache_control", None)
+        demoted.append(cand[1])
+        markers = _cache_markers(obj)
+    if demoted:
+        log["demoted_msg_markers"] = demoted
+    if len(markers) > _CACHE_BREAKPOINT_BUDGET:
+        # Self-demotion couldn't get under budget from message markers below the
+        # boundary (contrarian #4): the layout has an unexpected marker between
+        # boundary and frontier that stripping missed, or more system markers than
+        # assumed. The final clamp (drops non-tail message markers, which includes
+        # our pin) is then NOT a pure backstop for the floor. Flag it loudly so the
+        # A/B surfaces the layout instead of silently sacrificing the floor.
+        log["budget_overflow"] = len(markers)
+        print(f"[marker] OWN_MOBILE over budget after self-demote: "
+              f"{len(markers)} markers, boundary={boundary} frontier={frontier} "
+              f"— final clamp may drop the floor pin", flush=True)
+    _marker_state_save(session_id, _msg_identity(msgs[frontier]), frontier, ttl,
+                       len(msgs), _prefix_fingerprint(msgs, frontier))
+    return log
+
+
 def _edit_result_ids(msgs):
     """tool_use_ids whose assistant tool_use was an Edit/Write tool (any wire
     dialect) — so we can identify which user-side tool_result blocks are edit
@@ -2542,37 +3252,48 @@ def _edit_result_ids(msgs):
     return ids
 
 
-def _strip_prior_edit_acks(obj, agent_id=None, busted_from=None):
-    """Collapse Edit/Write SUCCESS acks to "ok" in the region the thinking-strip
-    ALREADY busted this turn — message indices in [busted_from, last_user). The
-    current turn is untouched (its ack keeps the live "no need to Read it back"
-    nudge). A result is collapsed only when ALL hold: its tool_use was an edit
-    tool, is_error is falsy, the string body matches a known ack fragment, and it
-    sits in the busted region. ECONOMIC GATE: `busted_from` is the thinking-strip's
-    earliest stripped index; when None (thinking didn't fire / declined) we collapse
-    NOTHING — originating a fresh bust to reclaim ~1.4k tok/turn is a ~1400-turn
-    loss. Byte-stable envelope (tool_use_id + type kept). Gated by
-    the per-session L2 level (or the STRIP_PRIOR_EDIT_ACKS scratch-A/B flag).
-    Returns a log dict or None."""
+def _strip_consumed_edit_acks(obj, agent_id=None):
+    """Collapse Edit/Write SUCCESS acks to "ok" once they have been CONSUMED —
+    an edit ack sitting BELOW the last assistant message (`idx < last_asst`), i.e.
+    the model has already produced its next action after the edit. The LIVE
+    frontier ack (in a user message after last_asst, no reaction yet) is kept: it
+    carries the CLI's "no need to Read it back" nudge that steers the very next
+    step. A result is collapsed only when ALL hold: its tool_use was an edit tool,
+    is_error is falsy, the string body matches a known ack fragment, and it is
+    consumed.
+
+    NEW MODEL (2026-07-20, Bogdan): CONSUMED vs LIVE, not prior vs current turn —
+    the same rewrite the failed-call strip got, for the same reason. The old
+    `busted_from` gate rode the thinking-strip bust "for free"; under the mid-turn
+    strip that bust is PHANTOM (thinking is pre-stripped in-turn, byte-neutral at
+    the transition), so the rider ORIGINATED the bust — wire-proven in the AB3
+    multi-turn rerun: the rider cold-latched at a task transition and collapsed
+    two ALREADY-CACHED task-1 acks, busting ~8.7k tok to reclaim 296 chars (~30:1
+    loss). Fix: collapse CONSUMED acks DETERMINISTICALLY every turn (no
+    busted_from, no rider latch). The marker "ok" is a constant + consumed is
+    monotone, so the first prefix that caches a collapsed span caches it
+    already-final and it never mutates-after-caching → the strip never originates
+    a bust. Byte-stable envelope (tool_use_id + type kept). Gated by the
+    per-session L2 level (or the STRIP_PRIOR_EDIT_ACKS scratch-A/B flag). Returns
+    a log dict or None."""
     if not isinstance(obj, dict):
         return None
     if not (STRIP_PRIOR_EDIT_ACKS or _strip_l2_enabled(obj, agent_id)):
         return None
-    if busted_from is None:               # no already-busted region to ride -> skip
-        return None
     msgs = obj.get("messages")
     if not isinstance(msgs, list) or not msgs:
         return None
-    last_user = _settled_boundary(msgs)
-    if last_user <= 0:
+    last_asst = _last_assistant_idx(msgs)
+    if not last_asst:                     # None or 0: nothing consumed below it
         return None
     edit_ids = _edit_result_ids(msgs)
     if not edit_ids:
         return None
     collapsed = stripped_chars = touched_msgs = 0
-    for i, m in enumerate(msgs):
-        if i < busted_from or i >= last_user or m.get("role") != "user":
-            continue                      # only the thinking-busted prior region
+    for i in range(last_asst):
+        m = msgs[i]
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
         c = m.get("content")
         if not isinstance(c, list):
             continue
@@ -2602,43 +3323,49 @@ def _strip_prior_edit_acks(obj, agent_id=None, busted_from=None):
         return None
     return {"stripped": True, "collapsed_edit_acks": collapsed,
             "touched_messages": touched_msgs, "stripped_chars": stripped_chars,
-            "rode_bust_from": busted_from,  # free-rode the thinking-strip bust here
-            "boundary_idx": last_user, "total_messages": len(msgs)}
+            "last_asst_idx": last_asst, "total_messages": len(msgs)}
 
 
-def _strip_prior_tool_errors(obj, agent_id=None, busted_from=None):
-    """Stub both halves of a FAILED tool call in COMPLETED prior turns: the
-    assistant `tool_use.input` (the fat old_string/new_string the model tried)
-    AND its paired error `tool_result.content`, matched by tool_use_id. A call is
-    "failed" iff its result carries a truthy `is_error`. Envelopes preserved
-    (tool_use id/type/name; result tool_use_id/type/is_error) — only the args
-    object / body string are replaced with byte-stable constants, so the API
-    pairing holds and the stripped prefix stays stable as the boundary advances.
-    ECONOMIC GATE — identical to the edit-ack strip: confined to [busted_from,
-    last_user), the region the thinking-strip ALREADY busted this turn; with
-    busted_from None (thinking didn't fire/declined) we strip NOTHING, since
-    originating a fresh bust to reclaim bursty error text is a ~1400-turn loss.
-    Current turn untouched (its error is the live retry signal). Gated by
-    the per-session L2 level (or the STRIP_PRIOR_TOOL_ERRORS scratch-A/B flag).
-    Returns a log dict or None."""
+def _strip_consumed_tool_errors(obj, agent_id=None):
+    """Stub both halves of a FAILED tool call once it has been CONSUMED — the
+    assistant `tool_use.input` (the fat old/new string the model tried) AND its
+    paired error `tool_result.content`, matched by tool_use_id. A call is
+    "failed" iff its result carries a truthy `is_error`; it is "consumed" iff its
+    error result sits BELOW the last assistant message (`idx < last_asst`), i.e.
+    the model has already produced its reaction to that error. Envelopes
+    preserved (tool_use id/type/name; result tool_use_id/type/is_error) — only
+    the args object / body string are replaced with byte-stable constants, so
+    the API pairing holds and the stripped bytes stay stable turn to turn.
+
+    NEW MODEL (2026-07-20, Bogdan): the axis is CONSUMED vs LIVE, not prior vs
+    current turn. The LIVE frontier error (in a user message AFTER last_asst, no
+    reaction yet) is untouched — it is the model's working retry signal, treated
+    exactly like current-turn thinking. Everything consumed is stubbed
+    DETERMINISTICALLY every turn (no `busted_from`, no free-rider premise): the
+    stub is a constant and "consumed" is monotone (once a later assistant exists,
+    it exists forever), so the first prefix that caches a stubbed span caches it
+    ALREADY-FINAL and it can never mutate-after-caching → the strip never
+    originates a bust (that phantom bust was the AB3 leak). Paired with the marker
+    gate, which keeps the LIVE error out of cache so its later stubbing is
+    bust-free too. Gated by the per-session L2 level (or the
+    STRIP_PRIOR_TOOL_ERRORS scratch-A/B flag). Returns a log dict or None."""
     if not isinstance(obj, dict):
         return None
     if not (STRIP_PRIOR_TOOL_ERRORS or _strip_l2_enabled(obj, agent_id)):
         return None
-    if busted_from is None:               # no already-busted region to ride -> skip
-        return None
     msgs = obj.get("messages")
     if not isinstance(msgs, list) or not msgs:
         return None
-    last_user = _settled_boundary(msgs)
-    if last_user <= 0:
+    last_asst = _last_assistant_idx(msgs)
+    if not last_asst:                     # None or 0: nothing consumed below it
         return None
-    # Pass 1 (user side): stub error result bodies in the busted region; collect
-    # their tool_use_ids so pass 2 can find the matching failed calls.
+    # Pass 1 (user side): stub CONSUMED error result bodies (idx < last_asst);
+    # collect their tool_use_ids so pass 2 can find the matching failed calls.
     error_ids = set()
     stripped_chars = stubbed_results = stubbed_calls = touched_msgs = 0
-    for i, m in enumerate(msgs):
-        if i < busted_from or i >= last_user or m.get("role") != "user":
+    for i in range(last_asst):
+        m = msgs[i]
+        if not isinstance(m, dict) or m.get("role") != "user":
             continue
         c = m.get("content")
         if not isinstance(c, list):
@@ -2665,11 +3392,12 @@ def _strip_prior_tool_errors(obj, agent_id=None, busted_from=None):
             touched_msgs += 1
     if not error_ids:
         return None
-    # Pass 2 (assistant side): stub the input of each failed tool_use in the
-    # busted region whose id matched an error result (the larger half).
+    # Pass 2 (assistant side): stub the input of each failed tool_use below
+    # last_asst whose id matched a consumed error result (the larger half).
     stub_len = len(json.dumps(ERROR_CALL_STUB, default=str))
-    for i, m in enumerate(msgs):
-        if i < busted_from or i >= last_user or m.get("role") != "assistant":
+    for i in range(last_asst):
+        m = msgs[i]
+        if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         c = m.get("content")
         if not isinstance(c, list):
@@ -2695,8 +3423,8 @@ def _strip_prior_tool_errors(obj, agent_id=None, busted_from=None):
         return None
     return {"stripped": True, "stubbed_error_results": stubbed_results,
             "stubbed_failed_calls": stubbed_calls, "touched_messages": touched_msgs,
-            "stripped_chars": stripped_chars, "rode_bust_from": busted_from,
-            "boundary_idx": last_user, "total_messages": len(msgs)}
+            "stripped_chars": stripped_chars, "last_asst_idx": last_asst,
+            "total_messages": len(msgs)}
 
 
 # ---- PIN SETTLED BREAKPOINT (cache-anchor placement, default ON) -----------
@@ -2774,9 +3502,27 @@ def _pin_settled_breakpoint(obj, agent_id=None):
     boundary = _settled_boundary(msgs)
     if boundary <= 0:
         return None                       # single-turn: nothing settled to anchor
-    anchor = _settled_boundary(msgs, upto=boundary)
-    if anchor < 0:
-        return None                       # first turn after msg0: msg0 markers cover it
+    # ANCHOR-ADVANCE (2026-07-20, Bogdan's lag find; AB2v2 expiry probe priced
+    # the lag at ~25-29k tok x 2x premium per >5m pause): the penultimate
+    # anchor is only NEEDED on the turn's FIRST request, where the boundary
+    # message is the fresh tail (the CLI's rolling marker sits on it — pinning
+    # would collide, and the penultimate entry is the exact-match transition
+    # anchor). From request 2+ (an assistant message exists past the boundary)
+    # the boundary has settled and everything above it is byte-stable for the
+    # rest of the turn (settle strips ran at the transition; mid-turn strips
+    # only touch later messages) -> anchor the CURRENT turn's opening. Costs
+    # the same 1h write the next transition would pay, just a turn earlier;
+    # the entry it writes then IS the next transition's exact-match anchor.
+    advanced = any(m.get("role") == "assistant" for m in msgs[boundary + 1:])
+    if advanced:
+        # request 2+ — anchor the boundary itself; if it already carries a
+        # marker (org-route second rolling marker) the already_marked decline
+        # below is the right outcome: coverage is already there.
+        anchor = boundary
+    else:
+        anchor = _settled_boundary(msgs, upto=boundary)
+        if anchor < 0:
+            return None                   # first turn after msg0: msg0 markers cover it
     tgt = msgs[anchor]
     c = tgt.get("content")
     # THE COMMON CASE is a bare-STRING anchor: the CLI sends a user prompt as
@@ -2819,15 +3565,24 @@ def _pin_settled_breakpoint(obj, agent_id=None):
         donor_idx = donor[1]
         mode = "migrated"
     else:
-        # fresh slot: mirror the prevailing ttl (API forbids 1h AFTER 5m; CLI
-        # requests share one ttl in practice) — copy the last marker's.
-        cc = dict(markers[-1][2]["cache_control"])
+        # fresh slot: mirror the ttl of the last marker BEFORE the anchor in
+        # canonical order — always ordering-legal (never longer than its
+        # predecessor; API forbids 1h AFTER 5m). In practice that is a 1h
+        # system/bundle marker, so the anchor goes durable even when
+        # scrap-tail has already downshifted the rolling tail to 5m (copying
+        # markers[-1] there would hand the anchor a 5m ttl = re-creating the
+        # expiry lag the advance exists to close).
+        prior = [b for r, i, b in markers
+                 if r in ("tools", "system") or (r == "messages" and i < anchor)]
+        src = prior[-1] if prior else markers[-1][2]
+        cc = dict(src["cache_control"])
         mode = "added"
     if needs_convert:
         tgt["content"] = [{"type": "text", "text": c}]
     tgt["content"][-1]["cache_control"] = cc
     return {"pinned": True, "mode": mode, "anchor_idx": anchor,
-            "boundary_idx": boundary, "donor_msg_idx": donor_idx,
+            "boundary_idx": boundary, "advanced": advanced,
+            "donor_msg_idx": donor_idx,
             "ttl": cc.get("ttl"), "converted_string": needs_convert,
             "markers_total": len(markers) + (1 if mode == "added" else 0),
             "total_messages": len(msgs)}
@@ -2884,62 +3639,11 @@ def _enforce_marker_budget(obj, agent_id=None):
     return {"dropped": dropped, "markers_before": len(markers)}
 
 
-SCRAP_TAIL_5M = os.environ.get("SCRAP_TAIL_5M", "1") not in ("0", "no", "off", "false")
-
-
-def _downshift_scrap_tail(obj, agent_id=None):
-    """On a session that STRIPS prior thinking (L1+), the current turn's frontier —
-    the assistant thinking + tool_results that accrete PAST the settled boundary —
-    is guaranteed to be busted and rewritten next turn by the strip. Paying the 1h
-    write premium (2x) to cache that frontier buys durability that is discarded
-    before it is ever collected cross-turn; at that point the right thing is to
-    write the scrap at 5m (1.25x). Intra-turn reuse is unaffected: reads match on
-    content regardless of ttl (wire-proven via the :7802 probe — a 1h pin over a
-    5m-written prefix re-reads it with ephemeral_1h=0, never re-writes), and the
-    5m entry slides on every in-loop read seconds apart.
-
-    THE GUARDRAIL — downshift ONLY when the tail marker sits STRICTLY PAST the
-    settled boundary (`tail_idx > boundary`). When the CLI's rolling marker is AT
-    the boundary (the turn's FIRST request, marking the user prompt), that write is
-    the DURABLE anchor next turn's pin reads back at 1h — 5m there would re-expose
-    the >5min-gap eviction trap on the base prefix. So the boundary write stays 1h;
-    only the post-boundary frontier goes 5m. This exactly separates durable
-    (turn-start / at-or-below boundary) from scrap (mid-loop / past boundary).
-
-    Ordering stays legal: every remaining 1h marker (system blocks, the settled
-    pin, the boundary write) sits at a lower index than the single 5m tail, and the
-    API requires longer-TTL markers first. Gated by L1 (`_strip_thinking_enabled`)
-    so a non-strip session keeps the CLI's 1h tail untouched — the frontier is only
-    'doomed' when this session actually strips. Kill-switch `SCRAP_TAIL_5M` (default
-    on; real gate is L1). Runs AFTER the pin. Returns a log dict or None."""
-    if not SCRAP_TAIL_5M or not isinstance(obj, dict):
-        return None
-    if not _strip_thinking_enabled(obj, agent_id):
-        return None                       # non-strip session: frontier not doomed
-    msgs = obj.get("messages")
-    if not isinstance(msgs, list) or not msgs:
-        return None
-    boundary = _settled_boundary(msgs)
-    # the rolling tail = the highest-index message block carrying a marker
-    tail = None
-    for i, m in enumerate(msgs):
-        c = m.get("content") if isinstance(m, dict) else None
-        if isinstance(c, list):
-            for blk in c:
-                if isinstance(blk, dict) and blk.get("cache_control"):
-                    tail = (i, blk)
-    if not tail:
-        return None
-    i, blk = tail
-    if i <= boundary:                     # durable boundary/prompt write -> keep 1h
-        return {"downshifted": False, "reason": "tail_at_durable_boundary",
-                "tail_idx": i, "boundary_idx": boundary}
-    was = blk["cache_control"].get("ttl")
-    if was == "5m":
-        return {"downshifted": False, "reason": "already_5m", "tail_idx": i}
-    blk["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
-    return {"downshifted": True, "tail_idx": i, "boundary_idx": boundary,
-            "from_ttl": was, "to_ttl": "5m", "total_messages": len(msgs)}
+# SCRAP_TAIL_5M / _downshift_scrap_tail REMOVED (2026-07-20 correction): the
+# 1h->5m tail downshift priced the frontier as doomed scrap, which was only
+# true under the old cross-turn strip (whole turn discarded + rewritten next
+# turn). In-turn stripping discards nothing — the span the tail marker covers
+# is durable — so the CLI's own ttl is simply correct and we don't touch it.
 
 
 def _patch_tool_descriptions(obj):

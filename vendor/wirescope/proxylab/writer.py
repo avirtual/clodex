@@ -1,24 +1,10 @@
-import asyncio
 import atexit
-import collections
-import hashlib
-import html
-import itertools
 import json
 import os
 import queue
 import re
-import sqlite3
 import threading
-import time
-import uuid
 from pathlib import Path
-
-import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
 
 # Siblings resolved LAZILY through the package object: writer is imported
 # early (warmth's header pulls it in) and eager `from proxylab import
@@ -34,7 +20,6 @@ import proxylab
 # writes serialized (stable file ordering) and avoids thread-explosion.
 NO_SESSION = "_no-session"          # bucket for requests that carry no session_id
 _WRITE_Q: "queue.Queue" = queue.Queue()
-
 
 def _writer_loop():
     while True:

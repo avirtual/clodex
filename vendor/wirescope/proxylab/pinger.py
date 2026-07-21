@@ -1,24 +1,7 @@
-import asyncio
-import atexit
-import collections
-import hashlib
-import html
-import itertools
 import json
 import os
-import queue
-import re
-import sqlite3
 import threading
 import time
-import uuid
-from pathlib import Path
-
-import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
@@ -411,6 +394,7 @@ def _sweep_state(now=None):
         meta_mod._SUBAGENTS.pop(sid, None)
         meta_mod._SUBAGENT_LAST_REQ.pop(sid, None)
         _transforms_mod._ws_forget(sid)   # sticky wirescope spawn memory
+        _transforms_mod._marker_state_forget(sid)   # owned-marker anchor memory
         _fold_mod._forget(sid)            # fold maps + override
         meta_mod.writer_mod._forget_session_fp(sid)   # main-line fingerprint
     purged = heads = lr_aged = busts = 0

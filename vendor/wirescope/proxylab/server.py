@@ -1,21 +1,10 @@
 import asyncio
-import atexit
-import collections
 import contextlib
-import hashlib
-import html
-import itertools
 import json
 import os
-import queue
 import re
-import sqlite3
-import threading
 import time
-import uuid
-from pathlib import Path
 
-import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
@@ -537,7 +526,25 @@ def _compact_path_allowed(path):
                    for root in COMPACT_PATH_ROOTS)
 
 
+def _endpoint_auth_ok(auth_header, token_param):
+    """Control-plane gate predicate (see the handler's gate block). Reads
+    core_mod.ENDPOINT_TOKEN live so a scratch A/B can flip it on the module."""
+    tok = core_mod.ENDPOINT_TOKEN
+    if not tok:
+        return True
+    return auth_header == f"Bearer {tok}" or token_param == tok
+
+
 async def handler(request: Request) -> Response:
+    # ---- HEAD preflight (CLI >= Bun-1.4 builds, 2026-07-20) -------------------
+    # Newer claude CLIs HEAD the ANTHROPIC_BASE_URL once at startup as a
+    # reachability check and refuse to run ("issue with the selected model")
+    # on a non-2xx. Answer locally: a HEAD carries no body to observe, and
+    # forwarding it upstream with the agent prefix stripped would just 404.
+    if request.method == "HEAD":
+        return Response(status_code=200,
+                        headers={"X-Wirescope-Version": core_mod.VERSION})
+
     # ---- identity: "is this our proxy?" handshake for subscribers -------------
     # GET /_identity — read-only, unauthenticated, spends nothing. Lets a
     # consumer confirm product == "wirescope" + read capabilities/protocols
@@ -547,6 +554,19 @@ async def handler(request: Request) -> Response:
         return Response(json.dumps(res, indent=2),
                         media_type="application/json",
                         headers={"X-Wirescope-Version": core_mod.VERSION})
+
+    # ---- control-plane auth gate (opt-in; open item (g)) ----------------------
+    # ENDPOINT_TOKEN set → every /_ endpoint below this line requires it
+    # (/_identity above stays open — it's the discovery handshake and spends
+    # nothing). One rule for the whole surface instead of a per-endpoint
+    # classification to get wrong; /_subscribe's own SUBSCRIBERS_TOKEN still
+    # applies on top. Accepts Bearer header or ?token= (the HTML views are
+    # browser-visited). Unset (default) = open, exactly as before.
+    if request.url.path.rstrip("/").startswith("/_") and not _endpoint_auth_ok(
+            request.headers.get("authorization", ""),
+            request.query_params.get("token")):
+        return Response(json.dumps({"error": "unauthorized"}),
+                        status_code=401, media_type="application/json")
 
     # ---- status: what sessions are tracked + warmth/hold/identity/cost --------
     # GET /_status[?session=<id>][&all=1] — read-only, spends nothing.
@@ -1323,41 +1343,44 @@ async def handler(request: Request) -> Response:
                 record["strip_prior_thinking"] = spt
                 if spt.get("removed_thinking_blocks"):
                     changed = True
-            # COLLAPSE PRIOR-TURN EDIT/WRITE ACKS: replace the success boilerplate
-            # with "ok" — but ONLY inside the region the thinking-strip just busted
-            # (free-rider). Originating its own bust to reclaim ~1.4k tok/turn is a
-            # ~1400-turn loss, so when thinking didn't strip (spt None/declined) we
-            # pass busted_from=None and it collapses nothing. Current turn untouched.
-            busted_from = spt.get("earliest_idx") if (spt and spt.get("stripped")) else None
-            # RIDER LATCH (v0.6.26): once a session's riders are latched
-            # full-range they fire on EVERY request like fold — deterministic
-            # replay, so baked resumes (no prior thinking -> spt no-ops) still
-            # re-produce the stubbed bytes the warm lineage carries instead of
-            # shipping raw acks and busting from the first old stub. Cold-gated
-            # establishment inside the helper; until latched the free-rider
-            # busted_from behavior is unchanged.
-            _sid_for_riders = (writer_mod._session_ids(obj) or [None])[0]
-            rider_from, rider_reason = transforms_mod._rider_full_range(
-                obj, _sid_for_riders, agent_id=agent_id)
-            if rider_from is not None:
-                busted_from = rider_from
-            if rider_reason:
-                record["rider_gate"] = {"reason": rider_reason,
-                                        "full_range": rider_from is not None}
-            sea = transforms_mod._strip_prior_edit_acks(
-                obj, agent_id=agent_id, busted_from=busted_from)
+            # MID-TURN THINKING STRIP (rides the per-session L-level, like the
+            # settled strip above — no separate tier): deletes consumed
+            # thinking INSIDE the current turn (everything but the last
+            # assistant message). Paired with the marker gate below, which
+            # keeps the doomed block out of cache so this deletion never
+            # invalidates an entry. Kill switch STRIP_MIDTURN_THINKING=0.
+            smt = transforms_mod._strip_midturn_thinking(obj, agent_id=agent_id)
+            if smt:
+                record["strip_midturn_thinking"] = smt
+                changed = True
+            # COLLAPSE CONSUMED EDIT/WRITE ACKS (CONSUMED-vs-LIVE model,
+            # 2026-07-20): replace the success boilerplate with "ok" once the ack
+            # has been CONSUMED (sits below the last assistant message = the model
+            # already acted after it). The LIVE frontier ack keeps its "no need to
+            # Read it back" nudge. Collapsed DETERMINISTICALLY every turn (no
+            # busted_from, no rider latch): "ok" is a constant + consumed is
+            # monotone, so the first prefix caches the collapsed span already-final
+            # → never mutates-after-caching → never originates a bust. This
+            # REPLACES the busted_from/rider-latch path, which under the mid-turn
+            # strip rode a PHANTOM bust and self-inflicted one instead — wire-proven
+            # in the AB3 multi-turn rerun (rider cold-latched at a task transition,
+            # collapsed two already-cached acks, busting ~8.7k tok for 296 chars,
+            # ~30:1). (The _RIDER_LATCH machinery is now vestigial — no caller.)
+            sea = transforms_mod._strip_consumed_edit_acks(obj, agent_id=agent_id)
             if sea:
                 record["strip_prior_edit_acks"] = sea
                 if sea.get("collapsed_edit_acks"):
                     changed = True
-            # STUB PRIOR-TURN FAILED CALLS (experimental, scratch-port A/B; OFF on
-            # :7800): a failed Edit etc. re-rides as the fat tool_use input + its
-            # is_error result; in a completed prior turn the recovery is already
-            # recorded downstream, so both halves are deadweight. Free-rides the
-            # SAME thinking-strip bust as the edit-ack strip (busted_from=None ->
-            # strips nothing). Current turn's error kept (live retry signal).
-            ste = transforms_mod._strip_prior_tool_errors(
-                obj, agent_id=agent_id, busted_from=busted_from)
+            # STUB CONSUMED FAILED CALLS (CONSUMED-vs-LIVE model, 2026-07-20): a
+            # failed Edit etc. re-rides as the fat tool_use input + its is_error
+            # result; once the model has REACTED to it (a later assistant message
+            # exists) both halves are deadweight. Stubbed DETERMINISTICALLY every
+            # turn (no busted_from) so the stub is first cached already-final and
+            # never mutates-after-caching → never originates a bust (the AB3 leak
+            # fix). The LIVE frontier error (no reaction yet) is kept — it's the
+            # model's retry signal, and the marker gate above keeps it out of
+            # cache so its later stubbing is bust-free too.
+            ste = transforms_mod._strip_consumed_tool_errors(obj, agent_id=agent_id)
             if ste:
                 record["strip_prior_tool_errors"] = ste
                 if ste.get("stubbed_error_results") or ste.get("stubbed_failed_calls"):
@@ -1416,16 +1439,39 @@ async def handler(request: Request) -> Response:
                     record["pin_settled_breakpoint"] = psb
                     if psb.get("pinned"):
                         changed = True
-            # SCRAP-TAIL 5m (L1 strip sessions): once we know this turn's frontier
-            # will be stripped+rewritten next turn, write that doomed cache at 5m
-            # (1.25x) instead of 1h (2x). Runs AFTER the pin so the pin (1h) stays a
-            # lower index than the 5m tail (legal ttl ordering); only fires when the
-            # tail sits PAST the settled boundary (durable boundary write stays 1h).
-            dst = transforms_mod._downshift_scrap_tail(obj, agent_id=agent_id)
-            if dst:
-                record["scrap_tail_5m"] = dst
-                if dst.get("downshifted"):
-                    changed = True
+            # MID-TURN MARKER GATE (Bogdan's placement rule, replaces the
+            # op-1 pin): when the last assistant message carries protected
+            # thinking (doomed — stripped the moment it stops being last),
+            # the CLI's rolling tail marker would cache it at premium one
+            # round before deletion and the deletion would invalidate the
+            # entry. Relocate the tail marker to the last stable message
+            # instead (drop it on the turn's first round): doomed thinking is
+            # read once at 1x, never written, never invalidated. Clean-tail
+            # rounds are byte-stock. Predicate reads only the last assistant
+            # message (which the strip never touches) -> order-safe by
+            # construction. Runs AFTER the settled pin (anchor placed on the
+            # final list), BEFORE scrap-tail (which then only sees a tail
+            # marker on clean rounds).
+            # OWN_MOBILE_MARKER (experimental, default off) REPLACES the reactive
+            # gate: wirescope computes the mobile marker's position itself and
+            # remembers it per session (persisted for restart / anti-flap). Needs
+            # the session_id (resolved fully further down; derive it here cheaply).
+            if transforms_mod.OWN_MOBILE_MARKER:
+                _mm_sid = (writer_mod._session_ids(obj) or [None])[0]
+                omm = transforms_mod._own_mobile_marker(
+                    obj, agent_id=agent_id, session_id=_mm_sid)
+                if omm:
+                    record["own_mobile_marker"] = omm
+                    if omm.get("mode") in ("placed", "floor_only"):
+                        changed = True
+            else:
+                mmg = transforms_mod._midturn_marker_gate(obj, agent_id=agent_id)
+                if mmg:
+                    record["midturn_marker_gate"] = mmg
+                    if mmg.get("acted"):
+                        changed = True
+            # (scrap-tail 5m downshift removed 2026-07-20: in-turn stripping
+            # leaves the tail-covered span durable — the CLI's own ttl stands.)
             # MARKER-BUDGET INVARIANT (hard rule): never forward >4
             # cache_control markers — the API hard-400s a 5th and kills the
             # user's turn. Every adder is budget-aware upstream; this clamp
@@ -1474,6 +1520,23 @@ async def handler(request: Request) -> Response:
         # count it: a persistent crash here must not look like client garbage.
         record["transform_error"] = repr(e)
         core_mod.ERROR_COUNTS["transform_errors"] += 1
+        # Fail-open has a CACHE cost the counter alone hides: on a session whose
+        # cached lineage is latched STRIPPED, the verbatim (unstripped) bytes
+        # diverge at the settled boundary → a full-depth cold write, potentially
+        # the priciest single request of the session. Say so in the record so a
+        # persistent crash on a long strip session prices as what it is. Read
+        # the latch directly (no _strip_level call — that has sticky-store side
+        # effects); annotation is best-effort, never allowed to break fail-open.
+        try:
+            sid = (writer_mod._session_ids(obj) or [None])[0] \
+                if isinstance(obj, dict) else None
+            if sid and transforms_mod._STRIP_GUARD_LATCH.get(sid):
+                record["transform_error_likely_bust"] = True
+                print(f"[transform-error] #{n} session {sid[:12]}… is "
+                      "strip-latched — verbatim forward likely busts the "
+                      "stripped lineage (full-depth cold write)", flush=True)
+        except Exception:
+            pass
         print(f"[transform-error] #{n} {agent} {type(e).__name__}: {e} — "
               "request forwarded verbatim (fail-open), transforms skipped",
               flush=True)
@@ -1733,7 +1796,7 @@ async def _lifespan(app):
 
 
 _routes = [Route("/{path:path}", handler,
-                 methods=["GET", "POST", "PUT", "DELETE"])]
+                 methods=["HEAD", "GET", "POST", "PUT", "DELETE"])]
 if codex_mod._websocket_available():
     _routes.append(WebSocketRoute("/{path:path}", websocket_handler))
 

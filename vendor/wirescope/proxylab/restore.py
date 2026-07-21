@@ -1,24 +1,5 @@
-import asyncio
-import atexit
-import collections
-import hashlib
-import html
-import itertools
 import json
-import os
-import queue
-import re
-import sqlite3
-import threading
 import time
-import uuid
-from pathlib import Path
-
-import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
@@ -44,7 +25,6 @@ from proxylab import store as store_mod
 # per-turn / cosmetic). Warmth ledger + session_head/meta were already durable.
 _RESTORED = {"holds": 0, "last_requests": 0, "totals": False,
              "session_totals": 0, "cwd_done": 0}
-
 
 def _restore_holds(now=None):
     now = now or time.time()

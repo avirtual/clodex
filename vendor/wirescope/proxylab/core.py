@@ -28,27 +28,13 @@ Point a CLI at the proxy either way:
             (codex: .../agent/<name>/openai) — <name> becomes the session's
             agent identity: dump filenames, /_status titles, subscriber routing.
 """
-import asyncio
-import atexit
-import collections
-import hashlib
-import html
 import itertools
-import json
 import os
-import queue
 import re
-import sqlite3
-import threading
 import time
-import uuid
 from pathlib import Path
 
 import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
 
 UPSTREAM = "https://api.anthropic.com"
 LOG_DIR = Path(os.environ.get("LOG_DIR", "/tmp/proxyclone/logs"))
@@ -133,3 +119,12 @@ def _safe_headers(headers):
 # transform_errors means OUR chain crashed on some shape and the request
 # forwarded fail-open with degraded capture — loud, not silent.
 ERROR_COUNTS = {"transform_errors": 0, "meta_errors": 0}
+
+# Opt-in control-plane auth (open item (g)): when set, every /_ endpoint except
+# the /_identity discovery handshake requires it — Bearer header or ?token=.
+# Unset (default) keeps the single-user-localhost open surface. The reason this
+# exists: the open surface COMPOSES badly with the pinger's in-memory auth
+# replay — /_ping can originate authenticated upstream SPEND, /_prune deletes
+# captures, /_hold//_strip//_end mutate session state. Advertised on /_identity
+# as capabilities.endpoint_token so a consumer knows to send it.
+ENDPOINT_TOKEN = os.environ.get("ENDPOINT_TOKEN", "")
