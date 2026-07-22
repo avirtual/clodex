@@ -170,6 +170,19 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         fs.mkdirSync(path.dirname(venv), { recursive: true });
         if (!fs.existsSync(py)) await this._run(sysPy, ['-m', 'venv', venv], { timeoutMs: 120000 });
         if (reqHash) {
+          // Some distros (Amazon Linux 2023, minimal RHEL) ship a python3 whose
+          // venvs are born WITHOUT pip (ensurepip split into a separate rpm), so
+          // `venv/bin/python3 -m pip` dies with "No module named pip". Probe and
+          // bootstrap via ensurepip before the install; if even ensurepip is
+          // missing, fail with the actionable package hint instead of the bare
+          // module error.
+          try { await this._run(py, ['-m', 'pip', '--version'], { timeoutMs: 30000 }); }
+          catch {
+            try { await this._run(py, ['-m', 'ensurepip', '--upgrade'], { timeoutMs: 120000 }); }
+            catch {
+              throw new Error('venv has no pip and ensurepip is unavailable — install your distro\'s python3-pip package (e.g. dnf install python3-pip) and retry');
+            }
+          }
           await this._run(py, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', reqPath],
             { timeoutMs: 600000 });
         }

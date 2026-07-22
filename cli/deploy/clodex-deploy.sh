@@ -97,11 +97,12 @@ if [ "$IS_MAC" = "1" ]; then
   log "macOS: skipping system packages (node-pty builds against the Xcode CLT here)"
   ok sys-deps
 elif command -v apt-get >/dev/null 2>&1; then
-  # Debian/Ubuntu: build-essential (gcc/g++/make) + python3 for node-gyp. Neither
-  # is a t64 package, so the noble virtual-provider dance the Electron libs needed
-  # is gone. dpkg -s present-check keeps a satisfied box off the need-sudo path.
+  # Debian/Ubuntu: build-essential (gcc/g++/make) + python3 for node-gyp, plus
+  # python3-venv/python3-pip for the wirescope managed venv (Debian's python3
+  # can't create venvs without python3-venv; AL-style pipless venvs exist too).
+  # dpkg -s present-check keeps a satisfied box off the need-sudo path.
   missing=""
-  for p in build-essential python3; do
+  for p in build-essential python3 python3-venv python3-pip; do
     dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
@@ -118,11 +119,13 @@ elif command -v apt-get >/dev/null 2>&1; then
   fi
   ok sys-deps
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
-  # RHEL/Fedora/Amazon Linux: gcc-c++ + make + python3 for node-gyp. rpm -q is the
+  # RHEL/Fedora/Amazon Linux: gcc-c++ + make + python3 for node-gyp, plus
+  # python3-pip — AL2023's base python3 creates venvs WITHOUT pip (ensurepip is
+  # split out), which breaks the wirescope managed venv. rpm -q is the
   # present-check (dpkg doesn't exist here); PM is dnf when available, else yum.
   PM="yum"; command -v dnf >/dev/null 2>&1 && PM="dnf"
   missing=""
-  for p in gcc-c++ make python3; do
+  for p in gcc-c++ make python3 python3-pip; do
     rpm -q "$p" >/dev/null 2>&1 || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
