@@ -41,6 +41,9 @@ class WireClient {
     try {
       res = await fetch(url, init);
     } catch (e) {
+      // A caller-signalled abort is not a network failure — rethrow untouched
+      // so the caller can tell its own ceiling from a dead engine.
+      if (e && e.name === 'AbortError') throw e;
       // Network-level failure: DNS, ECONNREFUSED, TLS, aborted tunnel.
       throw new CliError(EXIT.CONNECT, scrub(`cannot reach the engine: ${e.message}`, this._token));
     }
@@ -56,10 +59,13 @@ class WireClient {
   }
 
   // Run a request and return the parsed JSON on 2xx; throw a coded CliError
-  // otherwise. `verb` names the operation for the error message.
-  async _call(method, pathAndQuery, verb, jsonBody) {
+  // otherwise. `verb` names the operation for the error message. `opts.signal`
+  // (optional) is an AbortSignal — the caller can cut a hung request so its
+  // socket is released and the process can exit (send --wait's hard ceiling).
+  async _call(method, pathAndQuery, verb, jsonBody, opts) {
     const init = { method, headers: this._headers(jsonBody != null ? { 'Content-Type': 'application/json' } : null) };
     if (jsonBody != null) init.body = JSON.stringify(jsonBody);
+    if (opts && opts.signal) init.signal = opts.signal;
     const res = await this._fetch(pathAndQuery, init);
     const body = await this._body(res);
     if (res.ok) return body;
@@ -69,8 +75,8 @@ class WireClient {
     throw new CliError(exitForStatus(res.status), scrub(`${verb} failed: ${detail}`, this._token));
   }
 
-  get(pathAndQuery, verb) { return this._call('GET', pathAndQuery, verb || 'request'); }
-  post(pathAndQuery, verb, jsonBody) { return this._call('POST', pathAndQuery, verb || 'request', jsonBody == null ? {} : jsonBody); }
+  get(pathAndQuery, verb, opts) { return this._call('GET', pathAndQuery, verb || 'request', undefined, opts); }
+  post(pathAndQuery, verb, jsonBody, opts) { return this._call('POST', pathAndQuery, verb || 'request', jsonBody == null ? {} : jsonBody, opts); }
 
   // Open a text/event-stream over the wire and parse SSE frames by hand (zero
   // deps: node:http/https, blank-line block framing, `event:`/`data:` lines,

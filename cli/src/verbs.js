@@ -193,11 +193,11 @@ async function spawnAlive(client, name, sleepFn) {
   } catch { return null; }
 }
 
-async function send({ client, printer, flags, args }) {
+async function send({ client, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'send');
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'send needs message text');
-  if (flags.wait) return sendWait({ client, printer, flags, args, name, text });
+  if (flags.wait) return sendWait({ client, printer, flags, args, name, text, io });
   const res = await client.post('/api/send', 'send', { name, text });
   if (flags.json) printer.json(res);
   else printer.line(`sent to ${name} (fire-and-forget)`);
@@ -229,7 +229,7 @@ async function sessionType(client, name) {
 // `mode:"agent"|"pty"` so a script can tell which path ran. Routing is binary
 // on `type === 'bash'`, not a claude/codex whitelist: a future agent type still
 // routes to the safe send-wait path, never accidentally into raw TUI typing.
-async function run({ client, printer, flags, args, stderr }) {
+async function run({ client, printer, flags, args, stderr, io = {} }) {
   const name = requireName(args[0], 'run');
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'run needs text — a prompt for an agent, or a command for a bash session');
@@ -238,7 +238,7 @@ async function run({ client, printer, flags, args, stderr }) {
     // Reuse exec's PTY path verbatim; knownType skips its own lookup + guardrail.
     return exec({ client, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
   }
-  return sendWait({ client, printer, flags, name, text, mode: 'agent' });
+  return sendWait({ client, printer, flags, name, text, mode: 'agent', io });
 }
 
 // send --wait — deliver, then block until the agent goes IDLE (a matching
@@ -250,26 +250,42 @@ async function run({ client, printer, flags, args, stderr }) {
 // entries newer than that, starting from the first assistant entry (our own
 // echoed user message is excluded). Count-watermark is exact until the
 // transcript exceeds the 500-entry fetch cap — acceptable for v1.
-async function sendWait({ client, printer, flags, name, text, mode = null }) {
+async function sendWait({ client, printer, flags, name, text, mode = null, io = {} }) {
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
+  // --timeout is a HARD ceiling on the WHOLE verb, not just the wait: the wait
+  // phase is capped at timeoutMs and the post-wait refetch at an extra `grace`,
+  // so on EVERY transport the process returns by ~timeout+grace even when the
+  // engine never emits a turnEnd and even when a fetch wedges on a dead tunnel
+  // (a wedged fetch would otherwise hold a socket open AND keep sendWait from
+  // returning, so main.js's `finally { t.close() }` never reaps the tunnel
+  // child — the twin causes of the live 6-minute hang). io.refetchGraceMs is
+  // the test seam (keeps repro tests sub-second).
+  const graceMs = io.refetchGraceMs != null ? io.refetchGraceMs : 8000;
 
   // 1. Open the global events feed and wait until it is live (subscribed).
   let stream = null;
   let settled = false;
   let hardTimer = null;
   let snapshot = 0;
+  // Cuts a hung snapshot GET / send POST when the ceiling fires — an aborted
+  // fetch rejects and releases its socket, which is what lets node exit.
+  const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
     const finish = (fn, v) => { if (settled) return; settled = true; if (hardTimer) clearTimeout(hardTimer); fn(v); };
+    // Arm the ceiling BEFORE opening the stream and INDEPENDENT of onOpen — if
+    // the stream never reaches 200, or the snapshot/send await hangs, onOpen
+    // never reaches a timer of its own, so the ceiling must live out here. On
+    // fire: abort the in-flight wait-phase request and settle as a timeout.
+    hardTimer = setTimeout(() => { try { waitAc.abort(); } catch {} finish(resolve, { timedOut: true }); }, timeoutMs);
     stream = client.openEventStream('/api/events', 'send --wait (events)', {
       onOpen: async () => {
         try {
           // 2. Snapshot the transcript length BEFORE sending.
-          const before = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (snapshot)');
+          const before = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
           snapshot = (before.messages || []).length;
           // 3. Send.
-          await client.post('/api/send', 'send', { name, text });
-          hardTimer = setTimeout(() => finish(resolve, { timedOut: true }), timeoutMs);
-        } catch (e) { finish(reject, e); }
+          await client.post('/api/send', 'send', { name, text }, { signal: waitAc.signal });
+        } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
       // 4. Await a turn-end activity for OUR session; ignore all others.
       onEvent: (event, data) => {
@@ -278,8 +294,12 @@ async function sendWait({ client, printer, flags, name, text, mode = null }) {
       },
       onError: (e) => finish(reject, e),
     });
-  }).catch((e) => { try { if (stream) stream.close(); } catch {} throw e; });
+  }).catch((e) => { try { if (stream) stream.close(); } catch {} waitAc.abort(); throw e; });
   try { if (stream) stream.close(); } catch {}
+  // The wait can settle via onError/turnEnd while a snapshot/send fetch is
+  // still wedged in flight; abort it unconditionally or its socket keeps node
+  // alive (bin sets exitCode, never exit()). Idempotent, harmless when spent.
+  waitAc.abort();
 
   // 5. Refetch and print entries newer than the snapshot, from the first
   //    assistant entry on (drops our echoed user message + any leading users).
@@ -287,19 +307,36 @@ async function sendWait({ client, printer, flags, name, text, mode = null }) {
   //    signal fires before the last assistant text is persisted), so if the
   //    delta has no assistant entry yet, retry a few times with a short backoff
   //    before giving up — we print from the first assistant on, never a bare
-  //    echoed-user row.
+  //    echoed-user row. The whole loop is bounded by `grace`: a wedged engine
+  //    can hang a single refetch forever, and until sendWait returns the tunnel
+  //    child is never reaped, so the deadline aborts the in-flight fetch and we
+  //    stop retrying (this is the half of the ceiling the live hang tripped).
   const freshFrom = (msgs) => {
     const delta = deltaFrom(msgs, snapshot);
     const i = delta.findIndex((m) => m.role === 'assistant');
     return i === -1 ? [] : delta.slice(i);
   };
+  const refetchAc = new AbortController();
+  let graceExpired = false;
+  const refetchDeadline = setTimeout(() => { graceExpired = true; try { refetchAc.abort(); } catch {} }, graceMs);
   let fresh = [];
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const after = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (refetch)');
-    fresh = freshFrom(after.messages);
-    if (fresh.length || waitResult.timedOut) break;
-    await new Promise((r) => setTimeout(r, 250));
-  }
+  try {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      let after;
+      try {
+        after = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (refetch)', { signal: refetchAc.signal });
+      } catch (e) {
+        // Swallow ONLY our own ceiling abort (client rethrows AbortError
+        // unwrapped) — a real transport error that merely RACED the deadline
+        // still propagates with its honest exit code.
+        if (graceExpired && e && e.name === 'AbortError') break;
+        throw e;
+      }
+      fresh = freshFrom(after.messages);
+      if (fresh.length || waitResult.timedOut) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  } finally { clearTimeout(refetchDeadline); }
 
   if (flags.json) {
     printer.json({ ok: !waitResult.timedOut, name, ...(mode ? { mode } : {}), entries: fresh, timedOut: !!waitResult.timedOut });
