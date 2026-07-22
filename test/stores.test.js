@@ -513,7 +513,10 @@ test('templates: migration explodes templates.json → per-file, renames the blo
     const blobPath = path.join(userData, 'templates.json');
     fs.writeFileSync(blobPath, JSON.stringify(blob));
     // Re-init over the SAME dirs so migrateTemplatesJson runs against the blob.
-    const stores = initStores(userData, { registryDir });
+    // No-seed resourcesDir (like freshStores): this test isolates MIGRATION, so the
+    // shipped default templates (e.g. clodex-team-reviewer.json, T52) must not seed
+    // in and pollute the migrated-name assertion below.
+    const stores = initStores(userData, { registryDir, resourcesDir: path.join(registryDir, '__no_seed__') });
     const list = stores.templates.list();
     const names = list.map(t => t.name).sort();
     assert.deepStrictEqual(names, ['plain', 'trader-seat']); // slugified, dup + empty dropped
@@ -524,8 +527,9 @@ test('templates: migration explodes templates.json → per-file, renames the blo
     // Blob renamed to .migrated (never deleted — dropped entries recoverable).
     assert.strictEqual(fs.existsSync(blobPath), false);
     assert.ok(fs.existsSync(`${blobPath}.migrated`));
-    // Second init is a no-op (blob already renamed) — no re-run, no dup.
-    const stores2 = initStores(userData, { registryDir });
+    // Second init is a no-op (blob already renamed) — no re-run, no dup. No-seed
+    // again so a shipped default template (T52) doesn't inflate the migration count.
+    const stores2 = initStores(userData, { registryDir, resourcesDir: path.join(registryDir, '__no_seed__') });
     assert.strictEqual(stores2.templates.list().length, 2);
   } finally {
     fs.rmSync(userData, { recursive: true, force: true });
@@ -674,6 +678,36 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
   assert.match(hand, /task done/, 'hand prompt briefs reporting via task done');
   const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
   assert.match(reviewer, /review-done/, 'reviewer prompt briefs the review-done closing intent');
+});
+
+// T52: the reviewer seat DEFINITION now ships as a template (the DATA
+// _handleTeamReview consumes), seeded like the role prompts into
+// library/templates/. Pin it seeds byte-exact and surfaces through the store.
+const REPO_REVIEWER_TPL = path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer.json');
+
+test('seed (T52): ships the reviewer template into a fresh registry (byte-exact) and it lists', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  try {
+    const stores = initStores(userData, { registryDir });
+    const dest = path.join(registryDir, 'library', 'templates', 'clodex-team-reviewer.json');
+    assert.ok(fs.existsSync(dest), 'clodex-team-reviewer.json seeded on construction');
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), fs.readFileSync(REPO_REVIEWER_TPL, 'utf-8'),
+      'byte-for-byte the shipped template (the reviewed default is the source of truth)');
+    // Surfaces through the templates store with the lean-reviewer payload intact.
+    const seeded = stores.templates.list().find((t) => t.name === 'clodex-team-reviewer');
+    assert.ok(seeded, 'seeded reviewer template is listed');
+    assert.strictEqual(seeded.systemPromptFile, 'clodex-team-reviewer');
+    assert.deepStrictEqual(seeded.intents, []);
+    assert.deepStrictEqual(seeded.tools, ['Read', 'Grep', 'Glob']);
+    assert.deepStrictEqual(seeded.env, {
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1',
+    });
+    assert.strictEqual(seeded.spawnerHint, 'off');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
 });
 
 test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () => {

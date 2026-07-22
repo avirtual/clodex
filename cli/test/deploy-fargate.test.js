@@ -503,3 +503,88 @@ function deployHasParam(rec, param) {
   const c = rec.calls.find((x) => x.join(' ').includes('cloudformation deploy'));
   return !!c && c.includes(param);
 }
+
+// ── fargatePollHello: the retry/deadline loop (T50 followup) ──────────────────
+// The flow tests above inject io.probeFargate, so the poll loop itself
+// (deploy.js:1667) went uncovered. Exercise it DIRECTLY. openTransport is a hard
+// module require (not an injectable seam) and the loop doesn't thread the
+// forwarded local port, so the only ctx that can reach a live hello is a `{ url }`
+// entry pointed at a REAL throwaway HTTP server — the spawn/ssm paths pick their
+// own free port and would time out. The clock is faked (Date only, so the http
+// server's real timers still fire) and sleepFn is injected — NO real waiting.
+const http = require('node:http');
+const { CliError } = require('../src/errors');
+
+// A local server whose /api/peer/hello replies come from a scripted status
+// sequence (last entry sticks). Returns { url, hits, close }. hits counts hello
+// requests so a test can prove how many retries happened.
+async function helloServer(statuses) {
+  let i = 0;
+  const hits = [];
+  const srv = http.createServer((req, res) => {
+    hits.push(req.url);
+    const status = statuses[Math.min(i, statuses.length - 1)];
+    i += 1;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    // 2xx → a hello body; non-2xx → a coded error body (server's honest reason).
+    res.end(status >= 200 && status < 300
+      ? JSON.stringify({ app: 'clodex', host: 'node', version: '9.9.9', caps: [] })
+      : JSON.stringify({ error: `boom ${status}` }));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const { port } = srv.address();
+  return { url: `http://127.0.0.1:${port}`, hits, close: () => new Promise((r) => srv.close(r)) };
+}
+
+test('fargatePollHello: retries past transient failures and RETURNS the hello (through the finally-close); sleeps are injected, not real', async () => {
+  // Two 503s then a 200 — the loop must survive the catch/finally twice and return
+  // the success body on the third open. A large timeout keeps the deadline out of
+  // play; the injected sleepFn resolves instantly so no wall-clock time passes.
+  const srv = await helloServer([503, 503, 200]);
+  const slept = [];
+  try {
+    const hello = await D.fargatePollHello(
+      { url: srv.url }, WIRE,
+      { timeoutMs: 60_000, pollMs: 250, sleepFn: async (ms) => { slept.push(ms); } },
+    );
+    assert.deepStrictEqual(hello, { app: 'clodex', host: 'node', version: '9.9.9', caps: [] },
+      'the success body is returned even though two prior opens threw (return passes through the finally)');
+    assert.strictEqual(srv.hits.length, 3, 'polled three times: two failures + the success');
+    assert.deepStrictEqual(slept, [250, 250], 'slept once per failure (injected sleepFn, real pollMs), never before the success');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('fargatePollHello: deadline exhaustion throws the HONEST last error (CliError passthrough), driven by the injected clock', async (t) => {
+  // A server that never recovers (always 500). The clock is faked and advanced
+  // only inside sleepFn, so the deadline is crossed deterministically after a
+  // known number of polls — no real time elapses.
+  t.mock.timers.enable({ apis: ['Date'] });
+  t.mock.timers.setTime(1_000_000);
+  const srv = await helloServer([500]);
+  let sleeps = 0;
+  try {
+    await assert.rejects(
+      D.fargatePollHello(
+        { url: srv.url }, WIRE,
+        { timeoutMs: 100, pollMs: 40, sleepFn: async (ms) => { sleeps += 1; t.mock.timers.tick(ms); } },
+      ),
+      (e) => {
+        // The last WireClient error is a CliError (500 → EXIT.SERVER); the loop
+        // rethrows it UNCHANGED (instanceof passthrough), so the operator sees the
+        // server's own reason, not a generic "wire did not answer".
+        assert.ok(e instanceof CliError, 'throws a coded CliError');
+        assert.strictEqual(e.exitCode, EXIT.SERVER, '500 maps to EXIT.SERVER');
+        assert.match(e.message, /boom 500/, 'carries the honest last-error detail (passthrough), not a generic message');
+        return true;
+      },
+    );
+    // deadline = t0+100, pollMs 40: fail(t0)→tick→fail(40)→tick→fail(80)→tick→
+    // fail(120 ≥ 100)→throw. Three sleeps, four polls.
+    assert.strictEqual(sleeps, 3, 'slept exactly until the deadline was crossed (injected clock, no real waiting)');
+    assert.strictEqual(srv.hits.length, 4, 'polled until the deadline, then gave up');
+  } finally {
+    await srv.close();
+  }
+});

@@ -95,6 +95,38 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 // hint. (Until an operator-owned surface exists — T29 GUI may later widen
 // per-team from operator clicks.)
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
+// Cold-reviewer sessionEnv key allowlist (T52). The reviewer seat's env now comes
+// from a template (resources/library/templates/clodex-team-reviewer.json), which —
+// like team.json — is agent-writable. Env is an AUTHORITY surface (ANTHROPIC_BASE_URL,
+// proxy/credential redirects, model overrides), so a doctored template must not be
+// able to set an arbitrary key on a review seat. This code-level allowlist is the
+// ceiling: exactly the keys the SHIPPED default reviewer template uses. A template
+// env key outside this set is DROPPED LOUDLY (a note in the lead's confirm line),
+// never honored. Not an authority source — same posture as REVIEWER_TOOL_CAP.
+const REVIEWER_ENV_ALLOWLIST = new Set([
+  'CLAUDE_CODE_DISABLE_CLAUDE_MDS',
+  'FORCE_PROMPT_CACHING_5M',
+  'CLODEX_DISABLE_IPC_PROMPT',
+]);
+// The shipped default reviewer template's name (file stem under
+// library/templates/). team.roles.reviewer.template may name an alternative; absent
+// → this default. (T52)
+const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
+// Built-in reviewer constants (T52 fallback). The values below are the SHIPPED
+// default template's payload, byte-for-byte — the source of truth when the
+// template file is missing/unparseable so a review still spawns lean (a review
+// beats no review). Mirrors resources/library/templates/clodex-team-reviewer.json.
+const REVIEWER_FALLBACK = {
+  systemPromptFile: 'clodex-team-reviewer',
+  intents: [],
+  tools: ['Read', 'Grep', 'Glob'],
+  env: {
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    FORCE_PROMPT_CACHING_5M: '1',
+    CLODEX_DISABLE_IPC_PROMPT: '1',
+  },
+  spawnerHint: 'off',
+};
 // Team ticket registry (Task 25). Pure leaf (electron-free), required directly
 // like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
 // tickets.json (team-scoped, shared with the clodex-team exec).
@@ -3863,6 +3895,74 @@ function createSessionManager(deps) {
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
+      // T52: the reviewer seat is DATA. Its shape (system prompt ref, gated intents,
+      // tool allowlist, lean-context env, wirescope hint) lives in a TEMPLATE under
+      // library/templates/, referenced by team.roles.reviewer.template; absent → the
+      // shipped default. The template AND the manifest are both agent-writable, so
+      // EVERY authority-bearing field the template carries is re-capped IN CODE at
+      // consume time below (tools ∩ REVIEWER_TOOL_CAP; intents through
+      // withoutPrivilegedIntents; env keys through REVIEWER_ENV_ALLOWLIST;
+      // force-claude). A missing/unparseable template falls back to REVIEWER_FALLBACK
+      // (the shipped values) with a loud note — a review beats no review. Per-field
+      // precedence: template value > role manifest value (tools/prompt) > built-in.
+      const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
+      let reviewTpl = null;
+      try { reviewTpl = getTemplates().list().find((t) => t && t.name === templateName) || null; }
+      catch { reviewTpl = null; }
+      const tplWarn = reviewTpl
+        ? ''
+        : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
+
+      // systemPromptFile: template > role prompt > built-in. Becomes THE replacement
+      // system prompt (create()'s --system-prompt-file); create()'s auto role-prompt
+      // path dedupes its own append when this stem === def.prompt (T51).
+      let reviewerSystemPrompt =
+        (reviewTpl && typeof reviewTpl.systemPromptFile === 'string' && reviewTpl.systemPromptFile)
+          ? reviewTpl.systemPromptFile
+          : (def.prompt || REVIEWER_FALLBACK.systemPromptFile);
+      // Defense-in-depth (T52 nit): the template is agent-writable and its
+      // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
+      // a bare path.join with no confinement — a stem like "../../../../etc/x"
+      // escapes library/prompts/system. This is a PRE-EXISTING, non-escalating gap
+      // (def.prompt already flowed through the same resolver, and a system prompt
+      // only INSTRUCTS — it grants no tool/intent/env, all of which stay capped),
+      // but since T52 makes the template the canonical prompt source, reject a
+      // traversing/absolute stem HERE (not in the shared resolver — don't widen the
+      // blast radius) and fall back to the shipped default with a loud warn.
+      let promptEscapeWarn = '';
+      if (reviewerSystemPrompt.includes('/') || reviewerSystemPrompt.includes('\\') || reviewerSystemPrompt.includes('..')) {
+        promptEscapeWarn = ` — NOTE: reviewer systemPromptFile "${reviewerSystemPrompt}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`;
+        reviewerSystemPrompt = REVIEWER_FALLBACK.systemPromptFile;
+      }
+
+      // intents: template > built-in ([]), ALWAYS stripped of privileged intents
+      // (agent-writable source, same posture as the tools cap). [] = every catalog
+      // intent gated (the reviewer emits only the uncatalogued [agent:review-done]).
+      const reviewerIntents = withoutPrivilegedIntents(
+        Array.isArray(reviewTpl && reviewTpl.intents) ? reviewTpl.intents : REVIEWER_FALLBACK.intents,
+      );
+
+      // env: template > built-in, then FILTERED through REVIEWER_ENV_ALLOWLIST — a
+      // doctored template cannot set an authority key (ANTHROPIC_BASE_URL, proxy/
+      // credential redirects) on a review seat. Unknown keys are dropped LOUDLY.
+      const rawReviewerEnv =
+        (reviewTpl && reviewTpl.env && typeof reviewTpl.env === 'object' && !Array.isArray(reviewTpl.env))
+          ? reviewTpl.env : REVIEWER_FALLBACK.env;
+      const reviewerEnv = {};
+      const droppedEnvKeys = [];
+      for (const [k, v] of Object.entries(rawReviewerEnv)) {
+        if (REVIEWER_ENV_ALLOWLIST.has(k)) reviewerEnv[k] = String(v == null ? '' : v);
+        else droppedEnvKeys.push(k);
+      }
+      const envWarn = droppedEnvKeys.length
+        ? ` — reviewer template env keys [${droppedEnvKeys.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
+        : '';
+
+      // spawnerHint: 'off' (default) → suppress the proxy's spawner-hint block on the
+      // seat (fired post-create below). Any other value leaves the hint in place.
+      const wantSpawnerHintOff =
+        ((reviewTpl && typeof reviewTpl.spawnerHint === 'string') ? reviewTpl.spawnerHint : REVIEWER_FALLBACK.spawnerHint) === 'off';
+
       // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude, regardless of
       // the manifest's `type`. team.json is agent-writable and enforcement is at
       // CONSUME, not at a write op (the C3 twin): only create()'s claude arm
@@ -3888,12 +3988,17 @@ function createSessionManager(deps) {
       // operator-approval line to the lead. This inversion into the disabledTools
       // DENYLIST is the seam create()'s claude arm enforces — its auto role-prompt
       // path binds only the role `prompt`, never `tools`.
-      const manifestTools = (Array.isArray(def.tools) && def.tools.length) ? def.tools : null;
-      const effectiveTools = manifestTools
-        ? REVIEWER_TOOL_CAP.filter((t) => manifestTools.includes(t))
+      // T52: tools source is template > role manifest (both agent-writable, both
+      // NARROWING hints under the cap — never authority). The intersection with
+      // REVIEWER_TOOL_CAP is the ceiling regardless of which supplied the request.
+      const requestedTools = (Array.isArray(reviewTpl && reviewTpl.tools) && reviewTpl.tools.length)
+        ? reviewTpl.tools
+        : ((Array.isArray(def.tools) && def.tools.length) ? def.tools : null);
+      const effectiveTools = requestedTools
+        ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
         : REVIEWER_TOOL_CAP.slice();
-      const beyondCap = manifestTools
-        ? manifestTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
+      const beyondCap = requestedTools
+        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
         : [];
       // type is force-claude (above), so the denylist is ALWAYS live — no dead
       // non-claude branch. Disable every catalog tool outside the effective cap.
@@ -3929,12 +4034,15 @@ function createSessionManager(deps) {
       // gets a reviewer with NO briefing and no signal. Preflight the file so the
       // lead's confirm line warns when it's absent. Best-effort: a read error here
       // is treated as "present" (don't block on a stat hiccup).
+      // T52: preflight the ACTUAL system-prompt file the reviewer boots with
+      // (reviewerSystemPrompt = template > role > built-in), not just def.prompt —
+      // a template-supplied prompt ref can be missing too.
       let promptWarn = '';
-      if (def.prompt) {
+      if (reviewerSystemPrompt) {
         try {
-          const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+          const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`);
           if (!fs.existsSync(promptFile)) {
-            promptWarn = ` — WARNING: role prompt "${def.prompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
+            promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
           }
         } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
       }
@@ -3951,31 +4059,16 @@ function createSessionManager(deps) {
       const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
         ? ['--dangerously-skip-permissions'] : [];
 
-      // Lean-reviewer context (T51). Three levers, ALL hardcoded here — NOT read
-      // from team.json (the manifest is agent-writable and env is an authority
-      // surface, same argument as the REVIEWER_TOOL_CAP intersection above):
-      //   * the role prompt becomes THE system prompt (--system-prompt-file), a
-      //     full REPLACEMENT of the CLI's bulky default (systemPromptFile below).
-      //     create()'s auto role-prompt path dedupes its own append when the same
-      //     stem rides as systemPromptFile, so the briefing isn't delivered twice.
-      //   * intents: [] gates every catalog intent (the reviewer emits only the
-      //     uncatalogued [agent:review-done], which always fires) — buildIpcPrompt([])
-      //     then sheds all gateable grammar + the MEMORY section.
-      //   * sessionEnv: the CLI's own slimming knobs + the Clodex-internal
-      //     CLODEX_DISABLE_IPC_PROMPT directive (consumed in create()'s claude arm)
-      //     that drops the IPC protocol append entirely — the reviewer role prompt
-      //     already teaches the one line it needs (lead scope arrives as
-      //     [agent:from <lead>]). DISABLE_CLAUDE_MDS gates the CLI's CLAUDE.md
-      //     loader (independent of --system-prompt); FORCE_PROMPT_CACHING_5M pins
-      //     the short-TTL cache. Env is defense-in-depth WITH intents:[] — the
-      //     prompt skip removes the teaching, the gate removes the capability;
-      //     they fail independently.
-      const reviewerSystemPrompt = def.prompt || null;
-      const reviewerEnv = {
-        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
-        FORCE_PROMPT_CACHING_5M: '1',
-        CLODEX_DISABLE_IPC_PROMPT: '1',
-      };
+      // Lean-reviewer context (T51, now template-driven in T52). The three levers —
+      // system prompt REPLACEMENT (reviewerSystemPrompt → --system-prompt-file, a
+      // full swap of the CLI's bulky default; create() dedupes its auto role-prompt
+      // append when the stem === def.prompt), gated intents (reviewerIntents — [] =
+      // every catalog intent gated; buildIpcPrompt([]) sheds all gateable grammar +
+      // MEMORY), and lean-context env (reviewerEnv, incl. the Clodex-internal
+      // CLODEX_DISABLE_IPC_PROMPT directive create()'s claude arm consumes to drop
+      // the IPC protocol append) — are all resolved from the reviewer template above,
+      // re-capped in code. Env is defense-in-depth WITH intents:[]: the prompt skip
+      // removes the teaching, the gate removes the capability; they fail independently.
 
       // Defer off the scan callback that fired us (same discipline as
       // _handleSpawnIntent): never drive a PTY spawn synchronously from a watcher emit.
@@ -3984,7 +4077,7 @@ function createSessionManager(deps) {
           await this.create(
             name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
             null, false, session.proxy ?? null, [], [], disabledTools, [], [],
-            reviewerSystemPrompt, [], [], [], reviewerEnv,
+            reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv,
           );
           // wirescope spawner-hint suppression (T51): tell the proxy to drop its
           // spawner-hint block from THIS seat's system prompt. Keyed by the seat's
@@ -3997,7 +4090,7 @@ function createSessionManager(deps) {
           // resolved base); any failure is logged and ignored — a review with the
           // hint beats no review, and this must never fail or delay the spawn.
           try {
-            const hintBase = resolveProxyBase(session.proxy ?? null, getUiSettings());
+            const hintBase = wantSpawnerHintOff ? resolveProxyBase(session.proxy ?? null, getUiSettings()) : null;
             const routeName = (this.sessions.get(name) || {}).proxyAgent || null;
             if (hintBase && routeName) {
               ProxyClient.spawnerHint(hintBase, routeName, { on: false })
@@ -4027,7 +4120,7 @@ function createSessionManager(deps) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${typeWarn}${promptWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${typeWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           // Spawn failed → free the reserved name so it doesn't linger as a phantom
           // persisted seat that blocks the slot forever (MUST-FIX 1 reservation cleanup).

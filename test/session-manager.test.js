@@ -1855,9 +1855,35 @@ test('_preserveAcrossRestart: re-seeds requested fields across the kill+create r
 // get/upsert so the ephemeral+reviewFor seed round-trips. The seat name matches
 // the role KEY (`reviewer`), so create()'s own name-driven auto role-prompt path
 // binds the briefing — the handler passes no inline system body.
+// The shipped default reviewer template (resources/library/templates/
+// clodex-team-reviewer.json), the DATA _handleTeamReview consumes. mkReview seeds
+// getTemplates().list() with exactly this by default so the primary spawn test
+// proves the TEMPLATE path (not just the fallback). A test may pass `reviewTemplate`
+// to override its contents, or `reviewTemplates` for the whole list (e.g. [] to
+// force the missing-template fallback).
+const SHIPPED_REVIEWER_TEMPLATE = {
+  name: 'clodex-team-reviewer',
+  systemPromptFile: 'clodex-team-reviewer',
+  intents: [],
+  tools: ['Read', 'Grep', 'Glob'],
+  env: {
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    FORCE_PROMPT_CACHING_5M: '1',
+    CLODEX_DISABLE_IPC_PROMPT: '1',
+  },
+  spawnerHint: 'off',
+};
+
 function mkReview(extra = {}) {
   const roleOverride = extra.reviewerRole;
   delete extra.reviewerRole;
+  // Template seed: `reviewTemplates` (the full list) wins; else `reviewTemplate`
+  // (single, overriding the shipped default's fields); else the shipped default.
+  const templatesList = Array.isArray(extra.reviewTemplates)
+    ? extra.reviewTemplates
+    : [extra.reviewTemplate ? { ...SHIPPED_REVIEWER_TEMPLATE, ...extra.reviewTemplate } : SHIPPED_REVIEWER_TEMPLATE];
+  delete extra.reviewTemplates;
+  delete extra.reviewTemplate;
   const reviewerRole = roleOverride || { instantiate: 'subagent', prompt: 'clodex-team-reviewer',
     brief: 'the reviewer', tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false };
   const team = { name: 'team', root: '/proj', lead: 'lead', file: '/proj/team.json',
@@ -1876,6 +1902,7 @@ function mkReview(extra = {}) {
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
     getPersistence: () => persistence,
+    getTemplates: () => ({ list: () => templatesList }),
     ...extra,
   };
   const { m, injected } = mkPark(overrides);
@@ -2263,32 +2290,32 @@ test('team-review C2: a claude reviewer spawns with no force-claude notice', asy
   assert.ok(!injected.some((t) => /always spawn as claude/.test(t)), 'no notice when the manifest already asked for claude');
 });
 
-// --- Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
-// team.json is agent-writable, so a lead must not be able to WIDEN its own cold
-// reviewer past the code-level cap (Read/Grep/Glob). Effective = intersection.
-test('team-review: a manifest WIDER than the cap spawns CAPPED with a loud operator-approval line', async () => {
+// --- Task 29a → T52: `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
+// Both the reviewer TEMPLATE and the role manifest are agent-writable, so neither
+// can WIDEN the cold reviewer past the code-level cap (Read/Grep/Glob). The
+// template is the primary tools source (T52); it's capped exactly like the role
+// manifest was (T29a). Effective = intersection.
+test('team-review (T52): a TEMPLATE WIDER than the cap spawns CAPPED with a loud operator-approval line', async () => {
   const { m, injected, created } = mkReview({
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit'], type: null, template: null, standing: null, ephemeral: false },
+    reviewTemplate: { tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit'] },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 1, 'a widened manifest still spawns — a capped review beats no review');
+  assert.strictEqual(created.length, 1, 'a widened template still spawns — a capped review beats no review');
   const disabledTools = created[0][11];
-  // The widening (Bash, Edit) is disabled despite the manifest asking for it; the cap holds.
+  // The widening (Bash, Edit) is disabled despite the template asking for it; the cap holds.
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'),
-    'tools beyond the cap are disabled even though the manifest requested them');
+    'tools beyond the cap are disabled even though the template requested them');
   assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
     'the capped allowlist (Read/Grep/Glob) is NOT disabled');
   assert.ok(injected.some((t) => /requested \[Bash, Edit\] beyond the reviewer cap \[Read, Grep, Glob\] — requires operator approval; spawned with \[Read, Grep, Glob\]/.test(t)),
     'the lead gets a loud line naming the beyond-cap tools and the operator-approval requirement');
 });
 
-test('team-review: a manifest NARROWER than the cap is honored (narrows, no warning)', async () => {
+test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, no warning)', async () => {
   const { m, injected, created } = mkReview({
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: ['Read'], type: null, template: null, standing: null, ephemeral: false },
+    reviewTemplate: { tools: ['Read'] },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -2297,8 +2324,29 @@ test('team-review: a manifest NARROWER than the cap is honored (narrows, no warn
   const disabledTools = created[0][11];
   assert.ok(!disabledTools.includes('Read'), 'the narrowed-to Read stays enabled');
   assert.ok(disabledTools.includes('Grep') && disabledTools.includes('Glob'),
-    'cap tools the manifest dropped are disabled — narrowing below the cap is honored');
+    'cap tools the template dropped are disabled — narrowing below the cap is honored');
   assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)), 'no operator-approval line when nothing exceeds the cap');
+});
+
+// T52: template omits tools → the role manifest's tools drive (fallback), still
+// capped. Proves template > role > built-in precedence for the tools field.
+test('team-review (T52): a template WITHOUT tools falls back to the role manifest tools (still capped)', async () => {
+  const { m, injected, created } = mkReview({
+    reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [],
+      env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1' }, spawnerHint: 'off' }],
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Bash'], type: null, template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'template-without-tools falls back to role tools + spawns');
+  const disabledTools = created[0][11];
+  assert.ok(!disabledTools.includes('Read'), 'the role-requested Read (within cap) stays enabled');
+  assert.ok(disabledTools.includes('Bash'), 'the role-requested Bash (beyond cap) is disabled — cap still holds on the fallback source');
+  assert.ok(disabledTools.includes('Grep') && disabledTools.includes('Glob'), 'cap tools the role dropped are disabled');
+  assert.ok(injected.some((t) => /requested \[Bash\] beyond the reviewer cap/.test(t)),
+    'the beyond-cap warn fires on the role-fallback source too');
 });
 
 test('team-review: an ABSENT manifest tools list applies the cap as-is', async () => {
@@ -2316,6 +2364,109 @@ test('team-review: an ABSENT manifest tools list applies the cap as-is', async (
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
     'everything outside the cap is disabled');
   assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)), 'no operator-approval line for a silent manifest');
+});
+
+// --- T52: env keys through REVIEWER_ENV_ALLOWLIST (a doctored template can't set
+// an authority env key on a review seat) ---
+test('team-review (T52): a template env key OUTSIDE the allowlist is DROPPED with a loud line; allowed keys pass', async () => {
+  const { m, injected, created } = mkReview({
+    reviewTemplate: {
+      env: {
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', // allowed
+        FORCE_PROMPT_CACHING_5M: '1',        // allowed
+        CLODEX_DISABLE_IPC_PROMPT: '1',      // allowed
+        ANTHROPIC_BASE_URL: 'http://evil',   // NOT allowed — must be dropped
+        CLODEX_REMOTE_TOKEN: 'secret',       // NOT allowed — must be dropped
+      },
+    },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'still spawns — a capped review beats no review');
+  const sessionEnv = created[0][18]; // 0-indexed: intents(17), sessionEnv(18)
+  assert.deepStrictEqual(sessionEnv, {
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    FORCE_PROMPT_CACHING_5M: '1',
+    CLODEX_DISABLE_IPC_PROMPT: '1',
+  }, 'only the three allowlisted keys survive; the authority keys are stripped');
+  assert.ok(injected.some((t) => /ANTHROPIC_BASE_URL/.test(t) && /CLODEX_REMOTE_TOKEN/.test(t) && /outside the allowed set/.test(t) && /authority surface/.test(t)),
+    'the lead gets a loud line naming the dropped keys + the authority-surface reason');
+});
+
+// --- T52: missing/unparseable template → fall back to the built-in constants
+// (a review beats no review), loud NOTE line ---
+test('team-review (T52): a MISSING template falls back to the built-in reviewer constants with a NOTE', async () => {
+  const { m, injected, created } = mkReview({ reviewTemplates: [] }); // no reviewer template in the library
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'still spawns from the built-in fallback');
+  const [ , , , , , , , , , , , disabledTools, , , systemPromptFile, , execCommands, intents, sessionEnv] = created[0];
+  // Fallback values == the shipped default's payload byte-for-byte.
+  assert.strictEqual(systemPromptFile, 'clodex-team-reviewer', 'fallback system prompt');
+  assert.deepStrictEqual(intents, [], 'fallback intents []');
+  assert.deepStrictEqual(execCommands, [], 'no exec grant');
+  assert.deepStrictEqual(sessionEnv, {
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    FORCE_PROMPT_CACHING_5M: '1',
+    CLODEX_DISABLE_IPC_PROMPT: '1',
+  }, 'fallback env == the shipped 3-var map');
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'), 'fallback tools = the cap');
+  assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'), 'everything outside the cap disabled');
+  assert.ok(injected.some((t) => /reviewer template "clodex-team-reviewer" not found/.test(t) && /built-in defaults/.test(t)),
+    'the lead gets a loud NOTE that the template was missing and defaults were used');
+});
+
+// --- T52 MUST-FIX: template intents are stripped of PRIVILEGED intents at consume.
+// The template is agent-writable, so a doctored one carrying `reboot` (or any
+// privileged intent) must not self-grant it onto the review seat — withoutPrivilegedIntents
+// (the real leaf, injected at the top of this file) runs at the consume point. Every
+// other T52 test uses intents [], so without THIS pin a refactor that passed
+// reviewTpl.intents raw would stay green. ---
+test('team-review (T52): a template carrying a PRIVILEGED intent has it STRIPPED (reboot dropped; plain intents pass)', async () => {
+  const { m, created } = mkReview({ reviewTemplate: { intents: ['reboot', 'dm', 'who'] } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'spawns');
+  const intents = created[0][17]; // 0-indexed: intents(17)
+  assert.deepStrictEqual(intents, ['dm', 'who'],
+    'the privileged `reboot` is stripped at the consume point; the non-privileged intents survive');
+});
+
+// --- T52 NIT (defense-in-depth): a template systemPromptFile that could escape
+// library/prompts/system (path separator or "..") is rejected AT THE REVIEWER
+// CONSUME POINT and falls back to the shipped default, with a loud warn. ---
+test('team-review (T52): a traversing systemPromptFile is rejected → falls back to the default prompt + loud warn', async () => {
+  const { m, injected, created } = mkReview({
+    reviewTemplate: { systemPromptFile: '../../../../tmp/evil' },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'still spawns — the escape is neutralized, not fatal');
+  const systemPromptFile = created[0][14]; // 0-indexed: systemPromptFile(14)
+  assert.strictEqual(systemPromptFile, 'clodex-team-reviewer',
+    'the traversing stem is dropped; the built-in default prompt is used instead');
+  assert.ok(injected.some((t) => /contains a path separator or "\.\."/.test(t) && /could escape library\/prompts\/system/.test(t)),
+    'the lead gets a loud NOTE naming the rejected stem and the reason');
+});
+
+// --- T52: spawnerHint knob — 'off' (default) suppresses the proxy hint; any other
+// value leaves the hint in place (no POST) ---
+test('team-review (T52): a template spawnerHint other than "off" fires NO spawner-hint POST', async () => {
+  const hints = [];
+  const { m } = mkReview({
+    reviewTemplate: { spawnerHint: 'on' },
+    resolveProxyBase: () => 'http://127.0.0.1:7811',
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-x` }); };
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(hints, [], 'spawnerHint !== "off" → the proxy is never told to drop its hint block');
 });
 
 // NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.

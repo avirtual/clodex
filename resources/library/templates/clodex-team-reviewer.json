@@ -1,0 +1,16 @@
+{
+  "name": "clodex-team-reviewer",
+  "systemPromptFile": "clodex-team-reviewer",
+  "intents": [],
+  "tools": [
+    "Read",
+    "Grep",
+    "Glob"
+  ],
+  "env": {
+    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+    "FORCE_PROMPT_CACHING_5M": "1",
+    "CLODEX_DISABLE_IPC_PROMPT": "1"
+  },
+  "spawnerHint": "off"
+}
