@@ -72,6 +72,29 @@ test('buildSsmScript: root wrapper — prereqs+node gate, clodex user, pinned in
   try { require('node:child_process').execFileSync('sh', ['-n', f]); } finally { fs.rmSync(f, { force: true }); }
 });
 
+test('buildSsmScript: step 0 portcheck fails early when the wire port is held by a non-clodex holder', () => {
+  const s = D.buildSsmScript({ port: 7900, token: 'deadbeef', repo: 'https://github.com/avirtual/clodex', branch: 'master' });
+  // A step-0 marker before prereqs.
+  assert.match(s, /::step portcheck/);
+  assert.ok(s.indexOf('::step portcheck') < s.indexOf('::step prereqs'), 'portcheck runs first');
+  // ss query uses ONLY the validated numeric port — no other caller data.
+  assert.match(s, /ss -tlnpH "sport = :7900"/);
+  // holder identity comes from on-box ps output (never caller data).
+  assert.match(s, /ps -o user= -p "\$HPID"/);
+  assert.match(s, /ps -o comm= -p "\$HPID"/);
+  // held by OUR clodex user → a ::log, NOT a fail (redeploy restarts it).
+  assert.match(s, /\[ "\$HUSER" = "clodex" \]/);
+  assert.match(s, /::log port 7900 already held by our clodex service/);
+  // held by anything else → ::fail naming the holder, then exit 1.
+  assert.match(s, /echo "::fail portcheck port-7900-held-by-\$\{HUSER:-unknown\}-\$\{HCMD:-proc\}-pid-\$\{HPID:-unknown\}"/);
+  assert.match(s, /::ok portcheck/);
+  // the ONLY port literal in the portcheck block is the validated 7900 — confirm a
+  // different port flows through identically (no stray hardcode).
+  const s8 = D.buildSsmScript({ port: 8100, token: 't', repo: 'https://x/y', branch: 'm' });
+  assert.match(s8, /ss -tlnpH "sport = :8100"/);
+  assert.match(s8, /port-8100-held-by-/);
+});
+
 test('buildSsmScript: heredoc delimiters are per-run random nonces (unguessable)', () => {
   const a = D.buildSsmScript({ port: 7900, token: 't', repo: 'https://x/y', branch: 'm' });
   const b = D.buildSsmScript({ port: 7900, token: 't', repo: 'https://x/y', branch: 'm' });
@@ -326,6 +349,92 @@ test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + 
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts.mybox, { ssm: { target: 'i-1', region: 'us-west-2', profile: 'p' }, token: verifiedWith.token });
   assert.strictEqual(saved.current, 'mybox');
+});
+
+test('deploy ssm --claude-token-file: OAuth token delivered over the WIRE, NEVER in the SSM send-command params', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-oauth-secret\n');
+  let delivered = null;
+  const { code, stdout } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--claude-token-file', tf], {
+    execFn: fakeAws(rec),
+    probeSsm: async () => ({ app: 'clodex', host: 'mybox', version: '9', caps: [] }),
+    deliverToken: async (entry, wireToken, oauth) => { delivered = { entry, wireToken, oauth }; return { ok: true }; },
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  // Delivery happened over the wire with the typed ssm entry + minted WIRE token.
+  assert.strictEqual(delivered.oauth, 'sk-oauth-secret');
+  assert.deepStrictEqual(delivered.entry.ssm, { target: 'i-1' });
+  assert.match(delivered.wireToken, /^[0-9a-f]{48}$/);
+  // CRITICAL: the OAuth token VALUE is NOWHERE in the SSM send-command wrapper
+  // (CloudTrail). (The embedded ssh-flavor installer references the CLODEX_CLAUDE_TOKEN
+  // env VAR by name for its own drop-in guard — that's a name, never the secret; the
+  // ssm flavor leaves it unset so that branch is inert, and the value never rides SSM.)
+  assert.ok(!rec.sentScript.includes('sk-oauth-secret'), 'OAuth token must never ride SSM params');
+  // Nor in stdout / the deploy trail.
+  assert.doesNotMatch(stdout, /sk-oauth-secret/);
+  assert.match(stdout, /claude token sent over the wire .*verify with a claude spawn/);
+});
+
+test('deploy ssm --claude-token-file --dry-run: token noted by presence only, absent from wrapper', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-drysecret\n');
+  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf, '--dry-run'], {
+    execFn: async () => ({ stdout: '{}' }), probeSsm: async () => ({}),
+    deliverToken: async () => { throw new Error('should not deliver on dry-run'); },
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /claude.*delivered over the wire post-verify, NOT via SSM params/);
+  assert.doesNotMatch(stdout, /sk-drysecret/);
+});
+
+test('deploy ssm --claude-token-file: a bad token file fails fast BEFORE any aws call', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const tf = path.join(dir, 'empty'); fs.writeFileSync(tf, '\n');
+  let awsCalled = false;
+  const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf], {
+    execFn: async () => { awsCalled = true; return { stdout: '{}' }; },
+    probeSsm: async () => ({}), deliverToken: async () => ({ ok: true }),
+  });
+  assert.strictEqual(code, 2);   // EXIT.USAGE
+  assert.match(stderr, /no token/);
+  assert.strictEqual(awsCalled, false);
+});
+
+test('deliverClaudeToken: wire dance — bash session, control acquire, drop-in typed, engine polled back', async () => {
+  // A fake wire: a WireClient hits transport.js → we stub openTransport by
+  // pointing at a local http server that records the calls.
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null, auth: req.headers['authorization'] });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.method === 'POST' && /\/api\/control\//.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
+      if (req.url === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const entry = { url: `http://127.0.0.1:${port}` };
+  const r = await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {} });
+  assert.strictEqual(r.ok, true);
+  server.close();
+  // The wire carried: create bash session, acquire control, input the drop-in, then hello.
+  const create = seen.find((s) => s.method === 'POST' && s.url === '/api/sessions');
+  assert.strictEqual(create.body.type, 'bash');
+  assert.match(create.body.name, /^clodex-token-/);
+  assert.strictEqual(create.auth, 'Bearer wire-tok');
+  const input = seen.find((s) => s.method === 'POST' && /\/api\/input\//.test(s.url));
+  assert.strictEqual(input.body.token, 'ctrl-1');
+  assert.match(input.body.data, /systemctl --user restart clodex\.service/);
+  // The OAuth token rides a shell-var assignment in the typed script (not argv).
+  assert.match(input.body.data, /CLODEX_CLAUDE_TOKEN='sk-oauth-9'/);
+  assert.ok(seen.some((s) => s.url === '/api/peer/hello'), 'engine polled back after restart');
 });
 
 test('deploy ssm --port non-default: remotePort saved on the ssm entry + wrapper', async () => {

@@ -152,6 +152,13 @@ else
   git clone --quiet --branch "$BRANCH" "$REPO_URL" "$SRC_DIR" || fail source "git-clone-failed"
 fi
 cd "$SRC_DIR" || fail source "cd-failed"
+# Record WHAT got deployed — the ref + short commit sha. A stdout ::log marker
+# (not the stderr log() helper) so it rides BOTH the ssh trail and the ssm
+# wrapper's ^:: filter; parses grammar-generically to {type:'log'} in both
+# parsers (no new marker kind). BRANCH is the already-provided ref; the sha is
+# git's own output, no caller data. Makes "box cloned the wrong ref" visible.
+DEPLOYED_SHA="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "::log deployed $BRANCH@$DEPLOYED_SHA"
 ok source
 
 # --- npm install: prod deps only, then rebuild node-pty for the Node ABI ----
@@ -186,6 +193,39 @@ fs.renameSync(tmp, p);
 ' "$SETTINGS" "$PORT" >&2 || fail settings "ui-settings-merge-failed"
 ok settings
 
+# --- agent-clis: the claude/codex CLIs a spawn will exec ---------------------
+# The engine spawns `claude`/`codex` as child PTYs; without the binaries on PATH
+# the child dies on execvp with a bare code-1 (the exact silent-death this step
+# prevents). Install them the SETTLED native way — the same one-liners the GUI's
+# "Install <tool>…" button runs (tool-doctor.js): curl|sh into ~/.local/bin, no
+# npm, no root, self-updating. BEST-EFFORT by design: a node that only runs bash
+# sessions is legitimate, so a failed CLI install is logged but NEVER fails the
+# deploy and NEVER needs sudo. Idempotent: a present CLI is skipped. macOS is the
+# desktop-app story — skip there too (the app manages its own tools).
+step agent-clis
+if [ "$IS_MAC" = "1" ]; then
+  log "macOS: skipping agent-CLI install (desktop app manages its own tools)"
+  ok agent-clis
+else
+  if command -v claude >/dev/null 2>&1; then
+    log "claude already present — skipping"
+  else
+    log "installing claude CLI (native installer → ~/.local/bin)…"
+    curl -fsSL https://claude.ai/install.sh | bash >&2 \
+      && log "claude installed" \
+      || log "claude install failed (best-effort) — a Claude spawn will fail until it is installed"
+  fi
+  if command -v codex >/dev/null 2>&1; then
+    log "codex already present — skipping"
+  else
+    log "installing codex CLI (native installer → ~/.local/bin)…"
+    curl -fsSL https://chatgpt.com/codex/install.sh | sh >&2 \
+      && log "codex installed" \
+      || log "codex install failed (best-effort) — a Codex spawn will fail until it is installed"
+  fi
+  ok agent-clis
+fi
+
 # --- systemd --user service + linger ---------------------------------------
 # macOS: Bogdan's ruling — "if it is a mac we don't make it start automatically".
 # No unit, no linger; a fresh mac deploy ends with a manual first start, and the
@@ -194,6 +234,9 @@ ok settings
 step service
 if [ "$IS_MAC" = "1" ]; then
   log "macOS: auto-start not configured — start Clodex manually (npm start) or use the app"
+  # No systemd on macOS, so there's no unit drop-in to carry a Claude token —
+  # the desktop app manages its own auth. Say so rather than silently dropping it.
+  [ -n "${CLODEX_CLAUDE_TOKEN:-}" ] && log "macOS: --claude-token-file ignored (no systemd unit; the app manages Claude auth)"
   ok service
 else
 mkdir -p "$UNIT_DIR"
@@ -201,6 +244,21 @@ mkdir -p "$UNIT_DIR"
 # actual source dir (the repo unit uses %h/wb-wrap-ui; honor a CLODEX_SRC override).
 sed "s#^WorkingDirectory=.*#WorkingDirectory=$SRC_DIR#" "$SRC_DIR/peering/clodex.service" > "$UNIT_DIR/clodex.service" \
   || fail service "unit-install-failed"
+# Claude auth (ssh flavor): if a token rode the ssh stdin (CLODEX_CLAUDE_TOKEN,
+# set by the deploy preamble — never argv, never ps), write it into a unit
+# drop-in so the engine spawns `claude` already authenticated. printf is a shell
+# builtin (token never in a process arg list); the file is 0600, owned by this
+# user; done BEFORE daemon-reload/restart below so the restart picks it up. The
+# ssm flavor does NOT use this path — it delivers the token over the wire.
+if [ -n "${CLODEX_CLAUDE_TOKEN:-}" ]; then
+  DROPIN_DIR="$UNIT_DIR/clodex.service.d"
+  ( umask 077; mkdir -p "$DROPIN_DIR" ) || fail service "token-dropin-mkdir-failed"
+  ( umask 077; printf '[Service]\nEnvironment=CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$CLODEX_CLAUDE_TOKEN" > "$DROPIN_DIR/claude-token.conf" ) \
+    || fail service "token-dropin-write-failed"
+  chmod 600 "$DROPIN_DIR/claude-token.conf" 2>/dev/null || true
+  unset CLODEX_CLAUDE_TOKEN
+  log "claude token drop-in written (unit env)"
+fi
 # enable-linger so the --user service runs without an active login session.
 if ! loginctl show-user "$USER" 2>/dev/null | grep -q 'Linger=yes'; then
   if can_sudo; then

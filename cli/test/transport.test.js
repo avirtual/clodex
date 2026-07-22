@@ -91,7 +91,27 @@ test('openTransport: real detached child — opens, waits, group-killed on close
 test('openTransport(direct): no child, base is the url (trailing slash trimmed)', async () => {
   const t = await T.openTransport({ url: 'http://h:7900/' });
   assert.strictEqual(t.baseUrl, 'http://h:7900');
+  // waitExit for a url ctx never resolves (no child) — race it against a timer.
+  const raced = await Promise.race([t.waitExit().then(() => 'exited'), new Promise((r) => setTimeout(() => r('pending'), 60))]);
+  assert.strictEqual(raced, 'pending');
   t.close(); // no-op
+});
+
+// port-forward pins the LOCAL end. A real detached child that binds the pinned
+// {port} proves openTransport honors localPort and reports it back.
+test('openTransport(localPort): pins the local end, reports it, waitExit resolves on close', async () => {
+  const script = 'const net=require("net");const p=+process.argv[1].split(":")[0];net.createServer(s=>s.end()).listen(p,"127.0.0.1");setInterval(()=>{},1000);';
+  const local = await T.pickFreePort();
+  const ctx = { tunnel: [process.execPath, '-e', script, '{port}:7900'] };
+  const t = await T.openTransport(ctx, { deadlineMs: 5000, localPort: local });
+  assert.strictEqual(t.localPort, local);
+  assert.strictEqual(t.baseUrl, `http://127.0.0.1:${local}`);
+  assert.strictEqual(await T.portAccepts(local), true);
+  const exited = t.waitExit();
+  t.close();
+  await exited; // resolves once the group-killed child's exit event fires
+  await new Promise((r) => setTimeout(r, 400));
+  assert.strictEqual(await T.portAccepts(local), false);
 });
 
 test('waitForPort rejects with child stderr when the child dies first', async () => {

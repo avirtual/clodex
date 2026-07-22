@@ -145,7 +145,7 @@ async function skills({ client, printer, args }) {
 
 // ── write verbs ─────────────────────────────────────────────────────────────
 
-async function spawn({ client, printer, flags, args }) {
+async function spawn({ client, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'spawn');
   const body = { name };
   if (flags.cwd) body.cwd = String(flags.cwd);
@@ -159,8 +159,38 @@ async function spawn({ client, printer, flags, args }) {
   if (extra.length) body.extraArgs = extra;
   if (flags.fork) body.fork = true;
   const res = await client.post('/api/sessions', 'spawn', body);
-  if (flags.json) printer.json(res);
-  else printer.line(`spawned ${res.name || name} (${res.type || flags.type || '?'})${res.pid ? ` pid=${res.pid}` : ''}${res.warnings && res.warnings.length ? `\nwarnings: ${res.warnings.join('; ')}` : ''}`);
+  // Post-spawn liveness (the silent-death fix): a child that dies on execvp —
+  // e.g. its CLI isn't on the node's PATH (a fresh OS-flavor deploy) — STILL
+  // returns a pid, then the session vanishes from the engine with no hint. Wait a
+  // beat, then look for the name in the live list: gone → it was dead-on-arrival,
+  // so say WHY instead of reporting a pid the caller can't use. A read failure
+  // leaves `alive` unknown (null) — never turn a transient blip into a scary lie.
+  const type = res.type || flags.type || null;
+  const alive = await spawnAlive(client, res.name || name, io.sleepFn);
+  if (flags.json) { printer.json({ ...res, alive }); return; }
+  if (alive === false) {
+    printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''} — but it exited immediately (gone from the engine).`);
+    if (type && type !== 'bash') {
+      printer.line(`  likely the \`${type}\` CLI isn't installed on the node — a native OS-flavor deploy provisions the engine only. Check with \`clodexctl sessions\`; re-run \`clodexctl deploy …\` to (re)install the agent CLIs.`);
+    }
+    return;
+  }
+  printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''}${res.warnings && res.warnings.length ? `\nwarnings: ${res.warnings.join('; ')}` : ''}`);
+}
+
+// Is the just-spawned session still alive a beat later? Returns true (present),
+// false (absent — dead on arrival), or null (couldn't tell — a read error, so
+// the caller stays optimistic). A single short-delayed check keeps the added
+// latency bounded; sleepFn is the test seam (a no-op skips the wall-clock wait).
+const SPAWN_LIVENESS_DELAY_MS = 600;
+async function spawnAlive(client, name, sleepFn) {
+  const sleep = sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  try {
+    await sleep(SPAWN_LIVENESS_DELAY_MS);
+    const body = await client.get('/api/sessions', 'spawn liveness');
+    const list = body.sessions || [];
+    return list.some((s) => s && s.name === name);
+  } catch { return null; }
 }
 
 async function send({ client, printer, flags, args }) {

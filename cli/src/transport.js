@@ -204,9 +204,15 @@ function waitForPort(port, { deadlineMs = WAIT_PORT_MS, isDead, stderr } = {}) {
 // An opened transport: { baseUrl, close() }. Direct has nothing to close.
 // spawnFn is injectable for tests (defaults to child_process.spawn); a fake
 // child that listens on {port} exercises the whole path without real ssh.
-async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlineMs = WAIT_PORT_MS } = {}) {
+// `localPort` (optional) pins the local end instead of picking a free port —
+// port-forward needs a caller-chosen LOCAL. A busy port makes the tunnel child
+// fail its bind (ssh's ExitOnForwardFailure), so waitForPort surfaces the
+// child's stderr as an honest CONNECT rather than silently colliding.
+async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlineMs = WAIT_PORT_MS, localPort = null } = {}) {
   if (ctx.url) {
-    return { baseUrl: ctx.url.replace(/\/+$/, ''), close() {} };
+    // No child → nothing ever exits; waitExit stays pending forever (callers that
+    // race it, like port-forward, reject url ctx before opening).
+    return { baseUrl: ctx.url.replace(/\/+$/, ''), close() {}, waitExit: () => new Promise(() => {}) };
   }
   const remotePort = ctx.remotePort || DEFAULT_REMOTE_PORT;
   let argv;
@@ -230,11 +236,15 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     throw new CliError(EXIT.USAGE, 'context has no url, ssh, tunnel, or cloud transport');
   }
 
-  const port = await pickFreePort();
+  const port = localPort != null ? (localPort | 0) : await pickFreePort();
   const [cmd, ...rest] = substitutePort(argv, port);
 
   let stderrBuf = '';
   let exited = false;
+  // Resolves when the tunnel child exits — port-forward's foreground hold races
+  // it against a signal so a mid-session tunnel drop ends the hold honestly.
+  let resolveExit;
+  const exitP = new Promise((res) => { resolveExit = res; });
   // detached:true → the child leads its own process group, so kill(-pid)
   // sweeps helpers it forked. No shell: argv is passed literally.
   const child = spawnFn(cmd, rest, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -249,8 +259,9 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     } else {
       stderrBuf += `\n${e.message}`;
     }
+    resolveExit();
   });
-  child.on('exit', () => { exited = true; });
+  child.on('exit', () => { exited = true; resolveExit(); });
 
   const close = () => {
     try {
@@ -271,7 +282,7 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     close();
     throw e;
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, close, stderr: () => stderrBuf.trim() };
+  return { baseUrl: `http://127.0.0.1:${port}`, localPort: port, close, stderr: () => stderrBuf.trim(), waitExit: () => exitP };
 }
 
 module.exports = {

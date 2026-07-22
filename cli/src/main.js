@@ -15,6 +15,7 @@ const { CliError, EXIT } = require('./errors');
 const V = require('./verbs');
 const D = require('./deploy');
 const { attach } = require('./attach');
+const { portForward } = require('./port-forward');
 const { HELP, VERSION } = require('./help');
 const { parse } = require('./args');
 
@@ -54,6 +55,10 @@ async function run(argv, io = {}) {
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'args') return await dispatchArgs(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
+    // port-forward holds a tunnel in the FOREGROUND and owns no WireClient, so it
+    // resolves the ctx + opens the transport itself rather than routing through
+    // withWire (which would open a wire-port tunnel and reap it immediately).
+    if (verb === 'port-forward') { await portForward({ flags, args: rest, printer, io }); return EXIT.OK; }
     const handler = WIRE_VERBS[verb];
     if (!handler) throw new CliError(EXIT.USAGE, `unknown verb: ${verb} (try --help)`);
     // io.prompt is an injectable confirm seam (tests pass a canned answerer);

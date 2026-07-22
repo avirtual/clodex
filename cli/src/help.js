@@ -67,6 +67,17 @@ THE VERB
                           logs for scripting). run = ask and wait; attach = be
                           there. Survives a dropped stream (auto reconnect + full
                           re-replay). Works on any session type, any transport.
+  port-forward LOCAL:REMOTE  a kubectl-style FOREGROUND tunnel to an arbitrary
+                          remote port on the node, over whatever transport the
+                          context carries (ssh -L / ssm / kubectl / gcloud IAP /
+                          az bastion / custom {port} argv). Prints the local
+                          address once it is up, then holds — Ctrl-C exits 0.
+                          LOCAL binds 127.0.0.1 only. REMOTE is a port number or
+                          \`web\` (the node's web-GUI port: saved ctx webPort, else
+                          wire-port+1). Single-shot: a dropped tunnel exits with
+                          the child's stderr (no reconnect — the consumer retries).
+                          A url (direct) context has no tunnel → usage error.
+                          Non-TTY OK (a script can hold it open).
 
 WRITE VERBS
   spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--fork]
@@ -99,28 +110,36 @@ DEPLOY
   deploy <user@host>       install/UPDATE a headless Clodex node on an
              [--port N] [--repo URL] [--branch B] [--src DIR]  ssh-reachable box
              [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--dry-run]
+             [--claude-token-file FILE]
                           Drives peering/clodex-deploy.sh over ssh (idempotent —
                           re-run = update), streams ::step/::ok progress
                           (--json = NDJSON per marker), verifies hello through an
                           ssh tunnel, then saves a context {ssh, remotePort} (no
-                          token — the tunnel is the auth boundary). --no-ctx skips
-                          it; collision kept unless --force. ssh-reachable boxes
+                          token — the tunnel is the auth boundary). Installs the
+                          claude/codex CLIs on the box. --no-ctx skips the ctx;
+                          collision kept unless --force. ssh-reachable boxes
                           only — Fargate/k8s nodes stay recipe-based. Exit 42
                           from the script = run the printed sudo commands on the
-                          box, then re-run deploy.
+                          box, then re-run deploy. --claude-token-file reads
+                          CLAUDE_CODE_OAUTH_TOKEN from a local file (raw token or
+                          a CLAUDE_CODE_OAUTH_TOKEN=… env-file line) and rides the
+                          ssh stdin into a 0600 unit drop-in — never argv/logs.
   deploy ssm <name> --target i-INSTANCE   deploy a node over AWS SSM RunCommand
              [--region R] [--profile P] [--branch B] [--repo URL] [--port N]
-             [--no-ctx] [--force] [--dry-run] [--json]
+             [--no-ctx] [--force] [--dry-run] [--json] [--claude-token-file FILE]
                           no ssh, no open ports (OS flavor — a dedicated clodex
                           host user + systemd --user service, same as the ssh
                           flavor): mint a wire token, one root AWS-RunShellScript
                           (prereqs → the pinned installer as the clodex user →
                           token drop-in → on-box hello), poll to completion
                           (10min budget), verify from here through the real SSM
-                          port-forward, save a typed ssm context (+token). Token
-                          rides the send-command parameters → visible in the
+                          port-forward, save a typed ssm context (+token). Wire
+                          token rides the send-command parameters → visible in the
                           account's SSM history/CloudTrail; the port stays on
-                          loopback, re-run to rotate.
+                          loopback, re-run to rotate. --claude-token-file delivers
+                          CLAUDE_CODE_OAUTH_TOKEN over the ENCRYPTED WIRE after
+                          verify (NEVER via SSM params/CloudTrail) into a 0600 unit
+                          drop-in — never argv/logs.
                           (A host literally named \`ssm\` → \`deploy ssh ssm\`.)
   deploy docker <name>     birth a CONTAINER node — one \`docker run\` of the
              [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box]

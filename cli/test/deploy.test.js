@@ -34,6 +34,40 @@ test('buildPreamble: single-quote-escaped exports; CLODEX_SRC only when set', ()
   assert.match(withSrc, /REPO_URL='r'\\''x'/);   // embedded quote escaped
 });
 
+test('buildPreamble: claudeToken (ssh flavor) adds a single-quote-escaped CLODEX_CLAUDE_TOKEN export', () => {
+  const p = D.buildPreamble({ port: 7900, repo: 'https://h/r', branch: 'master', claudeToken: "tok'v" });
+  assert.match(p, /CLODEX_CLAUDE_TOKEN='tok'\\''v'/);   // embedded quote escaped
+  // no claudeToken → the export is absent (unchanged behavior).
+  assert.doesNotMatch(D.buildPreamble({ port: 7900, repo: 'r', branch: 'm' }), /CLODEX_CLAUDE_TOKEN/);
+});
+
+test('readClaudeToken: raw token, env-file line, and rejections', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const raw = path.join(dir, 'raw'); fs.writeFileSync(raw, '  sk-abc123\n');
+  assert.strictEqual(D.readClaudeToken(raw), 'sk-abc123');
+  const env = path.join(dir, 'env'); fs.writeFileSync(env, '# comment\nCLAUDE_CODE_OAUTH_TOKEN="sk-env-9"\nOTHER=1\n');
+  assert.strictEqual(D.readClaudeToken(env), 'sk-env-9');
+  const exp = path.join(dir, 'exp'); fs.writeFileSync(exp, 'export CLAUDE_CODE_OAUTH_TOKEN=sk-exp-7\n');
+  assert.strictEqual(D.readClaudeToken(exp), 'sk-exp-7');
+  const empty = path.join(dir, 'empty'); fs.writeFileSync(empty, '  \n');
+  assert.throws(() => D.readClaudeToken(empty), /no token/);
+  const spacey = path.join(dir, 'spacey'); fs.writeFileSync(spacey, 'sk abc');
+  assert.throws(() => D.readClaudeToken(spacey), /whitespace\/control/);
+  assert.throws(() => D.readClaudeToken(path.join(dir, 'nope')), /unreadable/);
+});
+
+test('buildTokenDropinScript: shell-var assignment (not argv), 0600 drop-in, reload+restart', () => {
+  const s = D.buildTokenDropinScript("sk-x'y");
+  assert.match(s, /CLODEX_CLAUDE_TOKEN='sk-x'\\''y'/);          // single-quote escaped assignment
+  assert.match(s, /Environment=CLAUDE_CODE_OAUTH_TOKEN=%s/);    // printf builtin, token via "$VAR"
+  assert.match(s, /printf .* "\$CLODEX_CLAUDE_TOKEN" > "\$DROPIN"/);
+  assert.match(s, /chmod 600 "\$DROPIN"/);
+  assert.match(s, /systemctl --user daemon-reload/);
+  assert.match(s, /systemctl --user restart clodex\.service/);
+  // The literal token never sits on a command line (only inside the var assign).
+  assert.doesNotMatch(s, /Environment=CLAUDE_CODE_OAUTH_TOKEN=sk-x/);
+});
+
 test('deriveCtxName: short host, sanitized; user@ and domain stripped', () => {
   assert.strictEqual(D.deriveCtxName('user@laptop2'), 'laptop2');
   assert.strictEqual(D.deriveCtxName('deploy@box.example.com'), 'box');
@@ -59,6 +93,48 @@ test('readScript: resolves off __dirname and returns the real installer bytes', 
   const s = D.readScript();
   assert.match(s, /Clodex headless peer-node deploy/);
   assert.match(s, /echo "::done"/);
+});
+
+test('installer: agent-clis step installs claude+codex the native way, best-effort', () => {
+  const s = D.readScript();
+  assert.match(s, /step agent-clis/);
+  // The SETTLED native install lines (tool-doctor.js) — curl|sh into ~/.local/bin.
+  assert.match(s, /curl -fsSL https:\/\/claude\.ai\/install\.sh \| bash/);
+  assert.match(s, /curl -fsSL https:\/\/chatgpt\.com\/codex\/install\.sh \| sh/);
+  // Idempotent: a present CLI is skipped.
+  assert.match(s, /command -v claude >\/dev\/null 2>&1/);
+  assert.match(s, /command -v codex >\/dev\/null 2>&1/);
+  // Best-effort: NEVER fails the deploy, NEVER needs sudo — no `fail`/`need_sudo`
+  // between the step marker and its ok.
+  const seg = s.slice(s.indexOf('step agent-clis'), s.indexOf('ok agent-clis'));
+  assert.doesNotMatch(seg, /\bfail agent-clis\b/);
+  assert.doesNotMatch(seg, /need_sudo/);
+});
+
+test('installer: source step ::logs the deployed ref@sha (a log marker, not a new kind)', () => {
+  const s = D.readScript();
+  // A ::log line (parses grammar-generically → {type:'log'} in BOTH parsers) —
+  // NOT an ::ok overload (the GUI keys the ✓ on the exact step name). Rides the
+  // already-provided BRANCH + git's own short sha, no caller data beyond BRANCH.
+  assert.match(s, /DEPLOYED_SHA="\$\(git -C "\$SRC_DIR" rev-parse --short HEAD/);
+  assert.match(s, /echo "::log deployed \$BRANCH@\$DEPLOYED_SHA"/);
+  // It sits in the source step, before its ok, so the trail shows what landed.
+  const seg = s.slice(s.indexOf('step source'), s.indexOf('ok source'));
+  assert.match(seg, /::log deployed \$BRANCH@\$DEPLOYED_SHA/);
+  // parseMarker treats it as a log line (no orphan step in the GUI checklist).
+  assert.deepStrictEqual(D.parseMarker('::log deployed master@abc1234'),
+    { type: 'log', text: '::log deployed master@abc1234' });
+});
+
+test('service unit: PATH carries ~/.local/bin (native CLIs) ahead of ~/.npm-global/bin', () => {
+  const unit = fs.readFileSync(path.join(__dirname, '..', '..', 'peering', 'clodex.service'), 'utf8');
+  const m = unit.match(/^Environment=PATH=(.+)$/m);
+  assert.ok(m, 'clodex.service must set Environment=PATH');
+  const entries = m[1].split(':');
+  assert.ok(entries.includes('%h/.local/bin'), 'PATH must include %h/.local/bin (native claude/codex)');
+  assert.ok(entries.includes('%h/.npm-global/bin'), 'PATH must keep %h/.npm-global/bin');
+  assert.ok(entries.indexOf('%h/.local/bin') < entries.indexOf('%h/.npm-global/bin'),
+    '~/.local/bin should precede ~/.npm-global/bin (native install is the deploy default)');
 });
 
 // ── flow: fake ssh ───────────────────────────────────────────────────────────
@@ -136,6 +212,33 @@ test('deploy happy path: env delivered, script on stdin, hello verified, ctx sav
   assert.deepStrictEqual(saved.contexts.box, { ssh: 'user@box' });
   assert.strictEqual(saved.contexts.box.token, undefined);
   assert.strictEqual(saved.current, 'box');
+});
+
+test('deploy --claude-token-file: token rides ssh stdin (preamble), NEVER argv/stdout', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-42\n');
+  const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf], {
+    spawnFn: fakeSsh(rec, { lines: HAPPY }),
+    probeHello: async () => ({ app: 'clodex', host: 'box', version: '1', caps: [] }),
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  // The token rode the stdin preamble as an env export (the ssh auth boundary).
+  assert.match(rec.stdin, /CLODEX_CLAUDE_TOKEN='sk-secret-42'/);
+  // REDACTION: the token is nowhere in the ssh argv nor in our stdout.
+  assert.ok(!rec.args.some((a) => String(a).includes('sk-secret-42')), 'token must not appear in ssh argv');
+  assert.doesNotMatch(stdout, /sk-secret-42/);
+});
+
+test('deploy --claude-token-file --dry-run: notes the token by presence only, redacted', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-99\n');
+  const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf, '--dry-run'], {});
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /claude  token from --claude-token-file/);
+  assert.doesNotMatch(stdout, /sk-secret-99/);
 });
 
 test('deploy --port non-default: remotePort recorded in the saved context', async () => {

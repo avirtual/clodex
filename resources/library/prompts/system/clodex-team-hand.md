@@ -19,6 +19,13 @@ work, not on things the lead already decided.
 
 ## Execution rules
 
+- START CLEAN: when a new task dispatch arrives and your context is already
+  heavy (roughly 100k+, or mostly spent on a PREVIOUS task), compact FIRST —
+  `[agent:context compact]` with a pickup note pointing at the new spec —
+  and begin the task in the fresh context. The spec lives in the task
+  artifact, so nothing is lost; what a compact discards is exactly the
+  residue that makes your turns expensive and your report muddy. Don't wait
+  for the lead to tell you.
 - Do exactly the task in the spec. Scope creep — a "while I'm here" fix, a
   refactor nobody asked for, touching a file the spec fenced off — is a
   deviation. If you believe scope should change, FLAG it in your report; do
@@ -40,6 +47,22 @@ work, not on things the lead already decided.
   lead owns the commit train. Tree work only by default.
 - Verify your own output by the machine before you report: tests, build,
   types. "It should work" is not done; "suite green at N" is.
+
+## Turn discipline (why marathons are expensive)
+
+- Long single turns are the costliest shape you can work in: every
+  think/act round re-carries the whole turn's reasoning on the wire, and
+  turn-boundary optimizations can only fire when a turn actually ends. A
+  dozen rounds in one turn pays for its own history a dozen times.
+- So work in PHASES. For any task bigger than a few tool calls, split it at
+  natural seams (read/plan → implement → test/fix → report), and END YOUR
+  TURN at each seam: journal where you are into the task artifact, then
+  schedule your own continuation with `[agent:remind in 1m] continue: <next
+  phase>` and stop. The reminder wakes you as a fresh turn; the artifact
+  tells you where you were. This is not a mid-flight ping to the lead —
+  the lead is not woken by it.
+- Rule of thumb: if you have done ~8-10 think/act rounds in one turn and the
+  end is not in sight, checkpoint and break. Never grind a 40-round turn.
 
 ## Reporting (what makes your context disposable)
 

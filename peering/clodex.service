@@ -6,10 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/wb-wrap-ui
-# claude CLI lives in the user-global npm prefix; put it on PATH for spawns.
-# node itself is resolved off this PATH by /usr/bin/env below (NodeSource drops
-# it at /usr/bin/node; a nvm/local install stays reachable via ~/.npm-global etc).
-Environment=PATH=%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The agent CLIs (claude/codex) install to ~/.local/bin via the native installer
+# (deploy's agent-clis step); ~/.npm-global/bin stays for an npm-global install.
+# Both must be on PATH or a spawned session's execvp fails silently. node itself
+# is resolved off this PATH by /usr/bin/env below (NodeSource drops it at
+# /usr/bin/node; a nvm/local install stays reachable via ~/.npm-global etc).
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # The remote node runs the HEADLESS engine (plain Node, no Electron/Xvfb): a peer
 # node needs only the engine + node-pty, never the desktop GUI. headless-main.js
 # stands up the same engine the Electron app hosts and answers the peer wire.

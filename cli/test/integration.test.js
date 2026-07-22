@@ -113,15 +113,82 @@ test('query: bad kind is a usage error (exit 2), no request made', async () => {
   server.close();
 });
 
+// A no-op sleep so the post-spawn liveness check adds no wall-clock wait.
+const NOSLEEP = { sleepFn: async () => {} };
+
 test('spawn: model rides extraArgs, not a top-level field', async () => {
-  const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, name: 'b', type: 'claude', pid: 9 })); });
+  const { server, seen } = stub((req, res, rec) => {
+    res.writeHead(200);
+    // POST creates; the follow-up liveness GET must see the session alive.
+    if (rec.method === 'GET' && rec.url === '/api/sessions') {
+      return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'b', type: 'claude' }] }));
+    }
+    res.end(JSON.stringify({ ok: true, name: 'b', type: 'claude', pid: 9 }));
+  });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'b', '--cwd', '/w', '--type', 'claude', '--model', 'opus', '--arg', '--foo'], port);
+  const { code, stdout } = await cli(['spawn', 'b', '--cwd', '/w', '--type', 'claude', '--model', 'opus', '--arg', '--foo'], port, NOSLEEP);
   assert.strictEqual(code, 0);
+  assert.strictEqual(seen[0].method, 'POST');
   assert.strictEqual(seen[0].url, '/api/sessions');
   assert.strictEqual(seen[0].body.model, undefined);
   assert.deepStrictEqual(seen[0].body.extraArgs, ['--model', 'opus', '--foo']);
   assert.match(stdout, /spawned b \(claude\) pid=9/);
+  server.close();
+});
+
+test('spawn: dead-on-arrival child (gone from the live list) reports WHY, not a bare pid', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    res.writeHead(200);
+    // Spawn returns a pid, but the liveness GET shows the session already gone.
+    if (rec.method === 'GET' && rec.url === '/api/sessions') {
+      return res.end(JSON.stringify({ ok: true, sessions: [] }));
+    }
+    res.end(JSON.stringify({ ok: true, name: 'w2', type: 'claude', pid: 4242 }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['spawn', 'w2', '--cwd', '/w', '--type', 'claude'], port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /exited immediately/);
+  assert.match(stdout, /claude` CLI isn't installed on the node/);
+  assert.match(stdout, /deploy/);
+  // We still ran exactly the spawn POST then the liveness GET.
+  assert.strictEqual(seen[0].method, 'POST');
+  assert.strictEqual(seen[1].method, 'GET');
+  assert.strictEqual(seen[1].url, '/api/sessions');
+  server.close();
+});
+
+test('spawn --json: carries alive:false when the child is dead on arrival', async () => {
+  const { server } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [] }));
+    res.end(JSON.stringify({ ok: true, name: 'w2', type: 'claude', pid: 4242 }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['spawn', 'w2', '--type', 'claude', '--json'], port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  const obj = JSON.parse(stdout);
+  assert.strictEqual(obj.alive, false);
+  assert.strictEqual(obj.pid, 4242);
+  server.close();
+});
+
+test('spawn: a liveness read failure stays optimistic (alive unknown → normal line)', async () => {
+  let n = 0;
+  const { server } = stub((req, res, rec) => {
+    if (rec.method === 'GET' && rec.url === '/api/sessions') {
+      // Simulate a transient read failure on the liveness probe.
+      res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: 'boom' }));
+    }
+    res.writeHead(200); res.end(JSON.stringify({ ok: true, name: 'w3', type: 'claude', pid: 7 }));
+    n++;
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['spawn', 'w3', '--type', 'claude'], port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  // Unknown liveness → we do NOT cry wolf; the normal spawned line stands.
+  assert.match(stdout, /spawned w3 \(claude\) pid=7/);
+  assert.doesNotMatch(stdout, /exited immediately/);
   server.close();
 });
 

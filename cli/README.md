@@ -209,6 +209,24 @@ same channel the GUI's xterm and `exec` use) — arrow keys, ESC sequences, and
 any ASCII control input work; raw non-UTF-8 byte streams are not guaranteed to
 round-trip losslessly.
 
+**`port-forward` — reach any port on the node.** Where `attach` gives you a
+session's screen, `port-forward` gives you a raw TCP tunnel to an arbitrary
+remote port, over the SAME transport the context already carries — no new
+credentials, no open ports on the box:
+
+| Verb | Mechanism | Notes |
+|---|---|---|
+| `port-forward LOCAL:REMOTE` | reuses the ctx's tunnel (`ssh -L` / `ssm start-session` / `kubectl port-forward` / `gcloud IAP` / `az bastion` / custom `{port}` argv) targeting `REMOTE` instead of the wire port | prints `forwarding 127.0.0.1:LOCAL -> <target>:REMOTE — Ctrl-C to stop`, then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` binds `127.0.0.1` only. `REMOTE` is a port number or `web` (the node's web-GUI port: saved ctx `webPort`, else wire-port+1). **Single-shot** — a dropped tunnel exits `3` with the child's stderr (no reconnect; the consumer retries). A `url` (direct) context has no tunnel → exit `2`. Non-TTY OK |
+
+It generalizes the tunnel machinery (`transport.js`) that every wire verb uses
+to open the wire port: same `{port}`-substituted, process-group-reaped child,
+but forwarding a port you name and held open in the foreground kubectl-style
+rather than reaped after one request. This is the plumbing for reaching a
+remote node's **web GUI** through SSM/ssh with zero published ports —
+`port-forward 8080:web` then open `http://127.0.0.1:8080` in a browser, once the
+node runs a web host (`CLODEX_WEB_PORT`; the prod installer does not enable it
+yet — the web-dist bundle a prod-only install ships without).
+
 **`logs -f` — follow.** Print the tail, then stream new transcript entries as
 each turn lands (subscribes to `/api/events`, refetches the delta on an activity
 for your session). `--json` emits **NDJSON** (one object per new entry), so
@@ -261,9 +279,9 @@ contract (task ids, completion events) is T38.
 
 | Verb | Transport | Notes |
 |---|---|---|
-| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box, streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context |
+| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
-| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context |
+| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
 idempotent installer** the GUI uses, so **re-running `deploy` on the same host is
@@ -275,6 +293,17 @@ branch `master`, default port `7900`.
   stay recipe-based (see `docs/deployment-plan.md`).
 - **No token is stored.** The node binds loopback and is reached over an ssh
   tunnel; the tunnel is the auth boundary (same posture as the GUI's peers).
+- **The claude/codex CLIs are installed** (native installer → `~/.local/bin`,
+  best-effort — a failed install never fails the deploy), and the unit's `PATH`
+  carries `~/.local/bin` so a spawned agent session resolves them. A node that
+  only runs bash sessions is fine without them.
+- **`--claude-token-file FILE`** authenticates Claude on the box: it reads
+  `CLAUDE_CODE_OAUTH_TOKEN` from a local file (a **raw token**, or a
+  `CLAUDE_CODE_OAUTH_TOKEN=…` env-file line) and rides the **ssh stdin** (already
+  the auth boundary, not logged) into a `0600` systemd drop-in
+  (`clodex.service.d/claude-token.conf`). The token never appears in argv, `ps`,
+  `--json`, or the deploy trail. Without it, `claude` installs but is
+  unauthenticated (it prompts/fails at first use — honest).
 - On success a context is saved (name defaults to the host's short name, or
   `--name N`); a name collision is **kept** unless `--force`. `--no-ctx` opts out.
   Deploy ends with `clodexctl --ctx <name> sessions`, not just an installed service.
@@ -384,6 +413,18 @@ clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the a
   the wire at all requires `ssm:StartSession` on the same account. To rotate the
   token, **re-run `deploy ssm`** (it mints a new one, rewrites the drop-in and
   restarts the service, then updates the context).
+- **`--claude-token-file FILE` never rides SSM.** The Claude OAuth token is
+  **not ours to rotate** (unlike the wire token), so it must **not** land in
+  CloudTrail. It is delivered **after the verify** over the **encrypted wire**
+  (the SSM port-forward): a throwaway bash session is spawned over the wire, the
+  drop-in is typed in (the token rides a shell **variable assignment**, never a
+  process argv), written `0600` to `clodex.service.d/claude-token.conf`, and the
+  service restarted. The restart drops the wire (the delivery session dies with
+  it); the engine comes back with `claude` authenticated. The token appears in
+  **no** SSM parameter, argv, `--json`, or trail. Same file format as the ssh
+  flavor (raw token or a `CLAUDE_CODE_OAUTH_TOKEN=…` line).
+- **The claude/codex CLIs are installed** by the pinned installer (best-effort,
+  `~/.local/bin`, on the unit `PATH`) — same as the ssh flavor.
 - **Model credentials** belong on the **instance role** (Bedrock) or seeded
   manually on the box — the same guidance as the ssh flavor.
 - **ssh-reachable boxes** should prefer plain `deploy <user@host>`; **`deploy ssm`

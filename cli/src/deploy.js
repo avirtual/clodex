@@ -81,10 +81,65 @@ function readScript() {
 // quote/space in a repo URL or path can't break out. CLODEX_SRC only when set —
 // otherwise the script's own $HOME/wb-wrap-ui default stands (one source of
 // truth). Returns a string ending in '\n', prepend it to the script.
-function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null } = {}) {
+//
+// claudeToken (ssh flavor ONLY): the Claude OAuth token rides the SAME stdin the
+// script does (`ssh host 'bash -s'`) — the ssh channel is the auth boundary and
+// isn't logged, so a secret in its env-export line is fine (never argv, never
+// ps). The installer's service step writes it into the unit drop-in when
+// CLODEX_CLAUDE_TOKEN is set. The SSM flavor MUST NOT use this — its wrapper text
+// lands in CloudTrail; buildSsmScript calls this with no claudeToken and delivers
+// the secret post-verify over the encrypted wire instead.
+function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null, claudeToken = null } = {}) {
   let line = `export PORT=${shSingleQuote(port)} REPO_URL=${shSingleQuote(repo)} BRANCH=${shSingleQuote(branch)}`;
   if (src) line += ` CLODEX_SRC=${shSingleQuote(src)}`;
+  if (claudeToken) line += ` CLODEX_CLAUDE_TOKEN=${shSingleQuote(claudeToken)}`;
   return line + '\n';
+}
+
+// Read a Claude OAuth token from a local FILE (never argv — argv leaks via ps,
+// mirroring docker's --env-file posture). Accepts either a RAW token or an
+// env-file: a `CLAUDE_CODE_OAUTH_TOKEN=VALUE` line wins (docker --env-file
+// shape), else the whole trimmed file is the token. Rejects empty / multi-line /
+// control-char values (a token is a single opaque word; a newline could smuggle
+// a second env-export line into the ssh preamble). Never printed — a bad file is
+// a coded CliError with the PATH, never the contents.
+function readClaudeToken(file) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); }
+  catch (e) { throw new CliError(EXIT.USAGE, `--claude-token-file unreadable at ${file}: ${e.message}`); }
+  let tok = null;
+  // env-file line takes precedence (KEY=VALUE, optional surrounding whitespace).
+  for (const ln of raw.split('\n')) {
+    const m = ln.match(/^\s*(?:export\s+)?CLAUDE_CODE_OAUTH_TOKEN\s*=\s*(.*)$/);
+    if (m) { tok = m[1].trim().replace(/^["']|["']$/g, ''); break; }
+  }
+  if (tok == null) tok = raw.trim();   // raw-token file
+  if (!tok) throw new CliError(EXIT.USAGE, `--claude-token-file ${file} has no token (empty, or no CLAUDE_CODE_OAUTH_TOKEN=… line)`);
+  if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, `--claude-token-file ${file}: token has whitespace/control chars — expected a single opaque token or a CLAUDE_CODE_OAUTH_TOKEN=… line`);
+  return tok;
+}
+
+// Build the shell snippet that writes the Claude-token systemd drop-in as the
+// clodex user, fed over the wire into a throwaway bash session (ssm flavor). The
+// token rides a shell VARIABLE assignment (single-quote-escaped) → it never
+// enters a process argv/ps on the box; printf is a builtin. The drop-in lands
+// 0600 (umask 077 for the mkdir, explicit chmod belt), then daemon-reload +
+// restart pick it up (the restart drops the wire — the expected end of the
+// delivery session). Pure + test-pinned; token is the ONLY interpolated value
+// and it is shell-quoted.
+function buildTokenDropinScript(token) {
+  return [
+    'set -e',
+    `CLODEX_CLAUDE_TOKEN=${shSingleQuote(token)}`,
+    'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+    'DROPIN_DIR="$HOME/.config/systemd/user/clodex.service.d"',
+    'DROPIN="$DROPIN_DIR/claude-token.conf"',
+    '(umask 077; mkdir -p "$DROPIN_DIR"; printf \'[Service]\\nEnvironment=CLAUDE_CODE_OAUTH_TOKEN=%s\\n\' "$CLODEX_CLAUDE_TOKEN" > "$DROPIN")',
+    'chmod 600 "$DROPIN"',
+    'unset CLODEX_CLAUDE_TOKEN',
+    'systemctl --user daemon-reload',
+    'systemctl --user restart clodex.service',
+  ].join('\n');
 }
 
 // Parse ONE line of the deploy script's ::marker stdout into a structured
@@ -205,8 +260,12 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
   const src = flags.src ? String(flags.src) : null;
   const sshOpts = Array.isArray(flags['ssh-opt']) ? flags['ssh-opt'] : (flags['ssh-opt'] ? [String(flags['ssh-opt'])] : []);
+  // Claude auth (optional): read the OAuth token from a local file (never argv),
+  // then let it ride the ssh stdin as an env-export in the preamble — the ssh
+  // channel is the auth boundary. Never printed, never in argv.
+  const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
   const script = readScript();
-  const preamble = buildPreamble({ port, repo, branch, src });
+  const preamble = buildPreamble({ port, repo, branch, src, claudeToken });
   const stdin = preamble + script;
   const ctxName = flags.name ? String(flags.name) : deriveCtxName(dest);
   const json = !!flags.json;
@@ -214,7 +273,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
 
   // --dry-run: describe, run nothing.
   if (flags['dry-run']) {
-    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
+    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
     printer.line([
       `dry-run — would deploy to ${dest}:`,
       `  port    ${port}`,
@@ -222,6 +281,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
       `  branch  ${branch}`,
       src ? `  src     ${src}` : null,
       `  script  ${script.length} bytes (${scriptPath()})`,
+      claudeToken ? '  claude  token from --claude-token-file (rides ssh stdin, redacted)' : null,
       flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName || '(none — pass --name)'}`,
     ].filter(Boolean).join('\n'));
     return;
@@ -590,6 +650,37 @@ function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branc
     '# ::step/::ok/::fail markers on stdout; the pinned installer runs as the',
     '# clodex user and its own marker trail is filtered in from its log.',
     '',
+    '# 0. portcheck (root): fail FAST if the wire PORT is already held by something',
+    "#    that ISN'T our clodex service. Run 3's silent 30s-then-no-hello was a",
+    '#    manual container squatting on the wire port — root sees every listener, so',
+    '#    we can name the holder. Held by the clodex USER = a prior deploy (redeploy',
+    '#    restarts it) → normal. Anything else → ::fail with the holder named. Only',
+    '#    ${port} (numerically validated by parsePortOr) enters these lines — every',
+    '#    other value is on-box command output, never caller data.',
+    'echo "::step portcheck"',
+    'PORT_LINE=""',
+    `command -v ss >/dev/null 2>&1 && PORT_LINE=$(ss -tlnpH "sport = :${port}" 2>/dev/null | head -n1)`,
+    'if [ -n "$PORT_LINE" ]; then',
+    "  HPID=$(printf '%s' \"$PORT_LINE\" | grep -o 'pid=[0-9]*' | head -n1 | cut -d= -f2)",
+    '  HUSER=""; HCMD=""',
+    '  if [ -n "$HPID" ]; then',
+    '    HUSER=$(ps -o user= -p "$HPID" 2>/dev/null | tr -d "[:space:]")',
+    '    HCMD=$(ps -o comm= -p "$HPID" 2>/dev/null | tr -d "[:space:]")',
+    '  fi',
+    '  if [ "$HUSER" = "clodex" ]; then',
+    `    echo "::log port ${port} already held by our clodex service (pid \${HPID:-?}) — redeploy restarts it"`,
+    '  elif [ -z "$HPID" ]; then',
+    '    # Listener present but ss gave no pid= (unusual ss output). Ambiguous data',
+    '    # must not hard-block a legitimate redeploy — warn and fall through to the',
+    '    # old behavior (verify times out if the holder really is foreign).',
+    `    echo "::log port ${port} is held but the holder could not be identified — continuing; verify will catch a real conflict"`,
+    '  else',
+    `    echo "::fail portcheck port-${port}-held-by-\${HUSER:-unknown}-\${HCMD:-proc}-pid-\${HPID:-unknown}"`,
+    '    exit 1',
+    '  fi',
+    'fi',
+    'echo "::ok portcheck"',
+    '',
     '# 1. prereqs (root): git, curl, node>=20, npm + the node-pty build toolchain —',
     '#    best-effort, PER-PACKAGE so one conflicting package (e.g. full curl vs',
     '#    curl-minimal on AL2023) cannot take down the rest of the transaction. A',
@@ -874,6 +965,67 @@ async function ssmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
   }
 }
 
+// Deliver the Claude OAuth token to the freshly-deployed ssm node over the
+// AUTHENTICATED WIRE (the tunnel is encrypted; the secret never touches SSM
+// send-command parameters, so it stays out of SSM history/CloudTrail — the
+// non-negotiable constraint). Opens the same typed-ssm transport the verify
+// used, with the minted WIRE token, then: spawn a throwaway bash session →
+// acquire control → type the drop-in script (token rides a shell VAR, never a
+// process argv) → the script's `systemctl restart` drops the engine, which
+// tears the wire down under us (the throwaway session dies with it — a
+// post-input connection error is the EXPECTED end, not a failure). We then poll
+// hello with the wire token until the engine is back. NOTE the epistemics of a
+// fire-over-PTY design: success here confirms input-accepted + engine-reachable-
+// after, NOT that the drop-in write itself succeeded — if the typed script fails
+// partway and the engine restarts (or stays up) without the env, this still
+// reports delivered while `claude` stays unauthenticated. The first `spawn
+// --type claude` is the real proof; re-running deploy retries idempotently.
+// io.* seams thread through; token is NEVER logged.
+const TOKEN_SESSION_PREFIX = 'clodex-token-';
+async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep } = {}) {
+  const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
+  const t = await openTransport(entry, { spawnFn, execFn });
+  try {
+    const client = new WireClient(t.baseUrl, wireToken);
+    // 1. throwaway bash session (as the clodex user the engine runs as).
+    await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash' });
+    // 2. acquire control (input is gated on the per-acquire capability token).
+    const acq = await client.post(`/api/control/${encodeURIComponent(sessName)}`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
+    const ctrlToken = acq && acq.token;
+    if (!ctrlToken) throw new CliError(EXIT.SERVER, 'token delivery: could not acquire session control');
+    // 3. type the drop-in script + Enter. The trailing restart kills the engine.
+    const dropin = buildTokenDropinScript(oauthToken) + '\n';
+    try {
+      await client.post(`/api/input/${encodeURIComponent(sessName)}`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
+    } catch (e) {
+      // A connection death right after the restart line is the expected outcome
+      // (the engine went down mid-request). Only a CONNECT-class error is benign;
+      // anything else (4xx/5xx from a still-up engine) is a real failure.
+      if (!(e instanceof CliError && e.exitCode === EXIT.CONNECT)) throw e;
+    }
+  } finally {
+    try { t.close(); } catch {}
+  }
+  // 4. wait for the engine to come back up authenticated (restart → wire drops →
+  //    reappears). Poll hello with the wire token until 200 or the deadline.
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
+  for (;;) {
+    let t2 = null;
+    try {
+      t2 = await openTransport(entry, { spawnFn, execFn });
+      const client = new WireClient(t2.baseUrl, wireToken);
+      const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
+      return { ok: true, hello };
+    } catch (e) { lastErr = e; }
+    finally { if (t2) { try { t2.close(); } catch {} } }
+    if (Date.now() >= deadline) {
+      throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
+    }
+    await sleepFn(pollMs);
+  }
+}
+
 // deploy ssm <name> — orchestration. io seams: execFn (aws child), spawnFn
 // (verify tunnel child), probeSsm (verify override for tests), contextsFile.
 // Throws CliError (caught by main.run). --json emits NDJSON events.
@@ -896,6 +1048,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
   if (!REF_RE.test(repo)) throw new CliError(EXIT.USAGE, `bad --repo "${repo}" — use a git URL/ref (${REF_RE.source})`);
   if (!REF_RE.test(branch)) throw new CliError(EXIT.USAGE, `bad --branch "${branch}" — use a git ref name (${REF_RE.source})`);
+  // Claude auth (optional): read the token from a local file NOW (fail fast on a
+  // bad path before any AWS call). It NEVER rides the SSM wrapper (CloudTrail) —
+  // it's delivered post-verify over the encrypted wire. Never printed.
+  const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
   const execFn = io.execFn;   // undefined → runAws/ssm* default to execFileP
@@ -928,7 +1084,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   if (flags['dry-run']) {
     const script = buildSsmScript({ port, token: '<minted-token>', repo, branch });
     const sendArgv = ssmSendCommandArgs({ target, region, profile, script });
-    if (json) { emit({ type: 'dry-run', name, target, region, profile, port, repo, branch, sendArgv, script, ctxName: flags['no-ctx'] ? null : name }); return; }
+    if (json) { emit({ type: 'dry-run', name, target, region, profile, port, repo, branch, claudeToken: !!claudeToken, sendArgv, script, ctxName: flags['no-ctx'] ? null : name }); return; }
     printer.line([
       `dry-run — would deploy "${name}" to ${target} over SSM (OS flavor):`,
       `  user       clodex (host user + systemd --user service)`,
@@ -937,6 +1093,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
       `  branch     ${branch}`,
       region ? `  region     ${region}` : null,
       profile ? `  profile    ${profile}` : null,
+      claudeToken ? '  claude     token from --claude-token-file (delivered over the wire post-verify, NOT via SSM params, redacted)' : null,
       `  send-command  aws ${sendArgv.slice(1).join(' ')}`,
       flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (ssm)`,
       '  --- wrapper ---',
@@ -997,6 +1154,21 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${target}:${port}`);
 
+  // 5b. Claude auth (optional): deliver the OAuth token over the ENCRYPTED WIRE
+  //     (never SSM params → never CloudTrail). Post-verify, so the wire is proven.
+  if (claudeToken) {
+    try {
+      const deliver = io.deliverToken || deliverClaudeToken;
+      await deliver(entry, token, claudeToken, { spawnFn: io.spawnFn, execFn, sleepFn });
+    } catch (e) {
+      if (json) emit({ type: 'error', reason: 'token-delivery-failed', message: e.message });
+      else printer.line(`installed and verified, but delivering the Claude token failed: ${e.message} (re-run with --claude-token-file to retry)`);
+      throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `claude token delivery failed: ${e.message}`);
+    }
+    if (json) emit({ type: 'claude-auth', ok: true });
+    else printer.line('  claude token sent over the wire (unit drop-in, 0600) — verify with a claude spawn');
+  }
+
   // 6. ctx upsert (typed ssm kind + minted token). Collision skip unless --force.
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
@@ -1018,8 +1190,8 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
 
 module.exports = {
   DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
-  shSingleQuote, scriptPath, readScript, buildPreamble, parseMarker, sshDeployArgs, deriveCtxName,
-  runDeploy, probeHello, deployVerb,
+  shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs, deriveCtxName,
+  runDeploy, probeHello, deployVerb, deliverClaudeToken,
   DOCKER_IMAGE_REPO, DOCKER_DEFAULT_TAG, CONTAINER_PREFIX, CONTAINER_WIRE_PORT,
   DOCKER_VERIFY_TIMEOUT_MS, DOCKER_VERIFY_POLL_MS,
   normalizeDockerHost, dockerHostToSshDest, dockerRunArgs, runDocker, pollHello, deployDockerVerb,
