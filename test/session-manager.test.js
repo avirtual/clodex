@@ -1888,6 +1888,10 @@ function mkReview(extra = {}) {
   const order = []; // shared recorder — proves deliver happens BEFORE the discard (NIT 4)
   m.create = async (...args) => { created.push(args); };
   m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
+  // Scope delivery is PASSIVE (parked, drains with the seat's first organic
+  // turn) — active injects race CLI boot and ate two live review scopes.
+  const passive = [];
+  m._deliverPassive = (name, sender, body, mtype) => passive.push({ name, sender, body, mtype });
   // Default: delivery succeeds. A test can reassign m._gatedDeliver to return
   // { error } (dead/absent lead) to drive MUST-FIX 3's bounce-and-keep-live arm.
   m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { delivered: true }; };
@@ -1896,11 +1900,11 @@ function mkReview(extra = {}) {
   // persistence record — mirror that here so the sweep/record assertions see it.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
   m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
-  return { m, injected, created, delivered, gated, archived, killed, contextActions, order, persistence, team };
+  return { m, injected, created, delivered, passive, gated, archived, killed, contextActions, order, persistence, team };
 }
 
-test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope injected', async () => {
-  const { m, injected, created, delivered, persistence } = mkReview();
+test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered passively', async () => {
+  const { m, injected, created, delivered, passive, persistence } = mkReview();
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'check the boot-race fix');
   await new Promise((r) => setImmediate(r));
@@ -1922,8 +1926,12 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   const rec = persistence.get('team-reviewer-1');
   assert.strictEqual(rec.ephemeral, true);
   assert.strictEqual(rec.reviewFor, 'lead');
-  // Scope injected as the seat's first turn (active delivery, from the lead).
-  assert.deepStrictEqual(delivered, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  // Scope delivered PASSIVELY (pending store, drains with the seat's first
+  // organic turn) — an active inject races CLI boot; the mode-2004 proxy firing
+  // early left the scope as an unsubmitted draft that the next inject's Ctrl-U
+  // wiped (ate the T40 and T42 review scopes live).
+  assert.deepStrictEqual(passive, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  assert.deepStrictEqual(delivered, [], 'no active inject for the scope');
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
 });
 

@@ -3837,9 +3837,16 @@ function createSessionManager(deps) {
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });
-          // Inject the lead's scope as the seat's first turn — active delivery
-          // through the quiet-gated inject queue, landing after boot.
-          this._deliverMessage(name, session.name, scope, 'dm');
+          // Deliver the lead's scope PASSIVELY (pending store, drains with the
+          // seat's first organic turn / boot-idle flush) — same rule as
+          // _injectRoster and for the same reason: an active inject races CLI
+          // boot, and when the mode-2004 proxy fires early the scope lands as an
+          // unsubmitted draft that the NEXT inject's Ctrl-U silently wipes. That
+          // race ate two review scopes (T40/T42) while T41's happened to survive
+          // via a fire-time park divert — passive IS that surviving path, made
+          // unconditional. Safe here because the reviewer is force-claude above
+          // (passive parking is a claude-hook store; codex never parks).
+          this._deliverPassive(name, session.name, scope, 'dm');
           this._broadcast('ipc-message', {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });

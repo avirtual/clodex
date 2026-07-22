@@ -347,7 +347,7 @@ test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + 
   // The token that was sent to the box (in the drop-in) matches the one saved + verified.
   assert.ok(rec.sentScript.includes(`Environment=CLODEX_REMOTE_TOKEN=${verifiedWith.token}`));
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.mybox, { ssm: { target: 'i-1', region: 'us-west-2', profile: 'p' }, token: verifiedWith.token });
+  assert.deepStrictEqual(saved.contexts.mybox, { ssm: { target: 'i-1', region: 'us-west-2', profile: 'p' }, webPort: 7901, token: verifiedWith.token });
   assert.strictEqual(saved.current, 'mybox');
 });
 
@@ -597,7 +597,7 @@ test('deploy ssm --json: NDJSON preflight/command/marker/verify/context, no toke
   // marker trail surfaces as parsed events (one per ^:: line).
   assert.ok(objs.some((o) => o.type === 'step' && o.name === 'prereqs'));
   assert.ok(objs.some((o) => o.type === 'verify' && o.ok && o.host === 'n'));
-  assert.deepStrictEqual(objs[objs.length - 1], { type: 'context', action: 'added', name: 'n' });
+  assert.deepStrictEqual(objs[objs.length - 1], { type: 'context', action: 'added', name: 'n', webPort: 7901 });
   // No object carries the minted token.
   assert.doesNotMatch(stdout, /[0-9a-f]{48}/);
 });

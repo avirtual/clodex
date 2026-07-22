@@ -87,7 +87,11 @@ async function portForward({ flags, args, printer, io = {} }) {
 
   const target = entryTarget(ctx) || (ctx.name || 'node');
   const bound = t.localPort || local;
-  printer.line(`forwarding 127.0.0.1:${bound} -> ${target}:${remoteLabel} — Ctrl-C to stop`);
+  // io.onBound is the reuse seam for the `web` verb: same tunnel machinery, a
+  // different "it's up" announcement (a browser URL + a best-effort pop). Absent
+  // (the port-forward path) → the plain forwarding line, behavior unchanged.
+  if (io.onBound) io.onBound({ bound, target, remote, remoteLabel, printer });
+  else printer.line(`forwarding 127.0.0.1:${bound} -> ${target}:${remoteLabel} — Ctrl-C to stop`);
 
   // Foreground hold: whichever fires first wins. A signal = clean stop (exit 0);
   // the tunnel child exiting = the node/tunnel dropped (exit CONNECT with stderr).

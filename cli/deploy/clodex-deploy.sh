@@ -223,6 +223,19 @@ else
       && log "codex installed" \
       || log "codex install failed (best-effort) — a Codex spawn will fail until it is installed"
   fi
+  # Onboarding pre-seed (T42): a fresh claude shows a first-run wizard (theme/ANSI
+  # prompt) before it is usable, which blinds a headless spawn. Seed ~/.claude.json
+  # with onboarding-complete state IF ABSENT — never overwrite an existing file
+  # (the user's real config or a prior deploy's seed). Keys verified against a live
+  # ~/.claude.json. No codex twin: codex has no equivalent single-file
+  # onboarding-complete flag (~/.codex/config.toml is per-project trust), so skip it.
+  if [ ! -e "$HOME/.claude.json" ]; then
+    printf '%s\n' '{"hasCompletedOnboarding": true, "theme": "dark"}' > "$HOME/.claude.json" \
+      && log "seeded ~/.claude.json (onboarding-complete)" \
+      || log "could not seed ~/.claude.json (best-effort) — first claude spawn may show the onboarding wizard"
+  else
+    log "~/.claude.json present — leaving it untouched"
+  fi
   ok agent-clis
 fi
 
@@ -244,6 +257,16 @@ mkdir -p "$UNIT_DIR"
 # actual source dir (the repo unit uses %h/wb-wrap-ui; honor a CLODEX_SRC override).
 sed "s#^WorkingDirectory=.*#WorkingDirectory=$SRC_DIR#" "$SRC_DIR/peering/clodex.service" > "$UNIT_DIR/clodex.service" \
   || fail service "unit-install-failed"
+# Web GUI (T42): enable the browser frontend on wire-port+1, bound to loopback so
+# it is reachable ONLY over an authenticated tunnel (`clodexctl web <ctx>` /
+# port-forward). A drop-in (not the unit body) keeps the shipped unit generic and
+# survives a unit refresh. daemon-reload/restart below picks it up.
+WEB_PORT=$((PORT + 1))
+WEB_DROPIN_DIR="$UNIT_DIR/clodex.service.d"
+mkdir -p "$WEB_DROPIN_DIR" || fail service "web-dropin-mkdir-failed"
+printf '[Service]\nEnvironment=CLODEX_WEB_PORT=%s\nEnvironment=CLODEX_WEB_HOST=127.0.0.1\n' "$WEB_PORT" > "$WEB_DROPIN_DIR/web.conf" \
+  || fail service "web-dropin-write-failed"
+echo "::log web port $WEB_PORT"
 # Claude auth (ssh flavor): if a token rode the ssh stdin (CLODEX_CLAUDE_TOKEN,
 # set by the deploy preamble — never argv, never ps), write it into a unit
 # drop-in so the engine spawns `claude` already authenticated. printf is a shell

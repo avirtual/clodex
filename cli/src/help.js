@@ -67,17 +67,26 @@ THE VERB
                           logs for scripting). run = ask and wait; attach = be
                           there. Survives a dropped stream (auto reconnect + full
                           re-replay). Works on any session type, any transport.
-  port-forward LOCAL:REMOTE  a kubectl-style FOREGROUND tunnel to an arbitrary
-                          remote port on the node, over whatever transport the
-                          context carries (ssh -L / ssm / kubectl / gcloud IAP /
-                          az bastion / custom {port} argv). Prints the local
-                          address once it is up, then holds — Ctrl-C exits 0.
-                          LOCAL binds 127.0.0.1 only. REMOTE is a port number or
-                          \`web\` (the node's web-GUI port: saved ctx webPort, else
-                          wire-port+1). Single-shot: a dropped tunnel exits with
-                          the child's stderr (no reconnect — the consumer retries).
-                          A url (direct) context has no tunnel → usage error.
-                          Non-TTY OK (a script can hold it open).
+  web [ctx]                open the node's web GUI in your browser. Opens a
+             [--port N]    FOREGROUND tunnel to the node's web-GUI port (saved ctx
+             [--no-open]   webPort, else wire-port+1), prints http://127.0.0.1:PORT
+                          prominently, and pops your browser (best-effort; skipped
+                          under --no-open or a non-TTY stdout — the URL is always
+                          printed). LOCAL defaults to 8080 (first free of 8080..8090);
+                          --port pins it. Holds until Ctrl-C (exit 0). Same tunnel
+                          machinery as port-forward — a url (direct) context has no
+                          tunnel → usage error.
+  port-forward LOCAL:REMOTE  the "any other port" tunnel — a kubectl-style
+                          FOREGROUND tunnel to an ARBITRARY remote port on the
+                          node, over whatever transport the context carries (ssh -L
+                          / ssm / kubectl / gcloud IAP / az bastion / custom {port}
+                          argv). Prints the local address once it is up, then holds
+                          — Ctrl-C exits 0. LOCAL binds 127.0.0.1 only. REMOTE is a
+                          port number or \`web\` (the node's web-GUI port; \`web\` above
+                          is the friendly shortcut for the common case). Single-shot:
+                          a dropped tunnel exits with the child's stderr (no
+                          reconnect — the consumer retries). A url (direct) context
+                          has no tunnel → usage error. Non-TTY OK.
 
 WRITE VERBS
   spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--fork]

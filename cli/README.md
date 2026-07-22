@@ -209,23 +209,34 @@ same channel the GUI's xterm and `exec` use) — arrow keys, ESC sequences, and
 any ASCII control input work; raw non-UTF-8 byte streams are not guaranteed to
 round-trip losslessly.
 
-**`port-forward` — reach any port on the node.** Where `attach` gives you a
-session's screen, `port-forward` gives you a raw TCP tunnel to an arbitrary
-remote port, over the SAME transport the context already carries — no new
-credentials, no open ports on the box:
+**`web` — the node's GUI in your browser.** Every deployed node runs the web
+frontend on a loopback-only port (the installer enables it on wire-port+1 and
+`deploy` saves it as the ctx's `webPort`). `web` opens a foreground tunnel to it
+over the SAME transport the context already carries — no new credentials, no
+published ports on the box — prints the URL, and pops your browser:
 
 | Verb | Mechanism | Notes |
 |---|---|---|
-| `port-forward LOCAL:REMOTE` | reuses the ctx's tunnel (`ssh -L` / `ssm start-session` / `kubectl port-forward` / `gcloud IAP` / `az bastion` / custom `{port}` argv) targeting `REMOTE` instead of the wire port | prints `forwarding 127.0.0.1:LOCAL -> <target>:REMOTE — Ctrl-C to stop`, then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` binds `127.0.0.1` only. `REMOTE` is a port number or `web` (the node's web-GUI port: saved ctx `webPort`, else wire-port+1). **Single-shot** — a dropped tunnel exits `3` with the child's stderr (no reconnect; the consumer retries). A `url` (direct) context has no tunnel → exit `2`. Non-TTY OK |
+| `web [ctx] [--port N] [--no-open]` | reuses the ctx's tunnel to the node's web-GUI port (saved ctx `webPort`, else wire-port+1) | prints `http://127.0.0.1:PORT` prominently and **pops your browser** (`open`/`xdg-open`, best-effort — skipped under `--no-open` or a non-TTY stdout; the URL is always printed), then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` defaults to `8080` (first free of `8080..8090`); `--port` pins it. Same tunnel machinery as `port-forward` — a `url` (direct) context has no tunnel → exit `2` |
 
-It generalizes the tunnel machinery (`transport.js`) that every wire verb uses
+The browser-through-SSM recipe: `clodexctl deploy ssm mybox --target i-…`, then
+`clodexctl web mybox` — the GUI for a node with **no ssh and no published ports**
+opens in your browser, the tunnel riding the same SSM session the wire uses. The
+node's web host binds `127.0.0.1` only (`CLODEX_WEB_HOST=127.0.0.1` in the unit
+drop-in), so it is reachable *exclusively* through this authenticated tunnel.
+
+**`port-forward` — reach any OTHER port on the node.** `web` is the shortcut for
+the common case; `port-forward` is the general plumbing — a raw TCP tunnel to an
+arbitrary remote port, over the SAME transport:
+
+| Verb | Mechanism | Notes |
+|---|---|---|
+| `port-forward LOCAL:REMOTE` | reuses the ctx's tunnel (`ssh -L` / `ssm start-session` / `kubectl port-forward` / `gcloud IAP` / `az bastion` / custom `{port}` argv) targeting `REMOTE` instead of the wire port | prints `forwarding 127.0.0.1:LOCAL -> <target>:REMOTE — Ctrl-C to stop`, then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` binds `127.0.0.1` only. `REMOTE` is a port number or `web` (the node's web-GUI port; the `web` verb above is the friendly shortcut). **Single-shot** — a dropped tunnel exits `3` with the child's stderr (no reconnect; the consumer retries). A `url` (direct) context has no tunnel → exit `2`. Non-TTY OK |
+
+Both generalize the tunnel machinery (`transport.js`) that every wire verb uses
 to open the wire port: same `{port}`-substituted, process-group-reaped child,
 but forwarding a port you name and held open in the foreground kubectl-style
-rather than reaped after one request. This is the plumbing for reaching a
-remote node's **web GUI** through SSM/ssh with zero published ports —
-`port-forward 8080:web` then open `http://127.0.0.1:8080` in a browser, once the
-node runs a web host (`CLODEX_WEB_PORT`; the prod installer does not enable it
-yet — the web-dist bundle a prod-only install ships without).
+rather than reaped after one request.
 
 **`logs -f` — follow.** Print the tail, then stream new transcript entries as
 each turn lands (subscribes to `/api/events`, refetches the delta on an activity

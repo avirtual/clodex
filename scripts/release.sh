@@ -42,8 +42,16 @@ git fetch --quiet origin master || die "git fetch failed"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse @{u})" ] \
   || die "local master is not in sync with origin/master — pull/push first"
 
+# web-dist staleness guard (T42): the prebuilt browser bundle is TRACKED, so a
+# release must ship a bundle built from the current sources. Rebuild it here —
+# BEFORE the dirty-tree check below — so a stale web-dist/index.html dirties the
+# tree and the dirty check IS the staleness failure ("web-dist stale — rebuild
+# and commit"). A clean rebuild leaves the tree untouched and the check passes.
+step "Rebuilding web bundle (web-dist staleness guard)"
+npm run build:web >/dev/null || die "build:web failed — the tracked web-dist bundle could not be rebuilt"
+
 if [ -n "$(git status --porcelain)" ]; then
-  die "working tree is dirty — commit or stash before releasing"
+  die "working tree is dirty — commit or stash before releasing (a dirty web-dist/ here means the committed bundle is stale: re-run 'npm run build:web' and commit it)"
 fi
 
 # Runtime-split smoke: import + exercise wire/ under the ELECTRON binary.

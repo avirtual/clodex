@@ -367,11 +367,17 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${ctxName} sessions`);
     return;
   }
-  store.contexts[ctxName] = { ssh: dest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}) };
+  // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
+  // save it so `clodexctl web <ctx>` tunnels to the right remote port.
+  const webPort = port + 1;
+  store.contexts[ctxName] = { ssh: dest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), webPort };
   if (!store.current) store.current = ctxName;
   contexts.save(store, io.contextsFile);
-  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName });
-  else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName, webPort });
+  else {
+    printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+    printer.line(`  see it in your browser: clodexctl web ${ctxName}`);
+  }
 }
 
 // Tolerant contexts load (an absent/garbled file → empty store; deploy still
@@ -987,8 +993,9 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
     const client = new WireClient(t.baseUrl, wireToken);
-    // 1. throwaway bash session (as the clodex user the engine runs as).
-    await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash' });
+    // 1. throwaway bash session (as the clodex user the engine runs as). The
+    //    engine REJECTS a create without cwd; /tmp exists on any box we deploy.
+    await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash', cwd: '/tmp' });
     // 2. acquire control (input is gated on the per-acquire capability token).
     const acq = await client.post(`/api/control/${encodeURIComponent(sessName)}`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
     const ctrlToken = acq && acq.token;
@@ -1181,11 +1188,17 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
     return;
   }
-  store.contexts[name] = { ...entry, token };
+  // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
+  // save it so `clodexctl web <ctx>` tunnels to the right remote port.
+  const webPort = port + 1;
+  store.contexts[name] = { ...entry, webPort, token };
   if (!store.current) store.current = name;
   contexts.save(store, io.contextsFile);
-  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name });
-  else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
+  else {
+    printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+    printer.line(`  see it in your browser: clodexctl web ${name}`);
+  }
 }
 
 module.exports = {

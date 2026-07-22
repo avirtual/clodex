@@ -16,12 +16,13 @@ const V = require('./verbs');
 const D = require('./deploy');
 const { attach } = require('./attach');
 const { portForward } = require('./port-forward');
+const { web } = require('./web');
 const { HELP, VERSION } = require('./help');
 const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'follow', 'read-only', 'help', 'version'],
+  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'follow', 'read-only', 'no-open', 'help', 'version'],
   multi: ['arg', 'ssh-opt', 'volume'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', 'remote-port': 'remotePort' },
@@ -59,6 +60,10 @@ async function run(argv, io = {}) {
     // resolves the ctx + opens the transport itself rather than routing through
     // withWire (which would open a wire-port tunnel and reap it immediately).
     if (verb === 'port-forward') { await portForward({ flags, args: rest, printer, io }); return EXIT.OK; }
+    // `web` is the headline browser-GUI verb — a friendly wrapper over the same
+    // foreground tunnel machinery (it delegates to portForward), so it routes
+    // OUTSIDE withWire for the identical reason.
+    if (verb === 'web') { await web({ flags, args: rest, printer, io }); return EXIT.OK; }
     const handler = WIRE_VERBS[verb];
     if (!handler) throw new CliError(EXIT.USAGE, `unknown verb: ${verb} (try --help)`);
     // io.prompt is an injectable confirm seam (tests pass a canned answerer);

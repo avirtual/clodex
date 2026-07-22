@@ -83,7 +83,7 @@ function sanitizeBasename(name) {
 // (the showSaveDialog degradation) land under <userDataPath>/exports/.
 // `registerHandlers` is an optional test seam defaulting to the real
 // registerIpcHandlers; tests inject fake handlers without standing up an engine.
-function createWebHost({ engine, log, port, token, userDataPath, registerHandlers } = {}) {
+function createWebHost({ engine, log, port, host, token, userDataPath, registerHandlers } = {}) {
   const manager = engine.manager;
   const exportsDir = path.join(userDataPath || os.homedir(), 'exports');
   const webDist = path.join(__dirname, 'web-dist'); // P3b esbuild output (may not exist yet)
@@ -415,7 +415,14 @@ function createWebHost({ engine, log, port, token, userDataPath, registerHandler
     ws.on('error', (err) => log.error('web', `socket: ${err.message}`));
   });
 
-  server.listen(port, () => log.info('web', `web host listening on :${port}${token ? ' (token required)' : ' (localhost-trust)'}`));
+  // `host` pins the bind interface. Unset (the desktop/docker default) → Node's
+  // default all-interfaces bind, which the docker web path relies on (compose
+  // maps 127.0.0.1:HOST_PORT→container:8080 — a loopback container bind would
+  // break the port map). A deploy sets CLODEX_WEB_HOST=127.0.0.1 so the node's
+  // web GUI is loopback-only = reachable ONLY over an authenticated tunnel
+  // (`clodexctl web`/port-forward), covering the absent-token case.
+  const listenArgs = host ? [port, host] : [port];
+  server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : ' (localhost-trust)'}`));
 
   return {
     close() {

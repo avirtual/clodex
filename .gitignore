@@ -1,6 +1,9 @@
 node_modules/
 dist/
-web-dist/
+# web-dist/ is TRACKED (T42): the prebuilt browser bundle ships in the repo so
+# `npm ci --omit=dev` + `git clone` delivers the web GUI to a node with no build
+# step. scripts/release.sh runs `npm run build:web` in preflight so a stale
+# bundle dirties the tree and fails the release (the staleness guard).
 .DS_Store
 *.log
 .claude/

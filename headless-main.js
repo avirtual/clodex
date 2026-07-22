@@ -196,6 +196,12 @@ if (Number.isInteger(webPort) && webPort > 0) {
     const { createWebHost } = require('./web-host');
     webHost = createWebHost({
       engine, log, port: webPort,
+      // CLODEX_WEB_HOST pins the bind interface (a deploy sets 127.0.0.1 so the
+      // node's web GUI is loopback-only = tunnel-only). Unset OR empty/blank →
+      // all-interfaces (the docker web path's port-map relies on it) — trim so
+      // a hand-edited `CLODEX_WEB_HOST=` drop-in reads as the documented unset
+      // case rather than an accidental widen hidden behind a falsy check.
+      host: (process.env.CLODEX_WEB_HOST || '').trim() || null,
       token: process.env.CLODEX_WEB_TOKEN || null,
       userDataPath,
     });
