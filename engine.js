@@ -525,7 +525,7 @@ const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-uti
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { createTeamManifest } = require('./team-manifest');
 // Teams (docs/teams-design.md): project resolution is pure cwd+fs math. Core
 // consumes findProjectRoot (the team-retire authorization check, string root)
@@ -909,6 +909,7 @@ const SessionManager = createSessionManager({
     draftChunkSignal,
     drainPending,
     countPending,
+    peekPending,
     enqueueOutbox,
     ensureDir,
     execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)

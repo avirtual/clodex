@@ -154,6 +154,41 @@ function countPending(root, name) {
   }
 }
 
+// Cheap peek (not a claim): the parked deliveries for `name` as
+// [{ from, snippet }], in arrival order, for the sidebar ✉ tooltip. Read-only —
+// no rename, no delivery side effect. `max` caps how many entries are parsed
+// (the tooltip shows a few and summarizes the rest); `snipLen` clamps each
+// snippet. The parked TEXT is the full delivery bytes _buildDeliveryText mints:
+// it starts `[agent:from <sender>] <body>` (or a `… attached: @path` spill
+// pointer for a big body). We recover the sender from that prefix and take the
+// body's first line as the snippet — never the whole body, so no full message
+// text leaves the store. A line that doesn't match the prefix (a system notice)
+// falls back to from='?' with the whole first line as snippet.
+function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
+  let files;
+  try {
+    files = fs.readdirSync(agentDir(root, name))
+      .filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort();
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files.slice(0, max)) {
+    let text;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      if (!obj || typeof obj.text !== 'string') continue;
+      text = obj.text;
+    } catch { continue; }
+    const m = text.match(/^\[agent:from ([^\]]+)\]\s?([\s\S]*)$/);
+    const from = m ? m[1] : '?';
+    let body = (m ? m[2] : text).split('\n')[0].trim();
+    if (body.length > snipLen) body = body.slice(0, snipLen - 1).trimEnd() + '…';
+    out.push({ from, snippet: body });
+  }
+  return out;
+}
+
 // Is `id` already used by any parked delivery, in any agent's store? Resend
 // carries only the id (not the target), so ids must be unique ACROSS dirs, not
 // just within one — mint checks this to guarantee a resend resolves to exactly
@@ -207,4 +242,4 @@ function claimParkedById(root, id) {
   return null;
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById, agentDir };

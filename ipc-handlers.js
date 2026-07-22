@@ -411,6 +411,9 @@ function registerIpcHandlers(deps) {
   // Operator flush of a session's parked DMs (sidebar ✉ badge click). Operator-only
   // by construction — no agent intent maps here.
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
+  // Read-only peek at a session's parked DMs ([{ from, snippet }]) for the
+  // sidebar ✉ tooltip — no delivery side effect, snippets only (never full bodies).
+  handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
   handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
   handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
   handle('session:setAutoCompact', (_e, name, on) => persistence.setAutoCompact(name, on !== false));

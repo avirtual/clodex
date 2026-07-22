@@ -426,11 +426,12 @@ function fmtIdle(ms) {
 // 'idle 12m, warm' | 'idle 3m'. Warmth only shown when known. A session
 // blocked on a permission dialog trumps everything — it is neither working
 // nor reachable, and peers should know a reply isn't coming until the human
-// answers the dialog.
-function peerStatusLabel({ state, idleMs, payload, attention = null, now = Date.now() }) {
+// answers the dialog. Codex sessions carry no warmth signal at all, so their
+// label never shows one (the poller's 'cold' for them is absence, not fact).
+function peerStatusLabel({ state, idleMs, payload, attention = null, agentType = null, now = Date.now() }) {
   if (attention === 'permission') return 'blocked on a permission dialog';
   if (state === 'thinking') return 'working';
-  const w = warmthNow(payload, now);
+  const w = agentType === 'codex' ? null : warmthNow(payload, now);
   let label = `idle ${fmtIdle(idleMs)}`;
   if (w === 'warm') label += ', warm';
   else if (w === 'cold') label += ', cache cold';

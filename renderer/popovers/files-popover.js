@@ -197,8 +197,12 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
 
   filePeekTabDiff.addEventListener('click', () => { if (filePeek) { filePeek.tab = 'diff'; renderFilePeek(); } });
   filePeekTabFile.addEventListener('click', () => { if (filePeek) { filePeek.tab = 'file'; renderFilePeek(); } });
-  document.getElementById('file-peek-open').addEventListener('click', () => {
-    if (filePeek) window.api.fileOpen(filePeek.path);
+  document.getElementById('file-peek-open').addEventListener('click', async () => {
+    if (!filePeek) return;
+    // shell.openPath resolves an error STRING on failure — close only on a
+    // clean open; a failed one keeps the popover up (the only feedback we have).
+    const err = await window.api.fileOpen(filePeek.path);
+    if (!err) closeFilePeek();
   });
   document.getElementById('file-peek-close').addEventListener('click', closeFilePeek);
   // [agent:file view] — main already vetted the path and focused this window;

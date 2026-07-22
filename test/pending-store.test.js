@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pending-test-'));
@@ -88,6 +88,43 @@ test('countPending returns the parked count without claiming (drives the ✉ bad
   assert.equal(countPending(root, 'a'), 2);
   assert.deepStrictEqual(drainPending(root, 'a', 't'), ['m1', 'm2']);
   assert.equal(countPending(root, 'a'), 0, 'drained store → 0');
+});
+
+test('peekPending returns {from, snippet} per park, in arrival order, without claiming', () => {
+  const root = tmpRoot();
+  assert.deepStrictEqual(peekPending(root, 'a'), [], 'absent store → []');
+  parkDelivery(root, 'a', '[agent:from bob] hi there', '0001');
+  parkDelivery(root, 'a', '[agent:from carol] second message', '0002');
+  assert.deepStrictEqual(peekPending(root, 'a'), [
+    { from: 'bob', snippet: 'hi there' },
+    { from: 'carol', snippet: 'second message' },
+  ]);
+  // Peek is read-only — a following drain still sees both.
+  assert.deepStrictEqual(drainPending(root, 'a', 't'), ['[agent:from bob] hi there', '[agent:from carol] second message']);
+});
+
+test('peekPending clamps the snippet to a single ellipsized line', () => {
+  const root = tmpRoot();
+  const long = 'x'.repeat(200);
+  parkDelivery(root, 'a', `[agent:from bob] ${long}`, '0001');
+  parkDelivery(root, 'a', '[agent:from bob] line one\nline two', '0002');
+  const out = peekPending(root, 'a', { snipLen: 60 });
+  assert.ok(out[0].snippet.length <= 60, 'snippet clamped');
+  assert.ok(out[0].snippet.endsWith('…'), 'ellipsized');
+  assert.equal(out[1].snippet, 'line one', 'only the first line');
+});
+
+test('peekPending caps the number of entries parsed (max)', () => {
+  const root = tmpRoot();
+  for (let i = 1; i <= 8; i++) parkDelivery(root, 'a', `[agent:from bob] m${i}`, SEQ(i));
+  assert.equal(peekPending(root, 'a').length, 5, 'default max 5');
+  assert.equal(peekPending(root, 'a', { max: 3 }).length, 3);
+});
+
+test('peekPending falls back to from=? for a non-dm notice (no [agent:from] prefix)', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'a system notice with no sender prefix', '0001');
+  assert.deepStrictEqual(peekPending(root, 'a'), [{ from: '?', snippet: 'a system notice with no sender prefix' }]);
 });
 
 test('countPending ignores stray .tmp files and the id suffix (counts real parks only)', () => {

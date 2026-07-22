@@ -673,6 +673,9 @@ html, body {
   font-size: 11px;
   line-height: 1.4;
   color: var(--text);
+  /* Honor embedded newlines (the parked-message tooltip lists one msg per line)
+     while still collapsing incidental wrapping whitespace. */
+  white-space: pre-line;
 }
 #ui-tooltip[hidden] { display: none; }
 
@@ -2586,6 +2589,11 @@ html, body {
 
 /* The pot is a data table, not a list — wider so its columns breathe. */
 #pot-drawer { width: 440px; }
+
+/* The inbox holds prose notes, not short list labels — the 320px column turns a
+   long note into an endless scroll. Widen it (still capped so it never eats the
+   whole window) and let the operator drag it wider; the body already wraps. */
+#inbox-drawer { width: min(70vw, 720px); min-width: 360px; max-width: 90vw; resize: horizontal; overflow: auto; }
 
 #agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden, #exec-drawer.hidden, #inbox-drawer.hidden, #pot-drawer.hidden { display: none; }
 

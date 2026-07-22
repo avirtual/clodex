@@ -236,6 +236,7 @@ function createSessionManager(deps) {
     draftChunkSignal,
     drainPending,
     countPending,
+    peekPending,
     enqueueOutbox,
     ensureDir,
     execBodyCap,
@@ -1908,6 +1909,15 @@ function createSessionManager(deps) {
       return s && s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0;
     }
 
+    // Parked-DM previews for one session as [{ from, snippet }] (empty for
+    // non-claude). Read-only — feeds the sidebar ✉ tooltip so the operator can
+    // judge who's waiting and roughly what about, without waking the agent to
+    // drain the queue. Snippets only; never the full body (peekPending clamps).
+    peekPendingFor(name) {
+      const s = this.sessions.get(name);
+      return s && s.agentType === 'claude' ? peekPending(PENDING_DIR, s.name) : [];
+    }
+
     // Poll the pending store for parked-DM counts and broadcast DELTAS ONLY on the
     // 'pending-count' channel, driving the sidebar ✉ badge. Poll (not event) is
     // deliberate: the UserPromptSubmit hook drains the store OUT OF PROCESS with an
@@ -2775,6 +2785,7 @@ function createSessionManager(deps) {
               idleMs: Date.now() - (s.activityTs || Date.now()),
               payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
               attention: s.needsAttention ? s.needsAttention.kind : null,
+              agentType: s.agentType,
             }) }));
           const externalNames = registry.listPeers()
             .map(p => p.name)

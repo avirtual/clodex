@@ -500,6 +500,17 @@ test('peerStatusLabel: working / idle / warmth suffixes', () => {
   assert.strictEqual(peerStatusLabel({ state: 'idle', idleMs: (26 * 60 + 90) * 60_000, payload: null, now: PV_NOW }), 'idle 27h30m');
 });
 
+test('peerStatusLabel: codex never shows a warmth suffix — no signal exists for it', () => {
+  // Even a payload the poller would read as cold (or warm) is absence-of-signal
+  // for codex, not fact: the label stays bare idle.
+  assert.strictEqual(
+    peerStatusLabel({ state: 'idle', idleMs: 5 * 3600_000, payload: { linked: true, ts: PV_NOW, warmth: { state: 'cold', remaining_s: null, ttl_s: null } }, agentType: 'codex', now: PV_NOW }),
+    'idle 5h');
+  assert.strictEqual(
+    peerStatusLabel({ state: 'idle', idleMs: 12 * 60_000, payload: warmPayload(600), agentType: 'codex', now: PV_NOW }),
+    'idle 12m');
+});
+
 test('peerStatusLabel: stale-poll warm that has since expired reads cold', () => {
   // Poll said warm/40s left, 60s ago — it's cold NOW.
   assert.strictEqual(

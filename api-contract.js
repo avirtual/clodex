@@ -72,6 +72,7 @@ const API_CONTRACT = [
   { name: 'archiveSession', kind: 'invoke', channel: 'session:archive' },
   { name: 'unarchiveSession', kind: 'invoke', channel: 'session:unarchive' },
   { name: 'flushPending', kind: 'invoke', channel: 'session:flushPending' },
+  { name: 'peekPending', kind: 'invoke', channel: 'session:peekPending' },
   { name: 'retrySpawnSession', kind: 'invoke', channel: 'session:retrySpawn' },
   { name: 'forgetSession', kind: 'invoke', channel: 'session:forget' },
   { name: 'resizeSession', kind: 'invoke', channel: 'session:resize' },

@@ -2789,6 +2789,30 @@ function applyPendingBadge(name, count) {
   badge.dataset.tip = count > 0
     ? `${count} parked message${count === 1 ? '' : 's'} waiting — click to deliver now`
     : 'Parked messages waiting — click to deliver now';
+  // With a live count, enrich the tooltip with per-message {from, snippet} so the
+  // operator can judge urgency without waking the agent. Lazy (on the count-change
+  // signal, not on hover — native/data-tip tooltips can't fetch on hover) and
+  // best-effort: a failed/empty peek leaves the plain count tip above. Snippets
+  // only — the main side clamps them; full bodies never reach the renderer.
+  if (count > 0) {
+    window.api.peekPending(name).then((items) => {
+      if (!Array.isArray(items) || items.length === 0) return;
+      // Guard against a stale async result landing after the count went to 0.
+      if (!badge.textContent) return;
+      const shown = items.slice(0, 5)
+        .map((m) => `• ${m.from}: ${m.snippet || '(no preview)'}`);
+      // The peek is a fresh store read; `count` is the (possibly older) delta
+      // value — reconcile so the header never disagrees with the bullets.
+      const total = Math.max(count, items.length);
+      const more = Math.max(0, total - shown.length);
+      const lines = [
+        `${total} parked message${total === 1 ? '' : 's'} — click to deliver now:`,
+        ...shown,
+      ];
+      if (more > 0) lines.push(`…and ${more} more`);
+      badge.dataset.tip = lines.join('\n');
+    }).catch(() => { /* keep the plain count tip */ });
+  }
 }
 
 window.api.onPendingCount((msg) => {
@@ -3042,7 +3066,10 @@ function renderProxyBar() {
   // the tooltip; degrades to the cumulative count on older proxies.
   const rSeg = reqSeg(p);
   if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-  if (p.warmth) {
+  // Warmth is Claude-only signal (a prompt-cache pinger). We have none for Codex,
+  // so a codex tab used to show a permanent "❄️ cold" that is noise, not truth —
+  // drop the seg for codex rather than assert a warmth state we can't observe.
+  if (p.warmth && sessionTypeOf(activeSession) !== 'codex') {
     let txt;
     if (dead) {
       txt = '🔥 ?';
@@ -3214,9 +3241,12 @@ function applyWarmBadge(name) {
   const badge = el.querySelector('.session-warm');
   const st = proxyState.get(name);
   const p = st && st.payload;
+  // Warmth is a Claude-only prompt-cache signal; a codex tab has none, so never
+  // paint a warmth state for it (see the proxy-bar seg gate above).
+  const isCodex = el.dataset.type === 'codex';
 
   if (badge) {
-    if (!p || !p.linked || !p.warmth) {
+    if (isCodex || !p || !p.linked || !p.warmth) {
       badge.textContent = '';
       badge.dataset.state = '';
     } else {
