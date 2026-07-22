@@ -14,6 +14,7 @@ deploy/
 # reach ../peering); a drift test pins it byte-equal to peering/clodex-deploy.sh.
 !cli/deploy/
 !cli/deploy/clodex-deploy.sh
+!cli/deploy/clodex-fargate.yaml
 
 # Python droppings from running/import-checking the vendored wirescope in place
 __pycache__/

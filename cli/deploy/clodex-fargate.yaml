@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Clodex node on AWS Fargate — the auditable infrastructure half of the
+  Fargate recipe (docs/recipes/aws-fargate.md). Creates everything around
+  the published container: cluster, IAM roles, secrets, log group, task
+  definition, and (optionally) a self-healing ECS Service. clodexctl never
+  creates AWS resources; an account admin reviews and deploys THIS, then
+  operators connect with `clodexctl ctx add <name> --ssm-ecs CLUSTER/FAMILY`.
+  No inbound network: access rides SSM (ECS Exec channels); the wire port
+  never leaves the task. Delete the stack and the node's footprint is gone
+  (the two secrets and the log group are retained by default for post-mortem;
+  see DeletionPolicy notes inline).
+
+Parameters:
+  ImageTag:
+    Type: String
+    Default: '3.5.3'
+    Description: >-
+      ghcr.io/avirtual/clodex tag to run. Pin a version for reproducible
+      engagements; 'latest' follows the newest publish.
+  ClaudeOauthToken:
+    Type: String
+    NoEcho: true
+    Description: >-
+      CLAUDE_CODE_OAUTH_TOKEN value (from `claude setup-token`). Stored in
+      Secrets Manager, injected into the task via the ECS secrets block —
+      never appears in the task definition, CloudTrail, or `docker inspect`.
+      Leave EMPTY to skip model credentials (e.g. Bedrock via the task role
+      instead; you can also update the secret later without redeploying).
+  Cpu:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['256', '512', '1024', '2048', '4096', '8192', '16384']
+    Description: Task CPU units (1024 = 1 vCPU). Fargate bills this per second, running or idle.
+  Memory:
+    Type: String
+    Default: '4096'
+    Description: >-
+      Task memory in MiB. Must be a valid Fargate pairing for the chosen Cpu
+      (1 vCPU pairs with 2048-8192). Memory, not CPU, is what agent sessions
+      actually exhaust — 4096 comfortably runs several.
+  Persistent:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      'false' (default): infrastructure only — start nodes yourself with
+      `aws ecs run-task` and they STAY DOWN when they stop (disposable
+      engagement shape). 'true': also create an ECS Service (DesiredCount 1)
+      that replaces a dead task automatically — the standing-daemon shape
+      (survives host retirement/OOM; sessions are still ephemeral). Pause a
+      persistent node with `aws ecs update-service --desired-count 0`.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      Subnets for the task ENI (public subnets with AssignPublicIp, or
+      private subnets with NAT/VPC endpoints — the task needs egress to pull
+      the image and reach the Anthropic API + SSM).
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      Security group for the task ENI. No inbound rules are needed — leave
+      it fully closed; SSM channels are outbound-only.
+  ClusterName:
+    Type: String
+    Default: 'clodex'
+    Description: >-
+      ECS cluster (a namespace, not machines — costs nothing by itself).
+      Created by this stack; also the CLUSTER half of the clodexctl context.
+
+Conditions:
+  WantService: !Equals [!Ref Persistent, 'true']
+  HaveClaudeToken: !Not [!Equals [!Ref ClaudeOauthToken, '']]
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ClusterName
+
+  # Wire token: minted BY Secrets Manager at stack create — no human ever
+  # sees or types it. clodexctl reads it via `aws secretsmanager
+  # get-secret-value` (the ctx add command in Outputs). Rotate by updating
+  # the secret + stopping the task (next task picks it up).
+  WireTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    Properties:
+      Name: !Sub '${AWS::StackName}/wire-token'
+      Description: Clodex wire token (Authorization bearer for the node API)
+      GenerateSecretString:
+        ExcludePunctuation: true
+        PasswordLength: 48
+
+  # Model credential. Created empty-capable: if no token was provided at
+  # deploy time, put one later with `aws secretsmanager put-secret-value`
+  # and bounce the task. Delete-retained so a stack teardown can't destroy
+  # a credential the org may still track — remove it explicitly.
+  ClaudeTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    Properties:
+      Name: !Sub '${AWS::StackName}/oauth-token'
+      Description: CLAUDE_CODE_OAUTH_TOKEN for agent sessions on the node
+      SecretString: !If [HaveClaudeToken, !Ref ClaudeOauthToken, 'REPLACE-ME']
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/clodex/${AWS::StackName}'
+      RetentionInDays: 30
+
+  # Execution role: what ECS ITSELF uses to start the container — pull the
+  # image, write logs, read the two secrets at launch. The container never
+  # holds these permissions.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-execution'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-clodex-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WireTokenSecret
+                  - !Ref ClaudeTokenSecret
+
+  # Task role: what the CONTAINER (and every agent session inside it) can do
+  # in your account. Deliberately minimal: only the SSM message channels that
+  # ECS Exec / clodexctl tunnels ride. Agents needing AWS powers (Bedrock,
+  # engagement work) get additions HERE — reviewed, in this file, not ad hoc.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-task'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ssm-exec-channels
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-node'
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: clodex
+          Image: !Sub 'ghcr.io/avirtual/clodex:${ImageTag}'
+          PortMappings:
+            - { ContainerPort: 7900, Protocol: tcp }
+          Environment:
+            - { Name: CLODEX_DATA_DIR, Value: /data }
+          Secrets:
+            - { Name: CLODEX_REMOTE_TOKEN, ValueFrom: !Ref WireTokenSecret }
+            - { Name: CLAUDE_CODE_OAUTH_TOKEN, ValueFrom: !Ref ClaudeTokenSecret }
+          LinuxParameters:
+            InitProcessEnabled: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: clodex
+
+  # The standing-daemon shape (Persistent=true): keep exactly one node alive.
+  # ECS replaces a dead task in ~a minute; the clodexctl context re-resolves
+  # the new task automatically (--ssm-ecs stores cluster/family, not task id).
+  Service:
+    Type: AWS::ECS::Service
+    Condition: WantService
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-node'
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref SecurityGroupId]
+          AssignPublicIp: ENABLED
+
+Outputs:
+  CtxAddCommand:
+    Description: Connect clodexctl to this node (reads the minted wire token; needs secretsmanager:GetSecretValue)
+    Value: !Sub >-
+      clodexctl ctx add ${AWS::StackName} --ssm-ecs ${ClusterName}/${AWS::StackName}-node
+      --region ${AWS::Region}
+      --token "$(aws secretsmanager get-secret-value --secret-id ${WireTokenSecret} --query SecretString --output text)"
+  RunTaskCommand:
+    Description: Start a node by hand (Persistent=false shape) — stop it with `aws ecs stop-task`
+    Value: !Sub
+      - >-
+        aws ecs run-task --cluster ${ClusterName} --launch-type FARGATE
+        --task-definition ${AWS::StackName}-node --enable-execute-command
+        --network-configuration 'awsvpcConfiguration={subnets=[${JoinedSubnets}],securityGroups=[${SecurityGroupId}],assignPublicIp=ENABLED}'
+        --region ${AWS::Region}
+      - JoinedSubnets: !Join [',', !Ref SubnetIds]
+  TaskFamily:
+    Description: The FAMILY half of --ssm-ecs CLUSTER/FAMILY
+    Value: !Sub '${AWS::StackName}-node'
+  ClaudeTokenSecretArn:
+    Description: Update the model credential here (put-secret-value), then stop the task to pick it up
+    Value: !Ref ClaudeTokenSecret
