@@ -588,3 +588,13 @@ test('fargatePollHello: deadline exhaustion throws the HONEST last error (CliErr
     await srv.close();
   }
 });
+
+// ── runAws default seam ──────────────────────────────────────────────────────
+// The live path calls runAws(undefined, …) (io.execFn unset outside tests);
+// the default must be a real exec, not a crash. Regression: "execFn is not a
+// function" on the first real `deploy fargate` run — every earlier test
+// injected execFn, so the default seam was never exercised.
+test('runAws with NO execFn injected execs the argv via the real child-process seam', async () => {
+  const out = await D.runAws(undefined, ['node', '-e', 'console.log("live-seam-ok")'], 'seam probe');
+  assert.strictEqual(out, 'live-seam-ok');
+});

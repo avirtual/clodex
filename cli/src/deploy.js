@@ -840,7 +840,7 @@ function ssmGetInvocationArgs({ commandId, target, region, profile } = {}) {
 // Run an aws argv through the injectable execFn (default promisified execFile —
 // NEVER a shell). ENOENT → the "is aws installed?" hint; any other failure →
 // a coded CliError with aws's own stderr relayed. Returns trimmed stdout.
-async function runAws(execFn, argv, what, code = EXIT.CONNECT) {
+async function runAws(execFn = execFileP, argv, what, code = EXIT.CONNECT) {
   try {
     const { stdout } = await execFn(argv[0], argv.slice(1));
     return String(stdout).trim();
