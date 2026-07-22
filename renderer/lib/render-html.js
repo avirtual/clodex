@@ -60,6 +60,20 @@ function svgCostChart(reqs, defs) {
     + `</svg>`;
 }
 
+// Per-row timestamp. /_bust entries carry `ts` as a zone-less ISO local-time
+// string ("2026-07-22T20:59:42") — Date() parses that as local, which matches
+// how the proxy stamped it. Absent/invalid (older proxy) → '' and the row
+// renders without a stamp, same degrade posture as fault/fix_hint.
+function fmtBustStamp(iso) {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch { return ''; }
+}
+
 // One transition row. Everything except fault/fix_hint is v0.6.19-present.
 function bustRow(t, base, sid) {
   const sev = t.severity || (t.bust ? 'bust' : 'append');
@@ -84,9 +98,11 @@ function bustRow(t, base, sid) {
   const turnLink = (base && sid && t.i != null)
     ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (⌘-click for browser)">turn ${t.i} →</span>`
     : `<span class="bust-turn-static">turn ${t.i != null ? t.i : '?'}</span>`;
+  const stampStr = t.ts ? fmtBustStamp(t.ts) : '';
+  const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : '';
   return `<div class="bust-row bust-sev-${esc(sev)}">`
     + `<div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div>`
-    + `<div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${turnLink}</div>`
+    + `<div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>`
     + hint
     + `</div>`;
 }

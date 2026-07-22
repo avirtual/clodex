@@ -1478,6 +1478,7 @@ html, body {
 .bust-row-meta { display: flex; align-items: baseline; gap: 10px; margin-top: 3px; font-size: 10px; color: var(--text-dim); }
 .bust-sev { text-transform: uppercase; letter-spacing: 0.04em; font-size: 9px; }
 .bust-mag { color: var(--text-dim); }
+.bust-stamp { color: var(--text-dim); margin-left: auto; }
 .bust-hint { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
 .bust-badge {
   font-size: 9px; padding: 1px 6px; border-radius: 8px;
