@@ -17,7 +17,7 @@ const D = require('./deploy');
 const { attach } = require('./attach');
 const { portForward } = require('./port-forward');
 const { web } = require('./web');
-const { HELP, VERSION } = require('./help');
+const { help, VERSION } = require('./help');
 const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
@@ -35,6 +35,13 @@ const WIRE_VERBS = {
   exec: V.exec, run: V.run, attach: attach, kill: V.kill, restart: V.restart, 'restart-app': V.restartApp,
 };
 
+// Verbs handled OUTSIDE WIRE_VERBS (their own dispatch above). Together with
+// WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
+// help.js's registry is pinned complete against it (help.test.js), so a new
+// verb can't ship without a help entry.
+const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'port-forward', 'web'];
+const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
+
 async function run(argv, io = {}) {
   const printer = makePrinter(io.stdout || ((s) => process.stdout.write(s)));
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
@@ -46,7 +53,19 @@ async function run(argv, io = {}) {
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;
   }
 
-  if (flags.help || flags._.length === 0) { printer.line(HELP); return EXIT.OK; }
+  // Help routing — CONTEXTUAL (T43). All three of these short-circuit BEFORE any
+  // context resolution or wire open, so `<verb> --help` never constructs a
+  // WireClient or needs a ctx:
+  //   bare `clodexctl` / `--help`         → the grouped index
+  //   `clodexctl help [verb…]`            → the index, or a verb's full entry
+  //   `clodexctl <verb> --help`           → that verb's full entry
+  if (flags.help && flags._.length > 0) {
+    const { text, code } = help(flags._);   // route --help THROUGH the present verb
+    printer.line(text);
+    return code;
+  }
+  if (flags.help || flags._.length === 0) { printer.line(help([]).text); return EXIT.OK; }
+  if (flags._[0] === 'help') { const { text, code } = help(flags._.slice(1)); printer.line(text); return code; }
   if (flags.version) { printer.line(VERSION); return EXIT.OK; }
 
   const verb = flags._[0];
@@ -164,4 +183,4 @@ function safeLoad(io) {
   catch { return { current: null, contexts: {} }; }
 }
 
-module.exports = { run };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS };

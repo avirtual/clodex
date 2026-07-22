@@ -26,12 +26,15 @@ test('every src/*.js parses (node --check) and loads (require)', () => {
   }
 });
 
-test('--help renders (HELP template literal is intact end-to-end)', async () => {
+test('--help renders (contextual index is intact end-to-end)', async () => {
   const { run } = require('../src/main');
   let stdout = '';
   const code = await run(['--help'], { stdout: (s) => (stdout += s), stderr: () => {}, env: {} });
   assert.strictEqual(code, 0);
   assert.match(stdout, /clodexctl — a text client/);
-  assert.match(stdout, /exec <name>/);
-  assert.match(stdout, /--no-enter/);
+  // The index is a grouped MAP of verbs now — per-verb flag detail moved into
+  // `help <verb>` (covered by help.test.js). Pin the group headers + a verb line.
+  assert.match(stdout, /PLUMBING/);
+  assert.match(stdout, /\bexec\b/);
+  assert.match(stdout, /clodexctl help <verb>/);
 });

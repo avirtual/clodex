@@ -175,6 +175,14 @@ in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 
 ## Verbs
 
+> **`clodexctl help <verb>` is the authoritative per-verb reference.** Help is
+> contextual: `clodexctl` (or `--help`) prints a grouped index of every verb, and
+> `clodexctl help <verb>` / `clodexctl <verb> --help` renders that verb's full
+> usage, flags, examples, and gotchas — rendered from a single in-code registry
+> that a test pins to the dispatch table (a verb can't ship without an entry).
+> The tables below are the narrative tour; for the exact current flag set of any
+> verb, ask `help`.
+
 Read (all support `--json` — stable raw wire payload):
 
 | Verb | Route |
