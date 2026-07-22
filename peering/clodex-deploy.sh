@@ -308,28 +308,37 @@ fi
 # comes later from the wizard, and the next hello is the real version check) → ok;
 # if silent → still ok, with a note to start it manually. Linux is unchanged
 # (30s, fail on silence — the systemd service must have come up).
+# This installer is deliberately tokenless (CLODEX_REMOTE_TOKEN rides a systemd
+# drop-in it never reads), so on a token-gated node the hello answers 401 — that
+# IS the app, alive and auth-gated. Accept the 200-with-identity body OR a 401
+# status; the caller's laptop-side verify does the real authenticated check.
+probe_hello() {
+  # body plus a trailing status marker in one round-trip (no -f: we parse the
+  # code ourselves; -f would suppress the 401 path we specifically want to see).
+  curl -sS -m 3 -w ' HTTPCODE:%{http_code}' "http://127.0.0.1:$PORT/api/peer/hello" 2>/dev/null || true
+}
 step verify
 if [ "$IS_MAC" = "1" ]; then
   hello=""
   for _ in $(seq 1 5); do
-    hello="$(curl -fsS -m 3 "http://127.0.0.1:$PORT/api/peer/hello" 2>/dev/null || true)"
-    case "$hello" in *'"app":"clodex"'*) break;; esac
+    hello="$(probe_hello)"
+    case "$hello" in *'"app":"clodex"'*|*'HTTPCODE:401') break;; esac
     sleep 1
   done
   case "$hello" in
-    *'"app":"clodex"'*) log "Clodex answering on :$PORT" ;;
+    *'"app":"clodex"'*|*'HTTPCODE:401') log "Clodex answering on :$PORT" ;;
     *) log "no Clodex answering on :$PORT — start it manually (npm start) or launch the app" ;;
   esac
   ok verify
 else
 hello=""
 for _ in $(seq 1 30); do
-  hello="$(curl -fsS -m 3 "http://127.0.0.1:$PORT/api/peer/hello" 2>/dev/null || true)"
-  case "$hello" in *'"app":"clodex"'*) break;; esac
+  hello="$(probe_hello)"
+  case "$hello" in *'"app":"clodex"'*|*'HTTPCODE:401') break;; esac
   sleep 1
 done
 case "$hello" in
-  *'"app":"clodex"'*) ok verify ;;
+  *'"app":"clodex"'*|*'HTTPCODE:401') ok verify ;;
   *) fail verify "no-hello-on-127.0.0.1:$PORT-after-30s" ;;
 esac
 fi

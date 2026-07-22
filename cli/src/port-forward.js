@@ -55,14 +55,17 @@ function toPort(v, side) {
 }
 
 // A signal seam over process.* — io.onSignal overrides it wholesale for tests.
-// Returns an off() the caller runs in its teardown. Both SIGINT (Ctrl-C) and
-// SIGTERM (systemd/kill) exit 0 by design: a foreground hold has nothing to
-// flush, so any orderly stop is a clean shutdown.
+// Returns an off() the caller runs in its teardown. SIGINT (Ctrl-C), SIGTERM
+// (systemd/kill) and SIGHUP (controlling terminal died) all exit 0 by design: a
+// foreground hold has nothing to flush, so any orderly stop is a clean shutdown.
+// SIGHUP MUST be handled: its default disposition kills us without running the
+// finally that closes the tunnel, so the detached child (own process group)
+// reparents to init and keeps serving the forward — an orphan listener.
 function installSignal(io, cb) {
   if (io && io.onSignal) return io.onSignal(cb);
   const h = () => cb();
-  process.on('SIGINT', h); process.on('SIGTERM', h);
-  return () => { process.off('SIGINT', h); process.off('SIGTERM', h); };
+  process.on('SIGINT', h); process.on('SIGTERM', h); process.on('SIGHUP', h);
+  return () => { process.off('SIGINT', h); process.off('SIGTERM', h); process.off('SIGHUP', h); };
 }
 
 // The verb. Dispatched from main.js OUTSIDE withWire — it needs the resolved ctx
@@ -79,29 +82,44 @@ async function portForward({ flags, args, printer, io = {} }) {
 
   const { local, remote, remoteLabel } = parseForwardSpec(args && args[0], ctx);
 
-  // Forward `remote` instead of the wire's remotePort by handing openTransport a
-  // ctx whose remotePort IS the target; localPort pins the caller's LOCAL end.
-  const forwardCtx = { ...ctx, remotePort: remote };
-  const open = io.openTransport || openTransport;
-  const t = await open(forwardCtx, { spawnFn: io.spawnFn, execFn: io.execFn, localPort: local });
-
-  const target = entryTarget(ctx) || (ctx.name || 'node');
-  const bound = t.localPort || local;
-  // io.onBound is the reuse seam for the `web` verb: same tunnel machinery, a
-  // different "it's up" announcement (a browser URL + a best-effort pop). Absent
-  // (the port-forward path) → the plain forwarding line, behavior unchanged.
-  if (io.onBound) io.onBound({ bound, target, remote, remoteLabel, printer });
-  else printer.line(`forwarding 127.0.0.1:${bound} -> ${target}:${remoteLabel} — Ctrl-C to stop`);
-
-  // Foreground hold: whichever fires first wins. A signal = clean stop (exit 0);
-  // the tunnel child exiting = the node/tunnel dropped (exit CONNECT with stderr).
+  // Signals are armed BEFORE the tunnel child exists: an SSM/ssh tunnel takes
+  // seconds to bind, and a Ctrl-C in that window under the default disposition
+  // would kill us without ever closing the (detached, own-group) child — the
+  // orphan-listener leak. With the handler up first, an early signal races the
+  // open below and the late-arriving transport is closed on landing.
   let offSignal = null;
   const stopped = new Promise((resolve) => {
     offSignal = installSignal(io, () => resolve({ reason: 'signal' }));
   });
-  const childGone = t.waitExit().then(() => ({ reason: 'exit' }));
 
+  // Forward `remote` instead of the wire's remotePort by handing openTransport a
+  // ctx whose remotePort IS the target; localPort pins the caller's LOCAL end.
+  const forwardCtx = { ...ctx, remotePort: remote };
+  const open = io.openTransport || openTransport;
+  const openP = open(forwardCtx, { spawnFn: io.spawnFn, execFn: io.execFn, localPort: local });
+
+  let t = null;
   try {
+    const raced = await Promise.race([openP.then((tr) => ({ t: tr })), stopped]);
+    if (raced.reason === 'signal') {
+      // Signal beat the open. The open is still in flight — close its transport
+      // whenever it lands (or swallow its failure); then a clean exit 0.
+      openP.then((tr) => { try { tr.close(); } catch {} }).catch(() => {});
+      return;
+    }
+    t = raced.t;
+
+    const target = entryTarget(ctx) || (ctx.name || 'node');
+    const bound = t.localPort || local;
+    // io.onBound is the reuse seam for the `web` verb: same tunnel machinery, a
+    // different "it's up" announcement (a browser URL + a best-effort pop). Absent
+    // (the port-forward path) → the plain forwarding line, behavior unchanged.
+    if (io.onBound) io.onBound({ bound, target, remote, remoteLabel, printer });
+    else printer.line(`forwarding 127.0.0.1:${bound} -> ${target}:${remoteLabel} — Ctrl-C to stop`);
+
+    // Foreground hold: whichever fires first wins. A signal = clean stop (exit 0);
+    // the tunnel child exiting = the node/tunnel dropped (exit CONNECT with stderr).
+    const childGone = t.waitExit().then(() => ({ reason: 'exit' }));
     const outcome = await Promise.race([stopped, childGone]);
     if (outcome.reason === 'exit') {
       const err = (t.stderr && t.stderr()) || '';
@@ -110,7 +128,7 @@ async function portForward({ flags, args, printer, io = {} }) {
     // signal: fall through to a clean exit
   } finally {
     try { if (offSignal) offSignal(); } catch {}
-    try { t.close(); } catch {}
+    try { if (t) t.close(); } catch {}
   }
 }
 
@@ -119,4 +137,4 @@ function safeLoad(io) {
   catch { return { current: null, contexts: {} }; }
 }
 
-module.exports = { portForward, parseForwardSpec };
+module.exports = { portForward, parseForwardSpec, installSignal };

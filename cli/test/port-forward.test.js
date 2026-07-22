@@ -142,3 +142,45 @@ test('port-forward: a url (direct) context is rejected — nothing to forward', 
   assert.strictEqual(code, 2); // EXIT.USAGE
   assert.match(stderr, /nothing to forward|url context/);
 });
+
+// ── the leak fixes: SIGHUP disposition + the signal-during-open window ───────
+
+test('port-forward: default signal install covers SIGHUP (terminal death must not orphan the tunnel)', () => {
+  // Drive installSignal WITHOUT the io.onSignal seam so the real process.on
+  // path runs, and pin that all three signals gain (and then lose) a handler.
+  const { installSignal } = require('../src/port-forward');
+  const before = {};
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) before[sig] = process.listenerCount(sig);
+  const off = installSignal(null, () => {});
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    assert.strictEqual(process.listenerCount(sig), before[sig] + 1, `${sig} handler installed`);
+  }
+  off();
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    assert.strictEqual(process.listenerCount(sig), before[sig], `${sig} handler removed`);
+  }
+});
+
+test('port-forward: a signal DURING the transport open exits 0 and closes the late transport', async () => {
+  // The open dangles until we let it finish; the signal fires first. The verb
+  // must return 0 immediately and close the transport when it finally lands.
+  const rec = { closed: false };
+  let landTransport;
+  const t = {
+    localPort: 8080,
+    close() { rec.closed = true; },
+    stderr: () => '',
+    waitExit: () => new Promise(() => {}),
+  };
+  let fire;
+  const code = await run(['port-forward', '8080:7900', '--ssh', 'user@box'], {
+    stdout: () => {}, stderr: () => {}, env: {}, contextsFile: NOFILE,
+    openTransport: () => new Promise((res) => { landTransport = () => res(t); }),
+    onSignal: (cb) => { fire = cb; setTimeout(() => cb(), 10); return () => {}; },
+  });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(rec.closed, false, 'transport not landed yet');
+  landTransport();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(rec.closed, true, 'late-landing transport closed');
+});
