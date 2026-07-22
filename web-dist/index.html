@@ -841,6 +841,7 @@ body {
   font-size: 11px;
   line-height: 1.4;
   color: var(--text);
+  white-space: pre-line;
 }
 #ui-tooltip[hidden] {
   display: none;
@@ -2036,6 +2037,10 @@ body {
 }
 .bust-mag {
   color: var(--text-dim);
+}
+.bust-stamp {
+  color: var(--text-dim);
+  margin-left: auto;
 }
 .bust-hint {
   margin-top: 5px;
@@ -3639,6 +3644,13 @@ body {
 }
 #pot-drawer {
   width: 440px;
+}
+#inbox-drawer {
+  width: min(70vw, 720px);
+  min-width: 360px;
+  max-width: 90vw;
+  resize: horizontal;
+  overflow: auto;
 }
 #agents-drawer.hidden,
 #skills-drawer.hidden,
@@ -5821,6 +5833,14 @@ body {
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
       </label>
+      <details id="env-section" class="dialog-section">
+        <summary>Environment variables</summary>
+        <label id="env-row">
+          <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
+          <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
+          <span id="env-hint" class="hint-text" style="display:none;"></span>
+        </label>
+      </details>
       <label id="proxy-row">API proxy
         <select id="input-proxy-mode">
           <option value="">Default</option>
@@ -5989,6 +6009,14 @@ body {
           <span class="hint-text">Which <code>[agent:…]</code> intents this seat may <em>send</em>. Checked = allowed (all checked by default). Unchecking one makes that verb bounce when the seat emits it — send-side only, so a seat with <code>dm</code> off still <em>receives</em> DMs. <code>name</code> can't be gated. Unlike the live 🔒 popover, this takes full effect on the restart this save triggers, prompt included.</span>
         </label>
       </details>
+      <details id="args-env-section" class="dialog-section">
+        <summary>Environment variables</summary>
+        <label id="args-env-row">
+          <textarea id="args-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
+          <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. Clear the box to remove all session vars. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Changes take effect on the next spawn — tick "Restart session now" below to apply them immediately.</span>
+          <span id="args-env-hint" class="hint-text" style="display:none;"></span>
+        </label>
+      </details>
       <label class="dialog-wide" style="display: flex; align-items: center; gap: 8px;">
         <input type="checkbox" id="args-restart" style="margin: 0;">
         <span>Restart session now (kills running process, respawns with new settings)</span>
@@ -6076,6 +6104,27 @@ body {
           <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
         </div>
         <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+      </section>
+      <section>
+        <h4>Environment variables</h4>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+          <span>Scope</span>
+          <select id="prefs-env-scope" style="flex: none;">
+            <option value="global">Global (all workspaces)</option>
+            <option value="workspace">This workspace</option>
+          </select>
+        </div>
+        <div id="prefs-env-list" style="margin-top: 8px;"></div>
+        <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
+          <input type="text" id="prefs-env-key" placeholder="KEY" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-env-value" placeholder="value" spellcheck="false" autocomplete="off" style="flex: 2;">
+          <label style="display: flex; align-items: center; gap: 4px; font-weight: normal; flex: none;">
+            <input type="checkbox" id="prefs-env-secret" style="margin: 0;"><span>Secret</span>
+          </label>
+          <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
+        </div>
+        <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </section>
       <section>
         <h4>Session discovery</h4>
@@ -6261,6 +6310,7 @@ body {
         { name: "archiveSession", kind: "invoke", channel: "session:archive" },
         { name: "unarchiveSession", kind: "invoke", channel: "session:unarchive" },
         { name: "flushPending", kind: "invoke", channel: "session:flushPending" },
+        { name: "peekPending", kind: "invoke", channel: "session:peekPending" },
         { name: "retrySpawnSession", kind: "invoke", channel: "session:retrySpawn" },
         { name: "forgetSession", kind: "invoke", channel: "session:forget" },
         { name: "resizeSession", kind: "invoke", channel: "session:resize" },
@@ -6453,7 +6503,13 @@ body {
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
         { name: "newWorkspace", kind: "invoke", channel: "workspace:new" },
         // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
-        { name: "potSnapshot", kind: "invoke", channel: "pot:snapshot" }
+        { name: "potSnapshot", kind: "invoke", channel: "pot:snapshot" },
+        // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
+        // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
+        // the global-or-workspace scope store. scope arg is 'global' or a workspaceId.
+        { name: "envScopesGet", kind: "invoke", channel: "envScopes:get" },
+        { name: "envScopesSet", kind: "invoke", channel: "envScopes:set" },
+        { name: "envScopesDelete", kind: "invoke", channel: "envScopes:delete" }
       ];
       module.exports = { API_CONTRACT };
     }
@@ -16758,10 +16814,10 @@ ${i3.join("\n")}
         if (h < 48) return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
         return `${Math.floor(h / 24)}d`;
       }
-      function peerStatusLabel({ state, idleMs, payload, attention = null, now = Date.now() }) {
+      function peerStatusLabel({ state, idleMs, payload, attention = null, agentType = null, now = Date.now() }) {
         if (attention === "permission") return "blocked on a permission dialog";
         if (state === "thinking") return "working";
-        const w = warmthNow(payload, now);
+        const w = agentType === "codex" ? null : warmthNow(payload, now);
         let label = `idle ${fmtIdle(idleMs)}`;
         if (w === "warm") label += ", warm";
         else if (w === "cold") label += ", cache cold";
@@ -17220,6 +17276,21 @@ ${i3.join("\n")}
         }).join("");
         return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative cost by type over requests"><line x1="${pl}" y1="${H - pb}" x2="${W - pr}" y2="${H - pb}" stroke="#444" stroke-width="1"/>` + paths + `<text x="${pl}" y="${pt}" font-size="9" fill="#888">${esc(fmtUsd(maxY))}</text><text x="${pl}" y="${H - 3}" font-size="9" fill="#888">req 1</text><text x="${W - pr}" y="${H - 3}" font-size="9" fill="#888" text-anchor="end">req ${n}</text></svg>`;
       }
+      function fmtBustStamp(iso) {
+        try {
+          const d = new Date(iso);
+          if (isNaN(d.getTime())) return "";
+          return d.toLocaleString(void 0, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false
+          });
+        } catch {
+          return "";
+        }
+      }
       function bustRow(t, base, sid) {
         const sev = t.severity || (t.bust ? "bust" : "append");
         const loc = t.locus || {};
@@ -17231,7 +17302,9 @@ ${i3.join("\n")}
         const hint = t.fix_hint && !deployTax ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : "";
         const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` \xB7 ${Math.round(t.write_frac * 100)}%` : ""}</span>`;
         const turnLink = base && sid && t.i != null ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (\u2318-click for browser)">turn ${t.i} \u2192</span>` : `<span class="bust-turn-static">turn ${t.i != null ? t.i : "?"}</span>`;
-        return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${turnLink}</div>` + hint + `</div>`;
+        const stampStr = t.ts ? fmtBustStamp(t.ts) : "";
+        const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : "";
+        return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + `</div>`;
       }
       module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow };
     }
@@ -17624,6 +17697,47 @@ ${i3.join("\n")}
         return `${prefix}${n}`;
       }
       module.exports = { bumpDefaultName };
+    }
+  });
+
+  // renderer/lib/env-edit.js
+  var require_env_edit = __commonJS({
+    "renderer/lib/env-edit.js"(exports, module) {
+      var KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+      var DENY = /* @__PURE__ */ new Set(["CLODEX_REMOTE_TOKEN"]);
+      function parseEnvLines(text) {
+        const env = {};
+        const skipped = [];
+        const lines = String(text == null ? "" : text).split("\n");
+        for (let raw of lines) {
+          raw = raw.replace(/\r$/, "");
+          const trimmedLead = raw.replace(/^\s+/, "");
+          if (!trimmedLead) continue;
+          if (trimmedLead[0] === "#") continue;
+          const eq = raw.indexOf("=");
+          if (eq < 0) {
+            skipped.push({ line: raw, reason: 'no "=" \u2014 expected KEY=value' });
+            continue;
+          }
+          const key = raw.slice(0, eq).trim();
+          const value = raw.slice(eq + 1);
+          if (!KEY_RE.test(key)) {
+            skipped.push({ line: raw, reason: `invalid env key "${key}"` });
+            continue;
+          }
+          if (DENY.has(key)) {
+            skipped.push({ line: raw, reason: `${key} is reserved` });
+            continue;
+          }
+          env[key] = value;
+        }
+        return { env, skipped };
+      }
+      function formatEnvLines(env) {
+        if (!env || typeof env !== "object") return "";
+        return Object.keys(env).map((k) => `${k}=${env[k] == null ? "" : env[k]}`).join("\n");
+      }
+      module.exports = { parseEnvLines, formatEnvLines };
     }
   });
 
@@ -20335,8 +20449,10 @@ helper=${d.helperPath}`;
             renderFilePeek();
           }
         });
-        document.getElementById("file-peek-open").addEventListener("click", () => {
-          if (filePeek) window.api.fileOpen(filePeek.path);
+        document.getElementById("file-peek-open").addEventListener("click", async () => {
+          if (!filePeek) return;
+          const err = await window.api.fileOpen(filePeek.path);
+          if (!err) closeFilePeek();
         });
         document.getElementById("file-peek-close").addEventListener("click", closeFilePeek);
         window.api.onSessionFileView((name, filePath) => {
@@ -23676,6 +23792,7 @@ ${detail}` });
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName } = require_name_suggest();
+      var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -23793,6 +23910,24 @@ ${detail}` });
       var inputType = document.getElementById("input-type");
       var inputCwd = document.getElementById("input-cwd");
       var inputArgs = document.getElementById("input-args");
+      var inputEnv = document.getElementById("input-env");
+      var envHint = document.getElementById("env-hint");
+      function renderEnvHint(textarea, hint) {
+        if (!textarea || !hint) return;
+        const { skipped } = parseEnvLines(textarea.value || "");
+        if (!skipped.length) {
+          hint.style.display = "none";
+          hint.textContent = "";
+          return;
+        }
+        hint.style.display = "";
+        hint.style.color = "var(--warn, #d9a55b)";
+        hint.textContent = `Ignored ${skipped.length} line${skipped.length > 1 ? "s" : ""}: ${skipped.map((s) => s.reason).join("; ")}`;
+      }
+      function refreshEnvHint() {
+        renderEnvHint(inputEnv, envHint);
+      }
+      if (inputEnv) inputEnv.addEventListener("input", refreshEnvHint);
       var inputModel = document.getElementById("input-model");
       var modelRow = document.getElementById("model-row");
       var argsHint = document.getElementById("args-hint");
@@ -25081,6 +25216,7 @@ ${detail}` });
       var toolsSection = document.getElementById("tools-section");
       var skillsSection = document.getElementById("skills-section");
       var otherSection = document.getElementById("other-section");
+      var envSection = document.getElementById("env-section");
       async function refreshNewSessionInjectSkills(enabledSet = /* @__PURE__ */ new Set()) {
         if (inputType.value !== "claude") return;
         setSkillLibCache(await window.api.listSkillLib() || []);
@@ -25299,9 +25435,11 @@ ${detail}` });
         if (inputStripLevel) inputStripLevel.value = "0";
         if (inputAutoCompact) inputAutoCompact.checked = true;
         inputPlacement.value = "host";
-        for (const sec of [toolsSection, skillsSection, otherSection]) {
+        for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
           if (sec) sec.open = false;
         }
+        if (inputEnv) inputEnv.value = "";
+        refreshEnvHint();
         applyTypeDefaults();
         inputName.style.borderColor = "";
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -25463,6 +25601,10 @@ ${detail}` });
           appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : []
         };
       }
+      function collectDialogEnv() {
+        const { env } = parseEnvLines(inputEnv ? inputEnv.value : "");
+        return Object.keys(env).length ? env : null;
+      }
       async function doCreate() {
         const name = inputName.value.trim();
         const cfg = collectFormConfig();
@@ -25482,6 +25624,7 @@ ${detail}` });
           appendPromptFiles,
           intents
         } = cfg;
+        const env = collectDialogEnv();
         const supportsPrompts = type === "claude" || type === "codex";
         const systemPromptBody = null;
         if (!name) return;
@@ -25551,7 +25694,7 @@ ${detail}` });
         closeDialog();
         if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
         const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents };
+        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env };
         let result;
         if (teamOn && dialogTeamMode === "create") {
           const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -25561,7 +25704,7 @@ ${detail}` });
           const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
           result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
         } else {
-          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env);
         }
         if (!result.ok) {
           console.error("Failed to create session:", result.error);
@@ -25781,6 +25924,22 @@ ${detail}` });
         if (!badge) return;
         badge.textContent = count > 0 ? `\u2709${count}` : "";
         badge.dataset.tip = count > 0 ? `${count} parked message${count === 1 ? "" : "s"} waiting \u2014 click to deliver now` : "Parked messages waiting \u2014 click to deliver now";
+        if (count > 0) {
+          window.api.peekPending(name).then((items) => {
+            if (!Array.isArray(items) || items.length === 0) return;
+            if (!badge.textContent) return;
+            const shown = items.slice(0, 5).map((m) => `\u2022 ${m.from}: ${m.snippet || "(no preview)"}`);
+            const total = Math.max(count, items.length);
+            const more = Math.max(0, total - shown.length);
+            const lines = [
+              `${total} parked message${total === 1 ? "" : "s"} \u2014 click to deliver now:`,
+              ...shown
+            ];
+            if (more > 0) lines.push(`\u2026and ${more} more`);
+            badge.dataset.tip = lines.join("\n");
+          }).catch(() => {
+          });
+        }
       }
       window.api.onPendingCount((msg) => {
         if (msg && typeof msg.name === "string") applyPendingBadge(msg.name, msg.count || 0);
@@ -25932,7 +26091,7 @@ ${detail}` });
         if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
         const rSeg = reqSeg(p);
         if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-        if (p.warmth) {
+        if (p.warmth && sessionTypeOf(activeSession) !== "codex") {
           let txt;
           if (dead) {
             txt = "\u{1F525} ?";
@@ -26033,8 +26192,9 @@ ${detail}` });
         const badge = el.querySelector(".session-warm");
         const st = proxyState.get(name);
         const p = st && st.payload;
+        const isCodex = el.dataset.type === "codex";
         if (badge) {
-          if (!p || !p.linked || !p.warmth) {
+          if (isCodex || !p || !p.linked || !p.warmth) {
             badge.textContent = "";
             badge.dataset.state = "";
           } else {
@@ -26720,6 +26880,106 @@ Click for live activity`;
       var prefsRemoteTokenSave = document.getElementById("prefs-remote-token-save");
       var prefsRemoteTokenClear = document.getElementById("prefs-remote-token-clear");
       var prefsRemoteTokenState = document.getElementById("prefs-remote-token-state");
+      var prefsEnvScope = document.getElementById("prefs-env-scope");
+      var prefsEnvList = document.getElementById("prefs-env-list");
+      var prefsEnvKey = document.getElementById("prefs-env-key");
+      var prefsEnvValue = document.getElementById("prefs-env-value");
+      var prefsEnvSecret = document.getElementById("prefs-env-secret");
+      var prefsEnvAdd = document.getElementById("prefs-env-add");
+      var prefsEnvState = document.getElementById("prefs-env-state");
+      function prefsEnvScopeArg() {
+        return prefsEnvScope && prefsEnvScope.value === "workspace" ? currentWorkspaceId || "default" : "global";
+      }
+      function setPrefsEnvState(msg, kind) {
+        if (!prefsEnvState) return;
+        prefsEnvState.textContent = msg || "";
+        prefsEnvState.style.color = kind === "error" ? "var(--warn, #d9a55b)" : "var(--muted, #8b949e)";
+      }
+      async function refreshPrefsEnv() {
+        if (!prefsEnvList) return;
+        const scope = prefsEnvScopeArg();
+        const res = await window.api.envScopesGet(scope);
+        prefsEnvList.textContent = "";
+        if (!res || res.ok === false) {
+          setPrefsEnvState(res && res.error || "Environment scopes unavailable on this host.", "error");
+          return;
+        }
+        setPrefsEnvState("");
+        const vars = res.vars || [];
+        if (!vars.length) {
+          const empty = document.createElement("span");
+          empty.className = "hint-text";
+          empty.textContent = "No variables set for this scope.";
+          prefsEnvList.appendChild(empty);
+          return;
+        }
+        for (const v of vars) {
+          const row = document.createElement("div");
+          row.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom:4px;";
+          const keyEl = document.createElement("code");
+          keyEl.textContent = v.key;
+          keyEl.style.cssText = "flex:1; overflow:hidden; text-overflow:ellipsis;";
+          const valEl = document.createElement("span");
+          valEl.className = "hint-text";
+          valEl.style.cssText = "flex:2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+          valEl.textContent = v.secret ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (secret \u2014 set)" : String(v.value == null ? "" : v.value);
+          const editBtn = document.createElement("button");
+          editBtn.className = "secondary";
+          editBtn.type = "button";
+          editBtn.style.flex = "none";
+          editBtn.textContent = v.secret ? "Replace" : "Edit";
+          editBtn.addEventListener("click", () => {
+            prefsEnvKey.value = v.key;
+            prefsEnvValue.value = v.secret ? "" : String(v.value == null ? "" : v.value);
+            prefsEnvSecret.checked = !!v.secret;
+            prefsEnvValue.focus();
+          });
+          const delBtn = document.createElement("button");
+          delBtn.className = "secondary";
+          delBtn.type = "button";
+          delBtn.style.flex = "none";
+          delBtn.textContent = "\xD7";
+          delBtn.title = `Delete ${v.key}`;
+          delBtn.addEventListener("click", async () => {
+            const r = await window.api.envScopesDelete(scope, v.key);
+            if (!r || r.ok === false) {
+              setPrefsEnvState(r && r.error || "Delete failed.", "error");
+              return;
+            }
+            refreshPrefsEnv();
+          });
+          row.append(keyEl, valEl, editBtn, delBtn);
+          prefsEnvList.appendChild(row);
+        }
+      }
+      async function addPrefsEnvVar() {
+        const key = (prefsEnvKey.value || "").trim();
+        const value = prefsEnvValue.value || "";
+        const secret = !!(prefsEnvSecret && prefsEnvSecret.checked);
+        if (!key) {
+          setPrefsEnvState("Enter a KEY first.", "error");
+          return;
+        }
+        if (secret && !value) {
+          setPrefsEnvState("Enter the secret value to set or replace it (empty would blank it).", "error");
+          return;
+        }
+        const res = await window.api.envScopesSet(prefsEnvScopeArg(), key, value, secret);
+        if (!res || res.ok === false) {
+          setPrefsEnvState(res && res.error || "Set failed.", "error");
+          return;
+        }
+        prefsEnvKey.value = "";
+        prefsEnvValue.value = "";
+        if (prefsEnvSecret) prefsEnvSecret.checked = false;
+        setPrefsEnvState(`Saved ${key}.`);
+        refreshPrefsEnv();
+      }
+      if (prefsEnvAdd) prefsEnvAdd.addEventListener("click", addPrefsEnvVar);
+      if (prefsEnvScope) prefsEnvScope.addEventListener("change", () => {
+        setPrefsEnvState("");
+        refreshPrefsEnv();
+      });
       function renderRemoteTokenState(hasToken) {
         prefsRemoteTokenState.textContent = hasToken ? "A token is configured \u2713 \u2014 paste a new one to replace it, or Clear to remove." : "No token set \u2014 phone access is open to anyone who can reach the port.";
         prefsRemoteTokenState.style.color = hasToken ? "var(--ok, #3fb950)" : "var(--warn, #d9a55b)";
@@ -27733,6 +27993,12 @@ ${res.stderr}` : "");
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
         prefsRemoteToken.value = "";
         renderRemoteTokenState(!!s.remoteHasToken);
+        if (prefsEnvScope) prefsEnvScope.value = "global";
+        if (prefsEnvKey) prefsEnvKey.value = "";
+        if (prefsEnvValue) prefsEnvValue.value = "";
+        if (prefsEnvSecret) prefsEnvSecret.checked = false;
+        setPrefsEnvState("");
+        refreshPrefsEnv();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
         prefsOverlay.classList.remove("hidden");
@@ -27808,6 +28074,10 @@ ${res.stderr}` : "");
       var argsSkillsSection = document.getElementById("args-skills-section");
       var argsInjectSkillsSection = document.getElementById("args-inject-skills-section");
       var argsInjectSkillsList = document.getElementById("args-inject-skills-list");
+      var argsEnvSection = document.getElementById("args-env-section");
+      var argsEnv = document.getElementById("args-env");
+      var argsEnvHint = document.getElementById("args-env-hint");
+      if (argsEnv) argsEnv.addEventListener("input", () => renderEnvHint(argsEnv, argsEnvHint));
       wireBulkToggles(argsToolsRow, argsToolsList);
       wireBulkToggles(argsSkillsRow, argsSkillsList);
       var argsEditingName = null;
@@ -27913,7 +28183,16 @@ ${res.stderr}` : "");
             argsSkillsInjectAuto = [];
           }
         }
-        for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection]) sec.open = false;
+        const isEnvEditable = !argsSource;
+        argsEnvSection.style.display = isEnvEditable ? "" : "none";
+        if (isEnvEditable) {
+          argsEnv.value = formatEnvLines(res.env || {});
+          renderEnvHint(argsEnv, argsEnvHint);
+        } else {
+          argsEnv.value = "";
+          renderEnvHint(argsEnv, argsEnvHint);
+        }
+        for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection, argsEnvSection]) sec.open = false;
         argsRestart.checked = false;
         argsOverlay.classList.remove("hidden");
         setTimeout(() => argsInput.focus(), 50);
@@ -27942,6 +28221,7 @@ ${res.stderr}` : "");
         const disabledTools = argsToolsRow.style.display === "none" ? [] : collectToolChecklist(argsToolsList);
         const intents = argsIntentsSection.style.display === "none" ? null : collectIntentChecklist(argsIntentsList);
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
+        const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
         const disabledSkills = skillsShown ? collectSkillChecklist(argsSkillsList) : void 0;
         const injectSkills = !skillsShown || argsInjectSkillsSection.style.display === "none" ? void 0 : reconcilePartialSelection(
@@ -27976,7 +28256,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, void 0, void 0, systemPromptFile, appendPromptFiles, intents, execCommandsGrant);
+        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, void 0, void 0, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;
