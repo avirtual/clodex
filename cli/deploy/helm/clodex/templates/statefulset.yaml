@@ -33,14 +33,14 @@ spec:
             - name: CLODEX_REMOTE_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret }}
+                  name: {{ include "clodex.secretName" . }}
                   key: wire-token
             # Optional: absent from the Secret (Bedrock / external model
             # credential) → no env var, engine runs tokenless.
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret }}
+                  name: {{ include "clodex.secretName" . }}
                   key: oauth-token
                   optional: true
             {{- with .Values.extraEnv }}

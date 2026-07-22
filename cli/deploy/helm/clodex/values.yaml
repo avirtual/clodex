@@ -25,15 +25,30 @@ persistence:
   size: 10Gi
   storageClassName: ""  # "" = cluster default (docker-desktop: hostpath)
 
-# Secrets. existingSecret names a Secret the operator creates OUT of the
-# chart (never a value in a values file / helm release / cluster history):
-#   kubectl -n NS create secret generic clodex-node \
-#     --from-literal=wire-token="$(openssl rand -hex 24)" \
-#     --from-literal=oauth-token="$(cat TOKEN-FILE)"
-# oauth-token is OPTIONAL in the secret: omit the key entirely when the
-# node's model credential comes from elsewhere (e.g. Bedrock via the pod's
-# IAM identity — see serviceAccount below).
+# Secrets — two mutually exclusive modes.
+#
+# 1. Chart-managed (the `deploy helm` path): pass token FILES at install
+#    time and the chart creates the Secret itself:
+#      helm install NAME ./clodex \
+#        --set-file secrets.wireToken=WIRE-TOKEN-FILE \
+#        --set-file secrets.oauthToken=OAUTH-TOKEN-FILE   # optional
+#    --set-file reads client-side, so values never touch argv or shell
+#    history (only paths do), and the chart trims trailing whitespace —
+#    the classic `--from-literal="$(cat FILE)"` newline-corrupts-bearer
+#    trap can't happen. Note helm keeps release values in its own release
+#    Secret in the namespace: the token exists in two Secrets under the
+#    same RBAC. If that's unacceptable, use mode 2.
+# 2. Operator-managed: leave wireToken empty and name a Secret you create
+#    OUT of the chart (keys: wire-token, oauth-token — oauth OPTIONAL,
+#    omit it when the model credential comes from the pod's cloud
+#    identity instead, e.g. Bedrock via IRSA — see serviceAccount):
+#      kubectl -n NS create secret generic clodex-node \
+#        --from-literal=wire-token="$(tr -d '\n' < WIRE-TOKEN-FILE)"
+#
+# wireToken set → chart-managed wins and existingSecret is ignored.
 secrets:
+  wireToken: ""         # set via --set-file, never inline in a values file
+  oauthToken: ""        # optional; same rule
   existingSecret: clodex-node
 
 # Per-node AWS/cloud identity (the k8s Tier-2 story): bind the pod to a
