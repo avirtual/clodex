@@ -145,7 +145,7 @@ const log = {
 // full teardown funnels through engine.shutdown().
 let engine = null;
 let manager = null;
-let workspaces, uiSettings, agentLibrary, skillLibrary;
+let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes;
 
 
 
@@ -317,6 +317,7 @@ const {
   getWorkspaces: () => workspaces,
   getAgentLibrary: () => agentLibrary,
   getSkillLibrary: () => skillLibrary,
+  getEnvScopes: () => envScopes,
 });
 
 
@@ -537,7 +538,7 @@ app.whenReady().then(() => {
     },
   });
   manager = engine.manager;
-  ({ workspaces, uiSettings, agentLibrary, skillLibrary } = engine.stores);
+  ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes } = engine.stores);
 
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
 

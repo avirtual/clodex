@@ -266,6 +266,12 @@ const API_CONTRACT = [
   { name: 'newWorkspace', kind: 'invoke', channel: 'workspace:new' },
   // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
   { name: 'potSnapshot', kind: 'invoke', channel: 'pot:snapshot' },
+  // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
+  // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
+  // the global-or-workspace scope store. scope arg is 'global' or a workspaceId.
+  { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
+  { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
+  { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
 ];
 
 module.exports = { API_CONTRACT };

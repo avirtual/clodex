@@ -48,6 +48,26 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   private (invisible to `[agent:who]`, not DM-able — but peer-visible for
   attach/control).
 
+**Scoped env vars (env-scopes.js).** The PTY's environment is built by
+`mergeSessionEnv` (pure leaf) with precedence `process.env < global <
+workspace < session < node-local override file`, then the app-owned keys
+(`TERM`, and `WB_WRAP_NAME` for codex) are applied last so they always win.
+`process.env` is pre-scrubbed of inherited CLAUDE_* markers at startup; the
+merge does NOT re-scrub, so scope-set CLAUDE_* values are deliberate config
+and survive. Global + per-workspace scopes live in `<userData>/env-scopes.json`
+(`0600`); a value marked `secret` is write-only — the `envScopes:get` IPC
+returns `{ key, secret:true, hasValue:true }`, never the bytes, so a secret
+never reaches the renderer, a log, an ack, or an error string. `CLODEX_REMOTE_TOKEN`
+is deny-listed in every scope (the wire gate must not be clobberable through the
+surface it gates); keys must match `[A-Za-z_][A-Za-z0-9_]*` and values carry no
+newlines. The per-session map is passed to `create()` and persisted flat on the
+sessions.json entry so `--resume` respawns identically. A box operator's
+`<userData>/env-override.env` (env-file format, read at spawn) has the final say.
+With no scope vars set anywhere the merge reduces to exactly `{ ...process.env,
+TERM }` — byte-identical to the historical spawn (pinned). GUI: Preferences ▸
+Environment variables (global/workspace editor) + a per-session section in the
+New Session dialog; over the wire, `clodexctl spawn --env KEY=VALUE`.
+
 **Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
 libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:
 `workspace: <name>` (visible only in that workspace — matched on its DISPLAY

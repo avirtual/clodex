@@ -62,6 +62,7 @@ const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 // directly like ./wire-intents — it's stateless and electron-free, so it needs
 // no dep seam. See the wire-intent cutover gate in create().
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
+const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
 // Live bracketed-paste-mode tracking for the inject paste-wrap. Pure leaf,
 // required directly like ./claude-env (its siblings draftChunkSignal /
 // isDraftOpen cross as deps only because they predate the direct-require
@@ -301,7 +302,7 @@ function createSessionManager(deps) {
     writeClaudeDigestFile,
     writeSkillPlugin,
     // getter deps (whenReady-assigned; see header)
-    getPersistence, getTemplates, getUiSettings, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     // electron seam fns (see header)
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
@@ -759,7 +760,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -773,6 +774,33 @@ function createSessionManager(deps) {
         if (!st) throw new Error(`Directory does not exist: ${cwd}`);
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
+      // Merged scope env (T46). Build it ONCE, up front, because two consumers
+      // need it: the tee-blind consult below (readEffectiveClaudeEnv's baseEnv —
+      // a SCOPE-set CLAUDE_CODE_USE_BEDROCK must be seen there or the session is
+      // misclassified as wire-routed and its intent scanner goes dark) and the
+      // PTY env construction further down. Precedence lives in env-scopes.js:
+      //   process.env < global < workspace < session(env param) < override file.
+      // process.env is already scrubInheritedClaudeMarkers'd at startup, so scope
+      // CLAUDE_* values are deliberate and survive. With NO scopes set anywhere +
+      // no override file, mergeSessionEnv returns exactly { ...process.env } — so
+      // the `{ ...mergedEnv, TERM }` below stays byte-identical to the old
+      // `{ ...process.env, TERM }`. Best-effort read of the scope store: a store
+      // hiccup degrades to base process.env, never blocks a spawn.
+      let mergedEnv;
+      try {
+        const store = getEnvScopes && getEnvScopes();
+        const all = store ? store.all() : { global: {}, workspaces: {} };
+        mergedEnv = mergeSessionEnv({
+          base: process.env,
+          global: all.global,
+          workspace: (all.workspaces && all.workspaces[workspaceId]) || null,
+          session: (sessionEnv && typeof sessionEnv === 'object') ? sessionEnv : null,
+          overrideFile: path.join(getUserDataPath(), 'env-override.env'),
+        });
+      } catch {
+        mergedEnv = { ...process.env };
+      }
+
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
 
       let cmd, args;
@@ -794,7 +822,7 @@ function createSessionManager(deps) {
       // consumers: the wire-intent gate below (Bedrock/Vertex bypass the tee, so
       // they must take intents from the JsonlWatcher) and the sidebar chip glyph
       // (B/V in place of A), surfaced via the session record + list().
-      const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd)) : null;
+      const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: mergedEnv })) : null;
       // A tee-blind backend (Bedrock/Vertex) routes to AWS/GCP and IGNORES the
       // ANTHROPIC_BASE_URL a proxy needs, so wirescope can never link — it would
       // just show a permanent "Proxy: no live session" and futile poll traffic.
@@ -1064,7 +1092,10 @@ function createSessionManager(deps) {
           args = [...extraArgs];
       }
 
-      const env = { ...process.env, TERM: 'xterm-256color' };
+      // App-owned keys applied AFTER the scope merge so they always win. With no
+      // scopes set, mergedEnv === { ...process.env } and this is byte-identical to
+      // the historical `{ ...process.env, TERM }` (+ WB_WRAP_NAME for codex).
+      const env = { ...mergedEnv, TERM: 'xterm-256color' };
       if (type === 'codex') env.WB_WRAP_NAME = name;
 
       let ptyProc;
@@ -1232,6 +1263,22 @@ function createSessionManager(deps) {
         // read in _handleIntent + the export coalesce), so omit an empty list to
         // keep the record lean — matching the template seed's prior .length guard.
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
+        // Session-scope env (T46). Persisted on the entry so --resume respawns
+        // with the SAME env (the wrong AWS identity on restart would be silent
+        // and dangerous). Like execCommands, an empty/absent env is NOT a distinct
+        // value — absent ≡ {} ≡ "no session env" — so omit it to keep the record
+        // lean and let the merge fall through to global/workspace scopes. Stored
+        // as the flat { KEY: value } shape create() received (session env has no
+        // secret flag — a session credential is opaque either way, and it never
+        // reaches an IPC read surface: it lives only on sessions.json at 0600).
+        // sanitizeFlat re-applies the key/deny/newline gate at the PERSISTENCE door
+        // too: a deny-listed key or newline value must not land on sessions.json
+        // even inert (deny-list at every door), and it's what a later --resume reads
+        // back — the spawn merge already drops junk, so the record must match.
+        ...(() => {
+          const clean = sanitizeFlat(sessionEnv);
+          return Object.keys(clean).length ? { env: clean } : {};
+        })(),
       });
 
       // Turn observation for agent modes. Two mutually exclusive paths:

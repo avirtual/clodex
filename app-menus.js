@@ -24,7 +24,7 @@ function createAppMenus(deps) {
     checkForUpdate, confirmRestartClodex, createWindow,
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
-    getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary,
+    getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
   } = deps;
 
   let tray = null;
@@ -172,6 +172,9 @@ function createAppMenus(deps) {
                   if (result.response !== 0) return;
                   for (const s of getManager().listForWorkspace(ws.id)) getManager().kill(s.name);
                   getWorkspaces().remove(ws.id);
+                  // Clean this workspace's env-scope entry so no secret husk survives
+                  // the workspace it belonged to (T46). Best-effort.
+                  try { getEnvScopes && getEnvScopes() && getEnvScopes().removeWorkspace(ws.id); } catch {}
                   const win = getManager().windowForWorkspace(ws.id);
                   if (win) win.close();
                   refreshAppMenu();
@@ -602,6 +605,9 @@ function createAppMenus(deps) {
                   if (result.response !== 0) return;
                   for (const s of getManager().listForWorkspace(ws.id)) getManager().kill(s.name);
                   getWorkspaces().remove(ws.id);
+                  // Clean this workspace's env-scope entry so no secret husk survives
+                  // the workspace it belonged to (T46). Best-effort.
+                  try { getEnvScopes && getEnvScopes() && getEnvScopes().removeWorkspace(ws.id); } catch {}
                   const win = getManager().windowForWorkspace(ws.id);
                   if (win) win.close();
                   refreshAppMenu();

@@ -145,6 +145,41 @@ async function skills({ client, printer, args }) {
 
 // ── write verbs ─────────────────────────────────────────────────────────────
 
+// Parse repeatable --env KEY=VALUE tokens into body.env, returning the sorted
+// keys we asked to set (for the old-box ack comparison). Split on the FIRST '='
+// so a value may itself contain '='. A token with no '=' or an empty key is a
+// usage error — a shapeless --env is a typo we should surface, not silently drop.
+// KEY/value validity (charset, deny-list, no-newline) is the BOX's call; the CLI
+// stays a thin passthrough so one box owns the rule.
+function parseEnvFlags(envFlag, body) {
+  const raw = Array.isArray(envFlag) ? envFlag : (envFlag != null ? [envFlag] : []);
+  if (!raw.length) return [];
+  const env = {};
+  for (const tok of raw) {
+    const s = String(tok);
+    const eq = s.indexOf('=');
+    if (eq <= 0) throw new CliError(EXIT.USAGE, `--env must be KEY=VALUE, got "${s}"`);
+    env[s.slice(0, eq)] = s.slice(eq + 1);
+  }
+  body.env = env;
+  return Object.keys(env).sort();
+}
+
+// Loud old-box / sanitize warning: any key we sent that the ack did NOT echo back
+// as applied is NOT live on the session. Printed to stderr-grade output so it
+// can't be missed even when the human form reports a pid. `applied` is undefined
+// on a box predating env support (the whole set is missing).
+function warnEnvMismatch(printer, sentKeys, applied) {
+  const got = new Set(Array.isArray(applied) ? applied : []);
+  const missing = sentKeys.filter((k) => !got.has(k));
+  if (!missing.length) return;
+  if (applied === undefined) {
+    printer.line(`WARNING: env NOT applied — this node predates env support (no envKeys in the ack). Sent but dropped: ${missing.join(', ')}. The session is running WITHOUT them.`);
+  } else {
+    printer.line(`WARNING: some env vars were NOT applied by the node (rejected/denied): ${missing.join(', ')}. The session is running WITHOUT them.`);
+  }
+}
+
 async function spawn({ client, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'spawn');
   const body = { name };
@@ -158,7 +193,19 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   else if (flags.arg) extra.push(String(flags.arg));
   if (extra.length) body.extraArgs = extra;
   if (flags.fork) body.fork = true;
+  // Session env (T46): --env KEY=VALUE, repeatable (multi). Split on the FIRST
+  // '=' so a value may contain '='. The box re-validates + deny-lists server-side
+  // (never trusts the client); we only reject a shapeless token here for UX.
+  const sentEnvKeys = parseEnvFlags(flags.env, body); // sorted keys we asked to set
   const res = await client.post('/api/sessions', 'spawn', body);
+  // Old-box compat (T46): the ack echoes envKeys = the set actually applied. A box
+  // predating env support omits the field entirely, and a box that sanitized away a
+  // bad/denied key returns a shorter set — either way a credential we asked for may
+  // NOT be live, and a session running as the wrong identity must never be silent.
+  // Gated on !flags.json: the warning is a human line (printer.line), and the JSON
+  // mode's raw payload already carries envKeys — printing it there would contaminate
+  // the stable-wire-payload stdout contract.
+  if (sentEnvKeys.length && !flags.json) warnEnvMismatch(printer, sentEnvKeys, res.envKeys);
   // Post-spawn liveness (the silent-death fix): a child that dies on execvp —
   // e.g. its CLI isn't on the node's PATH (a fresh OS-flavor deploy) — STILL
   // returns a pid, then the session vanishes from the engine with no hint. Wait a

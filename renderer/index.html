@@ -690,6 +690,14 @@
         <input type="text" id="input-args" placeholder="(none)">
         <span class="hint-text" id="args-hint"></span>
       </label>
+      <details id="env-section" class="dialog-section">
+        <summary>Environment variables</summary>
+        <label id="env-row">
+          <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
+          <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
+          <span id="env-hint" class="hint-text" style="display:none;"></span>
+        </label>
+      </details>
       <label id="proxy-row">API proxy
         <select id="input-proxy-mode">
           <option value="">Default</option>
@@ -945,6 +953,27 @@
           <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
         </div>
         <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+      </section>
+      <section>
+        <h4>Environment variables</h4>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+          <span>Scope</span>
+          <select id="prefs-env-scope" style="flex: none;">
+            <option value="global">Global (all workspaces)</option>
+            <option value="workspace">This workspace</option>
+          </select>
+        </div>
+        <div id="prefs-env-list" style="margin-top: 8px;"></div>
+        <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
+          <input type="text" id="prefs-env-key" placeholder="KEY" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-env-value" placeholder="value" spellcheck="false" autocomplete="off" style="flex: 2;">
+          <label style="display: flex; align-items: center; gap: 4px; font-weight: normal; flex: none;">
+            <input type="checkbox" id="prefs-env-secret" style="margin: 0;"><span>Secret</span>
+          </label>
+          <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
+        </div>
+        <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </section>
       <section>
         <h4>Session discovery</h4>

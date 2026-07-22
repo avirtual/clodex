@@ -15,6 +15,7 @@ const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = requir
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName } = require('./lib/name-suggest');
+const { parseEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -149,6 +150,22 @@ const inputName = document.getElementById('input-name');
 const inputType = document.getElementById('input-type');
 const inputCwd = document.getElementById('input-cwd');
 const inputArgs = document.getElementById('input-args');
+const inputEnv = document.getElementById('input-env');
+const envHint = document.getElementById('env-hint');
+
+// Live feedback for the New Session env textarea: parseEnvLines drops junk lines
+// (no '=', invalid key, the deny key) into `skipped` rather than throwing, so a
+// silently-vanished line would otherwise never be explained. Surface the reasons
+// under the field (warn color) so a typo'd or reserved var doesn't just disappear.
+function refreshEnvHint() {
+  if (!inputEnv || !envHint) return;
+  const { skipped } = parseEnvLines(inputEnv.value || '');
+  if (!skipped.length) { envHint.style.display = 'none'; envHint.textContent = ''; return; }
+  envHint.style.display = '';
+  envHint.style.color = 'var(--warn, #d9a55b)';
+  envHint.textContent = `Ignored ${skipped.length} line${skipped.length > 1 ? 's' : ''}: ${skipped.map((s) => s.reason).join('; ')}`;
+}
+if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
 const inputModel = document.getElementById('input-model');
 const modelRow = document.getElementById('model-row');
 const argsHint = document.getElementById('args-hint');
@@ -1832,6 +1849,7 @@ const inputAutoCompact = document.getElementById('input-auto-compact');
 const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
+const envSection = document.getElementById('env-section');
 
 async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
   if (inputType.value !== 'claude') return;
@@ -2094,9 +2112,11 @@ async function openDialog(prefill = null) {
   // visibility are (re)built below once the box registry lands.
   inputPlacement.value = 'host';
   // Collapse the advanced accordions each open so the dialog starts short.
-  for (const sec of [toolsSection, skillsSection, otherSection]) {
+  for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
     if (sec) sec.open = false;
   }
+  if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
+  refreshEnvHint();
   applyTypeDefaults();
   inputName.style.borderColor = '';
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -2331,12 +2351,23 @@ function collectFormConfig() {
   };
 }
 
+// Per-session env vars from the New Session dialog's KEY=value textarea, as a flat
+// { KEY: value } map (or null when empty → create()'s null default, no persisted
+// env, no-scopes byte-identity holds). Captured OUTSIDE collectFormConfig on
+// purpose: that config feeds the template save path too, and per-session env is
+// not a template field (T46 scope) — keeping it here leaves templates untouched.
+function collectDialogEnv() {
+  const { env } = parseEnvLines(inputEnv ? inputEnv.value : '');
+  return Object.keys(env).length ? env : null;
+}
+
 async function doCreate() {
   const name = inputName.value.trim();
   const cfg = collectFormConfig();
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
           systemPromptFile, appendPromptFiles, intents } = cfg;
+  const env = collectDialogEnv();
 
   // Prompts are referenced by library file now (system replaces, appends
   // compose), sourced through cfg (single capture path). The legacy inline body
@@ -2440,7 +2471,7 @@ async function doCreate() {
   // spawns down the same path. Otherwise the plain createSession. The seat params
   // are identical across all three; the team calls add the team fields.
   const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents };
+  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env };
   let result;
   if (teamOn && dialogTeamMode === 'create') {
     const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -2450,7 +2481,7 @@ async function doCreate() {
     const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
     result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
   } else {
-    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents);
+    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env);
   }
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
@@ -4129,6 +4160,113 @@ const prefsRemoteTokenSave = document.getElementById('prefs-remote-token-save');
 const prefsRemoteTokenClear = document.getElementById('prefs-remote-token-clear');
 const prefsRemoteTokenState = document.getElementById('prefs-remote-token-state');
 
+// --- Environment variables editor (T46) ------------------------------------
+// Global / per-workspace scoped env vars, wired to the write-only-secret IPC
+// (envScopesGet masks secret values as { key, secret:true, hasValue:true } — the
+// value never leaves main, same discipline as the phone-access token above).
+const prefsEnvScope = document.getElementById('prefs-env-scope');
+const prefsEnvList = document.getElementById('prefs-env-list');
+const prefsEnvKey = document.getElementById('prefs-env-key');
+const prefsEnvValue = document.getElementById('prefs-env-value');
+const prefsEnvSecret = document.getElementById('prefs-env-secret');
+const prefsEnvAdd = document.getElementById('prefs-env-add');
+const prefsEnvState = document.getElementById('prefs-env-state');
+
+// The scope arg the IPC handlers take: 'global', or this window's workspace id.
+function prefsEnvScopeArg() {
+  return prefsEnvScope && prefsEnvScope.value === 'workspace'
+    ? (currentWorkspaceId || 'default')
+    : 'global';
+}
+
+function setPrefsEnvState(msg, kind) {
+  if (!prefsEnvState) return;
+  prefsEnvState.textContent = msg || '';
+  prefsEnvState.style.color = kind === 'error' ? 'var(--warn, #d9a55b)' : 'var(--muted, #8b949e)';
+}
+
+// Render the current scope's rows. A secret row shows a masked placeholder + a
+// Replace affordance (no value ever arrives here to display); a plain row shows
+// its value. Delete removes the key immediately then re-renders.
+async function refreshPrefsEnv() {
+  if (!prefsEnvList) return;
+  const scope = prefsEnvScopeArg();
+  const res = await window.api.envScopesGet(scope);
+  prefsEnvList.textContent = '';
+  if (!res || res.ok === false) {
+    setPrefsEnvState((res && res.error) || 'Environment scopes unavailable on this host.', 'error');
+    return;
+  }
+  setPrefsEnvState('');
+  const vars = res.vars || [];
+  if (!vars.length) {
+    const empty = document.createElement('span');
+    empty.className = 'hint-text';
+    empty.textContent = 'No variables set for this scope.';
+    prefsEnvList.appendChild(empty);
+    return;
+  }
+  for (const v of vars) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:4px;';
+    const keyEl = document.createElement('code');
+    keyEl.textContent = v.key;
+    keyEl.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+    const valEl = document.createElement('span');
+    valEl.className = 'hint-text';
+    valEl.style.cssText = 'flex:2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+    valEl.textContent = v.secret ? '•••••••• (secret — set)' : String(v.value == null ? '' : v.value);
+    const editBtn = document.createElement('button');
+    editBtn.className = 'secondary';
+    editBtn.type = 'button';
+    editBtn.style.flex = 'none';
+    editBtn.textContent = v.secret ? 'Replace' : 'Edit';
+    editBtn.addEventListener('click', () => {
+      // Seed the add row for a replace/edit — a secret's value is never round-
+      // tripped (it can only be re-set), so the value field starts empty.
+      prefsEnvKey.value = v.key;
+      prefsEnvValue.value = v.secret ? '' : String(v.value == null ? '' : v.value);
+      prefsEnvSecret.checked = !!v.secret;
+      prefsEnvValue.focus();
+    });
+    const delBtn = document.createElement('button');
+    delBtn.className = 'secondary';
+    delBtn.type = 'button';
+    delBtn.style.flex = 'none';
+    delBtn.textContent = '×';
+    delBtn.title = `Delete ${v.key}`;
+    delBtn.addEventListener('click', async () => {
+      const r = await window.api.envScopesDelete(scope, v.key);
+      if (!r || r.ok === false) { setPrefsEnvState((r && r.error) || 'Delete failed.', 'error'); return; }
+      refreshPrefsEnv();
+    });
+    row.append(keyEl, valEl, editBtn, delBtn);
+    prefsEnvList.appendChild(row);
+  }
+}
+
+async function addPrefsEnvVar() {
+  const key = (prefsEnvKey.value || '').trim();
+  const value = prefsEnvValue.value || '';
+  const secret = !!(prefsEnvSecret && prefsEnvSecret.checked);
+  if (!key) { setPrefsEnvState('Enter a KEY first.', 'error'); return; }
+  // A secret's value never round-trips into the field (Replace seeds it empty), so
+  // an empty value on a secret set would silently blank the stored credential —
+  // refuse it rather than overwrite the secret with "". A non-secret empty value
+  // (KEY set to the empty string) is legitimate and allowed.
+  if (secret && !value) { setPrefsEnvState('Enter the secret value to set or replace it (empty would blank it).', 'error'); return; }
+  const res = await window.api.envScopesSet(prefsEnvScopeArg(), key, value, secret);
+  if (!res || res.ok === false) { setPrefsEnvState((res && res.error) || 'Set failed.', 'error'); return; }
+  prefsEnvKey.value = '';
+  prefsEnvValue.value = '';
+  if (prefsEnvSecret) prefsEnvSecret.checked = false;
+  setPrefsEnvState(`Saved ${key}.`);
+  refreshPrefsEnv();
+}
+
+if (prefsEnvAdd) prefsEnvAdd.addEventListener('click', addPrefsEnvVar);
+if (prefsEnvScope) prefsEnvScope.addEventListener('change', () => { setPrefsEnvState(''); refreshPrefsEnv(); });
+
 // Reflect the write-only token state (a derived boolean — the value never leaves
 // main). Called on prefs-open and after every set/clear.
 function renderRemoteTokenState(hasToken) {
@@ -5360,6 +5498,13 @@ async function openPrefs() {
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken);
+  // Env-scope editor: reset the add row + render the current scope's vars.
+  if (prefsEnvScope) prefsEnvScope.value = 'global';
+  if (prefsEnvKey) prefsEnvKey.value = '';
+  if (prefsEnvValue) prefsEnvValue.value = '';
+  if (prefsEnvSecret) prefsEnvSecret.checked = false;
+  setPrefsEnvState('');
+  refreshPrefsEnv();
   // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
   // Unchecked = denied by default for new sessions.
   setClaudeToolsCache(s.claudeTools || []);

@@ -980,6 +980,7 @@ const SessionManager = createSessionManager({
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
+  getEnvScopes: () => envScopes,
   getPromptLibrary: () => promptLibrary,
   getAgentLibrary: () => agentLibrary,
   getRemoteServer: () => remoteServer,
@@ -1222,7 +1223,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const preserveFields = ['ephemeral', 'reviewFor'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
-    const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null);
+    const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null);
     // kill() removed the persistence entry (incl. stripLevel) and create()
     // re-wrote it from spawn args only — re-assert the session's OWN level so
     // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
@@ -1370,7 +1371,12 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // unchanged. Intents ARE owned by this dialog now: nextIntents came from the
     // patch (null = all-enabled/cleared, or the enabled subset incl [] = everything
     // gated), so thread it — not beforeKill's — so the edit's gate wins.
-    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents);
+    // Env isn't editable in the args-edit dialog either — thread the persisted
+    // value through unchanged (like exec grants). Omitting it made create()'s
+    // upsert erase env from sessions.json on a successful args-edit restart, so a
+    // session carrying AWS_PROFILE respawned env-less and every later --resume was
+    // wrong too (the FAILURE path below already preserves it via ...beforeKill).
+    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (beforeKill.env && typeof beforeKill.env === 'object') ? beforeKill.env : null);
     // kill() dropped the entry's stripLevel; re-assert the session's own level
     // (see session:restart) so editing args doesn't reset stripping.
     const argsLvl = stripLevelOf(beforeKill);
@@ -1530,7 +1536,7 @@ const toolCache = createToolCache({ whichBin });
   // watchdog → remote → peers → cleanup → sweep). ────────────────────────────
   const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR });
   const { persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, renameWorkspaceScope } = stores;
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, renameWorkspaceScope } = stores;
 
   // Materialize the boiling-pot CLI closure into ~/.clodex/bin/ (grok skill reads
   // it from there; the app's own copy is sealed in app.asar). Overwrite-always.

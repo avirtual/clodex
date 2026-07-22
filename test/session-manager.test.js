@@ -3168,6 +3168,139 @@ test('create: an EMPTY execCommands grant writes NO key (absent ≡ [] ≡ no gr
   assert.strictEqual('execCommands' in persisted['b-nogrant'], false);
 });
 
+// --- T46: scoped env merged into the PTY env at create() ---------------------
+// Drives a REAL create() on a bash session (agentType null → no hooks/wire; the
+// upsert + env build are type-agnostic) with a fake pty capturing the env passed
+// to spawn, plus a real env-scope store fake + a tmp userData (no override file).
+// This exercises the actual mergeSessionEnv wire-in, not the try/catch degrade
+// path the other bash probes fall into (they don't inject getEnvScopes/path).
+function mkEnvProbe({ global = {}, workspaces = {} } = {}) {
+  const persisted = {};
+  let capturedEnv = null;
+  const fakePty = {
+    spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; },
+  };
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-envud-')); // no env-override.env inside
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [], get: () => null,
+      upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
+      setSessionId: () => {},
+    }),
+    getEnvScopes: () => ({ all: () => ({ global, workspaces }) }),
+    getUserDataPath: () => userData,
+    resolveProxyBase: () => null,
+    lastTranscriptWrite: () => null,
+    pty: fakePty, os, path,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._sendToSession = () => {};
+  return { m, persisted, captured: () => capturedEnv };
+}
+// Like bashCreate but threads the 19th positional (sessionEnv).
+const bashCreateWithEnv = (m, name, sessionEnv) => m.create(
+  name, 'bash', osReal.tmpdir(), [], null, 'ws', null, false, null,
+  [], [], [], [], [], null, [], [], null, sessionEnv,
+);
+
+test('create → PTY env: no scopes reduces to byte-identical { ...process.env, TERM }', async () => {
+  // The load-bearing no-behavior-change pin: with nothing set anywhere and no
+  // override file, mergeSessionEnv returns exactly { ...process.env }, so the
+  // spawned env is byte-for-byte the historical `{ ...process.env, TERM }`.
+  const { m, captured } = mkEnvProbe();
+  await bashCreate(m, 'env-none', null);
+  assert.deepStrictEqual(captured(), { ...process.env, TERM: 'xterm-256color' });
+});
+
+test('create → PTY env: a session env param layers over the base and reaches spawn', async () => {
+  const { m, captured } = mkEnvProbe();
+  await bashCreateWithEnv(m, 'env-sess', { AWS_PROFILE: 'acct', AWS_ROLE_SESSION_NAME: 'sess' });
+  const env = captured();
+  assert.strictEqual(env.AWS_PROFILE, 'acct');   // the driving per-session case
+  assert.strictEqual(env.AWS_ROLE_SESSION_NAME, 'sess');
+  assert.strictEqual(env.TERM, 'xterm-256color'); // app-owned key still applied last
+  assert.strictEqual(env.PATH, process.env.PATH); // base env still present underneath
+});
+
+test('create → PTY env: scope precedence (global < workspace < session) reaches the PTY', async () => {
+  // session wins over workspace wins over global; a global-only key survives.
+  const { m, captured } = mkEnvProbe({
+    global: { K: { value: 'g' }, GONLY: { value: 'gv' } },
+    workspaces: { ws: { K: { value: 'w' } } },
+  });
+  await bashCreateWithEnv(m, 'env-prec', { K: 's' });
+  const env = captured();
+  assert.strictEqual(env.K, 's', 'session overrides workspace and global');
+  assert.strictEqual(env.GONLY, 'gv', 'global-only key survives the merge');
+
+  // No session override → workspace wins over global (bashCreate passes ws-id 'ws').
+  const { m: m2, captured: cap2 } = mkEnvProbe({
+    global: { K: { value: 'g' } }, workspaces: { ws: { K: { value: 'w' } } },
+  });
+  await bashCreate(m2, 'env-prec2', null);
+  assert.strictEqual(cap2().K, 'w', 'workspace wins over global with no session override');
+});
+
+test('create → PTY env: a deny-listed scope key never reaches the PTY', async () => {
+  // flattenScope drops CLODEX_REMOTE_TOKEN before it can reach the merge, so a
+  // scope can't clobber the wire gate through the surface it gates.
+  const { m, captured } = mkEnvProbe({ global: { CLODEX_REMOTE_TOKEN: { value: 'leak' }, OK: { value: '1' } } });
+  await bashCreate(m, 'env-deny', null);
+  const env = captured();
+  assert.strictEqual(env.OK, '1', 'a legal sibling key still lands');
+  assert.strictEqual(env.CLODEX_REMOTE_TOKEN, process.env.CLODEX_REMOTE_TOKEN,
+    'the scope did not inject the deny key (base value, whatever it is, untouched)');
+});
+
+test('create: a session env param persists as a flat { KEY: value } on the entry (--resume identity)', async () => {
+  const { m, persisted } = mkEnvProbe();
+  await bashCreateWithEnv(m, 'env-persist', { AWS_PROFILE: 'acct' });
+  assert.deepStrictEqual(persisted['env-persist'].env, { AWS_PROFILE: 'acct' });
+});
+
+test('create: an absent session env writes NO env key (absent ≡ {} ≡ falls through to global/workspace)', async () => {
+  const { m, persisted } = mkEnvProbe();
+  await bashCreate(m, 'env-noenv', null);
+  assert.ok(persisted['env-noenv'], 'the record was written');
+  assert.strictEqual('env' in persisted['env-noenv'], false);
+});
+
+// The tee-blind CORRECTNESS TRAP (spec-called-out): create() consults
+// teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: mergedEnv })) to decide
+// a claude session's backend. Once scopes exist, a SCOPE-set CLAUDE_CODE_USE_BEDROCK
+// is visible ONLY if the MERGED env is the baseEnv — with the old default
+// (process.env) the classifier returns null, and the claude arm would flip
+// intentSource from 'jsonl' to 'wire' on a session whose Bedrock-routed bytes
+// never traverse the wire tee → its intent scanner goes dark. Spinning up a full
+// claude create() (preseed + wire + hook setup + prompt merge) just to observe
+// `backend` is disproportionate, so this pins the trap at the exact composed seam
+// create() runs (mergeSessionEnv → readEffectiveClaudeEnv → teeBlindBackend),
+// proving the fix is load-bearing: base {} models process.env WITHOUT the scope,
+// so only the merged env can carry bedrock. (Flagged in the report as a
+// seam-level pin, not a through-create pin.)
+const claudeEnv = require('../claude-env');
+const { mergeSessionEnv } = require('../env-scopes');
+test('tee-blind trap: a SCOPE-set CLAUDE_CODE_USE_BEDROCK is seen only through the merged baseEnv (scanner stays jsonl)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tee-'));   // no .claude/settings.json
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teehome-')); // isolate ~/.claude too
+  // The scope (e.g. a global env var) sets bedrock; the base env does not.
+  const merged = mergeSessionEnv({ base: {}, global: { CLAUDE_CODE_USE_BEDROCK: { value: '1' } } });
+  // FIXED path — create() passes baseEnv: mergedEnv → bedrock is seen → the claude
+  // arm keeps intentSource 'jsonl' (the JsonlWatcher reads the transcript regardless
+  // of backend).
+  assert.strictEqual(
+    claudeEnv.teeBlindBackend(claudeEnv.readEffectiveClaudeEnv(cwd, { baseEnv: merged, homeDir: home })),
+    'bedrock', 'the merged env carries the scope bedrock into the classifier',
+  );
+  // BUGGY path — the pre-fix default baseEnv: process.env (modeled by {}) can't see
+  // the scope → null → the arm would flip intentSource to 'wire' and the scanner
+  // goes dark. This is exactly what passing mergedEnv prevents.
+  assert.strictEqual(
+    claudeEnv.teeBlindBackend(claudeEnv.readEffectiveClaudeEnv(cwd, { baseEnv: {}, homeDir: home })),
+    null, 'without the merged baseEnv the scope bedrock is invisible (the trap)',
+  );
+});
+
 // --- session-exit meta: `expected` discriminates crash from deliberate teardown ---
 // Every deliberate teardown flags the session BEFORE the PTY dies (kill() →
 // _userKilled, which restart also routes through; killAll() → _shuttingDown),

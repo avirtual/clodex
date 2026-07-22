@@ -97,6 +97,7 @@ async function restoreSessionsForWorkspace({
         entry.appendPromptFiles || [],
         Array.isArray(entry.execCommands) ? entry.execCommands : [],
         Array.isArray(entry.intents) ? entry.intents : null,
+        (entry.env && typeof entry.env === 'object') ? entry.env : null,
       );
       restored.push({
         name: entry.name,

@@ -75,7 +75,7 @@ function registerIpcHandlers(deps) {
     // `let persistence, templates, …` list) — value-injected: initStores runs
     // before this factory in whenReady and the stores are never reassigned.
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings,
+    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes,
     // read-only mutable singletons (get seams)
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
@@ -115,7 +115,7 @@ function registerIpcHandlers(deps) {
     // fires for non-dialog callers — keeping new sessions on the shared, lean
     // tools segment. An explicit array always wins (undefined === "untouched").
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null);
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null);
     // Strip level isn't a spawn arg (it's a proxy-side override the poller
     // asserts once the session links), so persist it onto the entry after
     // create() rather than threading it through the spawn path.
@@ -132,9 +132,9 @@ function registerIpcHandlers(deps) {
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -1087,6 +1087,49 @@ function registerIpcHandlers(deps) {
     }
   });
 
+  // ---- GUI-managed environment scopes (T46) --------------------------------
+  // The global/workspace env-var editor. Secrets discipline (docs/sessions.md):
+  // a value marked `secret` is WRITE-ONLY through IPC — the read handler NEVER
+  // returns it, only { key, secret:true, hasValue:true } (mirror of the remote/
+  // peer token surfaces above). Non-secret rows return { key, value } so the
+  // editor can show + edit them. `scope` is 'global' or a workspaceId.
+  // Session-scope env is NOT here — it rides the New Session dialog → create()'s
+  // env param, never a stored editable scope.
+  handle('envScopes:get', (_e, scope) => {
+    if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
+    const raw = envScopes.getScope(scope === 'global' ? 'global' : String(scope));
+    // Masked projection: a secret value never leaves the main process. hasValue
+    // lets the editor render a "•••• (replace)" affordance without the bytes.
+    const vars = Object.entries(raw).map(([key, rec]) => {
+      const secret = !!(rec && typeof rec === 'object' && rec.secret);
+      if (secret) return { key, secret: true, hasValue: true };
+      const value = rec && typeof rec === 'object' ? rec.value : rec;
+      return { key, secret: false, value: String(value == null ? '' : value) };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+    return { ok: true, scope: scope === 'global' ? 'global' : String(scope), vars };
+  });
+  // Set/replace one KEY. envScopes.set throws (envKeyError) on an invalid/denied/
+  // newline key → surfaced as { ok:false, error } for the editor to show. The
+  // value is never echoed back.
+  handle('envScopes:set', (_e, scope, key, value, secret) => {
+    if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
+    try {
+      envScopes.set(scope === 'global' ? 'global' : String(scope), key, value, secret === true);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+  handle('envScopes:delete', (_e, scope, key) => {
+    if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
+    try {
+      envScopes.remove(scope === 'global' ? 'global' : String(scope), key);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
   // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
   // ssh-run.js). Classification + the deploy script live off-electron so they're
@@ -1881,6 +1924,7 @@ function registerIpcHandlers(deps) {
         entry.appendPromptFiles || [],
         Array.isArray(entry.execCommands) ? entry.execCommands : [],
         Array.isArray(entry.intents) ? entry.intents : null,
+        (entry.env && typeof entry.env === 'object') ? entry.env : null,
       );
       return { ok: true };
     } catch (err) {

@@ -1337,3 +1337,62 @@ test('uiSettings: a boxes write leaves the other settings intact', () => {
     assert.strictEqual(s.peers[0].id, 'p');
   } finally { cleanup(); }
 });
+
+// --- envScopes store (T46) --------------------------------------------------
+
+test('envScopes: set/getScope round-trips global + workspace, remove prunes', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { envScopes } = stores;
+    envScopes.set('global', 'AWS_PROFILE', 'acct', false);
+    envScopes.set('global', 'TOK', 'sekret', true);
+    envScopes.set('ws-1', 'WK', 'wv', false);
+    assert.deepStrictEqual(envScopes.getScope('global'), {
+      AWS_PROFILE: { value: 'acct', secret: false },
+      TOK: { value: 'sekret', secret: true },
+    });
+    assert.deepStrictEqual(envScopes.getScope('ws-1'), { WK: { value: 'wv', secret: false } });
+    // all() feeds the merge: global + the workspaces map.
+    const all = envScopes.all();
+    assert.deepStrictEqual(Object.keys(all.workspaces), ['ws-1']);
+    envScopes.remove('ws-1', 'WK');
+    assert.deepStrictEqual(envScopes.getScope('ws-1'), {}, 'emptied workspace read back as {}');
+    assert.deepStrictEqual(Object.keys(envScopes.all().workspaces), [], 'emptied workspace map pruned');
+  } finally { cleanup(); }
+});
+
+test('envScopes: set throws on an invalid key, the deny key, and a newline value', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { envScopes } = stores;
+    assert.throws(() => envScopes.set('global', '2bad', 'x', false), /invalid env key/);
+    assert.throws(() => envScopes.set('global', 'CLODEX_REMOTE_TOKEN', 'leak', false), /reserved/);
+    assert.throws(() => envScopes.set('global', 'OK', 'a\nb', false), /newline/);
+    assert.deepStrictEqual(envScopes.getScope('global'), {}, 'nothing landed');
+  } finally { cleanup(); }
+});
+
+test('envScopes: prototype-pollution guard — __proto__/constructor/prototype scopes are refused', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { envScopes } = stores;
+    for (const bad of ['__proto__', 'constructor', 'prototype']) {
+      assert.throws(() => envScopes.set(bad, 'K', 'v', false), /invalid scope/, `set(${bad}) refused`);
+      assert.deepStrictEqual(envScopes.getScope(bad), {}, `getScope(${bad}) is inert`);
+      assert.doesNotThrow(() => envScopes.remove(bad, 'K'));
+      assert.doesNotThrow(() => envScopes.removeWorkspace(bad));
+    }
+    // Object.prototype was never touched.
+    assert.strictEqual(({}).K, undefined, 'no key leaked onto Object.prototype');
+    assert.strictEqual(({}).polluted, undefined);
+  } finally { cleanup(); }
+});
+
+test('envScopes: the store file is written 0600 (secret store)', () => {
+  const { stores, userData, cleanup } = freshStores();
+  try {
+    stores.envScopes.set('global', 'K', 'v', false);
+    const st = fs.statSync(path.join(userData, 'env-scopes.json'));
+    assert.strictEqual(st.mode & 0o777, 0o600, 'env-scopes.json is 0600');
+  } finally { cleanup(); }
+});

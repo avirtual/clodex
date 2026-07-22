@@ -268,7 +268,7 @@ Write:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs` |
+| `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`run`/`send`/`args set` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
 | `kill <name> [--force]` | `POST /api/kill/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `--json`) |
 | `restart <name> [--fresh]` | `POST /api/restart-session/:name` | |
 | `args set <name> [--arg X…] [--proxy URL] [--restart]` | `POST /api/session-args/:name` | |

@@ -192,6 +192,102 @@ test('spawn: a liveness read failure stays optimistic (alive unknown → normal 
   server.close();
 });
 
+// --- T46: spawn --env KEY=VALUE + the old-box ack-echo warning ---------------
+test('spawn --env: repeatable KEY=VALUE tokens ride body.env; ack echo matches → no warning', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') {
+      return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
+    }
+    // A current box applies both keys and echoes them back sorted.
+    res.end(JSON.stringify({ ok: true, name: 'w', type: 'claude', pid: 9, envKeys: ['AWS_PROFILE', 'AWS_ROLE_SESSION_NAME'] }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(
+    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct', '--env', 'AWS_ROLE_SESSION_NAME=w'],
+    port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(seen[0].body.env, { AWS_PROFILE: 'acct', AWS_ROLE_SESSION_NAME: 'w' });
+  assert.match(stdout, /spawned w \(claude\) pid=9/);
+  assert.doesNotMatch(stdout, /WARNING/); // full echo → nothing dropped
+  server.close();
+});
+
+test('spawn --env: a value may contain "=" (split on the FIRST equals only)', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'bash' }] }));
+    res.end(JSON.stringify({ ok: true, name: 'w', type: 'bash', pid: 3, envKeys: ['TOKEN'] }));
+  });
+  const port = await listen(server);
+  const { code } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'bash', '--env', 'TOKEN=a=b=c'], port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(seen[0].body.env, { TOKEN: 'a=b=c' });
+  server.close();
+});
+
+test('spawn --env: an OLD box (no envKeys in the ack) warns loudly that env was NOT applied', async () => {
+  const { server } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
+    // Box predates env support: the ack carries NO envKeys field.
+    res.end(JSON.stringify({ ok: true, name: 'w', type: 'claude', pid: 9 }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct'], port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /WARNING: env NOT applied — this node predates env support/);
+  assert.match(stdout, /AWS_PROFILE/);
+  server.close();
+});
+
+test('spawn --env: a box that DROPPED a key (sanitize/deny) warns naming just the missing key', async () => {
+  const { server } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
+    // Applied OK but dropped CLODEX_REMOTE_TOKEN (deny-listed server-side).
+    res.end(JSON.stringify({ ok: true, name: 'w', type: 'claude', pid: 9, envKeys: ['OK'] }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(
+    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
+    port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /WARNING: some env vars were NOT applied by the node \(rejected\/denied\): CLODEX_REMOTE_TOKEN/);
+  assert.doesNotMatch(stdout, /predates env support/); // the field WAS present → not an old box
+  server.close();
+});
+
+test('spawn --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout stays clean JSON)', async () => {
+  // Review SHOULD-FIX 2: printer.line contaminates the --json wire-payload
+  // contract. Even a DROPPED key (which loudly warns in human mode) must not print
+  // a warning line to stdout under --json — the JSON already carries envKeys.
+  const { server } = stub((req, res, rec) => {
+    res.writeHead(200);
+    if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
+    res.end(JSON.stringify({ ok: true, name: 'w', type: 'claude', pid: 9, envKeys: ['OK'] }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(
+    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--json', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
+    port, NOSLEEP);
+  assert.strictEqual(code, 0);
+  assert.doesNotMatch(stdout, /WARNING/, 'no human warning line under --json');
+  const parsed = JSON.parse(stdout); // stdout is parseable JSON, uncontaminated
+  assert.deepStrictEqual(parsed.envKeys, ['OK'], 'the payload still carries the applied keys');
+  server.close();
+});
+
+test('spawn --env: a shapeless token (no "=") is a usage error before any request', async () => {
+  const { server, seen } = stub((req, res) => { res.writeHead(200); res.end('{}'); });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'JUSTAKEY'], port, NOSLEEP);
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--env must be KEY=VALUE/);
+  assert.strictEqual(seen.length, 0); // rejected before the POST
+  server.close();
+});
+
 test('send: fire-and-forget POST /api/send', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true })); });
   const port = await listen(server);

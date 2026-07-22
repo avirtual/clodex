@@ -112,21 +112,24 @@ const VERB_REGISTRY = [
   {
     name: 'spawn', group: 'sessions',
     summary: 'create a new session on the node',
-    usage: 'spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--fork] [--json]',
+    usage: 'spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [--json]',
     args: [['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
       ['--type T', 'claude | codex | bash'],
       ['--model M', 'agent model (rides extraArgs, same as any raw CLI flag)'],
       ['--arg X', 'raw passthrough CLI arg — repeatable (rides extraArgs)'],
+      ['--env KEY=VALUE', 'session env var — repeatable. Merged over the node\'s global/workspace scopes. The node re-validates + deny-lists; the ack echoes the keys actually applied and spawn warns loudly if any were dropped.'],
       ['--fork', 'fork mode (agents)'],
     ],
     examples: [
       'clodexctl spawn worker --cwd /home/clodex/work --type claude',
       'clodexctl spawn b --cwd /w --type claude --model opus --arg --foo',
+      'clodexctl spawn w --cwd /w --type claude --env AWS_PROFILE=acct --env AWS_ROLE_SESSION_NAME=w',
     ],
     notes: [
       'Post-spawn liveness check: a child that dies on exec (e.g. the agent CLI isn\'t on the node\'s PATH) STILL returns a pid, so spawn waits a beat and re-checks the live list — gone → it says WHY instead of reporting a dead pid.',
+      '--env is applied ONLY at create (spawn); `run`/`send` target an existing session and cannot change its env. A node predating env support drops the keys silently on its side — spawn detects the missing ack echo and warns.',
     ],
   },
   {

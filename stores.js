@@ -34,6 +34,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { envKeyError } = require('./env-scopes');
 const { parseAgentFrontmatter } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
 const { visibleTo } = require('./scope-util');
@@ -379,6 +380,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   const UI_SETTINGS_FILE = path.join(userDataPath, 'ui-settings.json');
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
   const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
+  // GUI-managed env scopes (T46). Holds secret VALUES at rest, so it is written
+  // chmod 0600 after every save — it is the one JSON store whose contents are
+  // credential-sensitive.
+  const ENV_SCOPES_FILE = path.join(userDataPath, 'env-scopes.json');
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
@@ -1508,6 +1513,98 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Env scopes (T46) — GUI-managed environment variables merged over process.env
+  // for every wrapper PTY. Shape:
+  //   { global: { KEY: { value, secret } }, workspaces: { [id]: { KEY: {…} } } }
+  // Session-scope env is NOT here (it persists on the sessions.json entry like any
+  // spawn param). This store holds secret VALUES at rest, so EVERY write chmods
+  // the file 0600 (atomicWriteFileSync already writes the temp at 0600, but the
+  // rename can land on a pre-existing world-readable file — the explicit chmod
+  // guarantees the final mode). Reads NEVER mask (the pure merge module needs the
+  // values); masking is an IPC-layer concern (get returns hasValue, not value).
+  // Key/value validation is shared with the merge module (envKeyError): a key
+  // must match [A-Za-z_][A-Za-z0-9_]*, may not be deny-listed, and a value may
+  // not contain a newline — set() throws on any violation so the GUI/IPC surface
+  // shows the reason.
+  // ---------------------------------------------------------------------------
+  // Prototype-pollution guard for scope names: a workspace-scope path does
+  // `data.workspaces[scope] = data.workspaces[scope] || {}`, so a scope of
+  // '__proto__' / 'constructor' / 'prototype' would reach Object.prototype (and
+  // ENV_KEY_RE even admits `toString` as a KEY). Workspace ids are UUIDs; these
+  // are never legitimate scope names — reject them at every door.
+  const UNSAFE_SCOPE = new Set(['__proto__', 'constructor', 'prototype']);
+  const safeScope = (scope) => scope === 'global' || !UNSAFE_SCOPE.has(String(scope));
+
+  const envScopes = {
+    _load() {
+      try {
+        const obj = JSON.parse(fs.readFileSync(ENV_SCOPES_FILE, 'utf-8'));
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { global: {}, workspaces: {} };
+        return {
+          global: (obj.global && typeof obj.global === 'object' && !Array.isArray(obj.global)) ? obj.global : {},
+          workspaces: (obj.workspaces && typeof obj.workspaces === 'object' && !Array.isArray(obj.workspaces)) ? obj.workspaces : {},
+        };
+      } catch { return { global: {}, workspaces: {} }; }
+    },
+    _save(data) {
+      try {
+        atomicWriteFileSync(ENV_SCOPES_FILE, JSON.stringify(data, null, 2));
+        // Reassert 0600 on the final file — a secret store must never be group/
+        // world-readable, and the atomic rename can land on an older lax-mode file.
+        try { fs.chmodSync(ENV_SCOPES_FILE, 0o600); } catch { /* best-effort */ }
+      } catch (e) { console.error('env-scopes save failed:', e); }
+    },
+    // The raw stored scope object for a scope. scope='global' → the global map;
+    // scope=<workspaceId> → that workspace's map ({} if none). Values are NOT
+    // masked here — this feeds the pure merge at spawn. The IPC read handler masks.
+    getScope(scope) {
+      if (!safeScope(scope)) return {};
+      const data = this._load();
+      if (scope === 'global') return data.global || {};
+      return (data.workspaces && data.workspaces[scope]) || {};
+    },
+    // Whole store (for the merge wire-in: global + the session's workspace map).
+    all() { return this._load(); },
+    // Set/replace one KEY in a scope. Throws (via envKeyError) on an invalid key,
+    // a deny-listed key, or a newline value — the write surfaces (IPC/GUI) turn
+    // that into a user-facing error. `secret` marks the value write-only through
+    // IPC/wire (masked on read). Editing an existing key is a full replace.
+    set(scope, key, value, secret) {
+      if (!safeScope(scope)) throw new Error(`invalid scope "${scope}"`);
+      const err = envKeyError(key, value);
+      if (err) throw new Error(err);
+      const data = this._load();
+      const target = scope === 'global'
+        ? (data.global = data.global || {})
+        : ((data.workspaces = data.workspaces || {}), (data.workspaces[scope] = data.workspaces[scope] || {}));
+      target[key] = { value: String(value == null ? '' : value), secret: secret === true };
+      this._save(data);
+    },
+    // Delete one KEY from a scope. Prunes an emptied workspace map so a deleted
+    // workspace's scope leaves no husk.
+    remove(scope, key) {
+      if (!safeScope(scope)) return;
+      const data = this._load();
+      if (scope === 'global') {
+        if (data.global) delete data.global[key];
+      } else if (data.workspaces && data.workspaces[scope]) {
+        delete data.workspaces[scope][key];
+        if (!Object.keys(data.workspaces[scope]).length) delete data.workspaces[scope];
+      }
+      this._save(data);
+    },
+    // Drop a whole workspace's scope (Delete Workspace… teardown).
+    removeWorkspace(workspaceId) {
+      if (!safeScope(workspaceId)) return;
+      const data = this._load();
+      if (data.workspaces && data.workspaces[workspaceId]) {
+        delete data.workspaces[workspaceId];
+        this._save(data);
+      }
+    },
+  };
+
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
   migrateTemplatesJson(); // one-shot: templates.json -> library/templates/*.json
   seedLibraryDefaults(); // seed-if-absent: shipped library defaults -> ~/.clodex/library
@@ -1515,6 +1612,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   return {
     persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings,
+    envScopes,
     renameWorkspaceScope,
   };
 }

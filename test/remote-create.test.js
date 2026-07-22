@@ -23,7 +23,7 @@ const IDX = {
   name: 0, type: 1, cwd: 2, extraArgs: 3, resumeId: 4, workspaceId: 5,
   systemPromptBody: 6, fork: 7, proxy: 8, agents: 9, denyBuiltins: 10,
   disabledTools: 11, disabledSkills: 12, injectSkills: 13, systemPromptFile: 14,
-  appendPromptFiles: 15, execCommands: 16, intents: 17,
+  appendPromptFiles: 15, execCommands: 16, intents: 17, env: 18,
 };
 
 // A createRemoteWiring dep bundle sufficient to reach `new RemoteServer(...)`.
@@ -97,10 +97,12 @@ test('createSession: bare {name,type,cwd} maps to the exact M3 defaults (compat)
   const { deps, createCalls, stripCalls } = makeDeps();
   const opts = captureOptions(deps);
   const ack = await opts.createSession({ name: 'worker', type: 'claude', cwd: '/tmp/w' });
-  assert.deepStrictEqual(ack, { ok: true, name: 'worker', type: 'claude', pid: 4242 });
+  // envKeys: [] rides EVERY ack now (the old-box negotiation echo) — a bare body
+  // applied no env, so the set is empty but the key is present.
+  assert.deepStrictEqual(ack, { ok: true, name: 'worker', type: 'claude', pid: 4242, envKeys: [] });
   assert.deepStrictEqual(createCalls[0], [
     'worker', 'claude', path.resolve('/tmp/w'),
-    [], null, 'default', null, false, null, [], [], [], [], [], null, [], [], null,
+    [], null, 'default', null, false, null, [], [], [], [], [], null, [], [], null, null,
   ]);
   assert.deepStrictEqual(stripCalls, [], 'no stripLevel seed for a bare body');
 });
@@ -132,6 +134,50 @@ test('createSession: every wire key lands in the right create() position', async
   assert.strictEqual(c[IDX.systemPromptFile], '/sp.md');
   assert.deepStrictEqual(c[IDX.appendPromptFiles], ['/ap.md']);
   assert.deepStrictEqual(c[IDX.intents], ['dm']);
+});
+
+// ── createSession: session env (T46) — sanitize inbound + ack envKeys echo ───
+
+test('createSession: a valid env body lands at position 18 and the ack echoes envKeys sorted', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({
+    name: 'awsw', type: 'claude', cwd: '/tmp/aws',
+    env: { AWS_ROLE_SESSION_NAME: 'w', AWS_PROFILE: 'acct' },
+  });
+  assert.deepStrictEqual(createCalls[0][IDX.env], { AWS_PROFILE: 'acct', AWS_ROLE_SESSION_NAME: 'w' });
+  // The ack echo is the old-box negotiation: keys ONLY, sorted, never values.
+  assert.deepStrictEqual(ack.envKeys, ['AWS_PROFILE', 'AWS_ROLE_SESSION_NAME']);
+});
+
+test('createSession: the client is NEVER trusted — invalid/denied env keys are sanitized off before create()', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({
+    name: 'dirty', type: 'claude', cwd: '/tmp/d',
+    env: {
+      OK: '1',
+      CLODEX_REMOTE_TOKEN: 'leak',   // deny-listed (the wire gate must not be clobberable)
+      '2bad': 'x',                    // invalid key (leading digit)
+      NL: 'a\nb',                     // newline value — rejected, never truncated
+    },
+  });
+  // Only the legal key survives into create() AND into the ack echo.
+  assert.deepStrictEqual(createCalls[0][IDX.env], { OK: '1' });
+  assert.deepStrictEqual(ack.envKeys, ['OK']);
+});
+
+test('createSession: an absent/empty env passes null into create() (no-scopes byte-identity) and echoes []', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  const ack1 = await opts.createSession({ name: 'noenv', type: 'claude', cwd: '/tmp/ne' });
+  assert.strictEqual(createCalls[0][IDX.env], null, 'absent env → null, not {}');
+  assert.deepStrictEqual(ack1.envKeys, []);
+  // An env that sanitizes to nothing is also null (never {}), so create()'s
+  // conditional-omit persist + no-scopes path hold exactly as with an absent key.
+  const ack2 = await opts.createSession({ name: 'emptyenv', type: 'claude', cwd: '/tmp/ee', env: { CLODEX_REMOTE_TOKEN: 'x' } });
+  assert.strictEqual(createCalls[1][IDX.env], null, 'all-dropped env → null');
+  assert.deepStrictEqual(ack2.envKeys, []);
 });
 
 // ── createSession: exec grants never cross ───────────────────────────────────

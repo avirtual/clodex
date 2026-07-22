@@ -23,6 +23,9 @@ const { pathFor } = require('./clodex-paths');
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants } = require('./session-args');
 const { withoutPrivilegedIntents } = require('./intent-catalog');
+// Env scopes cross the wire on a create body — never trust the client: sanitize
+// server-side (drops invalid/denied/newline keys) before it reaches create().
+const { sanitizeFlat } = require('./env-scopes');
 
 function createRemoteWiring(deps) {
   const {
@@ -190,8 +193,15 @@ function createRemoteWiring(deps) {
           } catch (e) {
             return { ok: false, error: `cannot create cwd "${dir}": ${e.message}` };
           }
+          // Session env (T46) crosses the wire but is NEVER trusted: sanitizeFlat
+          // drops any invalid/denied (CLODEX_REMOTE_TOKEN)/newline key server-side,
+          // so `sessionEnv` here is EXACTLY the set that will be applied. An OLD box
+          // predating env support just ignores the key — the ack echoes envKeys
+          // (below) so the client can detect the drop and warn loudly.
+          const sessionEnv = sanitizeFlat(b.env);
+          const sessionEnvKeys = Object.keys(sessionEnv).sort();
           try {
-            // Map the wire body onto create()'s 18-param positional signature
+            // Map the wire body onto create()'s 19-param positional signature
             // (session-manager.js:610). Each `|| default` reproduces the value the
             // M3 hardcoded call passed for an absent key. systemPromptBody stays
             // null (F2 — legacy inline body is never authored at create);
@@ -217,6 +227,10 @@ function createRemoteWiring(deps) {
               // box session an app-relaunch capability — mirror of the exec-grant
               // wire strip above. null passes through untouched.
               withoutPrivilegedIntents(Array.isArray(b.intents) ? b.intents : null),
+              // Session env (T46) — 19th positional. Already sanitized above; pass
+              // null (not {}) when empty so create()'s conditional-omit persist and
+              // no-scopes byte-identity both hold exactly as for a local spawn.
+              sessionEnvKeys.length ? sessionEnv : null,
             );
             // stripLevel isn't a create() param (it's a proxy-side override the
             // poller asserts once the session links) — seed it onto the entry after
@@ -231,6 +245,13 @@ function createRemoteWiring(deps) {
             // shape whether the session is local or on a peer.
             return {
               ok: true, name: out.name, type: out.type, pid: out.pid,
+              // Echo the env keys actually applied (T46). This IS the old-box
+              // negotiation: a box predating env support omits envKeys entirely, so
+              // clodexctl compares against what it sent and warns loudly on any
+              // mismatch/absence — a silently-dropped credential means the session
+              // runs as the WRONG identity, which must never be silent. Keys only,
+              // never values (secrets never cross a read/ack surface).
+              envKeys: sessionEnvKeys,
               ...(out.warnings && out.warnings.length ? { warnings: out.warnings } : {}),
             };
           } catch (e) {
