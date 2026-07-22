@@ -19,3 +19,6 @@ deploy/
 # Python droppings from running/import-checking the vendored wirescope in place
 __pycache__/
 vendor/wirescope/warmth.sqlite*
+
+# local design scratch (T44 etc.) — review protocol never commits docs/design/
+docs/design/
