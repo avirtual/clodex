@@ -63,6 +63,26 @@ test('helmChartPath: resolves to the packaged chart (Chart.yaml exists)', () => 
   assert.ok(fs.existsSync(path.join(D.helmChartPath(), 'Chart.yaml')));
 });
 
+test('deploy helm --no-wirescope: warned as ignored (chart value is the route), not silent', async () => {
+  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-wirescope', '--dry-run'], {
+    execFn: async () => { throw new Error('nothing runs on --dry-run'); },
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /--no-wirescope is ignored by the helm flavor — use --set wirescope\.enabled=false/);
+});
+
+test('chart: wirescope.enabled value (T49) — default true; false renders CLODEX_WIRESCOPE=off in the pod env', () => {
+  // No helm-template harness in this suite — string assertions on the chart
+  // files (the spec's fallback): the value exists with a true default, and the
+  // statefulset guards a CLODEX_WIRESCOPE=off env entry on `not enabled`.
+  const values = fs.readFileSync(path.join(D.helmChartPath(), 'values.yaml'), 'utf8');
+  assert.match(values, /^wirescope:\n  enabled: true$/m, 'values.yaml default is enabled: true');
+  const sts = fs.readFileSync(path.join(D.helmChartPath(), 'templates', 'statefulset.yaml'), 'utf8');
+  assert.match(sts, /\{\{- if not \.Values\.wirescope\.enabled \}\}/);
+  const block = sts.slice(sts.indexOf('{{- if not .Values.wirescope.enabled }}'));
+  assert.match(block.slice(0, block.indexOf('{{- end }}')), /name: CLODEX_WIRESCOPE\n\s+value: "off"/);
+});
+
 test('HELM_RELEASE_RE: DNS-1123 — rejects dots, underscores, uppercase, edges', () => {
   for (const ok of ['a', 'mynode', 'node-1', 'a1-b2']) assert.ok(D.HELM_RELEASE_RE.test(ok), ok);
   for (const bad of ['My.Node', 'a_b', 'UPPER', '-lead', 'trail-', '', 'a'.repeat(54)]) {

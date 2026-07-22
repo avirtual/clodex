@@ -90,10 +90,16 @@ function readScript() {
 // CLODEX_CLAUDE_TOKEN is set. The SSM flavor MUST NOT use this — its wrapper text
 // lands in CloudTrail; buildSsmScript calls this with no claudeToken and delivers
 // the secret post-verify over the encrypted wire instead.
-function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null, claudeToken = null } = {}) {
+//
+// noWirescope (--no-wirescope, T49): CLODEX_NO_WIRESCOPE=1 tells the installer
+// to (a) skip the wirescope-only python venv/pip sys-deps (best-effort) and
+// (b) pin CLODEX_WIRESCOPE=off into the service env via a systemd drop-in —
+// the engine's autoStartWanted() honors that over the proxyEnabled pref.
+function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null, claudeToken = null, noWirescope = false } = {}) {
   let line = `export PORT=${shSingleQuote(port)} REPO_URL=${shSingleQuote(repo)} BRANCH=${shSingleQuote(branch)}`;
   if (src) line += ` CLODEX_SRC=${shSingleQuote(src)}`;
   if (claudeToken) line += ` CLODEX_CLAUDE_TOKEN=${shSingleQuote(claudeToken)}`;
+  if (noWirescope) line += ` CLODEX_NO_WIRESCOPE='1'`;
   return line + '\n';
 }
 
@@ -265,8 +271,9 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   // then let it ride the ssh stdin as an env-export in the preamble — the ssh
   // channel is the auth boundary. Never printed, never in argv.
   const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
+  const noWirescope = !!flags['no-wirescope'];
   const script = readScript();
-  const preamble = buildPreamble({ port, repo, branch, src, claudeToken });
+  const preamble = buildPreamble({ port, repo, branch, src, claudeToken, noWirescope });
   const stdin = preamble + script;
   const ctxName = flags.name ? String(flags.name) : deriveCtxName(dest);
   const json = !!flags.json;
@@ -274,7 +281,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
 
   // --dry-run: describe, run nothing.
   if (flags['dry-run']) {
-    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
+    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, noWirescope, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
     printer.line([
       `dry-run — would deploy to ${dest}:`,
       `  port    ${port}`,
@@ -283,6 +290,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
       src ? `  src     ${src}` : null,
       `  script  ${script.length} bytes (${scriptPath()})`,
       claudeToken ? '  claude  token from --claude-token-file (rides ssh stdin, redacted)' : null,
+      noWirescope ? '  wirescope disabled (CLODEX_WIRESCOPE=off drop-in; python venv/pip deps skipped)' : null,
       flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName || '(none — pass --name)'}`,
     ].filter(Boolean).join('\n'));
     return;
@@ -420,7 +428,9 @@ function dockerHostToSshDest(dockerHost) {
 // trust boundary; --hostname is the engine's SELF_LABEL on the peer wire (must
 // be unique per node or DM routing collides). --env-file and extra -v ride
 // straight through in the operator's order.
-function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volumes = [] } = {}) {
+// --no-wirescope (T49) rides as -e CLODEX_WIRESCOPE=off — the engine-level
+// kill-switch (a fixed literal, no value interpolation).
+function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volumes = [], noWirescope = false } = {}) {
   const cname = CONTAINER_PREFIX + name;
   const argv = [
     'run', '-d',
@@ -430,6 +440,7 @@ function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volum
     '-p', `127.0.0.1:${port}:${CONTAINER_WIRE_PORT}`,
     '-v', `${cname}-data:/data`,
   ];
+  if (noWirescope) argv.push('-e', 'CLODEX_WIRESCOPE=off');
   if (envFile) argv.push('--env-file', envFile);
   for (const v of volumes) { argv.push('-v', v); }
   argv.push(image);
@@ -503,10 +514,11 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const volumes = Array.isArray(flags.volume) ? flags.volume : (flags.volume ? [String(flags.volume)] : []);
   const dockerHost = flags.host ? normalizeDockerHost(flags.host) : '';
   const sshDest = dockerHost ? dockerHostToSshDest(dockerHost) : '';
+  const noWirescope = !!flags['no-wirescope'];
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
 
-  const runArgs = dockerRunArgs({ name, port, image, envFile, volumes });
+  const runArgs = dockerRunArgs({ name, port, image, envFile, volumes, noWirescope });
 
   // --dry-run: describe the exact argv (secrets never appear — the env-file is a
   // PATH, its contents are docker's to read), run nothing.
@@ -640,11 +652,14 @@ const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //
 // Five steps, each emitting a ::step marker so the relayed trail reads like the
 // ssh flavor's; the installer's own ^:: markers are filtered in from its log.
-function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH } = {}) {
+function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, noWirescope = false } = {}) {
   // preamble + the byte-identical installer, fed verbatim to the clodex user's
   // bash. The installer bytes are the SAME readScript() the drift test pins —
   // the token is NOT here (installer is tokenless); it's injected in step 4.
-  const embedded = buildPreamble({ port, repo, branch }) + readScript();
+  // noWirescope rides the preamble (CLODEX_NO_WIRESCOPE=1): the installer
+  // itself writes the CLODEX_WIRESCOPE=off drop-in and skips the python
+  // venv/pip deps — same mechanism as the ssh flavor, not a fork.
+  const embedded = buildPreamble({ port, repo, branch, noWirescope }) + readScript();
   // Unguessable per-run heredoc delimiters (hex can't contain the delimiter, and
   // a validated repo/branch can't either — this is the belt to validation's
   // suspenders).
@@ -1060,6 +1075,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   // bad path before any AWS call). It NEVER rides the SSM wrapper (CloudTrail) —
   // it's delivered post-verify over the encrypted wire. Never printed.
   const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
+  const noWirescope = !!flags['no-wirescope'];
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
   const execFn = io.execFn;   // undefined → runAws/ssm* default to execFileP
@@ -1090,9 +1106,9 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   // --dry-run: describe the exact argv + wrapper + would-be ctx; the minted token
   // must NOT appear — print a placeholder.
   if (flags['dry-run']) {
-    const script = buildSsmScript({ port, token: '<minted-token>', repo, branch });
+    const script = buildSsmScript({ port, token: '<minted-token>', repo, branch, noWirescope });
     const sendArgv = ssmSendCommandArgs({ target, region, profile, script });
-    if (json) { emit({ type: 'dry-run', name, target, region, profile, port, repo, branch, claudeToken: !!claudeToken, sendArgv, script, ctxName: flags['no-ctx'] ? null : name }); return; }
+    if (json) { emit({ type: 'dry-run', name, target, region, profile, port, repo, branch, claudeToken: !!claudeToken, noWirescope, sendArgv, script, ctxName: flags['no-ctx'] ? null : name }); return; }
     printer.line([
       `dry-run — would deploy "${name}" to ${target} over SSM (OS flavor):`,
       `  user       clodex (host user + systemd --user service)`,
@@ -1102,6 +1118,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
       region ? `  region     ${region}` : null,
       profile ? `  profile    ${profile}` : null,
       claudeToken ? '  claude     token from --claude-token-file (delivered over the wire post-verify, NOT via SSM params, redacted)' : null,
+      noWirescope ? '  wirescope  disabled (CLODEX_WIRESCOPE=off drop-in; python venv/pip deps skipped)' : null,
       `  send-command  aws ${sendArgv.slice(1).join(' ')}`,
       flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (ssm)`,
       '  --- wrapper ---',
@@ -1112,7 +1129,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
 
   // 1. Mint a fresh wire token locally (always token-gated).
   const token = crypto.randomBytes(24).toString('hex');
-  const script = buildSsmScript({ port, token, repo, branch });
+  const script = buildSsmScript({ port, token, repo, branch, noWirescope });
 
   // 2. Preflight — instance registered + online.
   const info = await ssmPreflight(sd, { execFn });
@@ -1342,6 +1359,13 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const step = (n) => { if (json) emit({ type: 'step', name: n }); else printer.line(`→ ${n} …`); };
   const okm = (n) => { if (json) emit({ type: 'ok', name: n }); else printer.line(`  ${n} ok`); };
   const log = (t) => { if (json) emit({ type: 'log', text: t }); else printer.line(`  ${t}`); };
+
+  // --no-wirescope is the ssh/ssm/docker spelling; helm's route is the chart
+  // value. Warn instead of silently ignoring (the wirescope stays ON without
+  // the --set).
+  if (flags['no-wirescope']) {
+    log('--no-wirescope is ignored by the helm flavor — use --set wirescope.enabled=false (the chart value)');
+  }
 
   // --dry-run: describe, run nothing. Placeholder paths — no tempfile is ever
   // written, and the claude token is noted by PRESENCE only.

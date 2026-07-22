@@ -44,7 +44,7 @@ a container):
 ```sh
 clodexctl deploy ssm ec2ssm --target i-INSTANCE --region us-west-2 --profile prod
 #   [--branch B] [--repo URL] [--port N] [--claude-token-file F]
-#   [--no-ctx] [--force] [--dry-run] [--json]
+#   [--no-wirescope] [--no-ctx] [--force] [--dry-run] [--json]
 
 clodexctl --ctx ec2ssm sessions      # ready — the deploy saved the context
 ```

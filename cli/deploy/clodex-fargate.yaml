@@ -62,6 +62,17 @@ Parameters:
       and NOT injected, the container gets CLAUDE_CODE_USE_BEDROCK=1 +
       AWS_REGION, and the TaskRole is granted bedrock:InvokeModel*. With
       Bedrock there is no long-lived model credential anywhere in the account.
+  DisableWirescope:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      'true': set CLODEX_WIRESCOPE=off in the container — the engine-level
+      kill-switch for the wirescope traffic-optimization proxy (it never
+      starts, whatever the GUI pref says). NOTE UseBedrock=true already
+      auto-disables wirescope in the engine (Bedrock traffic bypasses the
+      proxy, which would see no bytes), so this parameter is only needed to
+      turn wirescope off on a NON-Bedrock node.
   Cpu:
     Type: String
     Default: '1024'
@@ -122,6 +133,7 @@ Parameters:
 Conditions:
   WantService: !Equals [!Ref Persistent, 'true']
   IsBedrock: !Equals [!Ref UseBedrock, 'true']
+  WantNoWirescope: !Equals [!Ref DisableWirescope, 'true']
   # The oauth-token secret exists ONLY when not on Bedrock — so the
   # "Bedrock ⇒ zero model credentials in the account" claim is literally true.
   CreateOauthSecret: !Not [!Equals [!Ref UseBedrock, 'true']]
@@ -276,12 +288,18 @@ Resources:
           Image: !Ref ImageUri
           PortMappings:
             - { ContainerPort: 7900, Protocol: tcp }
+          # CLODEX_WIRESCOPE=off (DisableWirescope) folds in via AWS::NoValue —
+          # list elements resolving to NoValue are removed, so no Condition
+          # cross-product with the Bedrock fork (which auto-disables wirescope
+          # in the engine anyway — see the DisableWirescope description).
           Environment: !If
             - IsBedrock
             - - { Name: CLODEX_DATA_DIR, Value: /data }
               - { Name: CLAUDE_CODE_USE_BEDROCK, Value: '1' }
               - { Name: AWS_REGION, Value: !Ref AWS::Region }
+              - !If [WantNoWirescope, { Name: CLODEX_WIRESCOPE, Value: 'off' }, !Ref 'AWS::NoValue']
             - - { Name: CLODEX_DATA_DIR, Value: /data }
+              - !If [WantNoWirescope, { Name: CLODEX_WIRESCOPE, Value: 'off' }, !Ref 'AWS::NoValue']
           # Wire token always injected; oauth token only when NOT on Bedrock.
           Secrets: !If
             - CreateOauthSecret

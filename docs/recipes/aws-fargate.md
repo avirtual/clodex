@@ -15,7 +15,9 @@ Every step is copy-paste; replace the ALL-CAPS placeholders.
 > reviewable, Delete-clean stack. Its parameters are `ImageUri` (tag OR digest;
 > mirror-and-pin into your own ECR for a real engagement), `AssignPublicIp`
 > (ENABLED for public-subnet/no-NAT, DISABLED for private subnets), `UseBedrock`
-> (§4), `Cpu`/`Memory` (validated Fargate pairings), `Persistent` (§3),
+> (§4), `DisableWirescope` (opt the node out of the wirescope proxy —
+> Bedrock nodes auto-disable it anyway), `Cpu`/`Memory` (validated Fargate
+> pairings), `Persistent` (§3),
 > `SubnetIds`, `SecurityGroupId`, `ClusterName`. It mints the wire token itself
 > and outputs the exact `ctx add`, `run-task`, and `put-secret-value` commands.
 > The manual walkthrough below is the same shape, spelled out.
@@ -176,7 +178,11 @@ Bedrock there is **no long-lived model credential anywhere in the account**.
 
 In the CloudFormation template this is the single parameter `UseBedrock=true`:
 it conditions the oauth-token secret off (not created, not injected), turns the
-two env vars on, and adds the Bedrock statement to the task role.
+two env vars on, and adds the Bedrock statement to the task role. The Bedrock
+env also auto-disables the wirescope proxy in the engine (Bedrock traffic
+bypasses it — the tee would see no bytes); to turn wirescope off on a
+non-Bedrock node, set the template's `DisableWirescope=true` parameter
+(`CLODEX_WIRESCOPE=off` in the container env).
 
 ## 5. Teardown
 

@@ -308,9 +308,9 @@ contract (task ids, completion events) is T38.
 
 | Verb | Transport | Notes |
 |---|---|---|
-| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
-| `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
-| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
+| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
+| `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
+| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
 | `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
@@ -336,6 +336,16 @@ branch `master`, default port `7900`.
   (`clodex.service.d/claude-token.conf`). The token never appears in argv, `ps`,
   `--json`, or the deploy trail. Without it, `claude` installs but is
   unauthenticated (it prompts/fails at first use — honest).
+- **`--no-wirescope`** disables the wirescope traffic-optimization proxy on the
+  node: the installer writes a `CLODEX_WIRESCOPE=off` systemd drop-in
+  (`clodex.service.d/wirescope.conf`) — the engine-level kill-switch, honored
+  over the GUI's proxy pref — and skips the wirescope-only python venv/pip
+  system packages. Symmetric: re-running deploy **without** the flag removes the
+  drop-in. Use it for nodes on Bedrock/Vertex (their traffic bypasses the proxy
+  — though a node-level `CLAUDE_CODE_USE_BEDROCK`/`VERTEX` env auto-disables
+  wirescope in the engine anyway). Same flag on `deploy ssm` (same drop-in) and
+  `deploy docker` (`-e CLODEX_WIRESCOPE=off`); helm uses the chart value
+  `--set wirescope.enabled=false`; Fargate the `DisableWirescope` stack parameter.
 - On success a context is saved (name defaults to the host's short name, or
   `--name N`); a name collision is **kept** unless `--force`. `--no-ctx` opts out.
   Deploy ends with `clodexctl --ctx <name> sessions`, not just an installed service.

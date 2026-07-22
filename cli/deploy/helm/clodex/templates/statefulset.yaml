@@ -43,6 +43,12 @@ spec:
                   name: {{ include "clodex.secretName" . }}
                   key: oauth-token
                   optional: true
+            {{- if not .Values.wirescope.enabled }}
+            # Engine-level wirescope kill-switch (autoStartWanted honors it
+            # over the proxyEnabled pref). See values.yaml `wirescope`.
+            - name: CLODEX_WIRESCOPE
+              value: "off"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

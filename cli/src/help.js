@@ -255,6 +255,7 @@ const VERB_REGISTRY = [
       ['--chart PATH', 'chart to install (default: the packaged cli/deploy/helm/clodex) [helm]'],
       ['--set k=v / --values F', 'raw helm value passthrough (repeatable / a values file) [helm]'],
       ['--claude-token-file FILE', 'authenticate Claude on the box (never argv/logs) [ssh/ssm/helm]'],
+      ['--no-wirescope', 'disable the wirescope proxy on the node (CLODEX_WIRESCOPE=off; Bedrock/Vertex nodes auto-disable it anyway) [ssh/ssm/docker]'],
       ['--no-ctx', 'skip saving a context'],
       ['--force', 'overwrite an existing context on a name collision'],
       ['--dry-run', 'print what would run, do nothing'],
@@ -271,6 +272,7 @@ const VERB_REGISTRY = [
       'ssh saves a tokenless context (the tunnel is the auth boundary); ssm/helm store the wire token they minted. --claude-token-file rides the ssh stdin (ssh), the encrypted wire post-verify (ssm — NEVER via SSM params/CloudTrail), or a 0600 tempfile into helm --set-file (helm — only PATHS in argv). Fargate nodes stay recipe-based (docs/recipes/).',
       'helm verifies laptop-side through the real `kubectl port-forward` transport and saves a typed {kubectl: svc/<name>} context. --json emits NDJSON (one object per ::marker/step).',
       'helm re-runs do NOT --reuse-values: prior --set/--values/--port fall back to chart defaults unless you repeat them (tokens are the exception — carried automatically).',
+      '--no-wirescope writes CLODEX_WIRESCOPE=off into the node env (systemd drop-in on ssh/ssm, -e on docker); helm uses the chart value instead: --set wirescope.enabled=false. Nodes with CLAUDE_CODE_USE_BEDROCK/VERTEX in the node env auto-disable wirescope regardless.',
     ],
   },
 
