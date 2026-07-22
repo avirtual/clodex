@@ -288,6 +288,39 @@ const VERB_REGISTRY = [
     ],
   },
 
+  // ── undeploy ───────────────────────────────────────────────────────────
+  {
+    name: 'undeploy', group: 'deploy',
+    summary: 'tear down a node deployed with `deploy` (fargate, helm, or docker)',
+    usage: 'undeploy <fargate <stack>|helm <name>|docker <name>> [flags]',
+    subcommands: [
+      ['undeploy fargate <stack> [flags]', 'delete the CloudFormation stack (stops stray tasks first)'],
+      ['undeploy helm <name> [flags]', 'helm uninstall + delete the StatefulSet PVC (--keep-data keeps it)'],
+      ['undeploy docker <name> [flags]', 'docker rm -f + delete the named data volume (--keep-data keeps it)'],
+    ],
+    flags: [
+      ['--force', 'skip the type-the-name confirmation (required in --json/non-TTY)'],
+      ['--keep-ctx', 'do not remove the saved context'],
+      ['--dry-run', 'print every command that would run; execute nothing destructive'],
+      ['--region R --profile P', 'AWS selectors (default: the ctx\'s pinned region/profile, else aws default) [fargate]'],
+      ['--wait', 'poll until the stack reaches DELETE_COMPLETE (default: return once deletion starts) [fargate]'],
+      ['--namespace NS --kube-context C', 'target namespace (default clodex) / kube context [helm]'],
+      ['--host ssh://u@box', 'run docker on a remote box (sets DOCKER_HOST) [docker]'],
+      ['--keep-data', 'keep the persistent volume/PVC (default: delete it for a full teardown) [helm/docker]'],
+    ],
+    examples: [
+      'clodexctl undeploy fargate clodex-node --wait',
+      'clodexctl undeploy helm mynode --keep-data',
+      'clodexctl undeploy docker mybox --host ssh://user@box',
+    ],
+    notes: [
+      'The flavor is sniffed on the LITERAL first token exactly like `deploy`. ssh/ssm undeploy is not supported (it needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
+      'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and --json without --force in a non-TTY refuse rather than silently destroy.',
+      'DATA doctrine: a full teardown removes the persistent store too — helm\'s StatefulSet PVC (survives `helm uninstall` by k8s design) and docker\'s named data volume (survives `docker rm -f`). --keep-data opts out and names what was kept. fargate is stateless (nothing to keep).',
+      'fargate resolves the region flag > the ctx\'s pinned region (deploy pins it) > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
+    ],
+  },
+
   // ── plumbing ───────────────────────────────────────────────────────────
   {
     name: 'send', group: 'plumbing',

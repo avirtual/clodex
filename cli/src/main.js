@@ -14,6 +14,7 @@ const { makePrinter } = require('./output');
 const { CliError, EXIT } = require('./errors');
 const V = require('./verbs');
 const D = require('./deploy');
+const U = require('./undeploy');
 const { attach } = require('./attach');
 const { portForward } = require('./port-forward');
 const { web } = require('./web');
@@ -22,7 +23,7 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'help', 'version'],
+  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'help', 'version'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', 'remote-port': 'remotePort' },
@@ -39,7 +40,7 @@ const WIRE_VERBS = {
 // WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
 // help.js's registry is pinned complete against it (help.test.js), so a new
 // verb can't ship without a help entry.
-const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'port-forward', 'web'];
+const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'undeploy', 'port-forward', 'web'];
 const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
 
 async function run(argv, io = {}) {
@@ -75,6 +76,7 @@ async function run(argv, io = {}) {
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'args') return await dispatchArgs(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
+    if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });
     // port-forward holds a tunnel in the FOREGROUND and owns no WireClient, so it
     // resolves the ctx + opens the transport itself rather than routing through
     // withWire (which would open a wire-port tunnel and reap it immediately).
