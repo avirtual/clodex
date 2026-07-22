@@ -21,7 +21,7 @@
 const { pathFor } = require('./clodex-paths');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
-const { withoutExecGrants } = require('./session-args');
+const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
 const { withoutPrivilegedIntents } = require('./intent-catalog');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
@@ -313,11 +313,12 @@ function createRemoteWiring(deps) {
         getSessionArgs: (name) => {
           const base = readSessionArgs(name);
           if (!base || !base.ok) return base || { ok: false };
-          // Exec grants are a LOCAL-ONLY capability — never expose the box's grant
-          // list over the wire (a viewer can't read nor edit it; readSessionArgs
-          // always includes execCommands, so strip it here explicitly).
+          // Exec grants AND session env (T46b) are LOCAL-ONLY — never expose the
+          // box's grant list or env (values may be creds; there's no secret masking)
+          // over the wire. readSessionArgs always includes both; withoutLocalOnly
+          // drops execCommands + env in one named barrier (pinned both directions).
           return {
-            ...withoutExecGrants(base),
+            ...withoutLocalOnly(base),
             catalogs: {
               // Agents catalog is the SCOPE-FILTERED list readSessionArgs already
               // resolved for this box session (base.agentCatalog) — so a remote
@@ -341,15 +342,16 @@ function createRemoteWiring(deps) {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);
           const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
-          // Strip any exec grants off the inbound patch — a peer can NEVER set the
-          // box's local exec allowlist (the renderer already omits it on a peer edit;
-          // this is the belt-and-suspenders backstop). withoutExecGrants drops the key
-          // entirely, so the resolver sees it as undefined = the box's grants untouched.
+          // Strip the local-only capabilities off the inbound patch — a peer can NEVER
+          // set the box's exec allowlist OR its session env (the renderer already omits
+          // both on a peer edit; this is the belt-and-suspenders backstop). withoutLocalOnly
+          // drops execCommands + env entirely, so the resolver sees each as undefined =
+          // the box's grants/env untouched.
           // Same for PRIVILEGED intents (reboot, Task 27): a remote viewer can't grant
           // an app-relaunch capability over the wire, so filter them off the requested
           // allowlist before the resolver sees it (a non-privileged intents edit still
           // applies; an absent/null intents key stays untouched).
-          const safePatch = withoutExecGrants(patch || {});
+          const safePatch = withoutLocalOnly(patch || {});
           if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntents(safePatch.intents);
           const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }

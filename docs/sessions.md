@@ -66,7 +66,18 @@ sessions.json entry so `--resume` respawns identically. A box operator's
 With no scope vars set anywhere the merge reduces to exactly `{ ...process.env,
 TERM }` — byte-identical to the historical spawn (pinned). GUI: Preferences ▸
 Environment variables (global/workspace editor) + a per-session section in the
-New Session dialog; over the wire, `clodexctl spawn --env KEY=VALUE`.
+New Session dialog; over the wire, `clodexctl spawn --env KEY=VALUE`. The
+per-session env is also EDITABLE after create via the Edit Session dialog's
+Environment variables section (T46b): the textarea prefills from the entry's
+persisted env, an empty box clears it, and the change rides the existing
+args-edit path (`session:setArgs` → `applySessionArgs` → `resolveSessionArgsPatch`
+sanitizes the map + the deny-list bites server-side → `persistence.setEnv`).
+Like exec grants, session env is LOCAL-only — never rendered, collected, sent, or
+returned over the peer wire (values may be creds and there's no secret masking for
+session env), so a remote Edit-Session view omits the section and the wire strips
+`env` in both directions. It applies at the next spawn; ticking "Restart session
+now" applies it immediately (`applySessionArgs` threads the edited env into the
+respawn's `create()`).
 
 **Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
 libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:

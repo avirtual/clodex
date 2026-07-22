@@ -999,15 +999,16 @@ function registerIpcHandlers(deps) {
   // shared with the peer session-args POST endpoint. This handler maps the
   // positional IPC args to the patch object and supplies the sender's workspace
   // as the respawn target (the peer path passes the entry's own workspaceId).
-  // execCommands rides POSITIONALLY as the last param — the exec-grant allowlist the
-  // Edit dialog now owns (Claude-only). It's LOCAL-ONLY by construction: the peer
-  // POST endpoint routes through source.save({...}) which never carries the key, and
-  // remote-wiring strips it in both directions belt-and-suspenders. So this positional
-  // slot is only ever reached by a local edit.
-  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands) =>
+  // execCommands and env ride POSITIONALLY (env is now the last param) — the
+  // exec-grant allowlist (Claude-only) and the per-session env (all types), both of
+  // which the Edit dialog now owns. Both are LOCAL-ONLY by construction: the peer
+  // POST endpoint routes through source.save({...}) which never carries either key,
+  // and remote-wiring strips both in both directions (withoutLocalOnly) belt-and-
+  // suspenders. So these positional slots are only ever reached by a local edit.
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
-      disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands,
+      disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
     }, workspaceOfSender(e)));
 
   // Restart in place: kill the PTY and respawn with the persisted settings,

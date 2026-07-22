@@ -13,10 +13,16 @@
 
 'use strict';
 
+// sanitizeFlat re-applies the env key/deny/newline gate on the resolved value so
+// the deny-list bites "at the door" of every edit (local + peer), not only in the
+// textarea parse. env-scopes is a pure (electron-free) leaf, so requiring it here
+// keeps this module unit-testable.
+const { sanitizeFlat } = require('./env-scopes');
+
 function resolveSessionArgsPatch(patch = {}, prev = null) {
   const {
     agents, denyBuiltins, disabledTools, disabledSkills, injectSkills,
-    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands,
+    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands, env,
   } = patch;
   return {
     agents: agents !== undefined ? (agents || []) : (prev?.agents || []),
@@ -47,6 +53,16 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     intents: intents !== undefined
       ? (Array.isArray(intents) ? intents.map(String) : null)
       : (Array.isArray(prev?.intents) ? prev.intents : null),
+    // Session env — the Edit dialog OWNS it (LOCAL-only, like execCommands: a peer
+    // patch never carries the key, so over the wire this always resolves to
+    // undefined = the box's env preserved). undefined = untouched keeps the
+    // persisted env; an explicit map is sanitizeFlat'd (deny-list/key/newline gate
+    // applied server-side); null/empty = a real clear. sanitizeFlat({}) is {}, and
+    // persistence.setEnv drops the key on an empty result, so "cleared" is stored
+    // as ABSENCE — matching create(), which only writes env when non-empty.
+    env: env !== undefined
+      ? sanitizeFlat(env)
+      : ((prev?.env && typeof prev.env === 'object') ? prev.env : {}),
   };
 }
 
@@ -63,4 +79,19 @@ function withoutExecGrants(obj) {
   return rest;
 }
 
-module.exports = { resolveSessionArgsPatch, withoutExecGrants };
+// Drop EVERY local-only capability before it crosses the peer wire: exec grants
+// (see above) AND per-session env (T46b — values may be credentials and session
+// env has no secret masking). Applied by remote-wiring in BOTH directions
+// (readSessionArgs result outbound, peer patch inbound), so a viewer can neither
+// read nor set the box's env. This is a NAMED barrier on purpose: the outbound
+// strip is the only thing between a peer viewer and credential values, so a
+// future "simplify: return withoutExecGrants(base)" refactor can't silently
+// re-leak env — this function is pinned in both directions. A nullish input
+// passes through unchanged.
+function withoutLocalOnly(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const { execCommands, env, ...rest } = obj;
+  return rest;
+}
+
+module.exports = { resolveSessionArgsPatch, withoutExecGrants, withoutLocalOnly };

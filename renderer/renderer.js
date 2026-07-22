@@ -15,7 +15,7 @@ const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = requir
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName } = require('./lib/name-suggest');
-const { parseEnvLines } = require('./lib/env-edit');
+const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -153,18 +153,20 @@ const inputArgs = document.getElementById('input-args');
 const inputEnv = document.getElementById('input-env');
 const envHint = document.getElementById('env-hint');
 
-// Live feedback for the New Session env textarea: parseEnvLines drops junk lines
-// (no '=', invalid key, the deny key) into `skipped` rather than throwing, so a
-// silently-vanished line would otherwise never be explained. Surface the reasons
-// under the field (warn color) so a typo'd or reserved var doesn't just disappear.
-function refreshEnvHint() {
-  if (!inputEnv || !envHint) return;
-  const { skipped } = parseEnvLines(inputEnv.value || '');
-  if (!skipped.length) { envHint.style.display = 'none'; envHint.textContent = ''; return; }
-  envHint.style.display = '';
-  envHint.style.color = 'var(--warn, #d9a55b)';
-  envHint.textContent = `Ignored ${skipped.length} line${skipped.length > 1 ? 's' : ''}: ${skipped.map((s) => s.reason).join('; ')}`;
+// Live feedback for an env textarea: parseEnvLines drops junk lines (no '=',
+// invalid key, the deny key) into `skipped` rather than throwing, so a silently-
+// vanished line would otherwise never be explained. Surface the reasons under the
+// field (warn color) so a typo'd or reserved var doesn't just disappear. Shared by
+// the New Session textarea (inputEnv) and the Edit Session one (argsEnv).
+function renderEnvHint(textarea, hint) {
+  if (!textarea || !hint) return;
+  const { skipped } = parseEnvLines(textarea.value || '');
+  if (!skipped.length) { hint.style.display = 'none'; hint.textContent = ''; return; }
+  hint.style.display = '';
+  hint.style.color = 'var(--warn, #d9a55b)';
+  hint.textContent = `Ignored ${skipped.length} line${skipped.length > 1 ? 's' : ''}: ${skipped.map((s) => s.reason).join('; ')}`;
 }
+function refreshEnvHint() { renderEnvHint(inputEnv, envHint); }
 if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
 const inputModel = document.getElementById('input-model');
 const modelRow = document.getElementById('model-row');
@@ -5596,6 +5598,11 @@ const argsSkillsList = document.getElementById('args-skills-list');
 const argsSkillsSection = document.getElementById('args-skills-section');
 const argsInjectSkillsSection = document.getElementById('args-inject-skills-section');
 const argsInjectSkillsList = document.getElementById('args-inject-skills-list');
+// Session env (T46b) — LOCAL-only (like exec grants), shown for every session type.
+const argsEnvSection = document.getElementById('args-env-section');
+const argsEnv = document.getElementById('args-env');
+const argsEnvHint = document.getElementById('args-env-hint');
+if (argsEnv) argsEnv.addEventListener('input', () => renderEnvHint(argsEnv, argsEnvHint));
 wireBulkToggles(argsToolsRow, argsToolsList);
 wireBulkToggles(argsSkillsRow, argsSkillsList);
 let argsEditingName = null;
@@ -5729,7 +5736,24 @@ async function openArgsDialog(name, argsSource = null) {
       argsSkillsInjectPersisted = []; argsSkillsInjectRendered = []; argsSkillsInjectAuto = [];
     }
   }
-  for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection]) sec.open = false;
+  // Session env — LOCAL-only (mirrors exec grants: a peer edit never reads the box's
+  // env — values may be creds, no secret masking over the wire — so the section is
+  // hidden on a peer row, never rendered/collected/sent; getSessionArgs strips env at
+  // the wire regardless). Applies to every session type (claude/codex/bash), so it's
+  // gated on !argsSource only, not Claude-only. Prefill from the entry's persisted
+  // env via formatEnvLines (its first live caller); res.env is {} when absent.
+  const isEnvEditable = !argsSource;
+  argsEnvSection.style.display = isEnvEditable ? '' : 'none';
+  if (isEnvEditable) {
+    argsEnv.value = formatEnvLines(res.env || {});
+    renderEnvHint(argsEnv, argsEnvHint);
+  } else {
+    // Peer row: the section is hidden and never collected, but wipe any stale local
+    // content from a prior local edit so nothing lingers behind the hidden textarea.
+    argsEnv.value = '';
+    renderEnvHint(argsEnv, argsEnvHint);
+  }
+  for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection, argsEnvSection]) sec.open = false;
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);
@@ -5772,6 +5796,14 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // the peer patch express differently: the local path passes the collected array (or,
   // when hidden, omits it below); the peer path never carries the key at all.
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
+  // Session env: LOCAL-only, like exec grants. The section is shown ONLY for a local
+  // edit, so a hidden section = a peer row → leave env UNTOUCHED (peer save omits the
+  // key entirely below). Locally the dialog OWNS env: an empty box = {} = a real clear
+  // (the resolver/setEnv store absence). parseEnvLines drops junk (surfaced by the
+  // live hint); the box re-validates server-side (sanitizeFlat) regardless.
+  const env = argsEnvSection.style.display === 'none'
+    ? undefined
+    : parseEnvLines(argsEnv.value || '').env;
   // Skills — collected only when the peer-only section is shown; undefined otherwise
   // so the save preserves the persisted set (a hidden section = local edit or a
   // non-Claude peer, neither of which owns skills here). Inject is RECONCILED against
@@ -5808,7 +5840,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;

@@ -626,6 +626,21 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
+    // Per-session env vars (T46b — the Edit dialog OWNS it, local-only). Stores a
+    // flat { KEY: value } map. Divergence-only like setExecCommands: a non-empty
+    // object persists; an empty/absent map REMOVES the key so "no env" is stored as
+    // ABSENCE — matching create(), which only writes env when non-empty. The caller
+    // (applySessionArgs) passes sanitizeFlat'd values, so the deny-list/key gate has
+    // already bitten; this is a plain writer.
+    setEnv(name, env) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (env && typeof env === 'object' && Object.keys(env).length) entry.env = { ...env };
+        else delete entry.env;
+        this._save(all);
+      }
+    },
     // Per-session wirescope strip-aggressiveness LEVEL (a cumulative ladder, not
     // independent toggles): 0 = off, 1 = strip prior thinking, 2 = + strip
     // superseded tool results. Each level is a superset of the one below. clodex

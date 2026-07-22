@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
-const { resolveSessionArgsPatch, withoutExecGrants } = require('../session-args');
+const { resolveSessionArgsPatch, withoutExecGrants, withoutLocalOnly } = require('../session-args');
 const { RemoteServer } = require('../remote');
 
 // ---- 1. pure resolver ------------------------------------------------------
@@ -107,6 +107,31 @@ test('resolver: no prev entry → execCommands defaults to empty', () => {
   assert.deepEqual(resolveSessionArgsPatch({}, null).execCommands, []);
 });
 
+// Session env (T46b) — the Edit dialog OWNS it (LOCAL-only, like execCommands): an
+// explicit map is sanitizeFlat'd (deny-list/key/newline gate at the door); undefined =
+// untouched (the peer/wire-stripped path keeps the box's env); empty/null = a real clear.
+test('resolver: env undefined preserves the persisted env (peer/wire-stripped path)', () => {
+  assert.deepEqual(resolveSessionArgsPatch({}, { env: { A: '1' } }).env, { A: '1' },
+    'omitting env keeps the box env');
+  assert.deepEqual(resolveSessionArgsPatch({ agents: ['x'] }, { env: { A: '1' } }).env, { A: '1' },
+    'an unrelated patch leaves env untouched');
+});
+
+test('resolver: env explicit map overwrites and is sanitized (deny/invalid dropped at the door)', () => {
+  const out = resolveSessionArgsPatch({ env: { AWS_PROFILE: 'acct', CLODEX_REMOTE_TOKEN: 'x', '1bad': 'y' } }, { env: { OLD: '9' } });
+  assert.deepEqual(out.env, { AWS_PROFILE: 'acct' },
+    'the edit overwrites the old env; the deny key and the invalid key are dropped server-side');
+});
+
+test('resolver: env {} is a real clear (distinct from omitting the field)', () => {
+  assert.deepEqual(resolveSessionArgsPatch({ env: {} }, { env: { A: '1' } }).env, {},
+    'an empty map clears; setEnv then stores absence');
+});
+
+test('resolver: no prev entry → env defaults to empty', () => {
+  assert.deepEqual(resolveSessionArgsPatch({}, null).env, {});
+});
+
 // withoutExecGrants — the LOCAL-ONLY wire strip, applied by remote-wiring in BOTH
 // directions (readSessionArgs result outbound, peer patch inbound). Exec grants must
 // never cross the peer wire, so this drops the key entirely.
@@ -132,6 +157,37 @@ test('withoutExecGrants strips the key off an inbound peer patch (inbound)', () 
 test('withoutExecGrants passes a nullish input through unchanged', () => {
   assert.equal(withoutExecGrants(null), null);
   assert.equal(withoutExecGrants(undefined), undefined);
+});
+
+// withoutLocalOnly — the SINGLE named barrier remote-wiring uses in BOTH directions
+// to keep exec grants AND session env off the peer wire. The OUTBOUND strip is the
+// only thing between a peer viewer and credential values (session env has no secret
+// masking), so a refactor that drops env from this must go red here. env AND
+// execCommands must both leave, in both directions.
+test('withoutLocalOnly strips execCommands AND env from a readSessionArgs result (outbound)', () => {
+  const base = { ok: true, type: 'claude', execCommands: ['deploy'], env: { AWS_PROFILE: 'acct' }, disabledTools: ['Read'] };
+  const out = withoutLocalOnly(base);
+  assert.ok(!('execCommands' in out), 'execCommands removed');
+  assert.ok(!('env' in out), 'env removed — the credential barrier holds');
+  assert.equal(out.type, 'claude', 'other fields survive');
+  assert.deepEqual(out.disabledTools, ['Read']);
+  assert.ok('env' in base && 'execCommands' in base, 'input is not mutated (shallow clone)');
+});
+
+test('withoutLocalOnly strips execCommands AND env off an inbound peer patch (inbound)', () => {
+  // A malicious/legacy peer that DID send env/execCommands must not reach the
+  // resolver with either — after the strip, both resolve to undefined = untouched.
+  const patch = { extraArgs: ['--x'], restart: false, execCommands: ['deploy'], env: { SECRET: 'x' } };
+  const stripped = withoutLocalOnly(patch);
+  assert.ok(!('execCommands' in stripped) && !('env' in stripped), 'both local-only keys removed');
+  const resolved = resolveSessionArgsPatch(stripped, { execCommands: ['keep'], env: { KEPT: '1' } });
+  assert.deepEqual(resolved.execCommands, ['keep'], 'box grants untouched by a stripped patch');
+  assert.deepEqual(resolved.env, { KEPT: '1' }, 'box env untouched by a stripped patch');
+});
+
+test('withoutLocalOnly passes a nullish input through unchanged', () => {
+  assert.equal(withoutLocalOnly(null), null);
+  assert.equal(withoutLocalOnly(undefined), undefined);
 });
 
 // ---- 2. remote endpoints (cap gating + 501) --------------------------------

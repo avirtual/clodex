@@ -55,5 +55,43 @@ test('args-edit restart with no persisted env threads null (no-scopes byte-ident
   assert.strictEqual(captured[0][18], null, 'an env-less session threads null, not {}');
 });
 
+// T46b — the Edit dialog now OWNS session env: a patch.env EDITS the entry (persist +
+// thread the NEW value, not beforeKill's), and the deny-list bites at the door.
+test('args-edit CHANGES session env: new env is persisted and threaded (deny/invalid dropped)', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'c', type: 'bash', cwd: '/tmp', env: { OLD: 'gone' } });
+  const captured = [];
+  spyCreate(eng.manager, captured);
+  const res = await eng.applySessionArgs('c', {
+    extraArgs: [], restart: true, env: { AWS_PROFILE: 'acct', CLODEX_REMOTE_TOKEN: 'x', '1bad': 'y' },
+  }, 'default');
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct' },
+    'the NEW env is threaded, the old is replaced, and the deny/invalid keys are dropped');
+  assert.deepStrictEqual(eng.stores.persistence.get('c').env, { AWS_PROFILE: 'acct' },
+    'the new env is persisted flat on the entry');
+});
+
+test('args-edit CLEARS session env: empty map → threads null AND drops entry.env (clear-to-null)', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'd', type: 'bash', cwd: '/tmp', env: { AWS_PROFILE: 'acct' } });
+  const captured = [];
+  spyCreate(eng.manager, captured);
+  const res = await eng.applySessionArgs('d', { extraArgs: [], restart: true, env: {} }, 'default');
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(captured[0][18], null, 'a cleared env threads null (byte-identity holds)');
+  assert.ok(!('env' in eng.stores.persistence.get('d')), 'entry.env is REMOVED, not left as {}');
+});
+
+test('args-edit with env omitted preserves the persisted env (no-restart save)', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'e', type: 'bash', cwd: '/tmp', env: { AWS_PROFILE: 'acct' } });
+  const res = await eng.applySessionArgs('e', { extraArgs: ['--z'] }, 'default'); // no restart, no env key
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.restarted, false);
+  assert.deepStrictEqual(eng.stores.persistence.get('e').env, { AWS_PROFILE: 'acct' },
+    'omitting env leaves the persisted env untouched');
+});
+
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });

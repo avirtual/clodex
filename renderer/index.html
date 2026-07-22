@@ -866,6 +866,14 @@
           <span class="hint-text">Which <code>[agent:…]</code> intents this seat may <em>send</em>. Checked = allowed (all checked by default). Unchecking one makes that verb bounce when the seat emits it — send-side only, so a seat with <code>dm</code> off still <em>receives</em> DMs. <code>name</code> can't be gated. Unlike the live 🔒 popover, this takes full effect on the restart this save triggers, prompt included.</span>
         </label>
       </details>
+      <details id="args-env-section" class="dialog-section">
+        <summary>Environment variables</summary>
+        <label id="args-env-row">
+          <textarea id="args-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
+          <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. Clear the box to remove all session vars. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Changes take effect on the next spawn — tick "Restart session now" below to apply them immediately.</span>
+          <span id="args-env-hint" class="hint-text" style="display:none;"></span>
+        </label>
+      </details>
       <label class="dialog-wide" style="display: flex; align-items: center; gap: 8px;">
         <input type="checkbox" id="args-restart" style="margin: 0;">
         <span>Restart session now (kills running process, respawns with new settings)</span>

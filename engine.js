@@ -1313,6 +1313,7 @@ function readSessionArgs(name) {
     injectSkills: entry.injectSkills || [],
     intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [], // exec GRANT allowlist (local-only; stripped at the peer wire)
+    env: (entry.env && typeof entry.env === 'object') ? entry.env : {}, // per-session env (T46b; local-only, stripped at the peer wire)
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
     stripLevel: stripLevelOf(entry),
   } : { ok: false };
@@ -1334,7 +1335,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools,
     disabledSkills: nextSkills, injectSkills: nextInject,
     systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend,
-    intents: nextIntents, execCommands: nextExec,
+    intents: nextIntents, execCommands: nextExec, env: nextEnv,
   } = resolveSessionArgsPatch(patch, beforeKill);
   persistence.setExtraArgs(name, extraArgs);
   persistence.setProxy(name, proxy ?? null);
@@ -1353,6 +1354,11 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   // The fire-time exec gate reads this fresh, so a no-restart save applies to the
   // NEXT [agent:exec] immediately — a restart only refreshes the seat's prompt.
   persistence.setExecCommands(name, nextExec);
+  // The dialog OWNS the session env now (LOCAL-only; a peer patch never carries it
+  // — stripped at the wire — so nextEnv resolves to the box's persisted env there).
+  // setEnv drops the key on an empty map (env cleared = ABSENCE), so a no-restart
+  // save persists the new env for the next spawn/--resume.
+  persistence.setEnv(name, nextEnv);
   if (!restart) return { ok: true, restarted: false };
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   try {
@@ -1371,12 +1377,12 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // unchanged. Intents ARE owned by this dialog now: nextIntents came from the
     // patch (null = all-enabled/cleared, or the enabled subset incl [] = everything
     // gated), so thread it — not beforeKill's — so the edit's gate wins.
-    // Env isn't editable in the args-edit dialog either — thread the persisted
-    // value through unchanged (like exec grants). Omitting it made create()'s
-    // upsert erase env from sessions.json on a successful args-edit restart, so a
-    // session carrying AWS_PROFILE respawned env-less and every later --resume was
-    // wrong too (the FAILURE path below already preserves it via ...beforeKill).
-    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (beforeKill.env && typeof beforeKill.env === 'object') ? beforeKill.env : null);
+    // Env IS owned by this dialog now (T46b): nextEnv came from the patch through
+    // the resolver (undefined = untouched → beforeKill's env; an explicit map =
+    // the edit, incl. {} = cleared), so thread nextEnv — not beforeKill's — so the
+    // edit's env wins on the respawn. Passing {} as null keeps create()'s no-scopes
+    // byte-identity (a cleared env respawns like an env-less session).
+    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null);
     // kill() dropped the entry's stripLevel; re-assert the session's own level
     // (see session:restart) so editing args doesn't reset stripping.
     const argsLvl = stripLevelOf(beforeKill);
@@ -1390,7 +1396,10 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // Carry the edited intents gate too (array = gate, undefined = all-enabled;
     // JSON.stringify drops the undefined key) so recovery reflects the edit, not the
     // stale beforeKill gate the spread would otherwise restore.
-    persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined });
+    // Carry the edited env too (map = keep, empty = undefined so JSON.stringify
+    // drops the key = cleared) so recovery reflects the edit, not the stale
+    // beforeKill.env the spread would otherwise restore.
+    persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined });
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }

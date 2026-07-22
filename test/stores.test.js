@@ -270,6 +270,31 @@ test('persistence: setIntents persists an array, removes the key on null', () =>
   } finally { cleanup(); }
 });
 
+test('persistence: setEnv persists a non-empty map, removes the key when empty (T46b)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    // Absent by default (no session env).
+    assert.strictEqual('env' in stores.persistence.get('a'), false);
+    // A non-empty map persists (stored as a copy, not by reference).
+    stores.persistence.setEnv('a', { AWS_PROFILE: 'acct' });
+    assert.deepStrictEqual(stores.persistence.get('a').env, { AWS_PROFILE: 'acct' });
+    // survives an unrelated upsert (spread-merge keeps the field)
+    stores.persistence.upsert({ name: 'a', label: 'x' });
+    assert.deepStrictEqual(stores.persistence.get('a').env, { AWS_PROFILE: 'acct' });
+    // {} REMOVES the key — "no env" is stored as ABSENCE (matches create()).
+    stores.persistence.setEnv('a', {});
+    assert.strictEqual('env' in stores.persistence.get('a'), false);
+    // null likewise removes.
+    stores.persistence.setEnv('a', { X: '1' });
+    stores.persistence.setEnv('a', null);
+    assert.strictEqual('env' in stores.persistence.get('a'), false);
+    // No-op on an unknown name (never creates an entry).
+    stores.persistence.setEnv('ghost', { X: '1' });
+    assert.strictEqual(stores.persistence.get('ghost'), null);
+  } finally { cleanup(); }
+});
+
 test('persistence: entries missing workspaceId migrate to the default id', () => {
   const { userData, stores, cleanup } = freshStores();
   try {
