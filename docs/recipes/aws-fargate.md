@@ -66,6 +66,19 @@ What it does, and the discipline it keeps:
   re-run. `--token-file` (or `CLODEX_CLAUDE_TOKEN_FILE`) rides `file://` into
   `put-secret-value`, so only the *path* crosses argv; `--use-bedrock` skips the
   oauth secret entirely.
+- **Region is resolved and recorded.** With `--region` given it behaves as
+  before (used, printed, pinned). Without it, `clodexctl` mirrors the aws CLI's
+  own precedence — `AWS_REGION`/`AWS_DEFAULT_REGION` env first, then the
+  profile's config (`aws configure get region`, profile-aware) — and prints the
+  result on
+  the `identity:` line so a wrong-region deploy is caught before it lands, then
+  **pins that region into the saved context** so future connects don't depend on
+  the same implicit resolution staying stable. If nothing resolves it warns
+  loudly (the stack still goes wherever AWS defaults — pass `--region`). This is
+  observe-and-record only; it never changes which region the deploy uses.
+- **The saved context knows the web port.** The entry pins `webPort: 8080` (the
+  image's fixed web-GUI port), so `clodexctl web <ctx>` tunnels to the right
+  place — the SSM tunnel reaches any in-task port.
 - **`--persistent` (default `true`)** adds the self-healing ECS Service and
   verifies the node end-to-end over the real SSM tunnel. `--persistent false` is
   the disposable, infra-only shape: it prints the `run-task` command and skips

@@ -121,6 +121,11 @@ test('deploy docker happy path: argv composed, verified, local url ctx saved', a
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts.mybox, { url: 'http://127.0.0.1:7900' });
   assert.strictEqual(saved.current, 'mybox');
+  // T55 audit: dockerRunArgs publishes ONLY the wire port (-p …:7900) — the web
+  // GUI (8080) is mapped to NO host port, so a webPort pin would point `web` at
+  // a port nothing publishes. Deliberately NO webPort here (unlike fargate,
+  // whose SSM tunnel reaches any in-task port). See spec T55 journal.
+  assert.strictEqual(saved.contexts.mybox.webPort, undefined, 'docker publishes no web port → no webPort stamp');
 });
 
 test('deploy docker --no-wirescope: -e CLODEX_WIRESCOPE=off rides the run argv', async () => {

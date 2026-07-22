@@ -46,6 +46,7 @@ const DOCKER_IMAGE_REPO = 'ghcr.io/avirtual/clodex';
 const DOCKER_DEFAULT_TAG = 'latest';
 const CONTAINER_PREFIX = 'clodexctl-';
 const CONTAINER_WIRE_PORT = 7900;           // the wire's in-container port (baked)
+const CONTAINER_WEB_PORT = 8080;            // the image's web GUI port (Dockerfile CLODEX_WEB_PORT; a FIXED port, NOT the ssh installer's wire+1)
 const DOCKER_VERIFY_TIMEOUT_MS = 60 * 1000; // pull already happened in `run`; boot is seconds
 const DOCKER_VERIFY_POLL_MS = 1000;
 
@@ -1623,6 +1624,13 @@ function fargateDeployArgs({ stackName, templateFile, region, profile, paramOver
 function callerIdentityArgs({ region, profile } = {}) {
   return ['aws', ...awsBase({ region, profile }), 'sts', 'get-caller-identity', '--output', 'json'];
 }
+// `aws configure get region` — the honest read of what the CLI itself resolved
+// for the profile when no --region flag was given. Profile-aware; NEVER carries
+// --region (that would defeat the point). An unset key exits non-zero → runAws
+// throws → the caller leaves the region unresolved and WARNs.
+function fargateConfigureGetRegionArgs({ profile } = {}) {
+  return ['aws', ...(profile ? ['--profile', profile] : []), 'configure', 'get', 'region'];
+}
 // put-secret-value with file://<path>: aws reads the file locally; the token
 // VALUE never enters argv. Only the oauth-token secret (never the wire token —
 // the stack owns that and we never rewrite it).
@@ -1851,6 +1859,38 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     if (sgInboundWarning) networkLines.push(`WARNING: ${sgInboundWarning}`);
   }
 
+  // Resolve the EFFECTIVE region for the RECORD only — never to steer the
+  // deploy (aws still resolves that itself, unchanged). Explicit --region is
+  // already the effective region and is threaded + pinned as today. When the
+  // flag is unset, mirror the CLI's OWN precedence: AWS_REGION /
+  // AWS_DEFAULT_REGION env beat profile config — querying `aws configure get
+  // region` with env set would record the CONFIG region while the deploy went
+  // to the ENV region (the exact recorded≠actual bug this exists to kill).
+  // Only when env is silent too, ask `aws configure get region`
+  // (profile-aware) — an unset key exits non-zero → runAws throws → we leave
+  // it unresolved and WARN LOUD (the stack still goes wherever AWS defaults).
+  // This is OBSERVE-AND-RECORD: read-only, so it runs on --dry-run too.
+  let effectiveRegion = region;
+  let regionResolvedFrom = null; // 'env' | 'profile' | null (flag = already effective)
+  if (!effectiveRegion) {
+    const env = io.env || process.env;
+    const envRegion = String(env.AWS_REGION || env.AWS_DEFAULT_REGION || '').trim();
+    if (envRegion) { effectiveRegion = envRegion; regionResolvedFrom = 'env'; }
+  }
+  if (!effectiveRegion) {
+    try {
+      const r = await runAws(execFn, fargateConfigureGetRegionArgs({ profile }), 'configure get region');
+      if (r) { effectiveRegion = r; regionResolvedFrom = 'profile'; }
+    } catch { /* unset key OR aws itself missing — leave null, warned below; a
+                 missing aws binary re-surfaces hard at the preflight step */ }
+  }
+  const regionResolvedFromProfile = regionResolvedFrom === 'profile';
+  const regionLine = effectiveRegion
+    ? (regionResolvedFrom
+      ? `region: ${effectiveRegion} [resolved from ${regionResolvedFrom === 'env' ? 'AWS_REGION/AWS_DEFAULT_REGION env' : 'profile'} — pin with --region]`
+      : `region: ${effectiveRegion}`)
+    : 'WARNING: no region resolved — the stack goes wherever AWS defaults; pass --region';
+
   const paramOverrides = fargateParamOverrides({ stackName, cluster, image, useBedrock, noWirescope, assignPublicIp, subnets, securityGroup, persistent, params });
   const deployArgv = fargateDeployArgs({ stackName, templateFile, region, profile, paramOverrides });
 
@@ -1871,11 +1911,12 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
       vpcId: netVpcId, subnets: subnets ? subnets.split(',') : [],
       securityGroup: securityGroup || null, assignPublicIp: assignPublicIp || null, autoDetected,
     };
-    if (json) { emit({ type: 'dry-run', stackName, cluster, templateFile, paramOverrides, useBedrock, persistent, deployArgv, putOauthArgv: putArgv, getWireTokenArgv: getArgv, ctxName: flags['no-ctx'] ? null : ctxName, network: networkPlan }); return; }
+    if (json) { emit({ type: 'dry-run', stackName, cluster, templateFile, paramOverrides, useBedrock, persistent, deployArgv, putOauthArgv: putArgv, getWireTokenArgv: getArgv, ctxName: flags['no-ctx'] ? null : ctxName, network: networkPlan, region: effectiveRegion || null, regionResolvedFrom, regionResolvedFromProfile }); return; }
     printer.line([
       `dry-run — would deploy the Fargate stack "${stackName}":`,
       `  template   ${templateFile}`,
       `  cluster    ${cluster}`,
+      `  ${regionLine}`,
       ...networkLines.map((l) => `  ${l}`),
       `  persistent ${persistent} (${persistent ? 'ECS Service + verify' : 'infra only, no verify'})`,
       useBedrock ? '  model      Bedrock via the TaskRole — no oauth-token secret'
@@ -1895,9 +1936,12 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const idOut = await runAws(execFn, callerIdentityArgs({ region, profile }), 'sts get-caller-identity');
   let account = null; let arn = null;
   try { const id = JSON.parse(idOut || '{}'); account = id.Account || null; arn = id.Arn || null; } catch { /* identity is informational */ }
-  log(`identity: account ${account || '?'} (${arn || '?'})`);
+  log(`identity: account ${account || '?'} (${arn || '?'}) region ${effectiveRegion || '?'}`);
   okm('preflight');
 
+  // Region — LOUD before the template step so a wrong-region deploy is caught
+  // (the us-east-1-vs-us-west-2 live-run miss). WARNING when unresolvable.
+  log(regionLine);
   // Loud, one line per resolved networking item (json → log events) BEFORE the
   // template step — the operator sees exactly what was auto-detected and fed in.
   for (const l of networkLines) log(l);
@@ -1922,7 +1966,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
       okm('oauth-token');
     } else {
       log('WARNING: no claude token (--token-file / CLODEX_CLAUDE_TOKEN_FILE unset) — the oauth-token secret keeps its REPLACE-ME placeholder; claude sessions will NOT authenticate until you populate it:');
-      log(`  ${outputs.PutTokenCommand || `aws secretsmanager put-secret-value --secret-id ${stackName}/oauth-token --secret-string "$(cat TOKEN-FILE)"${region ? ` --region ${region}` : ''}`}`);
+      log(`  ${outputs.PutTokenCommand || `aws secretsmanager put-secret-value --secret-id ${stackName}/oauth-token --secret-string "$(cat TOKEN-FILE)"${effectiveRegion ? ` --region ${effectiveRegion}` : ''}`}`);
     }
   }
 
@@ -1940,7 +1984,11 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   //    (the TaskDefinition Family / Service name). Collision kept unless --force.
   const family = `${stackName}-node`;
   const entry = {
-    ssm: { ecs: `${cluster}/${family}`, ...(region ? { region } : {}), ...(profile ? { profile } : {}) },
+    ssm: { ecs: `${cluster}/${family}`, ...(effectiveRegion ? { region: effectiveRegion } : {}), ...(profile ? { profile } : {}) },
+    // webPort: the image's FIXED web GUI port (CONTAINER_WEB_PORT=8080), NOT
+    // the ssh installer's wire+1 — the SSM tunnel reaches any in-task port, so
+    // `clodexctl web <ctx>` lands on 8080. Without this it fell back to 7901.
+    webPort: CONTAINER_WEB_PORT,
     token,
   };
   let ctxSaved = false;
@@ -1996,7 +2044,7 @@ module.exports = {
   DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
   shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs, deriveCtxName,
   runDeploy, probeHello, deployVerb, deliverClaudeToken,
-  DOCKER_IMAGE_REPO, DOCKER_DEFAULT_TAG, CONTAINER_PREFIX, CONTAINER_WIRE_PORT,
+  DOCKER_IMAGE_REPO, DOCKER_DEFAULT_TAG, CONTAINER_PREFIX, CONTAINER_WIRE_PORT, CONTAINER_WEB_PORT,
   DOCKER_VERIFY_TIMEOUT_MS, DOCKER_VERIFY_POLL_MS,
   normalizeDockerHost, dockerHostToSshDest, dockerRunArgs, runDocker, pollHello, deployDockerVerb,
   SSM_DEPLOY_TIMEOUT_MS, SSM_POLL_MS, SSM_PREPOLL_MS, SSM_SEND_RETRIES, SSM_SEND_RETRY_MS,
@@ -2005,7 +2053,7 @@ module.exports = {
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
-  fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs,
+  fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs, fargateConfigureGetRegionArgs,
   fargatePutOauthArgs, fargateGetWireTokenArgs, fargateStackOutputsArgs, parseStackOutputs, fargatePollHello, deployFargateVerb,
   fargateDescribeVpcsArgs, fargateDescribeSubnetsArgs, fargateDescribeSgArgs, fargateSgInboundWarning, fargateDetectNetwork,
 };

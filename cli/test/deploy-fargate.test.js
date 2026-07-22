@@ -121,6 +121,11 @@ function fakeAws(rec, {
   // pre-existing flow tests that omit --subnets/--security-group keep passing.
   vpc = 'vpc-default', subnets = ['subnet-b', 'subnet-a'], sg = 'sg-default', sgInbound = [],
   vpcFail = null, subnetsFail = null, sgFail = null,
+  // effective-region resolution (T55): what `aws configure get region` answers
+  // when no --region flag is given. Default a clean profile region so flow tests
+  // that omit --region keep passing; configRegion:'' / configRegionFail model
+  // an unset key (aws exits non-zero → runAws throws → unresolved + WARN).
+  configRegion = 'us-east-1', configRegionFail = null,
 } = {}) {
   rec.calls = [];
   const outs = outputs || [
@@ -141,6 +146,11 @@ function fakeAws(rec, {
     if (j.includes('ec2 describe-security-groups')) {
       if (sgFail) { const e = new Error('sg failed'); e.stderr = sgFail; throw e; }
       return { stdout: JSON.stringify({ SecurityGroups: sg ? [{ GroupId: sg, IpPermissions: sgInbound }] : [] }) };
+    }
+    if (j.includes('configure get region')) {
+      // aws exits non-zero for an unset key: model that as a throw (no stderr).
+      if (configRegionFail || !configRegion) { const e = new Error('config get failed'); if (configRegionFail) e.stderr = configRegionFail; throw e; }
+      return { stdout: configRegion + '\n' };
     }
     if (j.includes('sts get-caller-identity')) {
       if (idFail) { const e = new Error('id failed'); e.stderr = idFail; throw e; }
@@ -215,6 +225,7 @@ test('deploy fargate happy path: preflight→deploy→oauth→wire-token→ctx�
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts['clodex-node'], {
     ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' },
+    webPort: 8080,   // T55: the image's fixed web GUI port, pinned so `web` lands on 8080
     token: WIRE,
   });
   assert.strictEqual(saved.current, 'clodex-node');
@@ -233,7 +244,13 @@ test('deploy fargate: --cluster overrides the default; --profile flows through',
   assert.ok(deployCall.includes('ClusterName=shared'));
   assert.ok(deployCall.includes('--profile') && deployCall.includes('prod'));
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.s.ssm, { ecs: 'shared/s-node', profile: 'prod' });
+  // no --region → resolved from the profile (fakeAws configRegion default) + pinned.
+  assert.deepStrictEqual(saved.contexts.s.ssm, { ecs: 'shared/s-node', region: 'us-east-1', profile: 'prod' });
+  // the resolved region was queried profile-aware, WITHOUT a --region flag.
+  const cfgCall = rec.calls.find((c) => c.join(' ').includes('configure get region'));
+  assert.ok(cfgCall, 'configure get region was called when --region was omitted');
+  assert.ok(cfgCall.includes('--profile') && cfgCall.includes('prod'), 'profile-aware');
+  assert.ok(!cfgCall.includes('--region'), 'never carries --region');
 });
 
 test('deploy fargate --use-bedrock: NO oauth secret is touched (put-secret-value never runs)', async () => {
@@ -412,7 +429,7 @@ test('deploy fargate: ctx collision kept unless --force (verify still runs on th
   });
   assert.strictEqual(force.code, 0);
   assert.match(force.stdout, /context "s" updated/);
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.s.ssm, { ecs: 's/s-node' });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.s.ssm, { ecs: 's/s-node', region: 'us-east-1' });
 });
 
 test('deploy fargate --json: NDJSON step/ok + context + verify, no token leak', async () => {
@@ -648,6 +665,134 @@ test('deploy fargate --json --dry-run: the dry-run event carries network{vpcId,s
     vpcId: 'vpc-default', subnets: ['subnet-a', 'subnet-b'], securityGroup: 'sg-default',
     assignPublicIp: 'ENABLED', autoDetected: { subnets: true, securityGroup: true },
   });
+});
+
+// ── ctx entry completeness: webPort + resolved region (T55) ──────────────────
+
+test('fargateConfigureGetRegionArgs: profile-aware, NEVER carries --region', () => {
+  assert.deepStrictEqual(D.fargateConfigureGetRegionArgs({ profile: 'prod' }),
+    ['aws', '--profile', 'prod', 'configure', 'get', 'region']);
+  assert.deepStrictEqual(D.fargateConfigureGetRegionArgs({}),
+    ['aws', 'configure', 'get', 'region']);
+});
+
+test('deploy fargate: ctx entry stamps webPort 8080 (the image web GUI port)', async () => {
+  const contextsFile = tmpCtxFile();
+  const { code } = await cli(['deploy', 'fargate', 's', '--region', 'us-west-2', '--use-bedrock'], {
+    execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.webPort, 8080, 'web GUI port pinned so `web` lands on 8080, not wire+1');
+});
+
+test('deploy fargate: no --region → resolved from the profile, pinned into ctx + identity line', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+    execFn: fakeAws(rec, { configRegion: 'us-west-2' }), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  // the honest resolved region rides the identity line + a loud resolved-from-profile note.
+  assert.match(stdout, /identity: account .* region us-west-2/);
+  assert.match(stdout, /region: us-west-2 \[resolved from profile — pin with --region\]/);
+  // pinned into the ctx so future connects don't depend on implicit resolution.
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.ssm.region, 'us-west-2');
+  // the query was profile-unaware here (no --profile) but never carried --region.
+  const cfg = rec.calls.find((c) => c.join(' ').includes('configure get region'));
+  assert.ok(cfg && !cfg.includes('--region'));
+});
+
+// The aws CLI's own precedence is flag > AWS_REGION/AWS_DEFAULT_REGION env >
+// profile config. The un-flagged deploy honors the env vars, so recording the
+// CONFIG region while env is set would pin a region the stack did NOT land in
+// (transport would then open the wrong region) — env must win the record too,
+// and the configure-get query must not even run.
+test('deploy fargate: no --region, AWS_REGION env set and profile config differs → env wins the record', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+    execFn: fakeAws(rec, { configRegion: 'us-east-1' }),   // profile config says east…
+    env: { AWS_REGION: 'us-west-2' },                      // …but env steers the deploy west
+    probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /identity: account .* region us-west-2/);
+  assert.match(stdout, /region: us-west-2 \[resolved from AWS_REGION\/AWS_DEFAULT_REGION env — pin with --region\]/);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.ssm.region, 'us-west-2', 'the ENV region is pinned, not the config one');
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('configure get region')),
+    'env resolved it — the profile-config query never runs');
+});
+
+test('deploy fargate: AWS_DEFAULT_REGION honored when AWS_REGION unset (aws CLI precedence)', async () => {
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+    execFn: fakeAws({}, { configRegion: 'us-east-1' }),
+    env: { AWS_DEFAULT_REGION: 'eu-central-1' },
+    probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /region: eu-central-1 \[resolved from AWS_REGION\/AWS_DEFAULT_REGION env/);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.ssm.region, 'eu-central-1');
+});
+
+test('deploy fargate: no --region and the profile has none → WARNING, region left unpinned', async () => {
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+    execFn: fakeAws({}, { configRegion: '' }),   // unset key → aws exits non-zero → runAws throws
+    probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);   // observe-and-record: never blocks the deploy
+  assert.match(stdout, /WARNING: no region resolved — the stack goes wherever AWS defaults; pass --region/);
+  assert.match(stdout, /identity: account .* region \?/);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.ssm.region, undefined, 'nothing pinned when unresolvable');
+});
+
+test('deploy fargate: explicit --region is unchanged — no configure query, pinned as given', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--region', 'eu-west-1', '--use-bedrock'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('configure get region')), 'no resolution when the flag is given');
+  assert.match(stdout, /identity: account .* region eu-west-1/);
+  assert.match(stdout, /region: eu-west-1(?! \[resolved)/);   // plain line, no "resolved from profile"
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.s.ssm.region, 'eu-west-1');
+});
+
+test('deploy fargate --dry-run: prints the resolved region line (read-only resolution runs)', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run'], {
+    execFn: fakeAws(rec, { configRegion: 'ap-south-1' }), probeFargate: async () => { throw new Error('no verify'); },
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /region: ap-south-1 \[resolved from profile — pin with --region\]/);
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('configure get region')), 'resolution is read-only → runs on dry-run');
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('cloudformation deploy')), 'nothing mutating on dry-run');
+});
+
+test('deploy fargate --json --dry-run: the dry-run event carries the resolved region', async () => {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '--json'], {
+    execFn: fakeAws({}, { configRegion: 'us-west-2' }), probeFargate: async () => { throw new Error('no verify'); },
+  });
+  assert.strictEqual(code, 0);
+  const obj = stdout.trim().split('\n').map((l) => JSON.parse(l)).find((o) => o.type === 'dry-run');
+  assert.strictEqual(obj.region, 'us-west-2');
+  assert.strictEqual(obj.regionResolvedFromProfile, true);
+});
+
+// `web` sugar against a fargate-shaped (ssm-ecs) ctx WITH webPort 8080 resolves
+// remote 8080 — the miss this task fixes (fell back to wire+1=7901 before).
+test('parseForwardSpec: an ssm-ecs ctx with webPort 8080 resolves `web` → 8080', () => {
+  const { parseForwardSpec } = require('../src/port-forward');
+  const ctx = { ssm: { ecs: 's/s-node', region: 'us-west-2' }, webPort: 8080, token: 'x' };
+  assert.strictEqual(parseForwardSpec('9000:web', ctx).remote, 8080);
 });
 
 test('deploy fargate: an ec2 describe failure rides the runAws CliError shape', async () => {

@@ -256,7 +256,7 @@ const VERB_REGISTRY = [
       ['--chart PATH', 'chart to install (default: the packaged cli/deploy/helm/clodex) [helm]'],
       ['--set k=v / --values F', 'raw helm value passthrough (repeatable / a values file) [helm]'],
       ['--cluster NAME', 'ECS cluster (default: the stack name — avoids a two-stack collision) [fargate]'],
-      ['--image URI --region R --profile P', 'container image / AWS selectors [fargate]'],
+      ['--image URI --region R --profile P', 'container image / AWS selectors — region unset is resolved (AWS_REGION env, then profile), printed + pinned into the ctx (warns if unresolvable) [fargate]'],
       ['--use-bedrock', 'model access via the TaskRole — no oauth-token secret [fargate]'],
       ['--subnets IDs / --security-group ID', 'task ENI networking — comma list / one (default: auto-detected from the account\'s default VPC) [fargate]'],
       ['--assign-public-ip E|D', 'ENABLED|DISABLED (default: ENABLED when subnets were auto-detected — default-VPC subnets are public; explicit wins) [fargate]'],
