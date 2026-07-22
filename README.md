@@ -86,7 +86,7 @@ Every deployed node also serves the **full Clodex GUI in a browser** — sidebar
 
 ### Wire telemetry (wirescope)
 
-Route a session's API traffic through a [wirescope](https://github.com/avirtual/wirescope) proxy — a vendored copy ships inside Clodex, and Preferences can spawn and babysit it for you, or point at your own — and the app reads the truth off the wire:
+Route a session's API traffic through [wirescope](https://github.com/avirtual/wirescope), the companion proxy built for Clodex — a vendored copy ships inside the app, and Preferences can spawn and babysit it for you, or point at your own — and the app reads the truth off the wire:
 
 - **Status bar under the terminal** — context tokens and percentage, turn count, model, wire-accurate cost estimate, and a link to the session's page on the proxy.
 - **Delegation is visible.** When an agent spawns subagents, they appear as named child rows under the parent in the sidebar, each with its own turn count and cost — you can see who spawned whom and what every level of the tree is doing and spending, live.

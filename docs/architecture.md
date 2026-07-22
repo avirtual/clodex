@@ -120,7 +120,7 @@ adapter that hosts it. The modules below are what the engine assembles.
 
 - **fs-util.js** — filesystem primitives (ensureDir etc.).
 - **intent-scanner.js** — `[agent:…]` intent matching on assistant text
-  (port of wb-wrap/scanner.py).
+  (port of scanner.py from wb-wrap, Clodex's own tmux-based predecessor).
 - **argv-merge.js** — CLI argv assembly: prompt-channel merging +
   context-window math.
 - **statusline.js** — statusline script generation + proxy-base resolution.
