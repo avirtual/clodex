@@ -86,6 +86,8 @@ function startProbe({ url, fetchFn = fetch, intervalMs = PROBE_INTERVAL_MS, time
   let stopped = false;
   let timer = null;
   let failures = 0;
+  let inflight = null; // current tick's AbortController — stop() aborts it so a
+                       // hung probe can't delay process exit by up to timeoutMs
   let declareDead;
   const dead = new Promise((res) => { declareDead = res; });
   const tick = async () => {
@@ -93,9 +95,17 @@ function startProbe({ url, fetchFn = fetch, intervalMs = PROBE_INTERVAL_MS, time
     let alive = false;
     try {
       const ac = new AbortController();
+      inflight = ac;
       const to = setTimeout(() => ac.abort(), timeoutMs);
-      try { await fetchFn(url, { signal: ac.signal }); alive = true; }
-      finally { clearTimeout(to); }
+      if (to.unref) to.unref();
+      try {
+        const r = await fetchFn(url, { signal: ac.signal });
+        alive = true;
+        // Release the connection (undici checks out a socket per unconsumed
+        // response — a multi-hour hold would leak one per probe). Guarded:
+        // test fakes return bare {status} objects with no body.
+        try { if (r && r.body && r.body.cancel) await r.body.cancel(); } catch {}
+      } finally { clearTimeout(to); inflight = null; }
     } catch { /* no response = failure */ }
     if (stopped) return;
     if (alive) { failures = 0; }
@@ -109,7 +119,11 @@ function startProbe({ url, fetchFn = fetch, intervalMs = PROBE_INTERVAL_MS, time
   if (timer.unref) timer.unref();
   return {
     dead,
-    stop() { stopped = true; if (timer) clearTimeout(timer); },
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      try { if (inflight) inflight.abort(); } catch {}
+    },
   };
 }
 
@@ -202,4 +216,4 @@ function safeLoad(io) {
   catch { return { current: null, contexts: {} }; }
 }
 
-module.exports = { portForward, parseForwardSpec, installSignal, startProbe, PROBE_INTERVAL_MS, PROBE_FAILS };
+module.exports = { portForward, parseForwardSpec, installSignal, startProbe, PROBE_INTERVAL_MS, PROBE_TIMEOUT_MS, PROBE_FAILS };

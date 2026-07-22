@@ -179,7 +179,11 @@ async function diagnoseSsmInstance({ target, region, profile, execFn = execFileP
       return `SSM says ${target} is Online, yet the tunnel failed — suspect the box itself: clodex service down, wrong port, or a wedged agent worker (an OOM'd agent acks sessions it never serves; a reboot clears it).`;
     }
     let age = '';
-    const t = Number(info.LastPingDateTime);
+    // aws CLI v1 emits epoch-seconds floats; v2 (the common case) defaults to
+    // iso8601 strings. Handle both — a NaN just drops the age, never the verdict.
+    const raw = info.LastPingDateTime;
+    let t = Number(raw);
+    if (!Number.isFinite(t) && typeof raw === 'string') t = Date.parse(raw) / 1000;
     if (Number.isFinite(t) && t > 0) {
       const mins = Math.max(0, Math.round((Date.now() / 1000 - t) / 60));
       age = mins < 120 ? ` (last ping ${mins}m ago)` : ` (last ping ${Math.round(mins / 60)}h ago)`;

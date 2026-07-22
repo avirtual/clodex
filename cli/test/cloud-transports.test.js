@@ -180,6 +180,13 @@ test('diagnoseSsmInstance: ConnectionLost → agent-dead verdict with ping age',
   assert.match(v, /Reboot it, or redeploy/);
 });
 
+test('diagnoseSsmInstance: aws CLI v2 iso8601 LastPingDateTime also yields the age', async () => {
+  const iso = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+  const execFn = async () => ({ stdout: JSON.stringify({ InstanceInformationList: [{ PingStatus: 'ConnectionLost', LastPingDateTime: iso }] }) });
+  const v = await T.diagnoseSsmInstance({ target: 'i-0abc', execFn });
+  assert.match(v, /ConnectionLost \(last ping 4[45]m ago\)/);
+});
+
 test('diagnoseSsmInstance: best-effort — aws failure or a non-instance target → null', async () => {
   const boom = async () => { throw new Error('no credentials'); };
   assert.strictEqual(await T.diagnoseSsmInstance({ target: 'i-0abc', execFn: boom }), null);

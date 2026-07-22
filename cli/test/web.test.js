@@ -168,3 +168,20 @@ test('web: --port out of range is a usage error', async () => {
   assert.strictEqual(code, 2);
   assert.match(stderr, /--port must be an integer/);
 });
+
+test('web: the keep-alive probe is armed BY DEFAULT — a dead node ends the hold with CONNECT', async () => {
+  // No io.probe passed: web's own default must arm it. The probeFetch always
+  // fails, so with tiny probeOpts the hold must end 3 without any signal or
+  // child death — dropping web.js's probe default to false fails this test.
+  const transport = fakeTransport();
+  const out = await runWeb([], {
+    transport,
+    io: {
+      probeListen: async (port) => port === 8080,
+      probeOpts: { intervalMs: 5, fails: 2 },
+      probeFetch: async () => { throw new Error('node gone'); },
+    },
+  });
+  assert.strictEqual(out.code, 3); // EXIT.CONNECT
+  assert.match(out.stderr, /stopped answering/);
+});
