@@ -312,6 +312,7 @@ contract (task ids, completion events) is T38.
 | `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
 | `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
 | `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
+| `deploy fargate <stack> [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
 idempotent installer** the GUI uses, so **re-running `deploy` on the same host is
@@ -320,7 +321,8 @@ the update path**. Deploy params ride the remote environment (`PORT`, `REPO_URL`
 branch `master`, default port `7900`.
 
 - **ssh-reachable boxes only** (this flavor). Fargate nodes have no box to
-  script — they stay recipe-based (see `docs/deployment-plan.md`); k8s nodes
+  script — use `deploy fargate` below (the manual walkthrough in
+  `docs/recipes/aws-fargate.md` remains the reviewable alternative); k8s nodes
   get `deploy helm` below (the manual chart install in
   `docs/recipes/kubernetes.md` remains the reviewable alternative).
 - **No token is stored.** The node binds loopback and is reached over an ssh

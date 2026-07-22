@@ -207,6 +207,17 @@ adapter that hosts it. The modules below are what the engine assembles.
   one-shot ssh transport.
 - **peer-input-queue.js** — PendingInput buffer behind type-to-take.
 
+## CLI infra assets
+
+- **cli/deploy/** — the packaged infra catalog: one reviewable deployment
+  asset per `clodexctl deploy` flavor (`clodex-fargate.yaml` for the AWS
+  Fargate CloudFormation stack, `helm/clodex/` for the Kubernetes chart,
+  `clodex-deploy.sh` for the ssh/SSM installer). Shipped in the `clodexctl`
+  npm package and resolved `__dirname`-relative by the deploy verbs. Full
+  catalog + review posture: `cli/deploy/README.md`. The container image build
+  (`docker/web/Dockerfile`) is separate — it produces the image these assets
+  run, not a deploy asset itself.
+
 ## Renderer
 
 ### Coordinator

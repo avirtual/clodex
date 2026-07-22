@@ -1546,6 +1546,322 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} (svc/${name} -n ${namespace} @ ${kubeContext})`);
 }
 
+// ── fargate flavor: `clodexctl deploy fargate <stack>` ───────────────────────
+//
+// One command builds a Clodex node on AWS Fargate from the PACKAGED
+// CloudFormation template (cli/deploy/clodex-fargate.yaml): `aws cloudformation
+// deploy` (create OR idempotent update) → optionally populate the oauth-token
+// secret (file:// put-secret-value; SKIPPED on Bedrock) → read the stack's
+// self-minted wire token INTO MEMORY for the ctx entry → save a typed
+// {ssm:{ecs}} context → laptop-side hello through the REAL SSM/ECS tunnel.
+//
+// `aws` is the operator's tool, spawned argv-direct through the SAME runAws
+// seam the ssm flavor uses — never a shell, no AWS SDK. TOKEN DISCIPLINE
+// (binding): no secret VALUE ever enters argv/logs/errors/dry-run. The wire
+// token is the STACK's (get-secret-value into memory, never printed, never
+// rotated on re-run); the oauth token rides file://<path> into put-secret-value
+// (only the PATH crosses argv). ClusterName defaults to the stack name so two
+// stacks never collide on the template's 'clodex' default.
+const FARGATE_TEMPLATE = 'clodex-fargate.yaml';
+const FARGATE_VERIFY_TIMEOUT_MS = 5 * 60 * 1000;   // Fargate cold start: image pull + boot
+const FARGATE_VERIFY_POLL_MS = 5000;
+// CloudFormation stack names: start with a letter, then letters/digits/hyphens,
+// max 128. Stricter than NAME_RE because the name doubles as the ctx name, the
+// default cluster, and the secret prefix (<stack>/wire-token, <stack>/oauth-token).
+const FARGATE_STACK_RE = /^[A-Za-z][A-Za-z0-9-]{0,127}$/;
+// A --param KEY=VALUE override: KEY a CloudFormation parameter name (alnum),
+// VALUE anything (never a secret — those ride file:// / the stack's generator).
+const FARGATE_PARAM_RE = /^[A-Za-z][A-Za-z0-9]*=.*/;
+
+// Resolve the packaged template relative to THIS module (the helmChartPath
+// pattern): cli/src/deploy.js → cli/deploy/clodex-fargate.yaml. `deploy/` is in
+// the published files list, so `npm i -g` and in-repo runs both resolve.
+function fargateTemplatePath() {
+  return path.join(__dirname, '..', 'deploy', FARGATE_TEMPLATE);
+}
+
+// A true|false flag value → bool (the parser hands single-value flags as
+// strings). Anything else is a USAGE error.
+function parseBoolFlag(v, name) {
+  const s = String(v).toLowerCase();
+  if (s === 'true' || s === '1') return true;
+  if (s === 'false' || s === '0') return false;
+  throw new CliError(EXIT.USAGE, `--${name} must be true or false, got "${v}"`);
+}
+
+// The `--parameter-overrides` tokens — pure, the single source for execution AND
+// --dry-run display. ClusterName is ALWAYS emitted (defaults to the stack name,
+// so two stacks don't collide on the template's 'clodex' cluster default);
+// Persistent is ALWAYS emitted (the verb defaults it TRUE — a self-healing,
+// verifiable node — which differs from the template's 'false'). Everything else
+// only when chosen. Secret VALUES never appear here.
+function fargateParamOverrides({ stackName, cluster, image, useBedrock, noWirescope, assignPublicIp, subnets, securityGroup, persistent, params = [] } = {}) {
+  return [
+    `ClusterName=${cluster || stackName}`,
+    `Persistent=${persistent ? 'true' : 'false'}`,
+    ...(image ? [`ImageUri=${image}`] : []),
+    ...(useBedrock ? ['UseBedrock=true'] : []),
+    ...(noWirescope ? ['DisableWirescope=true'] : []),
+    ...(assignPublicIp ? [`AssignPublicIp=${assignPublicIp}`] : []),
+    ...(subnets ? [`SubnetIds=${subnets}`] : []),
+    ...(securityGroup ? [`SecurityGroupId=${securityGroup}`] : []),
+    ...params,
+  ];
+}
+
+// Full aws argv (leading 'aws') so each doubles as execution + --dry-run
+// display, awsBase order matching the ssm flavor.
+function fargateDeployArgs({ stackName, templateFile, region, profile, paramOverrides = [] } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'cloudformation', 'deploy',
+    '--stack-name', stackName,
+    '--template-file', templateFile,
+    '--capabilities', 'CAPABILITY_IAM',
+    '--no-fail-on-empty-changeset',
+    ...(paramOverrides.length ? ['--parameter-overrides', ...paramOverrides] : [])];
+}
+function callerIdentityArgs({ region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }), 'sts', 'get-caller-identity', '--output', 'json'];
+}
+// put-secret-value with file://<path>: aws reads the file locally; the token
+// VALUE never enters argv. Only the oauth-token secret (never the wire token —
+// the stack owns that and we never rewrite it).
+function fargatePutOauthArgs({ stackName, region, profile, tokenFile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'secretsmanager', 'put-secret-value',
+    '--secret-id', `${stackName}/oauth-token`,
+    '--secret-string', `file://${tokenFile}`];
+}
+// Read the stack's self-minted wire token into memory (for the ctx entry only).
+function fargateGetWireTokenArgs({ stackName, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'secretsmanager', 'get-secret-value',
+    '--secret-id', `${stackName}/wire-token`,
+    '--query', 'SecretString', '--output', 'text'];
+}
+function fargateStackOutputsArgs({ stackName, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'cloudformation', 'describe-stacks',
+    '--stack-name', stackName,
+    '--query', 'Stacks[0].Outputs', '--output', 'json'];
+}
+// describe-stacks Outputs JSON → { OutputKey: OutputValue }. The output VALUES
+// are literal copy-paste command templates (RunTaskCommand / PutTokenCommand
+// carry a `$(aws … get-secret-value …)` SUBSTITUTION, not a token value) — safe
+// to print. Best-effort: a parse failure yields {}.
+function parseStackOutputs(json) {
+  try {
+    const list = JSON.parse(json || '[]');
+    if (!Array.isArray(list)) return {};
+    const out = {};
+    for (const o of list) { if (o && o.OutputKey) out[o.OutputKey] = o.OutputValue; }
+    return out;
+  } catch { return {}; }
+}
+
+// Verify from the laptop through the REAL SSM/ECS tunnel the saved ctx will use:
+// openTransport resolves the running task, GET hello with the wire token. POLLED
+// to a generous deadline — Fargate cold start (image pull + boot) plus the
+// window before a task is RUNNING (resolveEcsTarget 404s until then). io.probe
+// Fargate overrides for unit tests.
+async function fargatePollHello(entry, token, { spawnFn, execFn, timeoutMs = FARGATE_VERIFY_TIMEOUT_MS, pollMs = FARGATE_VERIFY_POLL_MS, sleepFn = defaultSleep } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
+  for (;;) {
+    let t = null;
+    try {
+      t = await openTransport(entry, { spawnFn, execFn });
+      const client = new WireClient(t.baseUrl, token);
+      return await client.get('/api/peer/hello', 'deploy fargate (verify)');
+    } catch (e) { lastErr = e; }
+    finally { if (t) { try { t.close(); } catch {} } }
+    if (Date.now() >= deadline) {
+      throw lastErr instanceof CliError ? lastErr : new CliError(EXIT.SERVER, lastErr ? lastErr.message : 'wire did not answer');
+    }
+    await sleepFn(pollMs);
+  }
+}
+
+// deploy fargate <stack> — orchestration. io seams: execFn (aws child), spawnFn
+// (verify tunnel child), probeFargate (verify override for tests), sleepFn,
+// contextsFile, env. Throws CliError (caught by main.run). --json emits NDJSON
+// step/ok/log events shaped like the helm flavor.
+async function deployFargateVerb({ printer, flags, args, io = {} }) {
+  const stackName = args[0];
+  if (!stackName) throw new CliError(EXIT.USAGE, 'deploy fargate needs a stack name (e.g. deploy fargate clodex-node)');
+  if (!FARGATE_STACK_RE.test(stackName)) {
+    throw new CliError(EXIT.USAGE, `bad stack name "${stackName}" — a CloudFormation stack name: start with a letter, then letters/digits/hyphens, max 128 (it doubles as the ctx name, the default cluster, and the secret prefix)`);
+  }
+  const region = flags.region ? String(flags.region) : null;
+  const profile = flags.profile ? String(flags.profile) : null;
+  const cluster = flags.cluster ? String(flags.cluster) : stackName;
+  const image = flags.image ? String(flags.image) : null;
+  const useBedrock = !!flags['use-bedrock'];
+  const noWirescope = !!flags['no-wirescope'];
+  const assignPublicIp = flags['assign-public-ip'] ? String(flags['assign-public-ip']) : null;
+  if (assignPublicIp && assignPublicIp !== 'ENABLED' && assignPublicIp !== 'DISABLED') {
+    throw new CliError(EXIT.USAGE, `--assign-public-ip must be ENABLED or DISABLED, got "${assignPublicIp}"`);
+  }
+  const subnets = flags.subnets ? String(flags.subnets) : null;
+  const securityGroup = flags['security-group'] ? String(flags['security-group']) : null;
+  // The verb defaults Persistent TRUE — a self-healing, VERIFIABLE node (the
+  // one-command path's whole point); --persistent false is the disposable
+  // infra-only run-task shape.
+  const persistent = flags.persistent != null ? parseBoolFlag(flags.persistent, 'persistent') : true;
+  const params = Array.isArray(flags.param) ? flags.param.map(String) : (flags.param ? [String(flags.param)] : []);
+  for (const p of params) {
+    if (!FARGATE_PARAM_RE.test(p)) throw new CliError(EXIT.USAGE, `bad --param "${p}" — expected KEY=VALUE (KEY a CloudFormation parameter name)`);
+  }
+
+  const env = io.env || process.env;
+  // Oauth model credential (skipped ENTIRELY on Bedrock). Source: --token-file
+  // or CLODEX_CLAUDE_TOKEN_FILE. The value NEVER enters argv (file:// only) and
+  // is never read/printed here — we only verify the file EXISTS (fail fast).
+  let oauthTokenFile = null;
+  if (!useBedrock) {
+    const tf = flags['token-file'] ? String(flags['token-file'])
+      : (env.CLODEX_CLAUDE_TOKEN_FILE ? String(env.CLODEX_CLAUDE_TOKEN_FILE) : null);
+    if (tf) {
+      const abs = path.resolve(tf);
+      if (!fs.existsSync(abs)) throw new CliError(EXIT.USAGE, `--token-file not found: ${tf}`);
+      oauthTokenFile = abs;
+    }
+  }
+
+  const json = !!flags.json;
+  const emit = (obj) => printer.json(obj);
+  const execFn = io.execFn;   // undefined → runAws defaults to execFileP
+  const ctxName = flags.ctx ? String(flags.ctx) : stackName;
+  const templateFile = fargateTemplatePath();
+  const paramOverrides = fargateParamOverrides({ stackName, cluster, image, useBedrock, noWirescope, assignPublicIp, subnets, securityGroup, persistent, params });
+  const deployArgv = fargateDeployArgs({ stackName, templateFile, region, profile, paramOverrides });
+
+  const step = (n) => { if (json) emit({ type: 'step', name: n }); else printer.line(`→ ${n} …`); };
+  const okm = (n) => { if (json) emit({ type: 'ok', name: n }); else printer.line(`  ${n} ok`); };
+  const log = (t) => { if (json) emit({ type: 'log', text: t }); else printer.line(`  ${t}`); };
+
+  // --dry-run: describe the exact argv, run nothing. Secret VALUES never appear
+  // — the oauth file is a file:// placeholder, the wire-token read is noted as
+  // in-memory-only, no token is ever fetched.
+  if (flags['dry-run']) {
+    const putArgv = (!useBedrock && oauthTokenFile) ? fargatePutOauthArgs({ stackName, region, profile, tokenFile: '<oauth-token-file>' }) : null;
+    const getArgv = fargateGetWireTokenArgs({ stackName, region, profile });
+    if (json) { emit({ type: 'dry-run', stackName, cluster, templateFile, paramOverrides, useBedrock, persistent, deployArgv, putOauthArgv: putArgv, getWireTokenArgv: getArgv, ctxName: flags['no-ctx'] ? null : ctxName }); return; }
+    printer.line([
+      `dry-run — would deploy the Fargate stack "${stackName}":`,
+      `  template   ${templateFile}`,
+      `  cluster    ${cluster}`,
+      `  persistent ${persistent} (${persistent ? 'ECS Service + verify' : 'infra only, no verify'})`,
+      useBedrock ? '  model      Bedrock via the TaskRole — no oauth-token secret'
+        : (oauthTokenFile ? '  model      claude oauth token from a file (file:// → put-secret-value, redacted)'
+          : '  model      claude oauth (NO token file — the secret keeps its REPLACE-ME placeholder)'),
+      `  deploy     aws ${deployArgv.slice(1).join(' ')}`,
+      putArgv ? `  oauth      aws ${putArgv.slice(1).join(' ')}` : null,
+      `  wire-token aws ${getArgv.slice(1).join(' ')} (read into the ctx entry only, never printed)`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName} (ssm-ecs ${cluster}/${stackName}-node, token from the stack's wire-token secret)`,
+    ].filter((l) => l != null).join('\n'));
+    return;
+  }
+
+  // 1. preflight: aws resolves + NAME who we are (account+arn — identity
+  //    visibility so a wrong-account deploy is caught; NEVER a secret).
+  step('preflight');
+  const idOut = await runAws(execFn, callerIdentityArgs({ region, profile }), 'sts get-caller-identity');
+  let account = null; let arn = null;
+  try { const id = JSON.parse(idOut || '{}'); account = id.Account || null; arn = id.Arn || null; } catch { /* identity is informational */ }
+  log(`identity: account ${account || '?'} (${arn || '?'})`);
+  okm('preflight');
+
+  // 2. template: cloudformation deploy — create OR idempotent update
+  //    (--no-fail-on-empty-changeset makes a no-change re-run green).
+  step('template');
+  await runAws(execFn, deployArgv, 'cloudformation deploy', EXIT.SERVER);
+  okm('template');
+  // Read the stack Outputs (real ARNs / joined subnets / copy-paste commands) —
+  // best-effort; absence just drops the RunTaskCommand/PutTokenCommand display.
+  const outputs = parseStackOutputs(await runAws(execFn, fargateStackOutputsArgs({ stackName, region, profile }), 'describe-stacks', EXIT.SERVER).catch(() => ''));
+
+  // 3. oauth token (skip on Bedrock). put-secret-value with file:// — the value
+  //    never enters argv/logs. Absent → warn LOUD + print the manual command,
+  //    do NOT fail the deploy.
+  if (!useBedrock) {
+    if (oauthTokenFile) {
+      step('oauth-token');
+      await runAws(execFn, fargatePutOauthArgs({ stackName, region, profile, tokenFile: oauthTokenFile }), 'secretsmanager put-secret-value (oauth-token)', EXIT.SERVER);
+      log('claude oauth token stored (file:// → put-secret-value; value never in argv). (Re)start the task to pick it up.');
+      okm('oauth-token');
+    } else {
+      log('WARNING: no claude token (--token-file / CLODEX_CLAUDE_TOKEN_FILE unset) — the oauth-token secret keeps its REPLACE-ME placeholder; claude sessions will NOT authenticate until you populate it:');
+      log(`  ${outputs.PutTokenCommand || `aws secretsmanager put-secret-value --secret-id ${stackName}/oauth-token --secret-string "$(cat TOKEN-FILE)"${region ? ` --region ${region}` : ''}`}`);
+    }
+  }
+
+  // 4. wire token: the STACK minted its own (WireTokenSecret). Read it INTO
+  //    MEMORY for the ctx entry only — never printed, never rewritten (no
+  //    rotation on re-run — the stack owns it).
+  step('wire-token');
+  const token = await runAws(execFn, fargateGetWireTokenArgs({ stackName, region, profile }), 'secretsmanager get-secret-value (wire-token)', EXIT.SERVER);
+  if (!token || /[\s\x00-\x1f]/.test(token)) {
+    throw new CliError(EXIT.SERVER, `the stack's wire token (secret ${stackName}/wire-token) is empty or malformed — the stack may still be settling; re-run once it completes`);
+  }
+  okm('wire-token');
+
+  // 5. ctx upsert BEFORE verify (the helm ctxSaved pattern). family = <stack>-node
+  //    (the TaskDefinition Family / Service name). Collision kept unless --force.
+  const family = `${stackName}-node`;
+  const entry = {
+    ssm: { ecs: `${cluster}/${family}`, ...(region ? { region } : {}), ...(profile ? { profile } : {}) },
+    token,
+  };
+  let ctxSaved = false;
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+  } else {
+    const store = safeLoadContexts(io);
+    const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
+    if (exists && !flags.force) {
+      if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
+      else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite)`);
+    } else {
+      store.contexts[ctxName] = entry;
+      if (!store.current) store.current = ctxName;
+      contexts.save(store, io.contextsFile);
+      ctxSaved = true;
+      if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName });
+      else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+    }
+  }
+
+  // 6. verify — only for a persistent node (a Service keeps a task alive to
+  //    poll). A non-persistent stack is infrastructure only: print the run-task
+  //    command and skip verify (nothing is running yet).
+  if (!persistent) {
+    if (json) emit({ type: 'verify', ok: false, skipped: 'non-persistent' });
+    else {
+      printer.line('infrastructure deployed (Persistent=false) — start a node yourself; it stays down when it stops:');
+      printer.line(`  ${outputs.RunTaskCommand || 'aws ecs run-task … (see the stack RunTaskCommand output)'}`);
+    }
+    return;
+  }
+  step('verify');
+  let hello;
+  try {
+    const probe = io.probeFargate || fargatePollHello;
+    hello = await probe(entry, token, { spawnFn: io.spawnFn, execFn, sleepFn: io.sleepFn });
+  } catch (e) {
+    if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
+    else printer.line(`stack "${stackName}" deployed, but the node did not answer over the SSM tunnel within ${Math.round(FARGATE_VERIFY_TIMEOUT_MS / 60000)}min: ${e.message}`);
+    // Truthful hint: a skipped ctx (collision, no --force) points at the OLD entry.
+    const hint = flags['no-ctx'] ? ''
+      : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${ctxName} ctx test --verbose`
+        : ` — the context was NOT saved (name "${ctxName}" exists; re-run with --force to overwrite it)`;
+    throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${hint}`) : new CliError(EXIT.SERVER, `deploy fargate verify failed: ${e.message}${hint}`);
+  }
+  okm('verify');
+  if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
+  else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} (ecs ${cluster}/${family})`);
+}
+
 module.exports = {
   DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
   shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs, deriveCtxName,
@@ -1558,4 +1874,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
+  FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
+  fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs,
+  fargatePutOauthArgs, fargateGetWireTokenArgs, fargateStackOutputsArgs, parseStackOutputs, fargatePollHello, deployFargateVerb,
 };

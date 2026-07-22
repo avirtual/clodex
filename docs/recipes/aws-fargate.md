@@ -22,6 +22,48 @@ Every step is copy-paste; replace the ALL-CAPS placeholders.
 > and outputs the exact `ctx add`, `run-task`, and `put-secret-value` commands.
 > The manual walkthrough below is the same shape, spelled out.
 
+## 0. One command (`clodexctl deploy fargate`)
+
+`clodexctl` drives the whole template for you — `aws cloudformation deploy` of
+`cli/deploy/clodex-fargate.yaml`, populate the model credential, read the
+stack's self-minted wire token, save a ready-to-use context, and verify the
+node over the SSM tunnel:
+
+```sh
+clodexctl deploy fargate clodex-node \
+  --subnets subnet-AAA,subnet-BBB --security-group sg-CCC \
+  --token-file ./claude-token          # from `claude setup-token`; omit for Bedrock (--use-bedrock)
+# then:
+clodexctl --ctx clodex-node sessions   # the saved context is ready
+```
+
+What it does, and the discipline it keeps:
+
+- **`aws cloudformation deploy`** creates OR idempotently updates the stack
+  (`--no-fail-on-empty-changeset`), so a re-run is the update path. `ClusterName`
+  defaults to the stack name (two stacks never collide on the template's
+  `clodex` default). Pass any template parameter through with `--param KEY=VALUE`
+  (e.g. `--param Cpu=2048 --param Memory=8192`), and networking with
+  `--assign-public-ip`, `--subnets`, `--security-group`. When the same key
+  appears twice (e.g. your `--param ClusterName=x` after the verb's own
+  default), CloudFormation's last-value-wins ordering applies — your `--param`
+  trails the verb-emitted keys, so it wins.
+- **No secret value ever rides argv.** The wire token is the stack's — read
+  into memory for the context entry only, never printed, never rotated on a
+  re-run. `--token-file` (or `CLODEX_CLAUDE_TOKEN_FILE`) rides `file://` into
+  `put-secret-value`, so only the *path* crosses argv; `--use-bedrock` skips the
+  oauth secret entirely.
+- **`--persistent` (default `true`)** adds the self-healing ECS Service and
+  verifies the node end-to-end over the real SSM tunnel. `--persistent false` is
+  the disposable, infra-only shape: it prints the `run-task` command and skips
+  verify (nothing is running yet).
+- **`--dry-run`** prints every `aws` argv (with a `file://` placeholder for the
+  token) and runs nothing; **`--json`** emits one NDJSON object per step.
+
+The manual walkthrough below is the same stack spelled out by hand — the
+review-posture alternative, and the reference for what the one command
+automates.
+
 ## 1. Secrets (once per engagement)
 
 Two independent credentials — mint both in Secrets Manager:

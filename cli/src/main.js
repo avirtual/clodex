@@ -22,8 +22,8 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'no-wirescope', 'follow', 'read-only', 'no-open', 'probe-http', 'help', 'version'],
-  multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values'],
+  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'help', 'version'],
+  multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', 'remote-port': 'remotePort' },
 };
@@ -119,13 +119,15 @@ async function dispatchCtx(rest, flags, printer, io) {
 // deploy dispatch — sniff the first positional on a LITERAL token, not on the
 // shape of a dest (a bare hostname / ssh-config alias has no `@`, so an
 // `@`-sniff is the fragile one). `docker` → the container flavor; `ssm` → the
-// AWS RunCommand flavor; `helm` → the k8s chart flavor; `ssh` → the explicit
-// ssh alias (escape hatch for a host literally named `docker`/`ssm`/`helm`);
-// anything else → the ssh flavor as shipped in T36d, argv unchanged.
+// AWS RunCommand flavor; `helm` → the k8s chart flavor; `fargate` → the AWS
+// CloudFormation flavor; `ssh` → the explicit ssh alias (escape hatch for a
+// host literally named `docker`/`ssm`/`helm`/`fargate`); anything else → the
+// ssh flavor as shipped in T36d, argv unchanged.
 async function dispatchDeploy(rest, flags, printer, io) {
   if (rest[0] === 'docker') { await D.deployDockerVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
   if (rest[0] === 'ssm') { await D.deploySsmVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
   if (rest[0] === 'helm') { await D.deployHelmVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
+  if (rest[0] === 'fargate') { await D.deployFargateVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
   if (rest[0] === 'ssh') { await D.deployVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
   await D.deployVerb({ printer, flags, args: rest, io });
   return EXIT.OK;
