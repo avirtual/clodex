@@ -1,32 +1,67 @@
+# ── SECURITY POSTURE ──────────────────────────────────────────────────────────
+# The wire token (Authorization bearer on the node API) is DEFENSE-IN-DEPTH, NOT
+# the access boundary. IAM is the real boundary — anyone with ecs:ExecuteCommand
+# on this cluster gets a root shell in the task and can read every secret out of
+# the container environment, wire token included. Gate exec with IAM (see
+# OperatorPolicy for the minimal operator grant that does NOT include exec), and
+# treat the running node as a trust boundary: an agent with a shell can reach
+# whatever the TaskRole can reach.
+#
+# ── EGRESS the task needs (outbound only; INBOUND: NONE) ──────────────────────
+#   - the image registry: ghcr.io (or your ECR mirror — see ImageUri)
+#   - api.anthropic.com                     (or bedrock-runtime.<region> when UseBedrock)
+#   - ssmmessages.<region>.amazonaws.com    (ECS Exec / clodexctl tunnel)
+#   - logs.<region>.amazonaws.com           (awslogs driver)
+#   - secretsmanager.<region>.amazonaws.com (secret fetch at task launch)
+# In public subnets: AssignPublicIp=ENABLED (no NAT). In private subnets: NAT or
+# VPC endpoints for the above.
+# ──────────────────────────────────────────────────────────────────────────────
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Clodex node on AWS Fargate — the auditable infrastructure half of the
   Fargate recipe (docs/recipes/aws-fargate.md). Creates everything around
-  the published container: cluster, IAM roles, secrets, log group, task
-  definition, and (optionally) a self-healing ECS Service. clodexctl never
-  creates AWS resources; an account admin reviews and deploys THIS, then
-  operators connect with `clodexctl ctx add <name> --ssm-ecs CLUSTER/FAMILY`.
-  No inbound network: access rides SSM (ECS Exec channels); the wire port
-  never leaves the task. Delete the stack and the node's footprint is gone
-  (the two secrets and the log group are retained by default for post-mortem;
-  see DeletionPolicy notes inline).
+  the published container: cluster, IAM roles, the wire-token secret, log
+  group, task definition, and (optionally) a self-healing ECS Service.
+  clodexctl never creates AWS resources; an account admin reviews and deploys
+  THIS, then operators connect with `clodexctl ctx add <name> --ssm-ecs
+  CLUSTER/FAMILY`. No inbound network: access rides SSM (ECS Exec channels);
+  the wire port never leaves the task. Everything this stack makes is
+  Delete/UpdateReplace so a teardown leaves no footprint and a same-name
+  redeploy never collides. Wire token is defense-in-depth; IAM is the real
+  boundary (see the security-posture and egress comment blocks at the top of
+  this template).
 
 Parameters:
-  ImageTag:
+  ImageUri:
     Type: String
-    Default: '3.5.3'
+    Default: 'ghcr.io/avirtual/clodex:3.5.3'
     Description: >-
-      ghcr.io/avirtual/clodex tag to run. Pin a version for reproducible
-      engagements; 'latest' follows the newest publish.
-  ClaudeOauthToken:
+      FULL container image URI to run — a tag (repo:tag) OR a digest
+      (repo@sha256:…). The image is linux/arm64 (the task pins ARM64 below).
+      RECOMMENDED for a real engagement: mirror the image into your own
+      scanned ECR and pin it BY DIGEST here (repo@sha256:…) so what runs is
+      exactly what you reviewed — the default is a public, mutable ghcr tag.
+  AssignPublicIp:
     Type: String
-    NoEcho: true
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
     Description: >-
-      CLAUDE_CODE_OAUTH_TOKEN value (from `claude setup-token`). Stored in
-      Secrets Manager, injected into the task via the ECS secrets block —
-      never appears in the task definition, CloudTrail, or `docker inspect`.
-      Leave EMPTY to skip model credentials (e.g. Bedrock via the task role
-      instead; you can also update the secret later without redeploying).
+      Give the task ENI a public IP. ENABLED is REQUIRED in a public subnet
+      with no NAT — the task pulls its image and reaches the model API over
+      egress, and without a public IP that egress has no path. Use DISABLED in
+      a private subnet that has a NAT gateway or VPC endpoints. Threaded into
+      both the Service network config and the run-task command output.
+  UseBedrock:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      'false' (default): model credential comes from the oauth-token secret
+      this stack creates (populate it with PutTokenCommand). 'true': use
+      Bedrock via the TaskRole instead — the oauth-token secret is NOT created
+      and NOT injected, the container gets CLAUDE_CODE_USE_BEDROCK=1 +
+      AWS_REGION, and the TaskRole is granted bedrock:InvokeModel*. With
+      Bedrock there is no long-lived model credential anywhere in the account.
   Cpu:
     Type: String
     Default: '1024'
@@ -35,6 +70,19 @@ Parameters:
   Memory:
     Type: String
     Default: '4096'
+    # The valid values below are the UNION of every Fargate CPU/memory pairing
+    # for the Cpu choices above. AllowedValues can't cross-reference Cpu, so
+    # this catches non-Fargate MiB values but an invalid *pairing* (e.g. Cpu
+    # 256 with Memory 8192) still fails at task launch. Pairings: 256→0.5-2GB,
+    # 512→1-4GB, 1024→2-8GB, 2048→4-16GB, 4096→8-30GB, 8192→16-60GB(4GB step),
+    # 16384→32-120GB(8GB step).
+    AllowedValues:
+      ['512', '1024', '2048', '3072', '4096', '5120', '6144', '7168', '8192',
+       '9216', '10240', '11264', '12288', '13312', '14336', '15360', '16384',
+       '17408', '18432', '19456', '20480', '21504', '22528', '23552', '24576',
+       '25600', '26624', '27648', '28672', '29696', '30720', '32768', '36864',
+       '40960', '45056', '49152', '53248', '57344', '61440', '65536', '73728',
+       '81920', '90112', '98304', '106496', '114688', '122880']
     Description: >-
       Task memory in MiB. Must be a valid Fargate pairing for the chosen Cpu
       (1 vCPU pairs with 2048-8192). Memory, not CPU, is what agent sessions
@@ -47,15 +95,18 @@ Parameters:
       'false' (default): infrastructure only — start nodes yourself with
       `aws ecs run-task` and they STAY DOWN when they stop (disposable
       engagement shape). 'true': also create an ECS Service (DesiredCount 1)
-      that replaces a dead task automatically — the standing-daemon shape
-      (survives host retirement/OOM; sessions are still ephemeral). Pause a
-      persistent node with `aws ecs update-service --desired-count 0`.
+      that keeps a node running — it replaces a task lost to host retirement or
+      OOM. But the Service does NOT preserve state: there is no volume, so
+      EVERY task replacement is a factory reset — all session state is
+      ephemeral by design. Pause a persistent node with
+      `aws ecs update-service --desired-count 0`.
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: >-
-      Subnets for the task ENI (public subnets with AssignPublicIp, or
+      Subnets for the task ENI (public subnets with AssignPublicIp=ENABLED, or
       private subnets with NAT/VPC endpoints — the task needs egress to pull
-      the image and reach the Anthropic API + SSM).
+      the image and reach the model API + SSM; the exact egress allowlist is
+      in the comment block at the top of the template FILE).
   SecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: >-
@@ -70,21 +121,35 @@ Parameters:
 
 Conditions:
   WantService: !Equals [!Ref Persistent, 'true']
-  HaveClaudeToken: !Not [!Equals [!Ref ClaudeOauthToken, '']]
+  IsBedrock: !Equals [!Ref UseBedrock, 'true']
+  # The oauth-token secret exists ONLY when not on Bedrock — so the
+  # "Bedrock ⇒ zero model credentials in the account" claim is literally true.
+  CreateOauthSecret: !Not [!Equals [!Ref UseBedrock, 'true']]
 
 Resources:
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Ref ClusterName
+      # Route ECS Exec session I/O through the awslogs config below (audited,
+      # not raw). Upgrade point for a client that wants exec logs encrypted
+      # with a customer-managed key: add Configuration.ExecuteCommandConfiguration
+      # .KmsKeyId here (a KMS key resource is intentionally out of scope for
+      # this template).
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
 
   # Wire token: minted BY Secrets Manager at stack create — no human ever
   # sees or types it. clodexctl reads it via `aws secretsmanager
   # get-secret-value` (the ctx add command in Outputs). Rotate by updating
-  # the secret + stopping the task (next task picks it up).
+  # the secret + stopping the task (next task picks it up). Delete/UpdateReplace
+  # so teardown and same-name redeploy are clean; Secrets Manager's 7-30 day
+  # recovery window is the post-mortem safety net.
   WireTokenSecret:
     Type: AWS::SecretsManager::Secret
     DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       Name: !Sub '${AWS::StackName}/wire-token'
       Description: Clodex wire token (Authorization bearer for the node API)
@@ -92,32 +157,43 @@ Resources:
         ExcludePunctuation: true
         PasswordLength: 48
 
-  # Model credential. Created empty-capable: if no token was provided at
-  # deploy time, put one later with `aws secretsmanager put-secret-value`
-  # and bounce the task. Delete-retained so a stack teardown can't destroy
-  # a credential the org may still track — remove it explicitly.
+  # Model credential (skipped entirely on Bedrock — see UseBedrock). Created
+  # with a placeholder; populate it AFTER deploy with exactly one command
+  # (PutTokenCommand output) — a NoEcho stack parameter was removed because a
+  # later stack update without "use previous value" silently reverts the
+  # SecretString and kills agents days later. Delete/UpdateReplace: same clean
+  # teardown + redeploy story as the wire token; the recovery window is the
+  # retention story. A running task must be (re)started to pick up a new value.
   ClaudeTokenSecret:
     Type: AWS::SecretsManager::Secret
-    DeletionPolicy: Retain
+    Condition: CreateOauthSecret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       Name: !Sub '${AWS::StackName}/oauth-token'
-      Description: CLAUDE_CODE_OAUTH_TOKEN for agent sessions on the node
-      SecretString: !If [HaveClaudeToken, !Ref ClaudeOauthToken, 'REPLACE-ME']
+      Description: >-
+        CLAUDE_CODE_OAUTH_TOKEN for agent sessions on the node. Populate with
+        PutTokenCommand, then (re)start the task to pick it up.
+      SecretString: 'REPLACE-ME'
 
+  # Delete/UpdateReplace: a Retain'd log group blocks a same-name redeploy and
+  # outlives the "clean exit". Clients who want logs to survive the stack
+  # export them (subscription filter / S3) or flip this one line to Retain.
   LogGroup:
     Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: !Sub '/clodex/${AWS::StackName}'
       RetentionInDays: 30
 
   # Execution role: what ECS ITSELF uses to start the container — pull the
-  # image, write logs, read the two secrets at launch. The container never
-  # holds these permissions.
+  # image, write logs, read the secret(s) at launch. The container never
+  # holds these permissions. No RoleName: CFN generates one (avoids global
+  # name collisions and CAPABILITY_NAMED_IAM).
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${AWS::StackName}-execution'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -133,18 +209,19 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource:
-                  - !Ref WireTokenSecret
-                  - !Ref ClaudeTokenSecret
+                Resource: !If
+                  - CreateOauthSecret
+                  - [!Ref WireTokenSecret, !Ref ClaudeTokenSecret]
+                  - [!Ref WireTokenSecret]
 
   # Task role: what the CONTAINER (and every agent session inside it) can do
   # in your account. Deliberately minimal: only the SSM message channels that
-  # ECS Exec / clodexctl tunnels ride. Agents needing AWS powers (Bedrock,
-  # engagement work) get additions HERE — reviewed, in this file, not ad hoc.
+  # ECS Exec / clodexctl tunnels ride, plus Bedrock invoke when UseBedrock.
+  # Agents needing other AWS powers (engagement work) get additions HERE —
+  # reviewed, in this file, not ad hoc. No RoleName (CFN-generated).
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${AWS::StackName}-task'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -163,6 +240,22 @@ Resources:
                   - ssmmessages:OpenControlChannel
                   - ssmmessages:OpenDataChannel
                 Resource: '*'
+        # Bedrock model access, only when UseBedrock=true. Resource '*' because
+        # Bedrock foundation models are account-global, not stack-scoped; a
+        # client may narrow this to specific model ARNs
+        # (arn:aws:bedrock:<region>::foundation-model/<id>).
+        - !If
+          - IsBedrock
+          - PolicyName: bedrock-invoke
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - bedrock:InvokeModel
+                    - bedrock:InvokeModelWithResponseStream
+                  Resource: '*'
+          - !Ref AWS::NoValue
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -172,6 +265,7 @@ Resources:
       NetworkMode: awsvpc
       Cpu: !Ref Cpu
       Memory: !Ref Memory
+      # The published image is linux/arm64 — this pin must match ImageUri's arch.
       RuntimePlatform:
         CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
@@ -179,14 +273,37 @@ Resources:
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: clodex
-          Image: !Sub 'ghcr.io/avirtual/clodex:${ImageTag}'
+          Image: !Ref ImageUri
           PortMappings:
             - { ContainerPort: 7900, Protocol: tcp }
-          Environment:
-            - { Name: CLODEX_DATA_DIR, Value: /data }
-          Secrets:
-            - { Name: CLODEX_REMOTE_TOKEN, ValueFrom: !Ref WireTokenSecret }
-            - { Name: CLAUDE_CODE_OAUTH_TOKEN, ValueFrom: !Ref ClaudeTokenSecret }
+          Environment: !If
+            - IsBedrock
+            - - { Name: CLODEX_DATA_DIR, Value: /data }
+              - { Name: CLAUDE_CODE_USE_BEDROCK, Value: '1' }
+              - { Name: AWS_REGION, Value: !Ref AWS::Region }
+            - - { Name: CLODEX_DATA_DIR, Value: /data }
+          # Wire token always injected; oauth token only when NOT on Bedrock.
+          Secrets: !If
+            - CreateOauthSecret
+            - - { Name: CLODEX_REMOTE_TOKEN, ValueFrom: !Ref WireTokenSecret }
+              - { Name: CLAUDE_CODE_OAUTH_TOKEN, ValueFrom: !Ref ClaudeTokenSecret }
+            - - { Name: CLODEX_REMOTE_TOKEN, ValueFrom: !Ref WireTokenSecret }
+          # Liveness: curl the node's own hello endpoint on the wire port.
+          # This template always injects a wire token, so an unauthenticated
+          # probe answers 401 — accept 200 too so the check survives future
+          # auth-model changes. Connection refused yields 000 → unhealthy.
+          # curl ships in the published image (docker/web/Dockerfile).
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - >-
+                code=$(curl -s -o /dev/null -w '%{http_code}'
+                http://127.0.0.1:7900/api/peer/hello); echo "$code" |
+                grep -Eq '^(200|401)$'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
           LinuxParameters:
             InitProcessEnabled: true
           LogConfiguration:
@@ -199,6 +316,8 @@ Resources:
   # The standing-daemon shape (Persistent=true): keep exactly one node alive.
   # ECS replaces a dead task in ~a minute; the clodexctl context re-resolves
   # the new task automatically (--ssm-ecs stores cluster/family, not task id).
+  # The circuit breaker rolls a bad deploy back instead of crash-looping toward
+  # the CFN timeout (e.g. an unpullable ImageUri or blocked ghcr egress).
   Service:
     Type: AWS::ECS::Service
     Condition: WantService
@@ -209,11 +328,61 @@ Resources:
       DesiredCount: 1
       LaunchType: FARGATE
       EnableExecuteCommand: true
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets: !Ref SubnetIds
           SecurityGroups: [!Ref SecurityGroupId]
-          AssignPublicIp: ENABLED
+          AssignPublicIp: !Ref AssignPublicIp
+
+  # The minimal grant an operator needs to reach a node with
+  # `clodexctl --ssm-ecs` (list/describe the task, then port-forward over SSM)
+  # and to read the wire token. No name property (avoids CAPABILITY_NAMED_IAM).
+  # Attach to the operator principal; its ARN is an Output. NOTE: this is the
+  # access boundary — ecs:ExecuteCommand is deliberately NOT here, because an
+  # exec shell bypasses the wire token; grant that separately and knowingly.
+  OperatorPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Minimal grant for a clodexctl operator to reach this node over SSM
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Resolve the running task (--ssm-ecs does list-tasks → describe-tasks).
+          - Sid: ResolveTask
+            Effect: Allow
+            Action:
+              - ecs:ListTasks
+              - ecs:DescribeTasks
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                ecs:cluster: !GetAtt Cluster.Arn
+          # Open the SSM port-forward tunnel to this cluster's ECS-task targets.
+          - Sid: StartExecSession
+            Effect: Allow
+            Action: ssm:StartSession
+            Resource:
+              - !Sub 'arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*'
+              - !Sub 'arn:aws:ssm:${AWS::Region}::document/AWS-StartPortForwardingSession'
+          # Close the tunnel cleanly — session-manager-plugin calls
+          # TerminateSession when clodexctl exits; without it every close is
+          # AccessDenied and the session lingers to SSM's idle timeout.
+          # session/* because the operator may be an SSO/assumed-role
+          # principal, where ${aws:username} is undefined; IAM-user-only
+          # shops can narrow this to session/${aws:username}-*.
+          - Sid: EndOwnSession
+            Effect: Allow
+            Action: ssm:TerminateSession
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:session/*'
+          # Read the wire token (and nothing else) from Secrets Manager.
+          - Sid: ReadWireToken
+            Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Ref WireTokenSecret
 
 Outputs:
   CtxAddCommand:
@@ -228,12 +397,18 @@ Outputs:
       - >-
         aws ecs run-task --cluster ${ClusterName} --launch-type FARGATE
         --task-definition ${AWS::StackName}-node --enable-execute-command
-        --network-configuration 'awsvpcConfiguration={subnets=[${JoinedSubnets}],securityGroups=[${SecurityGroupId}],assignPublicIp=ENABLED}'
+        --network-configuration 'awsvpcConfiguration={subnets=[${JoinedSubnets}],securityGroups=[${SecurityGroupId}],assignPublicIp=${AssignPublicIp}}'
         --region ${AWS::Region}
       - JoinedSubnets: !Join [',', !Ref SubnetIds]
   TaskFamily:
     Description: The FAMILY half of --ssm-ecs CLUSTER/FAMILY
     Value: !Sub '${AWS::StackName}-node'
-  ClaudeTokenSecretArn:
-    Description: Update the model credential here (put-secret-value), then stop the task to pick it up
-    Value: !Ref ClaudeTokenSecret
+  PutTokenCommand:
+    Condition: CreateOauthSecret
+    Description: Populate the model credential (from `claude setup-token`), then (re)start the task to pick it up
+    Value: !Sub >-
+      aws secretsmanager put-secret-value --secret-id ${ClaudeTokenSecret}
+      --secret-string "$(cat TOKEN-FILE)" --region ${AWS::Region}
+  OperatorPolicyArn:
+    Description: Attach this managed policy to an operator principal so they can reach the node over SSM
+    Value: !Ref OperatorPolicy
