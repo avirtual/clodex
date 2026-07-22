@@ -7,9 +7,9 @@ the customer allows.
 ## Flavor A: ssh reachable (bastion/VPN/direct)
 
 One command — `clodexctl deploy` drives the same idempotent installer the
-desktop app's add-peer wizard uses (git clone → npm install → systemd --user
-service on 127.0.0.1:7900), verifies the wire answers, and registers a
-context:
+desktop app's add-peer wizard uses (git clone → prod-only `npm ci` → the
+headless engine as a systemd --user service on 127.0.0.1:7900), verifies the
+wire answers, and registers a context:
 
 ```sh
 clodexctl deploy ubuntu@ec2-host          # re-running IS the update path
@@ -22,11 +22,13 @@ clodexctl shells out to *your* ssh — whatever `ssh ubuntu@ec2-host` does on
 your machine, deploy does. If the installer needs root for missing OS deps
 it stops and prints the exact sudo commands rather than guessing (exit 42).
 
-Credential seeding (the installer does not handle model credentials): put
-`CLAUDE_CODE_OAUTH_TOKEN` in the service environment, e.g.
-`systemctl --user edit clodex` → `[Service] Environment=CLAUDE_CODE_OAUTH_TOKEN=…`,
-or use an instance role + `CLAUDE_CODE_USE_BEDROCK=1` for the
-no-secret-on-box variant (see the Fargate recipe §4 — identical here).
+Credential seeding: pass `--claude-token-file FILE` to deploy and the
+Claude OAuth token lands in a 0600 systemd drop-in on the box (delivered
+over ssh stdin — never on a command line). Alternatives: edit the service
+env by hand (`systemctl --user edit clodex` → `[Service]
+Environment=CLAUDE_CODE_OAUTH_TOKEN=…`), or use an instance role +
+`CLAUDE_CODE_USE_BEDROCK=1` for the no-secret-on-box variant (see the
+Fargate recipe §4 — identical here).
 
 No wire token needed in this flavor: the node binds loopback and the ssh
 tunnel is the auth boundary (same posture as the GUI's peers).
@@ -41,7 +43,8 @@ a container):
 
 ```sh
 clodexctl deploy ssm ec2ssm --target i-INSTANCE --region us-west-2 --profile prod
-#   [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--dry-run] [--json]
+#   [--branch B] [--repo URL] [--port N] [--claude-token-file F]
+#   [--no-ctx] [--force] [--dry-run] [--json]
 
 clodexctl --ctx ec2ssm sessions      # ready — the deploy saved the context
 ```
@@ -60,15 +63,16 @@ the update path (every step is idempotent).
 > anyone with `ssm:GetCommandInvocation`. Acceptable **because the port never
 > leaves the instance's loopback** (reaching the wire needs `ssm:StartSession`
 > on the same account); **re-run `deploy ssm` to rotate** the token. Model
-> credentials go on the instance role (Bedrock, Fargate recipe §4) or seeded on
-> the box — never through `send-command`.
+> credentials never ride `send-command`: `--claude-token-file` delivers the
+> Claude token *after* verify, over the authenticated wire, into a 0600
+> service drop-in — or use the instance role (Bedrock, Fargate recipe §4).
 
 **SSM: what works, what's limited.** Two channels, very different constraints:
 
 | Channel | What it is | Limits |
 |---|---|---|
 | **Runtime tunnel** (`--ssm` transport: sessions, `send`, `run`, `logs -f`, `attach`) | `aws ssm start-session` port-forward to the box's loopback | **None** — full wire parity, verified live; a normal Clodex peer over the tunnel |
-| **Deploy channel** (`deploy ssm` → RunCommand) | one async `AWS-RunShellScript`, polled | no live stdin/stdout → marker **trail at the end** (+ full log at `/home/clodex/clodex-deploy.log`); **24 KB** output cap; **async poll** (10 min budget); token **visible in SSM history** → loopback-only + re-run to rotate |
+| **Deploy channel** (`deploy ssm` → RunCommand) | one async `AWS-RunShellScript`, polled | no live stdin/stdout → marker trail **pseudo-streamed per poll tick** (+ full log at `/home/clodex/clodex-deploy.log`); **24 KB** output cap; **async poll** (10 min budget); wire token **visible in SSM history** → loopback-only + re-run to rotate |
 
 So the *limits are the deploy step's*, not the running node's — once deployed,
 the `--ssm` context behaves exactly like an `--ssh` one.

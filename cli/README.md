@@ -336,7 +336,7 @@ self-configuring image (`docker/web/Dockerfile` bakes `CLODEX_REMOTE_ENABLE=1`,
 ```
 clodexctl deploy docker mybox                 # local docker, image :latest
 clodexctl deploy docker edge --host user@box  # docker on a remote box over ssh
-clodexctl deploy docker ci --tag v0.14.2 --env-file ./auth.env
+clodexctl deploy docker ci --tag v3.5.2 --env-file ./auth.env
 ```
 
 - **Not a GUI sandbox.** A CLI container is the *minimal* box — a plain peer
