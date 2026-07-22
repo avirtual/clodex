@@ -1328,12 +1328,14 @@ async def handler(request: Request) -> Response:
             if srt:
                 record["tool_sort"] = srt
                 changed = True
-            # Strip the discarded history cache_control on a (busted) compact req.
-            scc = transforms_mod._strip_compact_cache(obj)
-            if scc:
-                record["strip_compact_cache"] = scc
-                if scc.get("removed_message_markers"):
-                    changed = True
+            # (The compact-cache strip used to run HERE, but its warmth check
+            # hashes the message prefix and MUST see the same bytes the ledger
+            # stamped — which are the FORWARDED, post-content-strip bytes. Moved
+            # below every content-mutating strip so it hashes the forwarded body;
+            # running it here read the UNSTRIPPED prefix on L1+ sessions, whose
+            # hash never matched the stamped (stripped) one -> always 'absent' ->
+            # stripped a WARM compact and re-shipped ~150k at 1.0x. See the
+            # `scc = ...` block after the strips below.)
             # STRIP PRIOR-TURN THINKING (experimental): drop thinking blocks from
             # completed prior turns; current turn untouched. Busts message cache
             # from the strip point (recouped by cheaper reads). Monster guard may
@@ -1422,6 +1424,21 @@ async def handler(request: Request) -> Response:
             if fmd:
                 record["filemod_diff_strip"] = fmd
                 changed = True
+            # STRIP THE DISCARDED HISTORY CACHE_CONTROL ON A (BUSTED) COMPACT REQ.
+            # MUST run AFTER every content-mutating strip above: its warmth check
+            # (`_compact_history_warmth`) hashes the message prefix and compares it
+            # to the ledger, which stamps the FORWARDED (post-strip) bytes. On an
+            # L1+ strip session, running this on the UNSTRIPPED body produced a hash
+            # that never matched the stamped (stripped) one -> read 'absent' ->
+            # stripped a WARM compact -> re-shipped ~150k history at 1.0x (the
+            # month-latent bug, wire-diagnosed 2026-07-22 on clodex a68b0455).
+            # Placed before PIN_SETTLED so the pin's "skip when the compact strip
+            # just reclaimed the markers" interlock still sees scc.
+            scc = transforms_mod._strip_compact_cache(obj)
+            if scc:
+                record["strip_compact_cache"] = scc
+                if scc.get("removed_message_markers"):
+                    changed = True
             # PIN SETTLED BREAKPOINT: anchor a cache_control marker on the last
             # SETTLED user boundary (one real-user turn before the current) so
             # a turn-boundary shed or a resume re-anchors at the still-warm
