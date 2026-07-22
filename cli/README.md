@@ -311,6 +311,7 @@ contract (task ids, completion events) is T38.
 | `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
 | `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
+| `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
 idempotent installer** the GUI uses, so **re-running `deploy` on the same host is
@@ -318,8 +319,10 @@ the update path**. Deploy params ride the remote environment (`PORT`, `REPO_URL`
 `BRANCH`, `CLODEX_SRC`); the default repo is the public Clodex repo, default
 branch `master`, default port `7900`.
 
-- **ssh-reachable boxes only.** Fargate/k8s nodes have no box to script — they
-  stay recipe-based (see `docs/deployment-plan.md`).
+- **ssh-reachable boxes only** (this flavor). Fargate nodes have no box to
+  script — they stay recipe-based (see `docs/deployment-plan.md`); k8s nodes
+  get `deploy helm` below (the manual chart install in
+  `docs/recipes/kubernetes.md` remains the reviewable alternative).
 - **No token is stored.** The node binds loopback and is reached over an ssh
   tunnel; the tunnel is the auth boundary (same posture as the GUI's peers).
 - **The claude/codex CLIs are installed** (native installer → `~/.local/bin`,
@@ -459,6 +462,65 @@ clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the a
 - **ssh-reachable boxes** should prefer plain `deploy <user@host>`; **`deploy ssm`
   is for instances you reach only through SSM**. A host literally named `ssm`
   still works via `deploy ssh ssm`.
+
+### `deploy helm <name>` — a Kubernetes node in one command
+
+Installs the **packaged chart** (`cli/deploy/helm/clodex` — a StatefulSet +
+headless Service, no Ingress; the chart itself is the reviewable surface) as
+helm release `<name>` and wires everything up: mint → install → context →
+verify. `<name>` doubles as the helm release name **and** the ctx name, so it
+must be DNS-1123 (lowercase letters/digits/hyphens, max 53 — no dots or
+underscores; validated early with a clear message).
+
+```
+clodexctl deploy helm mynode                                   # current kubectl context, ns "clodex"
+clodexctl deploy helm mynode --kube-context prod --namespace agents
+clodexctl deploy helm mynode --claude-token-file ./token       # authenticate claude in the pod
+clodexctl deploy helm mynode --set persistence.enabled=false --dry-run
+```
+
+- **The sequence.** Preflight (`helm`/`kubectl` resolve; the kube context is
+  resolved and **echoed** — deploying to the wrong cluster silently is the
+  scary failure; namespace created if absent) → wire token: **minted** fresh,
+  or — when the release already exists (`helm status` ok) — **reused** from
+  the release's `<name>-secrets` Secret, so a redeploy/upgrade never rotates
+  the token under a live ctx entry → `helm upgrade --install <name> <chart>
+  --set-file secrets.wireToken=<tempfile> --wait --timeout 5m` → save a typed
+  `{kubectl: {target: svc/<name>, namespace, context}, token}` context →
+  laptop-side hello **through the real `kubectl port-forward` transport** with
+  the Bearer token (proves port-forward + token end-to-end; `--wait` had only
+  proven the pod-internal readiness probe).
+- **Token discipline.** Token **values never enter argv, logs, or errors** —
+  only file **paths** do (`--set-file` reads client-side). The tempfiles are
+  `0600` and removed in a `finally`. `--claude-token-file` takes the same file
+  formats as the other flavors (raw token or a `CLAUDE_CODE_OAUTH_TOKEN=…`
+  line) and rides `--set-file secrets.oauthToken=…` into the chart-managed
+  Secret. Note helm also keeps release values in its own release Secret in the
+  namespace (same RBAC); if that's unacceptable use the chart's
+  operator-managed `secrets.existingSecret` mode via the manual recipe.
+- **helm/kubectl are the operator's tools** — spawned argv-direct (the same
+  `execFn` seam as `aws`), never a shell, zero k8s SDKs. A missing binary gets
+  the "is helm installed?" hint.
+- **Failure honesty.** A helm failure mid-`--wait` **leaves the release
+  installed** in a partial state — the error says so and tells you to fix the
+  cause and re-run (**the same command upgrades in place**; no auto-rollback).
+  A verify failure after a green helm still keeps the saved context and points
+  you at `clodexctl --ctx <name> ctx test --verbose`.
+- **Local/docker-desktop shape today.** EKS identity (IRSA service accounts)
+  rides the chart's `serviceAccount` values — pass them with `--set`/`--values`
+  or use the manual install in `docs/recipes/kubernetes.md`. More nodes = more
+  **releases** (one release, one pod, one PVC — agents are stateful PTYs, not
+  replicas).
+- **Re-runs don't `--reuse-values`.** `helm upgrade` is invoked with a full
+  fresh value set, so prior `--set` / `--values` / `--port` choices fall back
+  to chart defaults unless you **repeat them on every run**. Tokens are the
+  deliberate exception: the wire token is re-read from the release Secret, and
+  the claude oauth token is carried forward when `--claude-token-file` is
+  absent (pass it again to rotate).
+- Collision on the ctx name is **kept** unless `--force`; `--no-ctx` opts out.
+  `--dry-run` prints the cluster/namespace/release/chart, the exact helm argv
+  (placeholder token paths), and the ctx entry to be written. A host literally
+  named `helm` still works via `deploy ssh helm`.
 
 ## Exit codes (contract)
 

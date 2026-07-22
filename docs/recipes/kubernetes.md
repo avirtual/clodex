@@ -5,6 +5,29 @@ manifest only names it, feeds it secrets, and gives it storage. No ingress,
 no service exposure — reachability is `kubectl port-forward` through
 clodexctl's tunnel transport, so the customer's RBAC is the access control.
 
+## 0. The one-command path: `clodexctl deploy helm`
+
+The whole recipe below is one command when the packaged chart
+(`cli/deploy/helm/clodex`) fits your posture:
+
+```sh
+clodexctl deploy helm mynode \
+  [--namespace clodex] [--kube-context ENGAGEMENT] \
+  [--claude-token-file ./token] [--set k=v …] [--values f.yaml]
+```
+
+It mints the wire token, runs `helm upgrade --install … --set-file
+secrets.wireToken=<0600 tempfile> --wait` (token values never touch argv —
+only file paths do), saves a `{kubectl: svc/mynode, token}` context, and
+verifies hello through the real `kubectl port-forward` with the token.
+Re-running is the upgrade path and **reuses** the existing release's token.
+See `clodexctl help deploy` / the CLI README for the details.
+
+The manual install below remains the reviewable alternative — and the
+required one when the chart-managed Secret mode is unacceptable (helm keeps
+release values in its own release Secret) or you want the chart's
+operator-managed `secrets.existingSecret` mode.
+
 ## 1. Secrets
 
 ```sh

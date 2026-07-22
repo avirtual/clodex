@@ -15,6 +15,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
@@ -1201,6 +1202,326 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   }
 }
 
+// ── helm flavor: `clodexctl deploy helm <name>` ──────────────────────────────
+//
+// One command births a k8s node from the PACKAGED chart (cli/deploy/helm/
+// clodex): mint a wire token → `helm upgrade --install` with --set-file token
+// delivery (the chart creates the Secret itself; shipped 4427bba) → save a
+// kubectl-kind ctx → laptop-side hello through the real `kubectl port-forward`
+// transport. Local/docker-desktop shape today; nothing here paints EKS into a
+// corner (identity rides the chart's serviceAccount values, not this verb).
+//
+// helm/kubectl are the operator's tools — spawned argv-direct via the SAME
+// injectable execFn seam the ssm flavor uses, never a shell, zero k8s SDKs.
+// TOKEN DISCIPLINE (binding): the token VALUE never enters argv, markers, logs
+// or errors — only FILE PATHS cross argv (`--set-file secrets.wireToken=F`).
+// The tempfile is 0600 and removed in a finally.
+const HELM_TIMEOUT = '5m';                    // --wait budget (chart readiness probe)
+const DEFAULT_HELM_NAMESPACE = 'clodex';
+// Helm release names are DNS-1123 labels capped at 53 chars (lowercase
+// alphanumerics + '-', must start/end alphanumeric). Validate EARLY — helm's
+// own late failure is a worse message — and note the name doubles as the ctx
+// name (NAME_RE is a superset of this, so one check covers both).
+const HELM_RELEASE_RE = /^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$/;
+// Namespaces are DNS-1123 labels (63 chars).
+const K8S_NS_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+// Resolve the packaged chart relative to THIS module (the scriptPath pattern):
+// cli/src/deploy.js → cli/deploy/helm/clodex. `deploy/` is in the published
+// files list, chart included, so `npm i -g` and in-repo runs both resolve.
+function helmChartPath() {
+  return path.join(__dirname, '..', 'deploy', 'helm', 'clodex');
+}
+
+// The `helm upgrade --install` argv — pure, leaf-tested, the single source for
+// execution AND --dry-run display. Token FILES ride --set-file (paths in argv
+// are fine; values never are). --wait rides the chart's readiness probe (curl
+// 200|401 in-pod), so a green exit already means the wire answered inside the
+// pod; the laptop-side verify then proves port-forward + token end-to-end.
+function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [] } = {}) {
+  return [
+    'helm', 'upgrade', '--install', name, chart,
+    '--namespace', namespace,
+    ...(kubeContext ? ['--kube-context', kubeContext] : []),
+    '--set-file', `secrets.wireToken=${wireTokenFile}`,
+    ...(oauthTokenFile ? ['--set-file', `secrets.oauthToken=${oauthTokenFile}`] : []),
+    ...(port !== DEFAULT_PORT ? ['--set', `wirePort=${port}`] : []),
+    ...sets.flatMap((s) => ['--set', s]),
+    ...valuesFiles.flatMap((f) => ['--values', f]),
+    '--wait', '--timeout', HELM_TIMEOUT,
+  ];
+}
+
+// `helm status` — the release-exists probe (exit 0 = installed). Pure.
+function helmStatusArgs({ name, namespace, kubeContext = null } = {}) {
+  return ['helm', 'status', name, '--namespace', namespace,
+    ...(kubeContext ? ['--kube-context', kubeContext] : [])];
+}
+
+// kubectl argv to read a key of the chart-managed Secret (base64 via
+// jsonpath) — the REUSE path: an existing release keeps its wire token so a
+// redeploy/upgrade doesn't rotate it under a live ctx entry, and keeps its
+// oauth token so a flagless re-run doesn't silently drop claude auth. A
+// missing key renders as EMPTY stdout (exit 0), not an error. Pure.
+function releaseSecretArgs({ name, namespace, kubeContext = null, key = 'wire-token' } = {}) {
+  return ['kubectl', ...(kubeContext ? ['--context', kubeContext] : []),
+    '-n', namespace, 'get', 'secret', `${name}-secrets`,
+    '-o', `jsonpath={.data.${key}}`];
+}
+
+// Run a vendor CLI (helm/kubectl) argv through the injectable execFn — the
+// runAws pattern generalized. ENOENT → the "is X installed?" hint transport.js
+// uses for vendor CLIs; other failures relay the child's own stderr.
+async function runVendor(execFn, argv, what, code = EXIT.CONNECT) {
+  try {
+    const { stdout } = await execFn(argv[0], argv.slice(1));
+    return String(stdout).trim();
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || ''))) {
+      throw new CliError(EXIT.CONNECT, `${argv[0]}: command not found — is ${argv[0]} installed and on PATH?`);
+    }
+    const stderr = ((e && (e.stderr || e.message)) || '').toString().trim();
+    throw new CliError(code, `${argv[0]} ${what} failed${stderr ? `: ${stderr}` : ''}`);
+  }
+}
+
+// Verify from the laptop through the REAL kubectl transport the saved ctx will
+// use: openTransport on the kubectl entry (spawns `kubectl port-forward`), GET
+// hello with the Bearer token, expect 200. The ssmVerifyHello shape for the
+// kubectl kind. io.probeHelm overrides for unit tests.
+async function helmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
+  const t = await openTransport(entry, { spawnFn, execFn });
+  try {
+    const client = new WireClient(t.baseUrl, token);
+    return await client.get('/api/peer/hello', 'deploy helm (verify)');
+  } finally {
+    try { t.close(); } catch {}
+  }
+}
+
+// deploy helm <name> — orchestration. io seams: execFn (helm/kubectl children),
+// spawnFn (verify tunnel child), probeHelm (verify override), contextsFile.
+// Throws CliError (caught by main.run). --json emits NDJSON step markers
+// shaped like parseMarker events (mirrors the other flavors).
+async function deployHelmVerb({ printer, flags, args, io = {} }) {
+  const name = args[0];
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy helm needs a release name (e.g. deploy helm mynode)');
+  if (!HELM_RELEASE_RE.test(name)) {
+    throw new CliError(EXIT.USAGE, `bad release name "${name}" — helm release names are DNS-1123: lowercase letters/digits/hyphens, start+end alphanumeric, max 53 chars (no dots or underscores; it doubles as the ctx name)`);
+  }
+  const namespace = flags.namespace ? String(flags.namespace) : DEFAULT_HELM_NAMESPACE;
+  if (!K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label (lowercase letters/digits/hyphens, max 63 chars)`);
+  const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
+  const chart = flags.chart ? String(flags.chart) : helmChartPath();
+  // Only the PACKAGED default is existence-checked (it must ship with us); an
+  // operator --chart passes through untouched — helm resolves repo/oci refs.
+  if (!flags.chart && !fs.existsSync(path.join(chart, 'Chart.yaml'))) {
+    throw new CliError(EXIT.SERVER, `packaged helm chart unreadable at ${chart} — broken install?`);
+  }
+  const sets = Array.isArray(flags.set) ? flags.set.map(String) : (flags.set ? [String(flags.set)] : []);
+  // secrets.* via --set is a double footgun: the value would ride argv (ps-
+  // visible — the discipline this verb exists to uphold) AND, last-wins, it
+  // would override the minted/reused token under the ctx entry. Reject early.
+  for (const s of sets) {
+    if (/^secrets\./.test(s)) {
+      throw new CliError(EXIT.USAGE, `--set ${s.split('=')[0]} is not allowed — secret values must never ride argv; the wire token is minted/reused automatically and claude auth rides --claude-token-file`);
+    }
+  }
+  const valuesFiles = Array.isArray(flags.values) ? flags.values.map(String) : (flags.values ? [String(flags.values)] : []);
+  // Claude auth (optional): read + validate the token NOW (fail fast before any
+  // cluster call). The EXTRACTED value is re-staged into its own 0600 tempfile
+  // for --set-file — the input may be an env-file whose raw bytes are NOT the
+  // token. Never printed, never argv.
+  const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
+  const json = !!flags.json;
+  const emit = (obj) => printer.json(obj);
+  const execFn = io.execFn || execFileP;
+
+  // ::step/::ok/::log vocabulary, locally emitted (there is no remote marker
+  // stream to relay — helm is synchronous). --json mirrors parseMarker shapes.
+  const step = (n) => { if (json) emit({ type: 'step', name: n }); else printer.line(`→ ${n} …`); };
+  const okm = (n) => { if (json) emit({ type: 'ok', name: n }); else printer.line(`  ${n} ok`); };
+  const log = (t) => { if (json) emit({ type: 'log', text: t }); else printer.line(`  ${t}`); };
+
+  // --dry-run: describe, run nothing. Placeholder paths — no tempfile is ever
+  // written, and the claude token is noted by PRESENCE only.
+  if (flags['dry-run']) {
+    const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles });
+    const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), token: '<minted-or-reused>' };
+    if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : name, ctxEntry }); return; }
+    printer.line([
+      `dry-run — would deploy release "${name}" from the helm chart:`,
+      `  chart      ${chart}`,
+      `  namespace  ${namespace} (created if absent)`,
+      `  kube-ctx   ${flags['kube-context'] ? String(flags['kube-context']) : "(kubectl's current context)"}`,
+      `  port       ${port} (wire, in-cluster; reached via kubectl port-forward)`,
+      claudeToken ? '  claude     token from --claude-token-file (rides a 0600 tempfile into --set-file, redacted)' : null,
+      `  helm       ${argvPreview.join(' ')}`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (kubectl svc/${name} -n ${namespace}, token from the release Secret)`,
+      '  (an existing release would be UPGRADED in place, reusing its wire token; its claude oauth token is carried forward unless --claude-token-file replaces it)',
+    ].filter(Boolean).join('\n'));
+    return;
+  }
+
+  // 1. preflight: both binaries resolve, and NAME the cluster this will hit —
+  //    deploying to the wrong cluster silently is the scary failure.
+  step('preflight');
+  await runVendor(execFn, ['helm', 'version', '--short'], 'version');
+  await runVendor(execFn, ['kubectl', 'version', '--client', '--output=yaml'], 'version --client');
+  let kubeContext = flags['kube-context'] ? String(flags['kube-context']) : null;
+  if (!kubeContext) {
+    kubeContext = await runVendor(execFn, ['kubectl', 'config', 'current-context'], 'config current-context');
+    if (!kubeContext) throw new CliError(EXIT.CONNECT, 'kubectl has no current context — pass --kube-context');
+  }
+  log(`cluster: kube context "${kubeContext}", namespace "${namespace}"`);
+  // Namespace: get-first, create if absent. A lost create race (another
+  // creator won between our get and create) surfaces as AlreadyExists —
+  // that's the state we wanted, tolerate it.
+  try {
+    await runVendor(execFn, ['kubectl', '--context', kubeContext, 'get', 'namespace', namespace], 'get namespace');
+  } catch {
+    try {
+      await runVendor(execFn, ['kubectl', '--context', kubeContext, 'create', 'namespace', namespace], 'create namespace', EXIT.SERVER);
+      log(`namespace "${namespace}" created`);
+    } catch (e) {
+      if (!/AlreadyExists|already exists/i.test(e.message || '')) throw e;
+    }
+  }
+  okm('preflight');
+
+  // 2. token: REUSE an existing release's wire token (so redeploy/upgrade never
+  //    rotates it under a live ctx entry), else mint fresh. helm status exit 0
+  //    = the release exists; only a "not found" stderr means fresh install —
+  //    any OTHER status failure (auth, unreachable cluster, wedged helm) must
+  //    NOT fall through to a fresh mint, or we'd rotate a live release's token
+  //    exactly when the operator can least see it happening.
+  step('token');
+  let token = null;
+  let releaseExists = false;
+  try {
+    await runVendor(execFn, helmStatusArgs({ name, namespace, kubeContext }), 'status');
+    releaseExists = true;
+  } catch (e) {
+    if (!/not found/i.test(e.message || '')) {
+      throw new CliError(EXIT.CONNECT, `could not determine whether release "${name}" exists (helm status failed for a reason other than not-found) — check cluster access and re-run: ${e.message}`);
+    }
+    /* release not installed → fresh mint below */
+  }
+  let reusedOauth = null;   // existing release's oauth token (preserved on flagless re-run)
+  if (releaseExists) {
+    let b64;
+    try {
+      b64 = await runVendor(execFn, releaseSecretArgs({ name, namespace, kubeContext }), `get secret ${name}-secrets`, EXIT.SERVER);
+    } catch (e) {
+      throw new CliError(EXIT.SERVER, `release "${name}" exists but its wire token could not be read from Secret "${name}-secrets" — it was likely installed with an operator-managed Secret (secrets.existingSecret); upgrade it with helm directly, or uninstall and re-run (${e.message})`);
+    }
+    token = Buffer.from(b64.trim(), 'base64').toString('utf8').trim();
+    if (!token || /[\s\x00-\x1f]/.test(token)) {
+      throw new CliError(EXIT.SERVER, `release "${name}" exists but Secret "${name}-secrets" holds no usable wire-token — uninstall and re-run, or fix the Secret`);
+    }
+    log('reusing existing release token (upgrade in place, no rotation)');
+    // Preserve the release's oauth token when --claude-token-file is absent:
+    // the chart renders the oauth-token key only when a value is passed, and
+    // an upgrade REPLACES the Secret — a flagless re-run would silently drop
+    // claude auth (hidden by the pod env's optional:true until the next
+    // restart). A missing key is empty stdout (exit 0) → nothing to preserve.
+    if (!claudeToken) {
+      let ob64 = '';
+      try {
+        ob64 = await runVendor(execFn, releaseSecretArgs({ name, namespace, kubeContext, key: 'oauth-token' }), `get secret ${name}-secrets (oauth)`, EXIT.SERVER);
+      } catch { ob64 = ''; }   // best-effort: absent/unreadable → no oauth to carry
+      if (ob64.trim()) {
+        const prev = Buffer.from(ob64.trim(), 'base64').toString('utf8').trim();
+        if (prev && !/[\s\x00-\x1f]/.test(prev)) {
+          reusedOauth = prev;
+          log('preserving existing claude oauth token (no --claude-token-file on this run)');
+        }
+      }
+    }
+  } else {
+    token = crypto.randomBytes(24).toString('hex');   // same entropy as the other flavors
+    log('minted a fresh wire token');
+  }
+  okm('token');
+
+  // 3+4. stage token FILES (0600, cleaned in a finally) and run helm. Only
+  //      paths enter argv; helm's --set-file reads the values client-side.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-'));
+  try {
+    const wireTokenFile = path.join(tmpDir, 'wire-token');
+    fs.writeFileSync(wireTokenFile, token, { mode: 0o600 });
+    let oauthTokenFile = null;
+    const oauthToStage = claudeToken || reusedOauth;   // fresh flag wins; else preserve
+    if (oauthToStage) {
+      oauthTokenFile = path.join(tmpDir, 'oauth-token');
+      fs.writeFileSync(oauthTokenFile, oauthToStage, { mode: 0o600 });
+      if (claudeToken) log('claude token staged (0600 tempfile → --set-file, redacted)');
+    }
+    const argv = helmArgv({ name, chart, namespace, kubeContext, port, wireTokenFile, oauthTokenFile, sets, valuesFiles });
+    step('helm');
+    try {
+      await runVendor(execFn, argv, 'upgrade --install', EXIT.SERVER);
+    } catch (e) {
+      // Failure honesty: a mid---wait failure leaves the release INSTALLED
+      // (helm does not roll back for us, and we don't auto-rollback).
+      if (json) emit({ type: 'error', reason: 'helm-failed', message: e.message });
+      throw new CliError(EXIT.SERVER, `${e.message}\nrelease "${name}" likely exists in a partial state — fix the cause and re-run: the same command upgrades in place (inspect with: helm status ${name} -n ${namespace}; kubectl -n ${namespace} get pods)`);
+    }
+    okm('helm');
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+
+  // 5. ctx upsert — the kubectl-kind entry the verify (and the user) will use.
+  //    Name-taken: kept unless --force (the flavors' shared semantics); the
+  //    verify below still runs against the FRESH entry either way.
+  const entry = {
+    kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
+    ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
+    token,
+  };
+  let ctxSaved = false;   // the verify-failure hint must not claim a save that was skipped
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+  } else {
+    const store = safeLoadContexts(io);
+    const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+    if (exists && !flags.force) {
+      if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
+      else printer.line(`context "${name}" already exists — kept it (--force to overwrite)`);
+    } else {
+      store.contexts[name] = entry;
+      if (!store.current) store.current = name;
+      contexts.save(store, io.contextsFile);
+      ctxSaved = true;
+      if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name });
+      else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+    }
+  }
+
+  // 6. verify: laptop-side hello through the REAL kubectl port-forward with the
+  //    Bearer token — proves port-forward + token end-to-end, not just the
+  //    pod-internal readiness --wait already rode on.
+  step('verify');
+  let hello;
+  try {
+    const probe = io.probeHelm || helmVerifyHello;
+    hello = await probe(entry, token, { spawnFn: io.spawnFn, execFn });
+  } catch (e) {
+    if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
+    else printer.line(`release "${name}" is live (helm --wait passed), but the wire did not answer through kubectl port-forward: ${e.message}`);
+    // The hint must tell the truth about the ctx: a skipped upsert (name
+    // collision, no --force) would send the operator to the OLD entry.
+    const hint = flags['no-ctx'] ? ''
+      : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${name} ctx test --verbose`
+        : ` — the context was NOT saved (name "${name}" exists; re-run with --force to overwrite it)`;
+    throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${hint}`) : new CliError(EXIT.SERVER, `deploy helm verify failed: ${e.message}${hint}`);
+  }
+  okm('verify');
+  if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
+  else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} (svc/${name} -n ${namespace} @ ${kubeContext})`);
+}
+
 module.exports = {
   DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
   shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs, deriveCtxName,
@@ -1211,4 +1532,6 @@ module.exports = {
   SSM_DEPLOY_TIMEOUT_MS, SSM_POLL_MS, SSM_PREPOLL_MS, SSM_SEND_RETRIES, SSM_SEND_RETRY_MS,
   buildSsmScript, awsBase, ssmDescribeArgs, ssmSendCommandArgs, ssmGetInvocationArgs,
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
+  HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
+  helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
 };

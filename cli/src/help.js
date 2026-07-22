@@ -228,12 +228,13 @@ const VERB_REGISTRY = [
   // ── deploy ─────────────────────────────────────────────────────────────
   {
     name: 'deploy', group: 'deploy',
-    summary: 'install/UPDATE a headless node (ssh, ssm, or docker)',
-    usage: 'deploy <user@host|ssm <name>|docker <name>> [flags]',
+    summary: 'install/UPDATE a headless node (ssh, ssm, docker, or helm)',
+    usage: 'deploy <user@host|ssm <name>|docker <name>|helm <name>> [flags]',
     subcommands: [
       ['deploy <user@host> [flags]', 'ssh flavor — drives clodex-deploy.sh over ssh (installs the agent CLIs)'],
       ['deploy ssm <name> --target i-INSTANCE [flags]', 'OS flavor over AWS SSM RunCommand — no ssh, no open ports'],
       ['deploy docker <name> [flags]', 'a CONTAINER node — one docker run of the published image'],
+      ['deploy helm <name> [flags]', 'a KUBERNETES node — helm upgrade --install of the packaged chart'],
     ],
     flags: [
       ['--port N', 'wire port on the box (default 7900)'],
@@ -247,7 +248,10 @@ const VERB_REGISTRY = [
       ['--host ssh://u@box', 'run docker on a remote box (sets DOCKER_HOST) [docker]'],
       ['--volume V', 'extra docker volume — repeatable [docker]'],
       ['--ssh-opt X', 'extra ssh option — repeatable [ssh]'],
-      ['--claude-token-file FILE', 'authenticate Claude on the box (never argv/logs) [ssh/ssm]'],
+      ['--namespace NS --kube-context C', 'target namespace (default clodex) / kube context (default: current) [helm]'],
+      ['--chart PATH', 'chart to install (default: the packaged cli/deploy/helm/clodex) [helm]'],
+      ['--set k=v / --values F', 'raw helm value passthrough (repeatable / a values file) [helm]'],
+      ['--claude-token-file FILE', 'authenticate Claude on the box (never argv/logs) [ssh/ssm/helm]'],
       ['--no-ctx', 'skip saving a context'],
       ['--force', 'overwrite an existing context on a name collision'],
       ['--dry-run', 'print what would run, do nothing'],
@@ -256,11 +260,14 @@ const VERB_REGISTRY = [
       'clodexctl deploy user@box --claude-token-file ./token',
       'clodexctl deploy ssm mybox --target i-0123456789abcdef0 --region us-west-2',
       'clodexctl deploy docker edge --host user@box --tag v3.5.2 --env-file ./auth.env',
+      'clodexctl deploy helm mynode --namespace clodex --claude-token-file ./token',
     ],
     notes: [
-      'The flavor is sniffed on the LITERAL first token: `docker` / `ssm` / `ssh`; anything else is the ssh flavor (a host literally named `ssm`/`docker` → `deploy ssh ssm`).',
-      'Re-running deploy on the same host is the UPDATE path — the installer is idempotent. --json emits NDJSON (one object per ::marker).',
-      'ssh saves a tokenless context (the tunnel is the auth boundary); ssm stores the wire token it minted. --claude-token-file rides the ssh stdin (ssh) or the encrypted wire post-verify (ssm) — NEVER via SSM params/CloudTrail. Fargate/k8s nodes stay recipe-based (docs/recipes/).',
+      'The flavor is sniffed on the LITERAL first token: `docker` / `ssm` / `helm` / `ssh`; anything else is the ssh flavor (a host literally named `ssm`/`docker`/`helm` → `deploy ssh ssm`).',
+      'Re-running deploy on the same host is the UPDATE path — the installer is idempotent; `deploy helm` re-run is `helm upgrade` in place and REUSES the release\'s wire token (no rotation).',
+      'ssh saves a tokenless context (the tunnel is the auth boundary); ssm/helm store the wire token they minted. --claude-token-file rides the ssh stdin (ssh), the encrypted wire post-verify (ssm — NEVER via SSM params/CloudTrail), or a 0600 tempfile into helm --set-file (helm — only PATHS in argv). Fargate nodes stay recipe-based (docs/recipes/).',
+      'helm verifies laptop-side through the real `kubectl port-forward` transport and saves a typed {kubectl: svc/<name>} context. --json emits NDJSON (one object per ::marker/step).',
+      'helm re-runs do NOT --reuse-values: prior --set/--values/--port fall back to chart defaults unless you repeat them (tokens are the exception — carried automatically).',
     ],
   },
 
