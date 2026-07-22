@@ -103,6 +103,33 @@ const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = requir
 // ticket's assignee has been quiet longer than this. Per-team override:
 // `watchdogMs` in team.json. 30 minutes (Bogdan design 07-20).
 const TICKET_STALL_MS = 30 * 60 * 1000;
+
+// First claude spawn on a fresh box (deployed node, sandbox container) hits
+// the CLI's interactive onboarding wizard — theme picker etc. — inside a PTY
+// nobody on a headless node is watching. Pre-seed the global ~/.claude.json
+// so sessions start ready. Merge-only: a file that already completed
+// onboarding is left byte-untouched, unparseable JSON is never clobbered, and
+// any failure degrades to the wizard (never blocks a spawn). Credentials are
+// NOT touched here — the token rides the service env
+// (deploy --claude-token-file). Module-level with a deps bag so tests inject
+// fs/path + a home dir; create() calls it with the factory's natives.
+function preseedClaudeOnboarding({ fs, path, homeDir }) {
+  try {
+    const p = path.join(homeDir, '.claude.json');
+    let j = {};
+    if (fs.existsSync(p)) {
+      j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
+      if (j.hasCompletedOnboarding) return false;
+    }
+    j.hasCompletedOnboarding = true;
+    if (!j.theme) j.theme = 'dark';
+    const tmp = `${p}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, p);
+    return true;
+  } catch { return false; }
+}
 // Human-readable age for the list summary + the stall nudge ("34m", "2h", "3d").
 function humanizeAge(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -829,6 +856,9 @@ function createSessionManager(deps) {
       switch (type) {
         case 'claude': {
           cmd = 'claude';
+          if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir() })) {
+            this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
+          }
           // IPC protocol always goes in; the posture prompt is a persistent
           // session property — applied on resume/restart too, editable via
           // the Edit Session dialog.
@@ -5360,4 +5390,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit, nameConflict };
+module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding };
