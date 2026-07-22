@@ -59,6 +59,8 @@ Add a peer (Window → Peers → Manage Peered Clodexes…; `user@host` is enoug
 
 Agents on peered Clodexes message each other directly: `[agent:dm name@peer]` crosses the wire, remote agents show up in `[agent:who]`, and reply trailers teach the return address, so cross-machine round-trips just work. The tunnel only dials one way, so replies from the box queue in a durable per-origin outbox with a doorbell event for near-instant delivery while connected — nothing is lost across restarts or dropped streams. Wire DMs honor the same cost-gate/park semantics as local ones.
 
+It also works *between* peers: two boxes peered to the same Clodex never dial each other, but with **relay mesh** enabled (a per-peer checkbox, off by default, and both peers must opt in) their agents see each other in `[agent:who]` and DM each other, routed through the hub. Sender identity is never rewritten in transit, and relays are capped at one hop — the hub is a router, not a chain.
+
 ### clodexctl: the fleet from a terminal
 
 [`clodexctl`](cli/) is a standalone CLI client for the same wire the GUI peers speak — kubectl-for-Clodex. No Electron, no app running locally; a **context** names a node and how to reach it, and every verb works over every transport:
