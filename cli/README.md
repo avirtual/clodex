@@ -150,6 +150,16 @@ running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
 > and are verifiable in shape the same way. Missing a vendor binary surfaces as
 > the usual tunnel-failed error with an "is `<cli>` installed?" hint.
 
+**When an SSM tunnel fails, the error names the world.** SSM's control plane
+happily starts sessions to sick instances, so a bare timeout says nothing. On
+any failed open of an `--ssm` context, clodexctl asks SSM about the instance
+and appends a verdict: **no registration** ("terminated, stopped, or never had
+the agent — if you recreated the box, `deploy ssm <name> --target i-NEW…`"),
+**agent not pinging** ("last ping 43m ago — reboot it, or redeploy if it was
+replaced"), or **Online yet unreachable** ("suspect the box itself: service
+down, wrong port, or a wedged agent"). Best-effort — if the describe call
+itself fails, the original error stands alone.
+
 ### One-shot / CI
 
 No file needed: `clodexctl --url … --token … sessions`. Env sits between file
@@ -217,7 +227,7 @@ published ports on the box — prints the URL, and pops your browser:
 
 | Verb | Mechanism | Notes |
 |---|---|---|
-| `web [ctx] [--port N] [--no-open]` | reuses the ctx's tunnel to the node's web-GUI port (saved ctx `webPort`, else wire-port+1) | prints `http://127.0.0.1:PORT` prominently and **pops your browser** (`open`/`xdg-open`, best-effort — skipped under `--no-open` or a non-TTY stdout; the URL is always printed), then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` defaults to `8080` (first free of `8080..8090`); `--port` pins it. Same tunnel machinery as `port-forward` — a `url` (direct) context has no tunnel → exit `2` |
+| `web [ctx] [--port N] [--no-open]` | reuses the ctx's tunnel to the node's web-GUI port (saved ctx `webPort`, else wire-port+1) | prints `http://127.0.0.1:PORT` prominently and **pops your browser** (`open`/`xdg-open`, best-effort — skipped under `--no-open` or a non-TTY stdout; the URL is always printed), then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` defaults to `8080` (first free of `8080..8090`); `--port` pins it. A **keep-alive probe** rides the tunnel (a cloud tunnel's data channel can die while the local child lives on): if the node stops answering, the hold ends with exit `3` and an honest message instead of serving a zombie tab. Same tunnel machinery as `port-forward` — a `url` (direct) context has no tunnel → exit `2` |
 
 The browser-through-SSM recipe: `clodexctl deploy ssm mybox --target i-…`, then
 `clodexctl web mybox` — the GUI for a node with **no ssh and no published ports**
@@ -231,7 +241,7 @@ arbitrary remote port, over the SAME transport:
 
 | Verb | Mechanism | Notes |
 |---|---|---|
-| `port-forward LOCAL:REMOTE` | reuses the ctx's tunnel (`ssh -L` / `ssm start-session` / `kubectl port-forward` / `gcloud IAP` / `az bastion` / custom `{port}` argv) targeting `REMOTE` instead of the wire port | prints `forwarding 127.0.0.1:LOCAL -> <target>:REMOTE — Ctrl-C to stop`, then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` binds `127.0.0.1` only. `REMOTE` is a port number or `web` (the node's web-GUI port; the `web` verb above is the friendly shortcut). **Single-shot** — a dropped tunnel exits `3` with the child's stderr (no reconnect; the consumer retries). A `url` (direct) context has no tunnel → exit `2`. Non-TTY OK |
+| `port-forward LOCAL:REMOTE [--probe-http]` | reuses the ctx's tunnel (`ssh -L` / `ssm start-session` / `kubectl port-forward` / `gcloud IAP` / `az bastion` / custom `{port}` argv) targeting `REMOTE` instead of the wire port | prints `forwarding 127.0.0.1:LOCAL -> <target>:REMOTE — Ctrl-C to stop`, then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` binds `127.0.0.1` only. `REMOTE` is a port number or `web` (the node's web-GUI port; the `web` verb above is the friendly shortcut). **Single-shot** — a dropped tunnel exits `3` with the child's stderr (no reconnect; the consumer retries). `--probe-http` adds the keep-alive probe when the remote speaks HTTP — any response (200/401/404) counts as alive; two missed probes end the hold with exit `3` instead of holding a dead pipe. A `url` (direct) context has no tunnel → exit `2`. Non-TTY OK |
 
 Both generalize the tunnel machinery (`transport.js`) that every wire verb uses
 to open the wire port: same `{port}`-substituted, process-group-reaped child,

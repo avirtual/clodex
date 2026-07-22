@@ -184,3 +184,70 @@ test('port-forward: a signal DURING the transport open exits 0 and closes the la
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(rec.closed, true, 'late-landing transport closed');
 });
+
+// ── the silent-death keep-alive probe ────────────────────────────────────────
+
+const { startProbe } = require('../src/port-forward');
+
+test('startProbe: consecutive failures declare death; one failure does not', async () => {
+  // fetchFn fails twice then would succeed — but with fails=2 the second
+  // failure already declares death.
+  let calls = 0;
+  const probe = startProbe({
+    url: 'http://127.0.0.1:1/',
+    fetchFn: async () => { calls++; throw new Error('down'); },
+    intervalMs: 5, fails: 2,
+  });
+  const outcome = await probe.dead;
+  assert.strictEqual(outcome.reason, 'probe-dead');
+  assert.strictEqual(calls, 2);
+  probe.stop();
+});
+
+test('startProbe: any HTTP response resets the failure count (401 counts as alive)', async () => {
+  // fail, respond, fail, respond… never two consecutive failures → dead never
+  // fires within the window.
+  let calls = 0;
+  let dead = false;
+  const probe = startProbe({
+    url: 'http://127.0.0.1:1/',
+    fetchFn: async () => { if (++calls % 2) throw new Error('blip'); return { status: 401 }; },
+    intervalMs: 5, fails: 2,
+  });
+  probe.dead.then(() => { dead = true; });
+  await new Promise((r) => setTimeout(r, 80));
+  probe.stop();
+  assert.strictEqual(dead, false, 'alternating blips never declare death');
+  assert.ok(calls >= 4, 'probe kept polling');
+});
+
+test('port-forward: probe death ends the hold with CONNECT and an honest message', async () => {
+  const transport = fakeTransport();
+  let stdout = '', stderr = '';
+  const code = await run(['port-forward', '8080:7900', '--ssh', 'user@box', '--probe-http'], {
+    stdout: (s) => (stdout += s), stderr: (s) => (stderr += s), env: {}, contextsFile: NOFILE,
+    openTransport: async (ctx, opts) => { transport.t.localPort = opts.localPort; return transport.t; },
+    onSignal: () => () => {},
+    probeOpts: { intervalMs: 5, fails: 2 },
+    probeFetch: async () => { throw new Error('data channel dead'); },
+  });
+  assert.strictEqual(code, 3); // EXIT.CONNECT
+  assert.match(stderr, /stopped answering/);
+  assert.strictEqual(transport.rec.closed, true, 'tunnel closed on probe death');
+});
+
+test('port-forward: no probe without --probe-http (a non-HTTP remote must not be probed)', async () => {
+  let probed = false;
+  const transport = fakeTransport();
+  const p = run(['port-forward', '8080:7900', '--ssh', 'user@box'], {
+    stdout: () => {}, stderr: () => {}, env: {}, contextsFile: NOFILE,
+    openTransport: async (ctx, opts) => { transport.t.localPort = opts.localPort; return transport.t; },
+    onSignal: () => () => {},
+    probeOpts: { intervalMs: 5, fails: 1 },
+    probeFetch: async () => { probed = true; throw new Error('down'); },
+  });
+  await new Promise((r) => setTimeout(r, 40));
+  transport.die();
+  await p;
+  assert.strictEqual(probed, false, 'probe never armed without the flag');
+});

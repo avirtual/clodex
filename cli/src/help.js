@@ -73,11 +73,13 @@ THE VERB
                           prominently, and pops your browser (best-effort; skipped
                           under --no-open or a non-TTY stdout — the URL is always
                           printed). LOCAL defaults to 8080 (first free of 8080..8090);
-                          --port pins it. Holds until Ctrl-C (exit 0). Same tunnel
-                          machinery as port-forward — a url (direct) context has no
-                          tunnel → usage error.
+                          --port pins it. Holds until Ctrl-C (exit 0). Keep-alive
+                          probes ride the tunnel; a node that stops answering ends
+                          the hold with a clear error instead of serving a zombie
+                          tab. Same tunnel machinery as port-forward — a url
+                          (direct) context has no tunnel → usage error.
   port-forward LOCAL:REMOTE  the "any other port" tunnel — a kubectl-style
-                          FOREGROUND tunnel to an ARBITRARY remote port on the
+             [--probe-http]  FOREGROUND tunnel to an ARBITRARY remote port on the
                           node, over whatever transport the context carries (ssh -L
                           / ssm / kubectl / gcloud IAP / az bastion / custom {port}
                           argv). Prints the local address once it is up, then holds
@@ -85,8 +87,11 @@ THE VERB
                           port number or \`web\` (the node's web-GUI port; \`web\` above
                           is the friendly shortcut for the common case). Single-shot:
                           a dropped tunnel exits with the child's stderr (no
-                          reconnect — the consumer retries). A url (direct) context
-                          has no tunnel → usage error. Non-TTY OK.
+                          reconnect — the consumer retries). --probe-http adds the
+                          keep-alive probe when the remote speaks HTTP (an SSM data
+                          channel can die while the local tunnel child lives on).
+                          A url (direct) context has no tunnel → usage error.
+                          Non-TTY OK.
 
 WRITE VERBS
   spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--fork]

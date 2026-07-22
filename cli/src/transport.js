@@ -151,6 +151,43 @@ async function resolveEcsTarget(ecsSpec, { region, profile, execFn = execFileP }
   return `ecs:${cluster}_${taskId}_${runtimeId}`;
 }
 
+// Post-mortem for a failed SSM tunnel: ask SSM itself what it thinks of the
+// instance and turn the answer into a one-line verdict. The control plane can
+// accept start-session while the box is terminated, stopped, or OOM-wedged
+// (proven live: a memory-starved agent acks the session but never spawns a
+// worker, so the tunnel "opens" and times out with a generic message). This
+// names which world you're in. Best-effort by construction: any aws/parse
+// failure returns null and the original error stands alone. Only for plain
+// i-… targets — ecs: targets already fail with their own resolve errors.
+async function diagnoseSsmInstance({ target, region, profile, execFn = execFileP } = {}) {
+  if (!/^i-[0-9a-f]+$/i.test(String(target || ''))) return null;
+  try {
+    const args = [
+      ...(profile ? ['--profile', profile] : []),
+      ...(region ? ['--region', region] : []),
+      'ssm', 'describe-instance-information',
+      '--filters', `Key=InstanceIds,Values=${target}`,
+      '--output', 'json',
+    ];
+    const { stdout } = await execFn('aws', args);
+    const list = JSON.parse(String(stdout)).InstanceInformationList || [];
+    if (!list.length) {
+      return `SSM has no registration for ${target} — the instance is terminated, stopped, or never had the agent. If you recreated the box, update the context: clodexctl deploy ssm <name> --target i-NEW…`;
+    }
+    const info = list[0];
+    if (info.PingStatus === 'Online') {
+      return `SSM says ${target} is Online, yet the tunnel failed — suspect the box itself: clodex service down, wrong port, or a wedged agent worker (an OOM'd agent acks sessions it never serves; a reboot clears it).`;
+    }
+    let age = '';
+    const t = Number(info.LastPingDateTime);
+    if (Number.isFinite(t) && t > 0) {
+      const mins = Math.max(0, Math.round((Date.now() / 1000 - t) / 60));
+      age = mins < 120 ? ` (last ping ${mins}m ago)` : ` (last ping ${Math.round(mins / 60)}h ago)`;
+    }
+    return `SSM agent on ${target} is ${info.PingStatus}${age} — the instance is stopped, frozen, or lost its agent. Reboot it, or redeploy if it was replaced.`;
+  } catch { return null; }
+}
+
 // Pick a free loopback port (peer-tunnel.js:39-46 pattern). Promise form.
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -280,6 +317,14 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     await waitForPort(port, { deadlineMs, isDead: () => exited, stderr: () => stderrBuf.trim() });
   } catch (e) {
     close();
+    // SSM's control plane happily starts sessions to sick instances, so the
+    // generic timeout/exit message says nothing about WHY. One describe call
+    // names the world: gone / agent-dead / online-but-broken. Best-effort —
+    // a null verdict leaves the original error untouched.
+    if (ctx.ssm && ctx.ssm.target && !ctx.ssm.ecs) {
+      const verdict = await diagnoseSsmInstance({ ...ctx.ssm, execFn });
+      if (verdict) e.message += `\n${verdict}`;
+    }
     throw e;
   }
   return { baseUrl: `http://127.0.0.1:${port}`, localPort: port, close, stderr: () => stderrBuf.trim(), waitExit: () => exitP };
@@ -288,6 +333,6 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
 module.exports = {
   DEFAULT_REMOTE_PORT, WAIT_PORT_MS,
   sshArgv, ssmArgv, kubectlArgv, gcloudArgv, azArgv,
-  parseEcsSpec, resolveEcsTarget,
+  parseEcsSpec, resolveEcsTarget, diagnoseSsmInstance,
   pickFreePort, portAccepts, substitutePort, waitForPort, openTransport,
 };

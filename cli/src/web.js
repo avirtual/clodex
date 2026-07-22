@@ -94,11 +94,14 @@ async function web({ flags, args, printer, io = {} }) {
 
   // Reuse portForward wholesale: the `web` sugar resolves REMOTE = ctx.webPort ||
   // wire+1, and its foreground hold + signal handling are exactly what we want.
+  // probe: the remote IS an HTTP GUI, so the silent-death keep-alive probe is
+  // always on — a dead data channel ends the hold honestly instead of leaving a
+  // browser tab pointed at a zombie tunnel. io.probe passes through for tests.
   await portForward({
     flags: { ...flags, ctx: ctxName },
     args: [`${local}:web`],
     printer,
-    io: { ...io, onBound },
+    io: { ...io, onBound, probe: io.probe != null ? io.probe : true },
   });
 }
 

@@ -145,8 +145,55 @@ async function assertRoutes(ctx, expectCmd, portRe, extra = {}) {
 }
 
 test('openTransport(ssm target): routes to aws, {port} substituted in parameters', async () => {
-  const rec = await assertRoutes({ ssm: { target: 'i-0abc' } }, 'aws', /"localPortNumber":\["\d+"\]/);
+  // execFn injected: the ssm failure path now runs the instance post-mortem,
+  // which must never reach a real aws CLI from a test.
+  const execFn = async () => ({ stdout: '{"InstanceInformationList":[]}' });
+  const rec = await assertRoutes({ ssm: { target: 'i-0abc' } }, 'aws', /"localPortNumber":\["\d+"\]/, { execFn });
   assert.ok(rec.args.includes('start-session'));
+});
+
+// ── the SSM instance post-mortem (diagnoseSsmInstance) ───────────────────────
+
+test('diagnoseSsmInstance: unregistered instance → gone verdict with redeploy hint', async () => {
+  const execFn = async (cmd, args) => {
+    assert.strictEqual(cmd, 'aws');
+    assert.ok(args.includes('describe-instance-information'));
+    return { stdout: '{"InstanceInformationList":[]}' };
+  };
+  const v = await T.diagnoseSsmInstance({ target: 'i-0dead', execFn });
+  assert.match(v, /terminated, stopped, or never had the agent/);
+  assert.match(v, /--target i-NEW/);
+});
+
+test('diagnoseSsmInstance: Online yet tunnel failed → suspect-the-box verdict', async () => {
+  const execFn = async () => ({ stdout: JSON.stringify({ InstanceInformationList: [{ PingStatus: 'Online' }] }) });
+  const v = await T.diagnoseSsmInstance({ target: 'i-0abc', execFn });
+  assert.match(v, /Online, yet the tunnel failed/);
+  assert.match(v, /wedged agent|reboot/i);
+});
+
+test('diagnoseSsmInstance: ConnectionLost → agent-dead verdict with ping age', async () => {
+  const lastPing = Date.now() / 1000 - 45 * 60; // 45 minutes ago
+  const execFn = async () => ({ stdout: JSON.stringify({ InstanceInformationList: [{ PingStatus: 'ConnectionLost', LastPingDateTime: lastPing }] }) });
+  const v = await T.diagnoseSsmInstance({ target: 'i-0abc', execFn });
+  assert.match(v, /ConnectionLost \(last ping 4[45]m ago\)/);
+  assert.match(v, /Reboot it, or redeploy/);
+});
+
+test('diagnoseSsmInstance: best-effort — aws failure or a non-instance target → null', async () => {
+  const boom = async () => { throw new Error('no credentials'); };
+  assert.strictEqual(await T.diagnoseSsmInstance({ target: 'i-0abc', execFn: boom }), null);
+  assert.strictEqual(await T.diagnoseSsmInstance({ target: 'ecs:c_t_r', execFn: async () => ({ stdout: '{}' }) }), null);
+  assert.strictEqual(await T.diagnoseSsmInstance({ target: '', execFn: async () => ({ stdout: '{}' }) }), null);
+});
+
+test('openTransport(ssm): a failed open appends the post-mortem verdict to the error', async () => {
+  const rec = {};
+  const execFn = async () => ({ stdout: '{"InstanceInformationList":[]}' });
+  await assert.rejects(
+    T.openTransport({ ssm: { target: 'i-0dead' } }, { spawnFn: inspectSpawn(rec), execFn, deadlineMs: 200 }),
+    (e) => e.exitCode === 3 && /did not open a local port/.test(e.message) && /terminated, stopped/.test(e.message),
+  );
 });
 
 test('openTransport(kubectl): routes to kubectl, {port}:7900 substituted', async () => {
