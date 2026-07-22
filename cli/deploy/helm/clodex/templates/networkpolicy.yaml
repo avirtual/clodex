@@ -1,0 +1,18 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny ingress, open egress — the k8s spelling of "leave the SG
+# fully closed". kubectl port-forward traffic arrives via the kubelet, not
+# pod ingress, so attach/tunnel work with zero ingress rules. NOTE: inert
+# on CNIs without NetworkPolicy enforcement (docker-desktop default).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "clodex.name" . }}
+  labels: {{- include "clodex.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "clodex.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress: []          # none — the node is reached only by port-forward
+  egress:
+    - {}               # all egress (model API, registries, cloud APIs)
+{{- end }}

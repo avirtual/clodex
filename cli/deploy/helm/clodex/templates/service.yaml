@@ -1,0 +1,14 @@
+# Headless ClusterIP: gives the StatefulSet pod its stable DNS name and a
+# stable port-forward target (svc/NAME) — never externally reachable.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "clodex.name" . }}
+  labels: {{- include "clodex.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "clodex.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: wire
+      port: {{ .Values.wirePort }}
+      targetPort: wire

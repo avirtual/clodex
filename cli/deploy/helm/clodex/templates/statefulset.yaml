@@ -1,0 +1,101 @@
+# One node = one pod (replicas is deliberately not a value: agents are
+# stateful PTYs, not a scalable workload — run more RELEASES for more nodes,
+# each its own identity/PVC; that is the k8s Tier-2 shape).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "clodex.name" . }}
+  labels: {{- include "clodex.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ include "clodex.name" . }}
+  selector:
+    matchLabels: {{- include "clodex.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "clodex.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "clodex.serviceAccountName" . }}
+      {{- if .Values.persistence.enabled }}
+      # The image runs as user clodex (uid 1000); fsGroup makes the PVC
+      # writable for it without an initContainer chown.
+      securityContext:
+        fsGroup: 1000
+      {{- end }}
+      containers:
+        - name: clodex
+          image: {{ include "clodex.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: wire
+              containerPort: {{ .Values.wirePort }}
+          env:
+            - name: CLODEX_REMOTE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: wire-token
+            # Optional: absent from the Secret (Bedrock / external model
+            # credential) → no env var, engine runs tokenless.
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: oauth-token
+                  optional: true
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.persistence.enabled }}
+          # subPath mounts: the image bakes onboarding state into $HOME at
+          # build time (.claude.json pre-seed) — shadowing all of /home/clodex
+          # with an empty PVC would erase it. Persist exactly the state dirs.
+          volumeMounts:
+            - { name: state, mountPath: /data,                subPath: data }
+            - { name: state, mountPath: /home/clodex/.clodex, subPath: dot-clodex }
+            - { name: state, mountPath: /home/clodex/.claude, subPath: dot-claude }
+            - { name: state, mountPath: /home/clodex/work,    subPath: work }
+          {{- end }}
+          # Liveness mirrors the Fargate healthCheck. NOT httpGet: the wire
+          # is token-gated and answers 401 unauthenticated, which an httpGet
+          # probe counts as failure — exec+curl accepts 200 (ungated) or 401
+          # (gated), both meaning "engine is serving".
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  code=$(curl -s -o /dev/null -w '%{http_code}'
+                  http://127.0.0.1:{{ .Values.wirePort }}/api/peer/hello);
+                  echo "$code" | grep -Eq '^(200|401)$'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  code=$(curl -s -o /dev/null -w '%{http_code}'
+                  http://127.0.0.1:{{ .Values.wirePort }}/api/peer/hello);
+                  echo "$code" | grep -Eq '^(200|401)$'
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

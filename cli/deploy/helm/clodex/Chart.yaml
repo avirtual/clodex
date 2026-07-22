@@ -1,0 +1,10 @@
+apiVersion: v2
+name: clodex
+description: >-
+  A Clodex node — the headless multi-agent engine — as a StatefulSet with a
+  persistent volume, reachable only via kubectl port-forward (clodexctl's
+  --kubectl transport). No Ingress, no LoadBalancer: the reviewable surface
+  is this chart; the access path is the operator's own kubectl credentials.
+type: application
+version: 0.1.0
+appVersion: "3.5.3"

@@ -1,0 +1,22 @@
+Clodex node "{{ .Release.Name }}" deployed to namespace {{ .Release.Namespace }}.
+
+Before the pod goes Ready, the secret must exist (if you haven't yet):
+
+  kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.secrets.existingSecret }} \
+    --from-literal=wire-token="$(openssl rand -hex 24)" \
+    --from-literal=oauth-token="$(cat TOKEN-FILE)"
+
+(omit oauth-token when the model credential comes from the pod's cloud
+identity instead — e.g. Bedrock via an IRSA-bound service account.)
+
+Add the node to clodexctl (resolves the pod through YOUR kubectl access —
+no ingress exists):
+
+  clodexctl ctx add {{ .Release.Name }} \
+    --kubectl svc/{{ include "clodex.name" . }} \
+    --namespace {{ .Release.Namespace }} \
+    --kube-context $(kubectl config current-context) \
+    --token "$(kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secrets.existingSecret }} -o jsonpath='{.data.wire-token}' | base64 -d)"
+
+Then: clodexctl --ctx {{ .Release.Name }} spawn worker --type claude
+      clodexctl --ctx {{ .Release.Name }} attach worker

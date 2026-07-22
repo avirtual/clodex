@@ -1,0 +1,70 @@
+# Clodex node — chart values.
+# Review posture mirrors the CloudFormation template (cli/deploy/
+# clodex-fargate.yaml): everything a client security team must approve is
+# in this file; nothing opens inbound network access.
+
+image:
+  # FULL image reference. For a real engagement: mirror into your own
+  # scanned registry and pin BY DIGEST (repository@sha256:…, tag ignored).
+  repository: ghcr.io/avirtual/clodex
+  tag: "3.5.3"
+  digest: ""            # when set, used INSTEAD of tag
+  pullPolicy: IfNotPresent
+
+# The engine's wire port (peer API — what clodexctl tunnels to). ClusterIP
+# service only; reach it with `kubectl port-forward`, never expose it.
+wirePort: 7900
+
+# Persistence — the reason this is a StatefulSet, and the key difference
+# from the Fargate shape: /data (CLODEX_DATA_DIR) and the clodex user's
+# home (~/.clodex sockets/registry, ~/.claude CLI state) live on a PVC, so
+# sessions survive pod rescheduling. Set enabled: false for the disposable
+# engagement shape (every restart is a factory reset, nothing left behind).
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: ""  # "" = cluster default (docker-desktop: hostpath)
+
+# Secrets. existingSecret names a Secret the operator creates OUT of the
+# chart (never a value in a values file / helm release / cluster history):
+#   kubectl -n NS create secret generic clodex-node \
+#     --from-literal=wire-token="$(openssl rand -hex 24)" \
+#     --from-literal=oauth-token="$(cat TOKEN-FILE)"
+# oauth-token is OPTIONAL in the secret: omit the key entirely when the
+# node's model credential comes from elsewhere (e.g. Bedrock via the pod's
+# IAM identity — see serviceAccount below).
+secrets:
+  existingSecret: clodex-node
+
+# Per-node AWS/cloud identity (the k8s Tier-2 story): bind the pod to a
+# cloud IAM role via the service account. EKS: set create true + the IRSA
+# role-arn annotation. Local/docker-desktop: leave create false (uses the
+# namespace default SA, no cloud identity).
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+  #  eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/clodex-agent-…
+
+# Extra env for the engine process (name/value pairs). The GUI-managed
+# env-var mechanism (T46) rides spawn params, not pod env — this is for
+# node-level settings like CLAUDE_CODE_USE_BEDROCK=1 + AWS_REGION.
+extraEnv: []
+#  - name: CLAUDE_CODE_USE_BEDROCK
+#    value: "1"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    memory: 4Gi        # memory, not CPU, is what agent sessions exhaust
+
+# Default-deny network posture, matching "leave the SG fully closed":
+# a NetworkPolicy allowing DNS + all egress, NO ingress. Port-forward
+# traffic arrives via the kubelet, not pod ingress, so attach still works.
+# Requires a CNI that enforces NetworkPolicy (docker-desktop's default
+# does NOT — the object applies but is inert there; on EKS use the VPC CNI
+# policy engine or Calico/Cilium).
+networkPolicy:
+  enabled: true
