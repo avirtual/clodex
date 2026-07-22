@@ -31,11 +31,24 @@ node over the SSM tunnel:
 
 ```sh
 clodexctl deploy fargate clodex-node \
-  --subnets subnet-AAA,subnet-BBB --security-group sg-CCC \
   --token-file ./claude-token          # from `claude setup-token`; omit for Bedrock (--use-bedrock)
 # then:
 clodexctl --ctx clodex-node sessions   # the saved context is ready
 ```
+
+No `--subnets` / `--security-group`? They're **auto-detected from the account's
+default VPC** — the common first-run case, no console archaeology. When either
+flag is omitted, `clodexctl` resolves it read-only (`aws ec2 describe-vpcs`
+filtered to the default VPC, then its `default-for-az` subnets / `default`
+security group) and prints exactly what it detected before deploying. It never
+guesses among non-default VPCs — no default VPC in the region and it stops,
+telling you to pass both flags explicitly. Because auto-detected default-VPC
+subnets are public, `--assign-public-ip` defaults to `ENABLED` in that case (the
+task needs egress to pull its image; DISABLED there would hang the pull). If the
+detected default SG has any inbound rules, it prints a loud WARNING (the node
+needs no inbound) but proceeds. An **explicit flag always wins** — pass
+`--subnets`/`--security-group`/`--assign-public-ip` for private subnets or a
+locked-down SG, and no detection runs for the flag you gave.
 
 What it does, and the discipline it keeps:
 

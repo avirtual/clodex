@@ -114,7 +114,14 @@ test('FARGATE_STACK_RE: CFN stack names — letter start, hyphens ok, no dots/un
 // the verb makes (sts get-caller-identity, cloudformation deploy, describe-
 // stacks, secretsmanager get/put). `wire` is what get-secret-value returns;
 // override individual steps to fail via the *Fail hooks.
-function fakeAws(rec, { wire = WIRE, outputs = null, deployFail = null, getWireFail = null, putFail = null, idFail = null } = {}) {
+function fakeAws(rec, {
+  wire = WIRE, outputs = null, deployFail = null, getWireFail = null, putFail = null, idFail = null,
+  // default-VPC networking (T53): what the ec2 describe-* calls answer. Defaults
+  // are a clean default VPC (two default-for-az subnets, a factory-empty SG) so
+  // pre-existing flow tests that omit --subnets/--security-group keep passing.
+  vpc = 'vpc-default', subnets = ['subnet-b', 'subnet-a'], sg = 'sg-default', sgInbound = [],
+  vpcFail = null, subnetsFail = null, sgFail = null,
+} = {}) {
   rec.calls = [];
   const outs = outputs || [
     { OutputKey: 'RunTaskCommand', OutputValue: 'aws ecs run-task --cluster CL …' },
@@ -123,6 +130,18 @@ function fakeAws(rec, { wire = WIRE, outputs = null, deployFail = null, getWireF
   return async (cmd, args) => {
     rec.calls.push([cmd, ...args]);
     const j = cmd + ' ' + args.join(' ');
+    if (j.includes('ec2 describe-vpcs')) {
+      if (vpcFail) { const e = new Error('vpc failed'); e.stderr = vpcFail; throw e; }
+      return { stdout: (vpc || '') + '\n' };   // --output text: id or empty when none
+    }
+    if (j.includes('ec2 describe-subnets')) {
+      if (subnetsFail) { const e = new Error('subnets failed'); e.stderr = subnetsFail; throw e; }
+      return { stdout: (subnets || []).join('\t') + '\n' };   // --output text: tab-separated
+    }
+    if (j.includes('ec2 describe-security-groups')) {
+      if (sgFail) { const e = new Error('sg failed'); e.stderr = sgFail; throw e; }
+      return { stdout: JSON.stringify({ SecurityGroups: sg ? [{ GroupId: sg, IpPermissions: sgInbound }] : [] }) };
+    }
     if (j.includes('sts get-caller-identity')) {
       if (idFail) { const e = new Error('id failed'); e.stderr = idFail; throw e; }
       return { stdout: JSON.stringify({ Account: ACCT, Arn: `arn:aws:iam::${ACCT}:user/op`, UserId: 'AIDA' }) };
@@ -302,7 +321,8 @@ test('deploy fargate --dry-run: plan only — deploy/put/get argv with a file://
   let ran = false;
   const contextsFile = tmpCtxFile();
   const tf = tokenFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--region', 'eu-west-1', '--token-file', tf, '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--region', 'eu-west-1', '--token-file', tf,
+    '--subnets', 'subnet-x', '--security-group', 'sg-x', '--dry-run'], {
     execFn: async () => { ran = true; return { stdout: '' }; },
     probeFargate: async () => { throw new Error('should not verify'); },
     contextsFile,
@@ -321,7 +341,7 @@ test('deploy fargate --dry-run: plan only — deploy/put/get argv with a file://
 });
 
 test('deploy fargate: the wire token value never rides the dry-run (no fetch happens at all)', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--subnets', 'subnet-x', '--security-group', 'sg-x', '--dry-run'], {
     execFn: async () => { throw new Error('nothing runs on --dry-run'); },
     probeFargate: async () => ({}),
   });
@@ -452,6 +472,192 @@ test('deploy fargate: --assign-public-ip rejects a non-ENABLED/DISABLED value', 
   });
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /--assign-public-ip must be ENABLED or DISABLED/);
+});
+
+// ── default-VPC networking auto-detect (T53) ─────────────────────────────────
+
+// pure builders + posture gate
+test('fargateDescribe*Args: exact ec2 argv — default-VPC filters, query/output shape', () => {
+  assert.deepStrictEqual(D.fargateDescribeVpcsArgs({ region: 'us-west-2' }), [
+    'aws', '--region', 'us-west-2', 'ec2', 'describe-vpcs',
+    '--filters', 'Name=is-default,Values=true', '--query', 'Vpcs[].VpcId', '--output', 'text']);
+  assert.deepStrictEqual(D.fargateDescribeSubnetsArgs({ vpcId: 'vpc-1', profile: 'p' }), [
+    'aws', '--profile', 'p', 'ec2', 'describe-subnets',
+    '--filters', 'Name=vpc-id,Values=vpc-1', 'Name=default-for-az,Values=true',
+    '--query', 'Subnets[].SubnetId', '--output', 'text']);
+  assert.deepStrictEqual(D.fargateDescribeSgArgs({ vpcId: 'vpc-1' }), [
+    'aws', 'ec2', 'describe-security-groups',
+    '--filters', 'Name=vpc-id,Values=vpc-1', 'Name=group-name,Values=default', '--output', 'json']);
+});
+
+test('fargateSgInboundWarning: factory-benign → null; a real inbound rule → offender line', () => {
+  // empty → benign
+  assert.strictEqual(D.fargateSgInboundWarning('sg-1', []), null);
+  // only self-referencing pair → benign (the default SG's factory all-self rule)
+  assert.strictEqual(D.fargateSgInboundWarning('sg-1', [{ IpProtocol: '-1', UserIdGroupPairs: [{ GroupId: 'sg-1' }] }]), null);
+  // a CIDR grant → warned, with proto/port/source
+  const w = D.fargateSgInboundWarning('sg-1', [{ IpProtocol: 'tcp', FromPort: 22, ToPort: 22, IpRanges: [{ CidrIp: '0.0.0.0/0' }] }]);
+  assert.match(w, /sg-1 has inbound rules: tcp 22 from 0\.0\.0\.0\/0/);
+  assert.match(w, /needs NO inbound/);
+  // a FOREIGN group reference is not factory → warned
+  assert.match(D.fargateSgInboundWarning('sg-1', [{ IpProtocol: '-1', UserIdGroupPairs: [{ GroupId: 'sg-other' }] }]), /all from sg-other/);
+  // a port RANGE renders as from-to
+  assert.match(D.fargateSgInboundWarning('sg-1', [{ IpProtocol: 'tcp', FromPort: 8000, ToPort: 8100, IpRanges: [{ CidrIp: '10.0.0.0/8' }] }]), /tcp 8000-8100 from 10\.0\.0\.0\/8/);
+});
+
+test('deploy fargate: both --subnets and --security-group given → ZERO ec2 calls, explicit ids used', async () => {
+  const rec = {};
+  const { code } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx',
+    '--subnets', 'subnet-A,subnet-B', '--security-group', 'sg-X'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('ec2 describe')), 'no detection when both flags given');
+  assert.ok(deployHasParam(rec, 'SubnetIds=subnet-A,subnet-B'), 'explicit subnets used');
+  assert.ok(deployHasParam(rec, 'SecurityGroupId=sg-X'), 'explicit sg used');
+  // no auto AssignPublicIp when subnets were explicit and the flag was omitted.
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('AssignPublicIp')), 'no implied public ip on explicit subnets');
+});
+
+test('deploy fargate: BOTH flags missing → full detect, resolved ids in overrides, ENABLED implied, loud lines', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  // all three describes ran (vpc, subnets, sg).
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-vpcs')));
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-subnets')));
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-security-groups')));
+  // resolved ids fed the SAME template params; subnets are SORTED (stable order).
+  assert.ok(deployHasParam(rec, 'SubnetIds=subnet-a,subnet-b'), 'subnets resolved + sorted');
+  assert.ok(deployHasParam(rec, 'SecurityGroupId=sg-default'));
+  assert.ok(deployHasParam(rec, 'AssignPublicIp=ENABLED'), 'public ip implied by auto subnets');
+  // loud, one line per resolved item.
+  assert.match(stdout, /network: default VPC vpc-default \[auto-detected\]/);
+  assert.match(stdout, /network: subnets subnet-a,subnet-b \[auto-detected\]/);
+  assert.match(stdout, /network: security-group sg-default \[auto-detected\]/);
+  assert.match(stdout, /network: assign-public-ip ENABLED \[implied by default-VPC subnets\]/);
+});
+
+test('deploy fargate: only --security-group given → detect SUBNETS only (one describe path skipped)', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--security-group', 'sg-mine'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-vpcs')));
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-subnets')));
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('ec2 describe-security-groups')), 'no SG describe when sg explicit');
+  assert.ok(deployHasParam(rec, 'SubnetIds=subnet-a,subnet-b'));
+  assert.ok(deployHasParam(rec, 'SecurityGroupId=sg-mine'), 'explicit sg wins');
+  assert.ok(deployHasParam(rec, 'AssignPublicIp=ENABLED'), 'implied by the auto-detected subnets');
+  assert.doesNotMatch(stdout, /network: security-group/);   // sg wasn't auto-detected
+});
+
+test('deploy fargate: only --subnets given → detect SG only, NO implied public ip (subnets were explicit)', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--subnets', 'subnet-mine'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('ec2 describe-subnets')), 'no subnet describe when subnets explicit');
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-security-groups')));
+  assert.ok(deployHasParam(rec, 'SubnetIds=subnet-mine'));
+  assert.ok(deployHasParam(rec, 'SecurityGroupId=sg-default'));
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('AssignPublicIp')), 'public ip NOT implied — subnets were explicit');
+  assert.doesNotMatch(stdout, /assign-public-ip ENABLED \[implied/);
+});
+
+test('deploy fargate: explicit --assign-public-ip DISABLED SURVIVES auto-detected subnets (explicit wins the trap)', async () => {
+  // break-verify of the implied-ENABLED rule: a user who deliberately passes
+  // DISABLED (private subnets they detect for) must NOT be overridden.
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--assign-public-ip', 'DISABLED'], {
+    execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(deployHasParam(rec, 'AssignPublicIp=DISABLED'), 'explicit DISABLED survives detection');
+  assert.ok(!deployHasParam(rec, 'AssignPublicIp=ENABLED'), 'never flipped to ENABLED');
+  assert.doesNotMatch(stdout, /implied by default-VPC subnets/);
+});
+
+test('deploy fargate: no default VPC → USAGE naming BOTH flags, nothing deployed', async () => {
+  const rec = {};
+  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws(rec, { vpc: '' }), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, EXIT.USAGE);
+  assert.match(stderr, /no default VPC/);
+  assert.match(stderr, /--subnets and --security-group/);
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('cloudformation deploy')), 'aborts before deploy');
+});
+
+test('deploy fargate: default VPC with no default-for-az subnets → USAGE naming both flags', async () => {
+  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws({}, { subnets: [] }), probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, EXIT.USAGE);
+  assert.match(stderr, /no default-for-az subnets/);
+  assert.match(stderr, /--subnets and --security-group/);
+});
+
+test('deploy fargate: an auto-detected SG with a real inbound rule → loud WARNING, deploy PROCEEDS', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws(rec, { sgInbound: [{ IpProtocol: 'tcp', FromPort: 22, ToPort: 22, IpRanges: [{ CidrIp: '0.0.0.0/0' }] }] }),
+    probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);   // warn-don't-block
+  assert.match(stdout, /WARNING: detected default SG sg-default has inbound rules: tcp 22 from 0\.0\.0\.0\/0/);
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('cloudformation deploy')), 'proceeds past the warning');
+  assert.match(stdout, /verified|verify/);
+});
+
+test('deploy fargate: a factory default SG (all-self rule) → NO warning', async () => {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws({}, { sgInbound: [{ IpProtocol: '-1', UserIdGroupPairs: [{ GroupId: 'sg-default' }] }] }),
+    probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.doesNotMatch(stdout, /WARNING: detected default SG/);
+});
+
+test('deploy fargate --dry-run: detection RUNS (read-only) and the plan carries the resolved ids', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run'], {
+    execFn: fakeAws(rec), probeFargate: async () => { throw new Error('no verify on dry-run'); },
+  });
+  assert.strictEqual(code, 0);
+  // the read-only describes ran; the mutating deploy did NOT.
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('ec2 describe-vpcs')), 'detection runs on dry-run (read-only)');
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('cloudformation deploy')), 'no mutating deploy on dry-run');
+  // the plan shows the REAL resolved ids + the auto-detected network lines.
+  assert.match(stdout, /network: default VPC vpc-default \[auto-detected\]/);
+  assert.match(stdout, /SubnetIds=subnet-a,subnet-b/);
+  assert.match(stdout, /AssignPublicIp=ENABLED/);
+});
+
+test('deploy fargate --json --dry-run: the dry-run event carries network{vpcId,subnets,securityGroup,assignPublicIp,autoDetected}', async () => {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '--json'], {
+    execFn: fakeAws({}), probeFargate: async () => { throw new Error('no verify'); },
+  });
+  assert.strictEqual(code, 0);
+  const obj = stdout.trim().split('\n').map((l) => JSON.parse(l)).find((o) => o.type === 'dry-run');
+  assert.deepStrictEqual(obj.network, {
+    vpcId: 'vpc-default', subnets: ['subnet-a', 'subnet-b'], securityGroup: 'sg-default',
+    assignPublicIp: 'ENABLED', autoDetected: { subnets: true, securityGroup: true },
+  });
+});
+
+test('deploy fargate: an ec2 describe failure rides the runAws CliError shape', async () => {
+  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: fakeAws({}, { vpcFail: 'AccessDenied: not authorized to DescribeVpcs' }),
+    probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.notStrictEqual(code, 0);
+  assert.match(stderr, /aws ec2 describe-vpcs failed/);
+  assert.match(stderr, /AccessDenied/);
 });
 
 test('deploy fargate: bad stack name (dots/underscore/leading digit) → USAGE, nothing runs', async () => {

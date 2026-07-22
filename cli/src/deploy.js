@@ -1659,6 +1659,93 @@ function parseStackOutputs(json) {
   } catch { return {}; }
 }
 
+// ── default-VPC networking auto-detect ───────────────────────────────────────
+// When --subnets / --security-group are omitted, resolve them from the account's
+// DEFAULT VPC preflight-style — the common first-run case ("the default VPC is
+// fine") without console archaeology. All read-only `aws ec2 describe-*` through
+// the SAME runAws seam; the resolved ids feed the SAME template parameters (the
+// template is untouched). NEVER guesses among non-default VPCs. vpcs/subnets use
+// --query/--output text (line/tab splitting); the SG uses --output json because
+// the posture gate needs the nested IpPermissions, which text can't carry.
+function fargateDescribeVpcsArgs({ region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ec2', 'describe-vpcs',
+    '--filters', 'Name=is-default,Values=true',
+    '--query', 'Vpcs[].VpcId', '--output', 'text'];
+}
+function fargateDescribeSubnetsArgs({ vpcId, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ec2', 'describe-subnets',
+    '--filters', `Name=vpc-id,Values=${vpcId}`, 'Name=default-for-az,Values=true',
+    '--query', 'Subnets[].SubnetId', '--output', 'text'];
+}
+function fargateDescribeSgArgs({ vpcId, region, profile } = {}) {
+  return ['aws', ...awsBase({ region, profile }),
+    'ec2', 'describe-security-groups',
+    '--filters', `Name=vpc-id,Values=${vpcId}`, 'Name=group-name,Values=default',
+    '--output', 'json'];
+}
+
+// The default SG's FACTORY inbound is either nothing or a single all-self rule
+// (UserIdGroupPairs referencing the group itself — no CIDRs). Anything else — a
+// CIDR grant, an unrelated group — is operator-added: warn LOUD (the node needs
+// NO inbound; it listens on nothing public, so an open SG is slack, not exposure)
+// but PROCEED (warn-don't-block; no --force gate). Pure: returns the warning BODY
+// (the print site prepends "WARNING:", matching the no-claude-token loud line),
+// or null when the SG is in factory state.
+function fargateSgInboundWarning(sgId, ipPermissions = []) {
+  const items = [];
+  for (const p of ipPermissions || []) {
+    const proto = (p.IpProtocol === '-1' || p.IpProtocol == null) ? 'all' : String(p.IpProtocol);
+    const port = p.FromPort == null ? ''
+      : (p.FromPort === p.ToPort ? ` ${p.FromPort}` : ` ${p.FromPort}-${p.ToPort}`);
+    const sources = [
+      ...(p.IpRanges || []).map((r) => r.CidrIp),
+      ...(p.Ipv6Ranges || []).map((r) => r.CidrIpv6),
+      ...(p.PrefixListIds || []).map((r) => r.PrefixListId),
+      // self-referencing pairs are factory; only a FOREIGN group id offends.
+      ...(p.UserIdGroupPairs || []).filter((u) => u.GroupId && u.GroupId !== sgId).map((u) => u.GroupId),
+    ].filter(Boolean);
+    for (const s of sources) items.push(`${proto}${port} from ${s}`);
+  }
+  if (!items.length) return null;
+  return `detected default SG ${sgId} has inbound rules: ${items.join(', ')} — the node needs NO inbound; consider a closed SG`;
+}
+
+// Resolve the MISSING pieces (needSubnets/needSg) from the default VPC. Returns
+// { vpcId, subnets, securityGroup, sgInboundWarning } — a given flag stays null
+// here (the caller fills only the gaps; an explicit flag always wins). Missing
+// default VPC / empty default-for-az subnets / missing default SG → USAGE, each
+// naming BOTH flags so the operator can pass them explicitly. describe errors
+// ride the runAws CliError shape (`aws ec2 describe-* failed: …`).
+async function fargateDetectNetwork({ region, profile, needSubnets, needSg, execFn } = {}) {
+  const passBoth = 'pass --subnets and --security-group explicitly';
+  const vpcOut = await runAws(execFn, fargateDescribeVpcsArgs({ region, profile }), 'ec2 describe-vpcs');
+  const vpcId = vpcOut.split(/\s+/).filter(Boolean)[0] || null;
+  if (!vpcId) throw new CliError(EXIT.USAGE, `no default VPC in this account/region — ${passBoth}`);
+
+  let subnets = null;
+  if (needSubnets) {
+    const subOut = await runAws(execFn, fargateDescribeSubnetsArgs({ vpcId, region, profile }), 'ec2 describe-subnets');
+    const ids = subOut.split(/\s+/).filter(Boolean).sort();   // stable order
+    if (!ids.length) throw new CliError(EXIT.USAGE, `no default-for-az subnets in the default VPC ${vpcId} — ${passBoth}`);
+    subnets = ids.join(',');
+  }
+
+  let securityGroup = null;
+  let sgInboundWarning = null;
+  if (needSg) {
+    const sgOut = await runAws(execFn, fargateDescribeSgArgs({ vpcId, region, profile }), 'ec2 describe-security-groups');
+    let groups = [];
+    try { groups = (JSON.parse(sgOut || '{}').SecurityGroups) || []; } catch { groups = []; }
+    const g = groups[0] || null;
+    securityGroup = (g && g.GroupId) || null;
+    if (!securityGroup) throw new CliError(EXIT.USAGE, `no default security group in the default VPC ${vpcId} — ${passBoth}`);
+    sgInboundWarning = fargateSgInboundWarning(securityGroup, g.IpPermissions || []);
+  }
+  return { vpcId, subnets, securityGroup, sgInboundWarning };
+}
+
 // Verify from the laptop through the REAL SSM/ECS tunnel the saved ctx will use:
 // openTransport resolves the running task, GET hello with the wire token. POLLED
 // to a generous deadline — Fargate cold start (image pull + boot) plus the
@@ -1698,12 +1785,13 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const image = flags.image ? String(flags.image) : null;
   const useBedrock = !!flags['use-bedrock'];
   const noWirescope = !!flags['no-wirescope'];
-  const assignPublicIp = flags['assign-public-ip'] ? String(flags['assign-public-ip']) : null;
+  let assignPublicIp = flags['assign-public-ip'] ? String(flags['assign-public-ip']) : null;
   if (assignPublicIp && assignPublicIp !== 'ENABLED' && assignPublicIp !== 'DISABLED') {
     throw new CliError(EXIT.USAGE, `--assign-public-ip must be ENABLED or DISABLED, got "${assignPublicIp}"`);
   }
-  const subnets = flags.subnets ? String(flags.subnets) : null;
-  const securityGroup = flags['security-group'] ? String(flags['security-group']) : null;
+  const assignPublicIpGiven = assignPublicIp != null;   // an explicit flag always wins
+  let subnets = flags.subnets ? String(flags.subnets) : null;
+  let securityGroup = flags['security-group'] ? String(flags['security-group']) : null;
   // The verb defaults Persistent TRUE — a self-healing, VERIFIABLE node (the
   // one-command path's whole point); --persistent false is the disposable
   // infra-only run-task shape.
@@ -1733,6 +1821,36 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const execFn = io.execFn;   // undefined → runAws defaults to execFileP
   const ctxName = flags.ctx ? String(flags.ctx) : stackName;
   const templateFile = fargateTemplatePath();
+
+  // Auto-detect default-VPC networking for the MISSING flag(s). Read-only ec2
+  // describe-* through runAws — an explicit flag always wins (fills only gaps),
+  // both flags given → zero new AWS calls. Runs on --dry-run too (read-only), so
+  // the printed argv shows the REAL resolved ids. autoDetected marks + the loud
+  // `network:` lines are computed here and surfaced below (live: before the
+  // template step; dry-run: in the plan).
+  const needSubnets = !subnets;
+  const needSg = !securityGroup;
+  const autoDetected = { subnets: needSubnets, securityGroup: needSg };
+  const networkLines = [];
+  let netVpcId = null;
+  let sgInboundWarning = null;
+  if (needSubnets || needSg) {
+    const net = await fargateDetectNetwork({ region, profile, needSubnets, needSg, execFn });
+    netVpcId = net.vpcId;
+    if (needSubnets) subnets = net.subnets;
+    if (needSg) { securityGroup = net.securityGroup; sgInboundWarning = net.sgInboundWarning; }
+    // assign-public-ip: default-VPC subnets are PUBLIC — DISABLED there means no
+    // egress → image pull hangs → verify times out with no clue. When subnets were
+    // auto-detected and no flag was given, imply ENABLED (an explicit flag wins).
+    const impliedPublicIp = needSubnets && !assignPublicIpGiven;
+    if (impliedPublicIp) assignPublicIp = 'ENABLED';
+    networkLines.push(`network: default VPC ${netVpcId} [auto-detected]`);
+    if (needSubnets) networkLines.push(`network: subnets ${subnets} [auto-detected]`);
+    if (needSg) networkLines.push(`network: security-group ${securityGroup} [auto-detected]`);
+    if (impliedPublicIp) networkLines.push('network: assign-public-ip ENABLED [implied by default-VPC subnets]');
+    if (sgInboundWarning) networkLines.push(`WARNING: ${sgInboundWarning}`);
+  }
+
   const paramOverrides = fargateParamOverrides({ stackName, cluster, image, useBedrock, noWirescope, assignPublicIp, subnets, securityGroup, persistent, params });
   const deployArgv = fargateDeployArgs({ stackName, templateFile, region, profile, paramOverrides });
 
@@ -1746,11 +1864,19 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   if (flags['dry-run']) {
     const putArgv = (!useBedrock && oauthTokenFile) ? fargatePutOauthArgs({ stackName, region, profile, tokenFile: '<oauth-token-file>' }) : null;
     const getArgv = fargateGetWireTokenArgs({ stackName, region, profile });
-    if (json) { emit({ type: 'dry-run', stackName, cluster, templateFile, paramOverrides, useBedrock, persistent, deployArgv, putOauthArgv: putArgv, getWireTokenArgv: getArgv, ctxName: flags['no-ctx'] ? null : ctxName }); return; }
+    // The resolved (or explicitly-given) networking, so the plan is honest about
+    // what the real run would send — including the auto-detected ids and the
+    // implied public-ip rule.
+    const networkPlan = {
+      vpcId: netVpcId, subnets: subnets ? subnets.split(',') : [],
+      securityGroup: securityGroup || null, assignPublicIp: assignPublicIp || null, autoDetected,
+    };
+    if (json) { emit({ type: 'dry-run', stackName, cluster, templateFile, paramOverrides, useBedrock, persistent, deployArgv, putOauthArgv: putArgv, getWireTokenArgv: getArgv, ctxName: flags['no-ctx'] ? null : ctxName, network: networkPlan }); return; }
     printer.line([
       `dry-run — would deploy the Fargate stack "${stackName}":`,
       `  template   ${templateFile}`,
       `  cluster    ${cluster}`,
+      ...networkLines.map((l) => `  ${l}`),
       `  persistent ${persistent} (${persistent ? 'ECS Service + verify' : 'infra only, no verify'})`,
       useBedrock ? '  model      Bedrock via the TaskRole — no oauth-token secret'
         : (oauthTokenFile ? '  model      claude oauth token from a file (file:// → put-secret-value, redacted)'
@@ -1771,6 +1897,10 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   try { const id = JSON.parse(idOut || '{}'); account = id.Account || null; arn = id.Arn || null; } catch { /* identity is informational */ }
   log(`identity: account ${account || '?'} (${arn || '?'})`);
   okm('preflight');
+
+  // Loud, one line per resolved networking item (json → log events) BEFORE the
+  // template step — the operator sees exactly what was auto-detected and fed in.
+  for (const l of networkLines) log(l);
 
   // 2. template: cloudformation deploy — create OR idempotent update
   //    (--no-fail-on-empty-changeset makes a no-change re-run green).
@@ -1877,4 +2007,5 @@ module.exports = {
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
   fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs,
   fargatePutOauthArgs, fargateGetWireTokenArgs, fargateStackOutputsArgs, parseStackOutputs, fargatePollHello, deployFargateVerb,
+  fargateDescribeVpcsArgs, fargateDescribeSubnetsArgs, fargateDescribeSgArgs, fargateSgInboundWarning, fargateDetectNetwork,
 };
