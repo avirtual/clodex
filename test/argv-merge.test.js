@@ -20,6 +20,19 @@ test('mergeClaudeSystemPrompt: ipc leads, then appends, then inline', () => {
   assert.strictEqual(append, 'IPC\n\nA\n\nB\n\nINLINE');
 });
 
+test('mergeClaudeSystemPrompt (T51): a falsy/empty ipcPrompt drops the protocol blob but keeps the appends', () => {
+  // The lean-reviewer path (CLODEX_DISABLE_IPC_PROMPT=1) passes '' as ipcPrompt so
+  // the IPC protocol vanishes while the role/library/inline appends still ride —
+  // the filter(Boolean) at the seam is exactly what makes an empty ipcPrompt a no-op.
+  const { append } = mergeClaudeSystemPrompt([], '', {
+    appendBodies: ['ROLE'], inlineBody: 'INLINE',
+  });
+  assert.strictEqual(append, 'ROLE\n\nINLINE', 'no leading IPC block, appends intact');
+  // Sanity: the SAME call with a real ipcPrompt DOES lead with it (the on/off contrast).
+  const withIpc = mergeClaudeSystemPrompt([], 'IPC', { appendBodies: ['ROLE'], inlineBody: 'INLINE' });
+  assert.strictEqual(withIpc.append, 'IPC\n\nROLE\n\nINLINE');
+});
+
 test('mergeClaudeSystemPrompt: --append-system-prompt is consumed into the blob', () => {
   const { cleaned, append } = mergeClaudeSystemPrompt(
     ['--model', 'opus', '--append-system-prompt', 'USER'], 'IPC', {});

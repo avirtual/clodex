@@ -1909,13 +1909,30 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   m._handleTeamReview(m.sessions.get('lead'), 'check the boot-race fix');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(created.length, 1, 'one reviewer seat spawned');
-  const [name, type, cwd, extraArgs, resumeId, ws, sysBody, fork, proxy, agents, denyB, disabledTools] = created[0];
-  assert.strictEqual(name, 'team-reviewer-1', 'first reviewer name matches the role key so create() auto-binds the prompt');
+  // Full positional shape of the reviewer create() call (create() sig at
+  // session-manager.js:763): …, systemPromptFile(15), appendPromptFiles(16),
+  // execCommands(17), intents(18), sessionEnv(19) — 1-indexed positions.
+  const [name, type, cwd, extraArgs, resumeId, ws, sysBody, fork, proxy, agents, denyB, disabledTools,
+    disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, execCommands, intents, sessionEnv] = created[0];
+  assert.strictEqual(name, 'team-reviewer-1', 'first reviewer name matches the role key');
   assert.strictEqual(type, 'claude', 'defaults to claude when role.type is null');
   assert.strictEqual(cwd, '/proj', 'cwd defaults to team root');
-  // The handler passes NO inline system body — create()'s name-driven auto
-  // role-prompt path (seat stem === role key) binds the reviewer briefing itself.
-  assert.strictEqual(sysBody, null, 'no explicit inline briefing — auto-bound by create()');
+  // The handler passes NO inline system body — the reviewer's briefing rides as
+  // the REPLACEMENT system prompt (systemPromptFile below), not an inline body.
+  assert.strictEqual(sysBody, null, 'no explicit inline briefing');
+  // T51 lean-reviewer: the role prompt (def.prompt) is passed as the REPLACEMENT
+  // system prompt (--system-prompt-file), and create()'s auto role-prompt append
+  // dedupes itself against it, so the briefing lands once as the system prompt.
+  assert.strictEqual(systemPromptFile, 'clodex-team-reviewer', 'role prompt is THE system prompt (replacement)');
+  // T51: intents [] gates every catalog intent (only the uncatalogued review-done
+  // fires); execCommands [] grants nothing; sessionEnv is the hardcoded 3-var map.
+  assert.deepStrictEqual(intents, [], 'every catalog intent gated (buildIpcPrompt([]) sheds grammar + MEMORY)');
+  assert.deepStrictEqual(execCommands, [], 'no exec grant');
+  assert.deepStrictEqual(sessionEnv, {
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    FORCE_PROMPT_CACHING_5M: '1',
+    CLODEX_DISABLE_IPC_PROMPT: '1',
+  }, 'hardcoded lean-reviewer env: CLAUDE.md loader off, 5m cache pin, IPC-prompt skip directive');
   // The Read/Grep/Glob allowlist inverts to a denylist of every OTHER catalog tool
   // (create() auto-binds the role PROMPT but not its TOOLS — the handler owns this).
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
@@ -1933,6 +1950,96 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   assert.deepStrictEqual(passive, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
   assert.deepStrictEqual(delivered, [], 'no active inject for the scope');
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
+});
+
+test('team-review (T51): fires the wirescope spawner-hint (on=0) keyed on the seat proxyAgent, AFTER create() and BEFORE the scope is delivered', async () => {
+  // The hint suppresses wirescope's spawner-hint block from the reviewer's system
+  // prompt. It must key on the seat's ACTUAL route name (proxyAgent, minted inside
+  // create()) and fire post-create/pre-deliver (the scope rides passive delivery →
+  // no API request yet → still pre-first-request, wirescope's only hard requirement).
+  const hints = [];
+  const order = [];
+  const { m, created, passive } = mkReview({
+    resolveProxyBase: () => 'http://127.0.0.1:7811',
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 }); } },
+  });
+  // Stubbed create() must populate the session with a proxyAgent — that's what the
+  // handler reads back for the route key.
+  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-abc123`, proxyBase: 'http://127.0.0.1:7811' }); order.push('create'); };
+  m._deliverPassive = (name, sender, body, mtype) => { passive.push({ name, sender, body, mtype }); order.push('deliver'); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(hints, [{
+    base: 'http://127.0.0.1:7811', agent: 'clodex-team-reviewer-1-abc123', opts: { on: false },
+  }], 'spawner-hint POST keyed on the seat proxyAgent with on:false');
+  assert.deepStrictEqual(order, ['create', 'hint', 'deliver'],
+    'hint fired AFTER create() (proxyAgent exists) and BEFORE the scope handover (pre-first-request)');
+});
+
+test('team-review (T51): no proxy → NO spawner-hint POST (skipped entirely)', async () => {
+  const hints = [];
+  const { m } = mkReview({
+    resolveProxyBase: () => null, // lead has no proxy
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+  });
+  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-x`, proxyBase: null }); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(hints, [], 'no proxy base → the hint is skipped, never posted');
+});
+
+test('team-review (T51): a spawner-hint failure NEVER frees the reserved seat name (spawn survives)', async () => {
+  // The hint is best-effort to the last byte — a sync throw or a rejected promise
+  // must not fall into the spawn-failure catch that frees the reserved name.
+  const { m, created, persistence } = mkReview({
+    resolveProxyBase: () => 'http://127.0.0.1:7811',
+    ProxyClient: { spawnerHint: () => { throw new Error('proxy exploded'); } }, // sync throw
+  });
+  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-y`, proxyBase: 'http://127.0.0.1:7811' }); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 0, 'create() was overridden — but the point is the seat name survived');
+  assert.ok(persistence.get('team-reviewer-1'), 'reserved seat record intact despite the hint throw');
+});
+
+test('review-done (T51): retiring a reviewer fires the spawner-hint CLEAR (action=clear) keyed on its proxyAgent', (t) => {
+  // kill() arms a 5s SIGKILL-fallback timer — mock it so the test process doesn't
+  // hold open on it (the timer is production-correct; we just don't want to wait).
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hints = [];
+  const { m, persistence } = mkReview({
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+  });
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj',
+    proxyBase: 'http://127.0.0.1:7811', proxyAgent: 'clodex-team-reviewer-1-z', pty: { pid: 123, kill: () => {} } });
+  // Real kill() runs the clear (mkReview does NOT stub kill here — restore the class method).
+  const RealSM = m.constructor.prototype;
+  m.kill = RealSM.kill.bind(m);
+  m._notifyComposition = () => {};
+  m.kill('team-reviewer-1');
+  assert.deepStrictEqual(hints, [{
+    base: 'http://127.0.0.1:7811', agent: 'clodex-team-reviewer-1-z', opts: { clear: true },
+  }], 'kill() of a reviewer seat clears its spawner-hint row');
+});
+
+test('kill (T51): a NON-reviewer seat retiring does NOT touch the spawner-hint (proxy untouched)', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hints = [];
+  const { m, persistence } = mkReview({
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+  });
+  persistence.upsert({ name: 'plain', workspaceId: 'default' }); // no ephemeral/reviewFor
+  m.sessions.set('plain', { name: 'plain', agentType: 'claude', cwd: '/proj',
+    proxyBase: 'http://127.0.0.1:7811', proxyAgent: 'clodex-plain-q', pty: { pid: 1, kill: () => {} } });
+  const RealSM = m.constructor.prototype;
+  m.kill = RealSM.kill.bind(m);
+  m._notifyComposition = () => {};
+  m.kill('plain');
+  assert.deepStrictEqual(hints, [], 'an ordinary seat kill never posts a clear — gated to reviewer seats only');
 });
 
 test('team-review: reviewer inherits the lead permission posture (--dangerously-skip-permissions) so it never strands on a prompt', async () => {

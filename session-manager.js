@@ -871,7 +871,15 @@ function createSessionManager(deps) {
             teamBlock = formatTeamBlock(team, name);
             const role = matchSeatRole(team, name);
             const def = role ? team.roles[role] : null;
-            if (def && def.prompt) {
+            // Dedupe (T51): when THIS spawn already carries the role prompt as its
+            // REPLACEMENT system prompt (--system-prompt-file, systemPromptFile ===
+            // def.prompt — the lean-reviewer path), do NOT also append it to the
+            // team block, or the briefing is delivered twice (once as system, once
+            // as append). The small formatTeamBlock ("who you're with") still rides
+            // the append; only the role-prompt concat stands down. Any other seat
+            // (no systemPromptFile, or a different stem) keeps the append as before.
+            const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
+            if (def && def.prompt && !promptRidesAsSystem) {
               try {
                 const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
                 const rolePrompt = fs.readFileSync(promptFile, 'utf-8');
@@ -896,7 +904,16 @@ function createSessionManager(deps) {
           // ordered library appends + any legacy inline body form the append blob.
           const sysFile = resolveSystemPromptFile(systemPromptFile);
           const appendBodies = readAppendBodies(appendPromptFiles);
-          const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, buildIpcPrompt(intents), {
+          // CLODEX_DISABLE_IPC_PROMPT (T51) is a Clodex-INTERNAL directive var —
+          // NOT process env, read off the merged effective env this spawn is about
+          // to receive — that drops the IPC protocol append entirely for this seat.
+          // A falsy/empty ipcPrompt is filtered out by mergeClaudeSystemPrompt, so
+          // the protocol blob vanishes while the role/library/inline appends still
+          // ride. Used by the lean-reviewer path (a seat whose replacement system
+          // prompt already teaches the one line it needs); every other seat gets
+          // the full IPC protocol as before.
+          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents);
+          const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
             appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
           });
           args = cleaned;
@@ -1585,6 +1602,28 @@ function createSessionManager(deps) {
       // seats learn it retired. Covers the retire-discard path and the Delete
       // Session gesture alike — a single chokepoint on the teardown primitive.
       this._notifyComposition(s, 'retired');
+      // wirescope spawner-hint CLEAR (T51): a retired reviewer seat's suppression
+      // row must be released — wirescope's hint table has no TTL/sweeper and
+      // reloads whole at proxy restart, so monotonic ephemeral reviewer names
+      // (team-reviewer-1, -2, …) would accrete rows unbounded. Gated to reviewer
+      // seats ONLY (the persistence record carries ephemeral + reviewFor, set at
+      // team-review spawn) so an ordinary Delete-Session on any other seat never
+      // touches the proxy. Read the record BEFORE remove() below. Keyed by the
+      // seat's route name (proxyAgent), same key the spawn-time on=0 used. Both
+      // retire flows (review-done → kill, team-retire discard → kill) funnel here,
+      // so one clear covers both. Best-effort: never fail or delay teardown on it
+      // (a hard-crash w/o teardown leaves one dead row — accepted, wirescope reaps
+      // by age if it ever matters). No strip-override clear needed — that's
+      // session-id-keyed and self-reaps on wirescope's session sweep.
+      const killRec = getPersistence().get(name);
+      if (killRec && killRec.ephemeral && killRec.reviewFor && s.proxyBase && s.proxyAgent) {
+        try {
+          ProxyClient.spawnerHint(s.proxyBase, s.proxyAgent, { clear: true })
+            .catch((e) => log.warn('session', `reviewer spawner-hint(clear) ${s.proxyAgent} failed: ${e.message}`));
+        } catch (e) {
+          log.warn('session', `reviewer spawner-hint(clear) skipped: ${e.message}`);
+        }
+      }
       getPersistence().remove(name);
       try { s.pty.kill(); } catch {}
       setTimeout(() => {
@@ -3912,14 +3951,63 @@ function createSessionManager(deps) {
       const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
         ? ['--dangerously-skip-permissions'] : [];
 
+      // Lean-reviewer context (T51). Three levers, ALL hardcoded here — NOT read
+      // from team.json (the manifest is agent-writable and env is an authority
+      // surface, same argument as the REVIEWER_TOOL_CAP intersection above):
+      //   * the role prompt becomes THE system prompt (--system-prompt-file), a
+      //     full REPLACEMENT of the CLI's bulky default (systemPromptFile below).
+      //     create()'s auto role-prompt path dedupes its own append when the same
+      //     stem rides as systemPromptFile, so the briefing isn't delivered twice.
+      //   * intents: [] gates every catalog intent (the reviewer emits only the
+      //     uncatalogued [agent:review-done], which always fires) — buildIpcPrompt([])
+      //     then sheds all gateable grammar + the MEMORY section.
+      //   * sessionEnv: the CLI's own slimming knobs + the Clodex-internal
+      //     CLODEX_DISABLE_IPC_PROMPT directive (consumed in create()'s claude arm)
+      //     that drops the IPC protocol append entirely — the reviewer role prompt
+      //     already teaches the one line it needs (lead scope arrives as
+      //     [agent:from <lead>]). DISABLE_CLAUDE_MDS gates the CLI's CLAUDE.md
+      //     loader (independent of --system-prompt); FORCE_PROMPT_CACHING_5M pins
+      //     the short-TTL cache. Env is defense-in-depth WITH intents:[] — the
+      //     prompt skip removes the teaching, the gate removes the capability;
+      //     they fail independently.
+      const reviewerSystemPrompt = def.prompt || null;
+      const reviewerEnv = {
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+        FORCE_PROMPT_CACHING_5M: '1',
+        CLODEX_DISABLE_IPC_PROMPT: '1',
+      };
+
       // Defer off the scan callback that fired us (same discipline as
       // _handleSpawnIntent): never drive a PTY spawn synchronously from a watcher emit.
       setImmediate(async () => {
         try {
           await this.create(
             name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
-            null, false, session.proxy ?? null, [], [], disabledTools, [], [], null, [],
+            null, false, session.proxy ?? null, [], [], disabledTools, [], [],
+            reviewerSystemPrompt, [], [], [], reviewerEnv,
           );
+          // wirescope spawner-hint suppression (T51): tell the proxy to drop its
+          // spawner-hint block from THIS seat's system prompt. Keyed by the seat's
+          // actual route name (proxyAgent, minted INSIDE create()), read back off
+          // the live session. Fire AFTER create() but BEFORE the scope is handed
+          // over: the scope rides passive delivery (no API request yet), and the
+          // CLI makes no request until its first prompt lands, so this is safely
+          // pre-first-request (wirescope's only hard requirement). Best-effort: the
+          // proxy base re-resolves exactly as create() did (session.proxy → the
+          // resolved base); any failure is logged and ignored — a review with the
+          // hint beats no review, and this must never fail or delay the spawn.
+          try {
+            const hintBase = resolveProxyBase(session.proxy ?? null, getUiSettings());
+            const routeName = (this.sessions.get(name) || {}).proxyAgent || null;
+            if (hintBase && routeName) {
+              ProxyClient.spawnerHint(hintBase, routeName, { on: false })
+                .catch((e) => log.warn('intent', `team-review spawner-hint(off) ${routeName} failed: ${e.message}`));
+            }
+          } catch (e) {
+            // Best-effort to the last byte: a sync throw here (resolve/dep hiccup)
+            // must not fall into the spawn-failure catch and free the reserved name.
+            log.warn('intent', `team-review spawner-hint(off) skipped: ${e.message}`);
+          }
           // Draw the sidebar tab/terminal (the intent path bypasses the renderer's
           // create flow — reused verbatim from _handleSpawnIntent).
           this._sendToSession(name, 'session:context-action', {

@@ -90,6 +90,23 @@ const ProxyClient = {
     return this._req(base, `/_strip?${qs.toString()}`, 'POST');
   },
 
+  // Set (or clear) a per-agent SPAWNER-HINT override keyed by ROUTE NAME — the
+  // knob that suppresses wirescope's spawner-hint block from a seat's system
+  // prompt. Keyed by exact route name and MUST be set before the seat's first
+  // turn (a mid-session flip busts the system prefix), so callers fire it
+  // pre-spawn. `on=false` sets the suppression (POST /_hint?agent=<name>&on=0);
+  // omitting `on` clears it (action=clear) at retire, so ephemeral seat names
+  // don't accrete rows in wirescope's TTL-less hint table. Best-effort: an
+  // in-memory write on the proxy, cheap + idempotent — a re-fire is harmless.
+  // Callers treat ANY rejection as ignorable (never fail/delay a spawn or a
+  // teardown on it); the ~2s timeout keeps it snappy.
+  async spawnerHint(base, agent, { on, clear } = {}) {
+    const qs = new URLSearchParams({ agent });
+    if (clear) qs.set('action', 'clear');
+    else qs.set('on', on ? '1' : '0');
+    return this._req(base, `/_hint?${qs.toString()}`, 'POST', 2000);
+  },
+
   // Ask wirescope to BAKE a session's transcript down to its safe-to-drop set
   // (prior thinking; at L2 also the edit-ack / failed-call folds). A one-time
   // source rewrite — pay one re-cache, then run permanently slimmer with ~0
