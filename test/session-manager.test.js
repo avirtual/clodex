@@ -1259,6 +1259,69 @@ test('_onIncoming: an unknown delivery value falls through to the normal path (o
   assert.deepStrictEqual(delivered, ['hi']);
 });
 
+test('_deliverParkedActive: parks ACTIVE (turn-earning) for a live claude target — no spawn-time inject', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  const target = { name: 'a', agentType: 'claude' };
+  m.sessions.set('a', target);
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._deliverParkedActive('a', 'lead', 'review the fix', 'dm');
+  assert.deepStrictEqual(injected, [], 'active PARK still writes nothing at spawn time (T40/T42 race stays fixed)');
+  assert.ok(hasPending(PENDING_DIR, 'a'), 'parked in the pending store');
+  assert.strictEqual(hasActivePending(PENDING_DIR, 'a'), true, 'parked as ACTIVE — hasActivePending sees it, so an idle/boot edge drains it');
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'a', 't'), ['[agent:from lead] review the fix']);
+});
+
+test('_deliverParkedActive: a codex target falls back to the normal wake path (never dropped)', () => {
+  const { m, PENDING_DIR } = mkPark();
+  m.sessions.set('c', { name: 'c', agentType: 'codex' });
+  const delivered = [];
+  m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
+  m._deliverParkedActive('c', 'lead', 'scope', 'dm');
+  assert.deepStrictEqual(delivered, [{ name: 'c', sender: 'lead', body: 'scope', mtype: 'dm' }]);
+  assert.strictEqual(hasPending(PENDING_DIR, 'c'), false, 'nothing parked for codex');
+});
+
+test('_deliverParkedActive: park failure falls back to a normal delivery (degraded-but-not-dropped)', () => {
+  const { m } = mkPark({ parkDelivery: () => { throw new Error('disk full'); } });
+  m.sessions.set('a', { name: 'a', agentType: 'claude' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  const delivered = [];
+  m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
+  m._deliverParkedActive('a', 'lead', 'scope', 'dm');
+  assert.deepStrictEqual(delivered, [{ name: 'a', sender: 'lead', body: 'scope', mtype: 'dm' }], 'park throw → normal delivery, not dropped');
+});
+
+test('T54 end-to-end: an active-parked scope is SILENT at spawn time, then the idle/boot edge drains it', () => {
+  // The whole T54 fix in one flow against the REAL pending store: park the scope
+  // active (no spawn-time PTY write — T40/T42 stance), then an idle-class edge
+  // (the boot-ready rising edge calls the SAME _drainPendingAtIdle) delivers it.
+  const { m, PENDING_DIR, injected } = mkPark();
+  const session = { name: 'team-reviewer-1', agentType: 'claude' };  // no draft, boot-silent
+  m.sessions.set(session.name, session);
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  // 1. scope parked active — nothing injected yet (T40/T42: no draft-racing write).
+  m._deliverParkedActive(session.name, 'lead', 'review the boot-race fix', 'dm');
+  assert.deepStrictEqual(injected, [], 'NO direct PTY write of the scope at spawn time');
+  assert.strictEqual(hasActivePending(PENDING_DIR, session.name), true, 'held as active pending, awaiting an edge');
+  // 2. the idle/boot-ready edge fires the drain — the scope reaches the inject path.
+  m._drainPendingAtIdle(session);
+  assert.deepStrictEqual(injected, ['[agent:from lead] review the boot-race fix'],
+    'the idle/boot edge drained the active scope — no human ✉-click needed');
+  assert.strictEqual(hasPending(PENDING_DIR, session.name), false, 'claimed + removed from the store');
+});
+
+test('T54: a PASSIVE park still does NOT earn the boot/idle edge (only the active scope class does)', () => {
+  // Guards the class boundary: the fix flips ONLY the scope to active. A passive
+  // ride-along (roster/team delta) parked on the same seat must still wait for an
+  // organic carrier — the boot-ready edge drains actives, not passives.
+  const { m, PENDING_DIR, injected } = mkPark();
+  const session = { name: 'team-reviewer-1', agentType: 'claude' };
+  parkDelivery(PENDING_DIR, session.name, '[agent:from team] roster delta', '1', null, true); // passive
+  m._drainPendingAtIdle(session);
+  assert.deepStrictEqual(injected, [], 'a passive-only store does not earn a turn at the boot/idle edge');
+  assert.ok(hasPending(PENDING_DIR, session.name), 'the passive delta stays parked for an organic hook drain');
+});
+
 // --- team-retire (docs/teams-design.md): socket envelope → archive|discard --
 
 function mkRetire(rootByName, rolesByRoot) {
@@ -1915,10 +1978,14 @@ function mkReview(extra = {}) {
   const order = []; // shared recorder — proves deliver happens BEFORE the discard (NIT 4)
   m.create = async (...args) => { created.push(args); };
   m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
-  // Scope delivery is PASSIVE (parked, drains with the seat's first organic
-  // turn) — active injects race CLI boot and ate two live review scopes.
+  // Scope delivery is an ACTIVE-CLASS PARK (T54): parked (no spawn-time PTY
+  // write — the T40/T42 boot-race stays fixed) but turn-earning, drained by the
+  // boot-ready rising edge. _deliverPassive (roster/team deltas) is captured
+  // separately so a test can prove the scope no longer rides the passive path.
   const passive = [];
+  const parkedActive = [];
   m._deliverPassive = (name, sender, body, mtype) => passive.push({ name, sender, body, mtype });
+  m._deliverParkedActive = (name, sender, body, mtype) => parkedActive.push({ name, sender, body, mtype });
   // Default: delivery succeeds. A test can reassign m._gatedDeliver to return
   // { error } (dead/absent lead) to drive MUST-FIX 3's bounce-and-keep-live arm.
   m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { delivered: true }; };
@@ -1927,11 +1994,11 @@ function mkReview(extra = {}) {
   // persistence record — mirror that here so the sweep/record assertions see it.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
   m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
-  return { m, injected, created, delivered, passive, gated, archived, killed, contextActions, order, persistence, team };
+  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, team };
 }
 
-test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered passively', async () => {
-  const { m, injected, created, delivered, passive, persistence } = mkReview();
+test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered as an active-class park', async () => {
+  const { m, injected, created, delivered, passive, parkedActive, persistence } = mkReview();
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'check the boot-race fix');
   await new Promise((r) => setImmediate(r));
@@ -1970,11 +2037,12 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   const rec = persistence.get('team-reviewer-1');
   assert.strictEqual(rec.ephemeral, true);
   assert.strictEqual(rec.reviewFor, 'lead');
-  // Scope delivered PASSIVELY (pending store, drains with the seat's first
-  // organic turn) — an active inject races CLI boot; the mode-2004 proxy firing
-  // early left the scope as an unsubmitted draft that the next inject's Ctrl-U
-  // wiped (ate the T40 and T42 review scopes live).
-  assert.deepStrictEqual(passive, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  // Scope delivered as an ACTIVE-CLASS PARK (T54): parked (no spawn-time PTY
+  // write — the mode-2004 boot-race that ate the T40/T42 scopes stays fixed) but
+  // turn-earning, so the boot-ready rising edge drains it WITHOUT a human
+  // ✉-click (the operator-reported stall). It does NOT ride the passive path.
+  assert.deepStrictEqual(parkedActive, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  assert.deepStrictEqual(passive, [], 'scope no longer rides the passive (never-earns-a-turn) path');
   assert.deepStrictEqual(delivered, [], 'no active inject for the scope');
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
 });
@@ -1982,18 +2050,19 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 test('team-review (T51): fires the wirescope spawner-hint (on=0) keyed on the seat proxyAgent, AFTER create() and BEFORE the scope is delivered', async () => {
   // The hint suppresses wirescope's spawner-hint block from the reviewer's system
   // prompt. It must key on the seat's ACTUAL route name (proxyAgent, minted inside
-  // create()) and fire post-create/pre-deliver (the scope rides passive delivery →
-  // no API request yet → still pre-first-request, wirescope's only hard requirement).
+  // create()) and fire post-create/pre-deliver (the scope rides an active-class
+  // PARK → no API request yet → still pre-first-request, wirescope's only hard
+  // requirement).
   const hints = [];
   const order = [];
-  const { m, created, passive } = mkReview({
+  const { m, created, parkedActive } = mkReview({
     resolveProxyBase: () => 'http://127.0.0.1:7811',
     ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 }); } },
   });
   // Stubbed create() must populate the session with a proxyAgent — that's what the
   // handler reads back for the route key.
   m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-abc123`, proxyBase: 'http://127.0.0.1:7811' }); order.push('create'); };
-  m._deliverPassive = (name, sender, body, mtype) => { passive.push({ name, sender, body, mtype }); order.push('deliver'); };
+  m._deliverParkedActive = (name, sender, body, mtype) => { parkedActive.push({ name, sender, body, mtype }); order.push('deliver'); };
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
@@ -4524,6 +4593,7 @@ function mkOnDataProbe() {
   const fakePty = {
     spawn: () => ({ onData(cb) { onDataCb = cb; }, onExit() {}, kill() {}, pid: 777 }),
   };
+  const PENDING_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-pend-ondata-'));
   const m = mk({
     getPersistence: () => ({
       list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {},
@@ -4538,10 +4608,16 @@ function mkOnDataProbe() {
     INJECT_BOOT_MAXWAIT: 20_000,
     INJECT_QUIET_MS: 0, INJECT_QUIET_MAXWAIT: 0,
     LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
+    // T54: the boot-ready rising edge now calls _drainPendingAtIdle from onData,
+    // so this harness needs the drain's deps + a REAL pending store (production
+    // always has them). With no pending seeded the drain is a harmless no-op
+    // (hasActivePending → false), so it doesn't perturb the T35 readiness-gate
+    // assertions; the T54 edge test below seeds an active park to exercise it.
+    PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
   });
   m._sendToSession = () => {};
   m._scanPtyOutput = () => {};        // bash onData scans pty output — silence it
-  return { m, fireData: (d) => onDataCb(d), getSession: (n) => m.sessions.get(n) };
+  return { m, PENDING_DIR, fireData: (d) => onDataCb(d), getSession: (n) => m.sessions.get(n) };
 }
 
 test('T35 latch (production onData): a real mode-2004h chunk flips _bootReadySeen', async () => {
@@ -4580,4 +4656,44 @@ test('T35 latch (production onData): a claude-gated delivery holds until the rea
   fireData('\x1b[?2004h');                     // real onData latches _bootReadySeen
   await p;
   assert.deepStrictEqual(writes, ['\x15', 'scope message', '\r'], 'drained once ready');
+});
+
+test('T54 (production onData): the boot-ready rising edge DRAINS an active-parked scope (no idle turn needed)', async () => {
+  // The load-bearing edge, end-to-end through the REAL onData handler: a
+  // boot-silent claude seat never reaches an idle EDGE, so the ONLY thing that
+  // delivers an active-parked scope is the first mode-2004h rising edge calling
+  // _drainPendingAtIdle. Seat the scope active, fire the real 2004h chunk, and
+  // assert it drains to the PTY — WITHOUT any idle/turn event.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-d', null);
+  const s = getSession('boot-d');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';                       // gate + drain both read this
+  // Scope parked ACTIVE (as _deliverParkedActive would), nothing injected yet.
+  parkDelivery(PENDING_DIR, 'boot-d', '[agent:from lead] review the fix', '1');
+  assert.deepStrictEqual(writes, [], 'silent while booting — no spawn-time write (T40/T42 stance)');
+  assert.strictEqual(s._bootReadySeen ? true : false, false, 'not ready before any 2004 output');
+  fireData('\x1b[?2004h');                       // the rising edge — the whole fix
+  await new Promise((r) => setTimeout(r, 50));   // let the InjectQueue drain
+  assert.strictEqual(s._bootReadySeen, true, 'boot-ready latched');
+  assert.deepStrictEqual(writes, ['\x15', '[agent:from lead] review the fix', '\r'],
+    'the rising edge drained the active scope to the pane — no human ✉-click, no idle turn');
+  assert.strictEqual(hasPending(PENDING_DIR, 'boot-d'), false, 'claimed + removed from the store');
+});
+
+test('T54 (production onData): the rising edge leaves a PASSIVE-only store parked (class boundary holds)', async () => {
+  // A passive ride-along on the same boot-silent seat must NOT be drained by the
+  // boot-ready edge — only the active scope class earns it.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-e', null);
+  const s = getSession('boot-e');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'boot-e', '[agent:from team] roster delta', '1', null, true); // passive
+  fireData('\x1b[?2004h');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(writes, [], 'a passive-only store is not drained by the boot-ready edge');
+  assert.ok(hasPending(PENDING_DIR, 'boot-e'), 'the passive delta stays parked for an organic carrier');
 });

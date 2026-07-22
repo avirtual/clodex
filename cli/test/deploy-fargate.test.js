@@ -660,6 +660,37 @@ test('deploy fargate: an ec2 describe failure rides the runAws CliError shape', 
   assert.match(stderr, /AccessDenied/);
 });
 
+// T53 review nit 1: the SG describe JSON parse is try/catch-guarded (→ []); a
+// garbage stdout must fail SAFE (no default SG found → USAGE, deploy blocked)
+// rather than throwing an unhandled parse error or silently deploying SG-less.
+test('deploy fargate: malformed SG describe output (unparseable JSON) → USAGE, deploy blocked', async () => {
+  const rec = {};
+  const gibberish = async (cmd, args) => {
+    const j = cmd + ' ' + args.join(' ');
+    if (j.includes('ec2 describe-security-groups')) return { stdout: 'not-json <<<garbage>>>' };
+    return fakeAws(rec)(cmd, args);   // everything else answers normally
+  };
+  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+    execFn: gibberish, probeFargate: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, EXIT.USAGE);
+  assert.match(stderr, /no default security group/);
+  assert.match(stderr, /--subnets and --security-group/);
+});
+
+// T53 review nit 2: a MIXED permission entry (self-ref pair the factory allows
+// AND a real CIDR) must still warn, and name the CIDR — the self-ref filter
+// must not swallow the whole entry.
+test('fargateSgInboundWarning: a mixed self-ref + CIDR permission → warns, names the CIDR', () => {
+  const w = D.fargateSgInboundWarning('sg-1', [{
+    IpProtocol: 'tcp', FromPort: 443, ToPort: 443,
+    UserIdGroupPairs: [{ GroupId: 'sg-1' }],        // factory self-ref — benign alone
+    IpRanges: [{ CidrIp: '203.0.113.0/24' }],       // but a real CIDR rides the same entry
+  }]);
+  assert.match(w, /tcp 443 from 203\.0\.113\.0\/24/, 'the CIDR is named despite the benign self-ref pair');
+  assert.doesNotMatch(w, /from sg-1/, 'the self-referencing pair is NOT reported as an offender');
+});
+
 test('deploy fargate: bad stack name (dots/underscore/leading digit) → USAGE, nothing runs', async () => {
   for (const bad of ['my.stack', 'a_b', '1node']) {
     let ran = false;

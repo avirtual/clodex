@@ -1458,7 +1458,19 @@ function createSessionManager(deps) {
           // boot gate opens. This is a BOOT gate, not a liveness gate: 2004 keeps
           // toggling around dialogs/teardown for the paste-wrap decision, but
           // _bootReadySeen never un-sets once true.
-          if (session._pasteModeOn) session._bootReadySeen = true;
+          if (session._pasteModeOn && !session._bootReadySeen) {
+            session._bootReadySeen = true;
+            // Boot-ready rising edge = the ONLY reliable post-boot drain trigger
+            // for a boot-silent seat (T54). A seat that never takes a turn never
+            // reaches an idle EDGE — the wire ActivityTracker seeds 'idle' and
+            // dedupes, the JsonlWatcher only emits idle after a real turn flush —
+            // so a team-review scope parked ACTIVE would sit forever waiting for
+            // an idle that never comes. This rising edge fires exactly once (the
+            // latch guards it) and drives the same guarded drain the idle edge
+            // would: claude-only, draft-gated, active-pending peek, exactly-once
+            // claim, parkable inject through the ready-gated queue.
+            this._drainPendingAtIdle(session);
+          }
         }
 
         // In agent mode, PTY output is pass-through (intents come from JSONL)
@@ -2495,7 +2507,9 @@ function createSessionManager(deps) {
     // splicing). Claude-only: pending is a Claude-hook store (codex never parks).
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
-      if (isDraftOpen(session)) return;                 // don't splice an open draft
+      // Draft check fail-closed: this now also runs from the PTY onData hot path
+      // (boot-ready edge), where a throw would escape into the data handler.
+      try { if (isDraftOpen(session)) return; } catch { return; }   // don't splice an open draft
       // Passive-only stores don't earn a turn: leave ride-along notifications
       // (monitor ticks) parked for an organic carrier — a hook drain during a
       // turn that happens anyway, or a mixed claim once an active DM lands.
@@ -4106,16 +4120,19 @@ function createSessionManager(deps) {
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });
-          // Deliver the lead's scope PASSIVELY (pending store, drains with the
-          // seat's first organic turn / boot-idle flush) — same rule as
-          // _injectRoster and for the same reason: an active inject races CLI
-          // boot, and when the mode-2004 proxy fires early the scope lands as an
-          // unsubmitted draft that the NEXT inject's Ctrl-U silently wipes. That
-          // race ate two review scopes (T40/T42) while T41's happened to survive
-          // via a fire-time park divert — passive IS that surviving path, made
-          // unconditional. Safe here because the reviewer is force-claude above
-          // (passive parking is a claude-hook store; codex never parks).
-          this._deliverPassive(name, session.name, scope, 'dm');
+          // Deliver the lead's scope as an ACTIVE-CLASS PARK (T54): parked (NO
+          // spawn-time PTY write, so the T40/T42 boot-race stays fixed — an early
+          // mode-2004 proxy can't strand the scope as a Ctrl-U-wiped draft) but
+          // TURN-EARNING. A plain _deliverPassive parked it, but passive parks
+          // never earn a turn by design (hasActivePending excludes them), and a
+          // fresh reviewer seat has no other traffic — so the scope stalled until
+          // the operator manually clicked the envelope (operator-reported, 3/3).
+          // The active park is claimed by the boot-ready rising edge
+          // (_bootReadySeen → _drainPendingAtIdle) or any later idle edge, with
+          // the existing isDraftOpen guard + parkable divert re-park safety.
+          // Safe here because the reviewer is force-claude above (parking is a
+          // claude-hook store; codex never parks).
+          this._deliverParkedActive(name, session.name, scope, 'dm');
           this._broadcast('ipc-message', {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
@@ -5621,6 +5638,37 @@ function createSessionManager(deps) {
       }
       this._broadcast('ipc-message', {
         ts: Date.now(), from: senderName, to: targetName, kind: 'passive',
+        body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      });
+    }
+
+    // Active-class PARK (T54): parked like passive (NO spawn-time PTY write, so
+    // the T40/T42 boot-race stays fixed — an early mode-2004 proxy can't strand
+    // the text as a Ctrl-U-wiped draft), but TURN-EARNING — a NON-.passive.json
+    // entry, so hasActivePending() sees it and the boot-ready rising edge (or any
+    // idle edge) drains it. Passive parks never earn a turn by design; a fresh
+    // reviewer seat has no other traffic, so passive stalled the scope until a
+    // human ✉-click. Used ONLY for the team-review scope — roster/team deltas
+    // stay _deliverPassive (genuinely ride-along). Claude-only (pending is a
+    // Claude-hook store); park failure falls back to a normal delivery (degraded
+    // to noisy beats dropped), same as passive.
+    _deliverParkedActive(targetName, senderName, body, mtype) {
+      const target = this.sessions.get(targetName);
+      if (!target) return;
+      if (target.agentType !== 'claude' || target._dead) {
+        this._deliverMessage(targetName, senderName, body, mtype);
+        return;
+      }
+      const finalText = this._buildDeliveryText(target, senderName, body, mtype);
+      try {
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq());
+      } catch (e) {
+        log.error('inject', `active park failed for ${target.name}: ${e.message} — delivering normally`);
+        this._deliverMessage(targetName, senderName, body, mtype);
+        return;
+      }
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: senderName, to: targetName, kind: 'parked',
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
       });
     }
