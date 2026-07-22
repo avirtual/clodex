@@ -2,7 +2,7 @@
   "name": "clodexctl",
   "version": "0.1.0",
   "description": "kubectl-for-Clodex — a text client for the Clodex engine's remote.js HTTP+SSE wire",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "avirtual <bogdan.ionescu@gmail.com>",
   "type": "commonjs",
   "bin": {

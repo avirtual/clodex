@@ -154,4 +154,4 @@ For headless Linux nodes, `clodexctl deploy` does everything; the manual playboo
 
 ## License
 
-MIT
+[Apache 2.0](LICENSE)

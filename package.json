@@ -3,7 +3,7 @@
   "version": "3.5.2",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
   "author": "avirtual <bogdan.ionescu@gmail.com>",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "main": "main.js",
   "scripts": {
     "start": "ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
