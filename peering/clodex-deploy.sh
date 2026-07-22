@@ -19,7 +19,8 @@
 # NEVER prompts, NEVER hangs: if it needs root and can't sudo without a
 # password, it emits ::need-sudo + the exact commands and exits 42 (distinct
 # from a real failure's 1) — that exit is where the wizard offers the agent
-# fallback. Params via env: REPO_URL, BRANCH, PORT, CLODEX_SRC.
+# fallback. Params via env: REPO_URL, BRANCH, PORT, CLODEX_SRC,
+# CLODEX_NO_WIRESCOPE (=1 → skip wirescope python deps + pin CLODEX_WIRESCOPE=off).
 
 set -uo pipefail
 
@@ -48,6 +49,16 @@ IS_MAC=0
 # set -u + a non-login ssh that doesn't export USER would otherwise kill the
 # script at the linger check (which needs the username).
 USER="${USER:-$(id -un)}"
+
+# Wirescope opt-out (T49): CLODEX_NO_WIRESCOPE=1 rides the deploy preamble when
+# `deploy --no-wirescope` is passed (Bedrock nodes: the tee never sees a byte).
+# Effects: (a) the wirescope-only python sys-deps (venv/pip) are skipped —
+# node-gyp still needs python3 itself; (b) a systemd drop-in pins
+# CLODEX_WIRESCOPE=off in the service env, which the engine honors over the
+# proxyEnabled pref. Flag absent on a re-run removes the drop-in, so a redeploy
+# converges the node to the flag's state.
+WIRESCOPE_OFF=0
+case "${CLODEX_NO_WIRESCOPE:-}" in 1|true|yes|on) WIRESCOPE_OFF=1;; esac
 
 NEED_SUDO_EXIT=42
 
@@ -100,9 +111,13 @@ elif command -v apt-get >/dev/null 2>&1; then
   # Debian/Ubuntu: build-essential (gcc/g++/make) + python3 for node-gyp, plus
   # python3-venv/python3-pip for the wirescope managed venv (Debian's python3
   # can't create venvs without python3-venv; AL-style pipless venvs exist too).
+  # Wirescope opted out → the venv/pip packages are dead weight; skip them
+  # (best-effort dep trim — python3 itself stays, node-gyp needs it).
   # dpkg -s present-check keeps a satisfied box off the need-sudo path.
+  APT_PKGS="build-essential python3 python3-venv python3-pip"
+  [ "$WIRESCOPE_OFF" = "1" ] && APT_PKGS="build-essential python3"
   missing=""
-  for p in build-essential python3 python3-venv python3-pip; do
+  for p in $APT_PKGS; do
     dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
@@ -124,8 +139,10 @@ elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
   # split out), which breaks the wirescope managed venv. rpm -q is the
   # present-check (dpkg doesn't exist here); PM is dnf when available, else yum.
   PM="yum"; command -v dnf >/dev/null 2>&1 && PM="dnf"
+  RPM_PKGS="gcc-c++ make python3 python3-pip"
+  [ "$WIRESCOPE_OFF" = "1" ] && RPM_PKGS="gcc-c++ make python3"
   missing=""
-  for p in gcc-c++ make python3 python3-pip; do
+  for p in $RPM_PKGS; do
     rpm -q "$p" >/dev/null 2>&1 || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
@@ -253,6 +270,7 @@ if [ "$IS_MAC" = "1" ]; then
   # No systemd on macOS, so there's no unit drop-in to carry a Claude token —
   # the desktop app manages its own auth. Say so rather than silently dropping it.
   [ -n "${CLODEX_CLAUDE_TOKEN:-}" ] && log "macOS: --claude-token-file ignored (no systemd unit; the app manages Claude auth)"
+  [ "$WIRESCOPE_OFF" = "1" ] && log "macOS: --no-wirescope noted, but no systemd unit to carry it — export CLODEX_WIRESCOPE=off yourself"
   ok service
 else
 mkdir -p "$UNIT_DIR"
@@ -270,6 +288,17 @@ mkdir -p "$WEB_DROPIN_DIR" || fail service "web-dropin-mkdir-failed"
 printf '[Service]\nEnvironment=CLODEX_WEB_PORT=%s\nEnvironment=CLODEX_WEB_HOST=127.0.0.1\n' "$WEB_PORT" > "$WEB_DROPIN_DIR/web.conf" \
   || fail service "web-dropin-write-failed"
 echo "::log web port $WEB_PORT"
+# Wirescope opt-out (T49): a drop-in pins CLODEX_WIRESCOPE=off in the service
+# env — the engine's autoStartWanted() honors it over the proxyEnabled pref.
+# Same mechanism as the web/token drop-ins. Symmetric on re-run: flag absent →
+# drop-in removed, so a redeploy without --no-wirescope re-enables wirescope.
+if [ "$WIRESCOPE_OFF" = "1" ]; then
+  printf '[Service]\nEnvironment=CLODEX_WIRESCOPE=off\n' > "$WEB_DROPIN_DIR/wirescope.conf" \
+    || fail service "wirescope-dropin-write-failed"
+  echo "::log wirescope disabled (CLODEX_WIRESCOPE=off drop-in)"
+else
+  rm -f "$WEB_DROPIN_DIR/wirescope.conf" 2>/dev/null || true
+fi
 # Claude auth (ssh flavor): if a token rode the ssh stdin (CLODEX_CLAUDE_TOKEN,
 # set by the deploy preamble — never argv, never ps), write it into a unit
 # drop-in so the engine spawns `claude` already authenticated. printf is a shell

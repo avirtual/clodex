@@ -37,7 +37,10 @@ kubectl create secret generic clodex-node \
 ```
 
 (Bedrock variant: drop the OAuth key and use IRSA + `CLAUDE_CODE_USE_BEDROCK=1`
-— see the Fargate recipe §4; identical mechanism via the service account.)
+— see the Fargate recipe §4; identical mechanism via the service account. A
+node-level Bedrock/Vertex env auto-disables the wirescope proxy in the engine;
+the chart value `wirescope.enabled=false` — `CLODEX_WIRESCOPE=off` in the pod
+env — makes the opt-out explicit on any node.)
 
 ## 2. Manifest
 

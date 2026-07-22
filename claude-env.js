@@ -71,17 +71,27 @@ function teeBlindBackend(env) {
 // sessions — observed 2026-07-05 as every resumed agent silently NOT writing
 // its transcript, which blinds the JsonlWatcher (intents dead) and the phone
 // view at once. So the namespace is stripped before anything can inherit it,
-// with two survivors:
+// with these survivors:
 // - CLAUDE_CODE_OAUTH_TOKEN is credential config, not session state. The
 //   sandbox seeds it into the container env (M4 auth.env) and sessions must
 //   inherit it — scrubbing it spawned unauthenticated REPLs on a seeded box
 //   (observed live 2026-07-16, first sandbox e2e).
+// - CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX are backend CONFIG, not
+//   session state — the same class as the oauth token (a Fargate UseBedrock
+//   task / a Bedrock-env node sets them node-wide). Scrubbing them (a) broke
+//   session routing: PTY-spawned CLIs on a Bedrock node lost the flag and
+//   tried Anthropic-direct (pre-existing latent bug), and (b) blinded the
+//   wirescope Bedrock auto-off gate (T49) — wirescopeEnvGate reads process.env
+//   AFTER this scrub runs at entry-point init.
 // - ANTHROPIC_BASE_URL goes only when it points at an agent-scoped proxy route
 //   (ours or a dead predecessor's tee); a user's own global endpoint override
 //   survives.
+const SCRUB_SURVIVORS = new Set([
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+]);
 function scrubInheritedClaudeMarkers(env) {
   for (const k of Object.keys(env)) {
-    if (k === 'CLAUDE_CODE_OAUTH_TOKEN') continue;
+    if (SCRUB_SURVIVORS.has(k)) continue;
     if (/^CLAUDE(CODE|_)/.test(k)) delete env[k];
   }
   if (/\/agent\/[^/]+\//.test(env.ANTHROPIC_BASE_URL || '')) {

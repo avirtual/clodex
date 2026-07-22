@@ -111,6 +111,16 @@ test('buildSsmScript: heredoc delimiters are per-run random nonces (unguessable)
   assert.doesNotMatch(a, /CLODEX_INSTALL_EOF/);
 });
 
+test('buildSsmScript: noWirescope rides the embedded preamble (CLODEX_NO_WIRESCOPE=1) — same mechanism as ssh, no fork', () => {
+  const s = D.buildSsmScript({ port: 7900, token: 't', repo: 'https://x/y', branch: 'm', noWirescope: true });
+  assert.match(s, /export PORT='7900' REPO_URL='https:\/\/x\/y' BRANCH='m' CLODEX_NO_WIRESCOPE='1'/);
+  // the installer bytes themselves stay the pinned copy, verbatim.
+  assert.ok(s.includes(D.readScript()), 'installer bytes unchanged');
+  // no flag → no export (default behavior).
+  const d = D.buildSsmScript({ port: 7900, token: 't', repo: 'https://x/y', branch: 'm' });
+  assert.doesNotMatch(d, /CLODEX_NO_WIRESCOPE='1'/);
+});
+
 test('buildSsmScript: port/token/repo/branch substitution flows into the preamble + verify', () => {
   const s = D.buildSsmScript({ port: 8100, token: 'abc', repo: 'https://example.com/fork', branch: 'dev' });
   // preamble the installer inherits (buildPreamble contract).
@@ -323,6 +333,22 @@ async function cli(argv, io = {}) {
   return { code, stdout, stderr };
 }
 function tmpCtxFile() { return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-ssm-')), 'contexts.json'); }
+
+test('deploy ssm --no-wirescope: the sent wrapper embeds CLODEX_NO_WIRESCOPE=1; absent without the flag', async () => {
+  const rec = {};
+  const { code } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--no-wirescope', '--no-ctx'], {
+    execFn: fakeAws(rec),
+    probeSsm: async () => ({ app: 'clodex', host: 'mybox' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.match(rec.sentScript, /CLODEX_NO_WIRESCOPE='1'/);
+  const rec2 = {};
+  await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--no-ctx'], {
+    execFn: fakeAws(rec2),
+    probeSsm: async () => ({ app: 'clodex', host: 'mybox' }),
+  });
+  assert.doesNotMatch(rec2.sentScript, /CLODEX_NO_WIRESCOPE='1'/);
+});
 
 test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + token) saved', async () => {
   const rec = {};

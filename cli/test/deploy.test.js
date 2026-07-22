@@ -41,6 +41,26 @@ test('buildPreamble: claudeToken (ssh flavor) adds a single-quote-escaped CLODEX
   assert.doesNotMatch(D.buildPreamble({ port: 7900, repo: 'r', branch: 'm' }), /CLODEX_CLAUDE_TOKEN/);
 });
 
+test('buildPreamble: noWirescope (T49) adds CLODEX_NO_WIRESCOPE=1 — only with the flag', () => {
+  const p = D.buildPreamble({ port: 7900, repo: 'r', branch: 'm', noWirescope: true });
+  assert.match(p, /CLODEX_NO_WIRESCOPE='1'\n$/);
+  assert.doesNotMatch(D.buildPreamble({ port: 7900, repo: 'r', branch: 'm' }), /CLODEX_NO_WIRESCOPE/);
+});
+
+test('installer: wirescope opt-out — CLODEX_NO_WIRESCOPE gates the drop-in + trims python deps', () => {
+  const s = D.readScript();
+  // The env param the preamble sets, read into a normalized flag.
+  assert.match(s, /case "\$\{CLODEX_NO_WIRESCOPE:-\}" in 1\|true\|yes\|on\) WIRESCOPE_OFF=1;; esac/);
+  // Drop-in write is gated on the flag, and the flagless path REMOVES it
+  // (redeploy converges the node to the flag's state).
+  assert.match(s, /if \[ "\$WIRESCOPE_OFF" = "1" \]; then\n  printf '\[Service\]\\nEnvironment=CLODEX_WIRESCOPE=off\\n' > "\$WEB_DROPIN_DIR\/wirescope\.conf"/);
+  assert.match(s, /rm -f "\$WEB_DROPIN_DIR\/wirescope\.conf"/);
+  // Sys-deps trim: the wirescope-only python venv/pip packages drop off both
+  // families when the flag is set; python3 itself stays (node-gyp needs it).
+  assert.match(s, /\[ "\$WIRESCOPE_OFF" = "1" \] && APT_PKGS="build-essential python3"/);
+  assert.match(s, /\[ "\$WIRESCOPE_OFF" = "1" \] && RPM_PKGS="gcc-c\+\+ make python3"/);
+});
+
 test('readClaudeToken: raw token, env-file line, and rejections', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
   const raw = path.join(dir, 'raw'); fs.writeFileSync(raw, '  sk-abc123\n');
@@ -230,6 +250,23 @@ test('deploy --claude-token-file: token rides ssh stdin (preamble), NEVER argv/s
   // REDACTION: the token is nowhere in the ssh argv nor in our stdout.
   assert.ok(!rec.args.some((a) => String(a).includes('sk-secret-42')), 'token must not appear in ssh argv');
   assert.doesNotMatch(stdout, /sk-secret-42/);
+});
+
+test('deploy --no-wirescope: CLODEX_NO_WIRESCOPE=1 rides the stdin preamble; absent without the flag', async () => {
+  const rec = {};
+  const { code } = await cli(['deploy', 'user@box', '--no-wirescope', '--no-ctx'], {
+    spawnFn: fakeSsh(rec, { lines: HAPPY }),
+    probeHello: async () => ({ app: 'clodex', host: 'box' }),
+  });
+  assert.strictEqual(code, 0);
+  // the export rides the PREAMBLE (first line) — the installer bytes follow.
+  assert.match(rec.stdin.split('\n')[0], /^export PORT=.*CLODEX_NO_WIRESCOPE='1'$/);
+  const rec2 = {};
+  await cli(['deploy', 'user@box', '--no-ctx'], {
+    spawnFn: fakeSsh(rec2, { lines: HAPPY }),
+    probeHello: async () => ({ app: 'clodex', host: 'box' }),
+  });
+  assert.doesNotMatch(rec2.stdin.split('\n')[0], /CLODEX_NO_WIRESCOPE/);
 });
 
 test('deploy --claude-token-file --dry-run: notes the token by presence only, redacted', async () => {

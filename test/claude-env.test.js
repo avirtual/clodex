@@ -103,9 +103,11 @@ test('teeBlindBackend: bedrock is reported first when both are set', () => {
 });
 
 // ── scrubInheritedClaudeMarkers — the entry-point env self-decontamination.
-// Pins the two survivors alongside the strip: the OAuth token (credential
-// config — scrubbing it spawned unauthenticated REPLs on a token-seeded
-// sandbox, found live 2026-07-16) and a user's own non-agent-scoped
+// Pins the survivors alongside the strip: the OAuth token (credential config —
+// scrubbing it spawned unauthenticated REPLs on a token-seeded sandbox, found
+// live 2026-07-16), the Bedrock/Vertex backend flags (backend CONFIG, same
+// class — scrubbing them broke session routing on Bedrock-env nodes AND
+// blinded the T49 wirescope auto-off gate), and a user's own non-agent-scoped
 // ANTHROPIC_BASE_URL.
 const { scrubInheritedClaudeMarkers } = require('../claude-env');
 
@@ -126,6 +128,39 @@ test('scrub: nesting markers go, OAuth token and unrelated vars survive', () => 
     CLODEX_REMOTE_TOKEN: 'operator-secret',
     PATH: '/usr/bin',
   });
+});
+
+test('scrub: Bedrock/Vertex backend flags survive — node-level backend config, not session state', () => {
+  const env = {
+    CLAUDECODE: '1',
+    CLAUDE_CODE_SESSION_ID: 'abc',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: 'true',
+    AWS_REGION: 'us-west-2',
+  };
+  scrubInheritedClaudeMarkers(env);
+  assert.deepStrictEqual(env, {
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: 'true',
+    AWS_REGION: 'us-west-2',
+  });
+});
+
+// The T49 interaction regression: the entry points scrub process.env BEFORE the
+// wirescope supervisor ever reads it, so the Bedrock auto-off gate is only real
+// if the flag SURVIVES the scrub. Pin the composition end-to-end.
+test('scrub → wirescopeEnvGate: a scrubbed Bedrock env still gates wirescope off', () => {
+  const { wirescopeEnvGate } = require('../wirescope-supervisor');
+  const env = scrubInheritedClaudeMarkers({
+    CLAUDECODE: '1',
+    CLAUDE_CODE_SESSION_ID: 'abc',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    PATH: '/usr/bin',
+  });
+  assert.match(String(wirescopeEnvGate(env)), /tee-blind backend \(bedrock\)/);
+  // and CLODEX_WIRESCOPE is not CLAUDE-namespaced — the scrub never touches it.
+  const off = scrubInheritedClaudeMarkers({ CLODEX_WIRESCOPE: 'off' });
+  assert.match(String(wirescopeEnvGate(off)), /disabled by CLODEX_WIRESCOPE/);
 });
 
 test('scrub: agent-scoped ANTHROPIC_BASE_URL goes, a global override survives', () => {

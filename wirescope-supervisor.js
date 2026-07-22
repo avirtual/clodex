@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { isEnvTruthy, teeBlindBackend } = require('./claude-env');
 
 // Bind host for the managed uvicorn: loopback by default (the instance is
 // in-process — _base() and every probe stay 127.0.0.1). CLODEX_WIRESCOPE_HOST
@@ -30,6 +31,35 @@ function wirescopeBindHost(env = process.env) {
 }
 function uvicornArgs(port, env = process.env) {
   return ['-m', 'uvicorn', 'logproxy:app', '--host', wirescopeBindHost(env), '--port', String(port)];
+}
+
+// Node-level env kill-switch (T49). Returns the human-readable reason wirescope
+// is gated OFF, or null when no gate applies. Two gates, checked in order:
+// - CLODEX_WIRESCOPE set to `off` (the documented deploy value) or an
+//   isEnvTruthy-falsy value (""/0/false — truthiness single-sourced in
+//   claude-env.js) → explicit opt-out. Unset, or set truthy, → no gate.
+//   Deployed nodes get this from the systemd drop-in / pod env / docker -e
+//   that `deploy --no-wirescope` writes.
+// - a tee-blind backend in the NODE-LEVEL env (CLAUDE_CODE_USE_BEDROCK/VERTEX
+//   via teeBlindBackend): Bedrock/Vertex traffic ignores ANTHROPIC_BASE_URL,
+//   so the tee would never see a byte — wirescope is provably useless. Node
+//   env ONLY, deliberately not the per-session settings chain: a mixed node
+//   (some sessions Bedrock) with node-level env unset keeps wirescope.
+//   DELIBERATE: a truthy CLODEX_WIRESCOPE (e.g. =on) does NOT override this
+//   gate — it only means "no explicit opt-out"; on a Bedrock/Vertex node the
+//   proxy would still see zero traffic, so there is nothing to force on.
+//   (Entry points keep these flags through scrubInheritedClaudeMarkers —
+//   they are on its survivor list — or this gate could never fire.)
+// Pure (env injected) so the gate matrix is unit-testable; callers pass
+// process.env at call time so a headless node's drop-in env is honored live.
+function wirescopeEnvGate(env = process.env) {
+  if (Object.prototype.hasOwnProperty.call(env, 'CLODEX_WIRESCOPE')) {
+    const v = String(env.CLODEX_WIRESCOPE == null ? '' : env.CLODEX_WIRESCOPE).trim().toLowerCase();
+    if (v === 'off' || !isEnvTruthy(v)) return 'disabled by CLODEX_WIRESCOPE';
+  }
+  const blind = teeBlindBackend(env);
+  if (blind) return `tee-blind backend (${blind}) — proxy would see no traffic`;
+  return null;
 }
 
 function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDataPath, isPackaged }) {
@@ -196,7 +226,12 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     // Autostart is wanted only when sessions would actually route through the
     // managed instance: proxy enabled AND proxyUrl pointing at the managed local
     // port. A remote/custom proxyUrl means the user runs their own thing.
+    // The node-level env gate (CLODEX_WIRESCOPE=off / Bedrock-Vertex env) WINS
+    // over proxyEnabled=true — a deployed node's drop-in beats a remote viewer
+    // flipping the pref. process.env is read at CALL time (headless nodes get
+    // env from the systemd drop-in / pod env, live on restart).
     autoStartWanted() {
+      if (wirescopeEnvGate(process.env)) return false;
       const s = getUiSettings().get();
       if (!s.proxyEnabled) return false;
       try {
@@ -241,6 +276,10 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         stale,
         managed: alive,
         error: this.lastError,
+        // WHY autostart is gated off (T49): the node-level env kill-switch
+        // reason string, or null. Additive — the GUI toggle isn't a mystery
+        // on a CLODEX_WIRESCOPE=off / Bedrock node.
+        envGate: wirescopeEnvGate(process.env),
       };
     }
 
@@ -250,6 +289,14 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     // Returns { ok, state, error? }. Adopts an existing wirescope rather than
     // spawning a duplicate. Spawn errors surface asynchronously via status().
     async start() {
+      // Env-gated (T49): refuse with the reason, never a silent no-op — the
+      // same { ok:false, error } shape a missing source reports. Manual too:
+      // the drop-in/pod env is the node operator's word, it beats the pref.
+      const gate = wirescopeEnvGate(process.env);
+      if (gate) {
+        this.lastError = `wirescope ${gate}`;
+        return { ok: false, error: this.lastError };
+      }
       const s = getUiSettings().get();
       const port = s.wirescopePort || 7800;
       const base = this._base(port);
@@ -447,4 +494,4 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
   return { WirescopeSupervisor };
 }
 
-module.exports = { createWirescopeSupervisor, wirescopeBindHost, uvicornArgs };
+module.exports = { createWirescopeSupervisor, wirescopeBindHost, uvicornArgs, wirescopeEnvGate };

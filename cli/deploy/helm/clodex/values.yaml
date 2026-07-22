@@ -68,6 +68,16 @@ extraEnv: []
 #  - name: CLAUDE_CODE_USE_BEDROCK
 #    value: "1"
 
+# Wirescope (the traffic-optimization proxy the engine can self-host).
+# enabled: false → CLODEX_WIRESCOPE=off in the pod env, the engine-level
+# kill-switch: wirescope never starts, whatever the GUI pref says. Set it
+# false on Bedrock/Vertex nodes — their traffic ignores ANTHROPIC_BASE_URL,
+# so the proxy would see no bytes. (Belt and suspenders: a node with
+# CLAUDE_CODE_USE_BEDROCK/VERTEX in extraEnv auto-disables wirescope
+# anyway; this value makes the choice explicit and Bedrock-independent.)
+wirescope:
+  enabled: true
+
 resources:
   requests:
     cpu: 500m

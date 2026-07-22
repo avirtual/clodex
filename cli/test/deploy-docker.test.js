@@ -43,6 +43,15 @@ test('dockerRunArgs: exact argv — name/hostname/loopback publish/data volume',
   ]);
 });
 
+test('dockerRunArgs: --no-wirescope adds -e CLODEX_WIRESCOPE=off (T49); absent by default', () => {
+  const a = D.dockerRunArgs({ name: 'n', port: 7900, image: 'img:1', noWirescope: true });
+  const i = a.indexOf('-e');
+  assert.ok(i >= 0 && a[i + 1] === 'CLODEX_WIRESCOPE=off', '-e CLODEX_WIRESCOPE=off present');
+  assert.strictEqual(a[a.length - 1], 'img:1');   // still image-last
+  const b = D.dockerRunArgs({ name: 'n', port: 7900, image: 'img:1' });
+  assert.ok(!b.includes('-e') && !b.join(' ').includes('CLODEX_WIRESCOPE'), 'no flag → no env');
+});
+
 test('dockerRunArgs: env-file + repeated volumes ride in order, image last', () => {
   const a = D.dockerRunArgs({ name: 'n', port: 8100, image: 'img:1', envFile: '/secrets/x.env', volumes: ['/host:/c:ro', 'vol:/d'] });
   assert.strictEqual(a[a.length - 1], 'img:1');
@@ -112,6 +121,16 @@ test('deploy docker happy path: argv composed, verified, local url ctx saved', a
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts.mybox, { url: 'http://127.0.0.1:7900' });
   assert.strictEqual(saved.current, 'mybox');
+});
+
+test('deploy docker --no-wirescope: -e CLODEX_WIRESCOPE=off rides the run argv', async () => {
+  const rec = {};
+  const { code } = await cli(['deploy', 'docker', 'n', '--no-wirescope', '--no-ctx'], {
+    spawnFn: fakeDocker(rec),
+    pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
+  });
+  assert.strictEqual(code, 0);
+  assert.match(rec.args.join(' '), /-e CLODEX_WIRESCOPE=off/);
 });
 
 test('deploy docker --tag/--image/--port/--volume: argv + non-default url', async () => {
