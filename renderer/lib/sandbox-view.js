@@ -16,6 +16,13 @@
 // copy for the same daemon state.
 function detectNotice(detect) {
   const d = detect || {};
+  // An {ok:false,error} payload is a detection FAILURE (IPC/routing/manager
+  // error), NOT a verdict that docker is absent — don't lie that it "isn't
+  // installed" (which also wrongly gates create-box). A genuine probe returns
+  // {present,running}; only a real present:false is the not-installed case.
+  if (d.ok === false) {
+    return { kind: 'error', text: `Couldn’t check Docker${d.error ? ` — ${d.error}` : '.'}` };
+  }
   if (!d.present) {
     return { kind: 'error', text: 'Docker isn’t installed — sandboxes need Docker Desktop.' };
   }

@@ -1492,7 +1492,17 @@ function registerIpcHandlers(deps) {
     if (!s) return { ok: false, error: `no such sandbox: ${boxId}` };
     return fn(s);
   };
-  handle('sandbox:detect', (_e, boxId) => withBox(boxId, (s) => s.detect()));
+  // Docker detection is docker-WIDE, not box-scoped — it must NOT go through
+  // withBox. Routing it through a box meant that deleting the last sandbox left
+  // no box to resolve against, so detect returned {ok:false,'no such sandbox'},
+  // which the dialog mis-rendered as "Docker isn't installed" (the create-box
+  // gate then disabled itself). Route through the manager's cached probe, which
+  // answers regardless of how many boxes exist.
+  handle('sandbox:detect', () => {
+    const mgr = getSandboxManager();
+    if (!mgr) return { ok: false, error: 'sandbox manager unavailable' };
+    return mgr.detect();
+  });
   handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
   handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));
   handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {})));

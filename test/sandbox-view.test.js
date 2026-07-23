@@ -30,6 +30,17 @@ test('detectNotice: missing/undefined input reads as not installed', () => {
   assert.strictEqual(detectNotice({}).kind, 'error');
 });
 
+test('detectNotice: {ok:false} detection failure is NOT reported as "not installed"', () => {
+  // Regression: deleting the last sandbox routed detect through a box that no
+  // longer existed → {ok:false,'no such sandbox'} → the old code lied "Docker
+  // isn't installed" and gated create-box. A detection FAILURE must read as a
+  // failed check, never as an absence verdict.
+  const n = detectNotice({ ok: false, error: 'no such sandbox: ' });
+  assert.strictEqual(n.kind, 'error');
+  assert.doesNotMatch(n.text, /install/i);
+  assert.match(n.text, /check Docker/i);
+});
+
 // ── sandboxActionGate: the docker action gate (Task 8) ──────────────────────
 // Stop must NEVER be gated (cleanup stays reachable), so 'stop' is absent from
 // the disabled set in every state; Start/Rebuild/box-row-Start/box-create are
