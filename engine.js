@@ -105,6 +105,11 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // as a first-class warning — a failed merge is the usual root cause of
   // "claude/codex not on PATH" for a Finder-launched packaged app.
   const pathMergeFailed = !!seams.pathMergeFailed;
+  // Sandbox boxes are a desktop-only feature (docker-compose containers the GUI
+  // spawns). A headless host (docker image, ssh/ssm node) opts out so the New
+  // Session "Run in" selector shows no docker-in-docker placement — enableSandbox
+  // defaults ON so Electron (which omits the seam) is unchanged.
+  const enableSandbox = seams.enableSandbox !== false;
 
   // Clodex-owned runtime dir (~/.clodex): registry, sockets, hooks, spilled
   // messages, memory. A home-derived constant, identical across hosts, so the
@@ -1523,7 +1528,7 @@ const {
 // uiSettings peers path and calls syncPeerManager to reconcile.
 // ---------------------------------------------------------------------------
 const { createSandboxManager } = require('./sandbox');
-const sandboxManager = createSandboxManager({
+const sandboxManager = enableSandbox ? createSandboxManager({
   getUserDataPath: () => userDataPath,
   getUiSettings: () => uiSettings,
   syncPeerManager,
@@ -1531,7 +1536,7 @@ const sandboxManager = createSandboxManager({
   isPackaged,
   registryDir: REGISTRY_DIR,
   log,
-});
+}) : null;
 
 // External-tool detection (Task 12): a TTL-cached probe of the CLIs the app
 // shells out to (claude/codex/git/gh/docker/ssh), so the New Session dialog can
@@ -1612,7 +1617,9 @@ const toolCache = createToolCache({ whichBin });
   // pull / build can take a while and the app must not block on it; failures
   // just leave the sandbox stopped (the dialog surfaces the error on demand).
   try {
-    for (const box of sandboxManager.list()) {
+    for (const box of (sandboxManager ? sandboxManager.list() : [])) {
+      // .get() is reachable only when sandboxManager is non-null (the loop
+      // iterates [] when it's null in headless) — keep this deref INSIDE the loop.
       const inst = sandboxManager.get(box.id);
       try { if (inst && inst.getConfig().autoStart) inst.up().catch(() => {}); } catch { /* skip this box */ }
     }
@@ -1718,7 +1725,7 @@ const toolCache = createToolCache({ whichBin });
     // getSandbox(boxId) resolves a managed box instance (default: the shared
     // 'sandbox' box), or null for an unknown id. The manager itself is exposed for
     // list()/iteration (autostart, and the P2 box-list UI).
-    getSandbox: (boxId) => sandboxManager.get(boxId),
+    getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     // ── ipc-handlers consumers (helper surface) ──
     // Teams front door: the manifest writers + resolvers the team:* IPC handlers

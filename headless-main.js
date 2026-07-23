@@ -155,6 +155,8 @@ const engine = createEngine({
     notifyOS: (opts) => log.info('notify', `${(opts && opts.title) || ''}${opts && opts.body ? ` — ${opts.body}` : ''}`),
     setAppQuitting: (v) => { appQuitting = v; },
     pathMergeFailed,   // login-shell PATH merge outcome → diagnostics banner (Task 12)
+    // No docker-in-docker: a headless node offers no sandbox-box placement.
+    enableSandbox: false,
     // App-menu / tray refresh hooks default to no-ops (there is no menu here).
     // restartHost: shut down cleanly and exit 64 so a supervisor relaunches.
     restartHost: () => {
