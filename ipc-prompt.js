@@ -96,10 +96,14 @@ A warm-up no-op tool call first (e.g. Bash(true)) does nothing but bill a full r
 // INDEPENDENT of intent-catalog's GATEABLE_INTENTS order (which owns checklist row
 // + allowlist serialization) — two orderings, two owners; see intent-catalog.js.
 // Gating semantics (which `type` a seat may emit) come from that leaf's
-// intentEnabled. `name` is NOT gateable (always included); `exec` and `resend`
-// have NO grammar line at all (resend's instruction rides the dm park-bounce
-// notice). A future grammar line added to IPC_PROMPT but forgotten here is caught
-// by the buildIpcPrompt(<all gateable>) === IPC_PROMPT byte-pin.
+// intentEnabled. `name` is NOT gateable (always included); `resend` has NO
+// grammar line at all (its instruction rides the dm park-bounce notice); `exec`
+// has no grammar line either but a seat holding grants gets a synthesized EXEC
+// section (execSection, listing its ids), gated on the execCommands arg. `reboot`
+// is PRIVILEGED — its line lives here but renders only for a seat explicitly
+// granted it, so both byte-pins (which pass no privileged grant) stay clean. A
+// future NON-privileged grammar line added to IPC_PROMPT but forgotten here is
+// caught by the buildIpcPrompt(<all non-privileged gateable>) === IPC_PROMPT pin.
 const GRAMMAR_LINES = [
   { type: 'dm', text: `  [agent:dm TARGET] message body
   [agent:end]                      Direct message to TARGET — the bare [agent:end] line closes the body and is part of the dm shape, always write it. TARGET may be name@peer for an agent on a peered Clodex (peers appear in [agent:who] as name@peer).
@@ -118,9 +122,30 @@ const GRAMMAR_LINES = [
   [agent:spawn name:X template:Y]  Same, but from template Y — a saved template NAME (case-insensitive) or a JSON template FILE path (Y containing / or starting with ~ or . is a path, resolved against your cwd). The template supplies type/config incl. model-via-args; cwd optional if the template has one, and cwd: still overrides it.` },
   { type: 'file', text: `  [agent:file view PATH]           Show a file on your operator's screen in Clodex's viewer (contents + git diff). Relative paths resolve against your cwd.
   [agent:file open PATH]           Open a file with the operator's default app for that type (reports, docs, images). Launchable/executable files are refused — use view for those. Use these when your operator asks to see or open a file; errors come back as an [agent:file] line, success is silent.` },
+  // reboot is PRIVILEGED (intent-catalog PRIVILEGED_INTENTS) — off unless the
+  // operator explicitly granted it, so intentEnabled('reboot', …) is false for
+  // BOTH byte-pinned calls (absent list and the all-NON-privileged list) and this
+  // line renders ONLY for a seat whose persisted `intents` array lists 'reboot'.
+  // Last in prompt order: the rarest, most privileged verb.
+  { type: 'reboot', text: `  [agent:reboot] [reason]          Relaunch the whole Clodex app (privileged, operator-granted). Bodyless or with a one-line free-text reason (logged only). Sessions are killed and resume on relaunch (--resume). Rate-limited: a second reboot inside a few minutes is refused. Your own process dies with the app, so a "relaunch complete" notice reaches you only after it comes back.` },
 ];
 
 const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.`;
+
+// EXEC section — synthesized per-seat from the granted command-id allowlist, NOT
+// a static piece of IPC_PROMPT. exec has no grammar line and no `intentEnabled`
+// gate type (its authorization IS the per-seat execCommands allowlist), so this
+// block is gated purely on that array being non-empty: a seat with no grants adds
+// zero bytes (both byte-pins pass no exec arg), a seat WITH grants documents the
+// invocation form and lists its own ids (a forked prefix, accepted like any
+// non-default seat). IDs only — the registry defs carry no description.
+function execSection(execCommands) {
+  if (!Array.isArray(execCommands) || execCommands.length === 0) return '';
+  const ids = execCommands.map((c) => `  [agent:exec ${String(c)}]`).join('\n');
+  return `EXEC COMMANDS:
+Your operator granted this seat a set of named shell commands to run on demand via [agent:exec <name>] — each is a pre-registered command (you supply only the name, never the command line). Output returns in your input as an [agent:exec] line. Yours:
+${ids}`;
+}
 
 // Gated by the `memory` intent (its grammar lines are too, so both vanish
 // together for a seat that can't manage memory).
@@ -137,15 +162,21 @@ Your Bash tool starts in the session's working directory (the project root) and 
 
 // Assemble the append blob for a seat whose persisted intent allowlist is
 // `intentsList` (array | null; null/absent = all enabled — the interpretation
-// lives in intentEnabled). Grammar lines for disabled intents are dropped, in
-// prompt order; the MEMORY section is gated by `memory`. name/exec/resend carry
-// no grammar line. buildIpcPrompt(null) reproduces IPC_PROMPT byte-for-byte.
-function buildIpcPrompt(intentsList) {
+// lives in intentEnabled) and whose granted exec command-ids are `execCommands`
+// (array | absent). Grammar lines for disabled intents are dropped, in prompt
+// order; the MEMORY section is gated by `memory`; the reboot line renders only
+// for a seat granted the privileged `reboot` intent; the EXEC section renders
+// only when execCommands is non-empty. name/resend carry no grammar line.
+// buildIpcPrompt(null) — and buildIpcPrompt over the all-NON-privileged list with
+// no exec arg — reproduce IPC_PROMPT byte-for-byte (the two byte-pins).
+function buildIpcPrompt(intentsList, execCommands) {
   const grammar = GRAMMAR_LINES
     .filter((g) => intentEnabled(g.type, intentsList))
     .map((g) => g.text)
     .join('\n');
   const blocks = [PREAMBLE, grammar, REPLIES_LINE];
+  const exec = execSection(execCommands);
+  if (exec) blocks.push(exec);
   if (intentEnabled('memory', intentsList)) blocks.push(MEMORY_SECTION);
   blocks.push(TRAILER);
   return blocks.join('\n\n');

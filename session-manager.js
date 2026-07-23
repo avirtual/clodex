@@ -345,6 +345,17 @@ function createSessionManager(deps) {
   // the boot render quiesces (the TUI at its prompt, safe to inject). Injectable
   // for tests; 400ms in production.
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
+  // Settle margin before the boot-ready rising edge fires its pending drain (T54).
+  // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
+  // bracketed-paste during terminal setup — it can PRECEDE the readline loop
+  // actually accepting a submitted Enter. Draining in that SAME synchronous tick
+  // writes a pointer into a not-yet-ready composer that the boot re-render then
+  // wipes. THIS DEFER IS THE ONLY MARGIN: by the time the deferred drain runs,
+  // _bootReadySeen is already latched (set at the edge), so the InjectQueue's own
+  // ready-gate is no-op-true and adds zero wait — it can't cover this race, only
+  // the wall-clock defer can. Long enough to let the readline loop come up.
+  // Injectable for tests (driven at 0); ~750ms in production.
+  const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   // Absolute-wait cap on the settle re-arm (inject-queue maxWaitMs precedent): a
   // codex TUI with a sub-settle idle repaint (spinner / status clock) would push
   // the deadline forever and starve the roster SILENTLY — worse than the original
@@ -944,7 +955,7 @@ function createSessionManager(deps) {
           // ride. Used by the lean-reviewer path (a seat whose replacement system
           // prompt already teaches the one line it needs); every other seat gets
           // the full IPC protocol as before.
-          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents);
+          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, execCommands);
           const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
             appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
           });
@@ -1099,7 +1110,7 @@ function createSessionManager(deps) {
           // appends + legacy inline body into it alongside the IPC protocol.
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents), {
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, execCommands), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           // Build top-level flags first, then the optional `resume <uuid>`
@@ -1466,10 +1477,22 @@ function createSessionManager(deps) {
             // dedupes, the JsonlWatcher only emits idle after a real turn flush —
             // so a team-review scope parked ACTIVE would sit forever waiting for
             // an idle that never comes. This rising edge fires exactly once (the
-            // latch guards it) and drives the same guarded drain the idle edge
-            // would: claude-only, draft-gated, active-pending peek, exactly-once
-            // claim, parkable inject through the ready-gated queue.
-            this._drainPendingAtIdle(session);
+            // latch guards it). DEFERRED, not same-tick (T54 fix): the first 2004h
+            // announces bracketed-paste during terminal setup and can precede the
+            // readline loop accepting input, so a same-tick drain writes into a
+            // composer the boot re-render wipes AND destructively claims the file
+            // first → silent loss. Wait BOOT_DRAIN_SETTLE_MS (which is the SOLE
+            // margin here — _bootReadySeen is latched on THIS line, so the queue's
+            // ready-gate is already true by the time the deferred drain runs and
+            // adds no wait of its own), then drain via the fire-time-claim path
+            // (_drainPendingAtBootReady): the destructive pending claim happens
+            // past the queue's gates, so a delivery that still can't land stays
+            // parked (its ✉ survives).
+            clearTimeout(session._bootDrainTimer);
+            session._bootDrainTimer = setTimeout(() => {
+              session._bootDrainTimer = null;
+              this._drainPendingAtBootReady(session);
+            }, BOOT_DRAIN_SETTLE_MS);
           }
         }
 
@@ -2108,6 +2131,7 @@ function createSessionManager(deps) {
       clearTimeout(s._compactValveTimer);
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
+      clearTimeout(s._bootDrainTimer);
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       // Drop any parked deliveries ONLY for a session going away for good — i.e. a
       // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
@@ -2529,6 +2553,39 @@ function createSessionManager(deps) {
       // That's the same shape a single hook drain would have produced, so it's a
       // consistency win, not a regression. drainPending returns park order.
       this._injectText(session, texts.join('\n\n'), { parkable: true });
+    }
+
+    // Boot-ready-edge drain (T54). The idle-edge drain above claims the store
+    // EAGERLY (drainPending at schedule time) then fire-and-forgets the inject —
+    // fine for a genuinely-parked LIVE seat, but a silent-loss trap on a FRESH boot
+    // edge, where the composer may not yet accept input: the file is gone from disk
+    // (no ✉) yet the write is wiped by the boot re-render. So the boot path claims
+    // LATE instead: peek (non-destructive) to decide whether to bother, then enqueue
+    // a fire-time PRODUCER that does the destructive drainPending claim only once the
+    // InjectQueue is past its ready + quiet gates and about to write. If the seat
+    // died or a draft opened in the meantime the producer claims nothing and returns
+    // null — the delivery stays parked, recoverable, its ✉ intact (never worse than
+    // pre-T54's recoverable click). Exactly-once holds: the claim is the same atomic
+    // dir-rename the hook + idle drains use, so whoever fires first owns the messages.
+    _drainPendingAtBootReady(session) {
+      if (!session || session.agentType !== 'claude' || session._dead) return;
+      try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
+      if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
+      // Fire-time producer: the destructive claim happens HERE, inside the queue's
+      // critical section, past the ready + quiet gates. A draft opening or the seat
+      // dying between now and then re-checks fail-closed → claim nothing, stay parked.
+      const produce = () => {
+        if (session._dead) return null;
+        try { if (isDraftOpen(session)) return null; } catch { return null; }
+        let texts = [];
+        try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`); } catch { return null; }
+        if (!texts.length) return null;                 // hook/idle already claimed it
+        return texts.join('\n\n');
+      };
+      // bypassHold: the boot edge has no compact/mid-turn hold to respect, and the
+      // producer itself is the draft/dead guard — route straight to the byte-atomic
+      // queue so the fire-time claim lands in the queue's critical section.
+      this._injectQueueFor(session).enqueue('', { produce });
     }
 
     // --- JSONL text scanning (agent mode) ---

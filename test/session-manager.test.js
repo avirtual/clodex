@@ -4608,12 +4608,15 @@ function mkOnDataProbe() {
     INJECT_BOOT_MAXWAIT: 20_000,
     INJECT_QUIET_MS: 0, INJECT_QUIET_MAXWAIT: 0,
     LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
-    // T54: the boot-ready rising edge now calls _drainPendingAtIdle from onData,
-    // so this harness needs the drain's deps + a REAL pending store (production
-    // always has them). With no pending seeded the drain is a harmless no-op
+    // T54: the boot-ready rising edge now calls _drainPendingAtBootReady from
+    // onData (after a settle margin), so this harness needs the drain's deps + a
+    // REAL pending store (production always has them). bootDrainSettleMs:0 fires
+    // the deferred drain on the next tick so the tests don't wait the ~750ms
+    // production margin. With no pending seeded the drain is a harmless no-op
     // (hasActivePending → false), so it doesn't perturb the T35 readiness-gate
-    // assertions; the T54 edge test below seeds an active park to exercise it.
+    // assertions; the T54 edge tests below seed a park to exercise it.
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
+    bootDrainSettleMs: 0,
   });
   m._sendToSession = () => {};
   m._scanPtyOutput = () => {};        // bash onData scans pty output — silence it
@@ -4662,8 +4665,9 @@ test('T54 (production onData): the boot-ready rising edge DRAINS an active-parke
   // The load-bearing edge, end-to-end through the REAL onData handler: a
   // boot-silent claude seat never reaches an idle EDGE, so the ONLY thing that
   // delivers an active-parked scope is the first mode-2004h rising edge calling
-  // _drainPendingAtIdle. Seat the scope active, fire the real 2004h chunk, and
-  // assert it drains to the PTY — WITHOUT any idle/turn event.
+  // _drainPendingAtBootReady (deferred a settle margin, 0 in this harness). Seat
+  // the scope active, fire the real 2004h chunk, and assert it drains to the PTY
+  // — WITHOUT any idle/turn event.
   const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
   await bashCreate(m, 'boot-d', null);
   const s = getSession('boot-d');
@@ -4696,4 +4700,66 @@ test('T54 (production onData): the rising edge leaves a PASSIVE-only store parke
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(writes, [], 'a passive-only store is not drained by the boot-ready edge');
   assert.ok(hasPending(PENDING_DIR, 'boot-e'), 'the passive delta stays parked for an organic carrier');
+});
+
+test('T54 (fix) INVARIANT: a boot-edge drain that cannot land leaves the scope RECOVERABLE, never both-gone', async () => {
+  // The regression this fix exists for: pre-fix the boot edge DESTRUCTIVELY claimed
+  // the store (drainPending) before an unconfirmed fire-and-forget inject, so a
+  // delivery that couldn't land was claimed off disk AND not written = silent loss
+  // (no ✉, orphan file). Here an operator draft is open at the boot edge, so the
+  // scope must NOT be injected (would splice the draft) AND must stay on disk
+  // (recoverable — the ✉ survives). NEVER both-gone. This is the invariant that
+  // was violated; the recoverable-not-destructive net is what restores it.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-f', null);
+  const s = getSession('boot-f');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'boot-f', '[agent:from lead] review the fix', '1');
+  // Operator is composing a draft (lastUserInputTs > lastUserSubmitTs) — isDraftOpen true.
+  s.lastUserInputTs = Date.now();
+  s.lastUserSubmitTs = 0;
+  fireData('\x1b[?2004h');                       // boot-ready edge, the only trigger
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(writes, [], 'draft open → not injected (no splice)');
+  assert.ok(hasPending(PENDING_DIR, 'boot-f'), 'INVARIANT: scope stays recoverable on disk (✉ survives) — never claimed-and-lost');
+});
+
+test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fires, still leaves the scope recoverable', async () => {
+  // boot-f above opens the draft at DRAIN time, so _drainPendingAtBootReady's
+  // pre-enqueue gate short-circuits — it never reaches the producer. This case
+  // drives the HEART of the fix: the FIRE-TIME producer re-check inside the queue's
+  // critical section. The draft is CLOSED when the drain enqueues (so the producer
+  // IS enqueued), then opens while the queue holds on its boot-readiness gate, then
+  // the seat signals ready → the producer fires and re-checks: draft now open →
+  // it does its destructive drainPending claim on NOTHING and returns null. The
+  // scope is never claimed off disk. Same invariant, the actual claim path.
+  //
+  // The lever is the boot-readiness gate: hold _bootReadySeen false to keep the
+  // producer parked mid-queue (as a still-booting readline loop would), open the
+  // draft in that window, then flip it true to release the producer. This is the
+  // only deterministic way to interleave a draft between enqueue and fire.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'boot-g', null);
+  const s = getSession('boot-g');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'boot-g', '[agent:from lead] review the fix', '1');
+  // Draft CLOSED at the boot edge → the pre-enqueue gate passes and the producer enqueues.
+  s.lastUserInputTs = 0; s.lastUserSubmitTs = 0;
+  fireData('\x1b[?2004h');                     // latches _bootReadySeen, schedules the deferred drain
+  // Immediately re-hold the queue's ready-gate: the deferred drain (settle 0) will
+  // enqueue the producer, which then parks on this gate instead of firing.
+  s._bootReadySeen = false;
+  await new Promise((r) => setTimeout(r, 20));  // let the drain enqueue the (now-held) producer
+  assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'producer held at the ready-gate — nothing claimed yet');
+  assert.deepStrictEqual(writes, [], 'and nothing written yet');
+  // Operator opens a draft in the enqueue→fire window, THEN the loop signals ready.
+  s.lastUserInputTs = Date.now();               // isDraftOpen → true at fire time
+  s._bootReadySeen = true;                       // release the producer (fires within a ready-poll)
+  await new Promise((r) => setTimeout(r, 400));  // > readyPollMs (250) so the producer definitely fires
+  assert.deepStrictEqual(writes, [], 'fire-time re-check saw the draft → claimed nothing, wrote nothing');
+  assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
 });

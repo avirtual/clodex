@@ -4,9 +4,20 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { IPC_PROMPT, buildIpcPrompt } = require('../ipc-prompt');
-const { GATEABLE_INTENTS } = require('../intent-catalog');
+const { GATEABLE_INTENTS, PRIVILEGED_INTENTS } = require('../intent-catalog');
 
-const ALL_GATEABLE = GATEABLE_INTENTS.map((i) => i.type);
+// PRIVILEGED intents (reboot) are EXCLUDED here on purpose: under the `null`
+// allowlist intentEnabled('reboot', null) is false, so IPC_PROMPT is
+// privileged-free by construction (its reboot line renders for NO default seat).
+// The "no fork-drift" pin therefore compares against the null-EQUIVALENT explicit
+// list — every NON-privileged gateable type — not a list that would (wrongly)
+// enable reboot and render a line the literal doesn't have. Do NOT "helpfully"
+// re-add reboot: it would render the privileged grammar line and break the pin.
+// (A forgotten reboot grammar line is instead guarded by the dedicated
+// explicit-['reboot'] render case below, since this pin no longer covers it.)
+const ALL_GATEABLE = GATEABLE_INTENTS
+  .filter((i) => !PRIVILEGED_INTENTS.has(i.type))
+  .map((i) => i.type);
 
 // ── Byte-pins ────────────────────────────────────────────────────────────────
 // IPC_PROMPT is the hand-maintained canonical literal (an all-enabled seat's
@@ -95,4 +106,36 @@ test('a narrow seat (dm+who+name only) documents exactly those intents', () => {
     assert.ok(!p.includes(line), `${line} should be gated out`);
   }
   assert.ok(!/\nMEMORY:\n/.test(p), 'MEMORY section gated with memory');
+});
+
+// ── reboot: privileged grammar line renders only for an explicit grant ────────
+// Since reboot is excluded from ALL_GATEABLE (above), the fork-drift byte-pin no
+// longer covers a forgotten reboot grammar line — THIS case is what guards it.
+
+test('reboot line renders ONLY for a seat whose intents explicitly grant reboot', () => {
+  const line = '[agent:reboot] [reason]';
+  // Granted (explicit list including reboot) → present.
+  const granted = buildIpcPrompt(['reboot', ...ALL_GATEABLE]);
+  assert.ok(granted.includes(line), 'a reboot-granted seat sees the reboot line');
+  // The two byte-pinned calls (absent list = all non-privileged) → absent, which
+  // is WHY both pins still equal IPC_PROMPT.
+  assert.ok(!buildIpcPrompt(null).includes(line), 'default seat: no reboot line (null pin holds)');
+  assert.ok(!buildIpcPrompt(ALL_GATEABLE).includes(line), 'all-non-privileged seat: no reboot line (fork-drift pin holds)');
+});
+
+// ── exec: a synthesized section keyed on the granted command-id allowlist ─────
+
+test('exec section renders the granted command ids, and only when granted', () => {
+  const p = buildIpcPrompt(null, ['clodex-run-tests', 'clodex-team']);
+  assert.ok(/\nEXEC COMMANDS:\n/.test(p), 'EXEC COMMANDS section present when granted');
+  assert.ok(p.includes('[agent:exec clodex-run-tests]'), 'first granted id listed');
+  assert.ok(p.includes('[agent:exec clodex-team]'), 'second granted id listed');
+});
+
+test('exec section adds ZERO bytes for an empty/absent grant (both byte-pins keep this true)', () => {
+  // Empty array and absent arg both reproduce IPC_PROMPT — the exec block is
+  // additive-only, so the two byte-pins above already ride on this.
+  assert.strictEqual(buildIpcPrompt(null, []), IPC_PROMPT);
+  assert.strictEqual(buildIpcPrompt(null), IPC_PROMPT);
+  assert.ok(!buildIpcPrompt(null, []).includes('EXEC COMMANDS:'), 'no exec section for []');
 });

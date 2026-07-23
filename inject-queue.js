@@ -143,15 +143,25 @@ class InjectQueue {
   // how a delivery gets park-diverted when the operator opened a draft DURING
   // the quiet-gate wait: the divert re-checks draft state at fire time, not at
   // enqueue time. Absent/throwing divert ⇒ the item writes as normal.
+  //
+  // opts.produce(): optional fire-time text PRODUCER, evaluated AFTER the ready +
+  // quiet gates pass and a write is imminent (T54). When present the enqueued
+  // `text` is ignored and the producer's return value is what's written. It
+  // returning null/'' means "nothing to deliver" — the item completes with no
+  // write. This is how a deferred boot-edge drain does its DESTRUCTIVE pending-store
+  // claim at the last moment (past the gates) rather than at schedule time: a
+  // delivery that can't land yet is never claimed off disk, so its ✉ survives. A
+  // throwing producer is treated as null (never write a half-formed body).
   enqueue(text, opts = {}) {
     this._length++;
     const divert = typeof opts.divert === 'function' ? opts.divert : null;
-    const run = () => this._drain(text, divert).finally(() => { this._length--; });
+    const produce = typeof opts.produce === 'function' ? opts.produce : null;
+    const run = () => this._drain(text, divert, produce).finally(() => { this._length--; });
     this._chain = this._chain.then(run, run);   // run even if a prior item rejected
     return this._chain;
   }
 
-  async _drain(text, divert = null) {
+  async _drain(text, divert = null, produce = null) {
     // Boot-readiness gate (T35): a freshly spawned CLI seat's input loop may not
     // be up when the first item drains — bytes written pre-raw-mode are buffered
     // and read as ONE paste-like chunk, so the trailing Enter lands as content
@@ -191,6 +201,18 @@ class InjectQueue {
       await this._sleep(Math.min(this._quietMs, 500));
     }
     if (this._isDead()) return;
+    // Fire-time producer (T54): now past the ready + quiet gates and a write is
+    // imminent, resolve the actual text. A boot-edge drain uses this to do its
+    // DESTRUCTIVE pending-store claim HERE — not at schedule time — so a delivery
+    // that can't land yet was never claimed off disk (its ✉ survives). A producer
+    // returning null/'' (nothing to deliver, or a claim that lost the race) ends
+    // the item with no write. A throw is treated as null (never write a partial).
+    if (produce) {
+      let produced = null;
+      try { produced = produce(); } catch { produced = null; }
+      if (produced == null || produced === '') return;
+      text = produced;
+    }
     // Park-at-fire-time divert: a draft may have OPENED during the quiet-gate
     // wait above (the one-shot enqueue-time park decision couldn't see it).
     // Re-check now, immediately before the write. If the caller claims the item

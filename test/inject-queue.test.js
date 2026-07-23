@@ -230,6 +230,73 @@ test('InjectQueue: a throwing divert falls through to a normal write (never drop
   assert.deepStrictEqual(writes, ['\x15', 'safe', '\r']);
 });
 
+// --- T54: the fire-time text PRODUCER (deferred-claim boot drain) --------------
+
+test('InjectQueue: a producer resolves the text at fire time (enqueued text ignored)', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('placeholder', { produce: () => 'fire-time body' });
+  assert.deepStrictEqual(writes, ['\x15', 'fire-time body', '\r'], 'the producer value is written, not the placeholder');
+});
+
+test('InjectQueue: a producer returning null writes NOTHING (deferred claim lost the race)', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('', { produce: () => null });   // e.g. hasActivePending false / draft opened
+  assert.deepStrictEqual(writes, [], 'null producer → no write (nothing claimed, ✉ survives)');
+});
+
+test('InjectQueue: a producer runs AFTER the ready gate (a not-ready seat defers the claim)', async () => {
+  // The whole point of the deferred claim: the destructive produce() must not run
+  // while the seat is still booting, so a delivery is never claimed off disk before
+  // the composer can accept it. Hold ready false, assert produce hasn't run; flip it.
+  const writes = [];
+  let ready = false;
+  let produceCalls = 0;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    ready: () => ready,
+    readyMaxWaitMs: 10_000, readyPollMs: 5,
+  });
+  const p = q.enqueue('', { produce: () => { produceCalls++; return 'late body'; } });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(produceCalls, 0, 'producer has NOT run while the seat is not ready');
+  assert.deepStrictEqual(writes, [], 'nothing written yet');
+  ready = true;
+  await p;
+  assert.strictEqual(produceCalls, 1, 'producer ran once, after ready');
+  assert.deepStrictEqual(writes, ['\x15', 'late body', '\r']);
+});
+
+test('InjectQueue: a throwing producer writes nothing (never a partial body)', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('', { produce: () => { throw new Error('claim blew up'); } });
+  assert.deepStrictEqual(writes, [], 'a throwing producer is treated as null — no write');
+});
+
 test('InjectQueue: divert only claims its own item, not later ones', async () => {
   const writes = [];
   let open = true;                                // draft open for the first item only
