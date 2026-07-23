@@ -1,6 +1,6 @@
 {
   "name": "clodex",
-  "version": "3.5.4",
+  "version": "3.5.5",
   "description": "Visual multi-agent PTY manager for Claude and Codex CLIs",
   "author": "avirtual <bogdan.ionescu@gmail.com>",
   "license": "Apache-2.0",
