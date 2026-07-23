@@ -23,3 +23,6 @@ no ingress exists):
 
 Then: clodexctl --ctx {{ .Release.Name }} spawn worker --type claude
       clodexctl --ctx {{ .Release.Name }} attach worker
+{{- if .Values.web.enabled }}
+      clodexctl --ctx {{ .Release.Name }} web        # browser GUI (port {{ .Values.web.port }})
+{{- end }}

@@ -12,3 +12,8 @@ spec:
     - name: wire
       port: {{ .Values.wirePort }}
       targetPort: wire
+    {{- if .Values.web.enabled }}
+    - name: web
+      port: {{ .Values.web.port }}
+      targetPort: web
+    {{- end }}

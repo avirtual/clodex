@@ -183,10 +183,13 @@ test('deploy helm happy path: preflight→mint→helm→ctx (kubectl kind + toke
   // verify used the FRESH kubectl entry + the minted token.
   assert.deepStrictEqual(verifiedWith.entry.kubectl, { target: 'svc/mynode', namespace: 'clodex', context: 'docker-desktop' });
   assert.strictEqual(verifiedWith.token, wireTok);
-  // saved ctx: kubectl kind, svc target, token; default port → no remotePort.
+  // saved ctx: kubectl kind, svc target, token; default port → no remotePort;
+  // webPort = the image's fixed 8080 (the Service now publishes it, so
+  // `clodexctl web` resolves to 8080 instead of the unexposed 7901 fallback).
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts.mynode, {
     kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'docker-desktop' },
+    webPort: 8080,
     token: wireTok,
   });
   assert.strictEqual(saved.current, 'mynode');
@@ -216,6 +219,22 @@ test('deploy helm: namespace created when absent; --namespace/--kube-context/--p
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts.n.kubectl, { target: 'svc/n', namespace: 'agents', context: 'prod' });
   assert.strictEqual(saved.contexts.n.remotePort, 8100);
+});
+
+test('deploy helm: --set web.enabled=false → no webPort saved (chart publishes no web port)', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code } = await cli(['deploy', 'helm', 'n', '--set', 'web.enabled=false'], {
+    execFn: fakeK8s(rec),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  // web off → the Service has no web port, so `clodexctl web` must NOT resolve
+  // a webPort (it would fall to 7901, which isn't exposed either — no GUI to reach).
+  assert.strictEqual(saved.contexts.n.webPort, undefined);
+  assert.strictEqual(saved.contexts.n.token, rec.setFiles['secrets.wireToken']);
 });
 
 test('deploy helm: existing release REUSES its Secret token (no rotation under a live ctx)', async () => {

@@ -1345,6 +1345,16 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       throw new CliError(EXIT.USAGE, `--set ${s.split('=')[0]} is not allowed — secret values must never ride argv; the wire token is minted/reused automatically and claude auth rides --claude-token-file`);
     }
   }
+  // Does the chart publish its web GUI? The chart default is web.enabled=true;
+  // a `--set web.enabled=false` (last-wins) turns it off. Mirrors the ctx save
+  // below — we record a webPort only when there's a web port to reach. (A
+  // web.enabled override via --values file is not tracked here; --set is the
+  // documented way and the only one the CLI can see without rendering.)
+  let webEnabled = true;
+  for (const s of sets) {
+    const m = /^web\.enabled=(.*)$/.exec(s);
+    if (m) webEnabled = !/^(false|0|no)$/i.test(m[1].trim());
+  }
   const valuesFiles = Array.isArray(flags.values) ? flags.values.map(String) : (flags.values ? [String(flags.values)] : []);
   // Claude auth (optional): read + validate the token NOW (fail fast before any
   // cluster call). The EXTRACTED value is re-staged into its own 0600 tempfile
@@ -1503,6 +1513,12 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const entry = {
     kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
     ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
+    // webPort: the image's FIXED web GUI port (CONTAINER_WEB_PORT=8080), the
+    // same one the chart's Service now publishes as its `web` port. Without
+    // this `clodexctl web <ctx>` fell back to wire+1 (7901), which the Service
+    // never exposes → "does not have a service port 7901". Skipped when the
+    // chart's web is disabled (--set web.enabled=false): no port to reach.
+    ...(webEnabled ? { webPort: CONTAINER_WEB_PORT } : {}),
     token,
   };
   let ctxSaved = false;   // the verify-failure hint must not claim a save that was skipped

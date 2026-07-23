@@ -29,6 +29,10 @@ spec:
           ports:
             - name: wire
               containerPort: {{ .Values.wirePort }}
+            {{- if .Values.web.enabled }}
+            - name: web
+              containerPort: {{ .Values.web.port }}
+            {{- end }}
           env:
             - name: CLODEX_REMOTE_TOKEN
               valueFrom:

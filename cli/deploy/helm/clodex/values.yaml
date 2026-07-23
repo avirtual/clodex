@@ -15,6 +15,18 @@ image:
 # service only; reach it with `kubectl port-forward`, never expose it.
 wirePort: 7900
 
+# The browser GUI port. The headless image runs a web host on a FIXED port
+# (Dockerfile CLODEX_WEB_PORT = 8080); the chart publishes it on the same
+# ClusterIP service as a second named port so `clodexctl web <ctx>` can
+# port-forward to it (attach uses wirePort; web needs its own). Set
+# enabled: false for a wire-only node — attach/peering still work, there is
+# just no browser GUI to reach. `port` only moves the Service/containerPort:
+# the image still listens on its baked 8080, so leave it unless you rebuilt
+# the image with a different CLODEX_WEB_PORT.
+web:
+  enabled: true
+  port: 8080
+
 # Persistence — the reason this is a StatefulSet, and the key difference
 # from the Fargate shape: /data (CLODEX_DATA_DIR) and the clodex user's
 # home (~/.clodex sockets/registry, ~/.claude CLI state) live on a PVC, so
@@ -23,7 +35,13 @@ wirePort: 7900
 persistence:
   enabled: true
   size: 10Gi
-  storageClassName: ""  # "" = cluster default (docker-desktop: hostpath)
+  # "" = omit the field → bind to the cluster's DEFAULT StorageClass.
+  # docker-desktop has one (hostpath); many EKS clusters do NOT — the PVC then
+  # hangs Pending forever ("no storage class is set"). On EKS either name your
+  # class here (e.g. gp2/gp3, RWO — matches this chart's ReadWriteOnce) or mark
+  # one default; the EBS CSI driver addon must be installed for dynamic
+  # provisioning. For a throwaway test, set enabled: false (ephemeral, no PVC).
+  storageClassName: ""
 
 # Secrets — two mutually exclusive modes.
 #
