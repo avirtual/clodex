@@ -17431,6 +17431,9 @@ ${i3.join("\n")}
       "use strict";
       function detectNotice(detect) {
         const d = detect || {};
+        if (d.ok === false) {
+          return { kind: "error", text: `Couldn\u2019t check Docker${d.error ? ` \u2014 ${d.error}` : "."}` };
+        }
         if (!d.present) {
           return { kind: "error", text: "Docker isn\u2019t installed \u2014 sandboxes need Docker Desktop." };
         }
