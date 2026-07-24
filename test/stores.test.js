@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { initStores } = require('../stores');
 
 // Fresh temp userData + registry dirs, and a stores bundle over them. Seeding is
@@ -624,6 +625,176 @@ test('seed: a missing source tree is a no-op, not a throw', () => {
     fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(registryDir, { recursive: true, force: true });
   }
+});
+
+// --- seedLibraryDefaults: version-stamped reconciliation (v2 GAP) -------------
+// A per-file provenance manifest (library/.seed-state.json = { relPath: sha256 of
+// the shipped bytes we last wrote }) lets an upgrade overwrite an UNEDITED shipped
+// copy, while never clobbering an operator edit. These use a hermetic resourcesDir
+// like the seed harness above, plus a helper that stages a pre-existing manifest.
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+const seedStatePath = (registryDir) => path.join(registryDir, 'library', '.seed-state.json');
+const readSeedState = (registryDir) => JSON.parse(fs.readFileSync(seedStatePath(registryDir), 'utf-8'));
+
+function withSeedDirs(fn) {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-res-'));
+  try { fn({ userData, registryDir, resourcesDir }); }
+  finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+    fs.rmSync(resourcesDir, { recursive: true, force: true });
+  }
+}
+
+// Stage a dest file + a manifest entry claiming we last wrote `stampBytes` for it.
+function stageDest(registryDir, rel, destBytes, stampBytes) {
+  const dest = path.join(registryDir, 'library', rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, destBytes);
+  if (stampBytes !== undefined) {
+    const statePath = seedStatePath(registryDir);
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')); } catch {}
+    state[rel] = sha256(Buffer.from(stampBytes));
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  }
+}
+
+test('seed reconcile: absent file is seeded and its shipped hash is stamped', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    fs.mkdirSync(path.join(resourcesDir, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, 'exec', 'tool.json'), 'SHIPPED');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const rel = path.join('exec', 'tool.json');
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'SHIPPED', 'absent file seeded');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('SHIPPED')), 'shipped hash stamped');
+  });
+});
+
+test('seed reconcile: present + unedited + newer ship -> overwrites and re-stamps', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Dest holds V1 and the manifest says we last wrote V1 (unedited since).
+    stageDest(registryDir, rel, 'V1', 'V1');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V2', 'unedited copy upgraded to newer ship');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V2')), 're-stamped to new hash');
+  });
+});
+
+test('seed reconcile: present + unedited + same ship -> no-op', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SAME');
+    stageDest(registryDir, rel, 'SAME', 'SAME');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'SAME', 'already-current file untouched');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('SAME')), 'stamp unchanged');
+  });
+});
+
+test('seed reconcile: present + USER-EDITED + newer ship -> preserves the edit', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Dest was edited (now 'EDITED') but the manifest still stamps the V1 we wrote.
+    stageDest(registryDir, rel, 'EDITED', 'V1');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'EDITED', 'operator edit preserved over newer ship');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V1')), 'stamp left at last-written hash');
+  });
+});
+
+test('seed reconcile: legacy present-but-unstamped file is adopted, never overwritten', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Pre-marker install: dest exists, NO manifest entry (stampBytes omitted).
+    stageDest(registryDir, rel, 'LEGACY');
+    assert.strictEqual(fs.existsSync(seedStatePath(registryDir)), false, 'no manifest before run');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'LEGACY', 'legacy file not overwritten (unprovable pristine)');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('LEGACY')), 'adopted current bytes into manifest');
+  });
+});
+
+test('seed reconcile: a corrupt .seed-state.json degrades to {} (no throw, legacy-adopt)', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Dest exists; the manifest is garbage bytes -> must parse to {} -> legacy-adopt.
+    const dest = path.join(registryDir, 'library', rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, 'LEGACY');
+    fs.writeFileSync(seedStatePath(registryDir), '{ not json at all ]]]');
+
+    assert.doesNotThrow(() => initStores(userData, { registryDir, resourcesDir }));
+
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'LEGACY', 'corrupt manifest -> file treated as legacy, not overwritten');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('LEGACY')), 'adopted current bytes despite corrupt prior manifest');
+  });
+});
+
+test('seed reconcile: two launches self-heal a legacy stale-unedited file', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Legacy install: stale-unedited V1 on disk, NO manifest entry.
+    const dest = path.join(registryDir, 'library', rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, 'V1');
+
+    // First launch: adopt-only, no overwrite (can't prove pristine).
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V1', 'first launch adopts, does not overwrite');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V1')), 'first launch stamps current bytes');
+
+    // Second launch: same shipped-newer bytes, dest still untouched -> now upgrades.
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V2', 'second launch self-heals to newer ship');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V2')), 'second launch re-stamps to shipped hash');
+  });
+});
+
+test('seed reconcile: manifest is not rewritten when nothing changed', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SAME');
+    // Present + unedited + same ship -> a full no-op run.
+    stageDest(registryDir, rel, 'SAME', 'SAME');
+
+    const statePath = seedStatePath(registryDir);
+    const mtimeBefore = fs.statSync(statePath).mtimeMs;
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    assert.strictEqual(fs.statSync(statePath).mtimeMs, mtimeBefore, 'unchanged run leaves the manifest file untouched');
+  });
 });
 
 // --- T26: all three default team role prompts ship + brief the live protocols

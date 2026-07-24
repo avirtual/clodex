@@ -33,6 +33,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { envKeyError } = require('./env-scopes');
 const { parseAgentFrontmatter } = require('./agents-util');
@@ -1490,21 +1491,37 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   }
 
   // Seed the shipped library defaults (e.g. the clodex-team-lead system prompt) into
-  // ~/.clodex/library on every launch, SEED-IF-ABSENT: a file the operator
-  // already has is never touched, so operator edits always win over an upgrade's
-  // shipped copy. The source tree rides app.asar (__dirname-relative), copied
-  // out because a packaged read lives sealed inside the asar — the same reason
-  // pot-bin materializes the pot CLI. Best-effort: a copy failure is logged and
-  // skipped, never thrown (a missing seed degrades a feature, it never blocks a
-  // launch). v2 GAP: this is presence-only — a version-STAMPED upgrade (overwrite
-  // an unedited shipped copy when the app ships a newer one) needs a per-file
-  // provenance marker and is deliberately out of v1.
+  // ~/.clodex/library on every launch. VERSION-STAMPED reconciliation: a per-file
+  // provenance manifest (.seed-state.json = { relPath: sha256 of the shipped bytes
+  // we last wrote }) lets an upgrade overwrite an UNEDITED shipped copy when the app
+  // ships a newer one, while NEVER clobbering a file the operator has edited. The
+  // source tree rides app.asar (__dirname-relative), copied out because a packaged
+  // read lives sealed inside the asar — the same reason pot-bin materializes the pot
+  // CLI. Best-effort: a copy/read failure is logged and skipped, never thrown (a
+  // missing seed degrades a feature, it never blocks a launch); a corrupt manifest
+  // degrades to empty ({}), reverting that file to conservative seed-if-absent.
+  //   Per file:
+  //     - dest absent            -> copy, stamp state[rel] = shippedHash.
+  //     - dest present + stamped  -> if unedited (sha256(dest) === state[rel]) and we
+  //                                  ship something newer (shippedHash !== state[rel]),
+  //                                  overwrite + re-stamp; else leave it.
+  //     - dest present, NO stamp  -> LEGACY pre-marker file: cannot prove pristine, so
+  //                                  never overwrite; ADOPT (stamp state[rel] =
+  //                                  sha256(dest)) so the next ship reconciles cleanly.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
+  const SEED_STATE_NAME = '.seed-state.json';
+  const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   function seedLibraryDefaults() {
     const destRoot = path.join(registryDir, 'library');
     let src;
     try { src = fs.statSync(SEED_SRC); } catch { return; } // no seed tree shipped
     if (!src.isDirectory()) return;
+    const statePath = path.join(destRoot, SEED_STATE_NAME);
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) || {}; }
+    catch { state = {}; } // absent or corrupt -> conservative empty manifest
+    if (typeof state !== 'object' || Array.isArray(state)) state = {};
+    let changed = false;
     const stack = [''];
     while (stack.length) {
       const rel = stack.pop();
@@ -1516,15 +1533,40 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         const childRel = path.join(rel, ent.name);
         if (ent.isDirectory()) { stack.push(childRel); continue; }
         if (!ent.isFile()) continue;
+        // Never treat the manifest itself as a seedable entry (defensive: it lives in
+        // destRoot, not SEED_SRC, but guard against a future shipped copy of the name).
+        if (ent.name === SEED_STATE_NAME) continue;
         const dest = path.join(destRoot, childRel);
-        if (fs.existsSync(dest)) continue; // seed-if-absent: never clobber
         try {
-          ensureDir(path.dirname(dest));
-          fs.copyFileSync(path.join(SEED_SRC, childRel), dest);
+          const srcBytes = fs.readFileSync(path.join(SEED_SRC, childRel));
+          const shippedHash = sha256(srcBytes);
+          if (!fs.existsSync(dest)) {
+            ensureDir(path.dirname(dest));
+            atomicWriteFileSync(dest, srcBytes);
+            state[childRel] = shippedHash; changed = true;
+            continue;
+          }
+          const stamped = state[childRel];
+          if (stamped === undefined) {
+            // Legacy pre-marker file: adopt its current bytes, never overwrite.
+            state[childRel] = sha256(fs.readFileSync(dest)); changed = true;
+            continue;
+          }
+          const destHash = sha256(fs.readFileSync(dest));
+          if (destHash === stamped && shippedHash !== stamped) {
+            // Unedited since we wrote it, and we ship something newer -> upgrade.
+            atomicWriteFileSync(dest, srcBytes);
+            state[childRel] = shippedHash; changed = true;
+          }
+          // else: already current, or operator-edited -> preserve.
         } catch (e) {
           if (log) log.info?.('seed', `copy skipped ${childRel} (${e && e.message})`);
         }
       }
+    }
+    if (changed) {
+      try { ensureDir(destRoot); atomicWriteFileSync(statePath, JSON.stringify(state, null, 2)); }
+      catch (e) { if (log) log.info?.('seed', `state write skipped (${e && e.message})`); }
     }
   }
 
