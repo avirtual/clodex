@@ -544,7 +544,6 @@ function initWorkbenchPopover({ getActiveSession, showToast }) {
   });
 
   $('workbench-close').addEventListener('click', () => closeWorkbench());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeWorkbench(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !overlay.classList.contains('hidden')) closeWorkbench();
   });
