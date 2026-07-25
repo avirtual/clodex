@@ -680,3 +680,29 @@ unauthenticated browser: a **login form** makes opening correct (the user
 authenticates there), a bare **401** makes opening a dead end. Read `web-host.js`
 + `auth-token.js` and let the answer decide — do not guess the gate. (Same rule
 that produced `tokenGated` as a reported fact in t30a.)
+
+## AMENDMENT from clodex (msg-93431-32) — for t32/t33, NOT for this ticket
+
+Recorded here because it lands mid-t30b and must not be lost; **sequencing is
+explicit: finish t30b ssh-only first, do not widen it.**
+
+- **SETTLED, no longer open**: Clodex *reuses* `cli/src/transport.js` and never
+  grows its own SSM/kubectl/gcloud/az dialing. Bogdan's point twice over: the
+  reason clodexctl exists is to avoid a second implementation. Finding (D) is
+  the design — `openTransport`'s `localPort` IS the pinned port, `waitExit()`
+  is the respawn trigger, supervision stays Clodex-side.
+- **SETTLED**: `cli/` ships in the DMG. Add `"cli/**/*"` to `build.files`;
+  finding (B) is the reason it's necessary. Precedent in that list already:
+  `scripts/clodex-team.js`, `scripts/clodex-monitor.js`. This overturns
+  `cli/README.md:62`, so the README states the new position rather than a stale
+  assertion. Verify with `asar list` on a real artifact, not the config.
+- **Default is importing the module, not shelling out to a clodexctl binary**
+  (no PATH assumption, no subprocess lifecycle, errors as values). A reason to
+  prefer the binary is arguable, not assumed.
+- **What remains open in t32 is ONLY the record/registry axis** — (a)/(b)/(c)
+  as filed, with the token boundary at `contexts.js:28-31` load-bearing. Reused
+  dialing is inert if a peer record cannot persist `{ssm:{target,region}}`.
+- **t33 (the boundary gate) changes shape**: the app→cli half partly dissolves
+  once `cli/` ships, but cli→app still needs pinning, and the gate must assert
+  the NEW invariant — cli/ stays a leaf, and the app MAY import it *because* it
+  ships. Do not silently drop half the test.
