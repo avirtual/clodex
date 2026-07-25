@@ -362,6 +362,16 @@ function createAppMenus(deps) {
 
   function buildAppMenu() {
     const isMac = process.platform === 'darwin';
+    // The stock About panel reads the .app bundle's Info.plist, so under `npm start`
+    // (running inside Electron's own bundle) it reports Electron's version instead of
+    // ours. setAboutPanelOptions overrides those fields at runtime either way.
+    if (isMac) {
+      app.setAboutPanelOptions({
+        applicationName: 'Clodex',
+        applicationVersion: app.getVersion(),
+        version: `Electron ${process.versions.electron}`,
+      });
+    }
     const template = [
       ...(isMac ? [{
         label: app.getName(),
