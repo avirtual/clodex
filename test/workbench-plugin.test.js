@@ -256,3 +256,56 @@ test('W4: the temporary core→plugin DOM bridge is gone', () => {
   // as a "convenience" — it was a coupling core is now free of.
   assert.doesNotThrow(activateRendererHalf);
 });
+
+// ── W9 GATE 2: the peer/remote refusal keeps TODAY'S UX ─────────────────────
+//
+// The engine half of this gate is already covered above (every session-scoped
+// row refuses a peer with the exact `'remote'` string). What that does NOT show
+// is the half the user actually experiences: that the renderer still TURNS that
+// string into the same sentence it did before the migration. A refusal that
+// reaches the UI as a blank panel or a raw error envelope would pass every
+// engine test and still be a regression.
+//
+// Pinned against MASTER's byte-identical strings, so this is parity evidence,
+// not a restatement of what the plugin happens to say today.
+
+const fsNode = require('node:fs');
+const pathNode = require('node:path');
+const rendererSrc = fsNode.readFileSync(
+  pathNode.join(__dirname, '..', 'plugins', 'workbench', 'renderer.js'), 'utf8');
+
+test('W9 gate 2: all three remote notices survive the migration verbatim', () => {
+  // These are the exact strings renderer/popovers/workbench-popover.js carried
+  // at master (2f3f8e1, lines 212/272/414) before it was deleted at W2.
+  for (const notice of [
+    'This is a remote session — the file explorer only works on local sessions.',
+    'This is a remote session — source control only works on local sessions.',
+    'This is a remote session — worktree management only works on local sessions.',
+  ]) {
+    assert.ok(rendererSrc.includes(notice), `the pre-migration notice is gone: ${notice}`);
+  }
+});
+
+test('W9 gate 2: each notice is gated on the HOST\'s error string, not a local guess', () => {
+  // The renderer must branch on `error === 'remote'` — the value fsScope
+  // produces engine-side. A renderer that re-derived "is this a peer?" from its
+  // own session list would be a second locality rule, free to drift from the
+  // host guarantee that MUST-FIX 5 exists to make singular.
+  const branches = [...rendererSrc.matchAll(/error === 'remote'/g)];
+  assert.strictEqual(branches.length, 3, 'one branch per panel — files, scm, worktrees');
+});
+
+test('W9 gate 2: the dropdown itself never offers a peer session', () => {
+  // Defence in depth, and the reason the refusal is rarely seen in practice:
+  // peer sessions never enter the manager's record, so the workspace-scoped
+  // list cannot contain one. The comment documenting that must stay true — if
+  // the dropdown ever switched to a source that includes peers, fsScope would
+  // still refuse, but the UX would regress to "click it and get an error".
+  // Comments stripped first: the file's own header explains at length WHY it
+  // does not call listAll(), and prose naming the forbidden thing must not read
+  // as the forbidden thing — the same false-positive class plugin-boundary and
+  // electron-boundary already document.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /listWorkspace\(/, 'the dropdown uses the workspace-scoped accessor');
+  assert.ok(!/listAll\(/.test(code), 'and never the global one');
+});
