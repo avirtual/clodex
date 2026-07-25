@@ -1245,6 +1245,16 @@ The defence that worked every time: **revert the fix and watch the test go red.*
 Not reason about whether it would. Whoever picks up Phase 4 should assume they
 are equally capable of writing one of these.
 
+**The generalisation, added after Phase 4a and worth more than the list above:
+flag the claim you have not run, even when you expect the flag to weaken your
+own conclusion.** In 4a I shipped a finding and volunteered its one unrun leg,
+predicting it might soften the result; checking showed it *sharpened* it. The
+flag was right for a reason I had backwards — which is the argument for
+flagging rather than for guessing well. Every defect in the list above was a
+claim asserted where nothing executed and nobody marked it. (A count recalled
+rather than run is the same thing: I reported this branch as eleven commits
+ahead of master when `git rev-list --count` says 31.)
+
 ## What `VERIFY.md` will test (blocked on Bogdan's machine)
 
 `plugins/git-branches/VERIFY.md` — five behaviours no harness reaches, needing a
