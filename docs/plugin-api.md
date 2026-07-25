@@ -1069,6 +1069,13 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   blocked idea: the plumbing that would carry it (the app menu reading plugin
   state from the engine) already exists, wired for the `Plugins` menu itself. The
   conventional entry point today is a sidebar footer button (§6.3).
+- **`fsScope` refuses peers, but not foreign workspaces** (§4). It answers "does this session have a
+  local working directory?", not "is this session mine to touch". Nothing else supplies the missing
+  half: the plugin transport discards the calling window before dispatch, so your engine half is
+  never told which workspace asked. If a session name can reach your handler from somewhere you do
+  not control, a cwd in another workspace is reachable through it. Compare `handle.workspaceId`
+  against a workspace you established yourself when that matters to you. Closing this in the host
+  would mean carrying a caller workspace on the transport — additive, but not yet decided.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
 - **No renderer-side event subscription** (§9). Design against pull-on-open.
 - **`rhost.sessions` has no `listAll()`** and never will; if you need the global

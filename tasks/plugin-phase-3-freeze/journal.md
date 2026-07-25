@@ -277,7 +277,192 @@ the intent rules P1-P5.
 - Committed `f12fb89` on `plugin-phase-1`, parent `88a811f`. `git reset -q
   node_modules` before staging; the symlink is still untracked. Master
   untouched, nothing pushed.
+- T6 **ACCEPTED** by clodex, which independently verified the freeze pin, the
+  `sessions.get` peer claim, the §4 peer posture, and 2467/2467 from the
+  worktree. It called the `rhost` events gap "the best find in the report".
 - **No deviation letter used. (r) is still free.** The eight shape findings were
   the ticket's requested proposal pass, not departures; the nine plan
   divergences are piece 4's deliverable, not my choices. Nothing in T6 departed
   from the spec.
+
+---
+
+# T7 — correct docs/plugin-plan.md against what shipped
+
+Ticket verbatim: `ticket-t7.txt` beside this file. (clodex labelled it "T8" in
+the body and "t7" in the ticket id; the id wins — it is t7.)
+
+## State at dispatch
+
+Branch `plugin-phase-1`, HEAD `f36875c`, suite **2467/2467**. Master untouched
+at `2f3f8e1`. Nothing pushed. Deviation letters (a)-(q) used; next is **(r)**.
+
+## The task
+
+**Fix `docs/plugin-plan.md` so it stops lying.** Phases 4 and 5 get specced from
+that document — a wrong fact in it becomes a wrong instruction later. Correct
+all nine T6 divergences (P5 above has every one with its evidence), **in place,
+in the plan's own voice**. Not a changelog: a future reader should just find it
+correct.
+
+Order given, 1 = the live landmine:
+
+1. §3.2 `sessions.get` "null for peer-backed entries" — false. Handles for any
+   session incl. peers; null = no such session. Locality refusal is `fsScope`
+   ALONE.
+2. §2.1 status-bar `ctx` — the most copy-pasted block. Ship shape is
+   `{ session, type, isAgent, peerQueryable, peerConfigurable, workspaceId }`;
+   `linked`/`hasPayload` never existed; note `workspaceId` is required by §3.3
+   law 1.
+3. "twelve stores" → **eight** (§2.5 enumerates twelve BY NAME — fix count AND
+   list).
+4. §3.1 `announce` toast — never shipped; became the Manage Plugins description
+   line. Record the reasoning: the text belongs where the user is deciding.
+5. §3.1 "restart to fully unload" banner — the FACT is true and documented; the
+   BANNER doesn't exist. Correct the promise, keep the fact.
+6. §3.1 manifest example — add `enabledByDefault`.
+7. §3.4 — a plugin's own failures share the refusal envelope; name the
+   `'no such plugin method'` discriminator.
+8. §2.5 — reflect the T5 split: choosing (menu) vs settings (dialog).
+9. §2.6 — `mount()` is called once, lazily, never again.
+
+**Plus ONE, clodex's own find at `plugin-host-engine.js:18`:** `fsScope` refuses
+PEERS but **not foreign workspaces** — the comment there already knows it.
+**Check whether anything else scopes it**, then say WHICH it is: a real hole a
+plugin could walk through, or covered elsewhere. If real: write it up as a known
+gap in the plan AND in `docs/plugin-api.md` §14 beside the other two.
+**Do not build a fix.**
+
+Rule for the voice: where the plan states an intention that shipped differently
+and the SHIPPED thing is better, say which shipped and why, in ONE line. Where
+the plan is simply stale, just make it right.
+
+## Hard constraints
+
+- **NO code changes. NO test changes.** If I want either, STOP and flag it —
+  "a plan-correction pass that edits code has found something we both want to
+  know about."
+- Code wins everywhere; never change code to match the plan.
+- Commit on `plugin-phase-1`. Never touch master, never push.
+  `git reset -q node_modules` before staging.
+- Suite must still be **2467** — via the `clodex-test-green` skill with an
+  explicit cd into the worktree. `[agent:exec clodex-run-tests]` is blind to
+  worktrees and will lie.
+- `.claude/CLAUDE.md` and `.claude/memory.md` are never mine to edit.
+
+## Progress log
+
+### Q1 — the `fsScope` foreign-workspace question (investigated, answer below)
+
+**VERDICT: a REAL gap. Nothing else scopes it.** Write it up in both docs.
+Evidence, in the order it settles the question:
+
+- **`fsScope` (`plugin-host-engine.js:249-255`) is the whole guard.** Three
+  refusals: unknown name, `s.peer` (`'remote'`), no cwd. There is no
+  workspace comparison, and the comment at :247 says so outright ("scoping
+  across workspaces is listWorkspace's job, not this one's").
+- **Nothing upstream narrows it.** The path is `plugin:invoke` →
+  `host.dispatch(pluginId, method, args)` → the plugin's handler → `fsScope`.
+  `ipc-handlers.js:1089` **discards the Electron event** (`(_e, pluginId,
+  method, args)`), so by the time a plugin handler runs, the caller's window —
+  and therefore its workspace — is GONE. Core's own rows do this correctly with
+  `workspaceOfSender(e)` (:317 etc.); the plugin transport deliberately does
+  not carry it. So the engine half **could not** scope by workspace today even
+  if it wanted to: the information isn't on the wire.
+- **The renderer half is scoped, but only by convention.**
+  `renderer/plugin-host.js:496` filters `listWorkspace` client-side on
+  `s.workspaceId === wsId`, and `rhost.workspaceId` (:474) is the window's own.
+  That is a renderer-side courtesy over a global list, not an engine guard —
+  and the workbench's fifteen rows take a `name` straight from the renderer
+  and hand it to `fsScope`, so nothing stops a caller naming a session in
+  another workspace.
+- **Not a regression.** The pre-plugin helper (`git show 2f5e6d3:ipc-handlers.js`
+  lines 159-165) was byte-identical, peer check and all — the workbench as core
+  reached exactly as far. The plugin host inherited the hole, it did not open
+  it.
+- **Bounded by what it can actually cost.** The engine half is unsandboxed
+  in-process Node (api §1: no sandbox, a plugin may `require('fs')`), so
+  `fsScope` is a correctness guard that stops a CARELESS plugin widening
+  locality — never a boundary against a hostile one. What it really buys is
+  that fifteen handlers can't each get the peer check wrong. Judged on that
+  bar, the workspace hole is a real defect in the guarantee's *shape* (a
+  plugin author reads "the locality refusal is a host guarantee" and reasonably
+  assumes workspace locality too), not an escalation path.
+
+So: known gap in the plan §3.2 alongside the `sessions.get` correction, and in
+`plugin-api.md` §14 beside the other two. **No fix built** (ticket says so, and
+a fix would need the transport to carry a caller workspace — a "1"-affecting
+design decision, not a hand's call).
+
+Next: the nine corrections in `docs/plugin-plan.md`.
+
+### Q2 — the nine corrections (done, with ONE refused)
+
+Eight applied in place, in the plan's voice. **Item 3 was NOT applied — the plan is
+right and my D2 was wrong.** See the deviation note below.
+
+1. §3.2 `sessions.get` — comment corrected, plus a new "Where the locality
+   refusal lives — `fsScope` alone" paragraph. The Q1 gap follows it.
+2. §2.1 — the inline `ctx` comment now points to a new block giving the shipped
+   six-field shape with a line on why each of `isAgent` / `peerConfigurable` /
+   `workspaceId` is there. `linked`/`hasPayload` gone.
+3. **REFUSED — see deviation (r).**
+4. §3.1 — `announce` is the Manage Plugins description line, with the reasoning.
+5. §3.1 + §1 (two sites) — banner promise removed, the restart-boundary FACT
+   kept and pointed at `plugin-api.md` §10.
+6. §3.1 — `enabledByDefault: true` in the manifest example + a paragraph on what
+   it decides.
+7. §3.4 — a plugin's own failures share the envelope; `'no such plugin method'`
+   named as the exact discriminator.
+8. §2.5 — new "Choosing and configuring are two surfaces" paragraph (T5 split,
+   why it CAN be a menu: engine-side state, no renderer round trip; absent not
+   empty; checkbox = intent, quarantine in the label).
+9. §2.6 — `mount()` once/lazily/never again, with what belongs in `onOpen`
+   instead. Verified against `renderer/plugin-host.js:438-444` (mount fires only
+   when `entry.el` is absent) before asserting it as contract.
+
+Q1 gap also written into `docs/plugin-api.md` §14, phrased for a plugin author
+(what to do about it) rather than for a core reader.
+
+### Deviation (r) — item 3 refused: `initStores` really does return twelve
+
+The ticket said "twelve stores → eight (§2.5 enumerates twelve BY NAME — fix
+count AND list)". **I did not make this change: the code returns TWELVE.**
+`stores.js:1704-1709` returns `persistence, templates, workspaces,
+promptLibrary, agentDefaults, agentLibrary, skillLibrary, execLibrary,
+reminders, notifications, uiSettings, envScopes` — plus the `renameWorkspaceScope`
+helper, which is a function, not a store. The plan's §2.5 list is twelve names
+and matches that return **exactly**, in order.
+
+The error is MINE, from T6's P5: I wrote D2 by comparing the plan against
+CLAUDE.md's "the eight persistence stores" rather than against `stores.js`, on a
+task whose first rule is that code wins. CLAUDE.md's "eight" is itself stale
+(stores.js:6's own header says "the eight JSON stores live here" — true of the
+userData JSON files, but four more stores are file-backed under
+`registryDir/library/`, so the count of STORES and the count of JSON blobs in
+userData are different numbers). The plan says "stores", so twelve is correct,
+and §3.2's "the twelve stores" in the deliberately-not-exposed list is correct
+for the same reason.
+
+Applying item 3 would have written a falsehood into the document Phases 4 and 5
+get specced from — the exact failure the ticket exists to prevent — so I left
+both sites alone. Flagging rather than silently skipping. **Not mine to fix:
+CLAUDE.md is frozen for me, and its "eight" is a separate (real, small) staleness
+for clodex to rule on.**
+
+### Queued: t8 (do NOT start until t7 is committed and reported)
+
+`ticket-t8.txt` beside this file — "enforce three boundary invariants the code
+only claims", from a cold review that came back REWORK. F1 plugin verbs survive
+`withoutPrivilegedIntents`; F2 `host.lib` frozen one level too shallow; F4
+`enabled` is a legal plugin id; plus two smalls (false quarantine strike on
+double activation, `telemetry.snapshot` returns the live payload). clodex
+verified all diagnoses against source itself — **do not re-diagnose**, spend the
+effort on fixes and on proving each new test fails WITHOUT its fix (revert, do
+not reason). Explicitly OUT of t8: the lint hardening (separate ticket), and the
+`fsScope`/`safeResolve` containment question (clodex is ruling on it separately
+— note this overlaps Q1 above, so my Q1 write-up is INPUT to that ruling, not a
+decision).
+
+Numbering: clodex confirmed the ticket ids are **t7** and **t8**; the "T8"/"t9"
+labels inside the message bodies are its own off-by-one. Cite t8 when closing.

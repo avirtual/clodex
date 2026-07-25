@@ -53,8 +53,8 @@ plugins/<id>/                      (in-repo, first-party — Phase 1-3)
 
 **Two trust tiers** (from the vision doc's liveness/trust table, kept as-is):
 - **Tier A — in-process JS, first-party/curated only.** Full host API. Live-enable yes; clean live
-  *unload* honestly = restart boundary (deactivate is best-effort teardown + "restart to fully
-  unload" banner).
+  *unload* honestly = restart boundary (deactivate is best-effort teardown, and the residue that
+  survives it is documented rather than papered over — §3.1).
 - **Tier B — out-of-process, BYO/untrusted (Phase 5).** Speaks a protocol; the process boundary is
   the sandbox. **Only the declarative subset of the taxonomy** (intents-as-protocol like the exec
   loop [V session-manager.js:3406-3520], declarative status segments/badges, declared surfaces or
@@ -116,7 +116,7 @@ no-payload (:3015-3029) and `!p.linked` (:3034-3041) — that bypass the segment
 ```js
 rhost.ui.statusBar.addAction({
   id,                        // namespaced by host: "<pluginId>:<id>"
-  when(ctx),                 // ctx = { session, type, peerQueryable, linked, hasPayload }
+  when(ctx),                 // ctx — see below
   button(ctx),               // -> { label, tip, accentClass? }   (text, escaped by host)
   onClick(anchorEl, ctx),
 }) -> dispose
@@ -125,6 +125,21 @@ rhost.ui.statusBar.addSegment({
   render(ctx),               // -> { text, tip?, accentClass?, onClick? } | null
 }) -> dispose
 ```
+
+**The `ctx` every one of those callbacks receives** — one frozen object, rebuilt per render from
+exactly what the bar itself sees, so a contribution cannot drift from the bar's own state:
+
+```js
+ctx = { session, type, isAgent, peerQueryable, peerConfigurable, workspaceId }
+```
+
+`session` is the active session name (or `null`); `type` its session type. `isAgent` is the
+predicate core's own bar branches on, so a plugin asking "is this an agent?" gets the same answer
+core does rather than re-deriving it from `type`. `peerQueryable` and `peerConfigurable` are the two
+independent peer capabilities — a peer-backed session may be readable without being configurable, so
+one flag could not carry both. `workspaceId` is present because §3.3 law 1 requires it: N windows
+means N renderer activations, and a contribution that scopes anything — a cache key, an `invoke`
+argument, an event filter — must be able to name its own window's workspace without asking.
 
 **By-construction placement rule (early-return correction):** plugin actions AND segments render
 inside the `#proxy-actions` span via `renderSessionActions`, which is invoked on **every** branch of
@@ -293,6 +308,18 @@ Host appends a `<section data-plugin="id">` to `#prefs-dialog` before `.dialog-a
 `pluginInvoke('_host','settings.set')`. This is the vision doc's "settings organized by plugin, and
 you chose the plugins" made literal: a disabled plugin's section does not exist.
 
+**Choosing and configuring are two surfaces, not one.** Turning a plugin on and off lives in a
+top-level **Plugins** menu — a checkbox per plugin plus a `Manage Plugins…` item, with refused
+directories listed disabled so a broken plugin is never silently invisible. Configuring lives in the
+Preferences dialog, in the per-plugin sections above. They separate cleanly because their state
+lives in different places: the enabled set and the quarantine record are **engine**-side, readable
+through the host object the main process already holds, so a synchronously-built `Menu` template can
+answer "is this on?" with no renderer round trip — whereas a plugin's settings DOM is renderer-side
+by construction. The menu is absent rather than empty when there is no host (`CLODEX_PLUGINS=0`) or
+nothing on disk: an empty menu reads as a broken feature, a missing one as an absent one. The
+checkbox shows the user's **intent** only; quarantine is a third state a checkbox cannot express and
+rides in the label instead, because a quarantine must never rewrite what the user asked for.
+
 ### 2.6 Whole-surface mounting
 
 **Seams [V]:** the workbench overlay is the exemplar — its DOM currently lives in
@@ -309,6 +336,13 @@ rhost.ui.surfaces.overlay({
   onOpen(opts), onClose(),
 }) -> { open(opts), close(), dispose() }
 ```
+
+`mount(rootEl)` is called **once**, lazily, at the first open — and never again. Subsequent opens
+reuse the DOM it built and deliver `onOpen(opts)` alone. That is the difference between a
+per-open refresh working and silently not: anything a plugin wants recomputed each time the surface
+appears belongs in `onOpen`, never in `mount`. (Lazy because a surface nobody opens should cost
+nothing; once because the alternative — rebuilding the interior per open — throws away scroll
+position, focus and every listener the plugin registered.)
 
 Host responsibilities: create `<div class="plugin-overlay hidden" data-plugin="id">` appended to
 `document.body`, toggle `hidden`, centralize Escape handling and one-overlay-at-a-time, and — the
@@ -337,9 +371,16 @@ bundle: GAP G7.
   "hostApi": "1",
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
+  "enabledByDefault": true,
   "announce": "Workbench enabled — Files, Source Control and Worktrees for any local session, in the sidebar footer."
 }
 ```
+
+`enabledByDefault` (optional, defaults **true**) decides what happens to a plugin the user has never
+made a decision about. It is what lets a plugin ship enabled without writing a settings entry into
+every existing install, and it is why "the user turned this off" stays distinguishable from "the
+user has never seen this" — a bare boolean in settings would erase that difference. A plugin that
+should lie dormant until asked for sets it `false`.
 
 - **Discovery:** Phase 1-3 scans `<repo>/plugins/*/manifest.json` only. Enabled set persists in
   `uiSettings.plugins.enabled` (see §2.5 store). Packaged-app path resolution: GAP G8.
@@ -348,7 +389,9 @@ bundle: GAP G7.
   any window and before renderer-driven restore [V engine.js:1560-1612; F restore]).
   `deactivate()` is best-effort: host tears down everything registered through it (dispatch-map
   entries, registry rows, hooks) regardless; the honest full-unload is the restart boundary
-  (vision doc), surfaced as a "restart to fully unload" banner.
+  (vision doc) — a disabled plugin's `require` cache entry survives, so its module-level state does
+  too. That limit is stated in the published contract (`plugin-api.md` §10) rather than surfaced in
+  the UI; no banner is rendered.
 - **Renderer lifecycle:** `activate(rhost)` runs **once per BrowserWindow**, and **may return a
   teardown function** (`activate(rhost) -> dispose?`). Host-driven disposal still removes everything
   the host created (containers, style element, subscriptions, registry rows), but that cannot reach
@@ -364,8 +407,10 @@ bundle: GAP G7.
   [Reviewer MUST-FIX A2.]
 - **Enable/disable at runtime:** `pluginSetEnabled` → engine activates/deactivates the engine half →
   emits system topic `plugin-state` scope `all` → each window's plugin host loads or disposes the
-  renderer half. First-ever enable raises the manifest `announce` as a toast — the vision doc's
-  consent-scoped self-introduction. Kill switch: `CLODEX_PLUGINS=0` env skips the loader entirely
+  renderer half. The manifest `announce` is the plugin's self-introduction, and it shows as the
+  description line beside the plugin in the Manage Plugins dialog rather than as a toast on first
+  enable: the text belongs where the user is already deciding, not interrupting them at the moment
+  they clicked. Kill switch: `CLODEX_PLUGINS=0` env skips the loader entirely
   (cheap global reversibility during the whole program).
 - **Versioning:** `HOST_API_VERSION = "0"` (explicitly unstable) until Phase 3 freezes `"1"`.
   Manifest `hostApi` mismatch ⇒ plugin refuses to load with a named error.
@@ -394,7 +439,7 @@ host = {
   sessions: {
     listAll(),                          // -> [{name,type,cwd,workspaceId}] — GLOBAL (manager.list()) [F :global; V workbench comment "record of truth, local-only" workbench-popover.js:30-38]
     listWorkspace(wsId),                // -> same shape — manager.listForWorkspace [F :2030]  // MUST-FIX 1: two names, no default
-    get(name),                          // -> SessionHandle | null   (null for peer-backed entries — see fsScope note)
+    get(name),                          // -> SessionHandle | null   — ANY session in the map, peers included; null means no such session
     fsScope(name),                      // -> { cwd } | { error: 'remote' | … } — verbatim sessionCwd guard [V ipc-handlers.js:295-313]  // MUST-FIX 5 host guarantee
     onCreate(fn),                       // SYNC hook, fired at the tail of create() after registration/notify [V tail region session-manager.js:1565-1570]; fires for restored sessions too iff restore routes through create() — GAP: G3
     onExit(fn),                         // SYNC-ONLY hook — spec below. MUST-FIX 4.
@@ -421,6 +466,30 @@ SessionHandle = Object.freeze({
 
 No raw session object, no `pty`, no persistence entry ever crosses. Anything a plugin needs beyond
 this is a deliberate future host addition, not a reach-in.
+
+**Where the locality refusal lives — `fsScope` alone.** `get(name)` is a lookup, not a guard: it
+hands back a handle for **any** session in the map, peer-backed entries included, and `null` means
+only "no such session". A plugin author must not read a non-null handle as "this session is local".
+One guard, not two, is the right shape — the check belongs where a filesystem path is about to be
+produced, and every filesystem-touching plugin handler's first line is `fsScope` — but it does mean
+the peer refusal is *invisible* at the point a handle is obtained. Say it plainly in the published
+contract, which is what `plugin-api.md` §4 does.
+
+**Known gap — `fsScope` refuses peers, not foreign workspaces.** Its three refusals are unknown
+name, `s.peer` (`'remote'`), and no-cwd; there is no workspace comparison, and **nothing else
+supplies one**. `plugin:invoke` discards the Electron event before dispatch [V ipc-handlers.js
+`(_e, pluginId, method, args)`], so the caller's window — and therefore its workspace — never
+reaches a plugin handler; the engine half could not scope by workspace today even if it wanted to,
+because the information is not on the wire. (`rhost.sessions.listWorkspace` filters client-side on
+the window's own `workspaceId`, which is a renderer courtesy over a global list, not an engine
+guard.) So a plugin handed a session name from any source can resolve a cwd in another workspace.
+This is inherited, not introduced: the pre-plugin `sessionCwd` helper was byte-identical, peer check
+and all, so the workbench-as-core reached exactly as far. It bounds what it can cost, too — the
+engine half is unsandboxed in-process Node, so `fsScope` was only ever a guarantee against a
+*careless* plugin widening locality, never a boundary against a hostile one. The defect is in the
+guarantee's shape: an author reads "the locality refusal is a host guarantee" and reasonably infers
+workspace locality as well. Closing it means deciding to carry a caller workspace on the plugin
+transport — a change to the frozen `"1"` surface, hence a decision, not a patch.
 
 **`sessions.onExit` exact spec (MUST-FIX 4):** the host installs a single call site inside
 `ptyProc.onExit`, **after** the `session-exit` send and the exit `ipc-message` broadcast, **before**
@@ -470,6 +539,12 @@ Written into the contract as normative text and enforced by the shapes:
   disable, and `dispose()` mutate the Map; no Electron-level unregistration ever happens, so
   disposables are implementable at every level of the API. Unknown `(pluginId, method)` ⇒
   `{ ok:false, error:'no such plugin method' }` (a disabled plugin degrades loudly, not silently).
+  A plugin's OWN failures come back in the same `{ ok:false, error }` envelope — the host does not
+  wrap a handler's return value, so a routing refusal and a handler's considered error are the same
+  shape on the wire. `'no such plugin method'` is therefore the exact discriminator, and a caller
+  that needs to tell "you are disabled / I typo'd the method" from "your handler said no" must
+  compare against that string. Naming it here makes it contract rather than an implementation
+  detail a caller reverse-engineered.
 - The engine `host.ipc` is **transport-agnostic**: the dispatch map lives in the engine; the
   desktop adapter and the web host each wire their transport to it via `registerIpcHandlers`
   [V main.js:563-588; architecture.md — web-host drives the SAME handler map]. Under pure headless
