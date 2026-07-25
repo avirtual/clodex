@@ -155,6 +155,12 @@ function createPluginLoader(deps) {
   // window, and "consistent failure across activations" reads as "it failed the
   // first time this launch tried it". The simple rule with a clear message,
   // chosen over per-window tallying, per the best-effort calibration.
+  // Verb collisions seen THIS APP RUN — id -> { verb, heldBy }. Deliberately in
+  // memory and never in uiSettings, unlike the failure record: a collision is a
+  // fact about which plugins are loaded right now, and persisting it would let a
+  // record survive the removal of the plugin that caused it (t20).
+  const verbConflicts = new Map();
+
   const rendererReportedThisRun = new Set();
   function noteRendererActivation(id, ok, error) {
     const key = String(id);
@@ -343,10 +349,24 @@ function createPluginLoader(deps) {
       const mod = rec.enginePath ? requireModule(rec.enginePath) : {};
       pluginHost.register(rec.id, mod, rec.manifest);
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
+      verbConflicts.delete(rec.id);
       if (count) clearFailures(rec.id); // a success clears the slate, always
       return { ok: true };
     } catch (e) {
       const error = String((e && e.message) || e);
+      // REFUSED, NOT PUNISHED (t20). A verb collision is a knowable structural
+      // refusal — this plugin is not broken, another plugin holds the verb — and
+      // the strike counter exists for plugins that CRASH. Striking here quarantined
+      // a working plugin two launches after the user installed an unrelated one,
+      // with Retry unable to recover it because the collision reproduces every
+      // time. Recorded for the settings row instead, and NOT persisted: a stale
+      // ownership record outliving the plugin that held the verb is the failure
+      // mode this whole ticket is about.
+      if (e && e.code === 'EVERBTAKEN') {
+        verbConflicts.set(rec.id, { verb: e.verb, heldBy: e.heldBy });
+        logIt(`${rec.id}: NOT loaded — intent verb "${e.verb}" is already held by "${e.heldBy}". No strike; disable one of the two.`);
+        return { ok: false, error, verbConflict: { verb: e.verb, heldBy: e.heldBy } };
+      }
       logIt(`FAILED to load ${rec.id}: ${error}`);
       const strikes = count ? recordFailure(rec.id, `engine activate() threw: ${error}`) : 0;
       return { ok: false, error, ...(strikes >= QUARANTINE_AFTER ? { quarantined: true } : {}) };
@@ -379,6 +399,7 @@ function createPluginLoader(deps) {
     const rec = discover().find((r) => r.id === String(id));
     if (!rec) return { ok: false, error: `no such plugin: ${id}` };
     clearFailures(rec.id);
+    verbConflicts.delete(String(id));
     rendererReportedThisRun.delete(String(id));
     return loadOne(rec, pluginHost);
   }
@@ -420,6 +441,11 @@ function createPluginLoader(deps) {
           quarantined: isQuarantined(rec.id),
           failCount: Number(f && f.count) || 0,
           lastError: (f && f.error) || null,
+          // Refused this run because another plugin holds its verb (t20). A
+          // per-plugin field rather than a top-level list like `shadowed`: unlike a
+          // shadowed copy this plugin is genuinely installed and keeps its toggle —
+          // disabling the holder is exactly how a user resolves it.
+          verbConflict: verbConflicts.get(rec.id) || null,
           root: rec.root || null,
           rootLabel: rec.rootLabel || null,
         };

@@ -28364,8 +28364,9 @@ ${res.stderr}` : "");
         }
         const plugins = status && status.ok && status.plugins || [];
         const problems = status && status.ok && status.problems || [];
+        const shadowed = status && status.ok && status.shadowed || [];
         pluginsList.innerHTML = "";
-        if (!plugins.length && !problems.length) {
+        if (!plugins.length && !problems.length && !shadowed.length) {
           const empty = document.createElement("div");
           empty.className = "plugin-row-note";
           empty.textContent = "No plugins are installed.";
@@ -28404,7 +28405,12 @@ ${res.stderr}` : "");
             d.textContent = p.description;
             body.appendChild(d);
           }
-          if (p.quarantined || p.failCount) {
+          if (p.verbConflict) {
+            const n = document.createElement("div");
+            n.className = "plugin-row-note warn";
+            n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb \u2014 disable one of them.`;
+            body.appendChild(n);
+          } else if (p.quarantined || p.failCount) {
             const n = document.createElement("div");
             n.className = "plugin-row-note warn";
             n.textContent = p.quarantined ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches \u2014 ${p.lastError || "unknown error"}` : `Failed to activate once (${p.lastError || "unknown error"}) \u2014 one more and it will be held back.`;
@@ -28445,6 +28451,34 @@ ${res.stderr}` : "");
           n.className = "plugin-row-note warn";
           n.textContent = `Not loaded: ${pr.why}`;
           body.appendChild(n);
+          row.appendChild(body);
+          pluginsList.appendChild(row);
+        }
+        for (const sh of shadowed) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = sh.id;
+          if (sh.rootLabel) {
+            const r = document.createElement("span");
+            r.className = "plugin-row-version";
+            r.textContent = sh.rootLabel;
+            nameEl.appendChild(r);
+          }
+          body.appendChild(nameEl);
+          const n = document.createElement("div");
+          n.className = "plugin-row-note warn";
+          n.textContent = `Shadowed by the ${sh.shadowedByLabel || sh.shadowedBy} copy of the same id \u2014 this one is not running.`;
+          body.appendChild(n);
+          if (sh.dir) {
+            const d = document.createElement("div");
+            d.className = "plugin-row-note";
+            d.textContent = sh.dir;
+            body.appendChild(d);
+          }
           row.appendChild(body);
           pluginsList.appendChild(row);
         }

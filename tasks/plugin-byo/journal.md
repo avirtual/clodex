@@ -377,3 +377,297 @@ correctly across roots), a half-copied directory with no `manifest.json` (alread
 silent-skipped at `:186-191`), a directory present in both roots, and case-folding
 collisions on macOS's case-insensitive default filesystem. **Where an input cannot
 be designed for, say which inputs were assumed.**
+
+---
+
+## T18 — document the global intent-verb namespace as a user-plugin hazard
+
+**Dispatched after t16 shipped. Found by RUNNING the app**, not by reading:
+clodex and Bogdan installed a second plugin into the user root (a copy of
+git-branches under id `gb-user`) and it would have failed to activate, because
+`intent-registry.js:343` is claimed to throw `intent verb "<type>" is already
+registered` when two plugins claim the same verb. clodex renamed the copy's verb
+to dodge it.
+
+**The behaviour is CORRECT** — a verb is a global namespace and first-come is the
+only sane rule. **The gap is that nothing tells an author or a user this.**
+
+### Do this first, before writing anything
+
+1. **Verify the claim at `intent-registry.js:343` myself** (clodex has been wrong
+   repeatedly; code wins over docs).
+2. **Check what the failure looks like END TO END**, because that determines how
+   bad this is. A throwing `activate()` is a strike toward quarantine (§10), so a
+   user installing two plugins that want the same verb may get a plugin **held
+   back after two launches**, with a message about *activation failure* rather
+   than about a *verb collision*. **If that is what happens, say so plainly — the
+   user-visible symptom and the actual cause are far apart.**
+
+### STOP condition (changes the ruling)
+
+**If the collision takes down a plugin that was working fine BEFORE the new one
+was installed — rather than the new one failing — STOP and report.** That is a
+defect, not a documentation gap.
+
+### Two places to write it
+
+- **`docs/plugin-sources.md`** — a user with two installed plugins is the FIRST
+  situation where this is reachable; in-repo plugins are curated by us, so a
+  collision would be caught at review. State that verbs are global and
+  first-come, that the loser fails to activate, and **what the user actually
+  sees**.
+- **`docs/plugin-api.md`** — an author choosing a verb is choosing from a global
+  namespace shared with plugins they have never seen, so **a distinctive verb is
+  a compatibility requirement, not a style preference**.
+
+**Do NOT invent a namespacing scheme or propose auto-prefixing.** That is a v1.1
+design question and the freeze holds.
+
+### The connection worth one line
+
+**Same pattern as t16's id collisions, one layer down.** Ids got a precedence
+rule and a visible shadowed row; verbs got neither — because the plugin system's
+only consumers until today were plugins we wrote.
+
+### State at dispatch
+
+HEAD `fef4da4`, suite **2501/2501**, tree clean apart from the untracked
+`node_modules` symlink. 39 ahead of local master. Nothing pushed. Deviation
+letter **(x)** still unused. Do not touch master, do not push.
+
+### T18 INVESTIGATION — STOP CONDITION MET. This is a defect, not a doc gap.
+
+The ticket named the hard stop: *"if the collision takes down a plugin that was
+working fine before the new one was installed, rather than the new one failing,
+STOP and report."* **That is exactly what happens.** Proven by execution, not by
+reading — probe drove the real `plugin-loader`, real `plugin-host-engine` and
+real `intent-registry`, with only the session manager and uiSettings faked.
+
+**`intent-registry.js:343` verified verbatim:**
+```js
+if (pluginRows.some((r) => r.type === type)) throw new Error(`intent verb "${type}" is already registered`);
+```
+Called from `plugin-host-engine.js:322` (`intents.register`), inside
+`register()`'s try at `:432-438`, which logs, calls `deactivate(pluginId)`, and
+**rethrows**. `plugin-loader.js:341` `loadOne` catches, logs `FAILED to load
+<id>`, and calls `recordFailure` — one quarantine strike. So a verb collision
+IS an activation failure with a strike, as the ticket suspected.
+
+**But the loser is not the newcomer.** `discover()` iterates roots in precedence
+order, and within a root sorts entries **alphabetically by directory name**
+(`plugin-loader.js:221`). Install order is not recorded anywhere and cannot be
+recovered. So the winner is whichever plugin sorts first, and installing a new
+plugin whose directory name sorts EARLIER than an existing one takes the
+existing one down.
+
+Observed, verbatim from the probe (`zzz` installed and working first, then `aaa`
+installed, both claiming verb `probe`, single user root):
+
+```
+A1 — only zzz installed
+  result: {"id":"zzz","ok":true}
+A2 — aaa installed later, first launch after
+  result: {"id":"aaa","ok":true}
+  result: {"id":"zzz","ok":false,"error":"intent verb \"probe\" is already registered"}
+  status: zzz enabled=true quarantined=false failCount=1
+A3 — second launch after
+  result: {"id":"zzz","ok":false,...,"quarantined":true}
+  status: zzz enabled=true quarantined=true failCount=2
+A4 — third launch after
+  result: {"id":"zzz","ok":true,"skipped":"quarantined"}
+```
+
+`zzz` worked. The user installed an unrelated plugin. `zzz` broke, and two
+launches later it was quarantined and silently skipped, with its `enabled` flag
+still true. **The user's working plugin is the casualty and the newcomer is
+fine.** Log line the user would have to find to understand it:
+`zzz: strike 2 — QUARANTINED (Preferences ▸ Plugins offers Retry; your enabled
+setting is untouched)`.
+
+**Symptom and cause are as far apart as the ticket feared, plus one step.** The
+Manage Plugins row for `zzz` says quarantined-after-failed-activation. Nothing
+anywhere names the other plugin, and nothing suggests the two are related. The
+plugin the user just installed looks healthy.
+
+**Retry does not recover it.** `engine.setEnabled('zzz', true)` →
+`{"ok":false,"error":"intent verb \"probe\" is already registered"}`, and it
+re-strikes immediately. The only recovery is to disable the WINNER first, which
+requires the user to have guessed the relationship:
+```
+Disable aaa: {"ok":true}
+Retry zzz after disabling aaa: {"ok":true}
+```
+
+**Core-vs-user is the benign direction, and it is the only one clodex saw.**
+Roots are iterated in precedence order, so a core plugin always beats a user
+plugin regardless of name (probe B1: core `zcore` beat user `auser`). That is
+why the `gb-user` case looked like "the new one fails" — it was a user copy
+losing to core. Two USER plugins, the case BYO makes reachable, behave as above.
+The mirror hazard is worse and also unhandled: **a core plugin that adds a verb
+in a future release takes down a user plugin that already used it**, at update
+time, with no diagnostic connecting the two.
+
+**Why the analogy to t16 breaks rather than holds.** t16's id collisions got a
+precedence rule AND a visible `shadowed` row that names the winner. Verbs got
+neither: the collision is discovered at activate time, after `discover()` has
+already accepted both plugins, so there is no shadowed row to render and the
+loser is recorded as a failure rather than as a shadowed copy. Same pattern one
+layer down, but the layer below has strictly worse behaviour, not merely
+undocumented behaviour.
+
+**Not touching either doc.** Per the ticket, this changes the ruling and the
+call is clodex's. Documenting "verbs are global, first-come, the loser fails to
+activate" would be documenting something that is not true as stated — the loser
+is the alphabetically-later plugin, not the later-installed one, and it does not
+merely fail to activate, it is quarantined.
+
+Probe scripts (scratchpad, not committed):
+`verb-collision-probe.js`, `verb-collision-retry.js`.
+
+Nothing committed under t18. HEAD still `fef4da4`.
+
+### T19 — dispatched mid-t18, NOT started
+
+Record Bogdan's decision that wirescope stays vendored and `docs/plugin-plan.md`
+§6 Phase 4b is dropped — struck through like 4a, not deleted, with the
+reasoning. Standing rule to state: **a 1.1 addition must serve more than one
+caller, or it is a private extension wearing a version number.** Note it costs
+nothing and forecloses nothing; migration stays available if a second consumer
+appears. Check §5.2's A/B/C additions, the GAP register, and Phase 5's scope for
+anything that assumes 4b happens — those should read *unscheduled*, not
+*pending*. STOP and report if dropping 4b changes a decision already made rather
+than merely removing future work. Deviation letter (x).
+
+## T20 — verb collision must be refused, not punished
+
+Supersedes t18's doc work (its sentence was false). Target behaviour from clodex:
+(1) refused, not punished — no quarantine strike; (2) visible and self-explaining
+— name the verb and the holder, in t16's shadowed-row register; (3) the incumbent
+survives where we can tell who the incumbent is.
+
+### Shape chosen: refuse at REGISTRATION time. Not a manifest field.
+
+Both shapes were weighed against the three targets. The decider is **coverage**.
+
+- **Manifest declaration** would let `discover()` arbitrate before any module is
+  required, so the loser never activates and takes no strike *by construction*.
+  Deterministic, and it enables a real shadowed-style row. But clodex's own
+  question kills it: if an undeclared verb still registers with today's
+  behaviour — and it must, or the field is a breaking change — then **the defect
+  stays live for every plugin that does not declare**. The plugins that will not
+  declare are exactly the ones we did not write, which is the entire population
+  that made this reachable. A fix that covers only cooperating plugins does not
+  cover the case it exists for.
+- **Registration-time refusal** covers every plugin unconditionally, declared or
+  not, needs no manifest field and raises no hostApi question at all. Its cost is
+  that the loser is decided by load order — but that costs nothing real, because
+  **both shapes fail target 3 identically** (below).
+
+So: no new surface, no `hostApi` question, universal coverage.
+
+### Target 3 is NOT achievable, and this is the honest limit
+
+**Incumbency is a temporal property; discovery is stateless.** `discover()` reads
+the disk every call and nothing anywhere records when a plugin arrived. Install
+order is not recoverable. Any static rule — alphabetical, root precedence,
+manifest order — is arbitrary with respect to "who was here first", so it would
+be exactly the fake ordering clodex said he did not want.
+
+Rejected: reading install order out of `uiSettings.plugins.enabled`, which *is*
+an append-ordered array (`setEnabledInSettings` appends). It only looks like
+install order — the first write materialises the whole current set in
+**discovery** order (`plugin-loader.js:324`), and a default-on plugin never
+appears until its first toggle. It would be a fake ordering that is right often
+enough to be trusted and wrong without warning.
+
+Rejected: a persisted verb-ownership ledger. It would hit target 3, and it buys
+staleness worse than the bug — ownership held by a deleted plugin, or by a
+plugin the user disabled, blocking a plugin that is actually running.
+
+**Consequence, stated plainly rather than papered over:** within one root the
+casualty of a collision is still the alphabetically-later plugin, which may be
+the one that was already working. What changes is that it now fails *visibly and
+recoverably* instead of being quarantined under a message about activation
+failure. The user is told which plugin holds the verb, so the fix is a decision
+they can actually make.
+
+### The mirror, and why it is target 3's clearest failure
+
+Roots iterate in precedence order, so a core plugin adding a verb in a future
+release registers BEFORE the user plugin that already used it. The incumbent
+(user) loses to the newcomer (core). Precedence cannot be reversed for verbs
+without contradicting the id rule settled in t16. Same mechanism covers it — the
+user plugin is refused cleanly and told that a built-in plugin now holds the verb
+— but target 3 is missed in the direction where it would matter most. To be
+confirmed by probe, not asserted.
+
+### No migration needed — verified, not assumed
+
+Only ONE shipped plugin declares a verb at all (`plugins/git-branches/engine.js:484`,
+`verb: 'branch'`), so no released install can hold a verb-collision quarantine
+record: the defect is only reachable with user plugins, and BYO is unreleased.
+Nothing has to un-quarantine on upgrade.
+
+### Implementation plan
+
+1. `intent-registry.js:343` — find the holding row, throw an error carrying
+   `code = 'EVERBTAKEN'`, `verb`, `heldBy`. Message keeps the substring
+   `already registered` (pinned by `test/intent-registry.test.js:338` and
+   `test/plugin-host-engine.test.js:418`) and gains the holder's id.
+2. `plugin-host-engine.js:432-438` — rethrows `e` itself, so the properties
+   survive untouched. Verify, do not change.
+3. `plugin-loader.js` `loadOne` — classify: on `EVERBTAKEN`, record a verb
+   conflict and **skip `recordFailure`**. Conflicts live in an app-run Map, NOT
+   persisted (persisting it would reintroduce the staleness I just rejected).
+4. `status()` — per-plugin `verbConflict: { verb, heldBy }`. A per-plugin field
+   rather than a top-level list like `shadowed`, because unlike a shadowed copy
+   this plugin is real and installed and keeps its toggle.
+5. `renderer/renderer.js:5154` — the conflict note replaces the quarantine note,
+   naming the verb and the holder. `npm run build:web` after.
+6. Probe re-run (`zzz`/`aaa` + the mirror), then revert-proof each test.
+
+### T20 OUTCOME — implemented, suite 2506/2506
+
+Targets 1 and 2 HIT. **Target 3 NOT hit, and it is not achievable** — see above.
+
+Proven by re-running the same harness that found the defect. Before/after on the
+`zzz`/`aaa` sequence (`zzz` working, then `aaa` installed, both wanting `probe`):
+
+| | before | after |
+|---|---|---|
+| launch 1 after install | zzz failCount=1 | zzz refused, failCount=0 |
+| launch 2 | zzz QUARANTINED | zzz refused, failCount=0 |
+| launch 3 | zzz skipped — quarantined | zzz refused, failCount=0 |
+| Retry on zzz | re-strikes, still fails | no strike; still refused while aaa holds it |
+| disable aaa, retry zzz | works | works |
+
+The mirror was CONFIRMED by probe, not asserted (`verb-collision-mirror.js`): a
+user plugin `aaa-mine` holding `notes`, then an app update shipping core plugin
+`zz-builtin` claiming `notes`. The user plugin loses to root precedence — the
+incumbent loses to the newcomer, target 3's clearest failure — but takes no
+strike, is never quarantined, and its row names `zz-builtin`. Same mechanism,
+confirmed to cover it.
+
+What the user now sees, in place of "Disabled automatically: activate() threw on
+2 consecutive launches":
+
+> Not running: it uses the intent verb [agent:probe], which the "aaa" plugin
+> already registered. Two plugins cannot share a verb — disable one of them.
+
+Changed: `intent-registry.js` (EVERBTAKEN + verb + heldBy on the throw; message
+keeps the `already registered` substring two tests pin, and gains the holder) ·
+`plugin-loader.js` (`verbConflicts` per-run Map; `loadOne` classifies and skips
+`recordFailure`; cleared on success and on activateById; `status()` exposes
+`verbConflict`) · `renderer/renderer.js` (conflict note checked BEFORE the
+quarantine note) · `web-dist/` rebuilt.
+
+Tests: 5 added, each revert-proofed and failing BY MESSAGE. The over-broad
+classification (treating every failure as a conflict) is caught by the eight
+existing quarantine tests, so the failure machinery cannot be silently turned
+off. `intent-registry.js:343`'s bare throw restored → the new registry test fails
+on `actual: undefined, expected: 'EVERBTAKEN'`.
+
+**Docs still owed** (t20 says they come after and describe what the code does):
+`docs/plugin-sources.md` and `docs/plugin-api.md`. t18's original sentence is
+superseded and must NOT be written — the loser is the alphabetically-later
+plugin, not the later-installed one.

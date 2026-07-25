@@ -535,3 +535,19 @@ test('P4 — the bounce list omits `team`, a PRE-EXISTING gap this refactor does
   assert.ok(registry.rowFor('team'), 'team is a real verb');
   assert.ok(!registry.CORE_VALID_INTENT_NAMES.includes('team'), 'still omitted, as it shipped');
 });
+
+test('P5 — a collision identifies the holder, so the refusal is actionable (t20)', () => {
+  // The message alone is not enough: the LOADER has to tell a structural refusal
+  // apart from a plugin that crashed, or it strikes the wrong plugin and
+  // quarantines it (t20). `code` is what it branches on; `heldBy` is what the
+  // settings row shows the user.
+  withPluginVerb({ verb: 'branch', parse: () => null, source: 'git-branches' }, () => {
+    let err = null;
+    try { registry.registerIntent({ verb: 'branch', parse: () => null }, 'other'); } catch (e) { err = e; }
+    assert.ok(err, 'still throws');
+    assert.strictEqual(err.code, 'EVERBTAKEN');
+    assert.strictEqual(err.verb, 'branch');
+    assert.strictEqual(err.heldBy, 'git-branches', 'the HOLDER, not the caller');
+    assert.match(err.message, /already registered by plugin "git-branches"/);
+  });
+});

@@ -340,7 +340,20 @@ function registerIntent(spec, source) {
   const type = String((spec && (spec.verb || spec.type)) || '');
   if (!PLUGIN_VERB_RE.test(type)) throw new Error(`invalid intent verb: ${JSON.stringify(type)}`);
   if (RESERVED_TYPES.has(type)) throw new Error(`intent verb "${type}" is reserved by core`);
-  if (pluginRows.some((r) => r.type === type)) throw new Error(`intent verb "${type}" is already registered`);
+  // A collision is STRUCTURAL, not a malfunction: the plugin is fine, the verb is
+  // taken. The loader has to tell those two apart to decide whether a strike is
+  // deserved (t20), and a user has to be told WHO holds the verb or the refusal is
+  // unactionable — so the holder rides on the error rather than only in the text.
+  // `code` is what the loader branches on; the message stays human and keeps the
+  // `already registered` substring two tests pin.
+  const holder = pluginRows.find((r) => r.type === type);
+  if (holder) {
+    const err = new Error(`intent verb "${type}" is already registered by plugin "${holder.source}"`);
+    err.code = 'EVERBTAKEN';
+    err.verb = type;
+    err.heldBy = holder.source;
+    throw err;
+  }
   if (typeof spec.parse !== 'function') throw new Error(`intent verb "${type}" needs a parse function`);
   if (spec.bodyMode != null && typeof spec.bodyMode !== 'function') {
     // MUST-FIX 7 again, at the boundary: a plugin passing a STRING here would be

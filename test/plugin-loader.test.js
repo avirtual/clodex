@@ -686,3 +686,93 @@ test('the legacy single-root `pluginsDir` spelling still works', () => {
   const { loader } = mkLoader(core);
   assert.deepStrictEqual(loader.discover().map((r) => r.id), ['alpha']);
 });
+
+// ── Verb collisions are REFUSED, not PUNISHED (t20) ─────────────────────────
+// The defect these pin, found by running the app: a user installed a plugin and
+// it took down a DIFFERENT plugin they already had, quarantining it two launches
+// later under a message about activation failure that named neither the verb nor
+// the other plugin — and Retry could not recover it, because the collision
+// reproduces on every attempt.
+//
+// A host whose register() throws the shaped error intent-registry really throws.
+// Shaped rather than the real registry on purpose: what is under test here is the
+// LOADER's classification rule, and the registry's own throw is pinned next door
+// in intent-registry.test.js.
+function verbTakenHost(losers) {
+  const registered = [];
+  return {
+    registered,
+    register(id) {
+      const conflict = losers[id];
+      if (conflict) {
+        const e = new Error(`intent verb "${conflict.verb}" is already registered by plugin "${conflict.heldBy}"`);
+        e.code = 'EVERBTAKEN';
+        e.verb = conflict.verb;
+        e.heldBy = conflict.heldBy;
+        throw e;
+      }
+      registered.push(id);
+    },
+  };
+}
+
+test('a verb collision takes NO quarantine strike, however many launches', () => {
+  const dir = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkLoader(dir);
+  const host = verbTakenHost({ alpha: { verb: 'branch', heldBy: 'git-branches' } });
+
+  // Three launches. Under the old behaviour alpha was quarantined at the second.
+  for (let i = 0; i < 3; i++) loader.loadAll(host);
+
+  const row = loader.status().plugins.find((p) => p.id === 'alpha');
+  assert.strictEqual(row.failCount, 0,
+    'a verb collision is a structural refusal, not a malfunction — the strike counter is for plugins that CRASH');
+  assert.strictEqual(row.quarantined, false,
+    'quarantining here disabled a working plugin because the user installed an unrelated one');
+  assert.strictEqual(row.enabled, true, 'the user\'s intent is untouched');
+});
+
+test('a verb collision NAMES the verb and the plugin holding it', () => {
+  // Target 2. "Disabled automatically: activate() threw" is unactionable — it
+  // points at the wrong plugin and never mentions the verb.
+  const dir = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader, logged } = mkLoader(dir);
+  const host = verbTakenHost({ alpha: { verb: 'branch', heldBy: 'git-branches' } });
+
+  const results = loader.loadAll(host);
+  assert.deepStrictEqual(results[0].verbConflict, { verb: 'branch', heldBy: 'git-branches' },
+    'the load result carries the conflict, not just an error string');
+  assert.deepStrictEqual(loader.status().plugins[0].verbConflict, { verb: 'branch', heldBy: 'git-branches' },
+    'status() is what the settings row renders — the holder must reach it');
+  assert.ok(logged.some((l) => /already held by "git-branches"/.test(l) && /No strike/.test(l)),
+    'the log names the holder too');
+});
+
+test('a plugin that CRASHES still strikes and still quarantines', () => {
+  // The other half of the classification: t20 must not have turned the failure
+  // machinery off. `boom` throws a plain Error with no code.
+  const dir = mkTree({ boom: { manifest: { ...OK_MANIFEST, id: 'boom' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkLoader(dir);
+  loader.loadAll(fakeHost());
+  loader.loadAll(fakeHost());
+  const row = loader.status().plugins.find((p) => p.id === 'boom');
+  assert.strictEqual(row.failCount, 2);
+  assert.strictEqual(row.quarantined, true);
+  assert.strictEqual(row.verbConflict, null, 'a crash is not a verb conflict');
+});
+
+test('the conflict clears when the plugin loads — it is per-run, never persisted', () => {
+  // Persisting it would reintroduce the staleness this ticket is about: a record
+  // outliving the plugin that held the verb. So a load that succeeds after the
+  // holder is disabled must leave nothing behind.
+  const dir = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader, ui } = mkLoader(dir);
+  loader.loadAll(verbTakenHost({ alpha: { verb: 'branch', heldBy: 'git-branches' } }));
+  assert.ok(loader.status().plugins[0].verbConflict, 'refused first');
+
+  assert.strictEqual(JSON.stringify(ui.read()).includes('branch'), false,
+    'the conflict must not be written to uiSettings — it is a fact about this run');
+
+  loader.loadAll(fakeHost()); // the holder is gone this run
+  assert.strictEqual(loader.status().plugins[0].verbConflict, null);
+});

@@ -5151,7 +5151,16 @@ async function renderPluginsDialog() {
       d.textContent = p.description;
       body.appendChild(d);
     }
-    if (p.quarantined || p.failCount) {
+    // A verb conflict is checked FIRST and is not a failure count: the plugin is
+    // fine and another plugin holds the verb, so the row has to name the verb and
+    // the holder or the user cannot act on it (t20). "Activation failed" told them
+    // nothing and pointed at the wrong plugin.
+    if (p.verbConflict) {
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb — disable one of them.`;
+      body.appendChild(n);
+    } else if (p.quarantined || p.failCount) {
       const n = document.createElement('div');
       n.className = 'plugin-row-note warn';
       n.textContent = p.quarantined
