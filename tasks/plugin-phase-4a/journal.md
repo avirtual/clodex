@@ -130,6 +130,75 @@ file:line.
 
 ---
 
+## T15 — VERIFY.md re-audit: the prose was claims too
+
+Triggered by an accident. Bogdan had me emit `[agent:branch]` from an ungranted
+seat; it returned `[agent:branch] the branch intent is disabled for this
+session`, and step 1 said that case is **total silence**. Fixed in `3fdde01`,
+then clodex ruled the rest of the file needed the same treatment (t15).
+
+**Why t13 missed it:** t13's scope was the five listed behaviours. The grant
+paragraph was not one of the five, so it was never checked — an audit scoped to
+a list inherits the list's blind spots. The revert discipline could not have
+caught this either: there was no test to revert, only prose nobody had run.
+**What caught it was executing the thing.**
+
+### The three defects, all "told the operator to expect the wrong thing"
+
+1. **Ungranted verb "fails silently"** — it bounces. `session-manager.js:2825`
+   refuses at the gate and returns before dispatch, injecting at `:2839`. Pinned
+   the whole time by `test/plugin-fake.test.js:999-1009` ("refused at the gate,
+   never at the handler"), which asserts the empty handler record AND the exact
+   string. A green test in this repo contradicted the doc.
+2. **"the log shows `plugin:git-branches activated` exactly once"** — **no such
+   line exists anywhere.** Nothing in `plugin-host.js`, `plugin-host-engine.js`
+   or `plugin-loader.js` logs an activation; `logFor` (`plugin-host-engine.js:120`)
+   only emits what a plugin passes to `host.log`. The nearest real line is the
+   loader's `loaded <id> v<ver>` at **startup discovery** (`plugin-loader.js:281`),
+   a different event that will not reappear on a live re-enable. Bogdan would
+   have hunted for an unprintable line.
+3. **"a leaked timer would surface as a failed `invoke`"** — it would not. The
+   plugin handles that case on purpose: a stray invoke gets the documented
+   `{ ok:false, error:'no such plugin method' }` and `checkRoutable`
+   (`plugins/git-branches/renderer.js:155-162`) swallows it, stops its timers and
+   logs an **info** line. So a silent console is consistent with BOTH a clean
+   teardown and a leak — **the stated observable cannot discriminate.** The file
+   now points at the info line as the real signal.
+
+### What else changed
+
+- **Marking convention.** Every sentence stating what the app will do now either
+  cites `file:line` or is marked **[unrun prediction]**. Step 2's teardown is
+  `[source]` (`plugin-host.js:649` removes badge nodes directly, so chips vanish
+  without waiting for a relayout; `:644` the style; `:645` the settings section);
+  two-windows and re-enable stay `[unrun prediction]`.
+- **Step 0's failure branches**, which were guesses, are now diagnostics: an
+  absent Plugins menu has **two** causes, not one (`app-menus.js:342-352` returns
+  null for `CLODEX_PLUGINS=0` *or* nothing found on disk — so it can mean the copy
+  didn't land), refused dirs show `<dir> — not loaded` (`:378-380`) with the
+  reason at `renderer.js:5196`, and a throwing `activate()` is a *different*
+  state with the held-back label and a Retry button.
+- **"Reporting back" re-routed.** It used to say "everything in step 2 failing is
+  a finding against my code" — false, since two of step 2's observables were
+  defects in the document. Now routes by what failed, and flags a `[source]`
+  bullet misbehaving as the most interesting possible outcome.
+- **Confirmed-by-running** (Bogdan's pass): the grant takes effect **live, no
+  restart**, and the reply named the emitting session. No longer predictions.
+
+### Deviation (w) — clodex's near-miss, recorded because a reader will repeat it
+
+clodex predicted the reply would read `plugin-phase-1`; it read `master`. Correct
+behaviour — that seat's cwd is the main checkout, the worktree belongs to a
+different seat. Had it answered `plugin-phase-1` that would have been the "reply
+names a different session" failure. Step 1 now tells the operator to check the
+branch against **that session's cwd**, not the branch they have in mind.
+
+**Next letter is (x).**
+
+Committed after `3fdde01`. Suite 2489/2489.
+
+---
+
 ## T14 — pot-drawer migration: NOT ACHIEVABLE AT `"1"`. Finding delivered.
 
 **Closed. Ruling: take the finding, do not build the degraded variant, do not
