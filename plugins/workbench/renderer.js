@@ -691,8 +691,12 @@ module.exports.activate = (rhost) => {
         + `<div class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</div>`;
       row.appendChild(meta);
       const openBtn = document.createElement('button');
-      openBtn.textContent = 'Open';
-      openBtn.title = 'Reveal in Finder';
+      // Named "Reveal", not "Open": clicking the ROW is what opens a worktree in
+      // the workbench now, so a button labelled "Open" beside it reads like the
+      // primary action when it is the side one. This only hands the path to the
+      // OS file manager.
+      openBtn.textContent = 'Reveal';
+      openBtn.title = 'Show this worktree in Finder';
       openBtn.addEventListener('click', () => h.ui.openPath(w.path));
       row.appendChild(openBtn);
       if (!w.isMain) {

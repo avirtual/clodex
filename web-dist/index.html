@@ -7819,8 +7819,8 @@ body {
             meta.innerHTML = `<div class="worktree-branch">${esc(w.branch || (w.detached ? `(detached ${w.head})` : "(no branch)"))}${w.isMain ? ' <span class="worktree-main-badge">main</span>' : ""}</div><div class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</div>`;
             row.appendChild(meta);
             const openBtn = document.createElement("button");
-            openBtn.textContent = "Open";
-            openBtn.title = "Reveal in Finder";
+            openBtn.textContent = "Reveal";
+            openBtn.title = "Show this worktree in Finder";
             openBtn.addEventListener("click", () => h.ui.openPath(w.path));
             row.appendChild(openBtn);
             if (!w.isMain) {
