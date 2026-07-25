@@ -488,8 +488,15 @@ and all, so the workbench-as-core reached exactly as far. It bounds what it can 
 engine half is unsandboxed in-process Node, so `fsScope` was only ever a guarantee against a
 *careless* plugin widening locality, never a boundary against a hostile one. The defect is in the
 guarantee's shape: an author reads "the locality refusal is a host guarantee" and reasonably infers
-workspace locality as well. Closing it means deciding to carry a caller workspace on the plugin
-transport — a change to the frozen `"1"` surface, hence a decision, not a patch.
+workspace locality as well.
+
+**Deferred as a v1.1 candidate, alongside the menu slot** — scheduled, not abandoned. Closing it
+means carrying a caller workspace on the plugin transport, which is an *additive* change: a new
+field older plugins simply do not read, so the bump policy (§3.1 versioning) permits it in `1.1`
+without going to `"2"`. It is deferred rather than done because it is inherited rather than a
+regression, and because `fsScope` was never a boundary against a hostile plugin in the first place —
+so the honest fix is scheduled against a version, not rushed into a surface that was frozen the same
+week. Until then the published contract tells an author what to do about it (`plugin-api.md` §14).
 
 **`sessions.onExit` exact spec (MUST-FIX 4):** the host installs a single call site inside
 `ptyProc.onExit`, **after** the `session-exit` send and the exit `ipc-message` broadcast, **before**
