@@ -212,3 +212,317 @@ index.html `#workbench-overlay` block 283→~overlay end · ipc-handlers.js 2053
 **W1 commits only when the suite is green at ≥2355.** Baseline 2355.
 
 ### NEXT: write W1.
+
+---
+
+## W1 — DONE. Commit 699aa15. Suite 2380/2380 (baseline 2355, +25).
+
++23 from `test/plugin-loader.test.js`, +2 from the two per-plugin lint rows the
+new `plugins/workbench/` dir adds (plugin-boundary no-backdoor walk +
+electron-boundary engine walk). Both were already wired and green-but-empty in
+Phase 0; the pilot is their first real subject.
+
+### ADDED
+- `plugin-loader.js` — discovery + the enabled set. `createPluginLoader(deps)`,
+  fs/path/require injected (electron-free, M3 factory shape). Exports
+  `discover / isEnabled / enabledSet / setEnabledInSettings / loadAll /
+  activateById / rendererInfo` + the standalone `validateManifest`.
+- `plugins/workbench/{manifest.json,engine.js,renderer.js,style.css}` — real
+  manifest (`hostApi:"0"`, `enabledByDefault:true`), both halves as named
+  activate stubs that actually load, style.css empty until W3.
+- `test/plugin-loader.test.js` — 23 tests against a REAL temp plugins/ tree
+  (mocked readdir would pass a loader that can't read a directory), plus a
+  final test against the REAL `plugins/` dir so the pilot's manifest drifting
+  from what the loader accepts is a failure, not a mystery.
+
+### CHANGED
+- `plugin-host-engine.js` — `getLoader` getter dep; `setEnabled` got a real
+  enable path; new `_host` method `renderer.info`; the returned object is now
+  named `api` so setEnabled can hand the loader the same surface ipc-handlers
+  has (and no more).
+- `engine.js` — requires plugin-loader; `let pluginLoader = null` beside
+  `pluginHost`; loader constructed + `loadAll(pluginHost)` inside the existing
+  `pluginsEnabled` try; the catch now nulls BOTH halves.
+- `renderer/renderer.js` — `loadPluginRenderers()` after `initPluginHost`.
+- `test/free-identifier-leaks.test.js` — `plugin-loader.js` → SCANNED_MODULES.
+
+### DECISIONS (report material)
+
+1. **`renderer.info` rides the `_host` pseudo-id, NOT a sixth api-contract row.**
+   §1 freezes the plugin transport at five rows "for every plugin, forever". The
+   renderer needs two things to activate a half — the module path and the CSS —
+   and that is host plumbing, not a plugin method. `_host` already exists for
+   exactly this class (settings.get/set) and is deliberately outside the
+   dispatch map. Zero api-contract churn; `pluginCatalog` keeps its pinned row
+   shape untouched.
+2. **CSS crosses as TEXT, not a path.** `renderer/plugin-host.js:524` already
+   injects `<style data-plugin-style=id>` from a `css` string. A path would not
+   resolve in the built web bundle; text works in both. (Web bundle still needs
+   G7/W8 for the MODULE, hence the `__CLODEX_WEB__` guard below.)
+3. **`enabledByDefault` in the manifest + a null-vs-array enabled set.** `null`
+   (key absent) = "the user has never chosen" ⇒ manifest default; an array = an
+   explicit decision. Collapsing these to a bare boolean erases the difference
+   and W7 ("ships enabled, existing users see no change") becomes a settings
+   migration for every install instead of a manifest flag.
+4. **First-toggle materialization** — `setEnabledInSettings` expands the current
+   EFFECTIVE set before mutating. Otherwise the first-ever enable of one plugin
+   writes a one-element array and silently disables every default-on plugin.
+   Pinned by its own test.
+5. **`setEnabled` persists the decision BEFORE attempting activation**, so a
+   plugin whose activate() throws still records the user's click rather than
+   looking like the toggle was lost.
+6. **Two boundary checks, not one.** The static no-backdoor lint reads requires
+   INSIDE plugins/; the loader additionally refuses a manifest whose `entry`/
+   `style` path escapes the plugin dir. Neither sees the other's case — a
+   scanner can't see a path assembled in a manifest, a runtime check can't see a
+   require three files deep.
+7. **Renderer activation is guarded on `window.__CLODEX_WEB__ || !window.require`
+   and skips.** The desktop window `require()`s the absolute renderer path
+   (contextIsolation is off by design here); the browser can't, and its
+   build-generated id→module registry is explicitly GAP G7 / step W8. Guarding
+   now means W8 replaces a documented skip, not a crash.
+8. **Per-plugin failure isolation at three levels**: `loadAll` try/catches each
+   plugin (one bad plugin costs only its own features), `renderer.js` try/catches
+   each renderer half, and engine.js's existing catch drops both halves if the
+   HOST itself fails to construct.
+
+### DEVIATION (a) — W1 GREW THE LOADER (both halves). Flagged, load-bearing.
+§4's W1 line says only "scaffold ... against the Phase-1 host", but Phase 1 shipped
+no loader at all (`setEnabled(id,true)` → "enabling requires the plugin loader
+(Phase 2)"; nothing ever called `pluginBar.activate`). W4 deletes core's
+`#btn-workbench` and W7 says the pilot ships enabled — both are false without
+discovery + activation. §3.1 fully specifies the mechanism; it just wasn't
+assigned to a W-step. Alternative considered and rejected: defer to W7, which
+would leave W4 shipping a commit where the app has NO workbench entry point.
+
+### NEXT: W2 — DOM move into `surfaces.overlay({mount(rootEl)})`.
+Read `renderer/popovers/workbench-popover.js` (554 lines) whole + the
+`#workbench-overlay` block in index.html (from :283). Parity checklist from §4
+W2 is literal: dropdown repopulated per open following the ACTIVE session,
+unsaved-edit confirm on tab/session switch, shared editor/diff area semantics.
+Known rhost gaps to add as W2/W5 need them (FINDING 2): `ui.openPath`,
+`lib.renderDiffHtml`, a toast surface. Note W2 keeps the OLD data path working
+(`window.api.*` rows stay until W5/W6) — but the plugin's renderer half may not
+touch `window.api` (no-backdoor lint), so W2 must route its data calls through
+`rhost.invoke` and W5's engine rows must therefore exist by then, OR W2 lands
+the overlay against temporary `_host`-free passthrough rows. RESOLVE THIS FIRST
+IN W2: likeliest answer is to do W5's engine registrations as part of W2's
+landing so the moved DOM has a legal data path from its first commit.
+
+---
+
+## W2 — the data-path ordering question, RESOLVED
+
+### The constraint
+`test/plugin-boundary.test.js` forbids the plugin's renderer half from touching
+`window.api` at all, and forbids either half from requiring outside the plugin
+dir. So the moment the overlay DOM lives in `plugins/workbench/renderer.js`, its
+data calls must go through `rhost.invoke` → engine rows registered by
+`plugins/workbench/engine.js`. Those rows must call SOMETHING. The scm/fs
+implementations (`git-scm.js`, `fs-explorer.js`) are still at the core root and
+the plugin cannot require them there.
+
+Naively that collapses W2+W5+W6 (and W4, since a deleted popover leaves
+`#btn-workbench` opening nothing) into ONE commit — losing exactly the
+per-step revertability the ticket calls "the whole point of the phasing".
+
+### The resolution: two TEMPORARY `host.lib` entries.
+W2 registers the 14 engine rows against `host.lib.gitScm` / `host.lib.fsExplorer`
+— core keeps owning both files, exposed the same sanctioned-shared-leaf way
+`host.lib.gitWorktree` already is (§3.2 `lib`). W5 then does exactly what §4 W5
+says — moves the files INTO the plugin dir, switches the engine half to a local
+`require('./git-scm')`, and DELETES the two temporary lib entries. W6 deletes
+core's rows.
+
+Each commit is green, lint-clean, and leaves a working app:
+- **W2**: DOM + wiring live in the plugin; data flows plugin→host.lib→core files.
+  Core's `window.api` rows still exist (unused by the plugin, still used by
+  nothing else — deleted in W6).
+- **W3**: CSS extraction.
+- **W4**: entry points (footer button in, `#btn-workbench` + View item out).
+- **W5**: the two files move; temp lib entries die; `git-scm`/`fs-explorer`
+  requires become plugin-local.
+- **W6**: core's 14 rows + registrations deleted.
+
+Cost, stated plainly: two `host.lib` entries exist for three commits and are then
+removed. That churn is the price of per-step revertability, and it is commented
+as W5-temporary at the registration site so a reviewer isn't left wondering
+whether they were meant to be permanent API. **Flagged as deviation (b).**
+
+### Two more GAP answers found while reading (both change W5's scope)
+
+- **`fs-explorer.js` moves too — the plan never mentions it.** §4 W5 names only
+  `git-scm.js`, but `fs:list/read/write` delegate to `fsExplorer`
+  (ipc-handlers.js:373-386), not to gitScm. Its consumers are exactly the same
+  shape as git-scm's: `ipc-handlers.js:37`, its own `test/fs-explorer.test.js`,
+  and the leak-scanner list. So it is a second file to move, with two more test
+  repoints. **Flagged as deviation (c).**
+- **`renderDiffHtml` genuinely must stay core** — `renderer/lib/render-html.js`
+  is also required by `renderer/renderer.js:11`, `popovers/files-popover.js:15`,
+  `bust-popover.js`, `cost-popover.js`. Plan §4 W5's `rhost.lib.renderDiffHtml`
+  call is correct. Same for `fileOpen` (files-popover.js:204 also uses it) →
+  `rhost.ui.openPath`, and `createWorktree` (renderer.js:2457, the New-Session
+  dialog) → stays core.
+
+### A gap the plan leaves: the workbench's OWN "Create Worktree" button.
+`workbench-popover.js:461` calls `api.createWorktree(wl.repo, branch, {base})`.
+§4 W5 lists `createWorktree` among the rows that STAY core "(New-Session
+dialog)" but never says how the plugin reaches it. Two options: a new
+`rhost.ui.createWorktree` wrapper, or a plugin engine row `wt.create` built on
+the `host.lib.gitWorktree` leaf the plugin already has. **Taking the engine row**
+— it needs no new renderer-side surface, it keeps the leaf as the single
+sanctioned path to worktree code, and core's `worktree:create` row stays
+untouched for the New-Session dialog that actually owns it.
+**Flagged as deviation (d).**
+
+### rhost surfaces W2 must add (FINDING 2, now concrete)
+`ui.openPath(p)` (→ `window.api.fileOpen`), `lib.renderDiffHtml(diff)`,
+`ui.showToast(msg, opts)`, and `sessions.listWorkspace(wsId)` — the last is
+**THE load-bearing correction**: `rhost.sessions.listWorkspace(rhost.workspaceId)`,
+NEVER `listAll()`. Ground truth `ipc-handlers.js:377`
+`handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)))`.
+Note the OLD popover called `api.listSessions()`, which IS `session:list`, i.e.
+already workspace-scoped — so mapping it to `listAll()` would have been a real
+regression, not a theoretical one. `fsScope` refuses peers, not foreign
+workspaces.
+
+### NEXT: write W2 (DOM move + wiring + the four rhost surfaces + 15 engine rows
+— the 14 from §4 W5 plus `wt.create` per deviation (d)).
+
+---
+
+## INBOX — a follow-on from clodex, NOT part of W1–W6 (msg-60180-50.txt)
+
+Arrived mid-W2. Scoped addition to the W1 loader (fail-safe activation +
+quarantine). Deliberately NOT started — the ticket says finish W2 first and this
+message says the same ("a follow-on, not an interrupt"). Recorded here so it
+survives a compaction:
+
+- REQUIRED 1 — try/catch per plugin around manifest parse, engine `activate(host)`
+  AND renderer `activate(rhost)`. A throwing/malformed plugin is marked failed and
+  SKIPPED; the app boots regardless. Surface it in the §2.5 settings section (+ a
+  toast if cheap). Motivation: the engine half activates inside createEngine's
+  bootstrap, BEFORE any window exists — an uncaught throw there kills startup with
+  no window, so the user can't open a session to repair the plugin.
+- REQUIRED 2 — quarantine on the SECOND consecutive failed activation, not the
+  first (one throw is often transient). Persist a per-plugin failure counter;
+  clear it on any successful activation.
+- THE DESIGN RULE: do NOT clear `uiSettings.plugins.enabled` to quarantine —
+  that field is the USER'S INTENT and flipping it destroys the record. Keep a
+  SEPARATE quarantine set that SHADOWS enabled. Settings row reads e.g.
+  "disabled automatically: activate() threw on 2 consecutive launches — Retry".
+- RENDERER NUANCE: the renderer half activates once per BrowserWindow, so a
+  failure may be one window of three. Quarantine on consistent failure across
+  activations, not per-window. My judgment on the exact rule; flag what I choose.
+- Tests for both paths (throwing plugin skipped + app still boots; two strikes =
+  quarantined with enabled untouched).
+
+Note for whoever picks this up: `loadAll` ALREADY try/catches per plugin
+(plugin-loader.js) and `renderer.js:loadPluginRenderers` already try/catches per
+renderer half — W1 decision 8, "per-plugin failure isolation at three levels". So
+REQUIRED 1 is largely present and the real new work is (a) recording the failure
+rather than only logging it, (b) surfacing it in settings, and (c) the whole of
+REQUIRED 2. Verify before rebuilding.
+
+---
+
+## W2 — DONE (pending suite + commit). DOM move into the plugin.
+
+### What moved
+
+- **`renderer/index.html`** — the whole `#workbench-overlay` block (:283-354)
+  deleted, replaced by a 4-line comment. Core ships NO workbench markup.
+- **`renderer/popovers/workbench-popover.js`** — DELETED (`git rm`), 554 lines.
+  Its body lives in `plugins/workbench/renderer.js`, ported per §4 W2's list:
+  `$(id)` → `rootEl.querySelector('#'+id)`, the DOM as a template literal built
+  inside `mount(rootEl)`, drag kept plugin-internal, ESC + one-open-at-a-time
+  handed to the host surface (the plugin installs NO document keydown listener).
+- **`renderer/renderer.js`** — the popover require + init deleted; the two entry
+  points kept working (see the bridge below); three new deps passed to
+  `initPluginHost`.
+
+### The four rhost surfaces (FINDING 2, now real) — `renderer/plugin-host.js`
+
+- `rhost.sessions.listWorkspace(wsId)` — **THE load-bearing one.** Wraps
+  `window.api.listSessions()` (= `session:list` = `manager.listForWorkspace(
+  workspaceOfSender(e))`) and FILTERS on `workspaceId`. There is deliberately no
+  `listAll()` and no unqualified `list()` on this surface, mirroring the engine
+  half's law 1. Pinned by a test that asserts both are `undefined`.
+- `rhost.sessions.active()` — the active-session name. NOT in the plan; the old
+  popover took `getActiveSession` as a factory dep and the parity checklist
+  ("each open follows the ACTIVE session") is unimplementable without it.
+  **Flagged as deviation (e)** — it is a fifth surface, not one of the four.
+- `rhost.ui.openPath(p)` → `window.api.fileOpen` (files-popover uses it too).
+- `rhost.ui.showToast(msg, opts)` → core's toast host. The old popover fell back
+  to `alert()` when no showToast was injected; here the fallback is a
+  `console.warn`, since core always injects it.
+- `rhost.lib.renderDiffHtml` — `renderer/lib/render-html.js` required at the TOP
+  of plugin-host.js (core file, so no lint issue) and frozen into `rhost.lib`,
+  mirroring the engine host's `lib`.
+
+### The 15 engine rows — `plugins/workbench/engine.js`
+
+`fs.list/read/write`, `scm.status/diff/stage/unstage/discard/commit/branches/
+checkout/remote`, `wt.list`, `wt.remove`, `wt.create`. Thirteen go through a
+`scoped()` wrapper whose FIRST line is `host.sessions.fsScope(name)` and whose
+refusal envelope is `{ ok:false, error }` — byte-identical to ipc-handlers', so
+the renderer's existing `error === 'remote'` branches keep matching.
+
+`wt.remove` is NOT scoped: it takes a worktree PATH, exactly as core's
+`worktree:remove` does (which has no `sessionCwd` guard either, because the path
+comes from a `wt.list` result the user just clicked). Reproduced rather than
+"improved" — a behavior change hidden inside a move is the thing this phasing
+exists to prevent. Pinned by its own test so a future consistency fix argues
+with a test rather than silently tightening it.
+
+`scm.remote` keeps the `['push','pull','fetch']` allowlist on the ENGINE side,
+where ipc-handlers had it — not in the renderer.
+
+### Two decisions the plan didn't cover
+
+**1. `.plugin-overlay` base CSS is CORE css.** The host CREATES the overlay
+container, centralizes hidden/Escape/one-open on it, and removes it wholesale on
+disable (§2.6 / MUST-FIX 6) — so its backdrop/centering rule belongs to the host
+contract, not to any plugin's stylesheet. Added to `renderer/styles.css` beside
+the old `#workbench-overlay` rule (which dies in W3 with the rest of the wb-*
+block). It is `.plugin-overlay.hidden`, NOT a generic `.hidden`, so the project's
+always-visible gotcha stays impossible. **Flagged as deviation (f)** — W3 is
+"CSS moves OUT"; this is a small piece of CSS moving IN, and it is permanent.
+
+**2. A temporary DOM-event bridge keeps `#btn-workbench` working.** W4 owns the
+entry points; W2 must not break them. Core now does
+`document.dispatchEvent(new CustomEvent('clodex:open-workbench'))` and the plugin
+listens via `rhost.addEventListener(document, …)` (the host-WRAPPED one, so
+disable removes it). Core holds no handle to the plugin, and the plugin is not
+reached by name — the event is the whole coupling, and it is deleted in W4 when
+the plugin registers its own `sidebar.footerButton`. The alternative — accepting
+one commit where the Workbench button does nothing — was rejected because the
+ticket's "each step lands green and leaves a working app" is the point of the
+phasing. **Flagged as deviation (g).**
+
+### Parity checklist — honoured literally, plus one fix
+
+- Dropdown repopulated per open, following the ACTIVE session: `onOpen` →
+  `fetchSessions()` + `populateSessions()`, same logic verbatim.
+- `confirmDiscardEdit` on tab switch: unchanged.
+- `confirmDiscardEdit` on SESSION switch: **the old popover did NOT do this** —
+  `sessionSel`'s change handler called `resetEditor()` unconditionally, silently
+  dropping unsaved edits. The plan's checklist says "unsaved-edit confirm on
+  tab/session switch", i.e. the plan describes the intended behavior and the CODE
+  was the outlier. Implemented the plan here (confirm, and restore the select to
+  the current scope if the user cancels) because this is a bug, not a behavior
+  worth preserving. **Flagged as deviation (h)** — it is the one intentional
+  behavior CHANGE in W2.
+- Shared editor/diff semantics (Files edits · Source read-only diffs · Worktrees
+  hides `#wb-editor` and sets `worktrees-mode`): unchanged.
+
+### Tests
+
+- **NEW `test/workbench-plugin.test.js`** (8 tests) — the plugin's engine half
+  driven through the REAL host engine. The MUST-FIX 5 test loops EVERY
+  session-scoped row and asserts both the `'remote'` refusal and that no leaf was
+  touched; a spot-check would miss the single unguarded row that is the whole bug.
+- **`test/plugin-host.test.js`** +4 — the new rhost surfaces, incl. "offers ONLY
+  the workspace-scoped accessor" (asserts `listAll`/`list` are `undefined`).
+- **`test/plugin-host-engine.test.js`** — the two temporary lib entries added to
+  the fake deps + one assertion; both marked DELETE-IN-W5 at the site.

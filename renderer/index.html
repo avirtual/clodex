@@ -278,80 +278,10 @@
     </div>
   </div>
 
-  <!-- Workbench popover — files, source control, and worktrees for one session,
-       scoped to the selected session's cwd (resolved server-side by name). -->
-  <div id="workbench-overlay" class="hidden">
-    <div id="workbench-modal">
-      <div class="workbench-topbar">
-        <span class="workbench-title">Workbench</span>
-        <select id="workbench-session" class="sidebar-select" data-tip="Session whose directory this workbench scopes to"></select>
-        <div class="workbench-tabs">
-          <button type="button" class="workbench-tab active" id="workbench-tab-files" data-tab="files">Files</button>
-          <button type="button" class="workbench-tab" id="workbench-tab-scm" data-tab="scm">Source Control</button>
-          <button type="button" class="workbench-tab" id="workbench-tab-worktrees" data-tab="worktrees">Worktrees</button>
-        </div>
-        <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
-      </div>
-      <div class="workbench-body">
-        <div class="workbench-left">
-          <!-- Files: lazy tree -->
-          <div id="wb-files-panel" class="workbench-panel">
-            <div class="workbench-panel-bar">
-              <span id="wb-files-scope" class="workbench-scope"></span>
-              <button id="wb-files-refresh" type="button">Refresh</button>
-            </div>
-            <div id="wb-tree" class="wb-tree"></div>
-            <div id="wb-files-empty" class="hint hidden">No local session selected, or its directory isn't readable.</div>
-          </div>
-          <!-- Source control -->
-          <div id="wb-scm-panel" class="workbench-panel hidden">
-            <div class="wb-branchbar">
-              <select id="wb-branch-select" class="sidebar-select" data-tip="Switch branch"></select>
-              <span id="wb-aheadbehind" class="wb-aheadbehind"></span>
-              <button id="wb-fetch" class="wb-remote-btn" data-tip="git fetch --all" type="button">⟳</button>
-              <button id="wb-pull" class="wb-remote-btn" data-tip="git pull --ff-only" type="button">↓</button>
-              <button id="wb-push" class="wb-remote-btn" data-tip="git push" type="button">↑</button>
-              <button id="wb-newbranch" class="wb-remote-btn" data-tip="Create a new branch" type="button">+</button>
-              <button id="wb-scm-refresh" class="wb-remote-btn" data-tip="Refresh" type="button">⟲</button>
-            </div>
-            <div id="wb-changes" class="wb-changes"></div>
-            <div id="wb-commit-box" class="wb-commit-box">
-              <textarea id="wb-commit-msg" class="wb-commit-msg" placeholder="Commit message (staged changes)" spellcheck="false" rows="2"></textarea>
-              <button id="wb-commit-btn" type="button" disabled>Commit</button>
-            </div>
-            <div id="wb-scm-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
-          </div>
-          <!-- Worktrees (full width; the shared editor hides for this tab) -->
-          <div id="wb-worktrees-panel" class="workbench-panel hidden">
-            <div class="workbench-panel-bar">
-              <span class="workbench-scope">Worktrees for this session's repository</span>
-              <button id="wb-worktrees-refresh" type="button">Refresh</button>
-            </div>
-            <div id="wb-worktrees-list" class="worktrees-list"></div>
-            <div class="worktrees-add">
-              <input type="text" id="wb-worktree-branch" class="sidebar-search" placeholder="new branch name" spellcheck="false" autocomplete="off">
-              <input type="text" id="wb-worktree-base" class="sidebar-search" placeholder="base branch (optional)" spellcheck="false" autocomplete="off" list="wb-worktree-base-list">
-              <datalist id="wb-worktree-base-list"></datalist>
-              <button id="wb-worktree-add" type="button">Create Worktree</button>
-            </div>
-            <div id="wb-worktrees-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
-          </div>
-        </div>
-        <!-- Shared editor / diff area (Files edits here; Source shows diffs here) -->
-        <div id="wb-editor" class="workbench-editor">
-          <div class="wb-editor-bar">
-            <span id="wb-editor-path" class="wb-editor-path"></span>
-            <span id="wb-dirty" class="wb-dirty hidden" data-tip="Unsaved changes">●</span>
-            <button id="wb-save" type="button" disabled>Save</button>
-          </div>
-          <textarea id="wb-textarea" class="wb-textarea hidden" spellcheck="false" wrap="off"></textarea>
-          <div id="wb-diff" class="wb-diff hidden"></div>
-          <div id="wb-editor-note" class="wb-editor-note hidden"></div>
-          <div id="wb-editor-placeholder" class="wb-editor-placeholder">Select a file to view or edit.</div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- The Workbench overlay used to live here. It is a PLUGIN now
+       (plugins/workbench/): its DOM is built inside the plugin's own
+       `surfaces.overlay({ mount(root) })`, into a container the host creates and
+       removes wholesale on disable. Core no longer ships any of its markup. -->
 
   <div id="main">
     <div id="search-bar" class="hidden">

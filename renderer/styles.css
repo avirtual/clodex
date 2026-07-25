@@ -2601,6 +2601,18 @@ html, body {
 /* Workbench popover — one floating workbench (Files / Source Control / Worktrees)
    for a chosen session. Modeled on the file-peek modal (centered overlay, dark
    backdrop) but larger: this is a working surface, not a peek. */
+/* The container a plugin's `surfaces.overlay` mounts into (docs/plugin-plan.md
+   §2.6). CORE CSS by design, and it stays core: the host creates this element,
+   centralizes hidden/Escape/one-open on it, and removes it wholesale on disable
+   — a plugin styles only its own interior. Not a `.hidden` generic: the rule is
+   scoped to this container class, so no id can be made always-visible by it. */
+.plugin-overlay {
+  position: fixed; inset: 0; z-index: 72;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 3vw; background: rgba(0, 0, 0, 0.55);
+}
+.plugin-overlay.hidden { display: none; }
+
 #workbench-overlay {
   position: fixed; inset: 0; z-index: 72;
   display: flex; align-items: center; justify-content: center;

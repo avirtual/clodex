@@ -47,7 +47,6 @@ const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
 const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
-const { initWorkbenchPopover } = require('./popovers/workbench-popover');
 const { initPluginHost } = require('./plugin-host');
 
 // ---------------------------------------------------------------------------
@@ -2966,6 +2965,11 @@ const pluginBar = initPluginHost({
   sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
   scheduleSidebarRelayout,
   getWorkspaceId: () => currentWorkspaceId,
+  // Core capabilities plugins reach through rhost instead of window.api. Each
+  // has non-workbench consumers in core, which is why it is wrapped, not moved.
+  listSessions: () => window.api.listSessions(),
+  openPath: (p) => window.api.fileOpen(p),
+  showToast,
 });
 
 // Renderer-half activation — ONCE PER WINDOW (§3.3 law 1). The engine loads
@@ -3805,14 +3809,12 @@ createInboxDrawer();
 // state. Opened from the View menu ("Boiling Pot…") via request-open-boiling-pot.
 createPotDrawer();
 
-// Workbench popover — one floating surface (Files / Source Control / Worktrees)
-// for a chosen session (popovers/workbench-popover.js). Scopes to the SELECTED
-// session's cwd (its own dropdown, default = active), resolved server-side by the
-// fs:/scm:/worktree: IPC. Opened from the toolbar button + the View-menu event.
-const { openWorkbench } = initWorkbenchPopover({
-  getActiveSession: () => activeSession,
-  showToast,
-});
+// Workbench — now a PLUGIN (plugins/workbench/), not a core popover: it owns its
+// own overlay, DOM and data path, and core knows nothing about it beyond these
+// two entry points. Both are TEMPORARY and die in W4, when the plugin registers
+// its own `sidebar.footerButton`; until then they dispatch a DOM event the
+// plugin's renderer half listens for, so core holds no handle to the plugin.
+const openWorkbench = () => document.dispatchEvent(new CustomEvent('clodex:open-workbench'));
 const btnWorkbench = document.getElementById('btn-workbench');
 if (btnWorkbench) btnWorkbench.addEventListener('click', () => openWorkbench());
 if (window.api.onRequestOpenWorkbench) window.api.onRequestOpenWorkbench(() => openWorkbench());

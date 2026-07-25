@@ -639,6 +639,69 @@ test('rhost exposes invoke + workspaceId and NOT window.api', () => {
   }
 });
 
+// ── The W2 additions: the core capabilities a plugin reaches through rhost ──
+// Each of these exists because the capability has NON-workbench consumers in
+// core, so the row stays core and the plugin gets a wrapped view of it rather
+// than a window.api call (which the no-backdoor lint forbids outright).
+
+test('rhost.sessions offers ONLY the workspace-scoped accessor', async () => {
+  // The single most load-bearing correction in the pilot (plan §4 W5's
+  // blockquote). `session:list` is already sender-scoped, but the FILTER here is
+  // what makes the scope the caller's stated one. A `listAll()` on this surface
+  // would silently turn a per-window dropdown into a cross-workspace file
+  // read/write surface, and fsScope would NOT catch it — it refuses peers, not
+  // foreign workspaces.
+  const all = [
+    { name: 'mine', cwd: '/a', workspaceId: 'ws-1' },
+    { name: 'theirs', cwd: '/b', workspaceId: 'ws-2' },
+    { name: 'also-mine', cwd: '/c', workspaceId: 'ws-1' },
+  ];
+  const { host } = makeHost({ listSessions: async () => all });
+  const { rhost } = activate(host, 'demo', () => {});
+
+  assert.deepEqual((await rhost.sessions.listWorkspace('ws-1')).map((s) => s.name),
+    ['mine', 'also-mine']);
+  assert.deepEqual((await rhost.sessions.listWorkspace(rhost.workspaceId)).map((s) => s.name),
+    ['mine', 'also-mine'], 'the intended call shape reaches only this window\'s workspace');
+  assert.equal(rhost.sessions.listAll, undefined,
+    'no global accessor — MUST-FIX 1 holds on the renderer side too');
+  assert.equal(rhost.sessions.list, undefined, 'and no unqualified one');
+});
+
+test('rhost.sessions.listWorkspace degrades to [] rather than throwing', async () => {
+  const { host } = makeHost({ listSessions: async () => { throw new Error('ipc down'); } });
+  const { rhost } = activate(host, 'demo', () => {});
+  assert.deepEqual(await rhost.sessions.listWorkspace('ws-1'), []);
+
+  const { host: h2 } = makeHost({ listSessions: async () => null });
+  const { rhost: r2 } = activate(h2, 'demo', () => {});
+  assert.deepEqual(await r2.sessions.listWorkspace('ws-1'), [], 'a non-array answer is not a crash');
+});
+
+test('rhost.sessions.active mirrors the core predicate the status bar uses', () => {
+  const { host, state } = makeHost();
+  const { rhost } = activate(host, 'demo', () => {});
+  assert.equal(rhost.sessions.active(), 'seat-a');
+  state.active = 'seat-b';
+  assert.equal(rhost.sessions.active(), 'seat-b', 'read live, never captured');
+});
+
+test('rhost.ui.openPath and ui.showToast wrap core, and lib carries the shared leaf', () => {
+  const opened = [], toasted = [];
+  const { host } = makeHost({
+    openPath: (p) => opened.push(p),
+    showToast: (m, o) => toasted.push([m, o]),
+  });
+  const { rhost } = activate(host, 'demo', () => {});
+  rhost.ui.openPath('/tmp/wt');
+  rhost.ui.showToast('boom', { kind: 'error' });
+  assert.deepEqual(opened, ['/tmp/wt']);
+  assert.deepEqual(toasted, [['boom', { kind: 'error' }]]);
+  assert.equal(typeof rhost.lib.renderDiffHtml, 'function',
+    'render-html stays core (renderer.js + three popovers use it) and is exposed as a named leaf');
+  assert.ok(Object.isFrozen(rhost.lib));
+});
+
 test('workspaceId is read through a getter, not captured at init', () => {
   // currentWorkspaceId is filled asynchronously by renderer.js, so a captured
   // value would be null for the window's whole life.

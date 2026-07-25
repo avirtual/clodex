@@ -32,6 +32,12 @@
 //    `_liveResources()` is the introspection seam the W9 gate asserts zero on.
 
 const { esc } = require('./lib/format');
+// A sanctioned shared LEAF, exposed to plugins as `rhost.lib.renderDiffHtml`
+// (plan §4 W5). render-html.js stays core because renderer.js, files-popover,
+// bust-popover and cost-popover all use it — a plugin gets a named, versioned
+// view of it rather than a private copy (drifts) or a relative require that
+// escapes the plugin directory (which the no-backdoor lint exists to kill).
+const { renderDiffHtml } = require('./lib/render-html');
 
 function initPluginHost({
   getActiveSession,          // () -> session name | null
@@ -40,6 +46,12 @@ function initPluginHost({
   activePeerQueryable,       // () -> bool
   activePeerConfigurable,    // () -> bool
   scheduleSidebarRelayout,   // () -> void   (the debounced core relayout)
+  // Core capabilities a plugin's renderer half reaches through rhost instead of
+  // window.api (the no-backdoor lint). All three have non-workbench consumers in
+  // core, which is exactly why they are wrapped rather than moved.
+  listSessions,              // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
+  openPath,                  // (p) -> void   (window.api.fileOpen — reveal in Finder)
+  showToast,                 // (msg, opts) -> void
   // GETTER-shaped: this window's workspace id is filled ASYNCHRONOUSLY
   // (renderer.js:353 awaits window.api.currentWorkspace()), so a captured value
   // would be null forever. Law 1 of §3.3 requires rhost to carry it.
@@ -461,7 +473,39 @@ function initPluginHost({
       id: pluginId,
       get workspaceId() { return getWorkspaceId ? getWorkspaceId() : null; },
       invoke: (method, ...args) => invoke(pluginId, method, args),
+      // ── sessions (renderer side) ──
+      // ONE accessor, and it is the SCOPED one. There is deliberately no
+      // `listAll()` here and no unqualified `list()`: the engine half's law 1
+      // exists because conflating the two silently widens a per-window dropdown
+      // into a cross-workspace surface, and `fsScope` would NOT catch it (it
+      // refuses PEERS, not foreign workspaces). `session:list` is already
+      // sender-window-scoped [ipc-handlers.js:387
+      // `manager.listForWorkspace(workspaceOfSender(e))`]; the filter here makes
+      // the scope the CALLER's stated one rather than an implicit property of
+      // which window happened to ask.
+      sessions: Object.freeze({
+        // The session the user is looking at in THIS window, or null. Same
+        // predicate the status-bar context uses, so a plugin and the bar can
+        // never disagree about what "active" means.
+        active: () => (getActiveSession ? getActiveSession() : null),
+        listWorkspace: async (wsId) => {
+          if (!listSessions) return [];
+          let list = [];
+          try { list = await listSessions(); } catch { return []; }
+          if (!Array.isArray(list)) return [];
+          return list.filter((s) => s && s.workspaceId === wsId);
+        },
+      }),
       ui: Object.freeze({
+        // Reveal a path in the OS file manager. Core's row (window.api.fileOpen)
+        // stays — files-popover.js uses it too.
+        openPath: (p) => { if (openPath) openPath(String(p)); },
+        // Core's toast host, so a plugin's errors look like every other error in
+        // the app instead of an alert().
+        showToast: (msg, opts) => {
+          if (showToast) showToast(String(msg), opts || {});
+          else { try { console.warn(`[plugin:${pluginId}]`, msg); } catch {} }
+        },
         statusBar: Object.freeze({
           addAction: (s) => register(statusActions, s, ['when', 'button', 'onClick'], pluginId),
           addSegment: (s) => register(statusSegments, s, ['render'], pluginId),
@@ -481,6 +525,8 @@ function initPluginHost({
           overlay: (s) => surfaces.overlay({ ...s, pluginId }),
         }),
       }),
+      // Sanctioned shared pure leaves, mirroring the engine host's `lib`.
+      lib: Object.freeze({ renderDiffHtml }),
       // ── Law 3: the teardown surface ──
       onDispose: (fn) => disposable(pluginId, fn),
       // Wrapped timers/listeners. The plugin writes ordinary code; the host
