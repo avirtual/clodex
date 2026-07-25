@@ -2,7 +2,9 @@
    data-plugin-style="workbench"> element by the renderer host at activate, and
    removed as one node at disable (docs/plugin-plan.md §2.6 CSS decision).
 
-   W3: the whole wb-*/workbench-* block moved here out of renderer/styles.css.
+   W3: the whole wb- / workbench- block moved here out of renderer/styles.css.
+   (Written without a glob star before the slash on purpose: a literal `*` then
+   `/` closes this comment mid-sentence and takes the next rule down with it.)
    The plugin styles only its own INTERIOR. Two rules stayed core on purpose:
    `.plugin-overlay` / `.plugin-overlay.hidden` — that container is created,
    toggled and removed by the HOST, so it is host contract, not plugin skin.
