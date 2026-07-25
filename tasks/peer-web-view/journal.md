@@ -612,3 +612,27 @@ the main process (engine.js:1793) with full Node, so it is mechanically
 possible. **Blocked by the same finding (C):** a plugin could not express a
 cloud transport the peer schema cannot persist. So it lands *after* ticket #2,
 as an extension of it — recording it here so the ordering isn't rediscovered.
+
+## Phase 2 — BUILD (ssh-only, ruled). Starts here.
+
+Approved design is above ("What CLOSES it", "Never rendering the placeholder",
+"Re-resolution"). Concrete surface, to be confirmed against the code:
+
+- **New `web-tunnel.js`** — the supervisor, modelled on `peer-tunnel.js` but
+  with the deliberate inversions: local port **picked once and pinned** (reason
+  written into the code — our consumer is a browser tab that cannot be
+  re-pointed), browser popped **exactly once** on first up, and a **give-up cap**
+  instead of peer-tunnel's forever-retry.
+- **Four closes**: explicit toggle · peer removed/disabled · app shutdown
+  (`stopAll()` on the peer-tunnel path) · give-up cap.
+- **Wiring**: engine + `peer-wiring.js` (sync alongside TunnelManager), IPC
+  handlers, preload.
+- **`renderer/peers-ui.js`** — the affordance, reusing the sandbox ↗ arrow's UX
+  and toast vocabulary (`openBoxWeb`, peers-ui.js:105). Rendered from **live**
+  `status().webHost` (t30a), never a popover-open snapshot. No URL shown until
+  one is live; `http://127.0.0.1:1` never rendered.
+- **`tokenGated: true` → say the box requires a token**, do not hand over a URL
+  that will 401 (clodex made this a ticket requirement).
+- **ssh-only limitation stated in the UI** (ruling 1).
+
+Baseline for the suite: **2600, ESCAPES: 0**.
