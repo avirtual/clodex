@@ -903,3 +903,35 @@ Branch `peer-web-tunnel`, nothing pushed, master untouched.
 
 - [x] t30b phase 1 — investigation, ruled.
 - [x] t30b phase 2 — build, tests, proof, suite. Awaiting clodex's merge.
+
+## POST-MERGE (`8ae1343`) — a correction I earned, and a named trigger
+
+Both flagged deviations accepted (the pure leaf; the 222→225 api pin).
+
+### CORRECTION: "strict in all three readers" was wrong — there are FOUR
+
+`renderer/peers-ui.js:1095` still reads `!!(st && st.webHost && st.webHost.tokenGated)`,
+truthy. Harmless in practice — `peer-client.js:132` normalizes to a strict
+boolean before the renderer can see it, so the two cannot disagree — but the
+claim was false as stated, and I made it in the same breath as *fixing* a
+strict/truthy split. Fold it in on the next pass through that file; no separate
+work.
+
+**The tell, worth more than the fix: a claim of the form "all N places" is
+arrived at from memory of the sites I TOUCHED, not from the set that EXISTS.**
+The count is the signal to grep before writing the sentence. One grep would have
+turned "all three" into "four, one of them pre-existing and inert" — which is
+both true and more useful.
+
+### NAMED TRIGGER: a liveness signal that costs nothing to emit proves nothing about liveness
+
+The give-up cap defect, generalized, per clodex. `ssh -N` prints nothing on
+success, so "the process is alive" is emitted identically by a working forward
+and by one about to die of `No route to host`. I built the cap's retirement on
+that signal, which made close #4 dead code that looked live. Retirement now
+requires SURVIVING a duration — a signal the failing case cannot fake.
+
+Corollary for tests: it was invisible to any test that READ a flag, and only
+visible to one that DROVE the thing to its cap. Sits next to the carried
+impossible-fixture trigger — both are cases where the test passes for a reason
+unrelated to the claim.
