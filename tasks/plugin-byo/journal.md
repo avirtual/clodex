@@ -1019,8 +1019,11 @@ HEAD `f6b97ec`, suite **2514/2514**, 45 ahead of local master, tree clean apart
 from the untracked `node_modules` symlink. Nothing pushed, master untouched.
 Deviation letter **(x)** still unused.
 
-**Bookkeeping still unconfirmed:** the nine ticket closes (t13–t21) were
-re-emitted with the `t` prefix after bare numbers bounced; I have NOT yet seen a
-roster confirming they landed. Confirm from a `[agent:task list]` before telling
-anyone the board is clean — I reported that wrongly twice, both times by
-treating an emitted intent as a completed one.
+**Bookkeeping resolved:** t13–t21 all read `[done]` on the roster. The registry
+keys are **`t13`…`t21`, not bare integers** — bare numbers bounce with
+`no ticket N on clodex`. Standing lesson, learned the expensive way: a
+silent-on-success intent gives NO confirmation, so "I emitted it" is not "it
+happened". I reported the board clean twice without a roster, and the second
+time inferred one success from the ABSENCE of an error line — a consumer
+reconstructing something the producer never said, which is the exact defect class
+this project keeps hitting. **Confirm from `[agent:task list]`, always.**
