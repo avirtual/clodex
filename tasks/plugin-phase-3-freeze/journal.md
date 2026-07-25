@@ -869,3 +869,99 @@ Two more from the same report:
    the one hand-back and it arrives unprefixed.
 
 `test/plugin-surface-contract.test.js` 9/9 green.
+
+---
+
+## T9 — lint hardening: make the no-backdoor test fail for classes it cannot see
+
+`test/plugin-boundary.test.js` only. No production code changed, so no `"1"`
+surface question arises.
+
+**Framing, first, because it constrains every rule below.** The file's header now
+says outright what it is NOT: a security control. `contextIsolation: false` +
+`nodeIntegration: true` means a plugin is in-process code with the app's full
+authority, and the published contract already says the host API is a contract
+and not a containment boundary. This lint catches ACCIDENTS AND DRIFT — the
+honest reach for core, the shortcut that outlives its author. The header states
+the test to judge new rules by ("would it have caught the honest mistake?") so a
+future reader can't mistake the direction of travel.
+
+### The assertion that had to go
+
+The old self-test asserted EXACTLY THREE violations for its synthetic plugin.
+That is a green test measuring its own assumptions: a class the scanner cannot
+see contributes nothing to the total, so the count stays 3 and nothing goes red,
+no matter how many blind spots open. Same family as the fake-store tests, and
+same family as `plugin-kill-switch`'s "exactly ['workbench']" that clodex fixed
+today — an assertion encoding an assumption the suite cannot violate on its own.
+
+Replaced with `kindsByFile()`: violations now carry a `kind`, and the self-tests
+assert WHICH kinds were found per file. A new blind spot now shows up as a
+missing NAME rather than a number that happens to still match. Fixtures moved
+into a `withSyntheticPlugin(files, fn)` helper so each class gets its own,
+against the REAL `plugins/` dir (unchanged rationale: proves resolution against
+the actual pluginDir the production scan computes).
+
+### The three blind spots
+
+1. **Denied builtins.** `DENIED_BUILTINS = {module, vm}`, carved OUT of the
+   builtin allowance rather than bolted beside it — the allowance is the thing
+   that would otherwise wave them through. `require('module').createRequire(
+   __filename)('/abs/session-manager.js')` reaches every live core singleton via
+   an absolute path no specifier rule can classify. Kind `denied-builtin`, with
+   `isDeniedBuiltin()` so the self-test can assert "reports as DENIED", not
+   merely "is not a builtin" — those differ and only one is the fix.
+2. **Dynamic requires.** Kind `dynamic-require`. See the deviation below.
+3. **`api` off any global.** `GLOBAL_API_RE` covers `window|globalThis|self|top|
+   parent`, dot AND bracket form; `BARE_API_RE` (`/(?<![\w$\-])api\s*\./`) covers
+   the aliased reach `const w = window; w.api.x`, which by construction has no
+   global token left to match. `else if` between them: one violation per file per
+   class reads better than a doubled report of one mistake. `PROCESS_ESCAPE_RE`
+   rides along for `process.binding` / `process.mainModule` — same shape (module
+   system through a global), same remedy.
+
+   The lookbehind must NOT exclude `.`: `w.api.foo()` is exactly the case rule 2
+   exists for and a dot precedes it. It excludes `\w$` (so `capiX.` is not a hit)
+   and `-` (so a live string holding `plugin-api.md` is not one).
+
+### Deviation (t): the dynamic-require rule as specified is blind to its own example
+
+The ticket says: flag any `require\s*(` **not immediately followed by a quote**.
+That rule does not catch `require('..' + '/x')` — the ticket's own second
+example — because concatenation begins with a quote. Implementing it literally
+would have shipped a fixture-less hole under a green test, which is the exact
+defect this ticket exists to remove.
+
+Implemented the INTENT instead: `dynamicRequires` is the exact complement of
+`requireSpecs`. Every `require(` whose argument is not one COMPLETE string
+literal is flagged. The pair is now total by construction — a call site is
+either auditable or flagged, never neither — which is a stronger property than
+either rule alone and is what makes the blind spot closed rather than narrowed.
+Both ticket examples are pinned as fixtures, plus template-literal and
+`process.env` forms.
+
+### Revert proofs (all three, by reverting — not by reasoning)
+
+| revert | tests that go red |
+|---|---|
+| `DENIED_BUILTINS` emptied | `isBuiltin does NOT wave through the module system itself`; `scanPlugin flags a require("module") escape` |
+| `dynamicRequires` returns `[]` | `dynamicRequires flags every require whose argument is not a plain string`; `scanPlugin flags a computed require specifier as unauditable` |
+| literal `window.api` regex restored, bare rule disabled | `the global-api rules see every alias`; `scanPlugin flags api reached off any global, and via an alias` |
+
+Restored: 13/13 green.
+
+### The hardened lint against the real plugins — NO true positives
+
+Ran against both `plugins/workbench` and the newly-installed
+`plugins/git-branches`. **Both clean; nothing silenced, nothing widened.**
+Checked by hand as well as by the scan:
+- zero non-literal `require(` anywhere under `plugins/`;
+- zero `module`/`vm` requires;
+- the only `api.`-shaped text in either plugin is `plugin-api.md:739` inside
+  COMMENTS (git-branches' notes about the t10 signature bug), which
+  `stripComments` removes before any rule runs — a real check of the
+  false-positive class the header already documents, and it holds.
+
+So the hardening added five discriminations and cost zero suppressions. That is
+a weaker result than a true positive would have been, and it is worth saying
+plainly: the lint got sharper, but nothing shipped was found wanting.
