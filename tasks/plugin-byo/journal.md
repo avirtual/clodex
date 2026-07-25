@@ -1408,3 +1408,79 @@ unbuilding; only its two affordances are desktop-shaped, and they remain correct
 for the DMG. The genuinely superseded premise is **t21's**, not t22's. The real
 hole is one t22 never touched: **no delivery path exists at all**, and renderer
 halves are undeliverable to a node by construction.
+
+## T23 second pass — what already reaches a node that a plugin could ride
+
+Read-only. Probe: `scratchpad/probe-node-plugin.js` (throwaway, not committed),
+real `createPluginLoader` over temp roots, simulating a FRESH node.
+
+### 3 (answered first — it is a YES). Recipes carry a plugin today, no code change
+
+**Probe, observed:** an engine-only plugin dropped in the user root, on a node
+with **no `ui-settings.json` at all**, gives
+`discover()` → 1 rec (root `user`), `loadAll` → `register('fleet-probe')`,
+`status()` → `enabled: true, loaded, restartRequired: null`. Nothing interactive
+is required at any step, because `enabledSet()` returns null on a fresh install
+(`plugin-loader.js:423-428`) and `isEnabled` then falls back to the manifest's
+`enabledByDefault !== false` (`:435-439`) — **absent key = enabled**. `discover`
+tolerates a missing root silently (`:319-325`).
+
+Per target, the image layer alone is enough — persistence is not even needed:
+- **docker / `deploy docker`**: `docker/web/Dockerfile:89` already `mkdir -p
+  /home/clodex/.clodex`, and `cli/src/deploy.js:434-449` mounts ONLY
+  `<name>-data:/data`. So `.clodex` is pure image layer: a
+  `COPY --chown=clodex:clodex` into `/home/clodex/.clodex/plugins/<id>` is
+  present on every container from that image, and survives recreate because it
+  is re-supplied by the image. (`--chown` matters: the `chown -R` at
+  `Dockerfile:91` runs BEFORE any later COPY.)
+- **fargate**: same image, no volume at all (`clodex-fargate.yaml:110-113`) —
+  which turns from a weakness into the *reason it works*. A factory reset
+  restores the plugin instead of erasing it.
+- **ssh/systemd**: real home, real disk — a file drop works and persists.
+- **helm — THE TRAP**: `statefulset.yaml:65` mounts the PVC subPath
+  `dot-clodex` over `/home/clodex/.clodex`. An empty PVC **shadows the image
+  content**, so a baked plugin vanishes on exactly the one target that persists
+  `.clodex`. The chart already documents this failure mode for `.claude.json`
+  at `:60-63` and did not generalise it. Inverse of the durability table in the
+  first pass: image-baking works everywhere the volume does NOT reach.
+
+So delivery for docker/fargate/ssh is **documentation, not code**.
+
+### 1. An agent on the box writing its own plugin dir
+
+Nothing stops the write: the agent runs as `clodex` with `HOME=/home/clodex`
+(`Dockerfile:93`), the root is `$HOME/.clodex/plugins`, and no ownership,
+permission, or signature gate exists in discovery (`plugin-loader.js:267-286`
+checks only directory-ness and symlink resolution). `enabledByDefault` absent
+means an agent-authored plugin is **live on the next discovery with no consent
+step** — on a desktop that is a hazard, on a node it is the mechanism.
+
+What the agent CANNOT do is make it take effect: `rescan` is reachable only from
+a renderer (`renderer/renderer.js:5300` → `_host` `plugins.rescan`,
+`plugin-host-engine.js:536`). No intent verb, no wire route, no clodexctl verb.
+An agent's only lever is a whole-engine restart (`POST /api/restart`,
+`cli/README.md:275`) — which on a node is cheap and routine, so the gap is
+smaller than it looks, but it is real: **write is open, activation is not
+agent-reachable.**
+
+### 2. Blast radius of CLODEX_DATA_DIR-rooting the plugin root
+
+Mechanically **one site**: `engine.js:1779` is the only construction of the user
+plugin root in the tree (verified by grep; `clodex-paths.js:36` deliberately
+excludes it from KINDS). It drags nothing — `REGISTRY_DIR` stays exactly where
+it is for messages/, run/, pending/, agents/, skills/, library/.
+
+The sharper fact: **`userDataPath` is already a `createEngine` parameter**
+(`engine.js:88`), already CLODEX_DATA_DIR-honouring (`headless-main.js:47`), and
+**`plugin-host-engine.js:213` already roots per-plugin DATA at
+`path.join(userDataPath, 'plugins', pluginId)`.** So plugin data already follows
+the node contract while plugin CODE does not — the split exists inside the
+plugin subsystem today, and it is inverted.
+
+Not a rabbit hole. But not free either: moving it outright relocates the desktop
+root to `~/Library/Application Support/Clodex/plugins`, contradicting t16's
+choice, `docs/plugin-sources.md` §3, and t22's reveal affordance, and needs a
+migration. The contained shape, if it is ever wanted, is **additive** — `roots`
+is already an array (`engine.js:1777-1780`) and t21's version-aware precedence
+already arbitrates two copies of one id, so a third root costs no new
+mechanism and no migration. NOT BUILT; recorded as a shape, not a proposal.
