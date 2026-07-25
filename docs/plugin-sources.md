@@ -91,6 +91,11 @@ somewhere the app never writes.** This also settles a question the asar makes
 awkward — whether the app should ever modify the core plugins directory. It
 cannot, and now it does not need to.
 
+The consequence that answer leaves behind is handled in §4: if the asar copy
+always wins, a packaged user can never run a *newer* version of a core plugin
+either. The bundled copy is therefore treated as a **floor** — a strictly newer
+copy in the user root supersedes it.
+
 ---
 
 ## 3. Multi-root discovery
@@ -144,15 +149,18 @@ dirname per id, and `validateManifest` (`plugin-loader.js:40`) requires
 
 ### The rule
 
-**Core wins. The first root in the list that contains an id owns it; later roots
-are shadowed.**
+**Core wins by default, and a strictly NEWER copy overrides that.** The first
+root in the list that contains an id owns it; a later root's copy is shadowed
+*unless* its manifest `version` is higher, in which case it takes over and the
+earlier copy is the one shadowed.
 
-The alternative — user overrides core — is the more obviously "helpful" choice and
-is wrong here, for one reason that outweighs the ergonomics: **a shadowing user
-plugin would silently replace a core plugin after an update changed it.** A user
-who copied `git-branches` to experiment, then forgot, would be running their fork
-against a core they no longer match, with the app reporting the plugin as present
-and working. Under core-wins, the same mistake is inert and visible.
+The default half — core wins — exists because the alternative, unconditional
+user-overrides-core, is the more obviously "helpful" choice and is wrong, for one
+reason that outweighs the ergonomics: **a shadowing user plugin would silently
+replace a core plugin after an update changed it.** A user who copied
+`git-branches` to experiment, then forgot, would be running their fork against a
+core they no longer match, with the app reporting the plugin as present and
+working. Under core-wins, the same mistake is inert and visible.
 
 Put the asymmetry plainly, since user-wins is what most editors do and is what a
 reader will expect: the two options do not fail the same way. **User-wins fails
@@ -170,21 +178,120 @@ Two objections, both of which dissolve:
   checkout** — which is exactly the population that must not be silently running a
   stale fork.
 
-### Shadowing must be VISIBLE
+### The bundled copy is a FLOOR, not a ceiling
 
-A shadowed plugin is not silently dropped. `status()` gains a `shadowedBy` field
-and Manage Plugins renders a row for it — no toggle, in the same register as the
-existing `Not loaded: <why>` rows for refused directories (`renderer.js:5196`):
+**The version clause narrows core-wins; it does not overturn it.** Core plugins
+ship inside `app.asar` (§2), which is read-only and replaced wholesale by every
+update. Without this clause a packaged user could **never** run a newer version
+of a plugin than the one their DMG happened to ship — not by installing one, not
+by any mechanism at all, because the copy we cannot let them replace would always
+win. We cannot make the baked-in copy writable, so we make it losable.
+
+What core-wins protected against survives intact, because **a stale fork is by
+definition not newer.** The forgotten experimental copy of `git-branches` still
+loses, still loudly. What changes is only the case where the user's copy is a
+genuine later release — which was never the dangerous case, only an unreachable
+one.
+
+Concretely: core `1.0.0` + user `1.1.0` → the user copy runs. Core `2.1.0` + user
+`2.0.0` → the core copy runs and the user's is shadowed. **Equal versions lose**:
+"newer" is strictly greater, because an identical copy is not the later release
+this clause exists to serve.
+
+**Automatic, with no persisted pin.** The obvious alternative is recording a
+chosen copy in settings. A pin is state that goes stale — the pinned directory is
+deleted, or a newly bundled version outranks the pinned one — and every
+stale-state answer would be a decision better made once an install flow (§10)
+exists to record real user intent. Automatic needs no new state. The cost is
+expressiveness: there is no way to deliberately run an *older* copy, and the
+recourse for someone who wants that is the same as it always was — give the fork
+its own id.
+
+**How versions compare, and what malformed does.** `version` was decorative until
+this rule and is *still not validated*: `validateManifest` never mentions it and a
+manifest with no version at all loads normally. So the comparison has to be total
+over inputs nobody checked.
+
+- A comparable version is **dot-separated runs of digits, compared numerically**,
+  missing trailing segments treated as zero. `1.10` beats `1.9` — string
+  comparison gets that backwards, and the plugin on its tenth patch is precisely
+  the one being actively maintained. `1.2` and `1.2.0` tie.
+- **Anything else is uncomparable, and uncomparable never wins.** Absent,
+  non-string, `v2`, `the good one`, `1.0.0-beta` — all lose. This is the safe
+  direction by construction: "uncomparable" collapses to the pre-existing
+  behaviour, so junk can only ever fail to change something, and it cannot crash
+  discovery because the comparison returns a boolean for every pair of inputs.
+- **Semver pre-release ordering is deliberately not implemented.** Getting
+  `1.0.0-beta < 1.0.0` right needs the whole grammar and nothing here needs it.
+  The consequence is stated rather than hidden: `1.0.0-beta` does not lose to
+  `1.0.0` on precedence, it is uncomparable and loses *for that reason* — and the
+  settings row says so, rather than telling its author to bump a number.
+
+**A malformed version does not refuse the manifest.** Refusing would turn a
+decorative field into one that can un-install a working plugin, and would break
+every manifest that omits `version` — a far larger change than this rule needs.
+
+**The hazard this creates, stated plainly: a user-root plugin declaring
+`"version": "99"` wins forever and can never be superseded by any real release.**
+That is the forgotten-fork case in a new outfit. Nothing prevents it — nothing
+*can*, short of a pin or a curated registry — so the only thing that makes it
+recoverable is the row described below saying which copy is running and what
+version each one is. A user whose app ignores every update needs those two
+numbers on screen; without them there is no thread to pull.
+
+**Freeze-neutral, not a `hostApi` change.** `isValidPluginId` and
+`validateManifest` are untouched, the set of accepted manifests is identical, and
+no new field is required. Precedence between two copies of one id is host-internal
+discovery — a plugin cannot observe it from inside `activate()`, it observes only
+whether it was loaded, which was never guaranteed. The honest counter-argument is
+that `version` moving from decorative to load-bearing is a semantic change to the
+manifest contract; it is answered by the fact that no existing manifest's
+*observable* outcome changes except the one this rule exists to change. Nothing is
+narrowed, and narrowing is the breaking move.
+
+### Shadowing must be VISIBLE — the row is a safety mechanism
+
+A shadowed plugin is not silently dropped. `status()` carries a `shadowed` list
+and Manage Plugins renders a row for each — no toggle, in the same register as the
+existing `Not loaded: <why>` rows for refused directories:
 
 ```
-git-branches            User
-  Shadowed by the built-in plugin of the same id — this copy is not running.
+git-branches            User v1.4.0
+  Not running: shadowed by the Built in copy of the same id (v2.0.0).
+  This copy is v1.4.0; a user copy only takes over when its version is higher.
 ```
 
 The failure this prevents is specific and nasty: **a user editing code that is
 not the code running.** Without the row, the plugin appears in the list (the core
 one does), it is enabled, it works — and none of the user's edits have any
 effect, with nothing on screen explaining why.
+
+**Since the version clause the row can INVERT**, and it has to read correctly in
+both directions — the inverted one is where the version-99 hazard lives, so a row
+that could only say "your copy lost" would be silent exactly where it matters:
+
+```
+git-branches            Built in v3.5.0
+  Not running: this Built in copy is v3.5.0 and the User copy is v99
+  — the higher version wins.
+```
+
+**Both versions are named on every row, in both directions.** That is the whole
+recovery path for a user whose updates appear to do nothing.
+
+**The reason a copy lost is stamped by the loader, not inferred from the two
+version strings.** A row that compared the numbers itself would be right most of
+the time and wrong in the case that matters: an uncomparable version lost
+*because it could not be read*, not because it was lower, and telling its author
+to bump the number sends them somewhere that cannot help. So there is a third
+wording:
+
+```
+git-branches            User v1.0.0-beta
+  Not running: shadowed by the Built in copy (v2.0.0). This copy's version
+  ("1.0.0-beta") is not a plain number like 1.2.0, so it can never take over
+  — fix the version to supersede it.
+```
 
 ### What a shadowed plugin shares with its shadower
 
@@ -203,6 +310,25 @@ share both. Consequences, stated because they are not obvious:
   namespacing. Keying settings by root would mean a plugin's settings vanish when
   it moves between roots, which is a worse and more frequent surprise than the
   one above.
+
+**The version clause gives the shared object a new way to change hands, and this
+is the real cost of that rule.** Before it, the winner of a shadow pair was fixed,
+so the shared settings object was only ever read by one copy. Now an app update
+that bumps the core version can hand *the same object* to the other copy:
+
+> The user's copy v2.0 wins and writes its settings. Core ships v2.1. On the next
+> launch core wins and reads settings written by a **different plugin** that
+> happened to share its id.
+
+Neither copy is doing anything wrong, and neither can detect the swap. This is not
+a bug introduced by version-aware precedence — it is the shared-key design's
+existing consequence with a new trigger — but it is the reason the row must name
+both versions. A user who sees behaviour change after an update has no other way
+to work out that the copy running is not the copy that wrote the settings.
+
+The mitigation is the honest one: **precedence should be stable, and when it does
+change the UI must say so.** Key-namespacing settings by root remains rejected for
+the reason above; it would trade a rare surprise for a frequent one.
 
 ---
 
@@ -544,6 +670,9 @@ require re-deciding anything above.
 |---|---|
 | §3 multi-root discovery, user root at `~/.clodex/plugins/` | **Implemented** |
 | §4 core-wins precedence, shadowed rows in Manage Plugins | **Implemented** |
+| §4 a strictly newer copy overrides core-wins; both versions on the row | **Implemented** |
+| §4 a `version` 99 in the user root wins permanently | Visible, not preventable — needs §10 |
+| §4 pre-release versions (`1.0.0-beta`) order correctly | Not implemented; uncomparable, loses visibly |
 | §4a verb collisions refused without a strike, holder named | **Implemented** |
 | §4a which plugin wins within a root | Arbitrary — known limit, needs §10 |
 | §5 symlink following; the case-folding assumption | **Implemented** / assumed |

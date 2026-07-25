@@ -737,3 +737,164 @@ work. Four sites touched so it reads *unscheduled* rather than *pending*:
 
 Phase 5 checked: its scope is Tier B, the `~/.clodex/plugins/` scan and personas,
 none of which reference 4b or A/B/C. Nothing needed.
+
+## T21 — version-aware precedence: the bundled copy is a FLOOR, not a ceiling
+
+**Bogdan's decision.** Resolves the DMG problem: plugins ship inside `app.asar`
+(`engine.js:1778`, `path.join(__dirname,'plugins')`), read-only and replaced
+wholesale on update, so today a DMG user can NEVER run a newer workbench. We
+cannot replace the baked-in copy, so we make it lose.
+
+**THE RULE:** within a plugin id, a user-root copy whose manifest `version` is
+HIGHER than the core copy's wins and is loaded; equal or lower loses and is
+shadowed exactly as today. Both shipped manifests already carry `version`.
+
+**This NARROWS t16's core-wins, does not overturn it.** Read `docs/plugin-sources.md`
+§4 and the t16 journal entry first. Core-wins protected against a forgotten
+experimental fork silently replacing a core plugin after an update changed it.
+That protection SURVIVES intact under version comparison — a stale fork is by
+definition not newer. Only the genuine-later-release case changes.
+
+**Shape ruling (clodex, argue if I disagree): automatic, NO persisted pin.**
+Bogdan's phrasing was "set it as current in the clodex settings" = an explicit
+recorded selection. clodex ruled against persisting: a pin is state that goes
+stale (pinned directory deleted; pinned version lower than a newly bundled one),
+and every stale-state answer is a decision better made once an install flow
+exists to record real user intent. Automatic needs no new state and reuses
+shipped machinery. **Say so if automatic is actively WRONG rather than merely
+less expressive.**
+
+**THE DISPLAY IS THE SAFETY MECHANISM, not cosmetics — make it good.** Today's
+shadowed row says the user copy is not running. Under this rule the row can
+INVERT: the CORE copy is shadowed, by a user copy. State BOTH directions and
+**always name the version on both sides**. The hazard this rule creates: a
+user-root plugin declaring **version 99** wins forever and can never be
+superseded by any real release. That is the forgotten-fork case in a new outfit,
+and the only thing making it recoverable is a row saying plainly which copy is
+running and what version each is.
+
+### Settle against source, do NOT assume
+
+1. **`version` is free-text today. Is it validated at all?** Comparison needs a
+   defined ordering. Semver-ish is obvious, but `"1.10"` vs `"1.9"` and
+   non-numeric junk both need an answer. **A malformed version must NOT crash
+   discovery or silently win.** Decide and PIN what malformed does. *clodex flags
+   this as the part most likely to bite.*
+2. **Does this touch `isValidPluginId`/`validateManifest` — the frozen surface?**
+   Making `version` load-bearing when it was decorative is arguably a semantic
+   change to the manifest contract even with the shape unchanged. **Rule whether
+   that is 1.1-class additive or freeze-neutral, and say why.**
+3. **Enabled flag + settings object are keyed by bare id and SHARED across a
+   shadow pair** (t16 finding). Under this rule the pair can SWAP which one runs
+   on an app update. **Say what that means for settings written by the older
+   version.**
+4. **The mirror:** core ships a NEWER version than a user copy that was
+   previously winning. The user's copy should lose, correctly and visibly.
+   CONFIRM it does.
+
+Tests + revert proofs as usual. **Prove the version-99 hazard is at least
+VISIBLE** even though it is not preventable. Docs after, in `plugin-sources.md`
+**where the core-wins rule is stated — amend §4 there** rather than adding a
+competing rule elsewhere.
+
+### State at dispatch
+
+HEAD `0218ddd`, suite **2506/2506**, 42 ahead of local master, tree clean apart
+from the untracked `node_modules` symlink. Nothing pushed. Deviation letter **(x)**
+still unused. Do not touch master, do not push.
+
+Relevant prior art in this file: t16's precedence reasoning (core-wins, and the
+shared-settings finding), t20's §4a (verb collisions — the OTHER thing a shadow
+pair can collide on; unaffected by this rule but adjacent in the docs).
+
+### T21 phase 1 — the four questions, settled against source
+
+**1. `version` is validated NOWHERE and is purely decorative today.** Grepped the
+whole loader: `version` occurs exactly twice — `:351` in a log string
+(`loaded ${id} v${manifest.version || '?'}`) and `:436` as a `status()`
+passthrough (`rec.manifest.version || null`). `validateManifest` (`:27-48`) never
+mentions it; a manifest with no `version` at all validates and loads. So the
+field is free text, may be absent, and both shipped manifests happen to carry
+`"1.0.0"`.
+
+**The ordering I am pinning: dot-separated numeric segments, compared
+NUMERICALLY, left to right, missing segments treated as 0.** `"1.10" > "1.9"`
+because 10 > 9 — string comparison gets this backwards and is the single most
+likely real-world bite, since a plugin that reaches its tenth patch is exactly
+the plugin someone is shipping updates for. Shorter versions pad: `"1.2"` equals
+`"1.2.0"`.
+
+**Malformed is a LOSS, never a win, and never a crash.** A version that is
+absent, not a string, or whose leading segment is not a run of digits is
+*uncomparable*. The rule: **an uncomparable version can never be higher than
+anything**, so the user copy loses and is shadowed exactly as today. That is the
+safe branch by construction — the failure mode of a malformed version is
+"nothing changes", which is precisely the pre-t21 behaviour, and it cannot crash
+discovery because the comparison is total (it returns a number for every pair of
+inputs including `undefined`/`null`/objects). I am deliberately NOT refusing the
+manifest over a bad version: refusing would turn a decorative field into a
+load-bearing one that can un-install a working plugin, which is a far bigger
+behaviour change than this ticket asks for, and it would break every existing
+manifest that omits `version`. Trailing junk after the numeric segments
+(`"1.2.0-beta"`) compares on its numeric prefix — pre-release ordering is a real
+semver feature I am explicitly NOT implementing, and it is a *stated
+simplification*, because getting `1.0.0-beta < 1.0.0` right requires the whole
+semver grammar and nothing in this codebase needs it yet. Consequence to state
+in the doc: `1.0.1-beta` BEATS `1.0.0`, which is right, but `1.0.0-beta` TIES
+`1.0.0` and therefore loses. Ties losing is the conservative direction.
+
+**2. FREEZE-NEUTRAL. It does not touch the frozen surface, and here is why.**
+`isValidPluginId` and `validateManifest` are both unchanged: the set of manifests
+accepted is identical before and after, and no new field is required. The frozen
+thing is `hostApi "1"` — the surface the host LENDS to plugin code: `plugin-api.js`
+exports, the `host` object, the intent/registry contract. Precedence between two
+copies of one id is **host-internal discovery**, the same category t16 already
+established as outside the frozen surface ("this work is mostly OUTSIDE the frozen
+surface — discovery and loading are host-internal"). A plugin cannot observe the
+rule from inside `activate()`; it observes only whether it was loaded, which was
+never guaranteed. Nothing is NARROWED — narrowing a lent surface is the breaking
+move, and this lends nothing and takes nothing back.
+
+The counter-argument, which I want on record rather than waved off: `version`
+moving from decorative to load-bearing IS a semantic change to the manifest
+contract even with the shape unchanged, and an author who wrote `"version": "the
+good one"` had no reason to think it mattered. I still rule freeze-neutral,
+because that author's plugin behaves **identically** after this change — an
+uncomparable version loses, and losing is what a user copy did unconditionally
+before. There is no manifest whose *observable* outcome changes except the one
+this ticket exists to change: a user copy with a genuinely higher numeric
+version. A contract you can only detect by opting into the new behaviour has not
+been broken. Not 1.1-class either — a 1.1 addition must serve more than one
+caller, and this adds no callable surface at all.
+
+**3. Shared settings under a SWAP is the real cost, and it is not new — it is
+t16's finding with a new trigger.** The pair shares one `enabled` flag and one
+`uiSettings.plugins[<id>]` object. Before t21 the winner was fixed, so the shared
+object was only ever read by one copy; now an app update that bumps the core
+version can hand the SAME settings object to the other copy. Concretely: the user
+copy v2.0 wins and writes settings its own way; core ships v2.1; on next launch
+core wins and reads settings written by a **different** plugin under the same id.
+Neither copy is doing anything wrong. That is the honest cost of the shared-key
+design, and the mitigation is the same as t16's — precedence should be stable,
+and the row must say which copy is running with both versions named, so a user
+seeing new behaviour after an update can tell WHY. I am not key-namespacing
+settings by root: t16 already rejected that (settings would vanish when a plugin
+moves roots), and this ticket does not change that calculus. **This goes in the
+doc as a stated consequence, not as a bug I fixed.**
+
+**4. The mirror needs no new code path, but I will pin it with a test anyway.**
+The rule is a comparison, so "core newer than user" is the same branch taken the
+other way and the user copy stays shadowed. It is worth a test precisely because
+that is the claim a reader would assume rather than check.
+
+**Shape: I agree with clodex, automatic and no pin, and I did not find a case
+where automatic is actively wrong.** The closest candidate is "user deliberately
+wants to run an OLDER copy" — but that is not automatic being wrong, it is
+automatic being less expressive, exactly as clodex framed it, and the recourse
+(change the id, per §4's standing answer) already exists and is better anyway
+because a fork under its own name gets its own settings object.
+
+**Plan.** `compareVersions` as a pure module-level function in `plugin-loader.js`
+beside `validateManifest`; `discoverRoot`'s precedence branch consults it;
+`shadowed` rows carry both versions and a direction; renderer states both
+directions naming both versions. Then docs, amending §4 in place.
