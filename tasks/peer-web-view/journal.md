@@ -706,3 +706,83 @@ explicit: finish t30b ssh-only first, do not widen it.**
   once `cli/` ships, but cli→app still needs pinning, and the gate must assert
   the NEW invariant — cli/ stays a leaf, and the app MAY import it *because* it
   ships. Do not silently drop half the test.
+
+## Phase 2b — BUILT (commit `b4cce08`). Tests NOT written yet.
+
+### The gate question, settled from the code (not guessed)
+
+`web-host.js:383` answers an unauthenticated request with a bare
+`res.writeHead(401).end('unauthorized')` — **no login form, no redirect** — and
+`auth-token.js:38-51` only ever reads a token from `?token=` / `Authorization:
+Bearer` / the `clodex_remote_token` cookie, **none of which a freshly opened
+browser tab carries**. So for a gated box, opening a tab is a dead end the
+operator cannot fix from the browser.
+
+Decision: **open the tunnel, do NOT pop the browser, report the URL with what to
+do with it.** The tunnel is still what makes the box reachable at all; the pop is
+what would lie. Same reasoning as t30a's `tokenGated`: report the fact, don't
+guess the outcome.
+
+### What was built
+
+- **`web-tunnel.js`** (new, electron-free, `spawnFn` injectable) — `WebTunnel` +
+  `WebTunnelManager`. Three inversions vs `peer-tunnel.js`, each with its reason
+  in the header: port **pinned once** (`_spawnTunnel` returns straight to
+  `_spawnOn(this.localPort)` after the first pass — peer-tunnel re-picks at :99);
+  **`firstUp` on ONE emit** (rides `_setState`'s `extra`, never the stored
+  status, so a later `status()` read can't pop a second window); **give-up cap**
+  (`GIVE_UP_MS` 120s from `start()`, retired — not merely reset — on first up,
+  landing in a terminal `gave-up` that keeps `lastError`).
+  `url()` is non-null only while `state === 'up'`, and `status().url` is produced
+  there rather than assembled by consumers — so **there is no placeholder to
+  render**; `http://127.0.0.1:1` has no analogue here.
+- **`peer-wiring.js`** — `ensureWebTunnelManager()` (lazy: nothing constructed
+  until someone looks), `openPeerWeb` / `closePeerWeb`, and `webPopAllowed`, a
+  Set decided **before** the tunnel starts so the once-only `firstUp` emit can
+  never race the token decision. `syncPeerManager` feeds the same
+  already-disabled-filtered list to `.sync()` → close #2 for free.
+- **`engine.js`** — `webTunnelManager` let + get/set into the wiring; a new
+  `openExternal` seam (Electron: `shell.openExternal`; default: a logged no-op,
+  since a headless box has no browser to pop); `stopAll()` in `shutdown()` →
+  close #3; `getWebTunnelManager` + `openPeerWeb`/`closePeerWeb` exported.
+- **`main.js`** — `openExternal: (url) => shell.openExternal(url)` seam.
+- **`ipc-handlers.js`** — `peer:openWeb` / `peer:closeWeb`; `peer:list` hangs
+  `st.webTunnel` next to `st.tunnel` (null = nobody asked to look).
+- **`api-contract.js`** — three rows (`peerOpenWeb`, `peerCloseWeb`,
+  `onPeerWebTunnel`). Pinned surface 222 → **225** in api-contract.test.js.
+- **`renderer/lib/peer-web-view.js`** (NEW, pure leaf) — `webViewAffordance()`.
+  peers-ui is DOM-bound and untested by the R1 rule, so every judgment that could
+  be wrong lives here: phase, enabled, action, tip, and the rule that a URL is
+  only ever the supervisor's live one. Added to RENDERER_SCANNED_MODULES.
+- **`renderer/peers-ui.js`** — the ↗ for non-box peers, rendered from
+  `webViewAffordance({status, tunnel, webTunnel})` — all three live. **The click
+  re-reads the same decision**, so a peer that changed between paint and click is
+  acted on as it is now. `onPeerWebTunnel` repaints and surfaces the URL on
+  `firstUp` only. Seeded from `st.webTunnel` in the `peerList()` startup seed, so
+  a reopened window doesn't offer a second forward to the same box.
+- **ssh-only stated in the UI**, not hidden: a url-only peer gets a DISABLED ↗
+  reading "reached by URL, not ssh — Clodex can only tunnel to a web UI over
+  ssh". A silently missing button would read as "no web UI", a different and
+  false claim.
+- `renderer/styles.css` — phase tints (connecting/open/gave-up), so an open
+  forward to a remote box is visible at a glance rather than only on hover.
+- `npm run build:web` re-run (bundled renderer sources changed).
+
+Affected tests green: api-contract, electron-boundary, peer-manager-sync,
+free-identifier-leaks, peer, peer-tunnel, peer-disable.
+
+### Phase 2c — tests to write, then prove EACH by reverting
+
+1. **pinned port**: same local port across a respawn (the peer-tunnel inversion).
+2. **firstUp exactly once** — and absent from a later `status()` read.
+3. **give-up cap**: never-up → terminal `gave-up`, keeps `lastError`, stops
+   spawning; and a tunnel that DID come up is not capped by it.
+4. **no placeholder**: `url()`/`status().url` null in every non-up state.
+5. **four closes**: toggle, sync-prune (removed/disabled), `stopAll`, cap.
+6. **SECURITY-adjacent**: a `tokenGated` peer does NOT call `openExternal`, an
+   ungated one does — written so it fails if anyone ever pops a 401.
+7. **openPeerWeb refusals**: no such peer / url-only peer / no webHost — each
+   refuses rather than guessing a port.
+8. **affordance leaf**: phases, ssh-only disabled arm, and never a composed URL.
+
+Baseline: **2600, ESCAPES: 0**.
