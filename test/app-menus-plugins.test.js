@@ -109,7 +109,10 @@ function realStack(pluginsDir, { uiSettings = realUiSettings(), onPluginStateCha
 // give each caller a FRESH module instance so nothing leaks between tests.
 function loadAppMenus() {
   const stub = {
-    app: { getName: () => 'Clodex', getVersion: () => '0.0.0' },
+    // setAboutPanelOptions is a no-op on purpose: buildAppMenu calls it on mac
+    // (app-menus.js) to override the About panel, but these tests assert menu
+    // STRUCTURE, which its arguments cannot influence.
+    app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
     BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
     Menu: { buildFromTemplate: (t) => t, setApplicationMenu: () => {} },
     Tray: function Tray() {},
@@ -334,7 +337,9 @@ test('with no plugin host the app menu has no Plugins entry at all', () => {
 function buildTemplateWith(host) {
   let captured = null;
   const stub = {
-    app: { getName: () => 'Clodex', getVersion: () => '0.0.0' },
+    // See loadAppMenus: no-op for the same reason — the assertions here read
+    // the captured template's labels, not the About panel.
+    app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
     BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
     Menu: { buildFromTemplate: (t) => { captured = t; return t; }, setApplicationMenu: () => {} },
     Tray: function Tray() {},
