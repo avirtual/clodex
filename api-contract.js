@@ -51,21 +51,12 @@ const API_CONTRACT = [
   { name: 'markSessionWorktree', kind: 'invoke', channel: 'session:markWorktree' },
   { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
   { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },
-  // Workspace panes: source control, worktree management, file explorer/editor.
-  { name: 'scmStatus', kind: 'invoke', channel: 'scm:status' },
-  { name: 'scmDiff', kind: 'invoke', channel: 'scm:diff' },
-  { name: 'scmStage', kind: 'invoke', channel: 'scm:stage' },
-  { name: 'scmUnstage', kind: 'invoke', channel: 'scm:unstage' },
-  { name: 'scmDiscard', kind: 'invoke', channel: 'scm:discard' },
-  { name: 'scmCommit', kind: 'invoke', channel: 'scm:commit' },
-  { name: 'scmBranches', kind: 'invoke', channel: 'scm:branches' },
-  { name: 'scmCheckout', kind: 'invoke', channel: 'scm:checkout' },
-  { name: 'scmRemote', kind: 'invoke', channel: 'scm:remote' },
-  { name: 'worktreeList', kind: 'invoke', channel: 'worktree:list' },
-  { name: 'worktreeRemove', kind: 'invoke', channel: 'worktree:remove' },
-  { name: 'fsList', kind: 'invoke', channel: 'fs:list' },
-  { name: 'fsRead', kind: 'invoke', channel: 'fs:read' },
-  { name: 'fsWrite', kind: 'invoke', channel: 'fs:write' },
+  // The workbench's fourteen rows (scm:* ×9, worktree:list/remove, fs:* ×3) were
+  // here until docs/plugin-plan.md §4 W6. The workbench is a PLUGIN now: it
+  // registers those rows itself and they ride the one multiplexed plugin
+  // transport, so the contract shrank by fourteen instead of growing by them.
+  // That is the whole point of the pilot — the surface a feature costs core
+  // should go to zero when the feature moves out, not stay as a permanent tax.
   { name: 'listSessions', kind: 'invoke', channel: 'session:list' },
   { name: 'reservedSessionNames', kind: 'invoke', channel: 'session:reservedNames' },
   { name: 'killSession', kind: 'invoke', channel: 'session:kill' },

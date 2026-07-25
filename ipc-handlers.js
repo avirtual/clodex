@@ -33,16 +33,6 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-// TEMPORARY, DELETED IN W6 (docs/plugin-plan.md §4). W5 moved both files into
-// plugins/workbench/ — they implement the workbench and nothing else. The
-// fourteen scm:/fs: rows below are the workbench's PRE-migration path: the
-// plugin already reaches these same leaves through its own engine rows, no core
-// renderer code calls them any more, and W6 deletes the rows, these requires and
-// their api-contract entries together. Pointing core INTO a plugin directory is
-// exactly as wrong as it looks; it buys ONE commit of separation between the
-// file move and the contract shrink, and it dies in the next one.
-const gitScm = require('./plugins/workbench/git-scm');
-const fsExplorer = require('./plugins/workbench/fs-explorer');
 const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
 // The intent grammar table: `catalogRows` serves the renderer checklist over IPC
 // (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where
@@ -317,80 +307,12 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
 
-  // --- Workspace panes: Explorer / Source Control / Worktrees -------------
-  // All three panes scope to a session's cwd, resolved SERVER-SIDE from the live
-  // session (like fetchFileDiff) so the renderer only passes a session name — it
-  // never has to know or trust a path. A peer/remote session has no local
-  // filesystem here, so these refuse it (the pane shows a "remote" notice).
-  const sessionCwd = (name) => {
-    const s = manager.sessions.get(name);
-    if (!s) return { error: 'Session not found' };
-    if (s.peer) return { error: 'remote' }; // peer sessions have no local fs
-    if (!s.cwd) return { error: 'Session has no working directory' };
-    return { cwd: s.cwd };
-  };
-
-  // Source control (git-scm.js). Each handler resolves cwd then delegates.
-  handle('scm:status', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.status(r.cwd);
-  });
-  handle('scm:diff', async (_e, name, filePath, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.fileDiff(r.cwd, filePath, opts || {});
-  });
-  handle('scm:stage', async (_e, name, paths) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.stage(r.cwd, paths);
-  });
-  handle('scm:unstage', async (_e, name, paths) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.unstage(r.cwd, paths);
-  });
-  handle('scm:discard', async (_e, name, filePath, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.discard(r.cwd, filePath, opts || {});
-  });
-  handle('scm:commit', async (_e, name, message, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.commit(r.cwd, message, opts || {});
-  });
-  handle('scm:branches', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.branches(r.cwd);
-  });
-  handle('scm:checkout', async (_e, name, branch, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.checkout(r.cwd, branch, opts || {});
-  });
-  handle('scm:remote', async (_e, name, op) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    if (!['push', 'pull', 'fetch'].includes(op)) return { ok: false, error: 'Bad op' };
-    return gitScm.remoteOp(r.cwd, op);
-  });
-
-  // Worktree management pane: list all worktrees of the active session's repo.
-  // create/remove reuse the existing worktree:create + a new worktree:remove.
-  handle('worktree:list', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitWorktree.listWorktrees(r.cwd);
-  });
-  handle('worktree:remove', async (_e, worktreePath) =>
-    gitWorktree.removeWorktree(worktreePath));
-
-  // File explorer + editor (fs-explorer.js). Confined to the session cwd.
-  handle('fs:list', async (_e, name, rel) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.listDir(r.cwd, rel || '');
-  });
-  handle('fs:read', async (_e, name, rel) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.readFile(r.cwd, rel);
-  });
-  handle('fs:write', async (_e, name, rel, content) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.writeFile(r.cwd, rel, content);
-  });
+  // The fourteen scm:/worktree:/fs: rows that used to live here moved into
+  // plugins/workbench/engine.js (docs/plugin-plan.md §4 W6) — the workbench is a
+  // plugin now and reaches its own data over the plugin transport. Their
+  // `sessionCwd` helper went with them: the host's `sessions.fsScope(name)` is
+  // the same guarantee, offered to every plugin instead of re-implemented per
+  // handler, which is what stops a plugin widening locality by accident.
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:listAll', () => manager.list());

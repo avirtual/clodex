@@ -857,3 +857,68 @@ outside `web-dist/` (built artifact) and docs. NOTE `worktreeList`/`worktreeRemo
 are core rows over `git-worktree.js`, which STAYS core — check whether the
 New-Session dialog or the delete flow calls either before deleting them; if they
 do, those two rows STAY and only twelve go.
+
+---
+
+## W6 — DONE. Suite 2396/2396. **api surface 234 → 220.** W1–W6 COMPLETE.
+
+### The pre-delete grep: all fourteen rows were already dead
+
+Grepped each of the fourteen names across every `.js`/`.html` in the tree. Live
+callers outside `api-contract.js` + its test: **ZERO**. The only other hits are
+`docs/ipcmain-vs-wire-gap.md` and `docs/plugin-plan.md` (prose, and the plan is
+the plan) and `web-dist/index.html` (a BUILT artifact, regenerated — G7/W8).
+W2 moved the last caller into the plugin four commits ago; these have been dead
+weight since.
+
+### The worktree question the ticket asked me to check FIRST
+
+`worktreeList` / `worktreeRemove` are core rows over `git-worktree.js`, which
+STAYS core — so the ticket was right to ask whether a core caller keeps them
+alive. **Checked: no, both go.** The distinction that settles it:
+
+- The New-Session dialog uses `createWorktree` / `worktreeInfo`
+  (`renderer/renderer.js:2456, 1925`) — **different rows, untouched.**
+- The session-DELETE flow calls `gitWorktree.removeWorktree(worktree.path)`
+  **directly, in-process** at `ipc-handlers.js:420` — it never went through the
+  `worktree:remove` IPC row. That row existed solely for the workbench's
+  worktree pane.
+
+So core keeps using the LEAF while the ROWS die: exactly the shape §4 W5
+describes for `git-worktree.js`, confirmed rather than assumed. **All fourteen.**
+
+### DELETED
+- `api-contract.js` :54-68 — the fourteen rows.
+- `ipc-handlers.js` :319-392 — their registrations **and the `sessionCwd`
+  helper**, which had no other caller. Worth stating: that helper was the
+  locality guard, re-implemented per handler; the host's
+  `sessions.fsScope(name)` is the same guarantee offered to every plugin from
+  one place. The pilot didn't just move the rows, it removed a per-handler
+  discipline in favour of a host guarantee — MUST-FIX 5's actual payoff.
+- `ipc-handlers.js` :36-45 — the two `require('./plugins/workbench/…')` lines.
+  **Deviation (l) retires here**; core points at no plugin file again, and
+  `node -e "require('./ipc-handlers.js')"` loads clean.
+- `test/api-contract.test.js` — the fourteen names from PINNED_NAMES; the count
+  updated in all three places, 234 → 220.
+
+Suite unchanged at 2396: the contract test asserts a count, it does not generate
+one test per row.
+
+### W1–W6, the arc in one line each
+- **W1** 699aa15 — loader (both halves) + the pilot scaffold. 2355 → 2380.
+- **W2** cd618e1 — the DOM moves; four rhost surfaces; 15 engine rows. → 2392.
+- **W3** 9a00d1c — the CSS moves (69 rules); plugin-style guard. → 2395.
+- **W4** 573db5a — entry points; the api surface first shrinks, 235 → 234. → 2398.
+- **W5** 2fd0200 — git-scm + fs-explorer move in; host.lib temporaries die. → 2396.
+- **W6** (this) — the contract shrink, 234 → 220. → 2396.
+
+Core now contains NO workbench markup, CSS, entry point, data row or file. What
+remains anywhere in core is prose: comments naming what moved and why.
+
+### STOPPING HERE, as instructed.
+W7-W9 are a separate ticket. clodex's fail-safe/quarantine follow-on (the INBOX
+section above) is NOT part of t2 and has NOT been started — it is recorded there
+in full for whoever picks it up, including the note that `loadAll` and
+`loadPluginRenderers` already try/catch per plugin, so REQUIRED 1 is largely
+present and the real work is recording + surfacing the failure and the whole of
+REQUIRED 2.
