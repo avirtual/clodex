@@ -18,11 +18,15 @@
 // so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { esc } = require('./format');
-// Static gateable-intent catalog + the pure collect decision. Root leaf, like
-// scope-util/skills-util in checklist-popovers.js — the rows are a compile-time
-// constant (no IPC/cache, unlike the exec registry), so this checklist needs no
-// setter/refresh: it renders straight off the catalog.
-const { GATEABLE_INTENTS, intentEnabled, intentsAllowlistFromChecked } = require('../../intent-catalog');
+// NOTE — this file no longer requires intent-catalog. The gateable-intent rows
+// were a static require while the catalog was a compile-time constant; that
+// became wrong twice over (plugin plan MUST-FIX 2): a plugin can register a verb
+// at runtime, and the web bundle's copy of the catalog is FROZEN AT BUILD TIME,
+// so a served renderer would show a stale row set forever. Rows now arrive over
+// IPC (`intents:catalog`) into a cache with a setter — the same sanctioned seam
+// `setExecLibCache` uses. Checked-state is still computed here (the three-line
+// privileged/absent-list semantics), but the ALLOWLIST ITSELF is computed
+// engine-side, where the registry is authoritative.
 
 // ---- Owned cache state (the sanctioned seam) ----
 // Prompt library: `system` prompts fill a <select> (one replaces the CLI
@@ -35,6 +39,11 @@ let skillLibCache = [];
 // Exec-command registry (opt-in grant checklist; checked names become the
 // session's `execCommands` allowlist — which commands its seat may run).
 let execLibCache = [];
+// Gateable-intent catalog, served by the engine (`intents:catalog`). Rows are
+// `{ type, label, privileged }` — core rows in catalog order, then any plugin
+// verbs. Empty until the first fetch, which is fine: every render path awaits a
+// refresh before painting, exactly like the exec registry above.
+let intentCatalogCache = [];
 let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
 // these tools unchecked.
@@ -45,6 +54,7 @@ function setPromptLibCache(v) { promptLibCache = v; }
 function setAgentLibCache(v) { agentLibCache = v; }
 function setSkillLibCache(v) { skillLibCache = v; }
 function setExecLibCache(v) { execLibCache = v; }
+function setIntentCatalogCache(v) { intentCatalogCache = Array.isArray(v) ? v : []; }
 function setClaudeToolsCache(v) { claudeToolsCache = v; }
 function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
 
@@ -142,19 +152,30 @@ function collectExecChecklist(container) {
 // a gated seat still RECEIVES). Polarity is INVERTED from exec's opt-in: checked =
 // enabled, and the default is ALL checked, because `intents` is an opt-OUT field
 // (absent = everything on, the living all-enabled default). So the row's checked
-// state comes from `intentEnabled(type, intentsList)` — the exact catalog semantics
-// the fire-time gate reads — where `intentsList` is the raw persisted value
-// (array, or null/undefined = all-enabled), NOT a Set. `name` is never a row
-// (ungateable identity). Rendered off the static catalog; no cache/refresh.
+// state reproduces `intentEnabled`'s three-line semantics against the SERVED row's
+// own `privileged` flag, where `intentsList` is the raw persisted value (array, or
+// null/undefined = all-enabled), NOT a Set. `name` is never a row (ungateable
+// identity — the engine simply doesn't serve it). Rendered off intentCatalogCache;
+// refresh it (setIntentCatalogCache) before painting, like the exec registry.
+//
+// Why the semantics are INLINE here rather than a call to intent-catalog's
+// intentEnabled: the row already carries `privileged` from the engine, and calling
+// the leaf would re-introduce the static require this seam exists to remove — and
+// with it the stale-copy bug, since a plugin verb is not in the leaf's catalog at
+// all (the leaf would answer TRUE for it, "ungateable by omission").
+function intentRowChecked(row, intentsList) {
+  if (!Array.isArray(intentsList)) return !row.privileged;
+  return intentsList.includes(row.type);
+}
 function renderIntentChecklist(container, intentsList) {
   container.innerHTML = '';
-  for (const it of GATEABLE_INTENTS) {
+  for (const it of intentCatalogCache) {
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = it.type;
-    cb.checked = intentEnabled(it.type, intentsList);
+    cb.checked = intentRowChecked(it, intentsList);
     const txt = document.createElement('span');
     txt.innerHTML = `<strong>${esc(it.label)}</strong>`;
     row.appendChild(cb);
@@ -162,13 +183,15 @@ function renderIntentChecklist(container, intentsList) {
     container.appendChild(row);
   }
 }
-// Thin DOM gatherer → the pure decision lives in intent-catalog: all boxes checked
-// yields NULL (omit the field so the seat stays the all-enabled default), else the
-// enabled subset in catalog order. `[]` (nothing checked) is a real "everything
-// gated" value.
+// Thin DOM gatherer, and ONLY that: it returns the raw CHECKED SET, and the engine
+// decides what that set means (`allowlistFromChecked`, called in session-args.js /
+// the setIntents handler). The collapse used to happen here; it moved because only
+// the engine knows the live row set — a renderer collapsing "all boxes checked" to
+// null against a stale or plugin-less copy of the catalog would either drop a real
+// grant or manufacture one (plugin plan MUST-FIX 3). `[]` (nothing checked) stays a
+// real "everything gated" value on the wire.
 function collectIntentChecklist(container) {
-  const checked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
-  return intentsAllowlistFromChecked(checked);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
 // The built-in subagents the CLI injects into the roster — single-sourced in
@@ -337,13 +360,14 @@ module.exports = {
   renderAppendChecklist, collectAppendChecklist,
   renderAgentChecklist, collectAgentChecklist,
   renderExecChecklist, collectExecChecklist,
-  renderIntentChecklist, collectIntentChecklist,
+  renderIntentChecklist, collectIntentChecklist, intentRowChecked,
   renderBuiltinChecklist, collectBuiltinChecklist,
   renderInjectChecklist, collectInjectChecklist,
   renderToolChecklist, collectToolChecklist,
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
   setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
+  setIntentCatalogCache,
   setClaudeToolsCache, setDefaultToolDenyCache,
   getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache,
 };

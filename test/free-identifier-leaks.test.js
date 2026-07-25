@@ -44,6 +44,7 @@ const SCANNED_MODULES = [
   'statusline.js',
   'intent-scanner.js',
   'intent-catalog.js',
+  'intent-registry.js',
   'prompt-rails.js',
   'exec-schema.js',
   'remind-schedule.js',
@@ -63,6 +64,11 @@ const SCANNED_MODULES = [
   'engine.js',
   'headless-main.js',
   'sandbox.js',
+  // Plugin core (docs/plugin-plan.md Phase 0/1). plugin-api.js is a pure leaf
+  // (no requires at all); plugin-host-engine.js is a deps-object factory. Both
+  // join the list by the same convention as every other extraction.
+  'plugin-api.js',
+  'plugin-host-engine.js',
 ];
 
 // The same guard for renderer.js extractions — these modules were carved out of
@@ -101,6 +107,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/popovers/team-roles-popover.js',
   'renderer/popovers/context-popover.js',
   'renderer/popovers/session-menus.js',
+  'renderer/plugin-host.js',
   'renderer/peers-ui.js',
 ];
 

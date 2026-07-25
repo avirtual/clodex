@@ -54,6 +54,26 @@ function rootJsFiles() {
     .filter((f) => fs.statSync(path.join(ROOT, f)).isFile());
 }
 
+// Every plugin ENGINE half, as repo-relative paths (docs/plugin-plan.md §7).
+// A plugin's engine half is bootstrapped by the same electron-free engine as
+// the ~43 root modules above, so it inherits the same rule for the same reason:
+// the headless host stands the engine up with no Electron at all, and a plugin
+// that reaches for `require('electron')` would break it silently — worse than a
+// core module doing it, because the plugin ships as a droppable directory and
+// nobody re-reads it. The renderer half is deliberately NOT scanned: it is DOM
+// code loaded per window, and it is already forbidden from requiring electron
+// (or anything else outside its own directory) by the no-backdoor lint in
+// test/plugin-boundary.test.js.
+function pluginEngineFiles() {
+  const dir = path.join(ROOT, 'plugins');
+  let ids = [];
+  try { ids = fs.readdirSync(dir); } catch { return []; }
+  return ids
+    .filter((id) => { try { return fs.statSync(path.join(dir, id)).isDirectory(); } catch { return false; } })
+    .map((id) => path.join('plugins', id, 'engine.js'))
+    .filter((rel) => fs.existsSync(path.join(ROOT, rel)));
+}
+
 test('require(electron) appears only in the host-adapter layer', () => {
   const violators = rootJsFiles()
     .filter((f) => !ALLOWED.has(f))
@@ -64,6 +84,18 @@ test('require(electron) appears only in the host-adapter layer', () => {
     `engine-side module(s) import electron — move the electron use behind a seam `
     + `(see docs/engine-extraction-plan.md), or, with a documented ruling, add to `
     + `ALLOWED: ${violators.join(', ')}`,
+  );
+});
+
+test('plugin engine halves never import electron', () => {
+  const violators = pluginEngineFiles()
+    .filter((rel) => importsElectron(fs.readFileSync(path.join(ROOT, rel), 'utf8')))
+    .sort();
+  assert.deepStrictEqual(
+    violators, [],
+    `plugin engine half/halves import electron — a plugin engine half is plain `
+    + `Node (docs/plugin-plan.md §1, §7); everything it needs from the host comes `
+    + `through the host argument: ${violators.join(', ')}`,
   );
 });
 

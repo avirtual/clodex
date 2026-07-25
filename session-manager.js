@@ -282,6 +282,16 @@ function createSessionManager(deps) {
     setTeamWatchdog,
     fs,
     hasActivePending,
+    // Intent grammar table (intent-registry.js, plugin plan §2.3). `bodyModeFor`
+    // replaced the per-(type,sub) allow-set this file used to hard-code;
+    // `intentEnabledFor` wraps intent-catalog's `intentEnabled` so a PLUGIN verb
+    // is never granted by an absent allowlist; `pluginRowFor` is the dispatch
+    // tail's lookup; `validIntentNames` is the near-miss bounce list.
+    bodyModeFor,
+    intentEnabledFor,
+    pluginGrammarLines,
+    pluginRowFor,
+    validIntentNames,
     intentEnabled,
     isAlive,
     isDigested,
@@ -335,6 +345,12 @@ function createSessionManager(deps) {
     writeSkillPlugin,
     // getter deps (whenReady-assigned; see header)
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
+    // Plugin session hooks (docs/plugin-plan.md §3.2) — a GETTER for the same
+    // reason the stores above are: the plugin host is built at the createEngine
+    // TAIL, after this class is constructed, so a captured value would be
+    // undefined. Returns null on a host that builds no plugin host (headless,
+    // CLODEX_PLUGINS=0), which is why both call sites are `?.`-guarded.
+    getPluginHooks,
     // electron seam fns (see header)
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
@@ -955,7 +971,10 @@ function createSessionManager(deps) {
           // ride. Used by the lean-reviewer path (a seat whose replacement system
           // prompt already teaches the one line it needs); every other seat gets
           // the full IPC protocol as before.
-          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, execCommands);
+          // Third arg (plugin plan P3): the grammar lines of the PLUGIN verbs this
+          // seat was granted. Empty for every seat on a plugin-less run, so the
+          // prompt bytes are unchanged.
+          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, execCommands, pluginGrammarLines(intents));
           const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
             appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
           });
@@ -1110,7 +1129,7 @@ function createSessionManager(deps) {
           // appends + legacy inline body into it alongside the IPC protocol.
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, execCommands), {
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, execCommands, pluginGrammarLines(intents)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           // Build top-level flags first, then the optional `resume <uuid>`
@@ -1556,6 +1575,16 @@ function createSessionManager(deps) {
         if (!agentType && !session._shuttingDown && !session._userKilled && !session._archived) {
           getPersistence().remove(name);
         }
+        // Plugin sessions.onExit (docs/plugin-plan.md §3.2, MUST-FIX 4). ONE host
+        // call site, positioned INSIDE the landmine: after the session-exit send
+        // and the exit ipc-message broadcast (so the renderer has already resolved
+        // session → workspace → window), and physically BEFORE _cleanup(name),
+        // which drops the map entry that resolution depends on. Subscribers see a
+        // handle that is already _dead — isAlive() false, inject() a safe no-op —
+        // and run sync-only under try/catch inside the host, so neither a throw
+        // nor an async subscriber can re-break this ordering. Do not move this
+        // line; see the LANDMINE note in the module header.
+        try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
         if (typeof refreshAppMenu === 'function') refreshAppMenu();
@@ -1590,6 +1619,12 @@ function createSessionManager(deps) {
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor
         }
       }
+      // Plugin sessions.onCreate (docs/plugin-plan.md §3.2) — the create() tail,
+      // after registration/notify, so a subscriber's handle resolves against a
+      // session that is fully in the map. Sync-only + try/catch inside the host,
+      // like onExit; wrapped again here so a hook can never fail a spawn.
+      // Restored sessions route through create(), so this fires for them too.
+      try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
       return { name, type, pid: ptyProc.pid, backend, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
@@ -2640,7 +2675,14 @@ function createSessionManager(deps) {
           continue;
         }
 
-        // exec bodies are JSON DATA, not free text. The shared greedy capture
+        // BODY CAPTURE MODE comes from the grammar table (intent-registry
+        // `bodyModeFor`), not from a list of types spelled out here. It is a
+        // PREDICATE OVER THE PARSED INTENT (plugin plan MUST-FIX 7), because the
+        // answer depends on the sub-verb: `task add` captures a body and `task
+        // assign` must not — a per-type flag would swallow the prose after an
+        // assign. See intent-registry.js for the per-row modes.
+        //
+        // 'json' (exec today): the bodies are JSON DATA, not free text. The shared greedy capture
         // below would swallow any prose a seat writes on FOLLOWING lines into the
         // payload, so the downstream JSON.parse then fails on a valid-value-plus-
         // prose buffer (observed live). Terminate exec capture at the JSON value
@@ -2655,7 +2697,7 @@ function createSessionManager(deps) {
         // as the value (unextractable without a lexer) — fall through to the
         // greedy capture so it bounces exactly as it does today. dm / memory /
         // context keep the greedy capture untouched.
-        if (intent.type === 'exec') {
+        if (bodyModeFor(intent) === 'json') {
           let buf = intent.body || '';
           let j = i;
           let complete = jsonComplete(buf); // may already be complete on the intent line
@@ -2679,35 +2721,19 @@ function createSessionManager(deps) {
           // reproducing today's bytes so an incomplete payload bounces as before.
         }
 
-        // For dm: capture the multi-line body — every line from here until the
+        // 'greedy': capture the multi-line body — every line from here until the
         // next real intent line (at column 1) or the end of the turn, whichever
         // comes first. Using parseIntent as the boundary keeps it consistent
         // with the scanner: any line that WOULD fire as its own intent ends the
         // body instead of being swallowed, so an agent can emit several intents
         // in one turn. An escaped \[agent:…] line is literal text, not a
         // boundary, so it stays part of the body.
-        // dm and `memory remember` carry a free-text body that may span lines;
-        // `context compact` (and, later, reload) carry an optional continuation
-        // body with the same multi-line capture semantics. `remind` carries the
-        // reminder TEXT as its body (free text, greedy capture like dm) — the
-        // exec JSON-terminator above does NOT apply to it. `notify-user` carries
-        // the inbox note as free text, greedy like dm. `team-review` (review
-        // scope) and `review-done` (verdict) both carry free text, greedy like dm.
-        // `task add/done/reject/cancel` carry a free-text body (spec/report/reason)
-        // greedy like dm; `task assign/list` carry NO body (empty on the intent
-        // line — they must stay OUT of this set or they'd swallow following prose).
-        // `team role-add/role-set` carry a free-text brief BODY (greedy like dm);
-        // `team role-rm/role-rename/watchdog` carry NO body (keep them OUT).
-        if (intent.type === 'dm'
-          || intent.type === 'exec'
-          || intent.type === 'remind'
-          || intent.type === 'notify-user'
-          || intent.type === 'team-review'
-          || intent.type === 'review-done'
-          || (intent.type === 'task' && (intent.sub === 'add' || intent.sub === 'done' || intent.sub === 'reject' || intent.sub === 'cancel'))
-          || (intent.type === 'team' && (intent.sub === 'role-add' || intent.sub === 'role-set'))
-          || (intent.type === 'memory' && intent.sub === 'remember')
-          || (intent.type === 'context' && (intent.sub === 'compact' || intent.sub === 'reload'))) {
+        // Note the `|| 'json'`: an exec whose payload never completed within the
+        // cap FALLS THROUGH to here, reproducing the bytes an incomplete payload
+        // bounced with before the JSON terminator existed. That fall-through is
+        // control flow in this shell, not a fourth mode.
+        const bodyMode = bodyModeFor(intent);
+        if (bodyMode === 'greedy' || bodyMode === 'json') {
           const body = [];
           while (i < lines.length) {
             // fenced lines are quoted text — part of the body, never a
@@ -2773,7 +2799,7 @@ function createSessionManager(deps) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
-            + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, reboot, end. '
+            + `Valid intents: ${validIntentNames().join(', ')}. `
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
         this._broadcast('ipc-message', {
@@ -2785,14 +2811,18 @@ function createSessionManager(deps) {
 
       // Per-session intent gating (SEND side). Read the SENDER's allowlist FRESH
       // from persistence on every fire — same as the exec per-command grant below
-      // — so a checklist toggle applies WITHOUT a respawn. `intentEnabled` treats
-      // an absent list as "all enabled" (back-compat, the overwhelming default)
-      // and never gates `name` (identity). A disabled intent gets a loud bounce
+      // — so a checklist toggle applies WITHOUT a respawn. `intentEnabledFor`
+      // treats an absent list as "all enabled" (back-compat, the overwhelming
+      // default) and never gates `name` (identity), EXCEPT for privileged verbs,
+      // which need an explicit grant — and every PLUGIN verb is privileged by
+      // construction (intent-registry rule P1), so a plugin can never ride the
+      // "absent = all enabled" default into a seat that predates it.
+      // A disabled intent gets a loud bounce
       // naming the gate, then stops here. This is send-side ONLY: `_deliverMessage`
       // is untouched, so a dm-GATED agent still RECEIVES dms — it just can't emit
       // them. `exec` that passes here still hits its finer per-command grant in
       // _handleExecIntent (the two gates are coarse + fine, both must allow).
-      if (!intentEnabled(intent.type, getPersistence().get(senderName)?.intents)) {
+      if (!intentEnabledFor(intent.type, getPersistence().get(senderName)?.intents)) {
         // agentType guard mirrors the unknown-intent bounce above: bash panes
         // reach here too (_scanPtyOutput → _handleIntent with any KNOWN type),
         // and since `reboot` is gate-disabled on every default seat, cat'ing a
@@ -3108,6 +3138,54 @@ function createSessionManager(deps) {
           this._handleRebootIntent(session, intent.body || '');
           break;
         }
+        default:
+          // PLUGIN VERBS (docs/plugin-plan.md R-INT-2). The switch above keeps
+          // every core case verbatim; a registry lookup runs only for a type no
+          // core case claimed, so this tail cannot change core dispatch even if a
+          // plugin registers something adjacent. Gate ORDER is preserved by
+          // sitting here: unknown bounce → per-seat intentEnabledFor gate → this.
+          this._dispatchPluginIntent(session, intent);
+          break;
+      }
+    }
+
+    // Run a plugin-registered intent's handler. Split out of _handleIntent's
+    // switch so the failure policy is one readable block rather than a lump in
+    // an already-long method.
+    //
+    // The handler receives (SessionHandle, intent) — the same opaque handle
+    // sessions.onCreate/onExit get, never the raw session object — and replies
+    // via `handle.inject(...)`, mirroring the exec reply convention.
+    //
+    // Agent sessions only, like every other bounce-producing path: a bash pane
+    // reaches _handleIntent too (_scanPtyOutput calls parseIntent directly), and
+    // injecting into a shell would TYPE the text at the operator's prompt.
+    //
+    // A throwing handler becomes a `[agent:<verb>] error: …` bounce, never a
+    // crash: a Tier-A plugin runs in this process, so an unguarded throw here
+    // would take down intent handling for every session.
+    _dispatchPluginIntent(session, intent) {
+      const row = pluginRowFor(intent.type);
+      if (!row || !row.handler) return;
+      if (!session || !session.agentType) return;
+      // The handle is MINTED BY THE HOST, not here: plugin-host-engine owns the
+      // handle's shape (§3.2) and this file must not grow a second, drifting
+      // copy of it. No host (kill switch, or a plugin verb somehow outliving
+      // its host) ⇒ nothing to dispatch to.
+      const hooks = getPluginHooks && getPluginHooks();
+      const handle = hooks && hooks.handleFor ? hooks.handleFor(session.name) : null;
+      if (!handle) return;
+      try {
+        const r = row.handler(handle, intent);
+        // Sync-only, like the sessions.onCreate/onExit hooks: a returned promise
+        // would let a plugin's rejection escape every try/catch on this path.
+        // Logged as the contract violation it is, then ignored.
+        if (r && typeof r.then === 'function') {
+          log(`[plugin:${row.source}] intent handler for ${intent.type} returned a promise — handlers must be synchronous; result ignored`);
+        }
+      } catch (e) {
+        log(`[plugin:${row.source}] intent handler for ${intent.type} threw: ${(e && e.message) || e}`);
+        this._injectText(session, `[agent:${intent.type}] error: ${(e && e.message) || e}`, { parkable: true });
       }
     }
 

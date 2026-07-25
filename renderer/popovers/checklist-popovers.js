@@ -24,6 +24,7 @@ const {
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
   renderIntentChecklist, collectIntentChecklist,
   setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
+  setIntentCatalogCache,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
 const { parseSkillFrontmatter } = require('../../skills-util');
@@ -382,8 +383,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   async function openIntentsPopover(name, anchorBtn) {
     const res = await window.api.getSessionArgs(name);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-    // res.intents is the raw persisted allowlist (array, or null = all-enabled);
-    // renderIntentChecklist reads it through intentEnabled, same as the dialog.
+    // res.intents is the raw persisted allowlist (array, or null = all-enabled).
+    // Rows are SERVED (intents:catalog), so seed the cache first, same as the dialog.
+    setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
     renderIntentChecklist(popoverIntentsList, res.intents);
     // res.execCommands is the seat's persisted grant list (local session, never
     // stripped — the wire strip is peer-only). Readout dims live off the exec box.

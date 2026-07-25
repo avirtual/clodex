@@ -35,6 +35,11 @@ const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const gitScm = require('./git-scm');
 const fsExplorer = require('./fs-explorer');
+const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
+// The intent grammar table: `catalogRows` serves the renderer checklist over IPC
+// (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where
+// the live row set is authoritative.
+const { catalogRows, allowlistFromChecked } = require('./intent-registry');
 
 function registerIpcHandlers(deps) {
   const {
@@ -82,6 +87,11 @@ function registerIpcHandlers(deps) {
     // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
     // lazy so a host that omits them simply has no sandbox handlers reachable.
     getSandbox, getSandboxManager,
+    // Plugin host accessor (docs/plugin-plan.md §3.4) — lazy, like the sandbox
+    // pair above: a host that omits it (or a CLODEX_PLUGINS=0 run, where the
+    // engine never builds one) simply has no plugins, and the four plugin
+    // handlers below degrade to a shaped refusal instead of throwing.
+    getPluginHost,
   } = deps;
 
   // Shared spawn body for session:create AND the team front door (team:create /
@@ -945,12 +955,15 @@ function registerIpcHandlers(deps) {
   // Focused per-session intent gating (mirror of setTools). UNLIKE the others this
   // applies IMMEDIATELY with no restart: the fire-time gate (_handleIntent) re-reads
   // persistence on every intent, so the upsert IS the apply. `intents` is the raw
-  // allowlist from collectIntentChecklist — an ARRAY ([] = everything gated) or NULL
-  // (all boxes checked → the living all-enabled default). setIntents removes the key
-  // on null, never freezes an array (mirrors setStripLevel's delete-when-default).
+  // CHECKED SET from collectIntentChecklist — an ARRAY ([] = nothing checked) or
+  // NULL (section hidden). The COLLAPSE to the all-enabled default happens HERE, not
+  // in the renderer (plugin plan R-INT-4 / MUST-FIX 3): only the engine's registry
+  // knows the live row set, so only the engine can tell "every box checked" from "a
+  // subset that happens to be long". setIntents removes the key on null, never
+  // freezes an array (mirrors setStripLevel's delete-when-default).
   handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
-    persistence.setIntents(name, Array.isArray(intents) ? intents : null);
+    persistence.setIntents(name, Array.isArray(intents) ? allowlistFromChecked(intents) : null);
     return { ok: true };
   });
   // Agent catalog for the Agents popover. Unlike skills there's no transcript
@@ -1130,6 +1143,46 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
+
+  // ---- Plugin transport (docs/plugin-plan.md §3.4). FOUR handlers, registered
+  // ONCE, carrying every plugin forever. `plugin:invoke` is the multiplexed
+  // channel: it forwards to the engine-owned dispatch Map, which enable/disable/
+  // dispose mutate. The injected transport has no removeHandler, so a per-plugin
+  // channel could never be unregistered — this is the only shape in which
+  // `dispose()` is implementable at every level of the API.
+  //
+  // getPluginHost() is a LAZY seam: a host that doesn't build a plugin host (or
+  // a run with CLODEX_PLUGINS=0) simply has no plugins, and every call degrades
+  // to the shaped refusal rather than throwing. Loud, not silent — an undefined
+  // resolution is indistinguishable from a successful empty call.
+  const pluginRefusal = () => errorEnvelope(NO_SUCH_METHOD);
+  handle('plugin:invoke', async (_e, pluginId, method, args) => {
+    const host = getPluginHost && getPluginHost();
+    if (!host) return pluginRefusal();
+    return host.dispatch(pluginId, method, Array.isArray(args) ? args : []);
+  });
+  handle('plugin:catalog', () => {
+    const host = getPluginHost && getPluginHost();
+    return host ? host.catalog() : [];
+  });
+  handle('plugin:setEnabled', async (_e, pluginId, enabled) => {
+    const host = getPluginHost && getPluginHost();
+    if (!host) return pluginRefusal();
+    return host.setEnabled(String(pluginId), enabled !== false);
+  });
+  // The intent catalog, served rather than statically required (plan §2.3
+  // R-INT-4). The renderer checklist used to `require('../../intent-catalog')`
+  // directly — fine while the catalog was a frozen const, wrong the moment a
+  // plugin can register a verb, and doubly wrong in the web bundle where that
+  // require is frozen at build time. Rows are `{ type, label, privileged }`;
+  // the renderer computes checked-state client-side but the ALLOWLIST itself is
+  // computed engine-side (setIntents/setArgs), where the catalog is authoritative.
+  // Straight off intent-registry, NOT off the plugin host: the registry is a
+  // module-level table that both halves mutate, so it is authoritative whether or
+  // not a host exists (kill switch, no plugins installed, host construction
+  // failed). Routing this through the host would make the checklist go blank in
+  // exactly the degraded cases where core rows still matter most.
+  handle('intents:catalog', () => catalogRows());
 
   // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /

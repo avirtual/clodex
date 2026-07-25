@@ -139,3 +139,64 @@ test('exec section adds ZERO bytes for an empty/absent grant (both byte-pins kee
   assert.strictEqual(buildIpcPrompt(null), IPC_PROMPT);
   assert.ok(!buildIpcPrompt(null, []).includes('EXEC COMMANDS:'), 'no exec section for []');
 });
+
+// --- P3: plugin grammar lines (docs/plugin-plan.md §2.3) --------------------
+
+const intentRegistry = require('../intent-registry');
+
+test('P3: the third argument is absent-equivalent — BOTH byte-pins hold through it', () => {
+  // The pins above call buildIpcPrompt with no third arg. These are the same
+  // pins with every no-op shape of the new argument, so a future default that
+  // quietly added bytes cannot pass.
+  for (const extra of [undefined, null, [], [''].filter(Boolean), 'not an array', 0]) {
+    assert.strictEqual(buildIpcPrompt(null, undefined, extra), IPC_PROMPT, `extra=${JSON.stringify(extra)}`);
+    assert.strictEqual(buildIpcPrompt(null, [], extra), IPC_PROMPT, `extra=${JSON.stringify(extra)}`);
+  }
+});
+
+test('P3: a granted plugin line is appended AFTER the core grammar block', () => {
+  const line = '  [agent:branch]                   Report your repo’s current branch to the operator.';
+  const out = buildIpcPrompt(null, undefined, [line]);
+  assert.notStrictEqual(out, IPC_PROMPT);
+  assert.ok(out.includes(line), 'the line is present');
+  // Appended, not interleaved: it sits after the last core grammar line (reboot's
+  // is privileged and absent here, so the last core line is the `file open` one)
+  // and before the REPLIES line that closes the block.
+  const fileIdx = out.indexOf('[agent:file open PATH]');
+  const replies = out.indexOf('Replies arrive later');
+  assert.ok(fileIdx < out.indexOf(line) && out.indexOf(line) < replies, 'ordering: core lines, plugin lines, replies');
+  // And nothing else moved: removing the added line restores the pinned bytes.
+  assert.strictEqual(out.replace(`\n${line}`, ''), IPC_PROMPT);
+});
+
+test('P3: two plugin lines keep registration order', () => {
+  const out = buildIpcPrompt(null, undefined, ['  [agent:aaa] one', '  [agent:bbb] two']);
+  assert.ok(out.indexOf('[agent:aaa] one') < out.indexOf('[agent:bbb] two'));
+});
+
+test('P3: pluginGrammarLines renders a line ONLY for a granted seat', () => {
+  try {
+    intentRegistry.registerIntent({
+      verb: 'branch', parse: () => null, promptLines: '  [agent:branch] Report the branch.',
+    }, 'demo');
+    // Absent list = the living all-enabled default for ORDINARY verbs, but a
+    // plugin verb is privileged, so this seat gets nothing and its prompt is
+    // byte-identical to the pin — the reboot precedent, reproduced.
+    assert.deepStrictEqual(intentRegistry.pluginGrammarLines(null), []);
+    assert.strictEqual(buildIpcPrompt(null, undefined, intentRegistry.pluginGrammarLines(null)), IPC_PROMPT);
+    // An explicitly granted seat gets the line.
+    const granted = buildIpcPrompt(['dm', 'branch'], undefined, intentRegistry.pluginGrammarLines(['dm', 'branch']));
+    assert.ok(granted.includes('[agent:branch] Report the branch.'));
+  } finally { intentRegistry._resetPluginRows(); }
+});
+
+test('P3: a registered verb with NO promptLines adds nothing (the resend precedent)', () => {
+  try {
+    intentRegistry.registerIntent({ verb: 'quiet', parse: () => null }, 'demo');
+    assert.deepStrictEqual(intentRegistry.pluginGrammarLines(['quiet']), []);
+    assert.strictEqual(
+      buildIpcPrompt(null, undefined, intentRegistry.pluginGrammarLines(['quiet'])),
+      IPC_PROMPT,
+    );
+  } finally { intentRegistry._resetPluginRows(); }
+});

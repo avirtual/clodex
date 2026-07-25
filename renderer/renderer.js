@@ -20,7 +20,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 // `sessions:`-scoped skills are auto-injected for a matching session (checked +
@@ -48,6 +48,7 @@ const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
 const { initWorkbenchPopover } = require('./popovers/workbench-popover');
+const { initPluginHost } = require('./plugin-host');
 
 // ---------------------------------------------------------------------------
 // State
@@ -979,6 +980,7 @@ function refreshSidebarView() {
   // Partition into visible / hidden by filter, and paint each row's PR badge.
   for (const el of rows) {
     applyPrBadge(el);
+    pluginBar.applyRowBadges(el); // no-op while no plugin registers a rowBadge
     const pass = rowPasses(el);
     el.style.display = pass ? '' : 'none';
     // Hide a row's subagent children with it.
@@ -1747,7 +1749,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderToolChecklist(inputToolsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
-  refreshNewSessionIntents();       // static catalog, box-independent
+  refreshNewSessionIntents();       // served by the LOCAL engine, box-independent (as the static catalog was)
   setPromptLibCache({
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
@@ -1867,12 +1869,15 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
-// Intent-gate checklist for the currently-entered config (Claude only). Static
-// catalog — no cache/IPC — so this is synchronous, unlike the exec refresh. The
-// arg is the raw persisted `intents` value (array, or undefined = the all-enabled
-// default → every box checked); renderIntentChecklist reads it via intentEnabled.
-function refreshNewSessionIntents(intentsList) {
+// Intent-gate checklist for the currently-entered config (Claude only). The rows
+// are SERVED (`intents:catalog`) rather than statically required, so this seeds the
+// cache first and is async like the exec refresh — a plugin can add a verb at
+// runtime, and the web bundle's build-time copy of the catalog would be stale
+// forever. The arg is the raw persisted `intents` value (array, or undefined = the
+// all-enabled default → every non-privileged box checked).
+async function refreshNewSessionIntents(intentsList) {
   if (inputType.value !== 'claude') return;
+  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
@@ -2949,6 +2954,20 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
+// --- Plugin host (renderer half) ---
+// Self-contained island (plugin-host.js) owning the six UI registries plugins
+// contribute through (docs/plugin-plan.md §2.1-2.6). Phase 1 ships NO plugins:
+// every registry is empty, so statusBarHtml() is '', hasVisibleContribution()
+// is false, menuEntriesFor() is [] and handleBarClick/handleMenuPick return
+// false — i.e. every seam below is byte-inert until a plugin registers.
+// getWorkspaceId is getter-shaped because currentWorkspaceId is filled async.
+const pluginBar = initPluginHost({
+  getActiveSession: () => activeSession,
+  sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
+  scheduleSidebarRelayout,
+  getWorkspaceId: () => currentWorkspaceId,
+});
+
 // Per-session quick-access icons on the left of the status bar. Claude gets a
 // Tools button (tool gating is Claude-only); both agent types get an Edit
 // shortcut so the crowded right-click menu isn't the only way in.
@@ -2999,7 +3018,10 @@ function renderSessionActions(holdHtml = '') {
   if (activePeerConfigurable()) {
     btns.push('<button class="px-action" data-act="peer-edit" data-tip="Edit this remote session\'s settings (args, prompts, tools, skills…)">⚙ Edit Session</button>');
   }
-  el.innerHTML = btns.join('') + (holdHtml || '');
+  // Plugin actions + segments render INSIDE this span, on every branch of
+  // renderProxyBar (both early returns call this too), so a contribution is
+  // never silently dropped for Bedrock/Vertex or unlinked sessions.
+  el.innerHTML = btns.join('') + pluginBar.statusBarHtml() + (holdHtml || '');
 }
 
 function renderProxyBar() {
@@ -3013,7 +3035,9 @@ function renderProxyBar() {
   // always reachable), or whenever there's telemetry to show. Hide it only for
   // non-agent sessions with nothing to display.
   if (!st || !st.payload) {
-    if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable()) {
+    // A plugin segment can keep the bar alive for a session type core would
+    // otherwise hide it for (plan §2.1) — false while no plugin registers.
+    if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable() || pluginBar.hasVisibleContribution()) {
       bar.style.display = '';
       if (main) main.classList.add('has-proxy-bar');
       tele.className = '';
@@ -3548,8 +3572,18 @@ setInterval(() => {
     if (costSeg && activeSession) { openCostPopover(activeSession, costSeg); return; }
     const bustSeg = e.target.closest('[data-act="bust"]');
     if (bustSeg && activeSession) { openBustPopover(activeSession, bustSeg); return; }
+    // Plugin segments (namespaced data-act on a .px-seg) — checked before the
+    // .px-action chain because a plugin segment is a span, not a button.
+    const pluginSeg = e.target.closest('.px-seg.px-plugin[data-act]');
+    if (pluginSeg && pluginBar.handleBarClick(pluginSeg.dataset.act, pluginSeg)) return;
     const action = e.target.closest('.px-action');
     if (action && activeSession) {
+      // Plugin acts are namespaced "<pluginId>:<id>", so a colon is by
+      // construction a plugin's — core acts never contain one.
+      if (action.dataset.act.includes(':')) {
+        pluginBar.handleBarClick(action.dataset.act, action);
+        return;
+      }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
       else if (action.dataset.act === 'peer-edit') {
         // Peer proxy-bar config button — opens the shared Edit Session dialog with a
@@ -3561,7 +3595,10 @@ setInterval(() => {
         // to its opener — the openers span two islands + a core dialog, so the
         // core owns this dispatch (the menu island stays opener-agnostic).
         if (isSessionMenuOpen()) closeSessionMenu();
-        else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor));
+        // Plugin providers append their entries after core's table (§2.4); the
+        // menu island stays a pure renderer of whatever list it's handed.
+        else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor),
+          pluginBar.menuEntriesFor(sessionTypeOf(activeSession)));
       }
       else if (action.dataset.act === 'strip-menu') {
         if (isStripMenuOpen()) closeStripMenu();
@@ -3596,6 +3633,9 @@ const {
 // `anchor` is the ⚙ button, so the launched popover positions over the bar.
 function routeSessionAction(act, anchor) {
   if (!activeSession) return;
+  // Namespaced acts belong to a plugin's menu provider (§2.4); core's table
+  // never emits one, so this branch is dead until a plugin registers.
+  if (act.includes(':') && pluginBar.handleMenuPick(act, activeSession, anchor)) return;
   if (act === 'tools') openToolsPopover(activeSession, anchor);
   else if (act === 'skills') openSkillsPopover(activeSession, anchor);
   else if (act === 'agents') openAgentsPopover(activeSession, anchor);
@@ -5511,11 +5551,31 @@ async function openPrefs() {
   // Unchecked = denied by default for new sessions.
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
+  // Plugin settings sections (§2.5) — one <section data-plugin> per registered
+  // section, appended before .dialog-actions. Values are pulled per plugin
+  // through the one multiplexed channel; a disabled plugin's section does not
+  // exist. No-op (and no invokes) while no plugin registers a section.
+  await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
   refreshWsLogs();
   if (wsPollTimer) clearInterval(wsPollTimer);
   wsPollTimer = setInterval(refreshWsStatus, 1500);
+}
+
+// Pull each registered section's persisted values through the ONE multiplexed
+// plugin channel (`_host` pseudo-id, §2.5) and hand them to the island to
+// render. Pull-on-open, per the multi-window law — never a maintained cache.
+async function renderPluginPrefs() {
+  const owners = pluginBar.settingsSectionOwners();
+  const values = {};
+  for (const id of owners) {
+    try {
+      const r = await window.api.pluginInvoke('_host', 'settings.get', [id]);
+      if (r && r.ok) values[id] = r.values || {};
+    } catch {}
+  }
+  pluginBar.renderSettingsSections(values);
 }
 
 function closePrefs() {
@@ -5545,6 +5605,12 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
   // persist them via their own setter. collectToolChecklist returns the
   // unchecked (= denied) tools.
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+  // Plugin sections persist under uiSettings.plugins[<id>] via the same one
+  // multiplexed channel (§2.5). Empty (and so no invokes) while no plugin
+  // registers a section.
+  for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
+    try { await window.api.pluginInvoke('_host', 'settings.set', [pluginId, patch]); } catch {}
+  }
   closePrefs();
 });
 
@@ -5699,6 +5765,7 @@ async function openArgsDialog(name, argsSource = null) {
   // enabled → every box checked; array = membership), read straight into the shared
   // widget. Editing here OWNS intents (the save patch carries the result).
   argsIntentsSection.style.display = isClaude ? '' : 'none';
+  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   // Exec grants — Claude-only AND LOCAL-only. A peer edit can neither read the box's
   // grants (readSessionArgs strips them at the wire) nor set them (the save omits the

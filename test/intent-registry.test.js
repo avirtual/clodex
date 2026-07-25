@@ -1,0 +1,537 @@
+'use strict';
+
+// Differential + contract tests for intent-registry.js (plugin plan §2.3).
+//
+// The load-bearing one is `parseIntent === parseIntentLegacy`: the registry walk
+// is a MOVE of the regex chain, so the only acceptable evidence is that the two
+// agree on every input, field by field, over a corpus large enough to catch a
+// reordering. `parseIntentLegacy` below is the chain as it stood on master
+// before the extraction (comments stripped, otherwise byte-identical) — a frozen
+// oracle, deliberately NOT imported from anywhere, so it cannot drift with the
+// code it is checking.
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { parseIntent, cleanLine } = require('../intent-scanner');
+const registry = require('../intent-registry');
+const { GATEABLE_INTENTS, PRIVILEGED_INTENTS, intentsAllowlistFromChecked } = require('../intent-catalog');
+
+// --- the frozen legacy oracle -----------------------------------------------
+
+function parseIntentLegacy(rawLine) {
+  const cleaned = cleanLine(rawLine).trim();
+  if (!cleaned) return null;
+
+  const escMatch = cleaned.match(/^\\(\[agent:.*)/);
+  if (escMatch) return { type: 'escape', text: escMatch[1] };
+
+  const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
+  if (dmMatch) return { type: 'dm', target: dmMatch[1], urgent: !!dmMatch[2], body: dmMatch[3] };
+
+  const resendMatch = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
+  if (resendMatch) return { type: 'resend', id: resendMatch[1].toLowerCase() };
+
+  if (/^\[agent:who\]\s*$/.test(cleaned)) return { type: 'who' };
+
+  if (/^\[agent:name\]\s*$/.test(cleaned)) return { type: 'name' };
+
+  if (/^\[agent:end\]\s*$/.test(cleaned)) return { type: 'end' };
+
+  const ctxMatch = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
+  if (ctxMatch) return { type: 'context', sub: ctxMatch[1].toLowerCase(), body: ctxMatch[2] };
+
+  const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
+  if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
+
+  const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
+  if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
+
+  const execMatch = cleaned.match(/^\[agent:exec\s+(\S+)\]\s*(.*)/s);
+  if (execMatch) return { type: 'exec', cmd: execMatch[1], body: execMatch[2] };
+
+  const remindMatch = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
+  if (remindMatch) return { type: 'remind', spec: remindMatch[1].trim(), body: remindMatch[2] };
+
+  const notifyMatch = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
+  if (notifyMatch) return { type: 'notify-user', body: notifyMatch[1] };
+
+  const teamReviewMatch = cleaned.match(/^\[agent:team-review\]\s*(.*)/s);
+  if (teamReviewMatch) return { type: 'team-review', body: teamReviewMatch[1] };
+
+  const reviewDoneMatch = cleaned.match(/^\[agent:review-done\]\s*(.*)/s);
+  if (reviewDoneMatch) return { type: 'review-done', body: reviewDoneMatch[1] };
+
+  const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
+  if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
+
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|list)\b([^\]]*)\]\s*(.*)/s);
+  if (taskMatch) {
+    const sub = taskMatch[1];
+    const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
+    const body = taskMatch[3];
+    if (sub === 'add') return { type: 'task', sub, who: argToks[0] || null, id: null, body };
+    if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
+    if (sub === 'list') return { type: 'task', sub, id: null, who: null, body: '' };
+    return { type: 'task', sub, id: argToks[0] || null, who: null, body };
+  }
+
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog)\b([^\]]*)\]\s*(.*)/s);
+  if (teamMatch) {
+    const sub = teamMatch[1];
+    const argStr = teamMatch[2];
+    const body = teamMatch[3];
+    const promptM = argStr.match(/\bprompt:(\S+)/);
+    const templateM = argStr.match(/\btemplate:(\S+)/);
+    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+    if (sub === 'role-add' || sub === 'role-set') {
+      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
+    }
+    if (sub === 'role-rm') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
+    const ms = positional[0] != null ? Number(positional[0]) : null;
+    return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
+  }
+
+  const spawnMatch = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
+  if (spawnMatch) {
+    const argstr = spawnMatch[1];
+    const nameM = argstr.match(/\bname:(\S+)/);
+    const cwdM = argstr.match(/\bcwd:(\S+)/);
+    const tplM = argstr.match(/\btemplate:(\S+)/);
+    return {
+      type: 'spawn',
+      name: nameM ? nameM[1] : null,
+      cwd: cwdM ? cwdM[1] : null,
+      template: tplM ? tplM[1] : null,
+    };
+  }
+
+  return null;
+}
+
+// --- the corpus --------------------------------------------------------------
+
+// Harvested LIVE from the intent test files rather than copied: every string
+// literal in them that mentions `[agent:` is, by construction, a line someone
+// once thought worth asserting on. Harvesting keeps the corpus growing with the
+// suite instead of freezing at whatever the extraction day happened to cover.
+function harvestedLines() {
+  const out = new Set();
+  for (const f of ['intent-scanner.test.js', 'session-manager.test.js', 'ipc-prompt.test.js']) {
+    let src;
+    try { src = fs.readFileSync(path.join(__dirname, f), 'utf8'); } catch { continue; }
+    // Single- and double-quoted literals, plus backticked ones without
+    // interpolation. Escapes are decoded through JSON where possible so a
+    // literal `\[agent:` in the source becomes a real backslash in the corpus.
+    const re = /(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const raw = m[2];
+      if (!raw.includes('[agent:')) continue;
+      if (raw.includes('${')) continue;
+      let decoded = raw;
+      try { decoded = JSON.parse(`"${raw.replace(/"/g, '\\"')}"`); } catch { /* keep raw */ }
+      for (const line of decoded.split('\n')) out.add(line);
+    }
+  }
+  return [...out];
+}
+
+// Adversarial cases the harvest can't be trusted to contain: every verb in
+// every shape, the order-sensitive pairs, and the near-misses.
+const ADVERSARIAL = [
+  '', '   ', 'plain prose', 'talking about [agent:who] mid-line',
+  '\\[agent:who]', '\\[agent:dm bob] hi', '\\\\[agent:who]',
+  '[agent:who]', '[agent:who] ', '[agent:who] extra', '[agent:WHO]',
+  '[agent:name]', '[agent:name] extra',
+  '[agent:end]', '[agent:end] ', '[agent:end] trailing',
+  '[agent:dm bob]', '[agent:dm bob] hello', '[agent:dm bob urgent] hello',
+  '[agent:dm bob  urgent]', '[agent:dm bob@peer urgent] x', '[agent:dm]',
+  '[agent:dm a b c] body', '[agent:dm bob] line1\nline2',
+  '[agent:resend abc123]', '[agent:resend ABC123]', '[agent:resend abc-123]',
+  '[agent:resend abc123] trailing', '[agent:resend]',
+  '[agent:context compact]', '[agent:context compact] pickup note',
+  '[agent:context CLEAR]', '[agent:context reload]', '[agent:context]',
+  '[agent:context two words]',
+  '[agent:memory list]', '[agent:memory remember] text', '[agent:memory RECALL] q',
+  '[agent:memory]',
+  '[agent:file view /a/b.txt]', '[agent:file open /a b/c.txt]',
+  '[agent:file VIEW x]', '[agent:file view]', '[agent:file view x] trailing',
+  '[agent:exec cmd]', '[agent:exec cmd] {"a":1}', '[agent:exec]',
+  '[agent:exec a b] x',
+  '[agent:remind every 30m] text', '[agent:remind in 45m]',
+  '[agent:remind on compact] re-read', '[agent:remind cron 0 9 * * *] x',
+  '[agent:remind list]', '[agent:remind]', '[agent:remind cancel abc]',
+  '[agent:notify-user]', '[agent:notify-user] note', '[agent:notify-user extra]',
+  '[agent:team-review]', '[agent:team-review] scope text',
+  '[agent:review-done]', '[agent:review-done] verdict',
+  '[agent:reboot]', '[agent:reboot] reason text', '[agent:reboot extra]',
+  '[agent:task add]', '[agent:task add reviewer] spec', '[agent:task add] spec',
+  '[agent:task assign t1 bob]', '[agent:task assign t1]', '[agent:task assign]',
+  '[agent:task done t1] report', '[agent:task reject t1] why',
+  '[agent:task cancel t1]', '[agent:task cancel t1] why', '[agent:task list]',
+  '[agent:task list] trailing', '[agent:task foo]', '[agent:task]',
+  '[agent:task added t1]',
+  '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
+  '[agent:team role-set lead template:t] brief', '[agent:team role-rm lead]',
+  '[agent:team role-rename a b]', '[agent:team watchdog 5000]',
+  '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
+  '[agent:team]', '[agent:team-reviewer]',
+  '[agent:spawn name:x cwd:/a]', '[agent:spawn name:x cwd:/a template:t]',
+  '[agent:spawn]', '[agent:spawn junk]', '[agent:spawn name:x cwd:/a] trailing',
+  '[agent:unknownverb]', '[agent:]', '[agent:', '[agent:dm',
+  '• [agent:who]', '  [agent:who]', '─ [agent:dm bob] hi',
+  '\x1b[32m[agent:who]\x1b[0m',
+];
+
+const CORPUS = [...new Set([...ADVERSARIAL, ...harvestedLines()])];
+
+test('corpus is big enough to be evidence', () => {
+  assert.ok(CORPUS.length >= 150, `corpus is only ${CORPUS.length} lines`);
+  // The harvest must actually be finding things; a silent regex breakage would
+  // otherwise reduce this test to the hand-written list.
+  assert.ok(harvestedLines().length >= 40, 'harvest found suspiciously few lines');
+});
+
+test('registry walk === legacy regex chain, field for field, over the whole corpus', () => {
+  for (const line of CORPUS) {
+    const got = parseIntent(line);
+    const want = parseIntentLegacy(line);
+    assert.deepStrictEqual(got, want, `parse differs for ${JSON.stringify(line)}`);
+    if (got && want) {
+      // deepStrictEqual would accept a differing key ORDER; the intents are
+      // serialized into shadow keys and log lines, so pin the shape too.
+      assert.deepStrictEqual(Object.keys(got), Object.keys(want), `key order differs for ${JSON.stringify(line)}`);
+    }
+  }
+});
+
+test('every core verb in the catalog is reachable through the walk', () => {
+  const seen = new Set();
+  for (const line of CORPUS) {
+    const i = parseIntent(line);
+    if (i) seen.add(i.type);
+  }
+  for (const r of registry.CORE_ROWS) {
+    assert.ok(seen.has(r.type), `corpus never produces a ${r.type} intent`);
+  }
+});
+
+// --- row shape ---------------------------------------------------------------
+
+test('core rows derive gateable/privileged/label from intent-catalog, never a copy', () => {
+  for (const r of registry.CORE_ROWS) {
+    const cat = GATEABLE_INTENTS.find((i) => i.type === r.type);
+    assert.strictEqual(r.gateable, !!cat, `${r.type} gateable`);
+    assert.strictEqual(r.label, cat ? cat.label : null, `${r.type} label`);
+    assert.strictEqual(r.privileged, PRIVILEGED_INTENTS.has(r.type), `${r.type} privileged`);
+    assert.strictEqual(r.source, 'core');
+    assert.strictEqual(r.handler, null, 'core rows are dispatched by the switch, not a handler');
+    // ipc-prompt's GRAMMAR_LINES owns prompt copy and its own ordering; a core
+    // row carrying a line here would be a second copy of pinned prompt bytes.
+    assert.strictEqual(r.promptLines, null, `${r.type} must not duplicate GRAMMAR_LINES`);
+  }
+});
+
+test('name is parsed but not gateable; reboot is gateable and privileged', () => {
+  assert.strictEqual(registry.rowFor('name').gateable, false);
+  assert.strictEqual(registry.rowFor('reboot').gateable, true);
+  assert.strictEqual(registry.rowFor('reboot').privileged, true);
+});
+
+test('end and escape are NOT rows — the scanner shell owns them', () => {
+  assert.strictEqual(registry.rowFor('end'), null);
+  assert.strictEqual(registry.rowFor('escape'), null);
+  // ...but they still parse, from the shell.
+  assert.deepStrictEqual(parseIntent('[agent:end]'), { type: 'end' });
+  assert.strictEqual(parseIntent('\\[agent:who]').type, 'escape');
+});
+
+// --- bodyMode: a PREDICATE, never a type-level flag (MUST-FIX 7) --------------
+
+test('bodyMode is decided per PARSED intent: task add captures, task assign does not', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task add bob] spec')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task done t1] report')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task reject t1] why')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task cancel t1]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task assign t1 bob]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task list]')), 'none');
+});
+
+test('bodyMode per sub-verb for team / memory / context', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-add lead] brief')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set lead] brief')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rm lead]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rename a b]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team watchdog 500]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory list]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory recall] q')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context compact]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context reload]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'none');
+});
+
+test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent', () => {
+  // The allow-set as it stood in _extractIntents before the collapse.
+  const legacyGreedy = (i) => (
+    i.type === 'dm'
+    || i.type === 'exec'
+    || i.type === 'remind'
+    || i.type === 'notify-user'
+    || i.type === 'team-review'
+    || i.type === 'review-done'
+    || (i.type === 'task' && (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'cancel'))
+    || (i.type === 'team' && (i.sub === 'role-add' || i.sub === 'role-set'))
+    || (i.type === 'memory' && i.sub === 'remember')
+    || (i.type === 'context' && (i.sub === 'compact' || i.sub === 'reload'))
+  );
+  for (const line of CORPUS) {
+    const i = parseIntent(line);
+    if (!i || i.type === 'escape' || i.type === 'end') continue;
+    const mode = registry.bodyModeFor(i);
+    // exec is the one type whose 'json' mode is a REFINEMENT of the legacy
+    // greedy capture (it terminates at the complete JSON value); it was in the
+    // allow-set then and still captures now.
+    const capturesNow = mode === 'greedy' || mode === 'json';
+    assert.strictEqual(capturesNow, legacyGreedy(i), `body capture differs for ${JSON.stringify(line)}`);
+  }
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
+});
+
+test('bodyMode of an unknown or malformed intent is none', () => {
+  assert.strictEqual(registry.bodyModeFor(null), 'none');
+  assert.strictEqual(registry.bodyModeFor({}), 'none');
+  assert.strictEqual(registry.bodyModeFor({ type: 'nope' }), 'none');
+});
+
+// --- plugin rows: rules P1-P5 -------------------------------------------------
+
+function withPluginVerb(spec, fn) {
+  const dispose = registry.registerIntent(spec, spec.source || 'fake-plugin');
+  try { return fn(dispose); } finally { registry._resetPluginRows(); }
+}
+
+test('P5 — reserved and malformed verbs are refused loudly', () => {
+  for (const bad of ['dm', 'who', 'task', 'end', 'escape', 'unknown']) {
+    assert.throws(() => registry.registerIntent({ verb: bad, parse: () => null }, 'p'),
+      /reserved by core/, `${bad} must be reserved`);
+  }
+  for (const bad of ['', 'Has-Caps', 'has space', '-leading', 'x'.repeat(33), 'a/b']) {
+    assert.throws(() => registry.registerIntent({ verb: bad, parse: () => null }, 'p'),
+      /invalid intent verb/, `${JSON.stringify(bad)} must be rejected`);
+  }
+  assert.throws(() => registry.registerIntent({ verb: 'ok', parse: 'nope' }, 'p'), /parse function/);
+  assert.throws(() => registry.registerIntent({ verb: 'ok', parse: () => null }, ''), /requires a source/);
+  // MUST-FIX 7 at the boundary: a string bodyMode is the type-level flag the
+  // design rejects, so it must not be quietly accepted.
+  assert.throws(() => registry.registerIntent({ verb: 'ok', parse: () => null, bodyMode: 'greedy' }, 'p'),
+    /must be a function/);
+});
+
+test('P5 — a second registration of the same verb collides', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    assert.throws(() => registry.registerIntent({ verb: 'branch', parse: () => null }, 'other'),
+      /already registered/);
+  });
+});
+
+test('P1 — a plugin verb is FORCED privileged, whatever it claims', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null, privileged: false, gateable: false }, () => {
+    const r = registry.rowFor('branch');
+    assert.strictEqual(r.privileged, true);
+    assert.strictEqual(r.gateable, true);
+    assert.strictEqual(r.source, 'fake-plugin');
+  });
+});
+
+test('P1 — an absent allowlist DISABLES a plugin verb (no retroactive grant)', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    assert.strictEqual(registry.intentEnabledFor('branch', null), false);
+    assert.strictEqual(registry.intentEnabledFor('branch', undefined), false);
+    assert.strictEqual(registry.intentEnabledFor('branch', []), false);
+    assert.strictEqual(registry.intentEnabledFor('branch', ['dm']), false);
+    assert.strictEqual(registry.intentEnabledFor('branch', ['branch']), true);
+    // core semantics are untouched
+    assert.strictEqual(registry.intentEnabledFor('dm', null), true);
+    assert.strictEqual(registry.intentEnabledFor('reboot', null), false);
+    assert.strictEqual(registry.intentEnabledFor('name', []), true);
+  });
+});
+
+test('a plugin verb parses only AFTER every core row', () => {
+  // A greedy plugin parse that would match anything still cannot shadow a core
+  // verb, because core rows walk first.
+  withPluginVerb({ verb: 'branch', parse: (l) => ({ type: 'branch', line: l }) }, () => {
+    assert.strictEqual(parseIntent('[agent:who]').type, 'who');
+    assert.strictEqual(parseIntent('[agent:dm bob] hi').type, 'dm');
+    assert.strictEqual(parseIntent('[agent:end]').type, 'end');
+    assert.strictEqual(parseIntent('\\[agent:who]').type, 'escape');
+    // ...but it does get everything the core chain declined.
+    assert.strictEqual(parseIntent('[agent:branch]').type, 'branch');
+    assert.strictEqual(parseIntent('anything at all').type, 'branch');
+  });
+});
+
+test('a plugin parse cannot claim another verb, and a throwing parse is null', () => {
+  withPluginVerb({ verb: 'branch', parse: () => ({ type: 'dm', target: 'bob', body: 'x' }) }, () => {
+    const i = parseIntent('[agent:branch]');
+    assert.strictEqual(i.type, 'branch', 'the registry overwrites the claimed type');
+    assert.strictEqual(i.target, 'bob', 'other fields survive');
+  });
+  withPluginVerb({ verb: 'boom', parse: () => { throw new Error('nope'); } }, () => {
+    assert.strictEqual(parseIntent('[agent:boom]'), null);
+    assert.strictEqual(parseIntent('[agent:who]').type, 'who', 'core still works');
+  });
+  withPluginVerb({ verb: 'weird', parse: () => 'not an object' }, () => {
+    assert.strictEqual(parseIntent('[agent:weird]'), null);
+  });
+});
+
+test('a plugin bodyMode is clamped to the three legal modes and cannot throw out', () => {
+  withPluginVerb({ verb: 'b1', parse: (l) => (l === '[agent:b1]' ? {} : null), bodyMode: () => 'greedy' }, () => {
+    assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:b1]')), 'greedy');
+  });
+  withPluginVerb({ verb: 'b2', parse: (l) => (l === '[agent:b2]' ? {} : null), bodyMode: () => 'nonsense' }, () => {
+    assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:b2]')), 'none');
+  });
+  withPluginVerb({ verb: 'b3', parse: (l) => (l === '[agent:b3]' ? {} : null), bodyMode: () => { throw new Error('x'); } }, () => {
+    assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:b3]')), 'none');
+  });
+  withPluginVerb({ verb: 'b4', parse: (l) => (l === '[agent:b4]' ? {} : null) }, () => {
+    assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:b4]')), 'none', 'default');
+  });
+});
+
+test('dispose is idempotent and removes the verb from the walk', () => {
+  const dispose = registry.registerIntent({ verb: 'branch', parse: (l) => (l === '[agent:branch]' ? {} : null) }, 'p');
+  assert.strictEqual(parseIntent('[agent:branch]').type, 'branch');
+  dispose();
+  assert.strictEqual(parseIntent('[agent:branch]'), null);
+  dispose();
+  assert.strictEqual(registry.rowFor('branch'), null);
+});
+
+test('unregisterSource drops every row a plugin owns and leaves others alone', () => {
+  registry.registerIntent({ verb: 'one', parse: () => null }, 'p1');
+  registry.registerIntent({ verb: 'two', parse: () => null }, 'p1');
+  registry.registerIntent({ verb: 'three', parse: () => null }, 'p2');
+  registry.unregisterSource('p1');
+  assert.strictEqual(registry.rowFor('one'), null);
+  assert.strictEqual(registry.rowFor('two'), null);
+  assert.ok(registry.rowFor('three'));
+  registry._resetPluginRows();
+});
+
+// --- R-INT-4 catalog projection + P2 allowlist --------------------------------
+
+test('catalogRows with no plugin is GATEABLE_INTENTS, in ITS order, unchanged', () => {
+  const rows = registry.catalogRows();
+  assert.strictEqual(rows.length, GATEABLE_INTENTS.length);
+  rows.forEach((r, k) => {
+    assert.strictEqual(r.type, GATEABLE_INTENTS[k].type);
+    assert.strictEqual(r.label, GATEABLE_INTENTS[k].label);
+    assert.strictEqual(r.privileged, PRIVILEGED_INTENTS.has(r.type));
+    assert.strictEqual(r.source, 'core');
+  });
+});
+
+test('catalogRows appends plugin rows as a TAIL — existing checklist order is untouched', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null, label: 'Report git branch (branch)' }, () => {
+    const rows = registry.catalogRows();
+    assert.strictEqual(rows.length, GATEABLE_INTENTS.length + 1);
+    assert.deepStrictEqual(rows.slice(0, -1).map((r) => r.type), GATEABLE_INTENTS.map((i) => i.type));
+    const last = rows[rows.length - 1];
+    assert.deepStrictEqual(last, { type: 'branch', label: 'Report git branch (branch)', privileged: true, source: 'fake-plugin' });
+  });
+});
+
+test('a plugin row gets a default label naming its owner', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    assert.match(registry.rowFor('branch').label, /branch.*fake-plugin/);
+  });
+});
+
+test('P2 — allowlistFromChecked matches intent-catalog exactly when no plugin verb is checked', () => {
+  const cases = [
+    [],
+    ['dm'],
+    ['dm', 'who'],
+    GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type),
+    GATEABLE_INTENTS.map((i) => i.type),
+  ];
+  for (const c of cases) {
+    assert.deepStrictEqual(registry.allowlistFromChecked(c), intentsAllowlistFromChecked(c), JSON.stringify(c));
+  }
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    for (const c of cases) {
+      assert.deepStrictEqual(registry.allowlistFromChecked(c), intentsAllowlistFromChecked(c),
+        `registering a plugin verb must not change the core answer for ${JSON.stringify(c)}`);
+    }
+  });
+});
+
+test('P2 — a checked plugin verb forces an explicit array, never the null collapse', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    const allCore = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
+    // Every core box checked collapses to null on its own...
+    assert.strictEqual(intentsAllowlistFromChecked(allCore), null);
+    // ...but adding the plugin grant must NOT, or the grant silently vanishes
+    // (absence reads as "privileged off").
+    const got = registry.allowlistFromChecked([...allCore, 'branch']);
+    assert.ok(Array.isArray(got));
+    assert.ok(got.includes('branch'));
+    assert.deepStrictEqual(got.slice(0, -1), allCore, 'core half stays in catalog order');
+    assert.strictEqual(registry.intentEnabledFor('branch', got), true);
+    // A subset + the plugin verb keeps both halves.
+    const sub = registry.allowlistFromChecked(['dm', 'branch']);
+    assert.deepStrictEqual(sub, ['dm', 'branch']);
+    // Unknown types are dropped, same as the core function does.
+    assert.deepStrictEqual(registry.allowlistFromChecked(['dm', 'nope', 'branch']), ['dm', 'branch']);
+  });
+});
+
+// --- P3 grammar lines ---------------------------------------------------------
+
+test('P3 — pluginGrammarLines is empty with no plugins, so buildIpcPrompt sees no third arg', () => {
+  assert.deepStrictEqual(registry.pluginGrammarLines(null), []);
+  assert.deepStrictEqual(registry.pluginGrammarLines(['dm']), []);
+});
+
+test('P3 — a plugin line renders only for a seat that was GRANTED the verb', () => {
+  withPluginVerb({ verb: 'branch', parse: () => null, promptLines: '  [agent:branch]   Report the branch.' }, () => {
+    assert.deepStrictEqual(registry.pluginGrammarLines(null), [], 'absent list = not granted');
+    assert.deepStrictEqual(registry.pluginGrammarLines(['dm']), []);
+    assert.deepStrictEqual(registry.pluginGrammarLines(['branch']), ['  [agent:branch]   Report the branch.']);
+  });
+  withPluginVerb({ verb: 'quiet', parse: () => null }, () => {
+    assert.deepStrictEqual(registry.pluginGrammarLines(['quiet']), [], 'no promptLines = no line (the resend precedent)');
+  });
+});
+
+// --- P4 near-miss list --------------------------------------------------------
+
+test('P4 — every name in the bounce list is a real registry verb', () => {
+  for (const n of registry.CORE_VALID_INTENT_NAMES) {
+    assert.ok(registry.rowFor(n), `bounce list names "${n}", which is not a registry verb`);
+  }
+});
+
+test('P4 — validIntentNames appends plugin verbs before the trailing end', () => {
+  const bare = registry.validIntentNames();
+  assert.deepStrictEqual(bare, [...registry.CORE_VALID_INTENT_NAMES, 'end']);
+  withPluginVerb({ verb: 'branch', parse: () => null }, () => {
+    const withPlugin = registry.validIntentNames();
+    assert.deepStrictEqual(withPlugin, [...registry.CORE_VALID_INTENT_NAMES, 'branch', 'end']);
+  });
+});
+
+test('P4 — the bounce list omits `team`, a PRE-EXISTING gap this refactor does not change', () => {
+  // Documented, not silently fixed: Phase 1 is a zero-behavior-change refactor,
+  // and this string is user-visible copy. Flagged for a follow-up.
+  assert.ok(registry.rowFor('team'), 'team is a real verb');
+  assert.ok(!registry.CORE_VALID_INTENT_NAMES.includes('team'), 'still omitted, as it shipped');
+});

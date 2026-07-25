@@ -543,6 +543,7 @@ const {
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled, withoutPrivilegedIntents } = require('./intent-catalog');
+const { bodyModeFor, intentEnabledFor, pluginGrammarLines, pluginRowFor, validIntentNames } = require('./intent-registry');
 const { isFilenameToken, parseAndValidate, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
@@ -863,6 +864,23 @@ function spillToFile(sender, body, recipient) {
 // see session-manager.js's header for the full contract.
 const { createSessionManager } = require('./session-manager');
 
+// The plugin host (docs/plugin-plan.md §3.1/§3.2) — declared HERE so the
+// SessionManager's getPluginHooks getter can close over it, ASSIGNED at the
+// bootstrap tail below, after stores/manager/wiring exist and before the engine
+// handle returns (i.e. before any window exists, and therefore before the
+// renderer-driven session restore). Stays null under the CLODEX_PLUGINS=0 kill
+// switch, which is exactly what makes that switch byte-equivalent: every hook
+// call site is `?`-guarded on it.
+const { createPluginHostEngine } = require('./plugin-host-engine');
+const { pluginsEnabled } = require('./plugin-api');
+// Exposed to plugins as the frozen host.lib.gitWorktree shared leaf (§4 W5):
+// git-worktree.js stays CORE because the New-Session worktree row and the delete
+// flow's removeWorktree depend on it, so a plugin gets a named, versioned view of
+// it rather than a private copy (drifts) or a relative require (which the
+// no-backdoor lint exists to kill).
+const gitWorktree = require('./git-worktree');
+let pluginHost = null;
+
 
 
 const SessionManager = createSessionManager({
@@ -929,6 +947,11 @@ const SessionManager = createSessionManager({
     setTeamWatchdog,
     fs,
     hasActivePending,
+    bodyModeFor,
+    intentEnabledFor,
+    pluginGrammarLines,
+    pluginRowFor,
+    validIntentNames,
     intentEnabled,
     withoutPrivilegedIntents,
     isAlive,
@@ -1003,6 +1026,9 @@ const SessionManager = createSessionManager({
   // through (restartClodex → app.relaunch(); app.quit()); the handler's auth
   // gate + rate limit live in session-manager, the electron call stays here.
   relaunchApp: restartHost,
+  // Plugin session hooks — getter-shaped: the plugin host is constructed at this
+  // factory's TAIL (after stores + manager + wiring), so nothing is bound here yet.
+  getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
 const proxyPoller = new ProxyPoller(manager);
@@ -1688,6 +1714,42 @@ const toolCache = createToolCache({ whichBin });
   // seats (the old ARCHIVE-retire corpses) before any window restores archived rows.
   try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }
 
+  // ── Plugin host (docs/plugin-plan.md §3.1 "Engine lifecycle") ──────────────
+  // Constructed at the bootstrap TAIL: stores, manager, pollers, remote and peer
+  // wiring all exist, no window does yet, and the handle has not returned — so a
+  // plugin's activate() runs exactly once per app run, strictly before the
+  // renderer-driven restore can create any session. That ordering is what lets a
+  // plugin's sessions.onCreate see restored sessions rather than race them.
+  //
+  // Phase 1 registers NO plugins: core populates the registries and the loader
+  // that walks plugins/*/manifest.json is Phase 2. What exists here is the host
+  // itself, reachable by ipc-handlers, so the transport and the hooks are live
+  // and testable before anything depends on them.
+  //
+  // CLODEX_PLUGINS=0 skips construction entirely — pluginHost stays null, every
+  // hook call site short-circuits, and the four IPC handlers degrade to their
+  // shaped refusals. That is the whole-program reversibility the plan rides on.
+  if (pluginsEnabled(process.env)) {
+    try {
+      pluginHost = createPluginHostEngine({
+        manager,
+        getUiSettings: () => uiSettings,
+        log,
+        userDataPath,
+        fs, path,
+        gitWorktree,
+        telemetrySnapshot: (name) => proxyPoller.snapshot(name),
+      });
+    } catch (e) {
+      // A broken plugin host must not take the app down with it — degrade to
+      // "no plugins" and say so, loudly, in the log.
+      pluginHost = null;
+      log.info('plugin', `host construction failed, continuing without plugins: ${e && e.message}`);
+    }
+  } else {
+    log.info('plugin', 'CLODEX_PLUGINS=0 — plugin host not constructed');
+  }
+
   // Idempotent teardown — the Electron before-quit / window-all-closed paths and
   // the headless SIGTERM/SIGINT paths all funnel here. Mirrors the old before-quit
   // (remote/peer/tunnel stop + killAll) and additionally clears the engine's own
@@ -1727,6 +1789,12 @@ const toolCache = createToolCache({ whichBin });
     // list()/iteration (autostart, and the P2 box-list UI).
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
+    // The plugin host, for ipc-handlers' four plugin channels (§3.4). Lazy like
+    // the sandbox pair above: null under CLODEX_PLUGINS=0 or a failed
+    // construction, and every handler degrades to a shaped refusal rather than
+    // throwing. Both hosts (main.js, web-host.js) spread `...engine` into
+    // registerIpcHandlers, so this wires itself into both transports at once.
+    getPluginHost: () => pluginHost,
     // ── ipc-handlers consumers (helper surface) ──
     // Teams front door: the manifest writers + resolvers the team:* IPC handlers
     // call. Exposed on the ENGINE seam (not just the SessionManager deps) — this

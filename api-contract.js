@@ -272,6 +272,23 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
+  // Plugin transport (docs/plugin-plan.md §1, §3.4). EXACTLY these five rows —
+  // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
+  // multiplexed channel over an engine-owned dispatch Map: the injected
+  // transport has no removeHandler, so per-plugin channels could never be
+  // unregistered and `dispose()` would be a lie at every level of the API.
+  // Enable/disable/dispose mutate the Map instead; no Electron-level
+  // unregistration ever happens. Because both frontends build window.api from
+  // this one table, the browser frontend inherits the plugin transport free.
+  { name: 'pluginInvoke', kind: 'invoke', channel: 'plugin:invoke' },
+  { name: 'pluginCatalog', kind: 'invoke', channel: 'plugin:catalog' },
+  { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
+  { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
+  // The intent catalog served over IPC rather than statically required by the
+  // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
+  // that reads its own frozen copy of intent-catalog.js is reading a stale
+  // catalog — and the web bundle's copy is frozen at build time.
+  { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },
 ];
 
 module.exports = { API_CONTRACT };
