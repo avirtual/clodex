@@ -1310,3 +1310,101 @@ smoothing them.**
 
 State at dispatch: HEAD `c316576`, 52 ahead of local master, suite 2529/2529,
 clean but for the untracked `node_modules` symlink. Nothing pushed.
+
+## T23 findings — the fleet story vs the plugin premise (read-only, no code)
+
+Read cold: `docs/plugin-vision.md`, `docs/engine-as-substrate.md`,
+`docs/deployment-plan.md`, `cli/README.md`, `cli/src/main.js` + `cli/src/deploy.js`,
+`cli/deploy/clodex-fargate.yaml`, `cli/deploy/helm/clodex/templates/statefulset.yaml`,
+`docker/web/Dockerfile`, `build/build-web.js`, `renderer/web/plugin-registry.js`.
+
+### A — what plugin-vision already commits to
+
+- **Headless as a plugin target: NEVER CONSIDERED.** Zero hits for
+  headless/container/fleet in the doc. `:23-26` and `:40` mention
+  ec2/k8s/fargate only as *the thing Eugen recoils from*; `:213` lists
+  "peering/remote/deploy **off**" as the flagship persona. The doc's posture is
+  **deploy is a plugin you turn off**, never **a host that runs plugins**. This
+  is the contradiction, and it is larger than t22's two buttons.
+- **Workbench-as-plugin: already settled, Bogdan's ruling changes nothing.**
+  `:112`, `:144`, `:279-284` — workbench is a plugin and *the named pilot*.
+  `:120-128` demands first-party and third-party share one surface, "no backdoor".
+- **Engine-only plugins: outside the taxonomy.** The trust table `:186-197` is
+  in-process-**renderer** vs out-of-process; `:170-173` frames in-process as a
+  DOM capability; the extension-point candidates `:118-119` (status bar, sidebar,
+  intent grammar, session menu, settings) are all UI but for the intent handler.
+  An engine-only plugin on a node is not forbidden — it is unimagined.
+- **Out-of-tree/BYO: stated and load-bearing** (`:159-164`, the git-branches
+  case). But `:273-278` calls "in-repo vs downloadable vs local plugins…
+  downstream and comparatively easy" — i.e. the doc *deprioritises* exactly the
+  distribution question t22 left open, while its "one number" (the
+  extension-point taxonomy as a published versioned API) is still un-formalised.
+- **Restart boundary: the doc already held t22's position.** `:189`, `:196-197`,
+  `:202-204` — no clean live-unload, live-enable fine, `npm install && npm start`
+  for removal. The t22 require-cache probe re-derived a banked position.
+
+### B — delivery: there is no path, and one half is architecturally undeliverable
+
+- `grep -rn -i plugin cli/` → **one hit**, `cli/deploy/clodex-fargate.yaml:389`,
+  and it is AWS's `session-manager-plugin`. clodexctl is plugin-blind.
+- No file-transfer verb exists (`cli/src/main.js:33-44`). The only byte-carriers
+  are single-secret: `--claude-token-file` (`cli/README.md:334`), helm
+  `--set-file` (`:509`). The wire has 14 POST routes and none writes a file.
+- Per target: **ssh** = git clone of the repo (`peering/clodex-deploy.sh:30`;
+  `--src` names a dir ON THE BOX, `cli/src/deploy.js:99-105` — it uploads
+  nothing), so delivery means forking core. **docker** = one volume,
+  `<name>-data:/data` (`cli/src/deploy.js:434-449`) — `~/.clodex` is
+  container-layer. **helm** persists `/home/clodex/.clodex`
+  (`statefulset.yaml:65`) — the only target where a dropped plugin survives, and
+  nothing puts one there. **fargate** = `clodex-fargate.yaml:110-113` "there is
+  no volume… EVERY task replacement is a factory reset."
+- `docs/deployment-plan.md:218-232` build order has no plugin item; its stated
+  volume contract `:68-73` names `/data`, `.claude`, `.codex` and **omits
+  `~/.clodex`** — which helm already persists. Doc/code contradiction independent
+  of plugins.
+- **The deploy thesis argues AGAINST a plugin verb**: `:12-17` "Clodex should not
+  grow per-cloud integrations… the contract is the product." Plugin delivery on a
+  fleet belongs to the *recipe* (image layer or volume), not to Clodex.
+- **Renderer halves cannot reach a node at all.** `renderer/web/plugin-registry.js:22-24`
+  + `build/build-web.js:46-61`: the browser bundle's plugin modules are
+  build-generated from `ROOT/plugins` — the CORE root, at `npm run build:web`. The
+  web frontend is the only lens a headless node exports, so **on a node, engine
+  halves load from anywhere and renderer halves come only from the image.** Not
+  caused by t22 and not fixable inside it.
+
+### C — `~/.clodex/plugins` on a container
+
+- Root is `os.homedir()`-derived (`engine.js:117`, `:1775-1783`;
+  `headless-main.js:52`), **not `CLODEX_DATA_DIR`** — which is the documented node
+  contract var (`docs/deployment-plan.md:87`) that every recipe sets to `/data`.
+  So the plugin root is the one piece of node state that does not follow the node
+  contract; a recipe author persists `/data` and silently gets no plugin durability.
+- Durable on helm + ssh; **lost** on `deploy docker` recreate and on every Fargate
+  task replacement.
+- `engine.js:1770-1774`'s reason for never creating the dir is explicitly about
+  *teaching a user* — desktop reasoning inside an engine-level file. t22's
+  `ensureUserRoot()` fires from a button, i.e. only from a lens with a human in it.
+
+### D — which t16/t21/t22 assumptions survive
+
+- **core-wins: survives, strengthened.** `engine.js:1765-1769`'s rationale gets
+  better on a node whose core root is a pinned image.
+- **version-aware supersession (t21): PREMISE PARTLY GONE.** It was justified by
+  app.asar immutability (`plugin-loader.js:54-58`). A container's core root is
+  replaced wholesale on every deploy, and `docs/deployment-plan.md:65-67` wants
+  versions pinned so the node IS a fixed artifact. A user root out-ranking the
+  image works against that property. Collision of intents, not a bug.
+- **user root as upgrade channel: contradicted on Fargate** — a channel a factory
+  reset wipes is not a channel.
+- **restart-required: state right, presentation superseded.** On a node restart is
+  the routine cheap repair primitive — `POST /api/restart` (`cli/README.md:275`),
+  exit-64 supervisor restart (`docs/engine-as-substrate.md:89-90`), helm
+  liveness probes, ECS task replacement. "Restart required" is an *instruction an
+  orchestrator executes*, not a badge a human reads.
+- `CLODEX_PLUGINS=0` (`engine.js:1797`) already gives a node a host-off posture.
+
+**Verdict:** the mechanism t22 built is target-neutral and none of it needs
+unbuilding; only its two affordances are desktop-shaped, and they remain correct
+for the DMG. The genuinely superseded premise is **t21's**, not t22's. The real
+hole is one t22 never touched: **no delivery path exists at all**, and renderer
+halves are undeliverable to a node by construction.
