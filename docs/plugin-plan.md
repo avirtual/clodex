@@ -601,8 +601,12 @@ peer wire. Current coupling inventory, all [V]:
   'scm.unstage' | 'scm.discard' | 'scm.commit' | 'scm.branches' | 'scm.checkout' | 'scm.remote' |
   'wt.list' | 'wt.remove')`. Every handler's first line is `host.sessions.fsScope(name)` — the
   refusal (including the exact `'remote'` error string the renderer already renders as the remote
-  notice [V workbench-popover.js renderExplorer/renderScm/renderWorktrees]) is **host-side**, so a
-  buggy plugin cannot widen locality. `git-scm.js` moves into the plugin directory (GAP: G4 —
+  notice [V workbench-popover.js renderExplorer/renderScm/renderWorktrees]) is **host-side**, so the
+  peer refusal is not each plugin's code to get right. It answers "what cwd, and is this local?" and
+  nothing more: **not** workspace scoping (the transport discards the Electron event) and **not** cwd
+  confinement (the plugin's own lexical `safeResolve` follows a symlink out). An earlier version of
+  this line claimed a buggy plugin "cannot widen locality"; it can — a Tier-A plugin is unsandboxed
+  in-process Node, and the host API is a contract, not a containment boundary. `git-scm.js` moves into the plugin directory (GAP: G4 —
   grep for other consumers first). Worktree ops keep using core's `git-worktree.js` — it stays
   core because the New-Session worktree row and the delete flow's `removeWorktree` depend on it
   [V architecture.md git-worktree entry; api-contract comment on createWorktree/worktreeInfo] —

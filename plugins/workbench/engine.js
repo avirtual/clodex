@@ -4,10 +4,19 @@
 //
 // Fifteen data rows, one per fs:/scm:/worktree: IPC handler the workbench used
 // to reach through window.api. Every filesystem-touching one's FIRST line is
-// `host.sessions.fsScope(name)` (MUST-FIX 5) — the locality refusal, including
-// the exact `'remote'` error string the renderer half renders as the remote
-// notice, is a HOST guarantee, not this plugin's code to get right. A buggy or
-// careless plugin therefore cannot widen locality.
+// `host.sessions.fsScope(name)` (MUST-FIX 5) — the PEER refusal, including the
+// exact `'remote'` error string the renderer half renders as the remote notice,
+// is a HOST guarantee, not this plugin's code to get right.
+//
+// What fsScope is NOT: containment. It answers "what cwd, and is this local?"
+// and stops there. It does not scope to a workspace (the plugin transport
+// discards the Electron event, so a caller's window never reaches an engine
+// half), and it does not confine reads to the cwd it returned — that is this
+// plugin's own safeResolve, which is lexical and follows a symlink inside the
+// cwd pointing out. An earlier version of this comment claimed a careless
+// plugin "cannot widen locality"; it can. The engine half is unsandboxed
+// in-process Node holding a cwd and require('fs'), and docs/plugin-api.md says
+// so outright: the host API is a contract, not a containment boundary.
 //
 // W5 moved git-scm.js and fs-explorer.js OUT of the core root and into this
 // directory: they implement the workbench and nothing else, so they are the

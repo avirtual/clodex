@@ -23,9 +23,13 @@
 // build/build-web.js from `plugins/*/manifest.json` at every `npm run
 // build:web`. Do not edit the marked block; add a plugin and rebuild.
 //
-// This committed version is the EMPTY map, which is also the honest fallback:
-// checked into the tree it keeps the file requireable outside a build (tests,
-// the Electron path that never consults it), and a build overwrites it.
+// The COMMITTED version is whatever the last `npm run build:web` generated —
+// today the two shipped plugins below, not an empty map (it was empty until the
+// first renderer half landed, and this comment claimed so long after it stopped
+// being true). Checked into the tree it keeps the file requireable outside a
+// build (tests, the Electron path that never consults it); a build overwrites
+// it. An empty map remains the honest fallback shape, and `test/plugin-web-
+// parity.test.js` is what fails if the committed file drifts from `plugins/`.
 
 // Only the ENABLED-BY-DEFAULT question is the engine's; the bundle carries every
 // discovered plugin's module and lets `plugin:catalog` decide what activates. A

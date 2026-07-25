@@ -965,3 +965,233 @@ Checked by hand as well as by the scan:
 So the hardening added five discriminations and cost zero suppressions. That is
 a weaker result than a true positive would have been, and it is worth saying
 plainly: the lint got sharper, but nothing shipped was found wanting.
+
+---
+
+## T12 — the registry sweep investigation (done first; docs follow)
+
+**Question:** does any OTHER test assert over the intent registry's contents
+without controlling for plugin-registered rows?
+
+**Method.** The registry's read surface is `rows / catalogRows /
+pluginGrammarLines / validIntentNames / allowlistFromChecked / rowFor /
+pluginRowFor`. Grepped every one across `test/`, then crossed that against the
+files that really load plugins from disk. Six files enumerate:
+`intent-checklist-seam`, `intent-registry`, `ipc-prompt`, `plugin-fake`,
+`plugin-surface-contract`, `session-manager`. Six load real plugins:
+`app-menus-plugins`, `free-identifier-leaks`, `plugin-loader`,
+`plugin-web-parity`, `ui-settings-plugins`, `plugin-kill-switch`.
+
+The intersection is `plugin-kill-switch` ALONE — already fixed by clodex. Node
+runs each test file in its own process, so contamination is only ever
+within-file; that is why the intersection is the right question and why the
+answer is a short list.
+
+**Of the six enumerators, five already control for it**: `intent-registry`
+(`withPluginVerb` resets in a `finally`), `ipc-prompt` (two `finally` resets),
+`plugin-fake` (`withReset`), `plugin-surface-contract` (t6's reset, in the
+`finally` I wrote), `session-manager` (`withVerb`). None loads a real plugin, and
+each sweeps its own registration.
+
+**One genuine finding — `test/intent-checklist-seam.test.js:34`.** Titled "for
+every CORE row", it iterated `catalogRows()` unfiltered and asserted
+`intentRowChecked(row, list) === intentEnabled(row.type, list)`. For a PLUGIN row
+those two DELIBERATELY disagree — that is the content of the very next test in
+the file: plugin verbs are forced privileged on the row, while intent-catalog
+knows nothing of registry rows and answers "ungateable by omission", so an
+ungranted plugin verb is `false` on the checklist and `true` at the leaf.
+Verified by hand: a registered `probe` verb gives `checklist=false catalog=true`
+under `[]` and `['dm']`.
+
+This file registers no verb and loads no plugin, so it passes today — but it
+passes by circumstance, not by construction. The day any sibling test in it
+registers a verb, it goes red for a correctness property nobody broke.
+
+**Fix, per the ticket's rule.** Not weakened: the equivalence is genuinely
+core-only, so it is filtered by `source === 'core'` WITH a comment saying why,
+plus `assert.ok(coreRows.length > 5)` so the filter can't quietly empty the loop.
+Added a fixture that registers a real verb and asserts the divergence on a live
+row.
+
+**A proof-shape correction worth recording.** My first version of that fixture
+proved nothing: node runs tests in file order, the fixture sits AFTER the seam
+test, so reverting the filter still passed — the registry was empty when the
+seam test ran. Deleting the filter and watching it stay green is exactly the
+false-confidence shape this phase keeps finding. Rewritten to run the UNFILTERED
+loop inside `assert.throws(..., /seamprobe/)` at a moment when a plugin row IS
+registered, which is the same proof with no dependence on ordering.
+
+Left alone deliberately: the same file's "exactly the three fields" loop is
+unfiltered and should be. Row SHAPE must hold for every served row — a plugin row
+with an extra field is a real defect and that loop is what catches it. Verified
+plugin and core rows carry identical keys. Commented so the asymmetry with the
+filtered loop reads as a decision.
+
+So: **one sibling found and fixed, five already clean, and the shape gate
+correctly left universal.**
+
+---
+
+## T11 — source verification, BEFORE writing any doc prose
+
+Three of clodex's specs diverged from code today, so every claim below was
+checked against source first. Findings, with the divergences called out:
+
+**§4 `onCreate` and restored sessions — the DOC IS WRONG, and wrong in the
+safe-sounding direction.** §14 says "unspecified whether the hook fires for
+sessions restored at launch" and §4 tells the author to `listAll()` and
+reconcile. Source: `session-restore.js:81` calls `manager.create(...)`, and
+`session-manager.js:1622-1627` fires `fireCreate` at the create() tail with the
+comment "Restored sessions route through create(), so this fires for them too."
+So `onCreate` DOES fire for restored sessions — it is specified, by
+construction, and the doc's hedge is stale.
+
+The real gap is a DIFFERENT one and the doc never mentions it: engine halves
+activate in `engine.js:1741-1769` (`loadAll`) before any window exists, but a
+plugin enabled at RUNTIME (`setEnabled` → `activateById`) activates into a world
+where sessions are already running and no `onCreate` will ever fire for them.
+That is the case demand-driven resolution actually solves. clodex's ruling
+(teach demand-driven resolution) is right; its stated reason is not the reason.
+
+**§14's `listAll()`-at-activation remedy is doubly broken**: at first-run
+activation there are no sessions to enumerate (§4's own header says so), and at
+runtime-enable `listAll()` works but the doc points the author at reconciliation
+rather than the simpler thing.
+
+**§6.4 `cache.get(name)` → `?? null`** — confirmed against the spec three lines
+above (`{ text, tip?, cls? } | null`) and against
+`renderer/plugin-host.js:262`, which tests `!r || !r.text`. `undefined` happens
+to survive that check, so the example is not a crash — it is a spec violation
+that works by luck. Fix as ruled.
+
+**§6.4 `cls` vs §6.1 `accentClass` — both accept a space-separated class LIST.**
+Verified: `renderer/plugin-host.js:268` does
+`chip.className = \`session-plugin-badge${r.cls ? ' ' + String(r.cls) : ''}\``
+(assignment to className — a list is native); `:176`/`:184` interpolate
+`esc(String(accentClass))` into a `class="…"` attribute, and `esc`
+(`renderer/lib/format.js:18`) escapes `<>&"'` only, so spaces pass through
+intact. The builder's guess (one token per state) was defensive and unnecessary.
+Two different names for the same concept in adjacent sections is the actual
+defect.
+
+**§5 `listWorkspace` renderer element shape** — `renderer/plugin-host.js:491-497`
+filters the resolved `listSessions()` (bound to `session:list`,
+`ipc-handlers.js:317` → `manager.listForWorkspace`) by `workspaceId`. So the
+element is `manager.list()`'s row verbatim, `session-manager.js:2040-2062`:
+`{ name, type, pid, cwd, workspaceId, team, ticket, backend, activity,
+attention, pendingCount }`. IDENTICAL to the engine twin — same function, one
+await apart. The doc can point at §4 and say there is no difference.
+
+**§7 multiplicity — confirmed EXACTLY ONCE, and the reason is stronger than the
+ticket's.** clodex cited `session-manager.js:1519` (`if (!agentType)` gating
+`_scanPtyOutput`), which is correct and is the first of THREE independent
+reasons:
+1. `:1519` — PTY scanning is bash-only, so the two feeds never both run for one
+   session.
+2. `_dispatchPluginIntent:3170` — `if (!session || !session.agentType) return;`
+   refuses non-agent sessions outright, so even if a bash line reached it,
+   nothing dispatches.
+3. A session's agent feed is ONE of wire or jsonl, never both
+   (`intentSource` is `'wire'` xor `'jsonl'`, `:1379`/`:1391`), and the wire path
+   carries a per-batch `fired` Set (`:521-530`) that is explicitly load-bearing
+   against intra-turn duplicates.
+Any one suffices; together the guarantee is structural, not incidental.
+
+**`parse` vs `handler` — `parse` is the per-feed one.** `parseIntent`
+(→ `parseWithRegistry`) runs on BOTH scan paths: the PTY line loop
+(`:2210`) and `_extractIntents` (`:2631`, JSONL/wire). `handler` runs only from
+`_dispatchPluginIntent`, which is agent-only. So a plugin's `parse` really can be
+called from either feed — harmless, since it is pure and returns a value — while
+`handler` cannot. That is exactly the asymmetry the ticket asked me to name, and
+it confirms "live on every input feed at once" describes REGISTRATION and parse
+reach, not dispatch.
+
+**Throwing `handler` — a real guarantee, already implemented.**
+`session-manager.js:3186-3189`: catch → log → `_injectText(session,
+'[agent:<type>] error: <msg>', { parkable: true })`. Also `:3183` logs and
+ignores a returned promise. Both belong in the doc as guarantees.
+
+**The `fsScope` overclaim appears in FOUR places, not three** (clodex named
+three). `plugins/workbench/engine.js:5-14` — fixed by clodex.
+`docs/plugin-plan.md:605` — "a buggy plugin cannot widen locality", still false.
+`docs/plugin-api.md:337-339` — "host guarantee … cannot accidentally widen
+access to a remote session"; narrower and defensible as written, but sits three
+lines from an unqualified "host guarantee" and never mentions the symlink leg.
+**`plugin-host-engine.js:265-268` — the HOST'S OWN comment, "a buggy or careless
+plugin CANNOT widen locality", the most authoritative statement of the four and
+the one clodex did not know about.** Reporting it before touching it.
+
+### T11/T12 — what was written
+
+All in `docs/plugin-api.md` unless noted.
+
+1. **§4 `onCreate` — corrected, not softened.** States that restored sessions ARE
+   covered, names the two moments that have no `onCreate` (pre-window activation;
+   runtime-enable into a running world), and teaches demand-driven resolution with
+   a worked cache keyed by session name and `onExit` as the eviction hook. Frames
+   `onCreate` as an INVALIDATION HINT rather than a source of truth. §14's entry
+   rewritten from "unspecified" to the runtime-enable case, with restore called
+   out as fine.
+2. **New "Callback conventions" block in §4**, the single place the doc's callback
+   rules now live: sync-only, throw-contained-per-callback, and the multiplicity
+   rule — before putting a non-idempotent side effect in a callback, find out how
+   many times it can fire, because there is no emission id anywhere in the API to
+   detect a duplicate after the fact. Carries a per-callback guarantee table.
+   §6.4 and §7 both link to it. **Attribution, per the ticket's instruction that
+   it go here and not in the doc: the generalization is the ACCEPTANCE BUILDER's,
+   from the cold Phase 3 build.** It is better than anything §7 said before.
+3. **§3 Law 2 — the honest version.** The three pull triggers cover a surface a
+   user opens; they cover nothing that renders itself, which in "1" means
+   `rowBadge`. Says outright that a rowBadge's first render is structurally blank,
+   that this is the design working rather than a race, and to make "nothing yet" a
+   legitimate state.
+4. **§5 `listWorkspace`** — element shape written out, stated as the engine twin's
+   row verbatim (same producer, one await apart), plain data not SessionHandles,
+   and `[]` means "none OR could not ask".
+5. **§6.1/§6.4 `accentClass` / `cls`** — both take a space-separated LIST; the two
+   names are the same thing, historical, not a signal. Anchored `#class-fields` so
+   §6.4 links back. Retires the builder's one-token-per-state workaround.
+6. **§6.4 example** — `?? null`, with a sentence on why `undefined` renders
+   nothing today but is outside the contract.
+7. **§7** — three guarantees split out of the handler bullet: exactly once per
+   matched line (three mechanisms, stated structurally); a throw becomes a bounce
+   and IS the error channel, so do not wrap defensively; a returned promise is
+   logged and ignored, and an `async handler`'s rejection becomes silence rather
+   than a bounce. "Live on every input feed at once" rewritten to
+   "**registration is global, dispatch is not**", naming `parse` as the per-feed
+   one (pure, harmless) and `handler` as agent-only and once-per-line. Plus a
+   blockquoted operational note on forced-privileged silence: the verb is inert
+   until granted per-seat, NOTHING is logged, it looks identical to a broken
+   registration, and here is the ⚙-menu path to grant it.
+8. **§14** — new "no change notification" gap: `onCreate`/`onExit` are the whole
+   lifecycle set, nothing fires on checkout/branch/cwd change, §9 has no renderer
+   subscription, so **freshness is bounded by how often you re-ask, not by when
+   the data changed**; plugin owns a TTL and should state it in its README. Names
+   the real constraint: plugins that report are writable at "1", plugins that must
+   be instantaneously correct are not.
+9. **§1 — the build step** (t12 item 1). `npm run build:web` after ADDING or
+   REMOVING a renderer half, commit the regenerated registry, and the reason it is
+   easy to miss: Electron does not notice, only `plugin-web-parity` does.
+10. **`renderer/web/plugin-registry.js` header** (t12 item 1, code file, comment
+    only) — the "This committed version is the EMPTY map" claim replaced with what
+    is actually committed, plus which test catches drift.
+
+### Deviation (u) — approved before execution: the fsScope overclaim, all four sites
+
+clodex named three sites; there were **four**. The fourth is
+`plugin-host-engine.js:265-270` — the comment on `fsScope` ITSELF, the function
+the other three cite as their authority — claiming "a buggy or careless plugin
+CANNOT widen locality" and then, four lines later in the same comment, "Note this
+refuses PEERS, not foreign workspaces". It disproved its own claim in place and
+read as elaboration.
+
+Flagged before touching it (core code file under a doc-only ticket); clodex
+approved, ruling the guard aimed at behaviour changes, not false comments. All
+four now say one thing: fsScope answers "what cwd, and is this local?" — not
+workspace scoping, not cwd confinement, not a sandbox. `docs/plugin-api.md`'s §4
+gained a three-bullet "what this is not" block including the symlink leg;
+`docs/plugin-plan.md:605` and the host comment rewritten; §14's fsScope entry
+widened from "not foreign workspaces" to "neither scopes workspaces nor confines
+the cwd".
+
+Suite **2489/2489**.

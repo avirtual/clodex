@@ -262,12 +262,23 @@ function createPluginHostEngine(deps) {
         // WORKSPACE-SCOPED. What the sidebar and every per-window dropdown want.
         listWorkspace: (wsId) => manager.listForWorkspace(wsId),
         get: (name) => sessionHandle(name),
-        // The locality refusal as a HOST GUARANTEE (MUST-FIX 5), reproducing the
-        // sessionCwd guard in ipc-handlers verbatim. It lives here so a buggy or
-        // careless plugin CANNOT widen locality: every filesystem-touching plugin
-        // handler's first line is this call, and the refusal is not its code.
-        // Note this refuses PEERS, not foreign workspaces — scoping across
-        // workspaces is listWorkspace's job, not this one's.
+        // The PEER refusal as a host guarantee (MUST-FIX 5), reproducing the
+        // sessionCwd guard in ipc-handlers verbatim. It lives here so the
+        // refusal — including the exact 'remote' string renderers match on — is
+        // not each plugin's code to get right.
+        //
+        // What this answers: "what cwd, and is this local?" That is ALL it
+        // answers, and an earlier version of this comment claimed more — that a
+        // careless plugin "cannot widen locality" — while disproving itself four
+        // lines later. It is NOT workspace scoping (the plugin transport
+        // discards the Electron event, so an engine half is never told which
+        // window asked; compare handle.workspaceId yourself) and it is NOT cwd
+        // confinement (nothing stops a plugin resolving a path out of the cwd
+        // this returns, or following a symlink that leaves it). A Tier-A plugin
+        // is unsandboxed in-process Node holding a cwd and require('fs');
+        // docs/plugin-api.md §4 states the same thing in the same words, and the
+        // published contract is explicit that the host API is a contract, not a
+        // containment boundary.
         fsScope: (name) => {
           const s = manager.sessions.get(name);
           if (!s) return { error: 'Session not found' };

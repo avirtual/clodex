@@ -48,6 +48,20 @@ filesystem or the session manager — it asks its engine half to.
 
 The directory name **is** the plugin id. They may not differ.
 
+**A renderer half needs a build step.** Clodex also ships as a browser bundle,
+which cannot resolve a module path at runtime the way Electron can, so renderer
+halves are baked into a generated map at build time. After adding or removing a
+`renderer.js` — not after every edit to one — run:
+
+```
+npm run build:web
+```
+
+and commit the regenerated `renderer/web/plugin-registry.js` along with your
+plugin. Skip it and `test/plugin-web-parity.test.js` fails, naming the remedy;
+the Electron app itself will not notice, which is exactly why it is easy to miss.
+An engine-only plugin needs no build step at all.
+
 Discovery scans `<repo>/plugins/*/manifest.json` and nothing else. `~/.clodex/plugins/`
 is not scanned in this version — see [Known gaps](#14-known-gaps-and-unspecified-behaviour).
 
@@ -197,6 +211,17 @@ applying deltas, and must not try. The rule is: **pull on window open, on
 surface open, and on reattach**, via `rhost.invoke`. Use events only to say
 "something changed, ask again", never to carry the change itself.
 
+Those three triggers cover a surface a user opens. **They do not cover anything
+that renders itself** — in `"1"` that means `sidebar.rowBadge` (§6.4), which core
+paints on its own schedule and which is synchronous, so there is no moment at
+which you could have pulled first. Stated plainly, because you will observe it
+and wonder whether you have a bug: **a rowBadge's first render is structurally
+blank.** The sidebar asks, your cache is empty, you return `null`; you then
+resolve in the background and call `requestRelayout()`, and the chip appears on
+the next pass. That is the design working, not a race you can close. Design the
+badge so that "nothing yet" is a legitimate state rather than a flash of wrong
+data.
+
 **Law 3 — sessions outlive windows.** A window closing does not kill its
 sessions; they keep running and reattach when a window reopens. Durable
 per-session state belongs engine-side, keyed however you like.
@@ -334,9 +359,10 @@ directory, and otherwise `{ error }` where error is:
   notice; the string is stable and matchable),
 - `'Session has no working directory'`.
 
-This refusal is a **host guarantee**, not advice: it is the same guard core uses
-for its own filesystem IPC, so a plugin that routes every filesystem handler
-through it cannot accidentally widen access to a remote session. The idiom:
+The **peer refusal** is a host guarantee: it is the same guard core uses for its
+own filesystem IPC, and the `'remote'` string is stable, so a plugin that routes
+every filesystem handler through it cannot accidentally read a peer session's
+machine. The idiom:
 
 ```js
 const scoped = (fn) => async (name, ...rest) => {
@@ -347,8 +373,26 @@ const scoped = (fn) => async (name, ...rest) => {
 host.ipc.handle('fs.list', scoped((cwd, rel) => listDir(cwd, rel || '')));
 ```
 
-Note what `fsScope` does *not* do: it does not scope across workspaces. That is
-`listWorkspace`'s job.
+**Be precise about what that guarantee covers, because three other things sound
+like it and are not true.** `fsScope` answers exactly one question — *what cwd,
+and is this local?* It is not:
+
+- **not workspace scoping.** The plugin transport discards the calling window
+  before dispatch, so your engine half is never told which workspace asked. If a
+  session name can reach your handler from somewhere you do not control, another
+  workspace's cwd is reachable through it. Compare `handle.workspaceId` against a
+  workspace you established yourself when that matters (§14).
+- **not cwd confinement.** It hands you a cwd; nothing stops you — or a path bug
+  in your own code — resolving out of it. A lexical join is not enough: a symlink
+  *inside* the cwd pointing outside it resolves out, and `fsScope` neither knows
+  nor cares. Confining reads to the cwd is your code's job.
+- **not a sandbox.** Your engine half is in-process Node with `require('fs')` and
+  the app's full authority. Everything in this document is a **contract, not a
+  containment boundary**; see §12.
+
+That distinction is worth stating this bluntly because the reassuring version of
+it was written into three other places in this codebase and was false in all of
+them.
 
 ### Session hooks
 
@@ -377,13 +421,81 @@ Two facts worth knowing about `onExit`:
   session's persistence record by the time your hook runs. Do not expect to find
   one.
 
-`onCreate` fires at the tail of session creation. Whether it fires for sessions
-*restored* at app launch depends on whether restore routes through create; do
-not rely on either answer — if you need to know about pre-existing sessions,
-call `listAll()` at activation and reconcile.
+`onCreate` fires at the tail of session creation, after the session is fully in
+core's map, so a handle you mint from it resolves. **Restored sessions are
+included**: restore routes through the same `create()` path, so a session
+reattached at app launch fires `onCreate` exactly like a fresh one.
+
+**What `onCreate` does not cover, and the pattern that does.** Two moments have
+no `onCreate` for you:
+
+- Your engine half activates **before the first window and before restore**, so
+  at activation there are (usually) no sessions to see.
+- A plugin the user enables **at runtime** activates into a world where sessions
+  have been running for hours. Those sessions were created before you existed;
+  no hook will ever fire for them.
+
+Do not solve this by enumerating and reconciling at activation. Enumeration is
+empty in the first case and a race in the second, and it commits you to keeping
+a mirror in step with a world that changes without telling you (§14).
+
+**Resolve on demand instead.** Do the work when something first asks about a
+session — a badge resolving, an invoke arriving, a verb firing — and cache the
+answer keyed by session name:
+
+```js
+const cache = new Map();
+function infoFor(name) {
+  if (!cache.has(name)) cache.set(name, computeFrom(host.sessions.get(name)));
+  return cache.get(name);          // populated on first ask, not at activation
+}
+host.sessions.onExit((h) => cache.delete(h.name));   // the one hook you do need
+```
+
+This works identically for a session created a second ago and one that has been
+running since before your plugin was installed, which is exactly the property
+enumeration cannot give you. Treat `onCreate` as an *invalidation hint* — a
+reason to drop a cached answer — rather than as your source of truth. See
+[§14](#14-known-gaps-and-unspecified-behaviour) for what bounds the freshness of
+whatever you cache.
 
 Both return a dispose function. You do not have to call it: everything you
 register is torn down for you when your plugin is disabled (§10).
+
+<a name="callback-conventions"></a>
+### Callback conventions
+
+Three rules hold for **every** callback you hand this API — session hooks, intent
+handlers, render callbacks, badge resolvers.
+
+**1. They are synchronous.** Returning a promise is a contract violation: it is
+logged and the result ignored, never awaited. Capture what you need
+synchronously and schedule the rest yourself.
+
+**2. Throwing is contained, per callback.** Your throw does not break core, does
+not abort teardown, and does not affect another plugin's callback. It reaches the
+log, and in one case (§7's intent handler) the agent. It reaches nobody else —
+if a failure matters to your user, you have to surface it.
+
+**3. Before you put a non-idempotent side effect in a callback, find out how many
+times it can fire per logical event.** This is the rule worth internalising,
+because the API gives you no way to detect a duplicate after the fact: there is
+no emission id on any callback argument. A callback that fires twice for one
+event will run your side effect twice, and `inject()` — the most likely side
+effect a plugin has — is not idempotent: two injections are two messages the
+agent reads.
+
+So each callback either carries a **multiplicity guarantee** in its own section
+or must be treated as "may fire more than once":
+
+| Callback | Guarantee |
+|---|---|
+| `sessions.onCreate` / `onExit` (§4) | Once per session creation / exit. |
+| `intents.handler` (§7) | Exactly once per matched line — see §7. |
+| Render callbacks: `when`/`button`/`render`/`badge`/`resolve` (§6) | **No guarantee. Called on every render pass, many times per second.** They must be pure, cheap and side-effect free — treat them as read-only views of state you keep elsewhere. |
+
+The render row is the one that bites. A `resolve()` that injects, writes a file
+or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 
 ### `host.lib`
 
@@ -476,6 +588,20 @@ the bar can never disagree about what "active" means.
 it is async here and sync on the engine side — different mechanisms, same idea.
 As with the engine half, there is deliberately no `listAll()` on the renderer
 side at all.
+
+The **elements are the same objects the engine half's `listWorkspace` returns**
+(§4) — same producer, one `await` apart, no renderer-side reshaping:
+
+```js
+{ name, type, cwd, workspaceId,      // as on a SessionHandle
+  pid, team, ticket, backend,        // core's own sidebar fields
+  activity, attention, pendingCount }
+```
+
+They are plain data, not SessionHandles: there is no `inject()` or `isAlive()`
+here. Anything beyond looking is your engine half's job, through `invoke`. A
+failure resolves to `[]` rather than rejecting, so an empty array means "none, or
+we could not ask" — do not read it as "the workspace is empty".
 
 `rhost.ui.openPath(p)` reveals a path in Finder/Explorer. `rhost.ui.showToast(msg, opts)`
 raises one of Clodex's own toasts, so your errors look like every other error in
@@ -575,8 +701,16 @@ ctx = {
 }
 ```
 
-`accentClass` is a CSS class name added to the button; define it in your
-`style.css`.
+<a name="class-fields"></a>
+`accentClass` is added to the button's class attribute; define it in your
+`style.css`. **A space-separated list of classes is accepted** — `'px-warn
+px-bold'` applies both — so you do not need one class per state.
+
+The same field appears on the segment (§6.2) and, under the name `cls`, on the
+row badge (§6.4). The two names mean the same thing and behave the same way; the
+difference is historical and not a signal. In both cases the host escapes what
+you pass and appends it to its own class, so you are adding a class, never
+replacing the host's.
 
 ### 6.2 `rhost.ui.statusBar.addSegment(spec)`
 
@@ -628,13 +762,19 @@ A small chip on each session row in the sidebar.
 rhost.ui.sidebar.rowBadge({
   id: 'dirty',
   resolve(sessionName, meta) {         // required -> { text, tip?, cls? } | null
-    return cache.get(sessionName);     // SYNC — see below
+    return cache.get(sessionName) ?? null;   // SYNC, and never undefined — see below
   },
 });
 ```
 
 `meta` is `{ type, cwd }`. Return `null` (or no `text`) to show no chip on that
-row; an existing chip is removed.
+row; an existing chip is removed. Note the `?? null`: a `Map` miss is
+`undefined`, and the return type is `{…} | null`. Returning `undefined` happens
+to render nothing today, but it is outside the contract — say `null` and mean it.
+
+`cls` is a CSS class added to the chip, and takes a space-separated list. It is
+the same field §6.1 calls [`accentClass`](#class-fields) — same behaviour, two
+names, no significance to the difference.
 
 **`resolve` is synchronous and is called inside the sidebar's render loop, once
 per row.** There is no async form, because an awaited badge would stall the
@@ -642,6 +782,16 @@ sidebar. The idiom for anything that needs I/O is therefore: return whatever is
 in your own cache right now, fill the cache in the background, then call
 `rhost.ui.sidebar.requestRelayout()` — a debounced request for another render
 pass, at which point your now-populated cache is read.
+
+Two consequences to design for rather than fight:
+
+- **The first render is blank** (§3, Law 2). Nothing pulls on your behalf before
+  the sidebar paints, so the first `resolve` for a session runs against an empty
+  cache. The chip appears on the relayout you request afterwards.
+- **`resolve` is called constantly and must be side-effect free** — see
+  [callback conventions](#callback-conventions). Kick your background fill off
+  from a *guard* (a name you have not seen before), never from the resolve itself
+  unconditionally, or every render pass launches another one.
 
 ### 6.5 `rhost.ui.sessionMenu.addProvider(spec)`
 
@@ -785,12 +935,36 @@ const off = host.intents.register({
   host, never the raw session object — and it is how your verb knows *who* emitted
   the line: `handle.name`. The second argument is the object your own `parse`
   returned, with `type` set to your verb. Reply through `handle.inject(text)`;
-  there is no return-value channel, and a returned promise is logged and ignored
-  (handlers are synchronous, like the session hooks). A handler that throws
-  becomes an `[agent:<verb>] error: …` bounce injected back to the seat, not a
-  crash. Handlers run for **agent** sessions only — a bash pane never dispatches
-  one, because injecting into a shell would type the text at the operator's
-  prompt.
+  there is no return-value channel. Handlers run for **agent** sessions only — a
+  bash pane never dispatches one, because injecting into a shell would type the
+  text at the operator's prompt.
+
+Three guarantees on `handler`, stated as guarantees because you are meant to
+build on them rather than defend against them:
+
+**It is called exactly once per matched line.** Not "usually once" — once, by
+construction, and you do not need a de-duplication guard. Three independent
+mechanisms each enforce it on their own: PTY scanning runs only for non-agent
+sessions, so a session's two possible feeds are mutually exclusive; dispatch
+refuses any session that is not an agent, so a bash line could not reach your
+handler even if it were scanned; and an agent session's intent feed is one
+source or the other, never both, with the live path additionally de-duplicating
+identical intents within a turn. Put your non-idempotent side effect in a handler
+with that in hand — this is the one callback in the API that earns it (see
+[callback conventions](#callback-conventions)).
+
+**A throw becomes a bounce, not a crash.** Your exception is caught, logged, and
+injected back to the emitting seat as `[agent:<verb>] error: <message>`. You do
+not need to wrap your handler body in a try/catch to protect the app or to tell
+the agent something went wrong — throwing *is* the error channel, and the agent
+that wrote the line is who hears about it. Catch only when you want a different
+message than your exception's.
+
+**A returned promise is logged and ignored.** Handlers are synchronous, like the
+session hooks. An `async handler` will run, but nothing awaits it: its rejection
+escapes every guard above, so its failure becomes silence rather than a bounce.
+If you need async work, do the synchronous part, schedule the rest, and inject
+the result when it lands.
 
 Two rules you cannot opt out of:
 
@@ -800,13 +974,32 @@ granted it. There is no way to ship a verb enabled-by-default, and that is
 intentional: a plugin that could grant itself a verb retroactively across every
 seat that ever existed is not a plugin, it's a surprise.
 
+> **Read this before you debug a verb that "does nothing".** The consequence of
+> the rule above is that a freshly installed plugin's verb is inert on every
+> existing seat, and **the failure is silent**: the line the agent wrote is not
+> parsed as your verb, your `parse` is never consulted, your handler never runs,
+> and *nothing is logged* — to the agent it reads as an unrecognised intent. It
+> is working exactly as designed and looks identical to a broken registration.
+>
+> To make it fire: the session's ⚙ menu → the intent checklist → tick your verb,
+> per seat. Grant it to a seat before you conclude anything about your code, and
+> say so in your plugin's README — every one of your users hits this once.
+
 **Registration throws on a bad shape or a collision.** A refused verb must be an
 activation error you see, not a verb you believe you own that never fires.
 
-Your verb is live on every input feed at once — there is no way to register on
-one and not another. On deactivation every row you registered is removed, twice
-over: once through the normal disposal ledger, and once by a sweep of anything
-still claiming your plugin as its source.
+**Registration is global, dispatch is not.** One `register` call makes your verb
+recognisable everywhere Clodex scans for intents — there is no way to register on
+one feed and not another. That is a statement about *where the verb is known*,
+not about how often it runs: `parse` may be consulted on any feed that produces
+a candidate line, including a bash pane's, which is harmless because `parse` is
+pure and merely returns a value. `handler` is the asymmetric one, and it is
+agent-only and once-per-line, as above. If you are deciding where to put a side
+effect, that sentence is the whole answer: never in `parse`, always in `handler`.
+
+On deactivation every row you registered is removed, twice over: once through the
+normal disposal ledger, and once by a sweep of anything still claiming your
+plugin as its source.
 
 ---
 
@@ -1101,22 +1294,40 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   blocked idea: the plumbing that would carry it (the app menu reading plugin
   state from the engine) already exists, wired for the `Plugins` menu itself. The
   conventional entry point today is a sidebar footer button (§6.3).
-- **`fsScope` refuses peers, but not foreign workspaces** (§4). It answers "does this session have a
-  local working directory?", not "is this session mine to touch". Nothing else supplies the missing
-  half: the plugin transport discards the calling window before dispatch, so your engine half is
-  never told which workspace asked. If a session name can reach your handler from somewhere you do
-  not control, a cwd in another workspace is reachable through it. Compare `handle.workspaceId`
-  against a workspace you established yourself when that matters to you. Closing this in the host
-  would mean carrying a caller workspace on the transport — additive, but not yet decided.
+- **`fsScope` refuses peers, but neither scopes workspaces nor confines the cwd** (§4). It answers
+  "does this session have a local working directory?", not "is this session mine to touch" and not
+  "is this path inside it". Nothing else supplies the missing halves: the plugin transport discards
+  the calling window before dispatch, so your engine half is never told which workspace asked; and
+  no host code sees the paths you build from the cwd it returns. If a session name can reach your
+  handler from somewhere you do not control, a cwd in another workspace is reachable through it.
+  Compare `handle.workspaceId` against a workspace you established yourself when that matters to
+  you, and confine your own path joins (a lexical check is not enough — a symlink inside the cwd
+  resolves out of it). Closing the workspace half in the host would mean carrying a caller workspace
+  on the transport — additive, but not yet decided.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
 - **No renderer-side event subscription** (§9). Design against pull-on-open.
 - **`rhost.sessions` has no `listAll()`** and never will; if you need the global
   picture, ask your engine half.
 - **`sidebar.rowBadge.resolve` is sync-only** (§6.4). The cache-plus-relayout
   idiom is the supported pattern, not a workaround.
-- **`onCreate` and restored sessions**: unspecified whether the hook fires for
-  sessions restored at launch. Reconcile from `listAll()` at activation if it
-  matters to you.
+- **No change notification for session data** (§4). `onCreate` and `onExit` are
+  the complete lifecycle set, and nothing else tells you a session's world moved:
+  a `git checkout`, a branch rename, a file appearing, a cwd's contents changing
+  all happen in silence. There is no renderer-side event subscription either
+  (§9), so your engine half cannot push an invalidation even when it knows.
+  **The practical consequence: the freshness of anything you cache is bounded by
+  how often you re-ask, not by when the data changed.** A plugin whose data can
+  change out from under it must own that — a TTL, a re-resolve on the user
+  looking at something, a refresh on your own surface opening. Pick a bound and
+  state it in your README; there is no host mechanism that will do better, and a
+  badge that is silently ten minutes stale is worse than one that says so. This
+  is a real constraint on what is writable at `"1"`: plugins that *report* are
+  straightforward, plugins that must be instantaneously *correct* are not.
+- **`onCreate` at runtime-enable**: a plugin enabled while sessions are already
+  running gets no `onCreate` for them — they were created before it existed.
+  (Sessions *restored* at launch are fine: restore routes through `create()`, so
+  the hook fires normally.) Resolve on demand rather than enumerating; §4 has the
+  pattern.
 - **`catalog()[].enabled` means "loaded", not "the user wants it"** — it is
   `true` for everything in the catalog by construction, since the catalog lists
   what successfully activated. The user's *intent*, and the quarantine state, are
