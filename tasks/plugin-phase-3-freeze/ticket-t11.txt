@@ -1,0 +1,26 @@
+From: clodex
+Time: 14:29:51
+Size: 3823 bytes
+
+[ticket t11] tasks/plugin-phase-3-freeze — acceptance-build fallout, part two: four doc defects where the contract promises something it cannot deliver
+
+Rulings on the remaining findings from the cold build. Do this AFTER the signature fix and the boundary work, before or after the lint pass as you prefer. **Documentation only — I am building none of this.**
+
+Each item below is a place where the doc offers an author a remedy or a guarantee that does not hold. The common repair is the same: replace the false promise with the honest mechanism, and say what the author should actually write.
+
+**1. §4's `onCreate` remedy does not work.** It tells an author to call `listAll()` at activation and reconcile — but §4's own header says there are "(usually) no sessions yet" at activation, and §14 says restored sessions may not fire `onCreate`. Follow the stated remedy and restored sessions are reachable by neither route. The cold builder found the only thing that works and the doc never suggests it: **demand-driven resolution** — resolve a session's data when something first asks for it, not from an enumeration. Rewrite the remedy to teach that, and note it is also what makes a plugin work for sessions that were already running when it was enabled.
+
+**2. §6.4's canonical example returns `cache.get(name)`** — a Map miss is `undefined`, which its own spec (`{…} | null`) forbids, in exactly the case the surrounding paragraph is about. Fix the example to `?? null`. A canonical example that violates the spec three lines above it is worse than no example.
+
+**3. §3 Law 2's pull triggers have no applicable trigger for `rowBadge`** — "window open, surface open, reattach" covers none of the moments a sidebar row renders, and §6.4 says rowBadge is the one slot that needs a cache. Either name the trigger that actually applies to row rendering, or state plainly that rowBadge has no pull trigger and that the first render is therefore structurally blank until the plugin resolves and calls `requestRelayout`. **Prefer the honest version** — the builder discovered the blank-first-render on its own and designed for it; the next author should not have to.
+
+**4. Nothing notifies a plugin that a branch or cwd changed.** `onCreate`/`onExit` are the complete lifecycle set and neither fires on `git checkout`. Combined with §9's missing `rhost.events.on`, the engine cannot even push an invalidation. Say this outright in §14 as a known gap: **freshness is bounded by a poll interval, not by when the data changed**, and a plugin whose data can change out from under it must own a TTL. That is a real constraint on what kind of plugin is writable at "1", and an author deserves to learn it from the doc rather than from a stale badge.
+
+Also from the same report, smaller:
+- **§5's `listWorkspace` element shape is undefined on the renderer side** though §4 defines the engine twin precisely. Define it or point at §4 and state any difference.
+- **§6.4 renames §6.1's `accentClass` to `cls` and explains nothing.** The builder assumed a CSS class name and further assumed a space-separated list might be rejected, so it emits one token per state. Say which is true. If a class list is accepted, say so; if not, say that too.
+- **§7 forces plugin verbs privileged, so a verb does nothing until granted per-seat, and the failure is silent with nothing logged.** The builder had to put this in its own README. It belongs in §7 as an operational note — this is the first thing every plugin author will hit and the last thing they will diagnose.
+
+Where you are tempted to fix code instead of docs, stop and flag it to me. Every item here is a promise the doc should not have made; only #2 is a code-shaped thing and it is example code inside the doc.
+
+Commit on plugin-phase-1, no master, no push, suite digest in your close.

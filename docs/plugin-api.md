@@ -120,7 +120,7 @@ the menu bar has a tick next to it.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `id` | yes | Lowercase identifier, and the directory name. Becomes a filesystem directory, a CSS attribute selector, an intent-verb namespace and a dispatch prefix, so it is deliberately narrow: `/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/` — 1–40 chars, lowercase alphanumerics and hyphens, no leading or trailing hyphen, no underscore, no dot, no uppercase. |
+| `id` | yes | Lowercase identifier, and the directory name. Becomes a filesystem directory, a CSS attribute selector, a UI-slot id prefix and a dispatch prefix, so it is deliberately narrow: `/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/` — 1–40 chars, lowercase alphanumerics and hyphens, no leading or trailing hyphen, no underscore, no dot, no uppercase. It is **not** an intent-verb namespace: verbs live in one global namespace (§7). |
 | `name` | no | Human-readable label for the Plugins menu and the Manage Plugins dialog. Defaults to `id`. |
 | `version` | no | Free-form string, displayed to the user. Nothing parses it. |
 | `hostApi` | yes | Must be exactly `"1"`. A string, not a number. |
@@ -508,8 +508,10 @@ what 1–3 are for.
 All seven are registered from your **renderer** half, all return a dispose
 function (or, for overlays, an object containing one), and all take a spec whose
 `id` is a plain string that the host namespaces to `"<yourId>:<id>"` before it
-reaches the DOM. You never write the prefix yourself, and you never see an
-unnamespaced id come back to you except where noted.
+reaches the DOM. **The prefix is the host's business, in both directions**: you
+never write it, and you never see it. Anything the host hands back to one of your
+callbacks — `onPick`'s `act` (§6.5) is the one case — arrives **unprefixed**, as
+the bare string you wrote, so you always compare against your own value.
 
 **Everything you supply is data, never HTML.** Labels, tips and badge text are
 escaped by the host and inserted as text. This is not only an injection defence:
@@ -736,14 +738,18 @@ const off = host.intents.register({
   bodyMode(intent) { return 'greedy'; },            // optional
   label: 'Review',                                  // optional, for the UI checklist
   promptLines: '  [agent:review <target>] body',    // optional, for the agent's prompt
-  handler(intent, ctx) { … },                       // optional
+  handler(handle, intent) { … },                    // optional — NOTE the order
 });
 ```
 
 - **`verb`** must match `/^[a-z0-9][a-z0-9._-]{0,31}$/` and must not collide with
   a core verb or another plugin's. Core's verbs are reserved, as are the three
   structural ones (`end`, `escape`, `unknown`) — a plugin that shadowed those
-  could eat body terminators or escapes.
+  could eat body terminators or escapes. **Verbs share ONE GLOBAL namespace.**
+  Your plugin id does not namespace them and is not prefixed onto them: register
+  `review` and the line agents write is `[agent:review …]`, never
+  `[agent:yourid:review …]`. That single namespace is exactly why collisions are
+  refused — pick a verb distinctive enough to survive in it.
 - **`parse(line)`** receives one cleaned, trimmed line and returns your intent
   object or `null`. Your returned object always has `type` set to your verb by
   the host, whatever you put there; you cannot impersonate another verb. A
@@ -759,6 +765,17 @@ const off = host.intents.register({
   `"<verb> (plugin: <yourId>)"`.
 - **`promptLines`** is documentation injected into an agent's system prompt, and
   only for seats that have actually been granted your verb.
+- **`handler(handle, intent)`** runs your verb. **The handle comes first.** It is
+  the same **SessionHandle** `onCreate`/`onExit` receive (§4) — minted by the
+  host, never the raw session object — and it is how your verb knows *who* emitted
+  the line: `handle.name`. The second argument is the object your own `parse`
+  returned, with `type` set to your verb. Reply through `handle.inject(text)`;
+  there is no return-value channel, and a returned promise is logged and ignored
+  (handlers are synchronous, like the session hooks). A handler that throws
+  becomes an `[agent:<verb>] error: …` bounce injected back to the seat, not a
+  crash. Handlers run for **agent** sessions only — a bash pane never dispatches
+  one, because injecting into a shell would type the text at the operator's
+  prompt.
 
 Two rules you cannot opt out of:
 

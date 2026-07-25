@@ -313,6 +313,84 @@ test('the _host pseudo-plugin serves exactly five methods, and no plugin can rea
   } finally { cleanup(); }
 });
 
+// ── The intent handler's CALL SHAPE (t10) ───────────────────────────────────
+// ARGUMENT ORDER IS CONTRACT. `handler(handle, intent)` — the SessionHandle
+// FIRST, the parsed intent second. This file pinned the surface's MEMBERS and
+// missed the one shape a member is called with, and docs/plugin-api.md §7 then
+// published the order backwards for a full release: an author following it reads
+// the intent's fields off a handle and the handle's off an intent, both objects,
+// neither throwing, and the verb silently does nothing or the wrong thing. A
+// documented call shape that no test exercises is exactly the defect class this
+// file exists to prevent, so it is pinned here through the REAL path — the real
+// registry row, the real host-minted handle, the real session-manager dispatch —
+// rather than by reading the two sides and agreeing with them.
+test('an intent handler is called handler(SessionHandle, intent) — argument ORDER is contract', async () => {
+  const { createSessionManager } = require('../session-manager');
+  const intentRegistry = require('../intent-registry');
+  const { intentEnabled } = require('../intent-catalog');
+  const { engine, cleanup } = realEngineHost();
+  const seen = [];
+  const off = engine.register('demo2', {
+    activate(h) {
+      h.intents.register({
+        verb: 'shape',
+        parse: (l) => (l === '[agent:shape]' ? { probe: 1 } : null),
+        handler: (a, b) => { seen.push([a, b]); },
+      });
+    },
+  }, { hostApi: HOST_API_VERSION });
+  void off;
+  try {
+    const SessionManager = createSessionManager({
+      getRemoteServer: () => null,
+      getUiSettings: () => ({ get: () => ({}) }),
+      // The verb is FORCED privileged (§7), so it fires only for a seat that was
+      // explicitly granted it — an absent list would deny and prove nothing.
+      getPersistence: () => ({ list: () => [], get: () => ({ intents: ['shape'] }) }),
+      notifyOS: () => {},
+      intentEnabled,
+      fencedLines: require('../intent-scanner').fencedLines,
+      bodyModeFor: intentRegistry.bodyModeFor,
+      intentEnabledFor: intentRegistry.intentEnabledFor,
+      pluginRowFor: intentRegistry.pluginRowFor,
+      validIntentNames: intentRegistry.validIntentNames,
+      // The handle is minted BY THE HOST — this is the seam the whole test is
+      // about, so it is the real one.
+      getPluginHooks: () => engine.hooks,
+      fs, log: () => {},
+    });
+    const m = new SessionManager();
+    m._injectText = () => {};
+    m._broadcast = () => {};
+    m.sessions.set('seat', { name: 'seat', agentType: 'claude', type: 'claude', cwd: '/repo', workspaceId: 'ws-1' });
+
+    await m._handleIntent('seat', { type: 'shape', probe: 1 });
+
+    assert.strictEqual(seen.length, 1, 'the handler ran');
+    const [first, second] = seen[0];
+    // FIRST is the SessionHandle: it carries the session's identity and the reply
+    // channel. This is how a verb knows who emitted the line.
+    assert.strictEqual(typeof first, 'object');
+    assert.strictEqual(first.name, 'seat', 'arg 1 is the SessionHandle — handle.name identifies the emitter');
+    assert.strictEqual(typeof first.inject, 'function', 'arg 1 carries inject() — the reply channel');
+    // SECOND is the parsed intent: the object parse() returned, with `type` set.
+    assert.strictEqual(second.type, 'shape', 'arg 2 is the parsed intent — it carries type');
+    assert.strictEqual(second.probe, 1, 'and the fields parse() returned');
+    assert.strictEqual(second.inject, undefined, 'the intent is NOT a handle');
+    assert.strictEqual(first.probe, undefined, 'and the handle is NOT the intent');
+    // And the document must say the same thing, in the same order.
+    const doc = fs.readFileSync(DOCS, 'utf8');
+    assert.match(doc, /handler\(handle, intent\)/,
+      'docs §7 must publish the handler signature in the order it is actually called');
+    assert.ok(!/handler\(intent, ctx\)/.test(doc),
+      'the reversed signature must not survive anywhere in the document');
+  } finally {
+    engine.deactivate('demo2');
+    intentRegistry._resetPluginRows();
+    cleanup();
+  }
+});
+
 // ── The document ────────────────────────────────────────────────────────────
 
 test('docs/plugin-api.md exists, is frozen at this version, and names every published member', () => {

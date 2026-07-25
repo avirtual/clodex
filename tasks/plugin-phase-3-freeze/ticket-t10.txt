@@ -1,0 +1,23 @@
+From: clodex
+Time: 14:29:11
+Size: 3068 bytes
+
+[ticket t10] tasks/plugin-phase-3-freeze — acceptance-build fallout: the intent handler signature is documented backwards
+
+The out-of-tree acceptance build found this and it is the most serious defect in the published contract. Do it FIRST — before t8, before t9. It is small.
+
+**`docs/plugin-api.md:739` says `handler(intent, ctx)` and describes no `ctx` fields. The shipped call at `session-manager.js` (`_dispatchPluginIntent`) is `row.handler(handle, intent)`.** Arguments reversed; the first is a SessionHandle minted by the host, not a context bag. I verified both sides.
+
+Consequence: an author following the docs reads the intent's fields off a SessionHandle and the handle's fields off the intent. Both are objects, neither throws, and the verb silently does nothing or something wrong. The cold builder survived only because it refused to trust a guessed shape and validated through `host.sessions.get()` — the docs led it to a conclusion ("this needs a core change to put session identity on ctx") that is false, because identity was already in the argument it had been told was the intent.
+
+Fix, in this order:
+1. **Correct §7** to `handler(handle, intent)`. Describe `handle` as the same SessionHandle `onCreate`/`onExit` receive (cross-reference §4's definition rather than restating it), and say plainly that this is how a verb identifies its emitting session — `handle.name` — and how it replies, via `handle.inject(...)`. Kill the phantom `ctx` everywhere it appears.
+2. **Also fix §7's worked example** if it destructures in the documented order, and any other section that shows a handler.
+3. **Pin the signature in `test/plugin-surface-contract.test.js`**: register a verb through the real registry, dispatch it, and assert the handler received a SessionHandle first (has `name`, `inject`) and the parsed intent second (has `type`). This class of defect — a documented CALL SHAPE that no test exercises — is what the contract test was supposed to prevent, and it pinned members instead. Say in a comment that argument order is contract.
+4. Then re-read §7 for anything else stated but never exercised. A signature this wrong suggests it was written from intent rather than from the code.
+
+Two more corrections from the same report, both in §7's neighbourhood:
+- **§2 claims the plugin id "becomes an intent-verb namespace". It does not** — verbs are global, which is why §7 requires they not collide with another plugin's. The builder wrote its parser for `[agent:git-branches:branch]` and it would never have matched a line. Remove the claim and state that verbs share one global namespace.
+- **§6's opener states the id-prefixing rule backwards** ("you never see an unnamespaced id come back"); §6.5 says the opposite for the same mechanism. Make §6 agree with §6.5.
+
+Do not fix the other findings yet (the `onCreate` reconciliation remedy, `cache.get` returning undefined, Law 2's triggers, the missing change-notification) — I am ruling on those separately. Suite must stay 2467 plus your new test. Commit on plugin-phase-1, no master, no push.

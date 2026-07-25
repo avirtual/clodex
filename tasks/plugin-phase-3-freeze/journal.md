@@ -466,3 +466,277 @@ decision).
 
 Numbering: clodex confirmed the ticket ids are **t7** and **t8**; the "T8"/"t9"
 labels inside the message bodies are its own off-by-one. Cite t8 when closing.
+
+---
+
+# T8 — enforce three boundary invariants the code only claims
+
+Ticket verbatim: `ticket-t8.txt`. **t7 is CLOSED** (commit `964d599`, suite
+2467/2467) — t8 is now the active ticket.
+
+## State at dispatch
+
+Branch `plugin-phase-1`, HEAD `964d599`, suite **2467/2467**. Master untouched at
+`2f3f8e1`. Nothing pushed. Deviation letters (a)-(r) used; next is **(s)**.
+
+## The theme (what makes these one ticket)
+
+Each is an invariant asserted in a COMMENT or a plan marker with **nothing
+enforcing it** — the same defect class as the `uiSettings.plugins` bug. clodex
+verified all diagnoses against source itself: **do not re-diagnose**, spend the
+effort on the fixes and on the proof.
+
+**The proof obligation, and it is the point of the ticket:** where I fix one,
+the test must FAIL WITHOUT the fix — verified by REVERTING, not by reasoning.
+Report one line per fix proving it.
+
+## The five items
+
+**F1 (CRITICAL) — plugin verbs are not stripped from agent-authored grants.**
+`withoutPrivilegedIntents` (`intent-catalog.js:81`) filters against
+`PRIVILEGED_INTENTS`, a literal `Set(['reboot'])`. `registerIntent` sets
+`privileged: true` on the REGISTRY ROW (`intent-registry.js:367`) and never
+touches that Set, so a plugin verb survives every strip site: spawn template
+`session-manager.js:3953`, reviewer template `:4090`, peer-wire create
+`remote-wiring.js:229`, peer-wire setArgs `:355`. `persistence.setIntents`
+stores it verbatim; the fire-time gate then returns true. **A remote peer, or
+any agent that can write a template, can grant a seat a forced-privileged plugin
+verb.**
+- Fix: add `withoutPrivilegedIntentsFor(list)` to `intent-registry.js` —
+  filters BOTH `PRIVILEGED_INTENTS` and any registered plugin row — and use it
+  at all four sites (injected at `engine.js:963` for session-manager; required
+  directly in `remote-wiring.js`). Keeping the catalog fn for core-only callers
+  is fine, but **no strip site may keep the old one**.
+- Tests: register a plugin verb, assert ABSENT from persisted `intents` after a
+  template mint AND after a peer create/setArgs. (`grep withoutPrivilegedIntents
+  test/` finds only `reboot` today — that is the hole.)
+
+**F2 (MAJOR) — `host.lib` frozen one level too shallow.**
+`plugin-host-engine.js:313` is `Object.freeze({ gitWorktree })`. The WRAPPER is
+frozen; `gitWorktree` is the live module object core holds under the same
+require-cache entry (`ipc-handlers.js:35`). `host.lib.gitWorktree.removeWorktree
+= mine` and core's `worktree:remove`, the session-delete flow
+(`ipc-handlers.js:342`) and New-Session's `createWorktree` (`:273`) all call the
+plugin's function. Survives `deactivate`. Interception of core through the
+sanctioned door.
+- Fix: hand out a BOUND FAÇADE, not the module — `Object.freeze({ gitWorktree:
+  Object.freeze({ listWorktrees: (...a) => gitWorktree.listWorktrees(...a), … })
+  })` for **all four** members.
+- Test: mutate `host.lib.gitWorktree.removeWorktree` from a fake plugin, assert
+  `require('../git-worktree').removeWorktree` unchanged.
+
+**F4 (MODERATE) — `enabled` is a legal plugin id though the comment says
+reserved.** `plugin-loader.js:80-81` and `:222` claim reservation; the only
+artifact is a const holding the key name. clodex RAN it: `isValidPluginId('enabled')
+=== true`. Such a plugin calling `host.settings.set` writes `plugins.enabled =
+{…}`, `sanitizePlugins` coerces the non-array to `[]`, `enabledSet()` reads that
+as "user turned everything off" — **every other plugin silently disabled at next
+launch.**
+- Fix: `RESERVED_PLUGIN_IDS = new Set(['enabled'])` in `plugin-api.js`; refuse in
+  `validateManifest` with a `problems` row (so the dialog says WHY) and in
+  `register()`.
+- **Decide and state: does `_failures` need the same treatment?** (Note:
+  `PLUGIN_ID_RE` forbids a leading underscore, which is why the quarantine shadow
+  was collision-proof — check whether that already covers it and SAY SO.)
+
+**Also fix (both real, both small):**
+- **False quarantine strike on double activation.** `renderer.js:3043` calls
+  `activatePluginRenderer` unconditionally on `plugin-state{enabled}`;
+  `renderer/plugin-host.js:567` THROWS if already activated; the catch reports a
+  renderer FAILURE = a real strike. Two windows racing quarantine a HEALTHY
+  plugin. Make already-active a **no-op that is never reported**, not a throw.
+- **`telemetry.snapshot` returns the live poller payload**
+  (`plugin-host-engine.js:315`) — the same object core rebroadcasts. Return a
+  DEEP COPY; the comment says read-only.
+
+## Explicitly OUT of scope
+
+- **The lint hardening** = ticket **t9** (`ticket-t9.txt`, already queued, do
+  LAST).
+- **The `fsScope`/`safeResolve` containment question** — clodex is ruling
+  separately. My Q1 write-up is input to that ruling. **Do not touch it here.**
+
+## Hard constraints
+
+- Commit on `plugin-phase-1`. Never master, never push. `git reset -q
+  node_modules` before staging (`git add -A` sweeps it in every time).
+- Suite via the `clodex-test-green` skill with an EXPLICIT cd into the worktree,
+  plain `node --test`, NO dir arg. `[agent:exec clodex-run-tests]` is blind to
+  worktrees and will lie. Baseline to beat: 2467 + however many I add.
+- `renderer.js` and `renderer/plugin-host.js` are BUNDLED → run `npm run
+  build:web` and commit `web-dist/index.html` if it changes (a stale one is a
+  release failure, `scripts/release.sh:45-54`).
+- Code wins over docs everywhere. `.claude/CLAUDE.md` and `.claude/memory.md` are
+  never mine to edit.
+- If a fix turns out to need a `"1"`-surface change, STOP and flag — the API is
+  frozen.
+
+## Progress log
+
+### T7 addendum (done, before t8 started)
+
+clodex ruled on the workspace gap: **document, do not build**, and record it in
+the plan as a **v1.1 candidate** alongside the menu slot — the fix is additive (a
+new field on the transport), so the bump policy permits it in 1.1 without going
+to `"2"`, which makes it scheduled rather than abandoned. Added that paragraph to
+plan §3.2; committed `ab56253` (docs only). clodex also accepted the item-3
+refusal explicitly: *"your refusal of item 3 was correct and is the best thing in
+this report… deviation (r) is spent well, do not treat it as a budget concern."*
+CLAUDE.md's "eight" is Bogdan's to fix; clodex has flagged it.
+
+### F1 (done — CRITICAL, the registry-aware strip)
+
+`withoutPrivilegedIntentsFor(list)` added to `intent-registry.js` beside
+`intentEnabledFor` — its send-side twin, and documented as such: the catalog's
+strip filters `PRIVILEGED_INTENTS` (core verbs only), this one additionally drops
+any `pluginRowFor(t)`. Implemented by DELEGATING to the catalog fn and filtering
+the result, so core's semantics (non-array passes through untouched; `[]` and
+privileged-only both collapse to a real "everything gated") are inherited rather
+than re-stated.
+
+All four strip sites converted, **none kept the old one**:
+- `session-manager.js:3953` (spawn template) + `:4090` (reviewer template) — via
+  the injected dep, which I **RENAMED** `withoutPrivilegedIntents` →
+  `withoutPrivilegedIntentsFor` (engine.js:963) rather than aliasing. Rename not
+  alias on purpose: `test/session-manager.test.js:26` and
+  `test/plugin-fake.test.js:907` inject this dep themselves, and an alias would
+  have let both harnesses keep injecting the CATALOG leaf while the production
+  path was fixed — a green suite over a live hole, the exact failure mode this
+  ticket is about. Both harnesses updated to inject the registry fn.
+- `remote-wiring.js:229` (peer create) + `:355` (peer setArgs) — now requires
+  `./intent-registry` directly.
+- `engine.js:545` no longer imports the catalog's strip at all.
+
+Tests + REVERT PROOF (reverting = pointing the injected dep back at
+`intent-catalog.withoutPrivilegedIntents`):
+- `t8 F1: an agent [agent:spawn] template carrying a PLUGIN verb has it stripped
+  too` — fails without the fix: `actual: ['dm','fake-grant']` vs expected
+  `['dm']`.
+- `t8 F1: a reviewer template carrying a PLUGIN verb has it STRIPPED` — fails
+  without the fix: `actual: ['fake-grant','dm','who']` vs `['dm','who']`.
+Both use the existing `withVerb` helper (registers into the module-level table,
+resets in a promise-aware finally).
+
+Peer-wire tests added to `test/remote-create.test.js` (the existing owner-side
+harness: patches `RemoteServer` to capture the options object, then calls the real
+closures against a mock manager). Two additions to `makeDeps`: an `argsCalls`
+recorder, and `applySessionArgs` upgraded from an inert `{ ok:false }` stub to a
+capturing `{ ok:true }` — the setArgs closure passes the patch straight through,
+so capturing there IS the assertion point. `withVerb` is duplicated locally (it is
+a 9-line module-level-state guard, not exported by session-manager.test.js).
+- `createSession (t8 F1): a PLUGIN verb in the wire body is stripped before
+  create()` — fails without the fix: `actual: ['dm','fake-grant']` vs `['dm']`.
+- `setSessionArgs (t8 F1): a PLUGIN verb in a peer patch is stripped before the
+  resolver sees it` — fails without the fix: same `actual`/`expected`.
+Revert method: sed the `remote-wiring.js:28` import back to
+`intent-catalog.withoutPrivilegedIntents` under the same local name, run, restore
+from `/tmp/rw.bak`. File confirmed back at the registry import after.
+
+**F1 DONE** — all four strip sites fixed, four tests, four revert proofs.
+`test/remote-create.test.js` 18/18 green.
+
+### F2 (done — MAJOR, the bound façade)
+
+`libGitWorktree` built once at engine-construction time, near `notifyStateChanged`:
+a frozen object of bound wrappers `(...a) => gitWorktree[k](...a)`, one per
+FUNCTION export, and `lib` now hands that out instead of the module object. The
+plugin no longer holds a reference to the real leaf at all, so there is nothing to
+assign to; the façade is frozen on top of that.
+
+**Deviation (s) — the spec said "all four members"; `git-worktree.js` exports
+SEVEN.** `git-worktree.js:202-205`: `repoToplevel, createWorktree, removeWorktree,
+defaultWorktreePath, defaultBranch, repoInfo, listWorktrees`. (`docs/plugin-api.md`
+§`host.lib` names only three, but the pre-F2 code lent the whole module object, so
+seven is what a plugin could actually reach.) A hardcoded four-name façade would
+have SILENTLY NARROWED a frozen `"1"` surface — the exact class of change the
+freeze forbids — so I derived the wrapper set from `Object.keys(gitWorktree)`
+filtered to functions. That also means a future export is lent automatically
+rather than requiring a re-edit nobody would remember. Non-function members are
+skipped deliberately: the leaf has none today, and handing one out by value would
+re-open this same hole for anything mutable. **No behavior narrowed, nothing
+widened.** The doc's three-name list is now under-descriptive rather than wrong;
+flagging it for clodex, NOT editing it (t7 is closed and §4's wording is clodex's).
+
+Test `t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls` —
+injects the REAL `require('../git-worktree')` as the leaf, because the whole claim
+is about identity with what core requires and a stub would prove nothing. Asserts:
+the member assignment throws, `realLeaf.removeWorktree` is unchanged,
+`host.lib.gitWorktree !== realLeaf`, every function export is present and is NOT
+the raw fn, and a wrapper still delegates with args intact.
+- REVERT PROOF: sed `lib: Object.freeze({ gitWorktree: libGitWorktree })` back to
+  `Object.freeze({ gitWorktree })` → `AssertionError: Missing expected exception
+  (TypeError): the leaf façade itself is frozen, not just the lib wrapper`,
+  `actual: undefined`. 27 pass / 1 fail. Restored from `/tmp/phe.bak`.
+`test/plugin-host-engine.test.js` 28/28 green with the fix.
+
+Next: F4, then the two smalls.
+
+---
+
+# Ticket t10 — the handler signature is documented backwards (acceptance-build fallout)
+
+Ticket verbatim: `ticket-t10.txt`. Dispatched MID-t8 with **do it FIRST**, so
+F1+F2 sit uncommitted in the tree while this lands on top. Ticket t11 (four more
+doc defects, documentation-only) arrived at the same time and is saved as
+`ticket-t11.txt` — NOT started.
+
+## What was wrong
+
+`docs/plugin-api.md:739` published `handler(intent, ctx)` with no `ctx` fields
+described. The shipped call is `session-manager.js:3179` → `row.handler(handle,
+intent)`. Arguments reversed, and the first is a host-minted SessionHandle, not a
+context bag. Both objects, neither throws — an author following the doc reads each
+one's fields off the other and the verb silently misbehaves. The cold builder
+concluded "this needs a core change to put session identity on ctx", which is
+false: identity was already in the argument it had been told was the intent.
+
+## Done
+
+1. **§7 signature corrected** to `handler(handle, intent)` with `// optional —
+   NOTE the order`, plus a full bullet in the parameter list: handle FIRST, it is
+   the same SessionHandle `onCreate`/`onExit` get (cross-referencing §4 rather
+   than restating it), `handle.name` identifies the emitter, `handle.inject(text)`
+   is the reply channel, no return-value channel, a returned promise is logged and
+   ignored, a throw becomes an `[agent:<verb>] error: …` bounce, agent sessions
+   only. The phantom `ctx` is gone from §7 entirely — the remaining `ctx` mentions
+   in the file are §6.1/§6.2's UI-slot render context, which is real and unrelated.
+2. **No worked example needed fixing** — §7's only code block is the register()
+   call itself, and the pilot (`plugins/workbench/engine.js`) registers no verb, so
+   there was no second wrong destructure to chase.
+3. **Pinned in `test/plugin-surface-contract.test.js`**: `an intent handler is
+   called handler(SessionHandle, intent) — argument ORDER is contract`. Goes
+   through the REAL path end to end — real registry row via `host.intents.register`,
+   real host-minted handle via `engine.hooks`, real `_handleIntent` dispatch — so
+   it cannot pass by agreeing with a mock. Asserts arg1 has `name`+`inject` and
+   NOT the parse fields, arg2 has `type`+the parse fields and NOT `inject`, and
+   that the DOC says `handler(handle, intent)` and nowhere says `handler(intent,
+   ctx)`. Comment says argument order is contract and names the defect class (a
+   documented CALL SHAPE no test exercises; this file pinned members instead).
+   - REVERT PROOF, both sides: reverting the DOC line → the test fails on `docs §7
+     must publish the handler signature in the order it is actually called`;
+     reverting the CODE to `row.handler(intent, handle)` → fails on `arg 1 is the
+     SessionHandle — handle.name identifies the emitter`. 8 pass / 1 fail each way.
+4. **Re-read of §7 for unexercised claims** — every remaining claim has a test:
+   verb regex + reserved + collision (`intent-registry.test.js:318,335`), parse
+   can't impersonate / can't throw out (`:379`), bodyMode clamped to three modes
+   (`:394`), default label naming the owner (`:452`), promptLines only for a
+   GRANTED seat (`:504`), forced privileged (`:342`), absent list denies (`:351`),
+   live on the bash PTY feed too (`session-manager.test.js:5042`), disposal +
+   source sweep (`:409,418`). Nothing else in §7 is stated but unpinned.
+
+Two more from the same report:
+
+5. **§2's "intent-verb namespace" claim removed.** Verbs are global — that is
+   precisely why §7 refuses collisions — so the id row now says "a UI-slot id
+   prefix and a dispatch prefix … It is **not** an intent-verb namespace: verbs
+   live in one global namespace (§7)". §7 gained the positive statement too, with
+   the concrete form the builder got wrong: register `review` and agents write
+   `[agent:review …]`, never `[agent:yourid:review …]`.
+6. **§6's opener made to agree with §6.5.** It said "you never see an
+   unnamespaced id come back", which is backwards. Verified against
+   `renderer/plugin-host.js:338-350`: `handleMenuPick` splits at the first `:` and
+   calls `p.onPick(bare, …)`. New wording: the prefix is the host's business in
+   BOTH directions — you never write it and you never see it; `onPick`'s `act` is
+   the one hand-back and it arrives unprefixed.
+
+`test/plugin-surface-contract.test.js` 9/9 green.
