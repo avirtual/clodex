@@ -1184,3 +1184,109 @@ plugins/), and `/app/web-dist/index.html` contains the workbench renderer half.
 ### NEXT: W9, the five acceptance gates.
 Gates 1 (partly) and 5 need a RUNNING APP. Write the manual script precisely,
 claim nothing on inference.
+
+---
+
+## t4 W9 — DONE. Commit 51d6fbf. Suite 2430 (+12).
+
+### Gate-by-gate, with what is PROVEN vs what needs a human
+
+| Gate | Status | Evidence |
+|---|---|---|
+| 1. Two windows | **PARTLY automated** | plugin-host.test.js × 2 (W7). The Electron delivery half needs a running app — script below. |
+| 2. Peer/remote fsScope refusal | **AUTOMATED** | workbench-plugin.test.js: engine refusal (pre-existing) + 3 new UX-parity tests. |
+| 3. Core never learns the word | **AUTOMATED** | plugin-core-innocence.test.js, 4 tests. |
+| 4. Leak-scanner + electron-boundary | **AUTOMATED, verified not extended** | all four plugin modules already in SCANNED_MODULES / RENDERER_SCANNED_MODULES; electron-boundary already walks plugins/*/engine.js. |
+| 5. Kill switch | **AUTOMATED except the bootstrap branch** | plugin-kill-switch.test.js, 5 tests incl. a non-vacuity control. The `if (pluginsEnabled(...))` branch needs an app — script below. |
+
+### DEVIATION (p) — gate 3's literal wording is the wrong test, so I changed it
+The plan says `rg -i workbench` over core → **zero**. Core currently has ~12
+`workbench` mentions and every one is a COMMENT saying where a piece went
+(api-contract's fourteen rows, ipc-handlers' registrations + the sessionCwd
+helper, index.html's overlay block and footer button, app-menus' View item).
+Those comments are the migration's map — the only pointer a future reader has
+from the empty spot to the plugin. Deleting them to satisfy a grep would make
+the codebase worse and the gate would pass for the wrong reason.
+
+So the gate is now **"every surviving mention is PROSE"**: a walk of core (minus
+plugins/, docs/, tasks/, test/, web-dist/) with a comment detector, failing on
+any mention in live code — markup, CSS selector, contract row, require,
+identifier. Strictly stronger than the count, since a count of zero says nothing
+about a thirteenth mention that IS code. Plus a companion test asserting no core
+file requires anything from `plugins/` (deviation (l)'s wrong-arrow require is
+now a red test), and a non-vacuity test proving the walk actually reads core.
+One sanctioned live mention is excluded by name: `renderer/web/plugin-registry.js`,
+whose entire content is build-generated from `plugins/*/manifest.json` — delete
+the pilot, rebuild, and it empties itself.
+
+### Gate 4 note
+Nothing to extend. This is worth stating because the ticket says "extended and
+green": the extension already happened in W1 (both host halves + the loader
+added to the scanner lists) and W5 (git-scm/fs-explorer dropped, deviation (m)).
+I verified rather than assumed: all four names are present in the lists, and
+electron-boundary's `pluginEngineFiles()` walk picks up `plugins/*/engine.js`
+generically, so it covers the pilot with no per-plugin edit.
+
+---
+
+## THE MANUAL SCRIPT — what Bogdan should click
+
+Both runs are from the WORKTREE. `npm start` works there (node_modules is
+symlinked). Neither touches master.
+
+    cd /Users/bogdan/projects/tmux/wb-wrap-ui-plugin-phase-1
+
+**IMPORTANT before you start:** quit any running Clodex first. The
+single-instance lock means a second launch just focuses the existing windows —
+you would be testing master's build, not this branch's.
+
+### GATE 1 (running-app half) — two windows, one disable
+
+1. `npm start`
+2. In the sidebar footer you should see **◫ Workbench** below Inbox.
+   → *If it is missing, W7 failed.*
+3. **File ▸ New Workspace** (or Window menu) to get a SECOND window.
+   Confirm ◫ Workbench is in that window's footer too.
+4. Click ◫ Workbench in window A. The overlay opens.
+   **Do NOT open it in window B.** Confirm window B shows no overlay.
+   → *This is the per-window state claim: activation is per BrowserWindow.*
+5. Now open it in window B as well. Both are open, independently. Switch tabs in
+   one; the other must not change.
+6. **Preferences ▸ Plugins** (in either window) → untick **Workbench**.
+7. **Without restarting**, check BOTH windows:
+   - the ◫ Workbench footer button is gone from both;
+   - any open Workbench overlay has vanished from both;
+   - the ⚙ session menu has no Workbench entries.
+   → *This is the claim a unit test cannot make: that the broadcast reaches
+     every window. If it only cleared the window you clicked in, that is the
+     failure to report.*
+8. Re-tick Workbench in Preferences. The button should come back in both windows
+   without a restart.
+
+### GATE 5 — the kill switch
+
+1. Quit Clodex completely (Cmd+Q — remember it lives in the tray; the tray icon
+   must be gone).
+2. `CLODEX_PLUGINS=0 npm start`
+3. Confirm ALL of:
+   - the app boots normally and sessions restore;
+   - **no ◫ Workbench button** in the sidebar footer;
+   - **no Workbench item** in the View menu;
+   - **no Plugins section** in Preferences (it hides itself when the status call
+     refuses);
+   - the app is otherwise completely usable — create a session, type in it,
+     open Preferences, open the Inbox.
+   → *The gate is "a WORKING app with no workbench anywhere". A missing
+     workbench is correct. Anything broken is the failure.*
+4. Quit, then `npm start` normally again — the workbench returns.
+
+### OPTIONAL — the fail-safe, if you want to see it work
+1. Add `throw new Error('test');` as the first line of
+   `plugins/workbench/engine.js`'s `activate`.
+2. `npm start` → the app boots, no workbench, Preferences ▸ Plugins shows
+   "Failed to activate once (…) — one more and it will be held back."
+3. Quit and start again → now "Disabled automatically: activate() threw on 2
+   consecutive launches — …" with a **Retry** button, and the checkbox still
+   TICKED (your intent was never overwritten).
+4. Revert the throw (`git checkout plugins/workbench/engine.js`), click Retry →
+   it activates and the warning clears.
