@@ -1,5 +1,5 @@
 'use strict';
-// remote-create.test.js — the M5 full-param wire create (docs/sandbox-plan.md M5).
+// remote-create.test.js — the M5 full-param wire create (sandbox-plan.md [internal design doc, not in this repo] M5).
 // Two levels:
 //   1. remote-wiring's createSession/getCatalogs mapping — captured by patching
 //      RemoteServer so we can call the real owner-side closures with a mock
@@ -43,6 +43,7 @@ function makeDeps(overrides = {}) {
     },
   };
   const persistence = { get: () => undefined, setStripLevel: (n, l) => stripCalls.push([n, l]) };
+  const argsCalls = [];
   const uiSettings = { get: () => ({ remoteEnabled: true, remotePort: 0, proxyUrl: 'http://127.0.0.1:8123', proxyEnabled: true }) };
   const deps = {
     path, fs: require('fs'), os,
@@ -54,7 +55,8 @@ function makeDeps(overrides = {}) {
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager, proxyPoller: { snapshot: () => null },
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
-    readSessionArgs: () => ({ ok: false }), applySessionArgs: () => ({ ok: false }),
+    readSessionArgs: () => ({ ok: false }),
+    applySessionArgs: (n, p, w) => { argsCalls.push([n, p, w]); return { ok: true }; },
     readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
     fetchProxyContext: () => {}, fetchProxyReport: () => {}, fetchProxyBust: () => {},
     fetchSessionFiles: () => {}, fetchFilePeek: () => {}, fetchFileDiff: () => {},
@@ -69,7 +71,7 @@ function makeDeps(overrides = {}) {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   };
-  return { deps, createCalls, stripCalls };
+  return { deps, createCalls, stripCalls, argsCalls };
 }
 
 // Patch RemoteServer (require()d lazily inside syncRemoteServer) with a capturing
@@ -190,6 +192,52 @@ test('createSession: execCommands are stripped inbound and forced [] into create
     execCommands: [{ name: 'rm', cmd: 'rm -rf /' }],
   });
   assert.deepStrictEqual(createCalls[0][IDX.execCommands], [], 'exec grants never reach create()');
+});
+
+// ── t8 F1: PLUGIN verbs never cross the wire either ──────────────────────────
+// The wire strip used to be intent-catalog's withoutPrivilegedIntents, which
+// filters PRIVILEGED_INTENTS — a literal Set holding core's own verbs only.
+// registerIntent marks a plugin row `privileged: true` and never touches that
+// Set, so a plugin verb sailed straight through to the persisted allowlist and
+// the fire-time gate then honoured it: a remote viewer granting a box session a
+// forced-privileged capability. Both wire writers now use the registry-aware
+// withoutPrivilegedIntentsFor. Registry rows are module-level shared state, so
+// each test resets in a finally.
+
+const intentRegistry = require('../intent-registry');
+
+function withVerb(spec, fn) {
+  intentRegistry.registerIntent(spec, spec.source || 'fake-plugin');
+  const reset = () => intentRegistry._resetPluginRows();
+  let out;
+  try { out = fn(); } catch (e) { reset(); throw e; }
+  if (out && typeof out.then === 'function') return out.then((v) => { reset(); return v; }, (e) => { reset(); throw e; });
+  reset();
+  return out;
+}
+
+test('createSession (t8 F1): a PLUGIN verb in the wire body is stripped before create()', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    const { deps, createCalls } = makeDeps();
+    const opts = captureOptions(deps);
+    await opts.createSession({
+      name: 'peergrant', type: 'claude', cwd: '/tmp/pg',
+      intents: ['dm', 'fake-grant', 'reboot'],
+    });
+    assert.deepStrictEqual(createCalls[0][IDX.intents], ['dm'],
+      'the plugin verb AND reboot are both dropped on the wire create');
+  });
+});
+
+test('setSessionArgs (t8 F1): a PLUGIN verb in a peer patch is stripped before the resolver sees it', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    const { deps, argsCalls } = makeDeps();
+    const opts = captureOptions(deps);
+    await opts.setSessionArgs('box1', { intents: ['dm', 'fake-grant', 'reboot'] });
+    assert.strictEqual(argsCalls.length, 1, 'the patch reaches applySessionArgs');
+    assert.deepStrictEqual(argsCalls[0][1].intents, ['dm'],
+      'the plugin verb AND reboot are both dropped on the wire edit');
+  });
 });
 
 // ── createSession: warnings forwarded on the ack ─────────────────────────────

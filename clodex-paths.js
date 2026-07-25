@@ -33,8 +33,11 @@
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), agents/, skills/, library/,
-// clodex.log, wire-shadow.jsonl (global wire log), codex-session-hook.sh (the
-// one shared Codex hook, routed by $WB_WRAP_NAME).
+// plugins/ (the BYO plugin root — docs/plugin-sources.md §3; deliberately NOT a
+// KIND, since it is shared rather than per-agent, and constructed at the engine
+// bootstrap like every other entry in this list), clodex.log,
+// wire-shadow.jsonl (global wire log), codex-session-hook.sh (the one shared
+// Codex hook, routed by $WB_WRAP_NAME).
 //
 // BASH-MIRRORED GRAMMAR. Two generated scripts resolve the agent name at
 // RUNTIME ($WB_WRAP_NAME / $NAME) and so must rebuild these paths in bash — the

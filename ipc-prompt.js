@@ -169,11 +169,18 @@ Your Bash tool starts in the session's working directory (the project root) and 
 // only when execCommands is non-empty. name/resend carry no grammar line.
 // buildIpcPrompt(null) — and buildIpcPrompt over the all-NON-privileged list with
 // no exec arg — reproduce IPC_PROMPT byte-for-byte (the two byte-pins).
-function buildIpcPrompt(intentsList, execCommands) {
-  const grammar = GRAMMAR_LINES
-    .filter((g) => intentEnabled(g.type, intentsList))
-    .map((g) => g.text)
-    .join('\n');
+//
+// `extraGrammarLines` (plugin plan rule P3) appends PLUGIN grammar lines after the
+// core block. The caller passes only the lines for verbs this seat was actually
+// GRANTED (intent-registry.pluginGrammarLines does that filtering, since only the
+// registry knows which rows exist) — reboot is the shipped precedent for a
+// granted-only line. Omitted or empty ⇒ zero bytes added, which is what keeps both
+// byte-pins clean: they call this with no third argument.
+function buildIpcPrompt(intentsList, execCommands, extraGrammarLines) {
+  const grammar = [
+    ...GRAMMAR_LINES.filter((g) => intentEnabled(g.type, intentsList)).map((g) => g.text),
+    ...(Array.isArray(extraGrammarLines) ? extraGrammarLines.filter(Boolean).map(String) : []),
+  ].join('\n');
   const blocks = [PREAMBLE, grammar, REPLIES_LINE];
   const exec = execSection(execCommands);
   if (exec) blocks.push(exec);

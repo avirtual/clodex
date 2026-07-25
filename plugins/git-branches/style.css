@@ -1,0 +1,36 @@
+/*
+ * git-branches — injected as a per-plugin <style>, once per window.
+ *
+ * The docs do not state that plugin CSS is scoped or namespaced for us (§1 and
+ * §2 say only that it is loaded as text and injected; the `data-plugin`
+ * attribute in §6.7 is documented for overlay containers, not for stylesheets).
+ * So every selector here is a single, uniquely prefixed `gb-` class token that
+ * this plugin puts on its own elements, and nothing else. No element, tag or
+ * descendant selectors, and no !important — if this file leaks into the global
+ * scope, it still cannot affect anything but our own badges.
+ *
+ * Colours are deliberately expressed in terms of `currentColor` and opacity so
+ * the badge follows whatever theme the app is in, rather than pinning values
+ * that would be wrong in one of them.
+ */
+
+.gb-branch,
+.gb-unborn,
+.gb-detached {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* A branch that exists but has no commits yet. */
+.gb-unborn {
+  opacity: 0.6;
+}
+
+/* Not on a branch at all — read as a state, not as a name. */
+.gb-detached {
+  opacity: 0.7;
+  font-style: italic;
+}

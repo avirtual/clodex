@@ -1,5 +1,5 @@
 // pot-drawer.js — the "boiling pot": a left-side drawer ranking the files where
-// token CARRIAGE concentrates across every agent (docs/boiling-pot-plan.md).
+// token CARRIAGE concentrates across every agent (boiling-pot-plan.md [internal design doc, not in this repo]).
 // Opened from the View menu ("Boiling Pot…"); a global, cross-agent report you
 // study, not a glance-value badge — so it's a drawer, pulled fresh on open
 // (window.api.potSnapshot), never a live feed.

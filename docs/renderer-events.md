@@ -1,10 +1,9 @@
 # Renderer event push surface — the other half of the browser contract
 
-Audit deliverable for web-frontend Phase 2 (2026-07). `preload.js` invoke/send
-is the request half of `window.api` (165 endpoints); THIS is the push half —
-every channel the main process sends *toward* a renderer. A browser frontend
-(Phase 3) must receive each of these over WS exactly as the Electron renderer
-receives them over `ipcRenderer.on`.
+The contract map for every event the main process pushes at a renderer.
+`preload.js` invoke/send is the request half of `window.api` (165 endpoints);
+THIS is the push half. A browser frontend must receive each of these over WS
+exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
 `preload.js` (45 channels). This doc maps each to its emission point, its

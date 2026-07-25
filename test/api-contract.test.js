@@ -16,7 +16,7 @@ const { API_CONTRACT } = require('../api-contract');
 // from api-contract.js on purpose: if a change drops, renames, or adds a method
 // this list must be updated deliberately, and the mismatch is caught here.
 const PINNED_NAMES = [
-  // Teams front door (docs/teams-design.md) — added with the front-door build.
+  // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
   'teamCreate', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
   'teamGet', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog',
@@ -36,7 +36,9 @@ const PINNED_NAMES = [
   'onPtyData', 'onSessionExit', 'onIpcMessage', 'onSessionActivity',
   'onPendingCount', 'onSessionTicket', 'onSessionAttention', 'onSessionCtx', 'onSessionProxy',
   'onSessionFiles', 'sessionFiles', 'filePeek', 'fileDiff',
-  'fileOpen', 'onSessionFileView', 'openExternal', 'getProxySnapshot',
+  // fileReveal added by t22 — reveal-in-file-manager for Manage Plugins' "Open
+  // Plugins Folder", distinct from fileOpen (which opens the file itself).
+  'fileOpen', 'fileReveal', 'onSessionFileView', 'openExternal', 'getProxySnapshot',
   'getProxyContext', 'getProxyReport', 'getProxyBust', 'proxyHold',
   'wireHold', 'setStripLevel', 'setAutoCompact', 'getProxySubagentDetail',
   'onSessionMention', 'onRequestSwitchSession', 'onRequestOpenNewDialog', 'onRequestOpenDiscovery', 'onRequestRenameWorkspace',
@@ -64,14 +66,14 @@ const PINNED_NAMES = [
   'setSessionIntents', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
   'newWorkspace',
-  // Managed Docker sandbox (docs/sandbox-plan.md M2) — appended deliberately as
+  // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
   'sandboxDetect', 'sandboxStatus', 'sandboxGetConfig', 'sandboxSetConfig',
   'sandboxTranslatePath',
   'sandboxUp', 'sandboxRebuild', 'sandboxDown', 'sandboxLogsTail', 'sandboxSetToken',
   'sandboxClearToken', 'sandboxListBoxes', 'sandboxCreateBox', 'sandboxDeleteBox',
   'onRequestOpenSandboxDialog',
-  // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
   'potSnapshot',
   // Opt-in git worktree at session spawn + New Session working-directory
   // suggestions (recent MRU + popular). Appended deliberately as the surface grew.
@@ -80,17 +82,24 @@ const PINNED_NAMES = [
   // Sidebar organization: per-session meta (timestamps + git/PR status) +
   // per-workspace view-state persistence (group/sort/filter/search).
   'sidebarMeta', 'getSidebarView', 'setSidebarView',
-  // Workbench popover: source control, worktree management, file explorer/editor,
-  // plus its single View-menu / toolbar open event.
-  'scmStatus', 'scmDiff', 'scmStage', 'scmUnstage', 'scmDiscard', 'scmCommit',
-  'scmBranches', 'scmCheckout', 'scmRemote', 'worktreeList', 'worktreeRemove',
-  'fsList', 'fsRead', 'fsWrite',
-  'onRequestOpenWorkbench',
+  // No workbench rows: it is a PLUGIN (plugins/workbench/) and owns its own
+  // fifteen, dispatched over the plugin transport's five rows below. The
+  // migration took this list 235 -> 220 — a feature leaving core took its API
+  // surface with it, which is the pilot's whole claim.
   // Boiling Pot drawer moved from a footer button to the View menu.
   'onRequestOpenBoilingPot',
   // Scoped env vars for wrapper PTYs (T46) — global/workspace editor +
   // New Session dialog. get masks secret values.
   'envScopesGet', 'envScopesSet', 'envScopesDelete',
+  // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1) — the five rows that carry EVERY
+  // plugin, present and future, plus the intent catalog moving from a static
+  // renderer require to an IPC read (§2.3 R-INT-4).
+  'pluginInvoke', 'pluginCatalog', 'pluginSetEnabled', 'onPluginEvent',
+  'getIntentCatalog',
+  // T5: the Plugins menu's "Manage Plugins…" open request. Core chrome opening
+  // a core dialog — the same shape as onRequestOpenPeersDialog — so it does NOT
+  // widen the plugin transport, which is still exactly the five rows above.
+  'onRequestOpenPluginsDialog',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {
@@ -114,8 +123,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 230-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 230, 'pinned list is the full 230-method surface');
+test('contract covers exactly the pinned 222-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 222, 'pinned list is the full 222-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -139,7 +148,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 230, 'window.api has exactly 230 methods');
+    assert.equal(generated.length, 222, 'window.api has exactly 222 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

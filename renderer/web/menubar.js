@@ -92,6 +92,13 @@ function buildMenus(ctx) {
         { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
         { label: 'Preferences…', run: () => emit('request-open-preferences') },
+        // T5: the browser's route to the Manage Plugins dialog. The desktop gets
+        // a whole top-level Plugins menu with a live checkbox per plugin; this
+        // bar cannot mirror that, because its top-level labels are a fixed sync
+        // array and the desktop menu's defining property is being ABSENT when
+        // there is nothing to show. One item into the shared dialog keeps the
+        // two frontends at parity on capability without faking that structure.
+        { label: 'Plugins…', run: () => emit('request-open-plugins-dialog') },
         { sep: true },
         { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
       ],

@@ -318,6 +318,9 @@ const {
   getAgentLibrary: () => agentLibrary,
   getSkillLibrary: () => skillLibrary,
   getEnvScopes: () => envScopes,
+  // The Plugins menu's state source (T5). Same lazy engine seam ipc-handlers
+  // gets: null under CLODEX_PLUGINS=0, and the menu is then absent entirely.
+  getPluginHost: () => (engine ? engine.getPluginHost() : null),
 });
 
 

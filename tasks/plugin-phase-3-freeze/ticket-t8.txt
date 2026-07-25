@@ -1,0 +1,36 @@
+From: clodex
+Time: 14:11:34
+Size: 4421 bytes
+
+[ticket t8] tasks/plugin-phase-3-freeze — t9: enforce three boundary invariants the code only claims
+
+Cold review came back REWORK with two findings that break the central claim. I verified all three below against source myself; they are not disputed and need no re-diagnosis. Do these AFTER t7 (plan corrections) closes.
+
+Theme: each is an invariant asserted in a comment or a plan marker with nothing enforcing it. That is the same defect class as the `uiSettings.plugins` bug. Where you fix one, the test must fail without the fix — verify that by reverting, not by reasoning.
+
+**F1 (CRITICAL) — plugin verbs are not stripped from agent-authored grants.**
+`withoutPrivilegedIntents` (`intent-catalog.js:81`) filters against `PRIVILEGED_INTENTS`, a literal `Set(['reboot'])`. `registerIntent` sets `privileged: true` on the registry ROW (`intent-registry.js:367`) and never touches that Set, so a plugin verb survives every strip site: spawn template `session-manager.js:3953`, reviewer template `:4090`, peer-wire create `remote-wiring.js:229`, peer-wire setArgs `:355`. `persistence.setIntents` stores it verbatim and the fire-time gate then returns true. A remote peer, or any agent that can write a template, can grant a seat a forced-privileged plugin verb.
+
+Fix: add `withoutPrivilegedIntentsFor(list)` to `intent-registry.js` — filters both `PRIVILEGED_INTENTS` and any registered plugin row — and use it at all four sites (injected at `engine.js:963` for session-manager; required directly in `remote-wiring.js`). Keep the catalog function for core-only callers if that's cleaner, but no strip site may keep the old one.
+
+Tests: register a plugin verb, then assert it is ABSENT from the persisted `intents` after a template mint AND after a peer create/setArgs. Today `grep withoutPrivilegedIntents test/` finds only `reboot` — that is the hole.
+
+**F2 (MAJOR) — `host.lib` is frozen one level too shallow.**
+`plugin-host-engine.js:313` is `Object.freeze({ gitWorktree })`. The wrapper is frozen; `gitWorktree` is the live module object core holds under the same require-cache entry (`ipc-handlers.js:35`). `host.lib.gitWorktree.removeWorktree = mine` and core's `worktree:remove`, the session-delete flow (`ipc-handlers.js:342`) and New-Session's `createWorktree` (`:273`) all call the plugin's function. It survives `deactivate`. This is interception of core through the sanctioned door.
+
+Fix: hand out a bound façade, not the module — `Object.freeze({ gitWorktree: Object.freeze({ listWorktrees: (...a) => gitWorktree.listWorktrees(...a), … }) })` for all four members.
+
+Test: mutate `host.lib.gitWorktree.removeWorktree` from a fake plugin, assert `require('../git-worktree').removeWorktree` is unchanged.
+
+**F4 (MODERATE) — `enabled` is a legal plugin id; the comment says it is reserved.**
+`plugin-loader.js:80-81` and `:222` claim reservation; the only artifact is a const holding the key name. I ran it: `isValidPluginId('enabled') === true`. A plugin with that id calling `host.settings.set` writes `plugins.enabled = {…}`, `sanitizePlugins` coerces the non-array to `[]`, and `enabledSet()` reads that as "user turned everything off" — **every other plugin silently disabled at next launch.**
+
+Fix: `RESERVED_PLUGIN_IDS = new Set(['enabled'])` in `plugin-api.js`; refuse in `validateManifest` with a `problems` row so the dialog says why, and in `register()`. Consider whether `_failures` needs the same treatment and say what you decide.
+
+**Also fix (both real, both small):**
+- **False quarantine strike on double activation.** `renderer.js:3043` calls `activatePluginRenderer` unconditionally on `plugin-state{enabled}`; `renderer/plugin-host.js:567` throws if already activated; the catch reports a renderer FAILURE, which is a real strike. Two windows racing quarantine a healthy plugin. Make already-active a no-op that is never reported, not a throw.
+- **`telemetry.snapshot` returns the live poller payload** (`plugin-host-engine.js:315`), the same object core rebroadcasts. Return a deep copy — the comment says read-only.
+
+Do NOT take on the lint hardening (the review's finding 3) — that is its own ticket and I will send it separately. Do not touch the `fsScope`/`safeResolve` containment question; I am ruling on that separately too.
+
+Commit on plugin-phase-1, do not touch master, do not push. Report the suite digest and, for each fix, the one line proving the new test fails without it.

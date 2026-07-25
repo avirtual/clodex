@@ -20,7 +20,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 // `sessions:`-scoped skills are auto-injected for a matching session (checked +
@@ -47,7 +47,7 @@ const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
 const { initContextPopover } = require('./popovers/context-popover');
 const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
-const { initWorkbenchPopover } = require('./popovers/workbench-popover');
+const { initPluginHost } = require('./plugin-host');
 
 // ---------------------------------------------------------------------------
 // State
@@ -193,7 +193,7 @@ const worktreeBaseList = document.getElementById('worktree-base-list');
 const worktreeFields = document.getElementById('worktree-fields');
 const worktreeRow = document.getElementById('worktree-row');
 const cwdSuggestionsList = document.getElementById('cwd-suggestions');
-// Teams front door (docs/teams-design.md): the New Session dialog's team section.
+// Teams front door (teams-design.md [internal design doc, not in this repo]): the New Session dialog's team section.
 // Its form depends on whether the cwd already resolves to a team — create mode
 // (no team) adopts this session as lead; join mode (cwd inside a team root) adds
 // a seat in a picked role. dialogTeamMode tracks which; dialogTeamName is the
@@ -213,7 +213,7 @@ let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
-// New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
+// New Session placement selector (sandbox-plan.md [internal design doc, not in this repo] M3; N boxes in M6b P3) —
 // Host + one entry per registered sandbox box. The selected <option>'s value is the
 // placement: 'host' or a box id.
 const placementRow = document.getElementById('placement-row');
@@ -979,6 +979,7 @@ function refreshSidebarView() {
   // Partition into visible / hidden by filter, and paint each row's PR badge.
   for (const el of rows) {
     applyPrBadge(el);
+    pluginBar.applyRowBadges(el); // no-op while no plugin registers a rowBadge
     const pass = rowPasses(el);
     el.style.display = pass ? '' : 'none';
     // Hide a row's subagent children with it.
@@ -1747,7 +1748,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderToolChecklist(inputToolsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
-  refreshNewSessionIntents();       // static catalog, box-independent
+  refreshNewSessionIntents();       // served by the LOCAL engine, box-independent (as the static catalog was)
   setPromptLibCache({
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
@@ -1867,12 +1868,15 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
-// Intent-gate checklist for the currently-entered config (Claude only). Static
-// catalog — no cache/IPC — so this is synchronous, unlike the exec refresh. The
-// arg is the raw persisted `intents` value (array, or undefined = the all-enabled
-// default → every box checked); renderIntentChecklist reads it via intentEnabled.
-function refreshNewSessionIntents(intentsList) {
+// Intent-gate checklist for the currently-entered config (Claude only). The rows
+// are SERVED (`intents:catalog`) rather than statically required, so this seeds the
+// cache first and is async like the exec refresh — a plugin can add a verb at
+// runtime, and the web bundle's build-time copy of the catalog would be stale
+// forever. The arg is the raw persisted `intents` value (array, or undefined = the
+// all-enabled default → every non-privileged box checked).
+async function refreshNewSessionIntents(intentsList) {
   if (inputType.value !== 'claude') return;
+  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
@@ -1938,7 +1942,7 @@ async function refreshWorktreeForCwd() {
   inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
 }
 
-// --- Teams front door (docs/teams-design.md) -------------------------------
+// --- Teams front door (teams-design.md [internal design doc, not in this repo]) -------------------------------
 
 // Slugify a dir basename into a team/seat-name-legal token (session charset).
 function slugifyTeamName(s) {
@@ -2949,6 +2953,103 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
+// --- Plugin host (renderer half) ---
+// Self-contained island (plugin-host.js) owning the six UI registries plugins
+// contribute through (plugin-plan.md [internal design doc, not in this repo] §2.1-2.6). Phase 1 ships NO plugins:
+// every registry is empty, so statusBarHtml() is '', hasVisibleContribution()
+// is false, menuEntriesFor() is [] and handleBarClick/handleMenuPick return
+// false — i.e. every seam below is byte-inert until a plugin registers.
+// getWorkspaceId is getter-shaped because currentWorkspaceId is filled async.
+const pluginBar = initPluginHost({
+  getActiveSession: () => activeSession,
+  sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
+  scheduleSidebarRelayout,
+  getWorkspaceId: () => currentWorkspaceId,
+  // Core capabilities plugins reach through rhost instead of window.api. Each
+  // has non-workbench consumers in core, which is why it is wrapped, not moved.
+  listSessions: () => window.api.listSessions(),
+  openPath: (p) => window.api.fileOpen(p),
+  showToast,
+});
+
+// Renderer-half activation — ONCE PER WINDOW (§3.3 law 1). The engine loads
+// engine halves once per app run; each window pulls the catalog and requires the
+// renderer half of every loaded plugin itself, so per-window state lives in the
+// plugin's activation closure and dies with the window.
+//
+// Pull, not push: a window that opens later gets the same catalog, and a plugin
+// that arrives while this window is open is picked up by the plugin-state event
+// rather than by any buffered delta (§3.3 law 2 — events are unbuffered hints).
+async function activatePluginRenderer(id) {
+  let reported = false;
+  try {
+    const info = await window.api.pluginInvoke('_host', 'renderer.info', [id]);
+    if (!info || !info.ok || !info.rendererPath) return false;
+    const mod = requirePluginRenderer(info.rendererPath, id);
+    if (!mod) return false;
+    pluginBar.activate(id, mod, {
+      invoke: (pid, method, args) => window.api.pluginInvoke(pid, method, args),
+      css: info.css,
+    });
+    reported = true;
+    // Report the OUTCOME, not just the failure: a success is what clears a
+    // stale strike, and "consecutive" only means anything if success counts.
+    try { await window.api.pluginInvoke('_host', 'renderer.report', [id, true]); } catch {}
+    return true;
+  } catch (e) {
+    // One plugin's renderer half failing must not cost the others theirs, and
+    // must never take the window's own bootstrap down with it. The engine-side
+    // counter decides quarantine; this window only reports what it saw.
+    console.error(`[plugin:${id}] renderer activation failed`, e);
+    if (!reported) {
+      try { await window.api.pluginInvoke('_host', 'renderer.report', [id, false, String((e && e.message) || e)]); } catch {}
+    }
+    return false;
+  }
+}
+
+// `require` of an absolute path: contextIsolation is off by design in this app
+// (the renderer requires xterm modules directly), which is precisely what makes
+// a Tier-A in-process plugin possible without a bundler. The WEB bundle cannot
+// do this, so it resolves through the build-generated id→module registry
+// instead (plan GAP G7, step W8) — same module, different resolver.
+function requirePluginRenderer(rendererPath, id) {
+  const reg = window.__CLODEX_PLUGIN_REGISTRY__;
+  if (reg && typeof reg.get === 'function') return reg.get(id) || null;
+  if (window.__CLODEX_WEB__ || !window.require) return null;
+  return window.require(rendererPath);
+}
+
+async function loadPluginRenderers() {
+  if (!window.api.pluginCatalog) return;
+  let catalog = [];
+  try { catalog = await window.api.pluginCatalog(); } catch { return; }
+  for (const p of catalog || []) {
+    if (!p || !p.enabled) continue;
+    await activatePluginRenderer(p.id);
+  }
+}
+loadPluginRenderers();
+
+// The other half of W7's "disable removes it from EVERY window". The engine
+// broadcasts `plugin-state` on the `_host` pseudo-id when a plugin is toggled;
+// each open window disposes or activates its OWN renderer half in response,
+// because only the window holding those registries can tear them down. An
+// unbuffered hint by design (§3.3 law 2) — a window that opens later pulls the
+// catalog instead.
+if (window.api.onPluginEvent) {
+  window.api.onPluginEvent((pluginId, topic, payload) => {
+    if (pluginId !== '_host' || topic !== 'plugin-state' || !payload || !payload.id) return;
+    if (payload.enabled) activatePluginRenderer(payload.id);
+    else pluginBar.dispose(payload.id);
+    // A toggle from the menu, or from another window, while this window has the
+    // Manage Plugins dialog open. Re-render rather than leaving a stale tick —
+    // and only when it is open, so a closed dialog costs nothing (it pulls on
+    // open anyway).
+    if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
+  });
+}
+
 // Per-session quick-access icons on the left of the status bar. Claude gets a
 // Tools button (tool gating is Claude-only); both agent types get an Edit
 // shortcut so the crowded right-click menu isn't the only way in.
@@ -2999,7 +3100,10 @@ function renderSessionActions(holdHtml = '') {
   if (activePeerConfigurable()) {
     btns.push('<button class="px-action" data-act="peer-edit" data-tip="Edit this remote session\'s settings (args, prompts, tools, skills…)">⚙ Edit Session</button>');
   }
-  el.innerHTML = btns.join('') + (holdHtml || '');
+  // Plugin actions + segments render INSIDE this span, on every branch of
+  // renderProxyBar (both early returns call this too), so a contribution is
+  // never silently dropped for Bedrock/Vertex or unlinked sessions.
+  el.innerHTML = btns.join('') + pluginBar.statusBarHtml() + (holdHtml || '');
 }
 
 function renderProxyBar() {
@@ -3013,7 +3117,9 @@ function renderProxyBar() {
   // always reachable), or whenever there's telemetry to show. Hide it only for
   // non-agent sessions with nothing to display.
   if (!st || !st.payload) {
-    if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable()) {
+    // A plugin segment can keep the bar alive for a session type core would
+    // otherwise hide it for (plan §2.1) — false while no plugin registers.
+    if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable() || pluginBar.hasVisibleContribution()) {
       bar.style.display = '';
       if (main) main.classList.add('has-proxy-bar');
       tele.className = '';
@@ -3548,8 +3654,18 @@ setInterval(() => {
     if (costSeg && activeSession) { openCostPopover(activeSession, costSeg); return; }
     const bustSeg = e.target.closest('[data-act="bust"]');
     if (bustSeg && activeSession) { openBustPopover(activeSession, bustSeg); return; }
+    // Plugin segments (namespaced data-act on a .px-seg) — checked before the
+    // .px-action chain because a plugin segment is a span, not a button.
+    const pluginSeg = e.target.closest('.px-seg.px-plugin[data-act]');
+    if (pluginSeg && pluginBar.handleBarClick(pluginSeg.dataset.act, pluginSeg)) return;
     const action = e.target.closest('.px-action');
     if (action && activeSession) {
+      // Plugin acts are namespaced "<pluginId>:<id>", so a colon is by
+      // construction a plugin's — core acts never contain one.
+      if (action.dataset.act.includes(':')) {
+        pluginBar.handleBarClick(action.dataset.act, action);
+        return;
+      }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
       else if (action.dataset.act === 'peer-edit') {
         // Peer proxy-bar config button — opens the shared Edit Session dialog with a
@@ -3561,7 +3677,10 @@ setInterval(() => {
         // to its opener — the openers span two islands + a core dialog, so the
         // core owns this dispatch (the menu island stays opener-agnostic).
         if (isSessionMenuOpen()) closeSessionMenu();
-        else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor));
+        // Plugin providers append their entries after core's table (§2.4); the
+        // menu island stays a pure renderer of whatever list it's handed.
+        else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor),
+          pluginBar.menuEntriesFor(sessionTypeOf(activeSession)));
       }
       else if (action.dataset.act === 'strip-menu') {
         if (isStripMenuOpen()) closeStripMenu();
@@ -3596,6 +3715,9 @@ const {
 // `anchor` is the ⚙ button, so the launched popover positions over the bar.
 function routeSessionAction(act, anchor) {
   if (!activeSession) return;
+  // Namespaced acts belong to a plugin's menu provider (§2.4); core's table
+  // never emits one, so this branch is dead until a plugin registers.
+  if (act.includes(':') && pluginBar.handleMenuPick(act, activeSession, anchor)) return;
   if (act === 'tools') openToolsPopover(activeSession, anchor);
   else if (act === 'skills') openSkillsPopover(activeSession, anchor);
   else if (act === 'agents') openAgentsPopover(activeSession, anchor);
@@ -3728,17 +3850,10 @@ createInboxDrawer();
 // state. Opened from the View menu ("Boiling Pot…") via request-open-boiling-pot.
 createPotDrawer();
 
-// Workbench popover — one floating surface (Files / Source Control / Worktrees)
-// for a chosen session (popovers/workbench-popover.js). Scopes to the SELECTED
-// session's cwd (its own dropdown, default = active), resolved server-side by the
-// fs:/scm:/worktree: IPC. Opened from the toolbar button + the View-menu event.
-const { openWorkbench } = initWorkbenchPopover({
-  getActiveSession: () => activeSession,
-  showToast,
-});
-const btnWorkbench = document.getElementById('btn-workbench');
-if (btnWorkbench) btnWorkbench.addEventListener('click', () => openWorkbench());
-if (window.api.onRequestOpenWorkbench) window.api.onRequestOpenWorkbench(() => openWorkbench());
+// Workbench — a PLUGIN (plugins/workbench/). Core has NO workbench code left:
+// no markup, no CSS, no entry point, no data rows. It registers its own sidebar
+// footer button through the plugin host (§2.2), so the button exists exactly
+// when the plugin does.
 
 // ---------------------------------------------------------------------------
 // Peered Clodexes — self-contained subsystem (peers-ui.js). Owns the peer bar,
@@ -4896,7 +5011,7 @@ function collectPeers() {
     // pre-fill still round-trips harmlessly (main re-validates at deploy time).
     peer.remotePort = v.port;
     if (v.folder) peer.deployFolder = v.folder;
-    // Operator auth token — write-only (docs/remote-auth-plan.md §4). A typed
+    // Operator auth token — write-only (remote-auth-plan.md [internal design doc, not in this repo] §4). A typed
     // value SETS it; the "clear" checkbox sends '' to delete it; leaving the field
     // blank OMITS the key so sanitizePeers carries the stored token forward (the
     // dialog only ever knows hasToken, never the value). Typed value wins over the
@@ -4965,7 +5080,252 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
 window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 
-// ── Managed Docker sandbox dialog (docs/sandbox-plan.md M2) ─────────────────
+// ── Manage Plugins dialog (T5, plugin-plan.md [internal design doc, not in this repo] §2.5) ────────────────────
+// The detail surface behind the Plugins menu. The menu is the fast path — tick
+// to enable, untick to disable — and this is where what does not fit a menu
+// item lives: descriptions, versions, the real error behind a quarantine, and
+// an explicit Retry.
+//
+// It reads `plugins.status`, not `catalog()`: catalog lists what successfully
+// registered, which by definition excludes the plugin you came here to fix.
+// Toggling applies IMMEDIATELY (its own await, no Save button) because
+// enable/disable is not a form value — it tears down live DOM in every window,
+// and a Cancel that silently left the plugin gone would be a lie. Hence a single
+// Close button.
+const pluginsOverlay = document.getElementById('plugins-overlay');
+const pluginsList = document.getElementById('plugins-list');
+
+function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
+
+async function openPluginsDialog() {
+  await renderPluginsDialog();
+  pluginsOverlay.classList.remove('hidden');
+}
+
+async function renderPluginsDialog() {
+  if (!pluginsList) return;
+  let status = null;
+  try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
+  const plugins = (status && status.ok && status.plugins) || [];
+  const problems = (status && status.ok && status.problems) || [];
+  const shadowed = (status && status.ok && status.shadowed) || [];
+  pluginsList.innerHTML = '';
+  if (!plugins.length && !problems.length && !shadowed.length) {
+    // Reachable only by an explicit open under CLODEX_PLUGINS=0, where the
+    // refusal comes back shaped and empty — the MENU that normally opens this
+    // dialog is absent in that state.
+    const empty = document.createElement('div');
+    empty.className = 'plugin-row-note';
+    empty.textContent = 'No plugins are installed.';
+    pluginsList.appendChild(empty);
+  }
+  for (const p of plugins) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    // The checkbox shows INTENT, never the quarantine shadow — that is the whole
+    // point of keeping the two separate.
+    cb.checked = !!p.enabled;
+    cb.addEventListener('change', async () => {
+      cb.disabled = true;
+      try { await window.api.pluginSetEnabled(p.id, cb.checked); } catch {}
+      cb.disabled = false;
+      await renderPluginsDialog();
+    });
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = p.name || p.id;
+    if (p.version) {
+      const v = document.createElement('span');
+      v.className = 'plugin-row-version';
+      v.textContent = `v${p.version}`;
+      nameEl.appendChild(v);
+    }
+    body.appendChild(nameEl);
+    if (p.description) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = p.description;
+      body.appendChild(d);
+    }
+    // A verb conflict is checked FIRST and is not a failure count: the plugin is
+    // fine and another plugin holds the verb, so the row has to name the verb and
+    // the holder or the user cannot act on it (t20). "Activation failed" told them
+    // nothing and pointed at the wrong plugin.
+    if (p.verbConflict) {
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb — disable one of them.`;
+      body.appendChild(n);
+    } else if (p.restartRequired) {
+      // The disk copy moved under a plugin that is already running. Node's
+      // require cache is keyed by path, so the code in memory is the OLD code no
+      // matter what the manifest beside it now says — and the version shown on
+      // this row comes from that manifest. Saying so is the entire point: a row
+      // that displayed the new version silently would be claiming an upgrade the
+      // process never performed.
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      const was = p.restartRequired.was ? `v${p.restartRequired.was}` : 'no version';
+      const now = p.restartRequired.now ? `v${p.restartRequired.now}` : 'no version';
+      n.textContent = p.restartRequired.dirChanged
+        ? `Restart required: a different copy of this plugin (${now}) now wins, but the ${was} copy loaded at startup is still the one running.`
+        : `Restart required: the files on disk changed (${was} → ${now}), but the ${was} code loaded at startup is still the one running. Quit and reopen Clodex to pick this up.`;
+      body.appendChild(n);
+    } else if (p.quarantined || p.failCount) {
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      n.textContent = p.quarantined
+        ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches — ${p.lastError || 'unknown error'}`
+        : `Failed to activate once (${p.lastError || 'unknown error'}) — one more and it will be held back.`;
+      body.appendChild(n);
+    }
+    row.appendChild(cb);
+    row.appendChild(body);
+    if (p.quarantined) {
+      // Retry = clear the counter and try to activate now. It routes through
+      // pluginSetEnabled(true), which clears failures first — so a user who
+      // fixed the plugin is not refused by a stale strike.
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        let r = null;
+        try { r = await window.api.pluginSetEnabled(p.id, true); } catch {}
+        if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: 'peer-ui' });
+        else showToast(`${p.name || p.id} failed again: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
+        await renderPluginsDialog();
+      });
+      row.appendChild(retry);
+    }
+    pluginsList.appendChild(row);
+  }
+  // Directories that look like a plugin but were refused. No toggle: there is no
+  // id to key anything by when the manifest itself is what is broken.
+  for (const pr of problems) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = pr.dir;
+    body.appendChild(nameEl);
+    const n = document.createElement('div');
+    n.className = 'plugin-row-note warn';
+    n.textContent = `Not loaded: ${pr.why}`;
+    body.appendChild(n);
+    row.appendChild(body);
+    pluginsList.appendChild(row);
+  }
+  // Copies of an id another root's copy beat. No toggle: the enabled flag is
+  // keyed by bare id and belongs to whichever copy WON, so a checkbox here would
+  // toggle the other plugin. Shown rather than dropped because the failure it
+  // prevents is a user editing code that is not running (docs/plugin-sources.md
+  // §4).
+  //
+  // THIS ROW IS A SAFETY MECHANISM, not a label. Since t21 the loser can be the
+  // BUILT-IN copy — a user-root copy with a higher version supersedes it — and
+  // the hazard that creates is a user plugin declaring version 99 that wins
+  // forever and can never be superseded by a real release. Nothing prevents
+  // that, so the row has to make it legible: name which copy is not running,
+  // which one beat it, and THE VERSION ON BOTH SIDES. A user who cannot see the
+  // two numbers has no way to work out why their update did nothing.
+  for (const sh of shadowed) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = sh.id;
+    if (sh.rootLabel) {
+      const r = document.createElement('span');
+      r.className = 'plugin-row-version';
+      r.textContent = sh.version ? `${sh.rootLabel} v${sh.version}` : sh.rootLabel;
+      nameEl.appendChild(r);
+    }
+    body.appendChild(nameEl);
+    const n = document.createElement('div');
+    n.className = 'plugin-row-note warn';
+    const mine = sh.version ? `v${sh.version}` : 'no version';
+    const winner = sh.shadowedByLabel || sh.shadowedBy;
+    const theirs = sh.shadowedByVersion ? `v${sh.shadowedByVersion}` : 'no version';
+    // Three wordings, and the REASON comes from the loader rather than being
+    // guessed from the two version strings — a copy whose version cannot be
+    // parsed lost as uncomparable, not as lower, and telling its author to bump
+    // the number would send them somewhere that cannot help.
+    if (sh.reason === 'superseded') {
+      n.textContent = `Not running: this ${sh.rootLabel || sh.root} copy is ${mine} and the ${winner} copy is ${theirs} — the higher version wins.`;
+    } else if (!sh.comparable) {
+      n.textContent = `Not running: shadowed by the ${winner} copy (${theirs}). This copy's version (${sh.version ? JSON.stringify(sh.version) : 'missing'}) is not a plain number like 1.2.0, so it can never take over — fix the version to supersede it.`;
+    } else {
+      n.textContent = `Not running: shadowed by the ${winner} copy of the same id (${theirs}). This copy is ${mine}; a user copy only takes over when its version is higher.`;
+    }
+    body.appendChild(n);
+    if (sh.dir) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = sh.dir;
+      body.appendChild(d);
+    }
+    row.appendChild(body);
+    pluginsList.appendChild(row);
+  }
+}
+
+// Reveal the user plugins folder. The single cheapest fix for the install flow:
+// ~/.clodex is a dot-directory Finder hides, so a user told to "put it in
+// ~/.clodex/plugins" has to know ⌘⇧G exists. The path comes from the engine
+// rather than being rebuilt here — the renderer does not own where roots live.
+document.getElementById('btn-plugins-reveal').addEventListener('click', async () => {
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.userRoot'); } catch {}
+  if (!r || !r.ok || !r.dir) {
+    showToast(`Could not locate the plugins folder: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  try { await window.api.fileReveal(r.dir); } catch {}
+});
+
+// Re-scan without restarting. Honest about the three outcomes it can produce:
+// added plugins really are running, removed ones really are gone, and a CHANGED
+// plugin cannot be swapped in-process — that one gets a restart-required row from
+// the loader rather than a version badge the running code does not match.
+document.getElementById('btn-plugins-rescan').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-plugins-rescan');
+  btn.disabled = true;
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.rescan'); } catch {}
+  btn.disabled = false;
+  if (!r || !r.ok) {
+    showToast(`Re-scan failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  // The renderer half of a newly loaded plugin activates from the plugin-state
+  // hint the engine broadcast, same as an enable — nothing to do here but say
+  // what happened and redraw the rows.
+  const bits = [];
+  if (r.added.length) bits.push(`${r.added.length} added`);
+  if (r.removed.length) bits.push(`${r.removed.length} removed`);
+  if (r.changed.length) bits.push(`${r.changed.length} changed (restart required)`);
+  if (r.failed.length) bits.push(`${r.failed.length} failed`);
+  showToast(bits.length ? `Re-scan: ${bits.join(', ')}.` : 'Re-scan: no changes.', {
+    kind: r.failed.length ? 'error' : 'peer-ui',
+  });
+  await renderPluginsDialog();
+});
+
+document.getElementById('btn-plugins-close').addEventListener('click', closePluginsDialog);
+pluginsOverlay.addEventListener('mousedown', (e) => { if (e.target === pluginsOverlay) closePluginsDialog(); });
+window.api.onRequestOpenPluginsDialog(() => openPluginsDialog());
+
+// ── Managed Docker sandbox dialog (sandbox-plan.md [internal design doc, not in this repo] M2) ─────────────────
 const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
 const sbStatusRow = document.getElementById('sandbox-status');
@@ -5126,7 +5486,7 @@ async function refreshSandboxStatus() {
   }
 }
 
-// The token field is WRITE-ONLY (docs/sandbox-plan.md M4): the value never
+// The token field is WRITE-ONLY (sandbox-plan.md [internal design doc, not in this repo] M4): the value never
 // crosses back out, so the field always opens blank and the placeholder is the
 // only "configured" signal — a blank Save keeps whatever's already stored.
 function applyTokenState(hasToken) {
@@ -5511,11 +5871,33 @@ async function openPrefs() {
   // Unchecked = denied by default for new sessions.
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
+  // Plugin settings sections (§2.5) — one <section data-plugin> per registered
+  // section, appended before .dialog-actions. Values are pulled per plugin
+  // through the one multiplexed channel; a disabled plugin's section does not
+  // exist. No-op (and no invokes) while no plugin registers a section. Only a
+  // plugin's OWN settings live here — the on/off switch is the Plugins menu's
+  // (T5), so this dialog never lists a plugin the user hasn't already enabled.
+  await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
   refreshWsLogs();
   if (wsPollTimer) clearInterval(wsPollTimer);
   wsPollTimer = setInterval(refreshWsStatus, 1500);
+}
+
+// Pull each registered section's persisted values through the ONE multiplexed
+// plugin channel (`_host` pseudo-id, §2.5) and hand them to the island to
+// render. Pull-on-open, per the multi-window law — never a maintained cache.
+async function renderPluginPrefs() {
+  const owners = pluginBar.settingsSectionOwners();
+  const values = {};
+  for (const id of owners) {
+    try {
+      const r = await window.api.pluginInvoke('_host', 'settings.get', [id]);
+      if (r && r.ok) values[id] = r.values || {};
+    } catch {}
+  }
+  pluginBar.renderSettingsSections(values);
 }
 
 function closePrefs() {
@@ -5545,6 +5927,12 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
   // persist them via their own setter. collectToolChecklist returns the
   // unchecked (= denied) tools.
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+  // Plugin sections persist under uiSettings.plugins[<id>] via the same one
+  // multiplexed channel (§2.5). Empty (and so no invokes) while no plugin
+  // registers a section.
+  for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
+    try { await window.api.pluginInvoke('_host', 'settings.set', [pluginId, patch]); } catch {}
+  }
   closePrefs();
 });
 
@@ -5699,6 +6087,7 @@ async function openArgsDialog(name, argsSource = null) {
   // enabled → every box checked; array = membership), read straight into the shared
   // widget. Editing here OWNS intents (the save patch carries the result).
   argsIntentsSection.style.display = isClaude ? '' : 'none';
+  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   // Exec grants — Claude-only AND LOCAL-only. A peer edit can neither read the box's
   // grants (readSessionArgs strips them at the wire) nor set them (the save omits the

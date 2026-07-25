@@ -10,9 +10,17 @@
 const shim = require('./api-shim');
 const osShim = require('./os-shim');
 const menubar = require('./menubar');
+// The build-generated id→module map for plugin renderer halves (§4 W8, GAP G7).
+// The browser cannot `require()` a runtime path the way the Electron renderer
+// does, so the modules are baked in and looked up by id instead.
+const pluginRegistry = require('./plugin-registry');
 
 shim.start().then((welcome) => {
   osShim.__setHome(welcome && welcome.home);
+  // Installed BEFORE renderer.js's module body runs, for the same reason
+  // window.api is: loadPluginRenderers() fires from that body, and a registry
+  // that arrived afterwards would be consulted by nobody.
+  window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
   // Executes renderer.js's module body now: window.api is built, the socket is
   // open, and homedir() resolves — so its initWorkspace/restoreSessions IIFEs run
   // against a live transport exactly as the Electron renderer's do post-preload.

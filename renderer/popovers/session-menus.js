@@ -285,9 +285,12 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
   let sessionMenu = null;
   function closeSessionMenu() { if (sessionMenu) { sessionMenu.remove(); sessionMenu = null; } }
 
-  function openSessionMenu(anchorBtn, type, onPick) {
+  // `extra` is the plugin-contributed tail (renderer/plugin-host.js §2.4) —
+  // already namespaced and label-validated by the host, appended after core's
+  // table. Empty by default, so the menu is byte-identical without plugins.
+  function openSessionMenu(anchorBtn, type, onPick, extra = []) {
     closeSessionMenu();
-    const entries = sessionMenuEntries(type);
+    const entries = [...sessionMenuEntries(type), ...extra];
     if (!entries.length) return;
     sessionMenu = document.createElement('div');
     sessionMenu.className = 'warm-menu session-menu';

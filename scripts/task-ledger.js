@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // task-ledger — read-only per-task cost attribution over Claude Code
-// transcripts (docs/teams-design.md, "Making the number real"). Third clodex
+// transcripts (teams-design.md [internal design doc, not in this repo], "Making the number real"). Third clodex
 // analysis tool after transcript-stats + clodex-monitor; shares transcript-
 // stats' corpus facts and dedup discipline.
 //

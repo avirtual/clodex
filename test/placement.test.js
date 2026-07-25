@@ -1,6 +1,6 @@
 'use strict';
 // Unit tests for renderer/lib/placement.js — the New Session "Run in" placement
-// decisions (docs/sandbox-plan.md M3, generalized to N boxes in M6b P3). Pure
+// decisions (sandbox-plan.md [internal design doc, not in this repo] M3, generalized to N boxes in M6b P3). Pure
 // branch logic; the DOM plumbing in renderer.js is thin around these. A placement
 // is 'host' or a box id — the leaf treats any non-'host' value as a box.
 

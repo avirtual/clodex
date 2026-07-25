@@ -1,5 +1,5 @@
 'use strict';
-// file-heat.js — the boiling pot's tier-1 producer (docs/boiling-pot-plan.md).
+// file-heat.js — the boiling pot's tier-1 producer (boiling-pot-plan.md [internal design doc, not in this repo]).
 // Pure leaf: estimate/rangeSig/dateKey/recordInto/pruneDays/aggregateStates over
 // plain objects. Factory: lazy load + debounced flush + async stat, all seams
 // injected (no real FS, no real timers, a fixed clock).

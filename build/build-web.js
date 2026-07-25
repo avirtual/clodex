@@ -25,8 +25,62 @@ const ROOT = path.join(__dirname, '..');
 const WEB = path.join(ROOT, 'renderer', 'web');
 const OUT = path.join(ROOT, 'web-dist');
 
+// ── Plugin renderer halves (plugin-plan.md [internal design doc, not in this repo] §4 W8, GAP G7) ─────────────
+// The Electron renderer activates a plugin's renderer half with
+// `window.require(absolutePath)`. A browser has no require and esbuild resolves
+// every import at BUILD time, so the modules must be baked in and keyed by id.
+// This rewrites the marked block in renderer/web/plugin-registry.js from
+// `plugins/*/manifest.json` before the bundle is built.
+//
+// The plugin's CSS needs nothing here: it already crosses as TEXT over the
+// `_host` `renderer.info` call and becomes a per-plugin <style>, identically in
+// both frontends.
+//
+// The file is REWRITTEN IN PLACE and committed empty. Kept as a real file rather
+// than a virtual esbuild module so `require('./plugin-registry')` in boot.js is
+// an ordinary resolvable require — the same reason web-dist itself is tracked.
+const REGISTRY = path.join(WEB, 'plugin-registry.js');
+const GEN_START = '  // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block';
+const GEN_END = '  // >>> END BUILD-GENERATED PLUGIN MODULES';
+
+function discoverPluginRenderers() {
+  const dir = path.join(ROOT, 'plugins');
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const ent of entries.filter((d) => d.isDirectory()).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    let manifest;
+    try { manifest = JSON.parse(fs.readFileSync(path.join(dir, ent.name, 'manifest.json'), 'utf8')); } catch { continue; }
+    const rel = manifest && manifest.entry && manifest.entry.renderer;
+    // Engine-only plugins have no renderer half and belong nowhere in a bundle.
+    // Mirrors plugin-loader's refusal rather than re-deriving it: an id that
+    // does not match its directory is not a plugin, here either.
+    if (!rel || typeof rel !== 'string' || manifest.id !== ent.name) continue;
+    if (!fs.existsSync(path.join(dir, ent.name, rel))) continue;
+    out.push({ id: manifest.id, spec: `../../plugins/${ent.name}/${rel.replace(/^\.\//, '')}` });
+  }
+  return out;
+}
+
+function writePluginRegistry(plugins) {
+  const src = fs.readFileSync(REGISTRY, 'utf8');
+  const a = src.indexOf(GEN_START);
+  const b = src.indexOf(GEN_END);
+  if (a < 0 || b < 0) throw new Error('build-web: the generated block markers moved in renderer/web/plugin-registry.js');
+  const body = plugins.map((p) => `  ${JSON.stringify(p.id)}: require(${JSON.stringify(p.spec)}),`).join('\n');
+  const next = `${src.slice(0, a + GEN_START.length)}\n${body ? `${body}\n` : ''}${src.slice(b)}`;
+  // Written unconditionally but byte-identically when nothing changed, so the
+  // release script's staleness guard (a dirty tree = a stale bundle) stays a
+  // signal rather than firing on every build.
+  if (next !== src) fs.writeFileSync(REGISTRY, next);
+  return plugins.map((p) => p.id);
+}
+
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
+
+  const bundled = writePluginRegistry(discoverPluginRenderers());
+  console.log(`plugin renderer halves bundled: ${bundled.length ? bundled.join(', ') : '(none)'}`);
 
   const alias = {
     os: path.join(WEB, 'os-shim.js'),

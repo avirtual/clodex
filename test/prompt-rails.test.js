@@ -1,6 +1,6 @@
 // Run: node --test
 // prompt-rails: the append-rail filter behind the team join picker
-// (docs/teams-design.md "Front door"). The picker attaches its pick to the
+// (teams-design.md [internal design doc, not in this repo] "Front door"). The picker attaches its pick to the
 // append rail, so it may ONLY offer append-rail prompts: stock clodex-team-*
 // deltas (always) plus library prompts whose front matter declares
 // `rail: append`. Undeclared (replace-class) prompts are excluded so a

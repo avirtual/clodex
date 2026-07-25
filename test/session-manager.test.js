@@ -23,8 +23,16 @@ function mk(overrides = {}) {
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
     intentEnabled, // real pure leaf — the fire-time gate needs it on every _handleIntent
-    withoutPrivilegedIntents: require('../intent-catalog').withoutPrivilegedIntents, // real leaf — _handleSpawnIntent strips privileged grants
+    withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor, // real leaf — _handleSpawnIntent strips privileged grants (core AND plugin verbs)
     fencedLines: require('../intent-scanner').fencedLines, // real pure leaf — _extractIntents maps fences unconditionally
+    // The grammar table (intent-registry) — real pure leaf, like intent-catalog
+    // above. _extractIntents asks it for every intent's body-capture mode and
+    // _handleIntent asks it for the gate, the bounce list and the plugin
+    // dispatch tail, so a fake here would test the fake.
+    bodyModeFor: require('../intent-registry').bodyModeFor,
+    intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    pluginRowFor: require('../intent-registry').pluginRowFor,
+    validIntentNames: require('../intent-registry').validIntentNames,
     fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
     ...overrides,
   };
@@ -578,6 +586,25 @@ test('reboot: appears in the near-miss valid-intents bounce copy', async () => {
   assert.match(injected[0], /Valid intents:.*\breboot\b/);
 });
 
+// The bounce copy is now a registry join (plugin plan rule P4), so the join
+// ORDER — which is neither parse nor catalog order; it is the string as it
+// shipped — needs a real pin, not just a `\breboot\b` match. A refactor that
+// regenerated the list from some other ordering would sail past the match above.
+test('near-miss bounce: the WHOLE valid-intents string is pinned, byte for byte', async () => {
+  const injected = [];
+  const m = mk({ getPersistence: () => ({ list: () => [], get: () => ({ intents: null }) }) });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  await m._handleIntent('a', { type: 'unknown', text: '[agent:rebot]', more: 2 });
+  assert.strictEqual(
+    injected[0],
+    '[agent:?] unrecognized intent `[agent:rebot]` (+2 more unrecognized [agent:…] lines this turn) — nothing was done. '
+    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, reboot, end. '
+    + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].',
+  );
+});
+
 test('reboot: an agent [agent:spawn] from a template STRIPS privileged intents (no self-grant)', async () => {
   let createdIntents = 'UNSET';
   const m = mk({
@@ -602,6 +629,38 @@ test('reboot: an agent [agent:spawn] from a template STRIPS privileged intents (
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(createdIntents, ['dm'],
     'reboot filtered out of the template grant at the agent-spawn boundary');
+});
+
+// --- t8 F1: the strip must see PLUGIN verbs, not just core's PRIVILEGED_INTENTS.
+// A plugin verb is FORCED privileged (rule P1), but it lives on the registry row,
+// not in intent-catalog's literal Set — so the catalog's own strip passes it
+// straight through. The test above cannot catch that: `reboot` is in the Set.
+// Without the registry-aware strip, a self-authored template mints a seat holding
+// a forced-privileged plugin verb that intentEnabledFor then honours at fire time. ---
+test('t8 F1: an agent [agent:spawn] template carrying a PLUGIN verb has it stripped too (no self-grant)', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    let createdIntents = 'UNSET';
+    const m = mk({
+      AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+      getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
+      getTemplates: () => ({ list: () => [{ name: 'granter', type: 'claude', cwd: '/tmp/spawn-x', intents: ['dm', 'fake-grant', 'reboot'] }] }),
+      ensureDir: () => {},
+      os: require('node:os'),
+      path: require('node:path'),
+      log: { info: () => {}, error: () => {} },
+    });
+    m._injectText = () => {};
+    m._broadcast = () => {};
+    m._sendToSession = () => {};
+    m.create = async (...args) => { createdIntents = args[17]; return { name: args[0], type: args[1] }; };
+    const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
+    m.sessions.set('a', spawner);
+    m._handleSpawnIntent(spawner, { name: 'child', cwd: '/tmp/spawn-x', template: 'granter' });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(createdIntents, ['dm'],
+      'the plugin verb AND reboot are both stripped; only the ordinary grant survives');
+  });
 });
 
 // ── Task 28: the one-shot post-reboot notice ────────────────────────────────
@@ -1322,7 +1381,7 @@ test('T54: a PASSIVE park still does NOT earn the boot/idle edge (only the activ
   assert.ok(hasPending(PENDING_DIR, session.name), 'the passive delta stays parked for an organic hook drain');
 });
 
-// --- team-retire (docs/teams-design.md): socket envelope → archive|discard --
+// --- team-retire (teams-design.md [internal design doc, not in this repo]): socket envelope → archive|discard --
 
 function mkRetire(rootByName, rolesByRoot) {
   // rootByName: cwd → project root map for the stub findProjectRoot.
@@ -1456,7 +1515,7 @@ test('team-retire: absent target is a silent no-op (socket outlived the session)
 });
 
 // --- teams composition wiring: initial roster + passive deltas ---------------
-// The context architecture (docs/teams-design.md): a seat's composition rides as
+// The context architecture (teams-design.md [internal design doc, not in this repo]): a seat's composition rides as
 // DATA, never the system prompt. _injectRoster delivers the one-time initial
 // roster (sender `team`); _notifyComposition fans a passive delta to the OTHER
 // live seats on spawn / archive / retire. Both funnel every seat-lifecycle
@@ -2502,6 +2561,22 @@ test('team-review (T52): a template carrying a PRIVILEGED intent has it STRIPPED
   const intents = created[0][17]; // 0-indexed: intents(17)
   assert.deepStrictEqual(intents, ['dm', 'who'],
     'the privileged `reboot` is stripped at the consume point; the non-privileged intents survive');
+});
+
+// --- t8 F1, second strip site: the same hole at the REVIEWER template consume
+// point. `reboot` above is in intent-catalog's literal Set; a plugin verb is
+// privileged via its registry row instead, so only the registry-aware strip sees
+// it. The reviewer template is agent-writable, so this is a self-grant path. ---
+test('t8 F1: a reviewer template carrying a PLUGIN verb has it STRIPPED (registry-aware, not just core privileged)', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    const { m, created } = mkReview({ reviewTemplate: { intents: ['fake-grant', 'dm', 'who'] } });
+    m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+    m._handleTeamReview(m.sessions.get('lead'), 'scope');
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(created.length, 1, 'spawns');
+    assert.deepStrictEqual(created[0][17], ['dm', 'who'],
+      'the plugin verb is dropped at the reviewer consume point; ordinary intents survive');
+  });
 });
 
 // --- T52 NIT (defense-in-depth): a template systemPromptFile that could escape
@@ -4762,4 +4837,225 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   await new Promise((r) => setTimeout(r, 400));  // > readyPollMs (250) so the producer definitely fires
   assert.deepStrictEqual(writes, [], 'fire-time re-check saw the draft → claimed nothing, wrote nothing');
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
+});
+
+// --- plugin intent verbs (plugin-plan.md [internal design doc, not in this repo] R-INT-2, rules P1/P4) ----------
+//
+// These exercise the DISPATCH TAIL: the switch keeps every core case verbatim
+// and a registry lookup runs only for a type no core case claimed. The registry
+// is module-level shared state (that is what makes a plugin verb live on all
+// three feeds by construction), so every test here resets it in a finally.
+
+const intentRegistry = require('../intent-registry');
+
+// NOTE the promise handling: a plain try/finally would run the reset the moment
+// an ASYNC fn returned its promise — i.e. at fn's first await, with the test
+// body still to come — and every dispatch after that point would find an empty
+// registry. (It did. One test caught it.)
+function withVerb(spec, fn) {
+  intentRegistry.registerIntent(spec, spec.source || 'fake-plugin');
+  const reset = () => intentRegistry._resetPluginRows();
+  let out;
+  try { out = fn(); } catch (e) { reset(); throw e; }
+  if (out && typeof out.then === 'function') return out.then((v) => { reset(); return v; }, (e) => { reset(); throw e; });
+  reset();
+  return out;
+}
+
+// A manager whose plugin-hook getter mints the same shape plugin-host-engine's
+// sessionHandle does — the tail asks the HOST for the handle rather than
+// building its own, so the fake has to supply one.
+function mkWithPluginHost(overrides = {}) {
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: () => ({ intents: ['branch'] }) }),
+    log: (...a) => { void a; },
+    getPluginHooks: () => ({
+      handleFor: (name) => {
+        const s = m.sessions.get(name);
+        if (!s) return null;
+        return Object.freeze({
+          name: s.name, type: s.type, cwd: s.cwd, workspaceId: s.workspaceId,
+          isAlive: () => !!m.sessions.get(name),
+          inject: (text, opts = {}) => m._injectText(s, String(text), { parkable: opts.parkable !== false }),
+        });
+      },
+    }),
+    ...overrides,
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp/x' });
+  return { m, injected };
+}
+
+test('plugin verb: a granted seat reaches the handler with a SessionHandle', async () => {
+  const seen = [];
+  await withVerb({
+    verb: 'branch',
+    parse: (l) => (l === '[agent:branch]' ? { type: 'branch' } : null),
+    handler: (handle, intent) => { seen.push([handle, intent]); handle.inject('[agent:branch] main'); },
+  }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    await m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(seen.length, 1, 'handler ran');
+    const [handle, intent] = seen[0];
+    assert.strictEqual(intent.type, 'branch');
+    // The OPAQUE handle, not the raw session: no pty, no _dead, no map entry.
+    assert.deepStrictEqual(Object.keys(handle).sort(), ['cwd', 'inject', 'isAlive', 'name', 'type', 'workspaceId']);
+    assert.strictEqual(handle.name, 'a');
+    assert.strictEqual(handle.cwd, '/tmp/x');
+    assert.deepStrictEqual(injected, ['[agent:branch] main'], 'reply rode handle.inject');
+  });
+});
+
+test('plugin verb: P1 — an absent allowlist DENIES it, with the standard gate bounce', async () => {
+  let ran = false;
+  await withVerb({
+    verb: 'branch',
+    parse: () => null,
+    handler: () => { ran = true; },
+  }, async () => {
+    const { m, injected } = mkWithPluginHost({
+      // The "living all-enabled default": absent list. A core verb fires; a
+      // plugin verb must NOT (it is privileged by construction).
+      getPersistence: () => ({ list: () => [], get: () => ({ intents: null }) }),
+    });
+    await m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(ran, false, 'absent allowlist must not grant a plugin verb');
+    assert.deepStrictEqual(injected, ['[agent:branch] the branch intent is disabled for this session']);
+  });
+});
+
+test('plugin verb: an explicit grant enables it, an unrelated grant does not', async () => {
+  let runs = 0;
+  await withVerb({ verb: 'branch', parse: () => null, handler: () => { runs++; } }, async () => {
+    const denied = mkWithPluginHost({ getPersistence: () => ({ list: () => [], get: () => ({ intents: ['dm', 'who'] }) }) });
+    await denied.m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(runs, 0);
+    const granted = mkWithPluginHost({ getPersistence: () => ({ list: () => [], get: () => ({ intents: ['branch'] }) }) });
+    await granted.m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(runs, 1);
+  });
+});
+
+test('plugin verb: a throwing handler becomes a bounce, never a crash', async () => {
+  await withVerb({
+    verb: 'branch',
+    parse: () => null,
+    handler: () => { throw new Error('detached HEAD'); },
+  }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    await m._handleIntent('a', { type: 'branch' });   // must not reject
+    assert.deepStrictEqual(injected, ['[agent:branch] error: detached HEAD']);
+  });
+});
+
+test('plugin verb: bash panes never reach the handler (no typing into a live shell)', async () => {
+  let ran = false;
+  await withVerb({ verb: 'branch', parse: () => null, handler: () => { ran = true; } }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    m.sessions.set('sh', { name: 'sh', workspaceId: 'ws1' }); // no agentType
+    await m._handleIntent('sh', { type: 'branch' });
+    assert.strictEqual(ran, false);
+    assert.deepStrictEqual(injected, [], 'and nothing typed at the operator prompt');
+  });
+});
+
+test('plugin verb: no plugin host (kill switch) → the tail is a clean no-op', async () => {
+  let ran = false;
+  await withVerb({ verb: 'branch', parse: () => null, handler: () => { ran = true; } }, async () => {
+    const { m, injected } = mkWithPluginHost({ getPluginHooks: () => null });
+    await m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(ran, false);
+    assert.deepStrictEqual(injected, []);
+  });
+});
+
+test('plugin verb: a row with no handler is a silent no-op, not a crash', async () => {
+  await withVerb({ verb: 'branch', parse: () => null }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    await m._handleIntent('a', { type: 'branch' });
+    assert.deepStrictEqual(injected, []);
+  });
+});
+
+test('plugin verb: an async handler is refused (sync-only), and does not bounce', async () => {
+  let ran = false;
+  await withVerb({
+    verb: 'branch',
+    parse: () => null,
+    handler: () => { ran = true; return Promise.resolve('nope'); },
+  }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    await m._handleIntent('a', { type: 'branch' });
+    assert.strictEqual(ran, true, 'it still ran — the RESULT is what is ignored');
+    assert.deepStrictEqual(injected, [], 'a contract violation is logged, not bounced at the agent');
+  });
+});
+
+test('plugin verb: the dispatch tail cannot touch core dispatch', async () => {
+  // A plugin registering something adjacent must not perturb a core verb's
+  // routing — the switch claims it first and the tail never sees it.
+  let ran = false;
+  await withVerb({ verb: 'branch', parse: () => null, handler: () => { ran = true; } }, async () => {
+    const { m, injected } = mkWithPluginHost();
+    await m._handleIntent('a', { type: 'name' });
+    assert.strictEqual(ran, false);
+    assert.strictEqual(injected.length, 1);
+    assert.match(injected[0], /^\[agent:name\]/);
+  });
+});
+
+test('plugin verb: P4 — a registered verb joins the near-miss bounce list', async () => {
+  await withVerb({ verb: 'branch', parse: () => null, handler: () => {} }, async () => {
+    const { m, injected } = mkWithPluginHost({ getPersistence: () => ({ list: () => [], get: () => ({ intents: null }) }) });
+    await m._handleIntent('a', { type: 'unknown', text: '[agent:brnch]', more: 0 });
+    assert.match(injected[0], /Valid intents: dm, .*, reboot, branch, end\./,
+      'plugin verbs sit after the core list and before the trailing `end`');
+  });
+});
+
+test('plugin verb: body capture obeys the row bodyMode, through the real _extractIntents', () => {
+  withVerb({
+    verb: 'branch',
+    parse: (l) => { const mm = l.match(/^\[agent:branch\]\s*(.*)/s); return mm ? { type: 'branch', body: mm[1] } : null; },
+    bodyMode: () => 'greedy',
+  }, () => {
+    const m = mkExtract();
+    const out = m._extractIntents('[agent:branch] first\nsecond line\n[agent:who]');
+    assert.strictEqual(out.length, 2);
+    assert.strictEqual(out[0].type, 'branch');
+    assert.strictEqual(out[0].body, 'first\nsecond line');
+    assert.strictEqual(out[1].type, 'who');
+  });
+  withVerb({
+    verb: 'terse',
+    parse: (l) => { const mm = l.match(/^\[agent:terse\]\s*(.*)/s); return mm ? { type: 'terse', body: mm[1] } : null; },
+  }, () => {
+    const m = mkExtract();
+    const out = m._extractIntents('[agent:terse] first\nsecond line');
+    assert.strictEqual(out[0].body, 'first', 'default bodyMode none: the next line is NOT swallowed');
+  });
+});
+
+test('plugin verb: live on the BASH PTY feed too — but with no body (documented difference)', () => {
+  // R-INT-3. The bash feed calls parseIntent DIRECTLY (deliberately not
+  // fence-aware, no body capture), while jsonl/wire go through _extractIntents.
+  // Because registration mutates the one list parseIntent reads, the verb is
+  // live on both; the SEMANTIC difference is the missing body, and that is
+  // asserted rather than papered over.
+  withVerb({
+    verb: 'branch',
+    parse: (l) => { const mm = l.match(/^\[agent:branch\]\s*(.*)/s); return mm ? { type: 'branch', body: mm[1] } : null; },
+    bodyMode: () => 'greedy',
+  }, () => {
+    const { parseIntent: pi } = require('../intent-scanner');
+    // What the bash feed sees, line by line:
+    assert.deepStrictEqual(pi('[agent:branch] first'), { type: 'branch', body: 'first' });
+    assert.strictEqual(pi('second line'), null, 'the continuation line is its own (non-)intent on this feed');
+    // What the jsonl feed sees for the same two lines:
+    const out = mkExtract()._extractIntents('[agent:branch] first\nsecond line');
+    assert.strictEqual(out[0].body, 'first\nsecond line');
+  });
 });

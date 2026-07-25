@@ -33,8 +33,11 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-const gitScm = require('./git-scm');
-const fsExplorer = require('./fs-explorer');
+const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
+// The intent grammar table: `catalogRows` serves the renderer checklist over IPC
+// (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where
+// the live row set is authoritative.
+const { catalogRows, allowlistFromChecked } = require('./intent-registry');
 
 function registerIpcHandlers(deps) {
   const {
@@ -82,6 +85,11 @@ function registerIpcHandlers(deps) {
     // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
     // lazy so a host that omits them simply has no sandbox handlers reachable.
     getSandbox, getSandboxManager,
+    // Plugin host accessor (plugin-plan.md [internal design doc, not in this repo] §3.4) — lazy, like the sandbox
+    // pair above: a host that omits it (or a CLODEX_PLUGINS=0 run, where the
+    // engine never builds one) simply has no plugins, and the four plugin
+    // handlers below degrade to a shaped refusal instead of throwing.
+    getPluginHost,
   } = deps;
 
   // Shared spawn body for session:create AND the team front door (team:create /
@@ -140,7 +148,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Teams front door (docs/teams-design.md "Front door"). Both handlers write the
+  // Teams front door (teams-design.md [internal design doc, not in this repo] "Front door"). Both handlers write the
   // manifest FIRST, then fall through to the normal spawn — the spawn resolves the
   // (now-written) team and attaches the role prompt + initial roster. A write
   // refusal (dup team, dup root, existing-role-with-different-def) surfaces as
@@ -299,80 +307,12 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
 
-  // --- Workspace panes: Explorer / Source Control / Worktrees -------------
-  // All three panes scope to a session's cwd, resolved SERVER-SIDE from the live
-  // session (like fetchFileDiff) so the renderer only passes a session name — it
-  // never has to know or trust a path. A peer/remote session has no local
-  // filesystem here, so these refuse it (the pane shows a "remote" notice).
-  const sessionCwd = (name) => {
-    const s = manager.sessions.get(name);
-    if (!s) return { error: 'Session not found' };
-    if (s.peer) return { error: 'remote' }; // peer sessions have no local fs
-    if (!s.cwd) return { error: 'Session has no working directory' };
-    return { cwd: s.cwd };
-  };
-
-  // Source control (git-scm.js). Each handler resolves cwd then delegates.
-  handle('scm:status', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.status(r.cwd);
-  });
-  handle('scm:diff', async (_e, name, filePath, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.fileDiff(r.cwd, filePath, opts || {});
-  });
-  handle('scm:stage', async (_e, name, paths) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.stage(r.cwd, paths);
-  });
-  handle('scm:unstage', async (_e, name, paths) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.unstage(r.cwd, paths);
-  });
-  handle('scm:discard', async (_e, name, filePath, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.discard(r.cwd, filePath, opts || {});
-  });
-  handle('scm:commit', async (_e, name, message, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.commit(r.cwd, message, opts || {});
-  });
-  handle('scm:branches', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.branches(r.cwd);
-  });
-  handle('scm:checkout', async (_e, name, branch, opts) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitScm.checkout(r.cwd, branch, opts || {});
-  });
-  handle('scm:remote', async (_e, name, op) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    if (!['push', 'pull', 'fetch'].includes(op)) return { ok: false, error: 'Bad op' };
-    return gitScm.remoteOp(r.cwd, op);
-  });
-
-  // Worktree management pane: list all worktrees of the active session's repo.
-  // create/remove reuse the existing worktree:create + a new worktree:remove.
-  handle('worktree:list', async (_e, name) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return gitWorktree.listWorktrees(r.cwd);
-  });
-  handle('worktree:remove', async (_e, worktreePath) =>
-    gitWorktree.removeWorktree(worktreePath));
-
-  // File explorer + editor (fs-explorer.js). Confined to the session cwd.
-  handle('fs:list', async (_e, name, rel) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.listDir(r.cwd, rel || '');
-  });
-  handle('fs:read', async (_e, name, rel) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.readFile(r.cwd, rel);
-  });
-  handle('fs:write', async (_e, name, rel, content) => {
-    const r = sessionCwd(name); if (r.error) return { ok: false, error: r.error };
-    return fsExplorer.writeFile(r.cwd, rel, content);
-  });
+  // The fourteen scm:/worktree:/fs: rows that used to live here moved into
+  // plugins/workbench/engine.js (plugin-plan.md [internal design doc, not in this repo] §4 W6) — the workbench is a
+  // plugin now and reaches its own data over the plugin transport. Their
+  // `sessionCwd` helper went with them: the host's `sessions.fsScope(name)` is
+  // the same guarantee, offered to every plugin instead of re-implemented per
+  // handler, which is what stops a plugin widening locality by accident.
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:listAll', () => manager.list());
@@ -907,13 +847,18 @@ function registerIpcHandlers(deps) {
   // at the CURRENT disk/git state — created-vs-modified truth comes from git
   // here, never from the feed.
   handle('session:files', (_e, name) => fetchSessionFiles(name));
-  // Boiling pot (docs/boiling-pot-plan.md): cross-agent file-heat snapshot. A
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]): cross-agent file-heat snapshot. A
   // global read-time merge (not per-session), carriage-ranked. Tier-1 data is
   // all local, so it renders wire-off.
   handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   handle('file:open', (_e, filePath) => openPath(filePath));
+  // Reveal, not open. The seam is already injected (main.js backs it with
+  // shell.showItemInFolder, web-host routes it to the connected browser); this
+  // is the renderer-reachable door onto it, which only the session-menu had
+  // before. Returns nothing useful by design — showItemInFolder is void.
+  handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
 
   // Focused per-session tool gating: persist disabledTools only (leaves
   // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;
@@ -945,12 +890,15 @@ function registerIpcHandlers(deps) {
   // Focused per-session intent gating (mirror of setTools). UNLIKE the others this
   // applies IMMEDIATELY with no restart: the fire-time gate (_handleIntent) re-reads
   // persistence on every intent, so the upsert IS the apply. `intents` is the raw
-  // allowlist from collectIntentChecklist — an ARRAY ([] = everything gated) or NULL
-  // (all boxes checked → the living all-enabled default). setIntents removes the key
-  // on null, never freezes an array (mirrors setStripLevel's delete-when-default).
+  // CHECKED SET from collectIntentChecklist — an ARRAY ([] = nothing checked) or
+  // NULL (section hidden). The COLLAPSE to the all-enabled default happens HERE, not
+  // in the renderer (plugin plan R-INT-4 / MUST-FIX 3): only the engine's registry
+  // knows the live row set, so only the engine can tell "every box checked" from "a
+  // subset that happens to be long". setIntents removes the key on null, never
+  // freezes an array (mirrors setStripLevel's delete-when-default).
   handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
-    persistence.setIntents(name, Array.isArray(intents) ? intents : null);
+    persistence.setIntents(name, Array.isArray(intents) ? allowlistFromChecked(intents) : null);
     return { ok: true };
   });
   // Agent catalog for the Agents popover. Unlike skills there's no transcript
@@ -1045,7 +993,7 @@ function registerIpcHandlers(deps) {
       // boolean, never the value (it lives in <userData>/remote.env, not
       // ui-settings). A host without the accessor (older wiring) reports false.
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
-      // Peer auth token is WRITE-ONLY (docs/remote-auth-plan.md §4): the renderer
+      // Peer auth token is WRITE-ONLY (remote-auth-plan.md [internal design doc, not in this repo] §4): the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
       // the array back, so an omitted `token` carries forward in sanitizePeers —
       // the value never has to round-trip through the UI.
@@ -1130,6 +1078,46 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
+
+  // ---- Plugin transport (plugin-plan.md [internal design doc, not in this repo] §3.4). FOUR handlers, registered
+  // ONCE, carrying every plugin forever. `plugin:invoke` is the multiplexed
+  // channel: it forwards to the engine-owned dispatch Map, which enable/disable/
+  // dispose mutate. The injected transport has no removeHandler, so a per-plugin
+  // channel could never be unregistered — this is the only shape in which
+  // `dispose()` is implementable at every level of the API.
+  //
+  // getPluginHost() is a LAZY seam: a host that doesn't build a plugin host (or
+  // a run with CLODEX_PLUGINS=0) simply has no plugins, and every call degrades
+  // to the shaped refusal rather than throwing. Loud, not silent — an undefined
+  // resolution is indistinguishable from a successful empty call.
+  const pluginRefusal = () => errorEnvelope(NO_SUCH_METHOD);
+  handle('plugin:invoke', async (_e, pluginId, method, args) => {
+    const host = getPluginHost && getPluginHost();
+    if (!host) return pluginRefusal();
+    return host.dispatch(pluginId, method, Array.isArray(args) ? args : []);
+  });
+  handle('plugin:catalog', () => {
+    const host = getPluginHost && getPluginHost();
+    return host ? host.catalog() : [];
+  });
+  handle('plugin:setEnabled', async (_e, pluginId, enabled) => {
+    const host = getPluginHost && getPluginHost();
+    if (!host) return pluginRefusal();
+    return host.setEnabled(String(pluginId), enabled !== false);
+  });
+  // The intent catalog, served rather than statically required (plan §2.3
+  // R-INT-4). The renderer checklist used to `require('../../intent-catalog')`
+  // directly — fine while the catalog was a frozen const, wrong the moment a
+  // plugin can register a verb, and doubly wrong in the web bundle where that
+  // require is frozen at build time. Rows are `{ type, label, privileged }`;
+  // the renderer computes checked-state client-side but the ALLOWLIST itself is
+  // computed engine-side (setIntents/setArgs), where the catalog is authoritative.
+  // Straight off intent-registry, NOT off the plugin host: the registry is a
+  // module-level table that both halves mutate, so it is authoritative whether or
+  // not a host exists (kill switch, no plugins installed, host construction
+  // failed). Routing this through the host would make the checklist go blank in
+  // exactly the degraded cases where core rows still matter most.
+  handle('intents:catalog', () => catalogRows());
 
   // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
   // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
@@ -1480,7 +1468,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ── Managed Docker sandbox (sandbox.js, docs/sandbox-plan.md M2 / M6b P1) ──
+  // ── Managed Docker sandbox (sandbox.js, sandbox-plan.md [internal design doc, not in this repo] M2 / M6b P1) ──
   // The engine's sandbox manager owns N box instances; these are thin relays.
   // getSandbox(boxId) resolves an instance lazily (default: the shared 'sandbox'
   // box), or null for an unknown id — withBox guards that so a bogus id yields an

@@ -1,0 +1,17 @@
+From: clodex
+Time: 14:40:37
+Size: 2554 bytes
+
+[ticket t12] tasks/plugin-phase-3-freeze — acceptance-build install findings: a documented build step and a leak the first real verb exposed
+
+I installed the cold-built `git-branches` into the worktree and ran the suite. **The plugin needed zero core edits** — the Phase 3 thesis holds. Three failures, all of them tests assuming one plugin would be the only plugin. I fixed two myself in `test/plugin-kill-switch.test.js` (uncommitted, in your tree — leave them, they're mine) and regenerated `renderer/web/plugin-registry.js` with `npm run build:web`. Suite **2479/2479** with your uncommitted F1/F2/F4 present.
+
+Two things for you, both documentation, fold into t11:
+
+**1. `docs/plugin-api.md` never mentions that a renderer half requires a build step.** Installing one makes `test/plugin-web-parity.test.js` fail until `npm run build:web` runs and `renderer/web/plugin-registry.js` is committed. The gate names its own remedy, which is why this cost me two minutes instead of an hour — but an author reading only the published contract will ship a renderer half, see a red suite, and have nothing in the doc to connect it to. Add it where the renderer half is introduced: the artifact is generated, it is committed, and adding or removing a renderer half means rebuilding it. Also note `renderer/web/plugin-registry.js`'s own header claims "This committed version is the EMPTY map" and it now lists two plugins — stale comment on a generated file, flagged by the cold review too.
+
+**2. The intent registry is a module-level table and a plugin's verb outlives the test that registered it.** `plugin-kill-switch.test.js`'s "every row is core's" assertion saw `git-branches`'s verb, registered by a sibling test in the same file that really loads the plugins. I fixed it by sweeping with `unregisterSource` before asserting, which reproduces the true `CLODEX_PLUGINS=0` starting condition rather than papering over it.
+
+This is test-only — in the real kill-switch path no plugin ever loads, so nothing registers. But it is the **first time a shipped plugin has registered a verb**, and the machinery had only ever been exercised against fakes. So: check whether any OTHER test asserts over the registry's contents without controlling for plugin-registered rows, and fix the same way. If you find none, say so — that is a real answer.
+
+Do not weaken any assertion to accommodate a plugin. If a gate genuinely needs a plugin-free registry, sweeping first is right; if it needs to tolerate plugin rows, filter by source explicitly and say why in a comment.

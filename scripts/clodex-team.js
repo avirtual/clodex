@@ -2,7 +2,7 @@
 'use strict';
 
 // clodex-team.js — teams control plane over the exec intent
-// (docs/teams-design.md, docs/exec-tools.md). Second clodex tool after
+// (teams-design.md [internal design doc, not in this repo], docs/exec-tools.md). Second clodex tool after
 // clodex-monitor; same v1 identity convention (the agent self-supplies its
 // name as `agent`).
 //

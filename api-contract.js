@@ -23,7 +23,7 @@
 
 const API_CONTRACT = [
   { name: 'createSession', kind: 'invoke', channel: 'session:create' },
-  // Teams front door (docs/teams-design.md): write the team manifest, then spawn.
+  // Teams front door (teams-design.md [internal design doc, not in this repo]): write the team manifest, then spawn.
   // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
   { name: 'teamCreate', kind: 'invoke', channel: 'team:create' },
   { name: 'teamJoin', kind: 'invoke', channel: 'team:join' },
@@ -51,21 +51,12 @@ const API_CONTRACT = [
   { name: 'markSessionWorktree', kind: 'invoke', channel: 'session:markWorktree' },
   { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
   { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },
-  // Workspace panes: source control, worktree management, file explorer/editor.
-  { name: 'scmStatus', kind: 'invoke', channel: 'scm:status' },
-  { name: 'scmDiff', kind: 'invoke', channel: 'scm:diff' },
-  { name: 'scmStage', kind: 'invoke', channel: 'scm:stage' },
-  { name: 'scmUnstage', kind: 'invoke', channel: 'scm:unstage' },
-  { name: 'scmDiscard', kind: 'invoke', channel: 'scm:discard' },
-  { name: 'scmCommit', kind: 'invoke', channel: 'scm:commit' },
-  { name: 'scmBranches', kind: 'invoke', channel: 'scm:branches' },
-  { name: 'scmCheckout', kind: 'invoke', channel: 'scm:checkout' },
-  { name: 'scmRemote', kind: 'invoke', channel: 'scm:remote' },
-  { name: 'worktreeList', kind: 'invoke', channel: 'worktree:list' },
-  { name: 'worktreeRemove', kind: 'invoke', channel: 'worktree:remove' },
-  { name: 'fsList', kind: 'invoke', channel: 'fs:list' },
-  { name: 'fsRead', kind: 'invoke', channel: 'fs:read' },
-  { name: 'fsWrite', kind: 'invoke', channel: 'fs:write' },
+  // The workbench's fourteen rows (scm:* ×9, worktree:list/remove, fs:* ×3) were
+  // here until plugin-plan.md [internal design doc, not in this repo] §4 W6. The workbench is a PLUGIN now: it
+  // registers those rows itself and they ride the one multiplexed plugin
+  // transport, so the contract shrank by fourteen instead of growing by them.
+  // That is the whole point of the pilot — the surface a feature costs core
+  // should go to zero when the feature moves out, not stay as a permanent tax.
   { name: 'listSessions', kind: 'invoke', channel: 'session:list' },
   { name: 'reservedSessionNames', kind: 'invoke', channel: 'session:reservedNames' },
   { name: 'killSession', kind: 'invoke', channel: 'session:kill' },
@@ -133,6 +124,12 @@ const API_CONTRACT = [
   { name: 'filePeek', kind: 'invoke', channel: 'file:peek' },
   { name: 'fileDiff', kind: 'invoke', channel: 'file:diff' },
   { name: 'fileOpen', kind: 'invoke', channel: 'file:open' },
+  // Reveal in the OS file manager, as distinct from opening the file itself.
+  // An ordinary capability row, NOT part of the frozen five-row plugin transport
+  // — its first caller is Manage Plugins (t22), pointing a user at
+  // ~/.clodex/plugins, which is a dot-directory Finder hides by default and the
+  // single largest obstacle to a packaged user installing a plugin at all.
+  { name: 'fileReveal', kind: 'invoke', channel: 'file:reveal' },
   { name: 'onSessionFileView', kind: 'on', channel: 'session-file-view' },
   { name: 'openExternal', kind: 'invoke', channel: 'app:openExternal' },
   { name: 'getProxySnapshot', kind: 'invoke', channel: 'proxy:snapshot' },
@@ -148,11 +145,15 @@ const API_CONTRACT = [
   { name: 'onRequestSwitchSession', kind: 'on', channel: 'request-switch-session' },
   { name: 'onRequestOpenNewDialog', kind: 'on', channel: 'request-open-new-dialog' },
   { name: 'onRequestOpenDiscovery', kind: 'on', channel: 'request-open-discovery' },
-  { name: 'onRequestOpenWorkbench', kind: 'on', channel: 'request-open-workbench' },
   { name: 'onRequestOpenBoilingPot', kind: 'on', channel: 'request-open-boiling-pot' },
   { name: 'onRequestRenameWorkspace', kind: 'on', channel: 'request-rename-workspace' },
   { name: 'onRequestOpenPreferences', kind: 'on', channel: 'request-open-preferences' },
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
+  // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
+  // exactly like the peers row above — NOT a plugin transport row (the plugin
+  // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
+  // this channel).
+  { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
   { name: 'onRequestOpenPeerSession', kind: 'on', channel: 'request-open-peer-session' },
   { name: 'onRequestOpenAgentsDrawer', kind: 'on', channel: 'request-open-agents-drawer' },
   { name: 'onRequestOpenSkillsDrawer', kind: 'on', channel: 'request-open-skills-drawer' },
@@ -264,7 +265,7 @@ const API_CONTRACT = [
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
   { name: 'newWorkspace', kind: 'invoke', channel: 'workspace:new' },
-  // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
   { name: 'potSnapshot', kind: 'invoke', channel: 'pot:snapshot' },
   // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
   // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
@@ -272,6 +273,23 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
+  // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1, §3.4). EXACTLY these five rows —
+  // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
+  // multiplexed channel over an engine-owned dispatch Map: the injected
+  // transport has no removeHandler, so per-plugin channels could never be
+  // unregistered and `dispose()` would be a lie at every level of the API.
+  // Enable/disable/dispose mutate the Map instead; no Electron-level
+  // unregistration ever happens. Because both frontends build window.api from
+  // this one table, the browser frontend inherits the plugin transport free.
+  { name: 'pluginInvoke', kind: 'invoke', channel: 'plugin:invoke' },
+  { name: 'pluginCatalog', kind: 'invoke', channel: 'plugin:catalog' },
+  { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
+  { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
+  // The intent catalog served over IPC rather than statically required by the
+  // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
+  // that reads its own frozen copy of intent-catalog.js is reading a stale
+  // catalog — and the web bundle's copy is frozen at build time.
+  { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },
 ];
 
 module.exports = { API_CONTRACT };

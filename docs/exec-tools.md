@@ -117,7 +117,7 @@ one file). Registry: `~/.clodex/library/exec/clodex-monitor.json`.
 
 ## clodex-team (second tool)
 
-Teams control plane (docs/teams-design.md). `scripts/clodex-team.js`,
+Teams control plane (teams-design.md [internal design doc, not in this repo]). `scripts/clodex-team.js`,
 registry `~/.clodex/library/exec/clodex-team.json`.
 
 - `roster` (query → replies): resolves the team from the requester's
@@ -126,7 +126,7 @@ registry `~/.clodex/library/exec/clodex-team.json`.
   whose `root` contains that cwd (deepest wins), and answers one line: team
   name, roles (lead starred) + live agents joined by cwd-in-root. Manifests
   live entirely under `~/.clodex/teams/` — zero clodex droppings in project
-  repos (Bogdan ruling 2026-07-19).
+  repos.
 - `retire` (command → silent success): delivers a `team-retire` envelope to
   the TARGET's own socket. The core (`_handleTeamRetire`) authorizes —
   requester running, same team root, no self-retire — then archives

@@ -1,7 +1,7 @@
 // pot-bin.js — materializes the pot CLI closure into ~/.clodex/bin/ at launch.
 //
 // WHY copy at all: a running agent invokes `node "$HOME/.clodex/bin/pot-cli.js"`
-// (the grok skill, docs/boiling-pot-plan.md treatment 1), but in the packaged
+// (the grok skill, boiling-pot-plan.md [internal design doc, not in this repo] treatment 1), but in the packaged
 // app the source lives sealed inside app.asar — not a path an external `node`
 // can require across. So we stamp the CLI + its require closure onto a stable,
 // always-present path at every launch. Overwrite-always kills version drift: the

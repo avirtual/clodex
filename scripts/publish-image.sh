@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Clodex sandbox image publish — docs/sandbox-plan.md M0.
+# Clodex sandbox image publish — sandbox-plan.md [internal design doc, not in this repo] M0.
 #
 #   scripts/publish-image.sh [version]
 #

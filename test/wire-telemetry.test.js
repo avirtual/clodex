@@ -1,7 +1,7 @@
 // Run: node --test
 // W2 step-4 dark bridge: turn.completed receipts shaped into poll-payload
 // parity + the diff stream the cutover validation reads. Covers the field
-// rules from docs/w2-telemetry-flow.md: totals off any line, identity off
+// rules from w2-telemetry-flow.md [internal design doc, not in this repo]: totals off any line, identity off
 // the main line only, error receipts keeping the last real token count,
 // warmth two-state verdict, diff dedupe, and the never-throws contract.
 const { test } = require('node:test');

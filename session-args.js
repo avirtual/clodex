@@ -18,6 +18,14 @@
 // textarea parse. env-scopes is a pure (electron-free) leaf, so requiring it here
 // keeps this module unit-testable.
 const { sanitizeFlat } = require('./env-scopes');
+// The intents allowlist is now COLLAPSED HERE rather than in the renderer (plugin
+// plan R-INT-4 / MUST-FIX 3): the renderer sends the raw CHECKED set and the
+// engine, where the registry is authoritative, decides whether that set collapses
+// to the all-enabled default. A renderer computing it from its own catalog copy
+// would get the collapse wrong the moment a plugin verb exists — or, in the web
+// bundle, the moment its build-time copy went stale. intent-registry is a pure
+// leaf, so requiring it keeps this module unit-testable.
+const { allowlistFromChecked } = require('./intent-registry');
 
 function resolveSessionArgsPatch(patch = {}, prev = null) {
   const {
@@ -48,10 +56,15 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     // Intents gate allowlist. Unlike the fields above (empty = a real clear), the
     // gate's shapes are: an array (incl [] = everything gated, a real value) or null
     // (all-enabled — the absent/default state). The Edit dialog now OWNS it and sends
-    // an explicit value (null when all boxes checked, else the subset); undefined =
+    // the CHECKED set (an array; null when the section is hidden); undefined =
     // untouched keeps the persisted gate for any patch that omits intents.
+    // `allowlistFromChecked` is what turns the checked set into the persisted
+    // value: every non-privileged core box checked → null (the living all-enabled
+    // default, stored as ABSENCE), otherwise the subset in catalog order followed
+    // by any granted plugin verbs. It is idempotent on an already-collapsed value,
+    // so a peer patch echoing a previously persisted array resolves to itself.
     intents: intents !== undefined
-      ? (Array.isArray(intents) ? intents.map(String) : null)
+      ? (Array.isArray(intents) ? allowlistFromChecked(intents.map(String)) : null)
       : (Array.isArray(prev?.intents) ? prev.intents : null),
     // Session env — the Edit dialog OWNS it (LOCAL-only, like execCommands: a peer
     // patch never carries the key, so over the wire this always resolves to

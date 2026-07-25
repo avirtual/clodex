@@ -128,7 +128,7 @@ class RemoteServer {
     // dropped (last-sent dedup). _resizePending holds { cols, rows, timer }.
     this._resizePending = new Map(); // name -> { cols, rows, timer }
     this._resizeLast = new Map();    // name -> 'colsxrows' last flushed
-    // ── Operator auth (docs/remote-auth-plan.md §2–3). The shared auth-token.js
+    // ── Operator auth (remote-auth-plan.md [internal design doc, not in this repo] §2–3). The shared auth-token.js
     // gate; CLODEX_REMOTE_TOKEN threaded from remote-wiring. No token + loopback
     // bind = today's localhost-trust (SSH-tunnel peers untouched). No token +
     // non-loopback bind = the breach condition → fail-closed 503 unless the

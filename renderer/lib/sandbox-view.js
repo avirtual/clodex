@@ -1,6 +1,6 @@
 'use strict';
 // sandbox-view.js — pure presentation decisions for the Sandbox dialog
-// (docs/sandbox-plan.md M2). Kept as a leaf (no DOM, no window.api) so the
+// (sandbox-plan.md [internal design doc, not in this repo] M2). Kept as a leaf (no DOM, no window.api) so the
 // copy-selection logic — which is the part with real branches — is unit-tested
 // directly; renderer.js does only the DOM plumbing around these returns.
 //

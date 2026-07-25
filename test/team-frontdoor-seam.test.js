@@ -1,5 +1,5 @@
 // Run: node --test
-// The engine→ipc-handlers seam for the teams front door (docs/teams-design.md,
+// The engine→ipc-handlers seam for the teams front door (teams-design.md [internal design doc, not in this repo],
 // tasks/7-front-door REWORK 1). The green suite once masked a DEAD front door:
 // createTeam/addRole/resolveTeam/listTeams were threaded into the SessionManager
 // deps but NOT createEngine's return, so ipc-handlers destructured `undefined`
