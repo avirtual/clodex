@@ -37,7 +37,8 @@ plugins/<id>/
   manifest.json    required
   engine.js        optional — { activate(host), deactivate?() }   plain Node, no Electron
   renderer.js      optional — { activate(rhost) -> dispose? }     DOM, one per window
-  style.css        optional — injected as a per-plugin <style>, per window
+  style.css        optional — one <style> per plugin per window, injected
+                              VERBATIM and unscoped (§14)
 ```
 
 At least one half is required. A plugin with only an engine half is a pure data
@@ -649,10 +650,18 @@ what 1–3 are for.
 All seven are registered from your **renderer** half, all return a dispose
 function (or, for overlays, an object containing one), and all take a spec whose
 `id` is a plain string that the host namespaces to `"<yourId>:<id>"` before it
-reaches the DOM. **The prefix is the host's business, in both directions**: you
-never write it, and you never see it. Anything the host hands back to one of your
-callbacks — `onPick`'s `act` (§6.5) is the one case — arrives **unprefixed**, as
-the bare string you wrote, so you always compare against your own value.
+reaches the DOM. **For `id`, the prefix is the host's business in both
+directions**: you never write it, and you never see it. Anything the host hands
+back to one of your callbacks — `onPick`'s `act` (§6.5) is the one case —
+arrives **unprefixed**, as the bare string you wrote, so you always compare
+against your own value.
+
+**That rule covers `id` and nothing else.** In particular it does *not* extend to
+the class fields (`accentClass`, and `cls` on a row badge): those reach the DOM
+**verbatim**, exactly as you wrote them. The asymmetry is easiest to see on a row
+badge, where both appear on the same element — the chip carries a namespaced
+`data-plugin-badge="<yourId>:<id>"` and an un-namespaced `class`. So write your
+bare class name in `style.css` and it matches.
 
 **Everything you supply is data, never HTML.** Labels, tips and badge text are
 escaped by the host and inserted as text. This is not only an injection defence:
@@ -708,9 +717,11 @@ px-bold'` applies both — so you do not need one class per state.
 
 The same field appears on the segment (§6.2) and, under the name `cls`, on the
 row badge (§6.4). The two names mean the same thing and behave the same way; the
-difference is historical and not a signal. In both cases the host escapes what
-you pass and appends it to its own class, so you are adding a class, never
-replacing the host's.
+difference is historical and not a signal. In every case the host appends what
+you pass to its own class, so you are adding a class, never replacing the
+host's — and it appends it **verbatim**: unlike a spec's `id` (§6), a class field
+is never namespaced, so the selector you write in `style.css` is the one that
+matches. Keep it distinctive; nothing separates your classes from core's.
 
 ### 6.2 `rhost.ui.statusBar.addSegment(spec)`
 
@@ -1304,6 +1315,17 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   you, and confine your own path joins (a lexical check is not enough — a symlink inside the cwd
   resolves out of it). Closing the workspace half in the host would mean carrying a caller workspace
   on the transport — additive, but not yet decided.
+- **Your `style.css` is not scoped.** The host injects it verbatim as a single
+  `<style data-plugin-style="<yourId>">` in the shared document — the text is not
+  rewritten, wrapped or prefixed, so your selectors match anywhere in the window,
+  including core's own DOM and other plugins' surfaces. Nothing stops a plugin
+  restyling the app; the `data-plugin-style` attribute exists so the sheet can be
+  removed wholesale at disable, not to confine it. This is the same posture as
+  the rest of §13 — **contract, not containment** — and the same reasoning: with
+  `contextIsolation: false` a plugin that wanted to restyle core could do it from
+  JavaScript regardless, so a CSS scoper would buy appearance rather than safety.
+  Keep your selectors under your own class names (`cls`/`accentClass` reach the
+  DOM verbatim, §6) and prefix them so two plugins do not collide.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
 - **No renderer-side event subscription** (§9). Design against pull-on-open.
 - **`rhost.sessions` has no `listAll()`** and never will; if you need the global

@@ -328,6 +328,20 @@ test('rowBadge paints, updates and removes a chip in .session-badges', () => {
   assert.equal(chip.textContent, '3');
   assert.equal(chip.getAttribute('data-tip'), 'three', 'data-tip, not title — the tooltip is body-delegated');
 
+  // The ASYMMETRY, pinned deliberately as a pair with the assertion above: the
+  // badge's `id` IS namespaced into data-plugin-badge, and its `cls` is NOT —
+  // it reaches className verbatim. Both facts live on this one element, which
+  // is exactly why a future reader would "tidy" cls into matching id. Doing so
+  // would silently break every plugin stylesheet in existence (docs/plugin-api
+  // .md §6 tells authors to write their bare class name), with nothing else in
+  // the suite going red. A doc sentence is a claim no execution passes through.
+  badgeState.set('seat-a', { text: '3', cls: 'gb-branch gb-detached' });
+  host.applyRowBadges(row);
+  const classed = badges.querySelector('[data-plugin-badge="demo:count"]');
+  assert.equal(classed.className, 'session-plugin-badge gb-branch gb-detached',
+    'cls is appended UNPREFIXED and verbatim, and a space-separated list survives whole');
+  assert.ok(!classed.className.includes('demo:'), 'cls must never pick up the id namespace');
+
   badgeState.set('seat-a', { text: '9' });
   host.applyRowBadges(row);
   assert.equal(badges.querySelectorAll('[data-plugin-badge="demo:count"]').length, 1, 'updated in place, not duplicated');

@@ -1,15 +1,16 @@
 # git-branches — install and verify
 
-Confirms the five things that stub harnesses cannot reach. Assumes the app is
-running and you have at least one local session whose `cwd` is a git repo.
+Assumes the app is running and you have at least one local session whose `cwd`
+is a git repo.
 
-**On ordering.** You asked for the five in the order you listed them. Two of them
-cannot be checked in that order: `cls` and stylesheet scoping are only observable
-once a badge has actually painted, and on a cold cache the *only* thing that can
-paint it is `requestRelayout`. So relayout is checked first, as the prerequisite
-it is. Original numbering is carried in brackets.
+**Read this first.** This file used to list five behaviours "no test harness
+reaches". That conflated two different claims — *no harness reaches it* and *no
+source read settles it* — and four of the five turned out to be answerable
+without you. Those are now recorded below under **Settled by source**, with
+file:line, and are not yours to check. What remains in the manual section is the
+residue: things a running app genuinely shows and a source read cannot.
 
-Every step names what failure looks like. None of them are softened — if a step
+Every manual step names what failure looks like. None are softened — if a step
 fails, that is the point.
 
 ---
@@ -22,56 +23,24 @@ fails, that is the point.
 
 ---
 
-## 1. [was #5] `requestRelayout()` actually causes a re-render
+## 1. The grant, and the verb replying through it
 
-This is the load-bearing one: without it, `rowBadge` cannot ever show data that
-took I/O to fetch, and §6.4's documented cache-then-relayout idiom does not work.
-
-**Do:** after the restart in step 0, look at the sidebar and **touch nothing** — no clicks, no hover, no resize, no session switching — for 15 seconds.
-**Observable:** a branch chip appears on the git-repo session's row on its own, within about a second.
-**If not:** if the row stays bare until you click another session, resize the window, or create a session, then `requestRelayout()` is not triggering a pass and the badge is only riding on renders caused by something else. That is a doc/core finding, not a plugin bug — on the first pass `resolve()` has an empty cache and correctly returns `null` for every row, exactly as §6.4 prescribes.
-
----
-
-## 2. [was #2] `cls` becomes a CSS class on the chip
-
-**Do:** in a second git session, run `git checkout --detach` and wait one refresh (≤10 s). You now have one normal-branch chip and one detached chip on screen.
-**Observable:** both chips are monospace and slightly dimmed against the row label; the detached one is *italic* and shows a 7-character sha rather than a name.
-**If not:** if the text is right but the styling is absent on both, `cls` is not reaching the DOM as a class name — §6.4 names the field but never says what it is (§6.1's equivalent is `accentClass` and *is* explained).
-
-**Then confirm precisely, in DevTools:** inspect the chip element and read its class list.
-
-- `gb-branch` present → as documented-by-analogy, and my `style.css` matches.
-- `git-branches:gb-branch`, or any prefixed form → **finding**: the host namespaces `cls` the way §6 says it namespaces slot `id`s, but §6.4 never says so, so every plugin's `style.css` selector will silently fail to match. My CSS would need the prefix.
-- class absent, text present → `cls` is accepted and discarded.
-
----
-
-## 3. [was #3] Whether `style.css` is scoped for the plugin
-
-**Do:** in the window's DevTools console, run:
-
-```js
-[...document.querySelectorAll('style')].filter(s => s.textContent.includes('gb-branch')).map(s => s.textContent.slice(0, 220))
-```
-
-**Observable:** exactly one match, and its rules read verbatim as written — `.gb-branch, .gb-unborn, .gb-detached { … }`.
-**If not:** if the selectors come back rewritten or wrapped (e.g. `[data-plugin="git-branches"] .gb-branch`), the host scopes plugin CSS — which is good, but is stated nowhere in §1, §2 or §6, and means any plugin styling something outside its own container fails silently. Zero matches → the `style` manifest field did not load at all; check **Manage Plugins…** for a path refusal (§2 forbids paths escaping the plugin directory).
-
----
-
-## 4. [was #1] The verb replies, proving `handler(handle, intent)`
+This is the one behaviour from the original five with a real live residue. The
+handler signature itself is pinned in CI — `test/session-manager.test.js:4892`
+asserts the handler runs, that the handle carries exactly
+`['cwd','inject','isAlive','name','type','workspaceId']`, that it names the
+**emitting** session, and that the reply rides `handle.inject`. What that test
+cannot exercise is the **grant**: it hands the seat's allowlist in directly
+(`:4871`), so the checklist UI and the effect of ticking it are untested.
 
 **Grant it first — it does nothing until you do.** In the **per-seat intent
-checklist**, grant the verb `branch` for the seat you are about to test (it is
-listed as **"Report git branch"**). §7 forces every plugin verb to be privileged:
-off for every seat until explicitly granted.
+checklist**, grant the verb `branch` for the seat you are about to test (listed
+as **"Report git branch"**). §7 forces every plugin verb privileged: off for
+every seat until explicitly granted.
 
-**If you skip the grant, the failure is total silence** — the agent's
-`[agent:branch]` line produces no reply, no toast, no error, and **nothing in the
-app log under `plugin:git-branches`**, because the handler is never called at all.
-Silence here means "not granted", not "plugin broken". That is the one failure in
-this document with no observable of its own, which is why it is called out.
+**If you skip the grant, the failure is total silence** — no reply, no toast, no
+error, and nothing in the app log under `plugin:git-branches`, because the
+handler is never called. Silence means "not granted", not "plugin broken".
 
 **Do:** in a granted session whose `cwd` is a git repo, have the agent emit exactly:
 
@@ -79,42 +48,73 @@ this document with no observable of its own, which is why it is called out.
 [agent:branch]
 ```
 
-**Observable:** on the agent's **next turn** it receives `[git-branches] branch: <name>`, and `<name>` matches the chip on that session's row.
+**Observable:** on the agent's **next turn** it receives `[git-branches] branch: <name>`, and `<name>` matches the chip on that session's row. Exactly **one** such line, not two.
 **If not:**
-- Reply names a *different* session → the first argument is not the emitting session's handle.
-- App log shows `[agent:branch] fired without a usable session handle` → the first argument is not a `SessionHandle`; tell me its shape and I will rewire again.
-- Nothing at all, and the verb *is* granted → `parse` is not matching; confirm the line was emitted bare on its own line.
+- **Verb absent from the checklist**, or ticking it changes nothing → the finding. The registry row exists (a plugin verb is privileged by construction), but the seat-facing path does not honour it. This is the leg no test covers.
+- Reply names a *different* session, or the log shows `fired without a usable session handle` → contradicts `session-manager.test.js:4892`; tell me, because a green test is then lying.
+- **Two or more replies** → dispatch is per-feed, not per-line. Tell me the count: it is the number of live feeds, and it contradicts the three-legged source argument in step 5 below. `inject()` is not idempotent, so this is the one wrong answer that silently doubles every reply.
 
-Worth also doing once in a **non-repo** session (expect `not a git repository`) and once in a **remote** session (expect `not available for remote sessions`) — those two paths run through `fsScope`, which is the guard that keeps a plugin off a peer machine's filesystem.
-
----
-
-## 5. [was #4] Once per line, or once per input feed
-
-**Settled in source since this was written** — PTY line-scanning is gated to bash
-sessions and agent intents arrive only via the JSONL turn-text path, so the two
-feeds are mutually exclusive per session: one matched line, one handler call.
-This step is now a cheap confirmation that the observable matches the source,
-not an open question. Still worth doing, because `inject()` is not idempotent and
-this is the only step where a wrong answer would silently double every reply.
-
-**Do:** in the granted session from step 4, emit `[agent:branch]` **once**. Count the `[git-branches] branch: …` lines that come back on the next turn.
-**Observable:** exactly one.
-**If not:** two or more means dispatch is per-feed, not per-line, and §7's "your verb is live on every input feed at once" describes dispatch rather than registration. **Tell me the count** — it is the number of live feeds, and it changes the code: I would need a per-emission identifier to deduplicate correctly (see the answer in my reply, and NOTES.md ▸ Missing #5). Session identity does not help here; it cannot distinguish one line delivered twice from an agent legitimately asking twice.
+Worth also doing once in a **non-repo** session (expect `not a git repository`) and once in a **remote** session (expect `not available for remote sessions`) — those two paths run through `fsScope`.
 
 ---
 
-## 6. Three quick ones from the original brief
+## 2. Two windows, disable, re-enable
 
-- **Two windows:** open a second workspace window with a git session. Both windows show correct chips at the same time, and each was filled by its own renderer activation.
-- **Disable cleanly:** untick **Plugins ▸ Git Branches** with both windows open. Every chip disappears from both immediately, the **Preferences ▸ Git Branches** section is gone, and no error appears in either window's console over the following minute (a leaked timer would surface as a failed `invoke`).
+Per-window activation and teardown; no harness holds two real BrowserWindows.
+
+- **Two windows:** open a second workspace window with a git session. Both windows show correct chips at the same time, each filled by its own renderer activation.
+- **Disable cleanly:** untick **Plugins ▸ Git Branches** with both windows open. Every chip disappears from both immediately, the **Preferences ▸ Git Branches** section is gone, and no error appears in either console over the following minute (a leaked timer would surface as a failed `invoke`).
 - **Re-enable live:** tick it again without restarting. Chips come back in both windows within one refresh interval, and the log shows `plugin:git-branches activated` exactly once.
+
+---
+
+## Settled by source — do not hand-check these
+
+Each was in the original five. Each is now answered, with the code that answers
+it. Recorded here because the answer is a fact we own, not because the step was
+unimportant.
+
+**`requestRelayout()` causes a re-render.** Closed chain, no gap:
+`renderer/plugin-host.js:244` calls the injected `scheduleSidebarRelayout` →
+`renderer/renderer.js:1069-1072` debounces 250 ms then calls
+`refreshSidebarView()` → `:971-988` loops every local row → `applyRowBadges(el)`
+at `:982`. The plugin→core seam is pinned by `test/plugin-host.test.js:371`
+("the plugin never reaches refreshSidebarView directly"). Only the four core
+lines past that injected fake are audited by reading rather than by running;
+driving `refreshSidebarView` under faked timers was considered and rejected as
+scaffolding costing more than it protects.
+
+**`cls` becomes a CSS class, unprefixed.** `renderer/plugin-host.js:268`
+concatenates `cls` onto `session-plugin-badge` **verbatim**. So the selectors in
+this plugin's `style.css` — `.gb-branch`, `.gb-unborn`, `.gb-detached` — are
+correct as written, and no prefixed form was ever going to appear. Note the
+asymmetry on the same element: the badge **`id`** *is* namespaced
+(`data-plugin-badge="git-branches:branch"`, `:258`/`:265`). Both halves are now
+pinned as a deliberate pair in `test/plugin-host.test.js`, and
+`docs/plugin-api.md` §6 states the rule scoped to `id` rather than as a general
+one.
+
+**`style.css` is not scoped.** `renderer/plugin-host.js:583-592` creates one
+`<style data-plugin-style="<id>">` per plugin per window and assigns
+`textContent = String(css)` — verbatim, never rewritten or wrapped. A plugin's
+CSS matches anywhere in the window, including core's DOM. The
+`data-plugin-style` attribute exists so the sheet can be removed wholesale at
+disable, not to confine it. Now stated in `docs/plugin-api.md` §14 as a limit,
+in the same "contract, not containment" register as the rest of the posture.
+
+**Once per line, not once per feed.** Three independent legs: `intentSource` is
+`'wire'` xor `'jsonl'` per session; `_scanPtyOutput` is gated behind
+`if (!agentType)` (`session-manager.js:1519`) so PTY line-scanning never applies
+to an agent; and `_dispatchPluginIntent` refuses non-agent sessions (`:3170`).
+The wire path additionally carries a per-batch `fired` Set (`:521-530`). Step 1
+above still counts the replies, because this is the one wrong answer that would
+be silent.
 
 ---
 
 ## Reporting back
 
-For anything that fails, the useful payload is: the step number, the observable
-you actually got, and — for steps 2 and 4 — the DevTools class list or the log
-line verbatim. Steps 2, 3 and 5 failing are findings against the document.
-Steps 1, 4 and 6 failing are findings against my code.
+For anything that fails: the step number, the observable you actually got, and —
+for step 1 — the log line verbatim. A failure in the **grant** leg of step 1 is a
+finding against core. A doubled reply is a finding against the source argument
+above. Everything in step 2 failing is a finding against my code.
