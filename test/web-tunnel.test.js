@@ -68,6 +68,28 @@ function forwardSpec(call) {
 // tunnel whose ssh is up is not failing, and must not be capped. So the box has
 // to be failed repeatedly, across the real backoff (1s, then 2s), which is why
 // this polls for a few seconds rather than a few hundred ms.
+// HARNESS TIMING CONTRACT — read before changing giveUpMs at any call site.
+//
+// The supervisor retires its give-up clock when a spawn SURVIVES `_stableMs`
+// (web-tunnel.js:184), and `_stableMs` is derived as floor(giveUpMs / 2). This
+// helper kills each child from a polling loop, so the child's apparent lifetime
+// is the poll latency. If that latency ever reaches `_stableMs`, the child
+// reads as "genuinely worked", the clock retires, and the tunnel can NEVER
+// reach its cap — the loop then spins to `timeoutMs` and fails.
+//
+// That is a harness race, not a product bug, and it bit exactly once: with
+// giveUpMs 40-50 (→ _stableMs 20-25ms) against a 25ms poll, the margin was
+// zero. It passed alone and failed under full-suite load, where a 25ms timer
+// slips. So the invariant is now explicit and generous:
+//
+//     POLL_MS  <<  _stableMs  ==  floor(giveUpMs / 2)
+//
+// Call sites pass giveUpMs >= 400 (→ _stableMs >= 200ms, a 40x margin over the
+// 5ms poll). Do not shrink giveUpMs to make a test faster; the cap it exercises
+// is reached via BACKOFF_MIN_MS (1s), not via the deadline, so a smaller
+// deadline buys no speed and only narrows this margin.
+const POLL_MS = 5;
+
 async function failUntilGaveUp(get, children, { stderr = '', timeoutMs = 6000 } = {}) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -78,7 +100,7 @@ async function failUntilGaveUp(get, children, { stderr = '', timeoutMs = 6000 } 
       if (stderr) child.stderr.emit('data', Buffer.from(stderr));
       child.emit('exit', 255);
     }
-    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, POLL_MS));
   }
   return get().state === 'gave-up';
 }
@@ -149,7 +171,7 @@ test('url() is null in every state except up — there is no dead placeholder', 
   // object stays alive. A web view has no such need and a dead URL in a browser
   // is a broken page, so this side simply has no placeholder to leak.
   const { calls, children, spawnFn } = makeSpawnRecorder();
-  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {}, giveUpMs: 50 });
+  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {}, giveUpMs: 400 });
   assert.strictEqual(tun.url(), null, 'before start');
   assert.strictEqual(tun.status().url, null, 'and the status agrees');
   tun.start();
@@ -172,7 +194,7 @@ test('SECURITY-adjacent: 127.0.0.1:1 never appears — the dead-peer sentinel is
   // operator would get a browser tab at a closed port. Written so it fails if
   // anyone introduces a placeholder here.
   const { calls, children, spawnFn } = makeSpawnRecorder();
-  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {}, giveUpMs: 50 });
+  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {}, giveUpMs: 400 });
   const seen = [];
   const record = () => { seen.push(tun.url(), tun.status().url); };
   record();
@@ -243,7 +265,7 @@ test('give-up cap: a box that never comes up stops retrying and SAYS why', async
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const states = [];
   const tun = new WebTunnel({
-    id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, giveUpMs: 40,
+    id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, giveUpMs: 400,
     onState: (_id, st) => states.push(st.state),
   });
   tun.start();
@@ -262,7 +284,7 @@ test('a tunnel that DID come up is never capped — a blip is not a failure', as
   // tab, a wifi drop must keep retrying, or looking away for two minutes would
   // kill a working view.
   const { calls, children, spawnFn } = makeSpawnRecorder();
-  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, giveUpMs: 40, onState: () => {} });
+  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, giveUpMs: 400, onState: () => {} });
   tun.start();
   await waitFor(() => calls.length === 1, 'first spawn (this one comes UP)');
   await new Promise((r) => setTimeout(r, 80));   // longer than giveUpMs
@@ -376,7 +398,7 @@ test('re-opening after the remote web port MOVED replaces the tunnel', async () 
 
 test('re-opening a GAVE-UP tunnel tries again (the retry affordance is real)', async () => {
   const { calls, children, spawnFn } = makeSpawnRecorder();
-  const mgr = new WebTunnelManager({ spawnFn, onState: () => {}, giveUpMs: 40 });
+  const mgr = new WebTunnelManager({ spawnFn, onState: () => {}, giveUpMs: 400 });
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   await failUntilGaveUp(() => mgr.statusFor('p1'), children);
