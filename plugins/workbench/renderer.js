@@ -658,12 +658,20 @@ module.exports.activate = (rhost) => {
     $('workbench-close').addEventListener('click', () => surface.close());
   }
 
-  // TEMPORARY BRIDGE, DELETED IN W4. Core still owns the two entry points
-  // (`#btn-workbench` in the sidebar footer and the View ▸ Workbench menu item),
-  // and W4 is the step that replaces them with `rhost.ui.sidebar.footerButton`.
-  // Until then core dispatches this DOM event and we open. Through the host's
-  // wrapper so disable removes it.
-  rhost.addEventListener(document, 'clodex:open-workbench', () => surface.open());
+  // §2.2 — the plugin's own entry point, replacing core's `#btn-workbench` and
+  // the View ▸ Workbench menu item (both deleted in W4 along with the temporary
+  // DOM-event bridge that stood in for them). The host renders the button into
+  // `#sidebar-footer` with the same glyph+label structure as `#inbox-open`, and
+  // removes it on disable — which is the point: the entry point now has the
+  // same lifetime as the feature behind it, instead of outliving it as dead
+  // chrome that opens nothing.
+  rhost.ui.sidebar.footerButton({
+    id: 'open',
+    glyph: '◫',
+    label: 'Workbench',
+    tip: 'Workbench files, source control, and worktrees for a session',
+    onClick: () => surface.open(),
+  });
 };
 
 module.exports.deactivate = () => {

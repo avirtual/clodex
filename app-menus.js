@@ -482,13 +482,11 @@ function createAppMenus(deps) {
       {
         label: 'View',
         submenu: [
-          {
-            label: 'Workbench…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-workbench');
-            },
-          },
+          // No "Workbench…" item: the workbench is a plugin now and owns its
+          // own entry point (a sidebar footer button it registers itself). A
+          // core menu item would be chrome that survives disabling the plugin
+          // and opens nothing — and menus are built in the MAIN process, which
+          // has no way to ask a renderer-side plugin whether it is loaded.
           {
             label: 'Boiling Pot…',
             click: () => {

@@ -3809,15 +3809,10 @@ createInboxDrawer();
 // state. Opened from the View menu ("Boiling Pot…") via request-open-boiling-pot.
 createPotDrawer();
 
-// Workbench — now a PLUGIN (plugins/workbench/), not a core popover: it owns its
-// own overlay, DOM and data path, and core knows nothing about it beyond these
-// two entry points. Both are TEMPORARY and die in W4, when the plugin registers
-// its own `sidebar.footerButton`; until then they dispatch a DOM event the
-// plugin's renderer half listens for, so core holds no handle to the plugin.
-const openWorkbench = () => document.dispatchEvent(new CustomEvent('clodex:open-workbench'));
-const btnWorkbench = document.getElementById('btn-workbench');
-if (btnWorkbench) btnWorkbench.addEventListener('click', () => openWorkbench());
-if (window.api.onRequestOpenWorkbench) window.api.onRequestOpenWorkbench(() => openWorkbench());
+// Workbench — a PLUGIN (plugins/workbench/). Core has NO workbench code left:
+// no markup, no CSS, no entry point, no data rows. It registers its own sidebar
+// footer button through the plugin host (§2.2), so the button exists exactly
+// when the plugin does.
 
 // ---------------------------------------------------------------------------
 // Peered Clodexes — self-contained subsystem (peers-ui.js). Owns the peer bar,

@@ -114,8 +114,6 @@ test('W3: core styles.css keeps the host container rule and no plugin interior',
   for (const m of css.matchAll(/([^{}]+)\{[^{}]*\}/g)) {
     for (const sel of m[1].split(',')) {
       const s = sel.trim();
-      // `#btn-workbench` is core's sidebar button until W4 deletes it.
-      if (/^#btn-workbench\b/.test(s)) continue;
       if (/(^|[.#\s])(wb-|workbench-|workbench\b)/.test(s)) strays.push(s);
     }
   }

@@ -639,3 +639,114 @@ its `request-open-workbench` emit (`app-menus.js:489`), the
 (`test/api-contract.test.js:88`), the renderer subscription
 (`renderer/renderer.js:~3781`), and W2's temporary `clodex:open-workbench`
 CustomEvent bridge on BOTH sides (deviation (g) retires here).
+
+---
+
+## W4 — DONE. Suite 2398/2398 (+3 over W3's 2395).
+
+Core now has NO workbench entry point of its own. The plugin brings its own way
+in, so the button exists exactly as long as the feature behind it does.
+
+### IN — `rhost.ui.sidebar.footerButton` (§2.2)
+
+`plugins/workbench/renderer.js` registers `{ id:'open', glyph:'◫', label:
+'Workbench', tip:…, onClick: () => surface.open() }`. Shape taken from the CODE
+(`renderer/plugin-host.js:235-245, 277-313`), not the plan: the host renders
+`<button data-plugin-footer=…>` into `#sidebar-footer` with three spans
+(`.footer-glyph`, `.footer-label`, `.footer-badge`), reconciling on every
+register/dispose, so the button appears at activate and vanishes at disable
+without either side owning the other's DOM. `tip` becomes `data-tip` — the same
+body-delegated tooltip the deleted `#btn-workbench` used, so the hover text is
+unchanged.
+
+The glyph is `◫` (U+25EB) — the character `&#9707;` in the deleted markup.
+
+### OUT — five core sites, each grepped first
+
+1. `renderer/index.html:83-86` — the `#btn-workbench` `<button>`. Replaced by a
+   comment naming what appends there now.
+2. `renderer/styles.css:309/323` — `#btn-workbench, #inbox-open` and its
+   `:hover`. **NOT simply deleted**: the selector became
+   `#inbox-open, #sidebar-footer [data-plugin-footer]`, so plugin footer buttons
+   inherit the footer's native look. See the decision below.
+3. `app-menus.js:483-489` — the View ▸ "Workbench…" item and its
+   `win.webContents.send('request-open-workbench')` emit (GAP G5's site).
+4. `api-contract.js:151` — the `onRequestOpenWorkbench` row.
+5. `renderer/renderer.js:3812-3820` — the require-less init block: the
+   `#btn-workbench` click wiring, the `onRequestOpenWorkbench` subscription, AND
+   W2's temporary `clodex:open-workbench` CustomEvent dispatch. Its twin in
+   `plugins/workbench/renderer.js:661-666` went with it. **Deviation (g)
+   retires here as designed.**
+
+Residual grep for `btn-workbench` / `request-open-workbench` /
+`onRequestOpenWorkbench` / `clodex:open-workbench` across all js/html/css:
+only prose comments remain (`plugin-loader.js:7`, the new comments at the two
+sites above) plus `docs/plugin-plan.md`, which is the plan and stays as written,
+and `web-dist/index.html`, a BUILT artifact (regenerated — G7/W8).
+
+### THE DECISION W4 FORCED: who styles a plugin's footer button?
+
+Deleting `#btn-workbench` from the grouped rule would have left the plugin's
+button unstyled — a bare `<button>` in a styled footer — and the plan does not
+say whose problem that is. Two options:
+
+(a) the plugin ships the button's CSS in its own `style.css`;
+(b) core styles `#sidebar-footer [data-plugin-footer]` by the HOST's own
+    attribute.
+
+**Took (b).** The sidebar footer's chrome is core's, not any plugin's: a plugin
+that styled its own footer row could drift from `#inbox-open` on every theme
+change, and four plugins would mean four slightly different buttons in one
+8px-padded strip. Styling by the host's attribute means a plugin gets a native
+button by asking for one, and cannot override the footer's look. Same reasoning
+as `.plugin-overlay` in W2 (deviation (f)) — host-created chrome is host-styled.
+Consistent, and it keeps the plugin's stylesheet strictly about its interior.
+
+Also added `.footer-badge:empty { display: none; }` — the host creates the badge
+span unconditionally, and as a flex item an empty one draws the row's 8px gap
+after the label. No pill styling: nothing calls `badge()` yet and inventing its
+look before a caller exists would be guessing.
+
+**Flagged as deviation (k)** — a second piece of CORE css added during the
+phase where CSS moves out, permanent, for the same host-contract reason as (f).
+
+### `test/plugin-style.test.js`'s W4 debt paid
+
+Its move-gate carried an explicit `#btn-workbench` exception with a comment
+saying W4 must remove it. Removed. The gate now asserts NO `wb-`/`workbench-`
+selector of any kind survives in `renderer/styles.css`, with no exceptions.
+
+### The contract count moved DOWN — the expected shape of this step
+
+`test/api-contract.test.js` pins the surface size in three places. Deleting
+`onRequestOpenWorkbench` took it **235 → 234**. Updated all three (test name +
+two assertions) and reworded the workbench comment block: the fourteen data rows
+are still there and are W6's business; only the open event went in W4.
+
+This is the first row this migration has actually removed from core's contract,
+and it is worth stating plainly: the number going down is the deliverable, not a
+test that needed fixing.
+
+### Tests — `test/workbench-plugin.test.js` +3
+
+The engine half was already covered; the renderer half's ENTRY POINT was not,
+and after W4 nothing else in the suite opens the workbench — an unreachable
+feature would have been a silent pass. `activate` touches no DOM (markup is
+built lazily in `mount`), so a stub rhost is enough:
+
+- registers exactly ONE footer button, with a glyph, a label and an onClick;
+- `activate` alone opens nothing; `onClick()` opens the overlay surface;
+- **the W2 bridge is gone** — the stub's `addEventListener` THROWS, so
+  `activate()` merely completing is the assertion. That pins the bridge out:
+  it cannot creep back as a convenience.
+
+### NEXT: W5 — the data path moves.
+Move `git-scm.js` AND `fs-explorer.js` (deviation (c)) into
+`plugins/workbench/`; switch the engine half to local `require('./git-scm')` /
+`require('./fs-explorer')`; DELETE the two temporary `host.lib` entries
+(deviation (b) retires) — `engine.js`'s two requires + the pass-through,
+`plugin-host-engine.js`'s two deps + its `lib` freeze, and the fixture/assertions
+marked DELETE-IN-W5 in `test/plugin-host-engine.test.js`. Repoint
+`test/git-scm.test.js`, `test/fs-explorer.test.js`, and the two entries in
+`test/free-identifier-leaks.test.js`'s SCANNED_MODULES. `git-worktree.js` STAYS
+core as `host.lib.gitWorktree` (permanent). Use `git mv` so history follows.

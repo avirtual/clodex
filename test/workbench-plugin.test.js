@@ -184,3 +184,58 @@ test('deactivating the plugin removes every row from the dispatch map', () => {
     'host-driven teardown, not the plugin\'s own deactivate()');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── The RENDERER half's ENTRY POINT (§2.2 / W4) ─────────────────────────────
+// W4 deleted core's `#btn-workbench`, the View ▸ Workbench item and the
+// `onRequestOpenWorkbench` contract row. The plugin must therefore bring its own
+// way in, or the feature is unreachable — a silent, test-free failure mode,
+// since nothing else in the suite opens the workbench. `activate` touches no DOM
+// (the markup is built lazily in `mount`, at first open), so a stub rhost is
+// enough to pin the registration and the click path.
+const workbenchRenderer = require('../plugins/workbench/renderer');
+
+function activateRendererHalf() {
+  const rec = { overlays: [], footerButtons: [], opened: 0 };
+  const rhost = {
+    ui: {
+      sidebar: {
+        footerButton(spec) { rec.footerButtons.push(spec); return () => {}; },
+      },
+      surfaces: {
+        overlay(spec) {
+          rec.overlays.push(spec);
+          return { open: () => { rec.opened += 1; }, close: () => {} };
+        },
+      },
+    },
+    addEventListener() { throw new Error('the W2 open-workbench bridge should be gone'); },
+  };
+  workbenchRenderer.activate(rhost);
+  return rec;
+}
+
+test('W4: the renderer half registers its OWN sidebar footer button', () => {
+  const rec = activateRendererHalf();
+  assert.equal(rec.footerButtons.length, 1, 'exactly one entry point');
+  const [btn] = rec.footerButtons;
+  assert.equal(typeof btn.onClick, 'function');
+  assert.ok(btn.label, 'the button needs a label — the host renders glyph + label');
+  assert.ok(btn.glyph, 'and a glyph, matching #inbox-open\'s structure');
+});
+
+test('W4: clicking the footer button opens the overlay surface', () => {
+  const rec = activateRendererHalf();
+  assert.equal(rec.overlays.length, 1, 'one overlay surface');
+  assert.equal(rec.opened, 0, 'activation alone must not open anything');
+  rec.footerButtons[0].onClick();
+  assert.equal(rec.opened, 1, 'the button opens the surface it registered');
+});
+
+test('W4: the temporary core→plugin DOM bridge is gone', () => {
+  // W2 kept `#btn-workbench` alive by having core dispatch a
+  // `clodex:open-workbench` CustomEvent that this half listened for. W4 retires
+  // it: the stub rhost above throws on ANY addEventListener, so activate()
+  // completing at all is the assertion. Pinned so the bridge cannot creep back
+  // as a "convenience" — it was a coupling core is now free of.
+  assert.doesNotThrow(activateRendererHalf);
+});
