@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -475,8 +475,8 @@ body {
   border-top: 1px solid var(--border);
   padding: 6px 8px;
 }
-#btn-workbench,
-#inbox-open {
+#inbox-open,
+#sidebar-footer [data-plugin-footer] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -489,14 +489,17 @@ body {
   cursor: pointer;
   font-size: 12px;
 }
-#btn-workbench:hover,
-#inbox-open:hover {
+#inbox-open:hover,
+#sidebar-footer [data-plugin-footer]:hover {
   background: var(--sidebar-hover);
   color: var(--text);
 }
 .footer-glyph {
   font-size: 13px;
   line-height: 1;
+}
+.footer-badge:empty {
+  display: none;
 }
 .inbox-count {
   margin-left: auto;
@@ -3182,6 +3185,53 @@ body {
 .prefs-checkboxes input[type=checkbox] {
   margin: 0;
 }
+#prefs-plugins-section.hidden {
+  display: none;
+}
+.plugin-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+}
+.plugin-row:first-child {
+  border-top: none;
+}
+.plugin-row input[type=checkbox] {
+  margin: 2px 0 0;
+}
+.plugin-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.plugin-row-name {
+  font-size: 13px;
+}
+.plugin-row-version {
+  opacity: 0.6;
+  font-size: 11px;
+  margin-left: 6px;
+}
+.plugin-row-note {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+.plugin-row-note.warn {
+  color: var(--warn);
+  opacity: 1;
+}
+.plugin-row button {
+  align-self: center;
+}
+#prefs-dialog [data-plugin-section] h3 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  opacity: 0.7;
+  letter-spacing: 0.5px;
+}
 #dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
@@ -3660,7 +3710,7 @@ body {
 #pot-drawer.hidden {
   display: none;
 }
-#workbench-overlay {
+.plugin-overlay {
   position: fixed;
   inset: 0;
   z-index: 72;
@@ -3670,449 +3720,7 @@ body {
   padding: 4vh 3vw;
   background: rgba(0, 0, 0, 0.55);
 }
-#workbench-modal {
-  width: 100%;
-  max-width: 1180px;
-  height: 88vh;
-  max-height: 92vh;
-  min-width: 560px;
-  min-height: 360px;
-  resize: both;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--sidebar-bg);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-.workbench-topbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: move;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-.workbench-title {
-  font-size: 12px;
-  font-weight: 600;
-  flex: none;
-}
-#workbench-session {
-  flex: 0 1 220px;
-  min-width: 0;
-  cursor: pointer;
-}
-.workbench-tabs {
-  display: flex;
-  gap: 4px;
-}
-.workbench-tab {
-  font-size: 11px;
-  padding: 3px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  background: transparent;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-}
-.workbench-tab:hover {
-  color: var(--text);
-}
-.workbench-tab.active {
-  color: var(--text);
-  background: var(--active-bg);
-  border-color: var(--accent);
-}
-#workbench-close {
-  margin-left: auto;
-}
-.workbench-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-.workbench-left {
-  flex: 0 0 340px;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border-right: 1px solid var(--border);
-}
-.workbench-body.worktrees-mode .workbench-left {
-  flex: 1;
-  border-right: none;
-}
-.workbench-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.workbench-panel-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-.workbench-scope {
-  flex: 1;
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.workbench-panel-bar button,
-.wb-remote-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.workbench-panel-bar button:hover,
-.wb-remote-btn:hover {
-  color: var(--text);
-  background: var(--sidebar-hover);
-}
-.workbench-editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-.wb-editor-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-.wb-editor-path {
-  flex: 1;
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-}
-.wb-dirty {
-  color: var(--warn, #d19a66);
-  font-size: 14px;
-}
-.wb-editor-bar button {
-  background: var(--accent);
-  border: none;
-  color: #fff;
-  border-radius: 6px;
-  padding: 3px 12px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.wb-editor-bar button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.wb-textarea {
-  flex: 1;
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  background: var(--bg);
-  color: var(--text);
-  border: none;
-  outline: none;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 8px 12px;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
-}
-.wb-diff {
-  flex: 1;
-  overflow: auto;
-  padding: 8px 12px;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 11px;
-  line-height: 1.45;
-}
-.wb-editor-note {
-  padding: 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.wb-editor-placeholder {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.wb-tree {
-  flex: 1;
-  overflow: auto;
-  padding: 4px 0;
-  min-height: 0;
-}
-.explorer-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  color: var(--text);
-}
-.explorer-row:hover {
-  background: var(--sidebar-hover);
-}
-.explorer-row.selected {
-  background: var(--active-bg);
-}
-.explorer-twisty {
-  width: 10px;
-  display: inline-block;
-  color: var(--text-dim);
-}
-.explorer-icon {
-  width: 14px;
-  display: inline-block;
-  text-align: center;
-  opacity: 0.8;
-}
-.explorer-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.wb-branchbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-.wb-branchbar .sidebar-select {
-  flex: 1;
-  min-width: 0;
-}
-.wb-aheadbehind {
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.wb-changes {
-  flex: 1;
-  overflow: auto;
-  padding: 4px 0;
-  min-height: 0;
-}
-.scm-group-label {
-  padding: 6px 10px 2px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.scm-group-label button {
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 5px;
-  font-size: 10px;
-  padding: 1px 6px;
-  cursor: pointer;
-}
-.scm-file {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.scm-file:hover {
-  background: var(--sidebar-hover);
-}
-.scm-file.selected {
-  background: var(--active-bg);
-}
-.scm-file-status {
-  width: 14px;
-  text-align: center;
-  font-weight: 700;
-  flex: 0 0 auto;
-}
-.scm-file-status.modified {
-  color: var(--warn, #d19a66);
-}
-.scm-file-status.added {
-  color: var(--ok, #98c379);
-}
-.scm-file-status.deleted {
-  color: var(--error, #e06c75);
-}
-.scm-file-status.untracked {
-  color: var(--text-dim);
-}
-.scm-file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
-}
-.scm-file-actions {
-  display: none;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-.scm-file:hover .scm-file-actions {
-  display: flex;
-}
-.scm-file-actions button {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0 2px;
-}
-.scm-file-actions button:hover {
-  color: var(--text);
-}
-.wb-commit-box {
-  border-top: 1px solid var(--border);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: none;
-}
-.wb-commit-msg {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-  background: var(--input-bg, var(--active-bg));
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: inherit;
-}
-.wb-commit-box button {
-  background: var(--accent);
-  border: none;
-  color: #fff;
-  border-radius: 6px;
-  padding: 5px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.wb-commit-box button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.worktrees-list {
-  flex: 1;
-  overflow: auto;
-  padding: 4px 0;
-  min-height: 0;
-}
-.worktree-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-.worktree-meta {
-  flex: 1;
-  min-width: 0;
-}
-.worktree-branch {
-  font-weight: 600;
-}
-.worktree-path {
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.worktree-main-badge {
-  font-size: 9px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 4px;
-}
-.worktree-item button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 6px;
-  padding: 2px 7px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.worktree-item button:hover {
-  color: var(--text);
-  background: var(--sidebar-hover);
-}
-.worktrees-add {
-  border-top: 1px solid var(--border);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: none;
-}
-.worktrees-add button {
-  background: var(--accent);
-  border: none;
-  color: #fff;
-  border-radius: 6px;
-  padding: 5px;
-  font-size: 12px;
-  cursor: pointer;
-}
-#workbench-overlay.hidden,
-#wb-files-panel.hidden,
-#wb-scm-panel.hidden,
-#wb-worktrees-panel.hidden,
-#wb-editor.hidden,
-#wb-textarea.hidden,
-#wb-diff.hidden,
-#wb-editor-note.hidden,
-#wb-editor-placeholder.hidden,
-#wb-dirty.hidden,
-#wb-files-empty.hidden,
-#wb-scm-empty.hidden,
-#wb-worktrees-empty.hidden {
+.plugin-overlay.hidden {
   display: none;
 }
 #agents-header,
@@ -5223,10 +4831,9 @@ body {
       <span id="diag-actions"></span>
     </div>
     <div id="sidebar-footer">
-      <button id="btn-workbench" data-tip="Workbench files, source control, and worktrees for a session" type="button">
-        <span class="footer-glyph">&#9707;</span>
-        <span class="footer-label">Workbench</span>
-      </button>
+      <!-- Plugin footer buttons (docs/plugin-plan.md §2.2) are appended here by
+           the renderer plugin host and removed on disable — the Workbench one
+           used to be hard-coded above this comment. -->
       <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
         <span class="footer-glyph">&#9993;</span>
         <span class="footer-label">Inbox</span>
@@ -5421,80 +5028,10 @@ body {
     </div>
   </div>
 
-  <!-- Workbench popover — files, source control, and worktrees for one session,
-       scoped to the selected session's cwd (resolved server-side by name). -->
-  <div id="workbench-overlay" class="hidden">
-    <div id="workbench-modal">
-      <div class="workbench-topbar">
-        <span class="workbench-title">Workbench</span>
-        <select id="workbench-session" class="sidebar-select" data-tip="Session whose directory this workbench scopes to"></select>
-        <div class="workbench-tabs">
-          <button type="button" class="workbench-tab active" id="workbench-tab-files" data-tab="files">Files</button>
-          <button type="button" class="workbench-tab" id="workbench-tab-scm" data-tab="scm">Source Control</button>
-          <button type="button" class="workbench-tab" id="workbench-tab-worktrees" data-tab="worktrees">Worktrees</button>
-        </div>
-        <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
-      </div>
-      <div class="workbench-body">
-        <div class="workbench-left">
-          <!-- Files: lazy tree -->
-          <div id="wb-files-panel" class="workbench-panel">
-            <div class="workbench-panel-bar">
-              <span id="wb-files-scope" class="workbench-scope"></span>
-              <button id="wb-files-refresh" type="button">Refresh</button>
-            </div>
-            <div id="wb-tree" class="wb-tree"></div>
-            <div id="wb-files-empty" class="hint hidden">No local session selected, or its directory isn't readable.</div>
-          </div>
-          <!-- Source control -->
-          <div id="wb-scm-panel" class="workbench-panel hidden">
-            <div class="wb-branchbar">
-              <select id="wb-branch-select" class="sidebar-select" data-tip="Switch branch"></select>
-              <span id="wb-aheadbehind" class="wb-aheadbehind"></span>
-              <button id="wb-fetch" class="wb-remote-btn" data-tip="git fetch --all" type="button">⟳</button>
-              <button id="wb-pull" class="wb-remote-btn" data-tip="git pull --ff-only" type="button">↓</button>
-              <button id="wb-push" class="wb-remote-btn" data-tip="git push" type="button">↑</button>
-              <button id="wb-newbranch" class="wb-remote-btn" data-tip="Create a new branch" type="button">+</button>
-              <button id="wb-scm-refresh" class="wb-remote-btn" data-tip="Refresh" type="button">⟲</button>
-            </div>
-            <div id="wb-changes" class="wb-changes"></div>
-            <div id="wb-commit-box" class="wb-commit-box">
-              <textarea id="wb-commit-msg" class="wb-commit-msg" placeholder="Commit message (staged changes)" spellcheck="false" rows="2"></textarea>
-              <button id="wb-commit-btn" type="button" disabled>Commit</button>
-            </div>
-            <div id="wb-scm-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
-          </div>
-          <!-- Worktrees (full width; the shared editor hides for this tab) -->
-          <div id="wb-worktrees-panel" class="workbench-panel hidden">
-            <div class="workbench-panel-bar">
-              <span class="workbench-scope">Worktrees for this session's repository</span>
-              <button id="wb-worktrees-refresh" type="button">Refresh</button>
-            </div>
-            <div id="wb-worktrees-list" class="worktrees-list"></div>
-            <div class="worktrees-add">
-              <input type="text" id="wb-worktree-branch" class="sidebar-search" placeholder="new branch name" spellcheck="false" autocomplete="off">
-              <input type="text" id="wb-worktree-base" class="sidebar-search" placeholder="base branch (optional)" spellcheck="false" autocomplete="off" list="wb-worktree-base-list">
-              <datalist id="wb-worktree-base-list"></datalist>
-              <button id="wb-worktree-add" type="button">Create Worktree</button>
-            </div>
-            <div id="wb-worktrees-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
-          </div>
-        </div>
-        <!-- Shared editor / diff area (Files edits here; Source shows diffs here) -->
-        <div id="wb-editor" class="workbench-editor">
-          <div class="wb-editor-bar">
-            <span id="wb-editor-path" class="wb-editor-path"></span>
-            <span id="wb-dirty" class="wb-dirty hidden" data-tip="Unsaved changes">●</span>
-            <button id="wb-save" type="button" disabled>Save</button>
-          </div>
-          <textarea id="wb-textarea" class="wb-textarea hidden" spellcheck="false" wrap="off"></textarea>
-          <div id="wb-diff" class="wb-diff hidden"></div>
-          <div id="wb-editor-note" class="wb-editor-note hidden"></div>
-          <div id="wb-editor-placeholder" class="wb-editor-placeholder">Select a file to view or edit.</div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- The Workbench overlay used to live here. It is a PLUGIN now
+       (plugins/workbench/): its DOM is built inside the plugin's own
+       `surfaces.overlay({ mount(root) })`, into a container the host creates and
+       removes wholesale on disable. Core no longer ships any of its markup. -->
 
   <div id="main">
     <div id="search-bar" class="hidden">
@@ -6150,6 +5687,18 @@ body {
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
+      <!-- Plugins (docs/plugin-plan.md §2.5). CORE's own section — the one place
+           a plugin can be turned off, and the one place a plugin that failed to
+           activate is still visible. Populated from `_host` `plugins.status`,
+           which lists every plugin ON DISK rather than only the ones that loaded:
+           a quarantined plugin must still appear, or the only UI that could
+           clear it would be the one hiding it. Plugins' OWN sections are
+           appended after this one, by the plugin host, as [data-plugin-section]. -->
+      <section id="prefs-plugins-section" class="hidden">
+        <h4>Plugins</h4>
+        <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+        <div id="prefs-plugins-list"></div>
+      </section>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>
@@ -6289,21 +5838,12 @@ body {
         { name: "markSessionWorktree", kind: "invoke", channel: "session:markWorktree" },
         { name: "cwdSuggestions", kind: "invoke", channel: "session:cwdSuggestions" },
         { name: "noteCwd", kind: "invoke", channel: "session:noteCwd" },
-        // Workspace panes: source control, worktree management, file explorer/editor.
-        { name: "scmStatus", kind: "invoke", channel: "scm:status" },
-        { name: "scmDiff", kind: "invoke", channel: "scm:diff" },
-        { name: "scmStage", kind: "invoke", channel: "scm:stage" },
-        { name: "scmUnstage", kind: "invoke", channel: "scm:unstage" },
-        { name: "scmDiscard", kind: "invoke", channel: "scm:discard" },
-        { name: "scmCommit", kind: "invoke", channel: "scm:commit" },
-        { name: "scmBranches", kind: "invoke", channel: "scm:branches" },
-        { name: "scmCheckout", kind: "invoke", channel: "scm:checkout" },
-        { name: "scmRemote", kind: "invoke", channel: "scm:remote" },
-        { name: "worktreeList", kind: "invoke", channel: "worktree:list" },
-        { name: "worktreeRemove", kind: "invoke", channel: "worktree:remove" },
-        { name: "fsList", kind: "invoke", channel: "fs:list" },
-        { name: "fsRead", kind: "invoke", channel: "fs:read" },
-        { name: "fsWrite", kind: "invoke", channel: "fs:write" },
+        // The workbench's fourteen rows (scm:* ×9, worktree:list/remove, fs:* ×3) were
+        // here until docs/plugin-plan.md §4 W6. The workbench is a PLUGIN now: it
+        // registers those rows itself and they ride the one multiplexed plugin
+        // transport, so the contract shrank by fourteen instead of growing by them.
+        // That is the whole point of the pilot — the surface a feature costs core
+        // should go to zero when the feature moves out, not stay as a permanent tax.
         { name: "listSessions", kind: "invoke", channel: "session:list" },
         { name: "reservedSessionNames", kind: "invoke", channel: "session:reservedNames" },
         { name: "killSession", kind: "invoke", channel: "session:kill" },
@@ -6386,7 +5926,6 @@ body {
         { name: "onRequestSwitchSession", kind: "on", channel: "request-switch-session" },
         { name: "onRequestOpenNewDialog", kind: "on", channel: "request-open-new-dialog" },
         { name: "onRequestOpenDiscovery", kind: "on", channel: "request-open-discovery" },
-        { name: "onRequestOpenWorkbench", kind: "on", channel: "request-open-workbench" },
         { name: "onRequestOpenBoilingPot", kind: "on", channel: "request-open-boiling-pot" },
         { name: "onRequestRenameWorkspace", kind: "on", channel: "request-rename-workspace" },
         { name: "onRequestOpenPreferences", kind: "on", channel: "request-open-preferences" },
@@ -6509,7 +6048,24 @@ body {
         // the global-or-workspace scope store. scope arg is 'global' or a workspaceId.
         { name: "envScopesGet", kind: "invoke", channel: "envScopes:get" },
         { name: "envScopesSet", kind: "invoke", channel: "envScopes:set" },
-        { name: "envScopesDelete", kind: "invoke", channel: "envScopes:delete" }
+        { name: "envScopesDelete", kind: "invoke", channel: "envScopes:delete" },
+        // Plugin transport (docs/plugin-plan.md §1, §3.4). EXACTLY these five rows —
+        // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
+        // multiplexed channel over an engine-owned dispatch Map: the injected
+        // transport has no removeHandler, so per-plugin channels could never be
+        // unregistered and `dispose()` would be a lie at every level of the API.
+        // Enable/disable/dispose mutate the Map instead; no Electron-level
+        // unregistration ever happens. Because both frontends build window.api from
+        // this one table, the browser frontend inherits the plugin transport free.
+        { name: "pluginInvoke", kind: "invoke", channel: "plugin:invoke" },
+        { name: "pluginCatalog", kind: "invoke", channel: "plugin:catalog" },
+        { name: "pluginSetEnabled", kind: "invoke", channel: "plugin:setEnabled" },
+        { name: "onPluginEvent", kind: "on", channel: "plugin-event" },
+        // The intent catalog served over IPC rather than statically required by the
+        // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
+        // that reads its own frozen copy of intent-catalog.js is reading a stale
+        // catalog — and the web bundle's copy is frozen at build time.
+        { name: "getIntentCatalog", kind: "invoke", channel: "intents:catalog" }
       ];
       module.exports = { API_CONTRACT };
     }
@@ -7310,9 +6866,642 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // plugins/workbench/renderer.js
+  var require_renderer = __commonJS({
+    "plugins/workbench/renderer.js"(exports, module) {
+      "use strict";
+      var WORKBENCH_HTML = `
+<div id="workbench-modal">
+  <div class="workbench-topbar">
+    <span class="workbench-title">Workbench</span>
+    <select id="workbench-session" class="sidebar-select" data-tip="Session whose directory this workbench scopes to"></select>
+    <div class="workbench-tabs">
+      <button type="button" class="workbench-tab active" id="workbench-tab-files" data-tab="files">Files</button>
+      <button type="button" class="workbench-tab" id="workbench-tab-scm" data-tab="scm">Source Control</button>
+      <button type="button" class="workbench-tab" id="workbench-tab-worktrees" data-tab="worktrees">Worktrees</button>
+    </div>
+    <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
+  </div>
+  <div class="workbench-body">
+    <div class="workbench-left">
+      <!-- Files: lazy tree -->
+      <div id="wb-files-panel" class="workbench-panel">
+        <div class="workbench-panel-bar">
+          <span id="wb-files-scope" class="workbench-scope"></span>
+          <button id="wb-files-refresh" type="button">Refresh</button>
+        </div>
+        <div id="wb-tree" class="wb-tree"></div>
+        <div id="wb-files-empty" class="hint hidden">No local session selected, or its directory isn't readable.</div>
+      </div>
+      <!-- Source control -->
+      <div id="wb-scm-panel" class="workbench-panel hidden">
+        <div class="wb-branchbar">
+          <select id="wb-branch-select" class="sidebar-select" data-tip="Switch branch"></select>
+          <span id="wb-aheadbehind" class="wb-aheadbehind"></span>
+          <button id="wb-fetch" class="wb-remote-btn" data-tip="git fetch --all" type="button">\u27F3</button>
+          <button id="wb-pull" class="wb-remote-btn" data-tip="git pull --ff-only" type="button">\u2193</button>
+          <button id="wb-push" class="wb-remote-btn" data-tip="git push" type="button">\u2191</button>
+          <button id="wb-newbranch" class="wb-remote-btn" data-tip="Create a new branch" type="button">+</button>
+          <button id="wb-scm-refresh" class="wb-remote-btn" data-tip="Refresh" type="button">\u27F2</button>
+        </div>
+        <div id="wb-changes" class="wb-changes"></div>
+        <div id="wb-commit-box" class="wb-commit-box">
+          <textarea id="wb-commit-msg" class="wb-commit-msg" placeholder="Commit message (staged changes)" spellcheck="false" rows="2"></textarea>
+          <button id="wb-commit-btn" type="button" disabled>Commit</button>
+        </div>
+        <div id="wb-scm-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
+      </div>
+      <!-- Worktrees (full width; the shared editor hides for this tab) -->
+      <div id="wb-worktrees-panel" class="workbench-panel hidden">
+        <div class="workbench-panel-bar">
+          <span class="workbench-scope">Worktrees for this session's repository</span>
+          <button id="wb-worktrees-refresh" type="button">Refresh</button>
+        </div>
+        <div id="wb-worktrees-list" class="worktrees-list"></div>
+        <div class="worktrees-add">
+          <input type="text" id="wb-worktree-branch" class="sidebar-search" placeholder="new branch name" spellcheck="false" autocomplete="off">
+          <input type="text" id="wb-worktree-base" class="sidebar-search" placeholder="base branch (optional)" spellcheck="false" autocomplete="off" list="wb-worktree-base-list">
+          <datalist id="wb-worktree-base-list"></datalist>
+          <button id="wb-worktree-add" type="button">Create Worktree</button>
+        </div>
+        <div id="wb-worktrees-empty" class="hint hidden">No local session selected, or its directory isn't a git repository.</div>
+      </div>
+    </div>
+    <!-- Shared editor / diff area (Files edits here; Source shows diffs here) -->
+    <div id="wb-editor" class="workbench-editor">
+      <div class="wb-editor-bar">
+        <span id="wb-editor-path" class="wb-editor-path"></span>
+        <span id="wb-dirty" class="wb-dirty hidden" data-tip="Unsaved changes">\u25CF</span>
+        <button id="wb-save" type="button" disabled>Save</button>
+      </div>
+      <textarea id="wb-textarea" class="wb-textarea hidden" spellcheck="false" wrap="off"></textarea>
+      <div id="wb-diff" class="wb-diff hidden"></div>
+      <div id="wb-editor-note" class="wb-editor-note hidden"></div>
+      <div id="wb-editor-placeholder" class="wb-editor-placeholder">Select a file to view or edit.</div>
+    </div>
+  </div>
+</div>`;
+      module.exports.activate = (rhost) => {
+        let openFor = null;
+        const surface = rhost.ui.surfaces.overlay({
+          id: "main",
+          mount(root) {
+            wire(root, rhost);
+          },
+          onOpen(opts) {
+            if (openFor) openFor(opts && opts.tab);
+          }
+        });
+        function wire(rootEl, h) {
+          const $ = (id) => rootEl.querySelector(`#${id}`);
+          const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+          const toast = (msg) => h.ui.showToast(msg, { kind: "error" });
+          rootEl.innerHTML = WORKBENCH_HTML;
+          const modal = $("workbench-modal");
+          const topbar = rootEl.querySelector(".workbench-topbar");
+          const bodyEl = rootEl.querySelector(".workbench-body");
+          const sessionSel = $("workbench-session");
+          const tabs = { files: $("workbench-tab-files"), scm: $("workbench-tab-scm"), worktrees: $("workbench-tab-worktrees") };
+          const panels = { files: $("wb-files-panel"), scm: $("wb-scm-panel"), worktrees: $("wb-worktrees-panel") };
+          let curTab = "files";
+          let selName = null;
+          let sessionCache = [];
+          async function fetchSessions() {
+            try {
+              const list = await h.sessions.listWorkspace(h.workspaceId);
+              sessionCache = (Array.isArray(list) ? list : []).filter((s) => s && s.cwd).map((s) => ({ name: s.name, label: s.name, cwd: s.cwd })).sort((a, b) => a.label.localeCompare(b.label));
+            } catch {
+              sessionCache = [];
+            }
+          }
+          function localSessions() {
+            return sessionCache;
+          }
+          function populateSessions() {
+            const list = localSessions();
+            sessionSel.innerHTML = "";
+            if (!list.length) {
+              selName = null;
+              const opt = document.createElement("option");
+              opt.value = "";
+              opt.textContent = "No local sessions";
+              sessionSel.appendChild(opt);
+              sessionSel.disabled = true;
+              return;
+            }
+            sessionSel.disabled = false;
+            const active = h.sessions.active();
+            if (list.some((s) => s.name === active)) selName = active;
+            else if (!list.some((s) => s.name === selName)) selName = list[0].name;
+            for (const s of list) {
+              const opt = document.createElement("option");
+              opt.value = s.name;
+              opt.textContent = s.label;
+              if (s.name === selName) opt.selected = true;
+              sessionSel.appendChild(opt);
+            }
+          }
+          const activeName = () => selName;
+          const curCwd = () => {
+            const s = localSessions().find((x) => x.name === selName);
+            return s ? s.cwd : "";
+          };
+          sessionSel.addEventListener("change", () => {
+            if (!confirmDiscardEdit()) {
+              sessionSel.value = selName || "";
+              return;
+            }
+            selName = sessionSel.value || null;
+            resetEditor();
+            refreshTab();
+          });
+          const edPath = $("wb-editor-path");
+          const edDirty = $("wb-dirty");
+          const edSave = $("wb-save");
+          const edTextarea = $("wb-textarea");
+          const edDiff = $("wb-diff");
+          const edNote = $("wb-editor-note");
+          const edPlaceholder = $("wb-editor-placeholder");
+          let editingRel = null;
+          let editingBaseline = "";
+          function setEditorDirty(dirty) {
+            edDirty.classList.toggle("hidden", !dirty);
+            edSave.disabled = !dirty;
+          }
+          function showEditorOnly(which) {
+            edTextarea.classList.toggle("hidden", which !== "text");
+            edDiff.classList.toggle("hidden", which !== "diff");
+            edNote.classList.toggle("hidden", which !== "note");
+            edPlaceholder.classList.toggle("hidden", which !== "placeholder");
+          }
+          function resetEditor() {
+            editingRel = null;
+            editingBaseline = "";
+            edPath.textContent = "";
+            edSave.disabled = true;
+            edSave.classList.remove("hidden");
+            edDirty.classList.add("hidden");
+            showEditorOnly("placeholder");
+          }
+          function confirmDiscardEdit() {
+            if (editingRel && !edSave.disabled) {
+              return confirm("Discard unsaved changes to the open file?");
+            }
+            return true;
+          }
+          async function openInEditor(name, rel) {
+            if (!confirmDiscardEdit()) return;
+            const res = await h.invoke("fs.read", name, rel);
+            edPath.textContent = rel;
+            edSave.classList.remove("hidden");
+            if (!res || !res.ok) {
+              edNote.textContent = res && res.binary ? "Binary file \u2014 not shown." : res && res.tooBig ? `File too large to edit (${res.size} bytes).` : `Can't open: ${res && res.error || "unknown"}`;
+              editingRel = null;
+              setEditorDirty(false);
+              showEditorOnly("note");
+              return;
+            }
+            edTextarea.value = res.content;
+            editingRel = rel;
+            editingBaseline = res.content;
+            setEditorDirty(false);
+            showEditorOnly("text");
+            for (const r of $("wb-tree").querySelectorAll(".explorer-row")) {
+              r.classList.toggle("selected", r.dataset.rel === rel);
+            }
+          }
+          function showDiff(pathLabel, diffText, emptyNote) {
+            editingRel = null;
+            editingBaseline = "";
+            edPath.textContent = pathLabel;
+            edDirty.classList.add("hidden");
+            edSave.disabled = true;
+            edSave.classList.add("hidden");
+            if (!diffText || !diffText.trim()) {
+              edNote.textContent = emptyNote || "(no textual diff)";
+              showEditorOnly("note");
+              return;
+            }
+            edDiff.innerHTML = h.lib.renderDiffHtml(diffText);
+            showEditorOnly("diff");
+          }
+          edTextarea.addEventListener("input", () => {
+            if (editingRel == null) return;
+            setEditorDirty(edTextarea.value !== editingBaseline);
+          });
+          edSave.addEventListener("click", async () => {
+            const name = activeName();
+            if (!name || editingRel == null) return;
+            const res = await h.invoke("fs.write", name, editingRel, edTextarea.value);
+            if (!res || !res.ok) {
+              toast(`Save failed: ${res && res.error || "unknown"}`);
+              return;
+            }
+            editingBaseline = edTextarea.value;
+            setEditorDirty(false);
+          });
+          edTextarea.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+              e.preventDefault();
+              if (!edSave.disabled) edSave.click();
+            }
+          });
+          const tree = $("wb-tree");
+          const filesScope = $("wb-files-scope");
+          const filesEmpty = $("wb-files-empty");
+          const expExpanded = /* @__PURE__ */ new Set();
+          async function renderExplorer() {
+            const name = activeName();
+            if (!name) {
+              tree.innerHTML = "";
+              filesScope.textContent = "";
+              filesEmpty.classList.remove("hidden");
+              return;
+            }
+            filesScope.textContent = curCwd();
+            const rootRes = await h.invoke("fs.list", name, "");
+            if (!rootRes || !rootRes.ok) {
+              tree.innerHTML = "";
+              filesEmpty.textContent = rootRes && rootRes.error === "remote" ? "This is a remote session \u2014 the file explorer only works on local sessions." : `Not available: ${rootRes && rootRes.error || "unknown"}`;
+              filesEmpty.classList.remove("hidden");
+              return;
+            }
+            filesEmpty.classList.add("hidden");
+            tree.innerHTML = "";
+            await renderDirInto(tree, name, "", 0);
+          }
+          async function renderDirInto(container, name, rel, depth) {
+            const res = await h.invoke("fs.list", name, rel);
+            if (!res || !res.ok) return;
+            for (const ent of res.entries) {
+              const row = document.createElement("div");
+              row.className = "explorer-row";
+              row.style.paddingLeft = `${10 + depth * 14}px`;
+              row.dataset.rel = ent.rel;
+              row.dataset.type = ent.type;
+              const isOpen = ent.type === "dir" && expExpanded.has(ent.rel);
+              row.innerHTML = `<span class="explorer-twisty">${ent.type === "dir" ? isOpen ? "\u25BE" : "\u25B8" : ""}</span><span class="explorer-icon">${ent.type === "dir" ? "\u{1F4C1}" : "\u{1F4C4}"}</span><span class="explorer-name">${esc(ent.name)}</span>`;
+              if (ent.rel === editingRel) row.classList.add("selected");
+              container.appendChild(row);
+              row.addEventListener("click", async () => {
+                if (ent.type === "dir") {
+                  if (expExpanded.has(ent.rel)) expExpanded.delete(ent.rel);
+                  else expExpanded.add(ent.rel);
+                  renderExplorer();
+                } else {
+                  openInEditor(name, ent.rel);
+                }
+              });
+              if (isOpen) await renderDirInto(container, name, ent.rel, depth + 1);
+            }
+          }
+          $("wb-files-refresh").addEventListener("click", () => renderExplorer());
+          const scmChanges = $("wb-changes");
+          const scmEmpty = $("wb-scm-empty");
+          const scmBranchSel = $("wb-branch-select");
+          const scmAheadBehind = $("wb-aheadbehind");
+          const scmCommitMsg = $("wb-commit-msg");
+          const scmCommitBtn = $("wb-commit-btn");
+          let scmSelectedFile = null;
+          const STATUS_CLASS = { M: "modified", A: "added", D: "deleted", R: "modified", C: "modified", "?": "untracked" };
+          const statusChar = (f) => f.untracked ? "?" : f.staged ? f.x : f.y;
+          async function renderScm() {
+            const name = activeName();
+            if (!name) {
+              scmChanges.innerHTML = "";
+              scmEmpty.classList.remove("hidden");
+              return;
+            }
+            const res = await h.invoke("scm.status", name);
+            if (!res || !res.ok) {
+              scmChanges.innerHTML = "";
+              scmEmpty.textContent = res && res.error === "remote" ? "This is a remote session \u2014 source control only works on local sessions." : res && res.error || "Not a git repository.";
+              scmEmpty.classList.remove("hidden");
+              scmBranchSel.innerHTML = "";
+              scmAheadBehind.textContent = "";
+              return;
+            }
+            scmEmpty.classList.add("hidden");
+            scmAheadBehind.textContent = `${res.branch || "(detached)"}${res.ahead ? ` \u2191${res.ahead}` : ""}${res.behind ? ` \u2193${res.behind}` : ""}`;
+            await renderBranchOptions(name, res.branch);
+            renderChanges(name, res.files || []);
+            scmCommitBtn.disabled = !(res.files || []).some((f) => f.staged);
+          }
+          async function renderBranchOptions(name, current) {
+            const br = await h.invoke("scm.branches", name);
+            scmBranchSel.innerHTML = "";
+            if (!br || !br.ok) return;
+            for (const b of br.local) {
+              const opt = document.createElement("option");
+              opt.value = b;
+              opt.textContent = b;
+              if (b === (current || br.current)) opt.selected = true;
+              scmBranchSel.appendChild(opt);
+            }
+          }
+          function renderChanges(name, files) {
+            scmChanges.innerHTML = "";
+            const staged = files.filter((f) => f.staged);
+            const unstaged = files.filter((f) => !f.staged);
+            const group = (label, list, isStaged) => {
+              if (!list.length) return;
+              const head = document.createElement("div");
+              head.className = "scm-group-label";
+              head.innerHTML = `<span>${label} (${list.length})</span>`;
+              const btn = document.createElement("button");
+              btn.textContent = isStaged ? "Unstage all" : "Stage all";
+              btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const paths = list.map((f) => f.path);
+                const r = isStaged ? await h.invoke("scm.unstage", name, paths) : await h.invoke("scm.stage", name, paths);
+                if (!r || !r.ok) toast(`${isStaged ? "Unstage" : "Stage"} failed: ${r && r.error || "unknown"}`);
+                renderScm();
+              });
+              head.appendChild(btn);
+              scmChanges.appendChild(head);
+              for (const f of list) scmChanges.appendChild(fileRow(name, f, isStaged));
+            };
+            group("Staged", staged, true);
+            group("Changes", unstaged, false);
+          }
+          function fileRow(name, f, isStaged) {
+            const row = document.createElement("div");
+            row.className = "scm-file";
+            if (scmSelectedFile === f.path) row.classList.add("selected");
+            const ch = statusChar(f);
+            row.innerHTML = `<span class="scm-file-status ${STATUS_CLASS[ch] || ""}">${ch}</span><span class="scm-file-name" title="${esc(f.path)}">${esc(f.path)}</span>`;
+            const actions = document.createElement("span");
+            actions.className = "scm-file-actions";
+            const mkBtn = (label, title, fn) => {
+              const b = document.createElement("button");
+              b.textContent = label;
+              b.title = title;
+              b.addEventListener("click", (e) => {
+                e.stopPropagation();
+                fn();
+              });
+              actions.appendChild(b);
+            };
+            if (isStaged) {
+              mkBtn("\u2212", "Unstage", async () => {
+                await h.invoke("scm.unstage", name, f.path);
+                renderScm();
+              });
+            } else {
+              mkBtn("+", "Stage", async () => {
+                await h.invoke("scm.stage", name, f.path);
+                renderScm();
+              });
+              mkBtn("\u2A2F", "Discard changes", async () => {
+                if (!confirm(`Discard changes to ${f.path}? This can't be undone.`)) return;
+                await h.invoke("scm.discard", name, f.path, { untracked: f.untracked });
+                renderScm();
+              });
+            }
+            row.appendChild(actions);
+            row.addEventListener("click", () => {
+              scmSelectedFile = f.path;
+              for (const r of scmChanges.querySelectorAll(".scm-file")) r.classList.remove("selected");
+              row.classList.add("selected");
+              showScmDiff(name, f, isStaged);
+            });
+            return row;
+          }
+          async function showScmDiff(name, f, isStaged) {
+            const res = await h.invoke("scm.diff", name, f.path, { staged: isStaged });
+            if (!res || !res.ok) {
+              showDiff(f.path, "", `diff failed: ${res && res.error || "unknown"}`);
+              return;
+            }
+            showDiff(f.path, res.diff, f.untracked ? "(untracked \u2014 open it in the Files tab to view)" : "(no textual diff)");
+          }
+          scmBranchSel.addEventListener("change", async () => {
+            const name = activeName();
+            if (!name) return;
+            const r = await h.invoke("scm.checkout", name, scmBranchSel.value, {});
+            if (!r || !r.ok) toast(`Checkout failed: ${r && r.error || "unknown"}`);
+            renderScm();
+          });
+          scmCommitBtn.addEventListener("click", async () => {
+            const name = activeName();
+            if (!name) return;
+            const msg = scmCommitMsg.value.trim();
+            if (!msg) {
+              scmCommitMsg.focus();
+              return;
+            }
+            const r = await h.invoke("scm.commit", name, msg, {});
+            if (!r || !r.ok) {
+              toast(`Commit failed: ${r && r.error || "unknown"}`);
+              return;
+            }
+            scmCommitMsg.value = "";
+            renderScm();
+          });
+          const remoteBtn = (id, op) => $(id).addEventListener("click", async () => {
+            const name = activeName();
+            if (!name) return;
+            const r = await h.invoke("scm.remote", name, op);
+            if (r && r.error) toast(`git ${op} failed: ${r.error}`);
+            else h.ui.showToast(`git ${op}: ${r && r.output || "done"}`, { kind: "info" });
+            renderScm();
+          });
+          remoteBtn("wb-fetch", "fetch");
+          remoteBtn("wb-pull", "pull");
+          remoteBtn("wb-push", "push");
+          $("wb-newbranch").addEventListener("click", async () => {
+            const name = activeName();
+            if (!name) return;
+            const branch = prompt("New branch name (created from current HEAD):");
+            if (!branch) return;
+            const r = await h.invoke("scm.checkout", name, branch.trim(), { create: true });
+            if (!r || !r.ok) {
+              toast(`Create branch failed: ${r && r.error || "unknown"}`);
+              return;
+            }
+            renderScm();
+          });
+          $("wb-scm-refresh").addEventListener("click", () => renderScm());
+          const wtList = $("wb-worktrees-list");
+          const wtEmpty = $("wb-worktrees-empty");
+          const wtNewBranch = $("wb-worktree-branch");
+          const wtNewBase = $("wb-worktree-base");
+          const wtBaseList = $("wb-worktree-base-list");
+          async function renderWorktrees() {
+            const name = activeName();
+            if (!name) {
+              wtList.innerHTML = "";
+              wtEmpty.classList.remove("hidden");
+              return;
+            }
+            const res = await h.invoke("wt.list", name);
+            if (!res || !res.ok) {
+              wtList.innerHTML = "";
+              wtEmpty.textContent = res && res.error === "remote" ? "This is a remote session \u2014 worktree management only works on local sessions." : res && res.error || "Not a git repository.";
+              wtEmpty.classList.remove("hidden");
+              return;
+            }
+            wtEmpty.classList.add("hidden");
+            wtList.innerHTML = "";
+            for (const w of res.worktrees) wtList.appendChild(worktreeRow(name, w));
+            const br = await h.invoke("scm.branches", name);
+            wtBaseList.innerHTML = "";
+            if (br && br.ok) for (const b of br.local) {
+              const o = document.createElement("option");
+              o.value = b;
+              wtBaseList.appendChild(o);
+            }
+          }
+          function worktreeRow(name, w) {
+            const row = document.createElement("div");
+            row.className = "worktree-item";
+            const meta = document.createElement("div");
+            meta.className = "worktree-meta";
+            meta.innerHTML = `<div class="worktree-branch">${esc(w.branch || (w.detached ? `(detached ${w.head})` : "(no branch)"))}${w.isMain ? ' <span class="worktree-main-badge">main</span>' : ""}</div><div class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</div>`;
+            row.appendChild(meta);
+            const openBtn = document.createElement("button");
+            openBtn.textContent = "Open";
+            openBtn.title = "Reveal in Finder";
+            openBtn.addEventListener("click", () => h.ui.openPath(w.path));
+            row.appendChild(openBtn);
+            if (!w.isMain) {
+              const rm = document.createElement("button");
+              rm.textContent = "Remove";
+              rm.addEventListener("click", async () => {
+                if (!confirm(`Remove worktree at ${w.path}? (git worktree remove --force)`)) return;
+                const r = await h.invoke("wt.remove", w.path);
+                if (!r || !r.ok) {
+                  toast(`Remove failed: ${r && r.error || "unknown"}`);
+                  return;
+                }
+                renderWorktrees();
+              });
+              row.appendChild(rm);
+            }
+            return row;
+          }
+          $("wb-worktree-add").addEventListener("click", async () => {
+            const name = activeName();
+            if (!name) return;
+            const branch = wtNewBranch.value.trim();
+            if (!branch) {
+              wtNewBranch.focus();
+              return;
+            }
+            const wl = await h.invoke("wt.list", name);
+            if (!wl || !wl.ok) {
+              toast("Not a git repository.");
+              return;
+            }
+            const base = wtNewBase.value.trim() || null;
+            const r = await h.invoke("wt.create", wl.repo, branch, { base });
+            if (!r || !r.ok) {
+              toast(`Create worktree failed: ${r && r.error || "unknown"}`);
+              return;
+            }
+            wtNewBranch.value = "";
+            wtNewBase.value = "";
+            renderWorktrees();
+          });
+          $("wb-worktrees-refresh").addEventListener("click", () => renderWorktrees());
+          function refreshTab() {
+            if (curTab === "files") renderExplorer();
+            else if (curTab === "scm") renderScm();
+            else if (curTab === "worktrees") renderWorktrees();
+          }
+          function setTab(tab) {
+            if (curTab === "files" && tab !== "files" && !confirmDiscardEdit()) return;
+            curTab = tab;
+            for (const k of Object.keys(tabs)) {
+              tabs[k].classList.toggle("active", k === tab);
+              panels[k].classList.toggle("hidden", k !== tab);
+            }
+            const showEditor = tab !== "worktrees";
+            $("wb-editor").classList.toggle("hidden", !showEditor);
+            bodyEl.classList.toggle("worktrees-mode", tab === "worktrees");
+            refreshTab();
+          }
+          for (const k of Object.keys(tabs)) tabs[k].addEventListener("click", () => setTab(k));
+          function recenter() {
+            modal.style.position = "";
+            modal.style.left = "";
+            modal.style.top = "";
+            modal.style.margin = "";
+            modal.style.width = "";
+            modal.style.height = "";
+          }
+          openFor = async (tab) => {
+            await fetchSessions();
+            populateSessions();
+            resetEditor();
+            recenter();
+            setTab(tab || "files");
+          };
+          topbar.addEventListener("mousedown", (e) => {
+            if (e.target !== topbar && !e.target.classList.contains("workbench-title")) return;
+            const rect = modal.getBoundingClientRect();
+            const startX = e.clientX, startY = e.clientY;
+            const origLeft = rect.left, origTop = rect.top;
+            modal.style.position = "fixed";
+            modal.style.margin = "0";
+            modal.style.width = `${rect.width}px`;
+            modal.style.height = `${rect.height}px`;
+            modal.style.left = `${origLeft}px`;
+            modal.style.top = `${origTop}px`;
+            const onMove = (ev) => {
+              const w = modal.offsetWidth, ht = modal.offsetHeight;
+              const nl = Math.max(0, Math.min(origLeft + ev.clientX - startX, window.innerWidth - w));
+              const nt = Math.max(0, Math.min(origTop + ev.clientY - startY, window.innerHeight - ht));
+              modal.style.left = `${nl}px`;
+              modal.style.top = `${nt}px`;
+            };
+            const onUp = () => {
+              h.removeEventListener(document, "mousemove", onMove);
+              h.removeEventListener(document, "mouseup", onUp);
+            };
+            h.addEventListener(document, "mousemove", onMove);
+            h.addEventListener(document, "mouseup", onUp);
+            e.preventDefault();
+          });
+          $("workbench-close").addEventListener("click", () => surface.close());
+        }
+        rhost.ui.sidebar.footerButton({
+          id: "open",
+          glyph: "\u25EB",
+          label: "Workbench",
+          tip: "Workbench files, source control, and worktrees for a session",
+          onClick: () => surface.open()
+        });
+      };
+      module.exports.deactivate = () => {
+      };
+    }
+  });
+
+  // renderer/web/plugin-registry.js
+  var require_plugin_registry = __commonJS({
+    "renderer/web/plugin-registry.js"(exports, module) {
+      "use strict";
+      var MODULES = {
+        // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
+        "workbench": require_renderer()
+        // >>> END BUILD-GENERATED PLUGIN MODULES
+      };
+      var registry = {
+        get(id) {
+          return MODULES[String(id)] || null;
+        },
+        ids() {
+          return Object.keys(MODULES);
+        }
+      };
+      module.exports = registry;
+    }
+  });
+
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -13369,9 +13558,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -13405,9 +13594,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -16366,9 +16555,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -17891,52 +18080,6 @@ ${i3.join("\n")}
     }
   });
 
-  // intent-catalog.js
-  var require_intent_catalog = __commonJS({
-    "intent-catalog.js"(exports, module) {
-      var GATEABLE_INTENTS = [
-        { type: "dm", label: "Direct messages (dm)" },
-        { type: "who", label: "List peers (who)" },
-        { type: "context", label: "Self context control (compact/clear)" },
-        { type: "memory", label: "Memory management (remember/recall)" },
-        { type: "spawn", label: "Spawn peer sessions (spawn)" },
-        { type: "file", label: "Surface files on screen (file)" },
-        { type: "resend", label: "Escalate a parked dm (resend)" },
-        { type: "exec", label: "Run exec commands (exec)" },
-        { type: "remind", label: "Durable self-reminders (remind)" },
-        { type: "notify-user", label: "Operator inbox notes (notify-user)" },
-        // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
-        // OFF unless explicitly granted (absence does NOT enable it), and an
-        // agent-initiated grant is stripped at the mint/wire boundary.
-        { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" }
-      ];
-      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot"]);
-      var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
-      function intentEnabled(type, intentsList) {
-        if (!GATEABLE_TYPES.has(type)) return true;
-        if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-        return intentsList.includes(type);
-      }
-      function withoutPrivilegedIntents(intentsList) {
-        if (!Array.isArray(intentsList)) return intentsList;
-        return intentsList.filter((t) => !PRIVILEGED_INTENTS.has(t));
-      }
-      function intentsAllowlistFromChecked(checkedTypes) {
-        const checked = new Set(checkedTypes);
-        const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
-        const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
-        const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
-        return isDefault ? null : enabled;
-      }
-      function deniedIntentCount(intentsList) {
-        return GATEABLE_INTENTS.filter(
-          (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
-        ).length;
-      }
-      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
-    }
-  });
-
   // agents-util.js
   var require_agents_util = __commonJS({
     "agents-util.js"(exports, module) {
@@ -18005,11 +18148,11 @@ ${i3.join("\n")}
   var require_checklists = __commonJS({
     "renderer/lib/checklists.js"(exports, module) {
       var { esc } = require_format();
-      var { GATEABLE_INTENTS, intentEnabled, intentsAllowlistFromChecked } = require_intent_catalog();
       var promptLibCache = { system: [], append: [] };
       var agentLibCache = [];
       var skillLibCache = [];
       var execLibCache = [];
+      var intentCatalogCache = [];
       var claudeToolsCache = [];
       var defaultToolDenyCache = [];
       function setPromptLibCache(v) {
@@ -18023,6 +18166,9 @@ ${i3.join("\n")}
       }
       function setExecLibCache(v) {
         execLibCache = v;
+      }
+      function setIntentCatalogCache(v) {
+        intentCatalogCache = Array.isArray(v) ? v : [];
       }
       function setClaudeToolsCache(v) {
         claudeToolsCache = v;
@@ -18112,15 +18258,19 @@ ${i3.join("\n")}
       function collectExecChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
+      function intentRowChecked(row, intentsList) {
+        if (!Array.isArray(intentsList)) return !row.privileged;
+        return intentsList.includes(row.type);
+      }
       function renderIntentChecklist(container, intentsList) {
         container.innerHTML = "";
-        for (const it of GATEABLE_INTENTS) {
+        for (const it of intentCatalogCache) {
           const row = document.createElement("label");
           row.className = "agent-check";
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = it.type;
-          cb.checked = intentEnabled(it.type, intentsList);
+          cb.checked = intentRowChecked(it, intentsList);
           const txt = document.createElement("span");
           txt.innerHTML = `<strong>${esc(it.label)}</strong>`;
           row.appendChild(cb);
@@ -18129,8 +18279,7 @@ ${i3.join("\n")}
         }
       }
       function collectIntentChecklist(container) {
-        const checked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
-        return intentsAllowlistFromChecked(checked);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
       var { BUILTIN_AGENTS } = require_agents_util();
       function renderBuiltinChecklist(container, deniedSet) {
@@ -18262,6 +18411,7 @@ ${i3.join("\n")}
         collectExecChecklist,
         renderIntentChecklist,
         collectIntentChecklist,
+        intentRowChecked,
         renderBuiltinChecklist,
         collectBuiltinChecklist,
         renderInjectChecklist,
@@ -18276,6 +18426,7 @@ ${i3.join("\n")}
         setAgentLibCache,
         setSkillLibCache,
         setExecLibCache,
+        setIntentCatalogCache,
         setClaudeToolsCache,
         setDefaultToolDenyCache,
         getPromptLibCache,
@@ -18916,6 +19067,52 @@ helper=${d.helperPath}`;
         return { currentXtermTheme };
       }
       module.exports = { initThemes };
+    }
+  });
+
+  // intent-catalog.js
+  var require_intent_catalog = __commonJS({
+    "intent-catalog.js"(exports, module) {
+      var GATEABLE_INTENTS = [
+        { type: "dm", label: "Direct messages (dm)" },
+        { type: "who", label: "List peers (who)" },
+        { type: "context", label: "Self context control (compact/clear)" },
+        { type: "memory", label: "Memory management (remember/recall)" },
+        { type: "spawn", label: "Spawn peer sessions (spawn)" },
+        { type: "file", label: "Surface files on screen (file)" },
+        { type: "resend", label: "Escalate a parked dm (resend)" },
+        { type: "exec", label: "Run exec commands (exec)" },
+        { type: "remind", label: "Durable self-reminders (remind)" },
+        { type: "notify-user", label: "Operator inbox notes (notify-user)" },
+        // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
+        // OFF unless explicitly granted (absence does NOT enable it), and an
+        // agent-initiated grant is stripped at the mint/wire boundary.
+        { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" }
+      ];
+      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot"]);
+      var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
+      function intentEnabled(type, intentsList) {
+        if (!GATEABLE_TYPES.has(type)) return true;
+        if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
+        return intentsList.includes(type);
+      }
+      function withoutPrivilegedIntents(intentsList) {
+        if (!Array.isArray(intentsList)) return intentsList;
+        return intentsList.filter((t) => !PRIVILEGED_INTENTS.has(t));
+      }
+      function intentsAllowlistFromChecked(checkedTypes) {
+        const checked = new Set(checkedTypes);
+        const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
+        const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
+        const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
+        return isDefault ? null : enabled;
+      }
+      function deniedIntentCount(intentsList) {
+        return GATEABLE_INTENTS.filter(
+          (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
+        ).length;
+      }
+      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
     }
   });
 
@@ -20559,7 +20756,8 @@ helper=${d.helperPath}`;
         setClaudeToolsCache,
         setSkillLibCache,
         setAgentLibCache,
-        getSkillLibCache
+        getSkillLibCache,
+        setIntentCatalogCache
       } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
@@ -20872,6 +21070,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             alert("Session not found in persistence.");
             return;
           }
+          setIntentCatalogCache(await window.api.getIntentCatalog() || []);
           renderIntentChecklist(popoverIntentsList, res.intents);
           renderExecGrantReadout(res.execCommands || []);
           intentsPopoverRestart.checked = false;
@@ -21765,9 +21964,9 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             sessionMenu = null;
           }
         }
-        function openSessionMenu(anchorBtn, type, onPick) {
+        function openSessionMenu(anchorBtn, type, onPick, extra = []) {
           closeSessionMenu();
-          const entries = sessionMenuEntries(type);
+          const entries = [...sessionMenuEntries(type), ...extra];
           if (!entries.length) return;
           sessionMenu = document.createElement("div");
           sessionMenu.className = "warm-menu session-menu";
@@ -23243,537 +23442,717 @@ ${detail}` });
     }
   });
 
-  // renderer/popovers/workbench-popover.js
-  var require_workbench_popover = __commonJS({
-    "renderer/popovers/workbench-popover.js"(exports, module) {
+  // renderer/plugin-host.js
+  var require_plugin_host = __commonJS({
+    "renderer/plugin-host.js"(exports, module) {
+      var { esc } = require_format();
       var { renderDiffHtml } = require_render_html();
-      function initWorkbenchPopover({ getActiveSession, showToast }) {
-        const $ = (id) => document.getElementById(id);
-        const api = window.api;
-        const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-        const toast = (msg) => {
-          if (showToast) showToast(msg, { kind: "error" });
-          else alert(msg);
-        };
-        const overlay = $("workbench-overlay");
-        const modal = $("workbench-modal");
-        const topbar = overlay.querySelector(".workbench-topbar");
-        const bodyEl = overlay.querySelector(".workbench-body");
-        const sessionSel = $("workbench-session");
-        const tabs = { files: $("workbench-tab-files"), scm: $("workbench-tab-scm"), worktrees: $("workbench-tab-worktrees") };
-        const panels = { files: $("wb-files-panel"), scm: $("wb-scm-panel"), worktrees: $("wb-worktrees-panel") };
-        let curTab = "files";
-        let selName = null;
-        let sessionCache = [];
-        async function fetchSessions() {
+      function initPluginHost({
+        getActiveSession,
+        // () -> session name | null
+        sessionTypeOf,
+        // (name) -> 'claude' | 'codex' | 'bash' | 'remote' | …
+        activeIsAgent,
+        // () -> bool
+        activePeerQueryable,
+        // () -> bool
+        activePeerConfigurable,
+        // () -> bool
+        scheduleSidebarRelayout,
+        // () -> void   (the debounced core relayout)
+        // Core capabilities a plugin's renderer half reaches through rhost instead of
+        // window.api (the no-backdoor lint). All three have non-workbench consumers in
+        // core, which is exactly why they are wrapped rather than moved.
+        listSessions,
+        // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
+        openPath,
+        // (p) -> void   (window.api.fileOpen — reveal in Finder)
+        showToast,
+        // (msg, opts) -> void
+        // GETTER-shaped: this window's workspace id is filled ASYNCHRONOUSLY
+        // (renderer.js:353 awaits window.api.currentWorkspace()), so a captured value
+        // would be null forever. Law 1 of §3.3 requires rhost to carry it.
+        // No `= () => null` default: the leak scanner's param matcher cannot cross
+        // nested parens, and a defaulted arrow in this list would hide EVERY dep
+        // above it from the scan (verified — it did).
+        getWorkspaceId
+      } = {}) {
+        const statusActions = [];
+        const statusSegments = [];
+        const footerButtons = [];
+        const rowBadges = [];
+        const menuProviders = [];
+        const settingsSections = [];
+        const overlays = [];
+        const resources = /* @__PURE__ */ new Map();
+        const activated = /* @__PURE__ */ new Map();
+        function res(pluginId) {
+          if (!resources.has(pluginId)) {
+            resources.set(pluginId, {
+              disposers: /* @__PURE__ */ new Set(),
+              timers: /* @__PURE__ */ new Set(),
+              intervals: /* @__PURE__ */ new Set(),
+              listeners: [],
+              styleEl: null,
+              ownDispose: null
+            });
+          }
+          return resources.get(pluginId);
+        }
+        function disposable(pluginId, fn) {
+          const r = res(pluginId);
+          let done = false;
+          const d = () => {
+            if (done) return;
+            done = true;
+            r.disposers.delete(d);
+            try {
+              fn();
+            } catch (e) {
+              warn(pluginId, e);
+            }
+          };
+          r.disposers.add(d);
+          return d;
+        }
+        function warn(pluginId, e) {
           try {
-            const list = await api.listSessions();
-            sessionCache = (Array.isArray(list) ? list : []).filter((s) => s && s.cwd).map((s) => ({ name: s.name, label: s.name, cwd: s.cwd })).sort((a, b) => a.label.localeCompare(b.label));
+            console.warn(`[plugin:${pluginId}]`, e && e.message || e);
           } catch {
-            sessionCache = [];
           }
         }
-        function localSessions() {
-          return sessionCache;
-        }
-        function populateSessions() {
-          const list = localSessions();
-          sessionSel.innerHTML = "";
-          if (!list.length) {
-            selName = null;
-            const opt = document.createElement("option");
-            opt.value = "";
-            opt.textContent = "No local sessions";
-            sessionSel.appendChild(opt);
-            sessionSel.disabled = true;
-            return;
-          }
-          sessionSel.disabled = false;
-          const active = getActiveSession && getActiveSession();
-          if (list.some((s) => s.name === active)) selName = active;
-          else if (!list.some((s) => s.name === selName)) selName = list[0].name;
-          for (const s of list) {
-            const opt = document.createElement("option");
-            opt.value = s.name;
-            opt.textContent = s.label;
-            if (s.name === selName) opt.selected = true;
-            sessionSel.appendChild(opt);
+        function purge(list, pluginId) {
+          for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i].pluginId === pluginId) list.splice(i, 1);
           }
         }
-        const activeName = () => selName;
-        const curCwd = () => {
-          const s = localSessions().find((x) => x.name === selName);
-          return s ? s.cwd : "";
+        function barContext() {
+          const session = getActiveSession ? getActiveSession() : null;
+          return Object.freeze({
+            session,
+            type: session && sessionTypeOf ? sessionTypeOf(session) : null,
+            peerQueryable: !!(activePeerQueryable && activePeerQueryable()),
+            peerConfigurable: !!(activePeerConfigurable && activePeerConfigurable()),
+            isAgent: !!(activeIsAgent && activeIsAgent()),
+            workspaceId: getWorkspaceId ? getWorkspaceId() : null
+          });
+        }
+        const statusBar = {
+          addAction(spec) {
+            return register(statusActions, spec, ["when", "button", "onClick"]);
+          },
+          addSegment(spec) {
+            return register(statusSegments, spec, ["render"]);
+          }
         };
-        sessionSel.addEventListener("change", () => {
-          selName = sessionSel.value || null;
-          resetEditor();
-          refreshTab();
-        });
-        const edPath = $("wb-editor-path");
-        const edDirty = $("wb-dirty");
-        const edSave = $("wb-save");
-        const edTextarea = $("wb-textarea");
-        const edDiff = $("wb-diff");
-        const edNote = $("wb-editor-note");
-        const edPlaceholder = $("wb-editor-placeholder");
-        let editingRel = null;
-        let editingBaseline = "";
-        function setEditorDirty(dirty) {
-          edDirty.classList.toggle("hidden", !dirty);
-          edSave.disabled = !dirty;
-        }
-        function showEditorOnly(which) {
-          edTextarea.classList.toggle("hidden", which !== "text");
-          edDiff.classList.toggle("hidden", which !== "diff");
-          edNote.classList.toggle("hidden", which !== "note");
-          edPlaceholder.classList.toggle("hidden", which !== "placeholder");
-        }
-        function resetEditor() {
-          editingRel = null;
-          editingBaseline = "";
-          edPath.textContent = "";
-          edSave.disabled = true;
-          edSave.classList.remove("hidden");
-          edDirty.classList.add("hidden");
-          showEditorOnly("placeholder");
-        }
-        function confirmDiscardEdit() {
-          if (editingRel && !edSave.disabled) {
-            return confirm("Discard unsaved changes to the open file?");
+        function register(list, spec, fnKeys, pluginId) {
+          const owner = pluginId || spec && spec.pluginId || null;
+          if (!owner) throw new Error("plugin registration requires a pluginId");
+          if (!spec || typeof spec.id !== "string" || !spec.id) {
+            throw new Error(`[plugin:${owner}] registration requires a string id`);
           }
+          for (const k of fnKeys) {
+            if (typeof spec[k] !== "function") {
+              throw new Error(`[plugin:${owner}] ${spec.id}: ${k}() must be a function`);
+            }
+          }
+          const entry = { ...spec, pluginId: owner, id: `${owner}:${spec.id}` };
+          list.push(entry);
+          return disposable(owner, () => {
+            const i = list.indexOf(entry);
+            if (i >= 0) list.splice(i, 1);
+          });
+        }
+        function statusBarHtml() {
+          const ctx = barContext();
+          const out = [];
+          for (const a of statusActions) {
+            let show = false, b = null;
+            try {
+              show = !!a.when(ctx);
+            } catch (e) {
+              warn(a.pluginId, e);
+              continue;
+            }
+            if (!show) continue;
+            try {
+              b = a.button(ctx);
+            } catch (e) {
+              warn(a.pluginId, e);
+              continue;
+            }
+            if (!b || !b.label) continue;
+            const cls = b.accentClass ? ` ${esc(String(b.accentClass))}` : "";
+            const tip = b.tip ? ` data-tip="${esc(String(b.tip))}"` : "";
+            out.push(`<button class="px-action px-plugin${cls}" data-act="${esc(a.id)}"${tip}>${esc(String(b.label))}</button>`);
+          }
+          for (const s of statusSegments) {
+            let r = null;
+            try {
+              r = s.render(ctx);
+            } catch (e) {
+              warn(s.pluginId, e);
+              continue;
+            }
+            if (!r || !r.text) continue;
+            const cls = r.accentClass ? ` ${esc(String(r.accentClass))}` : "";
+            const tip = r.tip ? ` data-tip="${esc(String(r.tip))}"` : "";
+            const act = typeof r.onClick === "function" || typeof s.onClick === "function" ? ` data-act="${esc(s.id)}"` : "";
+            const btn = act ? " px-ctx-btn" : "";
+            out.push(`<span class="px-seg px-plugin${btn}${cls}"${act}${tip}>${esc(String(r.text))}</span>`);
+          }
+          return out.join("");
+        }
+        function hasVisibleContribution() {
+          const ctx = barContext();
+          for (const a of statusActions) {
+            try {
+              if (a.when(ctx)) return true;
+            } catch (e) {
+              warn(a.pluginId, e);
+            }
+          }
+          for (const s of statusSegments) {
+            try {
+              const r = s.render(ctx);
+              if (r && r.text) return true;
+            } catch (e) {
+              warn(s.pluginId, e);
+            }
+          }
+          return false;
+        }
+        function handleBarClick(act, anchorEl) {
+          const ctx = barContext();
+          for (const a of statusActions) {
+            if (a.id !== act) continue;
+            try {
+              a.onClick(anchorEl, ctx);
+            } catch (e) {
+              warn(a.pluginId, e);
+            }
+            return true;
+          }
+          for (const s of statusSegments) {
+            if (s.id !== act) continue;
+            let r = null;
+            try {
+              r = s.render(ctx);
+            } catch (e) {
+              warn(s.pluginId, e);
+              return true;
+            }
+            const fn = r && typeof r.onClick === "function" ? r.onClick : s.onClick;
+            if (typeof fn === "function") {
+              try {
+                fn(anchorEl, ctx);
+              } catch (e) {
+                warn(s.pluginId, e);
+              }
+            }
+            return true;
+          }
+          return false;
+        }
+        function addFooterButton(spec, pluginId) {
+          const d = register(footerButtons, spec, ["onClick"], pluginId);
+          renderFooterButtons();
+          return () => {
+            d();
+            renderFooterButtons();
+          };
+        }
+        const sidebar = {
+          footerButton(spec) {
+            return addFooterButton(spec);
+          },
+          rowBadge(spec) {
+            return register(rowBadges, spec, ["resolve"]);
+          },
+          requestRelayout() {
+            if (scheduleSidebarRelayout) scheduleSidebarRelayout();
+          }
+        };
+        function applyRowBadges(item) {
+          if (!item || !rowBadges.length) return;
+          const badges = item.querySelector(".session-badges");
+          if (!badges) return;
+          const name = item.dataset.name;
+          const meta = { type: item.dataset.type || null, cwd: item.dataset.cwd || "" };
+          for (const b of rowBadges) {
+            const sel = `[data-plugin-badge="${CSS.escape(b.id)}"]`;
+            let chip = badges.querySelector(sel);
+            let r = null;
+            try {
+              r = b.resolve(name, meta);
+            } catch (e) {
+              warn(b.pluginId, e);
+            }
+            if (!r || !r.text) {
+              if (chip) chip.remove();
+              continue;
+            }
+            if (!chip) {
+              chip = document.createElement("span");
+              chip.setAttribute("data-plugin-badge", b.id);
+              badges.appendChild(chip);
+            }
+            chip.className = `session-plugin-badge${r.cls ? ` ${String(r.cls)}` : ""}`;
+            chip.textContent = String(r.text);
+            if (r.tip) chip.setAttribute("data-tip", String(r.tip));
+            else chip.removeAttribute("data-tip");
+          }
+        }
+        function renderFooterButtons() {
+          const footer = document.getElementById("sidebar-footer");
+          if (!footer) return;
+          for (const el of [...footer.querySelectorAll("[data-plugin-footer]")]) {
+            if (!footerButtons.some((b) => b.id === el.getAttribute("data-plugin-footer"))) el.remove();
+          }
+          for (const b of footerButtons) {
+            let el = footer.querySelector(`[data-plugin-footer="${CSS.escape(b.id)}"]`);
+            if (!el) {
+              el = document.createElement("button");
+              el.type = "button";
+              el.setAttribute("data-plugin-footer", b.id);
+              for (const cls of ["footer-glyph", "footer-label", "footer-badge"]) {
+                const sp = document.createElement("span");
+                sp.className = cls;
+                el.appendChild(sp);
+              }
+              el.addEventListener("click", () => {
+                try {
+                  b.onClick(el);
+                } catch (e) {
+                  warn(b.pluginId, e);
+                }
+              });
+              footer.appendChild(el);
+            }
+            el.querySelector(".footer-glyph").textContent = b.glyph ? String(b.glyph) : "";
+            el.querySelector(".footer-label").textContent = b.label ? String(b.label) : "";
+            if (b.tip) el.setAttribute("data-tip", String(b.tip));
+            let badge = null;
+            if (typeof b.badge === "function") {
+              try {
+                badge = b.badge();
+              } catch (e) {
+                warn(b.pluginId, e);
+              }
+            }
+            const bEl = el.querySelector(".footer-badge");
+            bEl.textContent = badge ? String(badge) : "";
+            bEl.classList.toggle("zero", !badge);
+          }
+        }
+        const sessionMenu = {
+          addProvider(spec) {
+            return register(menuProviders, spec, ["entriesFor", "onPick"]);
+          }
+        };
+        function menuEntriesFor(type) {
+          const out = [];
+          for (const p of menuProviders) {
+            let entries = null;
+            try {
+              entries = p.entriesFor(type);
+            } catch (e) {
+              warn(p.pluginId, e);
+              continue;
+            }
+            if (!Array.isArray(entries)) continue;
+            for (const en of entries) {
+              if (!en || typeof en.act !== "string" || !en.label) continue;
+              out.push({ act: `${p.pluginId}:${en.act}`, label: String(en.label) });
+            }
+          }
+          return out;
+        }
+        function handleMenuPick(act, sessionName, anchorEl) {
+          const i = String(act).indexOf(":");
+          if (i < 0) return false;
+          const owner = act.slice(0, i);
+          const bare = act.slice(i + 1);
+          for (const p of menuProviders) {
+            if (p.pluginId !== owner) continue;
+            try {
+              p.onPick(bare, sessionName, anchorEl);
+            } catch (e) {
+              warn(p.pluginId, e);
+            }
+            return true;
+          }
+          return false;
+        }
+        const settings = {
+          section(spec) {
+            return register(settingsSections, spec, ["render", "collect"]);
+          }
+        };
+        function renderSettingsSections(valuesByPlugin = {}) {
+          const dialog = document.getElementById("prefs-dialog");
+          if (!dialog) return;
+          for (const el of [...dialog.querySelectorAll("[data-plugin-section]")]) {
+            if (!settingsSections.some((s) => s.id === el.getAttribute("data-plugin-section"))) el.remove();
+          }
+          const actions = dialog.querySelector(".dialog-actions");
+          for (const s of settingsSections) {
+            let el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+            if (!el) {
+              el = document.createElement("section");
+              el.setAttribute("data-plugin-section", s.id);
+              el.setAttribute("data-plugin", s.pluginId);
+              if (s.title) {
+                const h = document.createElement("h3");
+                h.textContent = String(s.title);
+                el.appendChild(h);
+              }
+              const body2 = document.createElement("div");
+              body2.className = "plugin-section-body";
+              el.appendChild(body2);
+              if (actions) dialog.insertBefore(el, actions);
+              else dialog.appendChild(el);
+            }
+            const body = el.querySelector(".plugin-section-body");
+            body.innerHTML = "";
+            try {
+              s.render(body, valuesByPlugin[s.pluginId] || {});
+            } catch (e) {
+              warn(s.pluginId, e);
+            }
+          }
+        }
+        function settingsSectionOwners() {
+          return [...new Set(settingsSections.map((s) => s.pluginId))];
+        }
+        function collectSettingsSections() {
+          const dialog = document.getElementById("prefs-dialog");
+          if (!dialog) return [];
+          const out = [];
+          for (const s of settingsSections) {
+            const el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+            if (!el) continue;
+            const body = el.querySelector(".plugin-section-body");
+            try {
+              const patch = s.collect(body);
+              if (patch && typeof patch === "object") out.push({ pluginId: s.pluginId, patch });
+            } catch (e) {
+              warn(s.pluginId, e);
+            }
+          }
+          return out;
+        }
+        let openOverlay = null;
+        function closeOpenOverlay() {
+          if (!openOverlay) return;
+          const o = openOverlay;
+          openOverlay = null;
+          if (o.el) o.el.classList.add("hidden");
+          if (typeof o.onClose === "function") {
+            try {
+              o.onClose();
+            } catch (e) {
+              warn(o.pluginId, e);
+            }
+          }
+        }
+        const surfaces = {
+          overlay(spec) {
+            const dispose2 = register(overlays, spec, ["mount"]);
+            const entry = overlays[overlays.length - 1];
+            return {
+              open(opts) {
+                closeOpenOverlay();
+                if (!entry.el) {
+                  entry.el = document.createElement("div");
+                  entry.el.className = "plugin-overlay hidden";
+                  entry.el.setAttribute("data-plugin", entry.pluginId);
+                  document.body.appendChild(entry.el);
+                  try {
+                    entry.mount(entry.el);
+                  } catch (e) {
+                    warn(entry.pluginId, e);
+                  }
+                }
+                entry.el.classList.remove("hidden");
+                openOverlay = entry;
+                if (typeof entry.onOpen === "function") {
+                  try {
+                    entry.onOpen(opts);
+                  } catch (e) {
+                    warn(entry.pluginId, e);
+                  }
+                }
+              },
+              close() {
+                if (openOverlay === entry) closeOpenOverlay();
+              },
+              dispose() {
+                if (openOverlay === entry) closeOpenOverlay();
+                if (entry.el) {
+                  entry.el.remove();
+                  entry.el = null;
+                }
+                dispose2();
+              }
+            };
+          }
+        };
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && openOverlay) {
+            e.stopPropagation();
+            closeOpenOverlay();
+          }
+        });
+        function buildRhost(pluginId, invoke) {
+          const r = res(pluginId);
+          return Object.freeze({
+            id: pluginId,
+            get workspaceId() {
+              return getWorkspaceId ? getWorkspaceId() : null;
+            },
+            invoke: (method, ...args) => invoke(pluginId, method, args),
+            // ── sessions (renderer side) ──
+            // ONE accessor, and it is the SCOPED one. There is deliberately no
+            // `listAll()` here and no unqualified `list()`: the engine half's law 1
+            // exists because conflating the two silently widens a per-window dropdown
+            // into a cross-workspace surface, and `fsScope` would NOT catch it (it
+            // refuses PEERS, not foreign workspaces). `session:list` is already
+            // sender-window-scoped [ipc-handlers.js:387
+            // `manager.listForWorkspace(workspaceOfSender(e))`]; the filter here makes
+            // the scope the CALLER's stated one rather than an implicit property of
+            // which window happened to ask.
+            sessions: Object.freeze({
+              // The session the user is looking at in THIS window, or null. Same
+              // predicate the status-bar context uses, so a plugin and the bar can
+              // never disagree about what "active" means.
+              active: () => getActiveSession ? getActiveSession() : null,
+              listWorkspace: async (wsId) => {
+                if (!listSessions) return [];
+                let list = [];
+                try {
+                  list = await listSessions();
+                } catch {
+                  return [];
+                }
+                if (!Array.isArray(list)) return [];
+                return list.filter((s) => s && s.workspaceId === wsId);
+              }
+            }),
+            ui: Object.freeze({
+              // Reveal a path in the OS file manager. Core's row (window.api.fileOpen)
+              // stays — files-popover.js uses it too.
+              openPath: (p) => {
+                if (openPath) openPath(String(p));
+              },
+              // Core's toast host, so a plugin's errors look like every other error in
+              // the app instead of an alert().
+              showToast: (msg, opts) => {
+                if (showToast) showToast(String(msg), opts || {});
+                else {
+                  try {
+                    console.warn(`[plugin:${pluginId}]`, msg);
+                  } catch {
+                  }
+                }
+              },
+              statusBar: Object.freeze({
+                addAction: (s) => register(statusActions, s, ["when", "button", "onClick"], pluginId),
+                addSegment: (s) => register(statusSegments, s, ["render"], pluginId)
+              }),
+              sidebar: Object.freeze({
+                footerButton: (s) => addFooterButton(s, pluginId),
+                rowBadge: (s) => register(rowBadges, s, ["resolve"], pluginId),
+                requestRelayout: sidebar.requestRelayout
+              }),
+              sessionMenu: Object.freeze({
+                addProvider: (s) => register(menuProviders, s, ["entriesFor", "onPick"], pluginId)
+              }),
+              settings: Object.freeze({
+                section: (s) => register(settingsSections, s, ["render", "collect"], pluginId)
+              }),
+              surfaces: Object.freeze({
+                overlay: (s) => surfaces.overlay({ ...s, pluginId })
+              })
+            }),
+            // Sanctioned shared pure leaves, mirroring the engine host's `lib`.
+            lib: Object.freeze({ renderDiffHtml }),
+            // ── Law 3: the teardown surface ──
+            onDispose: (fn) => disposable(pluginId, fn),
+            // Wrapped timers/listeners. The plugin writes ordinary code; the host
+            // holds the handles and clears them on disable, so the common leak needs
+            // no discipline from the plugin author.
+            setInterval: (fn, ms, ...a) => {
+              const h = setInterval(fn, ms, ...a);
+              r.intervals.add(h);
+              return h;
+            },
+            clearInterval: (h) => {
+              r.intervals.delete(h);
+              clearInterval(h);
+            },
+            setTimeout: (fn, ms, ...a) => {
+              const h = setTimeout(() => {
+                r.timers.delete(h);
+                fn();
+              }, ms, ...a);
+              r.timers.add(h);
+              return h;
+            },
+            clearTimeout: (h) => {
+              r.timers.delete(h);
+              clearTimeout(h);
+            },
+            addEventListener: (target, type, fn, opts) => {
+              target.addEventListener(type, fn, opts);
+              r.listeners.push({ target, type, fn, opts });
+            },
+            removeEventListener: (target, type, fn, opts) => {
+              target.removeEventListener(type, fn, opts);
+              const i = r.listeners.findIndex((l) => l.target === target && l.type === type && l.fn === fn);
+              if (i >= 0) r.listeners.splice(i, 1);
+            },
+            log: {
+              info: (...a) => {
+                try {
+                  console.log(`[plugin:${pluginId}]`, ...a);
+                } catch {
+                }
+              },
+              error: (...a) => {
+                try {
+                  console.error(`[plugin:${pluginId}]`, ...a);
+                } catch {
+                }
+              }
+            }
+          });
+        }
+        function activate(pluginId, mod, { invoke, css } = {}) {
+          if (activated.has(pluginId)) throw new Error(`plugin already activated: ${pluginId}`);
+          const r = res(pluginId);
+          activated.set(pluginId, mod);
+          if (css) {
+            const st = document.createElement("style");
+            st.setAttribute("data-plugin-style", pluginId);
+            st.textContent = String(css);
+            document.head.appendChild(st);
+            r.styleEl = st;
+          }
+          const rhost = buildRhost(pluginId, invoke || (() => Promise.resolve({ ok: false, error: "no transport" })));
+          let own = null;
+          try {
+            own = mod && typeof mod.activate === "function" ? mod.activate(rhost) : null;
+          } catch (e) {
+            warn(pluginId, e);
+            dispose(pluginId);
+            throw e;
+          }
+          if (typeof own === "function") r.ownDispose = own;
+          else if (mod && typeof mod.deactivate === "function") r.ownDispose = () => mod.deactivate();
+          return rhost;
+        }
+        function dispose(pluginId) {
+          const r = resources.get(pluginId);
+          activated.delete(pluginId);
+          if (!r) return false;
+          if (r.ownDispose) {
+            try {
+              r.ownDispose();
+            } catch (e) {
+              warn(pluginId, e);
+            }
+            r.ownDispose = null;
+          }
+          if (openOverlay && openOverlay.pluginId === pluginId) closeOpenOverlay();
+          for (const h of r.intervals) clearInterval(h);
+          r.intervals.clear();
+          for (const h of r.timers) clearTimeout(h);
+          r.timers.clear();
+          for (const l of r.listeners) {
+            try {
+              l.target.removeEventListener(l.type, l.fn, l.opts);
+            } catch {
+            }
+          }
+          r.listeners.length = 0;
+          for (const d of [...r.disposers]) d();
+          r.disposers.clear();
+          for (const o of overlays) {
+            if (o.pluginId === pluginId && o.el) {
+              if (openOverlay === o) closeOpenOverlay();
+              o.el.remove();
+              o.el = null;
+            }
+          }
+          if (r.styleEl) {
+            r.styleEl.remove();
+            r.styleEl = null;
+          }
+          for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays]) {
+            purge(list, pluginId);
+          }
+          for (const el of [...document.querySelectorAll(`[data-plugin="${CSS.escape(pluginId)}"]`)]) el.remove();
+          for (const el of [...document.querySelectorAll(`[data-plugin-badge^="${CSS.escape(pluginId)}:"]`)]) el.remove();
+          resources.delete(pluginId);
+          renderFooterButtons();
           return true;
         }
-        async function openInEditor(name, rel) {
-          if (!confirmDiscardEdit()) return;
-          const res = await api.fsRead(name, rel);
-          edPath.textContent = rel;
-          edSave.classList.remove("hidden");
-          if (!res || !res.ok) {
-            edNote.textContent = res && res.binary ? "Binary file \u2014 not shown." : res && res.tooBig ? `File too large to edit (${res.size} bytes).` : `Can't open: ${res && res.error || "unknown"}`;
-            editingRel = null;
-            setEditorDirty(false);
-            showEditorOnly("note");
-            return;
-          }
-          edTextarea.value = res.content;
-          editingRel = rel;
-          editingBaseline = res.content;
-          setEditorDirty(false);
-          showEditorOnly("text");
-          for (const r of $("wb-tree").querySelectorAll(".explorer-row")) {
-            r.classList.toggle("selected", r.dataset.rel === rel);
-          }
+        function disposeAll() {
+          for (const id of [...resources.keys()]) dispose(id);
         }
-        function showDiff(pathLabel, diffText, emptyNote) {
-          editingRel = null;
-          editingBaseline = "";
-          edPath.textContent = pathLabel;
-          edDirty.classList.add("hidden");
-          edSave.disabled = true;
-          edSave.classList.add("hidden");
-          if (!diffText || !diffText.trim()) {
-            edNote.textContent = emptyNote || "(no textual diff)";
-            showEditorOnly("note");
-            return;
+        return {
+          // Core's five seams.
+          statusBarHtml,
+          hasVisibleContribution,
+          handleBarClick,
+          applyRowBadges,
+          renderFooterButtons,
+          menuEntriesFor,
+          handleMenuPick,
+          renderSettingsSections,
+          collectSettingsSections,
+          settingsSectionOwners,
+          // Lifecycle (the Phase-2 loader and the in-tests fake plugin drive these).
+          activate,
+          dispose,
+          disposeAll,
+          // Direct registry access for core-registered contributions (none in Phase 1).
+          statusBar,
+          sidebar,
+          sessionMenu,
+          settings,
+          surfaces,
+          // Introspection seams — read-only counts, never the live containers.
+          _counts: () => ({
+            actions: statusActions.length,
+            segments: statusSegments.length,
+            footer: footerButtons.length,
+            badges: rowBadges.length,
+            menus: menuProviders.length,
+            sections: settingsSections.length,
+            overlays: overlays.length
+          }),
+          // W9 gate #1 asserts this is zero for a disabled plugin.
+          _liveResources: (pluginId) => {
+            const r = resources.get(pluginId);
+            if (!r) return { timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false };
+            return {
+              timers: r.timers.size,
+              intervals: r.intervals.size,
+              listeners: r.listeners.length,
+              disposers: r.disposers.size,
+              style: !!r.styleEl
+            };
           }
-          edDiff.innerHTML = renderDiffHtml(diffText);
-          showEditorOnly("diff");
-        }
-        edTextarea.addEventListener("input", () => {
-          if (editingRel == null) return;
-          setEditorDirty(edTextarea.value !== editingBaseline);
-        });
-        edSave.addEventListener("click", async () => {
-          const name = activeName();
-          if (!name || editingRel == null) return;
-          const res = await api.fsWrite(name, editingRel, edTextarea.value);
-          if (!res || !res.ok) {
-            toast(`Save failed: ${res && res.error || "unknown"}`);
-            return;
-          }
-          editingBaseline = edTextarea.value;
-          setEditorDirty(false);
-        });
-        edTextarea.addEventListener("keydown", (e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-            e.preventDefault();
-            if (!edSave.disabled) edSave.click();
-          }
-        });
-        const tree = $("wb-tree");
-        const filesScope = $("wb-files-scope");
-        const filesEmpty = $("wb-files-empty");
-        const expExpanded = /* @__PURE__ */ new Set();
-        async function renderExplorer() {
-          const name = activeName();
-          if (!name) {
-            tree.innerHTML = "";
-            filesScope.textContent = "";
-            filesEmpty.classList.remove("hidden");
-            return;
-          }
-          filesScope.textContent = curCwd();
-          const rootRes = await api.fsList(name, "");
-          if (!rootRes || !rootRes.ok) {
-            tree.innerHTML = "";
-            filesEmpty.textContent = rootRes && rootRes.error === "remote" ? "This is a remote session \u2014 the file explorer only works on local sessions." : `Not available: ${rootRes && rootRes.error || "unknown"}`;
-            filesEmpty.classList.remove("hidden");
-            return;
-          }
-          filesEmpty.classList.add("hidden");
-          tree.innerHTML = "";
-          await renderDirInto(tree, name, "", 0);
-        }
-        async function renderDirInto(container, name, rel, depth) {
-          const res = await api.fsList(name, rel);
-          if (!res || !res.ok) return;
-          for (const ent of res.entries) {
-            const row = document.createElement("div");
-            row.className = "explorer-row";
-            row.style.paddingLeft = `${10 + depth * 14}px`;
-            row.dataset.rel = ent.rel;
-            row.dataset.type = ent.type;
-            const isOpen = ent.type === "dir" && expExpanded.has(ent.rel);
-            row.innerHTML = `<span class="explorer-twisty">${ent.type === "dir" ? isOpen ? "\u25BE" : "\u25B8" : ""}</span><span class="explorer-icon">${ent.type === "dir" ? "\u{1F4C1}" : "\u{1F4C4}"}</span><span class="explorer-name">${esc(ent.name)}</span>`;
-            if (ent.rel === editingRel) row.classList.add("selected");
-            container.appendChild(row);
-            row.addEventListener("click", async () => {
-              if (ent.type === "dir") {
-                if (expExpanded.has(ent.rel)) expExpanded.delete(ent.rel);
-                else expExpanded.add(ent.rel);
-                renderExplorer();
-              } else {
-                openInEditor(name, ent.rel);
-              }
-            });
-            if (isOpen) await renderDirInto(container, name, ent.rel, depth + 1);
-          }
-        }
-        $("wb-files-refresh").addEventListener("click", () => renderExplorer());
-        const scmChanges = $("wb-changes");
-        const scmEmpty = $("wb-scm-empty");
-        const scmBranchSel = $("wb-branch-select");
-        const scmAheadBehind = $("wb-aheadbehind");
-        const scmCommitMsg = $("wb-commit-msg");
-        const scmCommitBtn = $("wb-commit-btn");
-        let scmSelectedFile = null;
-        const STATUS_CLASS = { M: "modified", A: "added", D: "deleted", R: "modified", C: "modified", "?": "untracked" };
-        const statusChar = (f) => f.untracked ? "?" : f.staged ? f.x : f.y;
-        async function renderScm() {
-          const name = activeName();
-          if (!name) {
-            scmChanges.innerHTML = "";
-            scmEmpty.classList.remove("hidden");
-            return;
-          }
-          const res = await api.scmStatus(name);
-          if (!res || !res.ok) {
-            scmChanges.innerHTML = "";
-            scmEmpty.textContent = res && res.error === "remote" ? "This is a remote session \u2014 source control only works on local sessions." : res && res.error || "Not a git repository.";
-            scmEmpty.classList.remove("hidden");
-            scmBranchSel.innerHTML = "";
-            scmAheadBehind.textContent = "";
-            return;
-          }
-          scmEmpty.classList.add("hidden");
-          scmAheadBehind.textContent = `${res.branch || "(detached)"}${res.ahead ? ` \u2191${res.ahead}` : ""}${res.behind ? ` \u2193${res.behind}` : ""}`;
-          await renderBranchOptions(name, res.branch);
-          renderChanges(name, res.files || []);
-          scmCommitBtn.disabled = !(res.files || []).some((f) => f.staged);
-        }
-        async function renderBranchOptions(name, current) {
-          const br = await api.scmBranches(name);
-          scmBranchSel.innerHTML = "";
-          if (!br || !br.ok) return;
-          for (const b of br.local) {
-            const opt = document.createElement("option");
-            opt.value = b;
-            opt.textContent = b;
-            if (b === (current || br.current)) opt.selected = true;
-            scmBranchSel.appendChild(opt);
-          }
-        }
-        function renderChanges(name, files) {
-          scmChanges.innerHTML = "";
-          const staged = files.filter((f) => f.staged);
-          const unstaged = files.filter((f) => !f.staged);
-          const group = (label, list, isStaged) => {
-            if (!list.length) return;
-            const head = document.createElement("div");
-            head.className = "scm-group-label";
-            head.innerHTML = `<span>${label} (${list.length})</span>`;
-            const btn = document.createElement("button");
-            btn.textContent = isStaged ? "Unstage all" : "Stage all";
-            btn.addEventListener("click", async (e) => {
-              e.stopPropagation();
-              const paths = list.map((f) => f.path);
-              const r = isStaged ? await api.scmUnstage(name, paths) : await api.scmStage(name, paths);
-              if (!r || !r.ok) toast(`${isStaged ? "Unstage" : "Stage"} failed: ${r && r.error || "unknown"}`);
-              renderScm();
-            });
-            head.appendChild(btn);
-            scmChanges.appendChild(head);
-            for (const f of list) scmChanges.appendChild(fileRow(name, f, isStaged));
-          };
-          group("Staged", staged, true);
-          group("Changes", unstaged, false);
-        }
-        function fileRow(name, f, isStaged) {
-          const row = document.createElement("div");
-          row.className = "scm-file";
-          if (scmSelectedFile === f.path) row.classList.add("selected");
-          const ch = statusChar(f);
-          row.innerHTML = `<span class="scm-file-status ${STATUS_CLASS[ch] || ""}">${ch}</span><span class="scm-file-name" title="${esc(f.path)}">${esc(f.path)}</span>`;
-          const actions = document.createElement("span");
-          actions.className = "scm-file-actions";
-          const mkBtn = (label, title, fn) => {
-            const b = document.createElement("button");
-            b.textContent = label;
-            b.title = title;
-            b.addEventListener("click", (e) => {
-              e.stopPropagation();
-              fn();
-            });
-            actions.appendChild(b);
-          };
-          if (isStaged) {
-            mkBtn("\u2212", "Unstage", async () => {
-              await api.scmUnstage(name, f.path);
-              renderScm();
-            });
-          } else {
-            mkBtn("+", "Stage", async () => {
-              await api.scmStage(name, f.path);
-              renderScm();
-            });
-            mkBtn("\u2A2F", "Discard changes", async () => {
-              if (!confirm(`Discard changes to ${f.path}? This can't be undone.`)) return;
-              await api.scmDiscard(name, f.path, { untracked: f.untracked });
-              renderScm();
-            });
-          }
-          row.appendChild(actions);
-          row.addEventListener("click", () => {
-            scmSelectedFile = f.path;
-            for (const r of scmChanges.querySelectorAll(".scm-file")) r.classList.remove("selected");
-            row.classList.add("selected");
-            showScmDiff(name, f, isStaged);
-          });
-          return row;
-        }
-        async function showScmDiff(name, f, isStaged) {
-          const res = await api.scmDiff(name, f.path, { staged: isStaged });
-          if (!res || !res.ok) {
-            showDiff(f.path, "", `diff failed: ${res && res.error || "unknown"}`);
-            return;
-          }
-          showDiff(f.path, res.diff, f.untracked ? "(untracked \u2014 open it in the Files tab to view)" : "(no textual diff)");
-        }
-        scmBranchSel.addEventListener("change", async () => {
-          const name = activeName();
-          if (!name) return;
-          const r = await api.scmCheckout(name, scmBranchSel.value, {});
-          if (!r || !r.ok) toast(`Checkout failed: ${r && r.error || "unknown"}`);
-          renderScm();
-        });
-        scmCommitBtn.addEventListener("click", async () => {
-          const name = activeName();
-          if (!name) return;
-          const msg = scmCommitMsg.value.trim();
-          if (!msg) {
-            scmCommitMsg.focus();
-            return;
-          }
-          const r = await api.scmCommit(name, msg, {});
-          if (!r || !r.ok) {
-            toast(`Commit failed: ${r && r.error || "unknown"}`);
-            return;
-          }
-          scmCommitMsg.value = "";
-          renderScm();
-        });
-        const remoteBtn = (id, op) => $(id).addEventListener("click", async () => {
-          const name = activeName();
-          if (!name) return;
-          const r = await api.scmRemote(name, op);
-          if (r && r.error) toast(`git ${op} failed: ${r.error}`);
-          else if (showToast) showToast(`git ${op}: ${r && r.output || "done"}`, { kind: "info" });
-          renderScm();
-        });
-        remoteBtn("wb-fetch", "fetch");
-        remoteBtn("wb-pull", "pull");
-        remoteBtn("wb-push", "push");
-        $("wb-newbranch").addEventListener("click", async () => {
-          const name = activeName();
-          if (!name) return;
-          const branch = prompt("New branch name (created from current HEAD):");
-          if (!branch) return;
-          const r = await api.scmCheckout(name, branch.trim(), { create: true });
-          if (!r || !r.ok) {
-            toast(`Create branch failed: ${r && r.error || "unknown"}`);
-            return;
-          }
-          renderScm();
-        });
-        $("wb-scm-refresh").addEventListener("click", () => renderScm());
-        const wtList = $("wb-worktrees-list");
-        const wtEmpty = $("wb-worktrees-empty");
-        const wtNewBranch = $("wb-worktree-branch");
-        const wtNewBase = $("wb-worktree-base");
-        const wtBaseList = $("wb-worktree-base-list");
-        async function renderWorktrees() {
-          const name = activeName();
-          if (!name) {
-            wtList.innerHTML = "";
-            wtEmpty.classList.remove("hidden");
-            return;
-          }
-          const res = await api.worktreeList(name);
-          if (!res || !res.ok) {
-            wtList.innerHTML = "";
-            wtEmpty.textContent = res && res.error === "remote" ? "This is a remote session \u2014 worktree management only works on local sessions." : res && res.error || "Not a git repository.";
-            wtEmpty.classList.remove("hidden");
-            return;
-          }
-          wtEmpty.classList.add("hidden");
-          wtList.innerHTML = "";
-          for (const w of res.worktrees) wtList.appendChild(worktreeRow(name, w));
-          const br = await api.scmBranches(name);
-          wtBaseList.innerHTML = "";
-          if (br && br.ok) for (const b of br.local) {
-            const o = document.createElement("option");
-            o.value = b;
-            wtBaseList.appendChild(o);
-          }
-        }
-        function worktreeRow(name, w) {
-          const row = document.createElement("div");
-          row.className = "worktree-item";
-          const meta = document.createElement("div");
-          meta.className = "worktree-meta";
-          meta.innerHTML = `<div class="worktree-branch">${esc(w.branch || (w.detached ? `(detached ${w.head})` : "(no branch)"))}${w.isMain ? ' <span class="worktree-main-badge">main</span>' : ""}</div><div class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</div>`;
-          row.appendChild(meta);
-          const openBtn = document.createElement("button");
-          openBtn.textContent = "Open";
-          openBtn.title = "Reveal in Finder";
-          openBtn.addEventListener("click", () => api.fileOpen(w.path));
-          row.appendChild(openBtn);
-          if (!w.isMain) {
-            const rm = document.createElement("button");
-            rm.textContent = "Remove";
-            rm.addEventListener("click", async () => {
-              if (!confirm(`Remove worktree at ${w.path}? (git worktree remove --force)`)) return;
-              const r = await api.worktreeRemove(w.path);
-              if (!r || !r.ok) {
-                toast(`Remove failed: ${r && r.error || "unknown"}`);
-                return;
-              }
-              renderWorktrees();
-            });
-            row.appendChild(rm);
-          }
-          return row;
-        }
-        $("wb-worktree-add").addEventListener("click", async () => {
-          const name = activeName();
-          if (!name) return;
-          const branch = wtNewBranch.value.trim();
-          if (!branch) {
-            wtNewBranch.focus();
-            return;
-          }
-          const wl = await api.worktreeList(name);
-          if (!wl || !wl.ok) {
-            toast("Not a git repository.");
-            return;
-          }
-          const base = wtNewBase.value.trim() || null;
-          const r = await api.createWorktree(wl.repo, branch, { base });
-          if (!r || !r.ok) {
-            toast(`Create worktree failed: ${r && r.error || "unknown"}`);
-            return;
-          }
-          wtNewBranch.value = "";
-          wtNewBase.value = "";
-          renderWorktrees();
-        });
-        $("wb-worktrees-refresh").addEventListener("click", () => renderWorktrees());
-        function refreshTab() {
-          if (curTab === "files") renderExplorer();
-          else if (curTab === "scm") renderScm();
-          else if (curTab === "worktrees") renderWorktrees();
-        }
-        function setTab(tab) {
-          if (curTab === "files" && tab !== "files" && !confirmDiscardEdit()) return;
-          curTab = tab;
-          for (const k of Object.keys(tabs)) {
-            tabs[k].classList.toggle("active", k === tab);
-            panels[k].classList.toggle("hidden", k !== tab);
-          }
-          const showEditor = tab !== "worktrees";
-          $("wb-editor").classList.toggle("hidden", !showEditor);
-          bodyEl.classList.toggle("worktrees-mode", tab === "worktrees");
-          refreshTab();
-        }
-        for (const k of Object.keys(tabs)) tabs[k].addEventListener("click", () => setTab(k));
-        function recenter() {
-          modal.style.position = "";
-          modal.style.left = "";
-          modal.style.top = "";
-          modal.style.margin = "";
-          modal.style.width = "";
-          modal.style.height = "";
-        }
-        async function openWorkbench(tab) {
-          await fetchSessions();
-          populateSessions();
-          resetEditor();
-          recenter();
-          overlay.classList.remove("hidden");
-          setTab(tab || "files");
-        }
-        function closeWorkbench() {
-          overlay.classList.add("hidden");
-        }
-        topbar.addEventListener("mousedown", (e) => {
-          if (e.target !== topbar && !e.target.classList.contains("workbench-title")) return;
-          const rect = modal.getBoundingClientRect();
-          const startX = e.clientX, startY = e.clientY;
-          const origLeft = rect.left, origTop = rect.top;
-          modal.style.position = "fixed";
-          modal.style.margin = "0";
-          modal.style.width = `${rect.width}px`;
-          modal.style.height = `${rect.height}px`;
-          modal.style.left = `${origLeft}px`;
-          modal.style.top = `${origTop}px`;
-          const onMove = (ev) => {
-            const w = modal.offsetWidth, h = modal.offsetHeight;
-            const nl = Math.max(0, Math.min(origLeft + ev.clientX - startX, window.innerWidth - w));
-            const nt = Math.max(0, Math.min(origTop + ev.clientY - startY, window.innerHeight - h));
-            modal.style.left = `${nl}px`;
-            modal.style.top = `${nt}px`;
-          };
-          const onUp = () => {
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-          };
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onUp);
-          e.preventDefault();
-        });
-        $("workbench-close").addEventListener("click", () => closeWorkbench());
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && !overlay.classList.contains("hidden")) closeWorkbench();
-        });
-        return { openWorkbench, closeWorkbench };
+        };
       }
-      module.exports = { initWorkbenchPopover };
+      module.exports = { initPluginHost };
     }
   });
 
   // renderer/renderer.js
-  var require_renderer = __commonJS({
+  var require_renderer2 = __commonJS({
     "renderer/renderer.js"() {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
@@ -23797,7 +24176,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -23823,7 +24202,7 @@ ${detail}` });
       var { initContextPopover } = require_context_popover();
       var { initSessionMenus } = require_session_menus();
       var { initPeersUi } = require_peers_ui();
-      var { initWorkbenchPopover } = require_workbench_popover();
+      var { initPluginHost } = require_plugin_host();
       var sessions = /* @__PURE__ */ new Map();
       var activeSession = null;
       var { currentXtermTheme } = initThemes({ sessions });
@@ -24551,6 +24930,7 @@ ${detail}` });
         sessionList.querySelectorAll(".session-group-header, .session-empty-note").forEach((el) => el.remove());
         for (const el of rows) {
           applyPrBadge(el);
+          pluginBar.applyRowBadges(el);
           const pass = rowPasses(el);
           el.style.display = pass ? "" : "none";
           sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`).forEach((c) => {
@@ -25227,8 +25607,9 @@ ${detail}` });
         setExecLibCache(await window.api.listExecCommands() || []);
         renderExecChecklist(inputExecList, enabledSet);
       }
-      function refreshNewSessionIntents(intentsList) {
+      async function refreshNewSessionIntents(intentsList) {
         if (inputType.value !== "claude") return;
+        setIntentCatalogCache(await window.api.getIntentCatalog() || []);
         renderIntentChecklist(inputIntentList, intentsList);
       }
       async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set()) {
@@ -26004,6 +26385,75 @@ ${detail}` });
         const type = (st.sessions || []).find((s) => s.name === entry.peer.name)?.type;
         return !type || type === "claude" || type === "codex";
       }
+      var pluginBar = initPluginHost({
+        getActiveSession: () => activeSession,
+        sessionTypeOf,
+        activeIsAgent,
+        activePeerQueryable,
+        activePeerConfigurable,
+        scheduleSidebarRelayout,
+        getWorkspaceId: () => currentWorkspaceId,
+        // Core capabilities plugins reach through rhost instead of window.api. Each
+        // has non-workbench consumers in core, which is why it is wrapped, not moved.
+        listSessions: () => window.api.listSessions(),
+        openPath: (p) => window.api.fileOpen(p),
+        showToast
+      });
+      async function activatePluginRenderer(id) {
+        let reported = false;
+        try {
+          const info = await window.api.pluginInvoke("_host", "renderer.info", [id]);
+          if (!info || !info.ok || !info.rendererPath) return false;
+          const mod = requirePluginRenderer(info.rendererPath, id);
+          if (!mod) return false;
+          pluginBar.activate(id, mod, {
+            invoke: (pid, method, args) => window.api.pluginInvoke(pid, method, args),
+            css: info.css
+          });
+          reported = true;
+          try {
+            await window.api.pluginInvoke("_host", "renderer.report", [id, true]);
+          } catch {
+          }
+          return true;
+        } catch (e) {
+          console.error(`[plugin:${id}] renderer activation failed`, e);
+          if (!reported) {
+            try {
+              await window.api.pluginInvoke("_host", "renderer.report", [id, false, String(e && e.message || e)]);
+            } catch {
+            }
+          }
+          return false;
+        }
+      }
+      function requirePluginRenderer(rendererPath, id) {
+        const reg = window.__CLODEX_PLUGIN_REGISTRY__;
+        if (reg && typeof reg.get === "function") return reg.get(id) || null;
+        if (window.__CLODEX_WEB__ || !window.require) return null;
+        return window.require(rendererPath);
+      }
+      async function loadPluginRenderers() {
+        if (!window.api.pluginCatalog) return;
+        let catalog = [];
+        try {
+          catalog = await window.api.pluginCatalog();
+        } catch {
+          return;
+        }
+        for (const p of catalog || []) {
+          if (!p || !p.enabled) continue;
+          await activatePluginRenderer(p.id);
+        }
+      }
+      loadPluginRenderers();
+      if (window.api.onPluginEvent) {
+        window.api.onPluginEvent((pluginId, topic, payload) => {
+          if (pluginId !== "_host" || topic !== "plugin-state" || !payload || !payload.id) return;
+          if (payload.enabled) activatePluginRenderer(payload.id);
+          else pluginBar.dispose(payload.id);
+        });
+      }
       function renderSessionActions(holdHtml = "") {
         const el = document.getElementById("proxy-actions");
         if (!el) return;
@@ -26027,7 +26477,7 @@ ${detail}` });
         if (activePeerConfigurable()) {
           btns.push(`<button class="px-action" data-act="peer-edit" data-tip="Edit this remote session's settings (args, prompts, tools, skills\u2026)">\u2699 Edit Session</button>`);
         }
-        el.innerHTML = btns.join("") + (holdHtml || "");
+        el.innerHTML = btns.join("") + pluginBar.statusBarHtml() + (holdHtml || "");
       }
       function renderProxyBar() {
         const bar = document.getElementById("proxy-bar");
@@ -26037,7 +26487,7 @@ ${detail}` });
         renderSessionActions();
         const st = activeSession ? proxyState.get(activeSession) : null;
         if (!st || !st.payload) {
-          if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable()) {
+          if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable() || pluginBar.hasVisibleContribution()) {
             bar.style.display = "";
             if (main) main.classList.add("has-proxy-bar");
             tele.className = "";
@@ -26421,14 +26871,25 @@ Click for live activity`;
             openBustPopover(activeSession, bustSeg);
             return;
           }
+          const pluginSeg = e.target.closest(".px-seg.px-plugin[data-act]");
+          if (pluginSeg && pluginBar.handleBarClick(pluginSeg.dataset.act, pluginSeg)) return;
           const action = e.target.closest(".px-action");
           if (action && activeSession) {
+            if (action.dataset.act.includes(":")) {
+              pluginBar.handleBarClick(action.dataset.act, action);
+              return;
+            }
             if (action.dataset.act === "files") openFilesPopover(activeSession, action);
             else if (action.dataset.act === "peer-edit") {
               openPeerArgs(activeSession);
             } else if (action.dataset.act === "session-menu") {
               if (isSessionMenuOpen()) closeSessionMenu();
-              else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor));
+              else openSessionMenu(
+                action,
+                sessionTypeOf(activeSession),
+                (act, anchor) => routeSessionAction(act, anchor),
+                pluginBar.menuEntriesFor(sessionTypeOf(activeSession))
+              );
             } else if (action.dataset.act === "strip-menu") {
               if (isStripMenuOpen()) closeStripMenu();
               else openStripMenu(action, Number(action.dataset.level) || 0);
@@ -26463,6 +26924,7 @@ Click for live activity`;
       });
       function routeSessionAction(act, anchor) {
         if (!activeSession) return;
+        if (act.includes(":") && pluginBar.handleMenuPick(act, activeSession, anchor)) return;
         if (act === "tools") openToolsPopover(activeSession, anchor);
         else if (act === "skills") openSkillsPopover(activeSession, anchor);
         else if (act === "agents") openAgentsPopover(activeSession, anchor);
@@ -26536,13 +26998,6 @@ Click for live activity`;
       var { appendIpcEntry } = createIpcLog({ sessions, getActiveSession: () => activeSession });
       createInboxDrawer();
       createPotDrawer();
-      var { openWorkbench } = initWorkbenchPopover({
-        getActiveSession: () => activeSession,
-        showToast
-      });
-      var btnWorkbench = document.getElementById("btn-workbench");
-      if (btnWorkbench) btnWorkbench.addEventListener("click", () => openWorkbench());
-      if (window.api.onRequestOpenWorkbench) window.api.onRequestOpenWorkbench(() => openWorkbench());
       var {
         typeToTakeControl,
         renderPeerBar,
@@ -28001,11 +28456,118 @@ ${res.stderr}` : "");
         refreshPrefsEnv();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
+        await renderPluginsSection();
+        await renderPluginPrefs();
         prefsOverlay.classList.remove("hidden");
         refreshWsStatus();
         refreshWsLogs();
         if (wsPollTimer) clearInterval(wsPollTimer);
         wsPollTimer = setInterval(refreshWsStatus, 1500);
+      }
+      async function renderPluginPrefs() {
+        const owners = pluginBar.settingsSectionOwners();
+        const values = {};
+        for (const id of owners) {
+          try {
+            const r = await window.api.pluginInvoke("_host", "settings.get", [id]);
+            if (r && r.ok) values[id] = r.values || {};
+          } catch {
+          }
+        }
+        pluginBar.renderSettingsSections(values);
+      }
+      async function renderPluginsSection() {
+        const section = document.getElementById("prefs-plugins-section");
+        const list = document.getElementById("prefs-plugins-list");
+        if (!section || !list) return;
+        let status = null;
+        try {
+          status = await window.api.pluginInvoke("_host", "plugins.status");
+        } catch {
+        }
+        const plugins = status && status.ok && status.plugins || [];
+        const problems = status && status.ok && status.problems || [];
+        section.classList.toggle("hidden", !plugins.length && !problems.length);
+        list.innerHTML = "";
+        for (const p of plugins) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!p.enabled;
+          cb.addEventListener("change", async () => {
+            cb.disabled = true;
+            try {
+              await window.api.pluginSetEnabled(p.id, cb.checked);
+            } catch {
+            }
+            cb.disabled = false;
+            await renderPluginsSection();
+            await renderPluginPrefs();
+          });
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = p.name || p.id;
+          if (p.version) {
+            const v = document.createElement("span");
+            v.className = "plugin-row-version";
+            v.textContent = `v${p.version}`;
+            nameEl.appendChild(v);
+          }
+          body.appendChild(nameEl);
+          if (p.description) {
+            const d = document.createElement("div");
+            d.className = "plugin-row-note";
+            d.textContent = p.description;
+            body.appendChild(d);
+          }
+          if (p.quarantined || p.failCount) {
+            const n = document.createElement("div");
+            n.className = "plugin-row-note warn";
+            n.textContent = p.quarantined ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches \u2014 ${p.lastError || "unknown error"}` : `Failed to activate once (${p.lastError || "unknown error"}) \u2014 one more and it will be held back.`;
+            body.appendChild(n);
+          }
+          row.appendChild(cb);
+          row.appendChild(body);
+          if (p.quarantined) {
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "secondary";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", async () => {
+              retry.disabled = true;
+              let r = null;
+              try {
+                r = await window.api.pluginSetEnabled(p.id, true);
+              } catch {
+              }
+              if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: "peer-ui" });
+              else showToast(`${p.name || p.id} failed again: ${r && r.error || "unknown error"}`, { kind: "error", duration: 9e3 });
+              await renderPluginsSection();
+              await renderPluginPrefs();
+            });
+            row.appendChild(retry);
+          }
+          list.appendChild(row);
+        }
+        for (const pr of problems) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = pr.dir;
+          body.appendChild(nameEl);
+          const n = document.createElement("div");
+          n.className = "plugin-row-note warn";
+          n.textContent = `Not loaded: ${pr.why}`;
+          body.appendChild(n);
+          row.appendChild(body);
+          list.appendChild(row);
+        }
       }
       function closePrefs() {
         prefsOverlay.classList.add("hidden");
@@ -28032,6 +28594,12 @@ ${res.stderr}` : "");
           remoteEnabled: prefsRemoteEnabled.checked
         });
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+        for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
+          try {
+            await window.api.pluginInvoke("_host", "settings.set", [pluginId, patch]);
+          } catch {
+          }
+        }
         closePrefs();
       });
       prefsRemoteTokenSave.addEventListener("click", () => {
@@ -28150,6 +28718,7 @@ ${res.stderr}` : "");
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsIntentsSection.style.display = isClaude ? "" : "none";
+        setIntentCatalogCache(await window.api.getIntentCatalog() || []);
         renderIntentChecklist(argsIntentsList, res.intents);
         const isExecEditable = isClaude && !argsSource;
         argsExecSection.style.display = isExecEditable ? "" : "none";
@@ -28348,9 +28917,11 @@ ${res.stderr}` : "");
   var shim = require_api_shim();
   var osShim = require_os_shim();
   var menubar = require_menubar();
+  var pluginRegistry = require_plugin_registry();
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
-    require_renderer();
+    window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
+    require_renderer2();
     menubar.mount(shim);
   }).catch((err) => {
     console.error("web boot failed", err);
