@@ -160,8 +160,32 @@ thing you were proving. The tell is doing a destructive restore on a file whose
 work is not yet in a commit. Committed first thereafter, and the remaining
 proofs were safe because HEAD then held the fix.
 
+## FINDING, out of scope here — ticket it separately: DESKTOP cannot reach
+## Manage Plugins with no plugins installed
+
+Surfaced while ruling on whether to keep web's `File → Plugins…`. clodex's
+ruling: keep it, and record the desktop consequence rather than fix it here.
+
+The desktop's ONLY route to the Manage Plugins dialog is the top-level Plugins
+menu (`app-menus.js:383`, `Manage Plugins…`). That menu returns null — and is
+spliced out entirely — when there is no host or when there are zero plugins AND
+zero problems (`app-menus.js:342-352`). So on a desktop install with no plugins
+on disk there is **no way to open the dialog at all**, and the dialog is where
+"Open Plugins Folder" lives, which is how a user installs their first plugin.
+
+A packaged build masks this by shipping `plugins/workbench`, so the menu is
+never actually absent in practice. That is luck, not design: strip the bundled
+plugins (or run `CLODEX_PLUGINS=0`, where an explicit open is already the only
+way in — `renderer.js:5113`'s empty-state comment says so) and the affordance is
+unreachable.
+
+Web does NOT have this hole, because `File → Plugins…` is unconditional there.
+The fix on desktop is presumably the same shape: an always-available File-menu
+item. Not done here — separate ticket.
+
 ## Result
 
-Branch `web-plugin-parity` off master `5efa7da` (v4.0.0). Two commits:
-`2c93f32` (all three defects + tests), `8e0557d` (rebuilt `web-dist`).
-Not pushed. Master untouched. `workbench-features` untouched and unmerged.
+Branch `web-plugin-parity` off master `5efa7da` (v4.0.0). Two code commits:
+`2c93f32` (all three defects + tests), `8e0557d` (rebuilt `web-dist`), plus this
+journal. Not pushed. Master untouched. `workbench-features` untouched and
+unmerged. clodex accepted t28 and ruled `File → Plugins…` stays.
