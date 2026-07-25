@@ -1,0 +1,447 @@
+# Plugin sources — where Clodex looks for plugins
+
+**Status: design, Phase 4b. Part of this is implemented (the local user root);
+most of it is deliberately not.** Every section says which.
+
+**Why this is its own file rather than a section of `plugin-plan.md` or
+`plugin-api.md`.** `plugin-api.md` is the frozen contract a plugin author writes
+against, published and version-pinned at `hostApi "1"`; nothing here changes that
+surface, so putting it there would imply a contract change where there is none.
+`plugin-plan.md` is the phase-by-phase build record, written for whoever
+implements the next phase. This document is neither: it is about **where code
+comes from and who is trusted to put it there**, which is a question a user asks
+and a security-minded reader asks, and both will keep asking it as remote sources
+arrive. It wants a stable home that outlives the phase that created it.
+
+---
+
+## 1. Why this exists
+
+The short version: **Phases 0–3 shipped an extension system that only its authors
+can extend.**
+
+Discovery scans exactly one directory. `engine.js:1762` sets
+
+```js
+pluginsDir: path.join(__dirname, 'plugins'),
+```
+
+and the comment two lines above it states the operative fact: `__dirname` is the
+repo root in dev and **the `app.asar` root when packaged**. `package.json:62`
+ships `plugins/**/*` inside that archive. So for anyone running the DMG:
+
+- The plugins directory is **inside a read-only archive**. There is no supported
+  way to put a directory in it.
+- Even if there were, `app.asar` is **replaced wholesale on every update**, so
+  the plugin would vanish at the next version bump with nothing recording that it
+  had been there.
+
+That is not an inconvenience with a workaround; it is a categorical limit, and it
+applies to **every Clodex user who does not build from source**. The plugin
+system is real for its authors and decorative for everyone else.
+
+There is a second, smaller motivation, and it should be read as a footnote to the
+first rather than as the argument: a developer working in a git checkout *can*
+drop a plugin into `<repo>/plugins`, but then their own code lives in the
+project's tree, and every `git pull` is a merge conflict waiting to happen. Real
+friction, but a developer's friction, with a developer's workarounds.
+
+**This is the same pattern the two Phase 4 findings share** (see
+`plugin-plan.md` §6, "Phase 4a's result" and "Phase 4's second finding"), showing
+up a third time and one level further out. The plugin system was built alongside
+consumers who were all developers with a git checkout, so the path a packaged
+user would take was never exercised — exactly as the API was built alongside the
+workbench, so the behaviour the workbench did not need was never made symmetric.
+Three instances is no longer a coincidence: **an artifact validated only by its
+authors is validated against its authors' environment too.**
+
+---
+
+## 2. GAP G8, answered
+
+`engine.js:1759` records "GAP G8 (packaged-.app resource layout) …  deliberately
+not pre-solved here". It is now due, and the answer should be explicit rather
+than implied by the user root existing.
+
+**The obvious-looking lever is `extraResources`.** `package.json:68` already has
+such a block (it ships `vendor/wirescope`), so moving `plugins/` out of the asar
+and into `Contents/Resources/plugins/` is available today and would make the
+directory visible in Finder and writable by the user.
+
+**We are not taking it, for three reasons.**
+
+1. **It does not solve the actual problem.** `extraResources` content is still
+   replaced by an update — that is what shipping it with the app means. A user
+   plugin placed there survives until the next version and then silently
+   disappears. A directory whose contents an update deletes is a worse place to
+   put user data than one the user cannot write at all, because the failure is
+   delayed and quiet instead of immediate and obvious.
+2. **It puts the user's code inside the application bundle.** On macOS that is a
+   signed artifact; ad-hoc signing (`build/afterPack.js`) is already load-bearing
+   for node-pty, and inviting users to add files inside `Clodex.app` is at best
+   fragile and at worst breaks launch. `~/` is where user data belongs on every
+   platform we target.
+3. **It conflates two different lifetimes under one directory.** Core plugins
+   ship with the app and are the app's business; user plugins outlive the app's
+   versions and are the user's. One directory holding both means an update has to
+   distinguish them by inspection. Two roots means it never has to.
+
+**So G8's answer is: core plugins stay inside the asar, and the user root is
+somewhere the app never writes.** This also settles a question the asar makes
+awkward — whether the app should ever modify the core plugins directory. It
+cannot, and now it does not need to.
+
+---
+
+## 3. Multi-root discovery
+
+**Implemented.**
+
+The seam already existed: `plugin-loader.js:64` takes `pluginsDir` injected, and
+`discover()` reads exactly that directory. The change is to take a **list** of
+roots and iterate it, with the per-directory validation unchanged.
+
+```
+roots = [
+  { id: 'core', dir: <app>/plugins,          label: 'Built in' },
+  { id: 'user', dir: ~/.clodex/plugins,      label: 'User' },
+]
+```
+
+Order is precedence order; see §4.
+
+**Why `~/.clodex/plugins/` and not `userData`.** `~/.clodex` is already the
+Clodex-owned runtime root (0700, created by the app), it is where an agent's own
+files live, and it is a path a user can type. `app.getPath('userData')` resolves
+to `~/Library/Application Support/Clodex/` on macOS — correct by platform
+convention, and hostile to the actual use case, which involves a person putting a
+directory somewhere with a shell or a Finder window.
+
+**It does NOT get registered in `clodex-paths.js`.** That module single-sources
+the **per-agent** grammar: `runDirFor` builds `run/<name>/`, `pathFor` builds
+`run/<name>/<kind>`, and `KINDS` is a table of per-agent artifacts. Shared
+root-level directories (`messages/`, `pending/`, `agents/`, `skills/`,
+`library/`) are *documented* in that module's header and *constructed* elsewhere.
+A plugins root is shared, not per-agent, so it earns a line in that header's
+shared list and no `KINDS` entry. Registering it as a kind would make `pathFor`
+lie about what it builds.
+
+**A missing user root is a legal, silent state** — the same rule `discover()`
+already applies to a missing `plugins/` directory (`:174-177`). The app does not
+create `~/.clodex/plugins/`, because a directory that exists only because we made
+it teaches a user nothing, and its absence is the correct representation of "no
+user plugins".
+
+---
+
+## 4. Id precedence and shadowing
+
+**Implemented.**
+
+Today, plugin id uniqueness is a **filesystem accident**: one directory, one
+dirname per id, and `validateManifest` (`plugin-loader.js:40`) requires
+`manifest.id === dirName`. With two roots, `git-branches` can exist in both.
+
+### The rule
+
+**Core wins. The first root in the list that contains an id owns it; later roots
+are shadowed.**
+
+The alternative — user overrides core — is the more obviously "helpful" choice and
+is wrong here, for one reason that outweighs the ergonomics: **a shadowing user
+plugin would silently replace a core plugin after an update changed it.** A user
+who copied `git-branches` to experiment, then forgot, would be running their fork
+against a core they no longer match, with the app reporting the plugin as present
+and working. Under core-wins, the same mistake is inert and visible.
+
+Put the asymmetry plainly, since user-wins is what most editors do and is what a
+reader will expect: the two options do not fail the same way. **User-wins fails
+late, quietly, and against a moving target. Core-wins fails immediately and
+visibly.** Given a choice between a wrong thing that announces itself and a wrong
+thing that waits, take the loud one.
+
+Two objections, both of which dissolve:
+
+- *"I want to modify a core plugin."* Change its id. A fork under its own name is
+  more honest than a silent shadow, and it gets its own settings object instead of
+  inheriting the original's.
+- *"I need to develop against a core plugin."* Anyone doing that has the repo
+  checkout and edits in place. **The user root exists for people without a
+  checkout** — which is exactly the population that must not be silently running a
+  stale fork.
+
+### Shadowing must be VISIBLE
+
+A shadowed plugin is not silently dropped. `status()` gains a `shadowedBy` field
+and Manage Plugins renders a row for it — no toggle, in the same register as the
+existing `Not loaded: <why>` rows for refused directories (`renderer.js:5196`):
+
+```
+git-branches            User
+  Shadowed by the built-in plugin of the same id — this copy is not running.
+```
+
+The failure this prevents is specific and nasty: **a user editing code that is
+not the code running.** Without the row, the plugin appears in the list (the core
+one does), it is enabled, it works — and none of the user's edits have any
+effect, with nothing on screen explaining why.
+
+### What a shadowed plugin shares with its shadower
+
+`uiSettings.plugins.enabled` is keyed by **bare id**, and so is the per-plugin
+settings object `uiSettings.plugins[<id>]`. Two plugins with one id therefore
+share both. Consequences, stated because they are not obvious:
+
+- **The enabled flag is one flag.** There is no state in which the user root's
+  copy is enabled and the core one is not — enabling "git-branches" enables
+  whichever copy won.
+- **The settings object is one object**, and the shadowed plugin's fields may
+  differ from the shadower's. If the user's fork added a setting, its value sits
+  in the shared object, unread, until the shadow is removed — at which point it
+  is read by a plugin that may interpret it differently.
+- **This is a reason to keep precedence stable**, not a bug to fix by key
+  namespacing. Keying settings by root would mean a plugin's settings vanish when
+  it moves between roots, which is a worse and more frequent surprise than the
+  one above.
+
+---
+
+## 5. Inputs we did not choose
+
+Every plugin that has exercised discovery so far lives in `<repo>/plugins` and
+was put there by this project. **Discovery has never seen an input it did not
+author.** That is the same insider-shaped-artifact pattern as §1, so this section
+exists to design against inputs a first real user will produce, and to name what
+is assumed where it cannot.
+
+| Input | Behaviour | Status |
+|---|---|---|
+| Directory with no `manifest.json` | Silently skipped — not an error, since an unrelated subdirectory is not a failed plugin (`:186-191`) | Already correct, unchanged |
+| `manifest.json` present but unparseable | Refused, and surfaced as a `problems` row with the parse error | Already correct, unchanged |
+| `manifest.id` ≠ dirname | Refused (`:40`) | Already correct; verified it still reads correctly when the dirname comes from a root we do not control — the check is per-directory and never consults the root |
+| `entry.*` or `style` escaping the plugin dir | Refused (`:198-212`) | Already correct. Note this is now doing real work: for a core plugin it guarded against our own mistake; for a user plugin it is the first check applied to a path we have never seen |
+| Same id in both roots | Core wins, user copy shown as shadowed (§4) | New |
+| **Symlinked plugin directory** | **Followed.** `readdirSync(…, { withFileTypes: true })` reports a symlink as `isSymbolicLink()`, *not* `isDirectory()`, so the current filter would skip it | **See below — decided** |
+| **Case-folding collision** (`Git-Branches` vs `git-branches`) | Both are discovered as distinct dirnames; on a case-insensitive filesystem they cannot coexist in ONE root but can across TWO | **See below — assumed** |
+| A directory being written while discovery runs (a half-finished `cp`) | Refused or skipped depending on how far the copy got; both are inert | Acceptable — no partial activation is possible, since the manifest is read before anything is required |
+
+### Symlinks: followed, deliberately
+
+`isDirectory()` is false for a symlink even when it points at a directory, so the
+current filter would skip a symlinked plugin. **That is the wrong behaviour for
+the user root**, where symlinking a plugin out of a working git checkout is the
+single most likely thing a developer does — and it would fail *silently*, with
+the plugin simply absent and no `problems` row, because a directory with no
+readable manifest is not an error.
+
+So discovery follows symlinks: an entry is a candidate if `isDirectory()` **or**
+(`isSymbolicLink()` and it stats as a directory). The `insideDir` checks then run
+against the **resolved** directory, so a symlink cannot be used to make
+`entry.engine` escape.
+
+**The assumption named:** a symlink in the user root is the user pointing at
+their own code, and following it is what they meant. This is consistent with §7's
+posture — a user root is code the user deliberately placed — and it would be the
+wrong default for a remote-populated root, which is one more reason a source
+populating a root (§9) is not the same thing as a root.
+
+### Case folding: assumed, not solved
+
+macOS's default filesystem is case-insensitive but case-*preserving*. Within one
+root, `Git-Branches` and `git-branches` cannot both exist, so `manifest.id ===
+dirName` has been sufficient. Across two roots they can, and `isValidPluginId`
+accepts both — so they are two distinct ids to every keyed structure
+(`uiSettings.plugins`, the enabled list, the shadowing check) and one id to the
+filesystem.
+
+**We assume this does not happen, and we do not detect it.** Case-normalising ids
+would change what `isValidPluginId` accepts, which is a `hostApi "1"` surface
+question and a breaking narrowing of a lent rule; doing it only for the shadowing
+check would make shadowing disagree with settings keying, which is worse than
+either alone. The honest scope is: **an id differing from another only by case is
+undefined behaviour**, stated here so the first person to hit it finds this
+paragraph instead of a mystery.
+
+---
+
+## 6. External plugins are Electron-only
+
+**Verified property, not a decision.**
+
+`renderer.js:3020` activates a renderer half with `window.require(rendererPath)`
+— an **absolute path resolved at runtime**, legal only because this app runs with
+`contextIsolation: false` and `nodeIntegration: true`. That works for any path on
+disk, so an external plugin's renderer half loads in Electron with **no build
+step**. CSS was never a problem either: it travels as *text* over
+`plugin:invoke` (`plugin-loader.js:330`), so no path has to resolve in the
+renderer at all.
+
+The web bundle cannot do this. esbuild resolves imports at **build time**, which
+is why `renderer/web/plugin-registry.js` exists — a generated id→module table
+built from `plugins/*/manifest.json`. A plugin that is not in the repo at build
+time cannot be in the bundle.
+
+**So: user plugins work in the Electron app and do not appear in the web
+frontend.** This is stated, not solved. Solving it means either shipping a
+bundler with the app or defining a pre-built plugin artifact format, and both are
+larger than this feature.
+
+### The lint and the parity gate are unaffected — by construction
+
+Both `test/plugin-boundary.test.js` (the no-backdoor lint) and
+`test/plugin-web-parity.test.js` compute their scan root from `__dirname` at dev
+time (`:54` and `:30` respectively, both `path.join(ROOT, 'plugins')`). They are
+static gates over **the code this repo ships**, run from the repo, and they
+cannot see a user root even in principle — there is no user root on a CI
+checkout.
+
+This is worth stating precisely, because "we do not lint code we did not ship"
+sounds like a policy we adopted and it is not: it is a property that already
+holds and that this change cannot break. Likewise the parity gate cannot start
+failing over a user plugin, because `pluginsWithRendererHalf()` reads
+`<repo>/plugins`, so an external renderer half is never expected in the bundle.
+
+A user plugin therefore gets **no static checking at all**. Which is the honest
+consequence of §7, and is why §7 is next.
+
+---
+
+## 7. Trust
+
+**A local plugin is code the user deliberately placed on their own machine, and
+it is judged by the same standard as anything else they choose to run.** No
+warning dialog, no confirmation, no "are you sure" theatre. A user who copies a
+directory into `~/.clodex/plugins/` has done something a good deal more
+deliberate than double-clicking an installer, and pretending otherwise trains
+people to click through warnings — which is worse than not warning.
+
+That is not a claim that plugins are contained. `plugin-api.md` §14 already says
+this plainly and it applies unchanged to user plugins: the host API is a
+**contract, not containment**. Clodex runs with `contextIsolation: false` and
+`nodeIntegration: true`; a Tier-A plugin is in-process JavaScript with the full
+authority of the application — it can read any file the user can read, spawn
+processes, and reach the network. The no-backdoor lint catches accidents and
+drift in code *we* ship; it is not a control, it has never been one, and §6 above
+notes it does not run over user code at all.
+
+**Remote fetch is a different posture and is out of scope here** (§9). The
+distinction that matters: local plugins are code the user *wrote or chose and
+placed*; remote plugins are code the user *authorized by name* and has usually
+never read. A warning is meaningful for the second because there is a real moment
+of decision to attach it to, and meaningless for the first because the decision
+already happened, offline, in a file manager.
+
+---
+
+## 8. npm dependencies
+
+**Sketch only. Not implemented, and not recommended for implementation yet.**
+
+No plugin has a dependency today, and the no-backdoor lint refuses bare package
+specifiers in `plugins/**` for exactly that reason.
+
+**Vendored `node_modules` beside a manifest should already work** and needs no
+machinery: Node's resolution algorithm walks up from the requiring file, so
+`~/.clodex/plugins/foo/node_modules/bar` resolves from
+`~/.clodex/plugins/foo/renderer.js` by the ordinary rules. Nothing in the loader
+interferes — `requireModule` is plain `require` (`engine.js:1765`). This costs
+nothing to allow because it is already true; it needs a test pinning it before
+being documented as supported.
+
+**Running `npm install` on fetched code is a strictly bigger trust step**, and
+should not be conflated with the above. Install scripts execute arbitrary code at
+install time — *before* the user has enabled anything, and outside every
+mechanism this document describes. If a source ever fetches a plugin with
+dependencies, the honest options are to require them vendored, or to install with
+scripts disabled. **Recommend, do not build.**
+
+---
+
+## 9. Sources — sketched, deliberately not specified
+
+**Not implemented. Half a page, and it is meant to be disagreed with.**
+
+The framing that keeps remote additive rather than structural:
+
+> **A source populates a root. It is not a new loading path.**
+
+Discovery reads roots. A source is whatever put files in one — a `git clone`, a
+tarball extraction, a person with a Finder window. Under this framing, adding
+remote support later changes nothing about discovery, precedence, shadowing,
+trust-at-load, or the Electron/web split, because none of them can tell how a
+directory came to exist. That is the property worth protecting; a design where
+"install from GitHub" is a code path *through the loader* gives it up on day one.
+
+What a source would need that a root does not: an identity (where this came
+from), a version or ref, a record of when it was fetched, and a way to update
+that does not lose local edits. Note the last one is where the framing gets
+uncomfortable — a fetched root the user has edited is neither cleanly theirs nor
+cleanly the source's, and "update" has no obviously correct meaning. A design
+that answers this by forbidding local edits to fetched roots is coherent; so is
+one that treats a fetched root as a cache and a user root as authority. **They
+are different products and the choice should be made deliberately, not
+discovered.**
+
+Deliberately unanswered here: whether a source is per-plugin or per-collection,
+whether pinning is by tag or commit, and whether an update is ever automatic.
+The last one has an opinion attached, though: **automatic updates of in-process
+code with full application authority is a supply-chain decision, not a
+convenience feature.**
+
+---
+
+## 10. What a packaged user's install flow actually is
+
+**Stated honestly, because the answer is "there mostly isn't one".**
+
+End to end, today, with the user root implemented:
+
+1. Find a plugin. **There is no discovery mechanism.** No directory, no index, no
+   search, no listing inside the app. The user learns a plugin exists from a
+   README, a link, or a person.
+2. Obtain it. **No install path in the app.** `git clone` or download and unzip,
+   in a terminal or a file manager.
+3. Place it at `~/.clodex/plugins/<id>/`, where `<id>` must equal the plugin's
+   manifest id. **`~/.clodex` is a dot-directory**, so a Finder user needs
+   ⌘⇧. to see it, or ⌘⇧G to navigate to it. Nothing in the app tells them this.
+4. Restart Clodex. **Discovery runs once, at startup** — a plugin added while the
+   app is running is not seen. (Manage Plugins calls `status()`, which calls
+   `discover()`, so the *dialog* would list it; the engine half is loaded by
+   `loadAll` at boot. This asymmetry is a wart, not a design.)
+5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`.
+
+**So the honest scope statement is: this feature makes user plugins possible, not
+usable.** A person who is handed a directory and these five steps can run a
+plugin on a packaged install, which is strictly more than zero and is the point.
+Nobody discovers a plugin, nobody installs one without a terminal, and nobody
+finds `~/.clodex` without being told.
+
+What would have to exist before this is usable by a non-developer, listed so it
+is a known gap rather than a surprise:
+
+- **A "reveal plugins folder" action** in Manage Plugins. Cheapest possible fix
+  for step 3, and it creates the directory as a side effect of a user asking for
+  it — which is the only good reason to create it (§3).
+- **Re-scan without restart**, closing the step-4 asymmetry.
+- **An install affordance** — even just "drop a folder here". This is where a
+  local-only design stays honest: dropping a directory is not a fetch.
+- **A place to find plugins at all.** Not a technical problem, and not solvable
+  by this document.
+
+None of these are in scope for the current implementation, and none of them
+require re-deciding anything above.
+
+---
+
+## 11. Implementation status
+
+| Section | Status |
+|---|---|
+| §3 multi-root discovery, user root at `~/.clodex/plugins/` | **Implemented** |
+| §4 core-wins precedence, shadowed rows in Manage Plugins | **Implemented** |
+| §5 symlink following; the case-folding assumption | **Implemented** / assumed |
+| §6 Electron-only, lint & parity unaffected | Verified property; no code |
+| §7 trust posture | Posture; no code |
+| §8 npm dependencies | Sketch, not built |
+| §9 sources, remote fetch | Sketch, not built |
+| §10 install flow gaps | Not built, scoped |

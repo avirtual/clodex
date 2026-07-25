@@ -61,11 +61,19 @@ function insideDir(path, dir, rel) {
 function createPluginLoader(deps) {
   const {
     fs, path,
-    pluginsDir,        // <repo>/plugins — §3.1 scans exactly this, Phases 1-3
+    pluginsDir,        // legacy single-root form; equivalent to roots: [{ dir }]
+    roots: rootsIn,    // [{ id, dir, label }] in PRECEDENCE order — docs/plugin-sources.md §3
     getUiSettings,     // getter: the store seam, assigned in the bootstrap
     log,
     requireModule,     // seam: node's require, injectable so tests load fakes
   } = deps;
+
+  // Both spellings are accepted because `pluginsDir` is the older one and every
+  // existing caller passes it; a list of one is exactly what it always meant.
+  const roots = (Array.isArray(rootsIn) && rootsIn.length
+    ? rootsIn
+    : [{ id: 'core', dir: pluginsDir, label: 'Built in' }]
+  ).filter((r) => r && r.dir);
 
   const logIt = (msg) => { try { log.info('plugin', String(msg)); } catch {} };
 
@@ -156,30 +164,62 @@ function createPluginLoader(deps) {
     return { counted: true, ok: false, count: recordFailure(key, `renderer activate() threw: ${error || 'unknown error'}`) };
   }
 
-  // ── Discovery (§3.1) ──────────────────────────────────────────────────────
-  // Scans `plugins/*/manifest.json` and NOTHING else. `~/.clodex/plugins/` (BYO)
-  // is Phase 5 and deliberately absent: a scan path is a trust boundary, and
-  // widening it is a decision, never a convenience.
+  // ── Discovery (§3.1, extended to MULTIPLE ROOTS by docs/plugin-sources.md) ──
+  // Scans `<root>/*/manifest.json` for each configured root, in PRECEDENCE
+  // order, and nothing else. A scan path is a trust boundary, so the roots are
+  // injected rather than discovered — widening the set is a decision at the
+  // bootstrap, never a convenience here.
+  //
   // Directories that LOOK like a plugin (they have a manifest.json) but were
   // refused, so the settings section can say so instead of the plugin merely
   // being absent. Not persisted and not counted as a strike: there is no id to
   // key a counter by when the manifest itself is the thing that is broken, and a
   // malformed manifest is already fully inert — nothing of it ever ran.
   let discoveryProblems = [];
+  // Copies of an id that a higher-precedence root already claimed. Surfaced, not
+  // dropped: the failure mode a silent drop produces is a user editing code that
+  // is not the code running (plugin-sources.md §4).
+  let discoveryShadowed = [];
 
-  function discover() {
+  // A symlinked plugin directory is FOLLOWED. readdirSync(withFileTypes) reports
+  // a symlink-to-directory as isSymbolicLink() and NOT isDirectory(), so the
+  // obvious filter skips it — and skips it silently, since a directory with no
+  // readable manifest is not an error. Symlinking a plugin out of a working
+  // checkout is the most likely thing a developer does in the user root, so that
+  // silence would be the first thing a real user hit. The resolved path is what
+  // every later check runs against (see resolveDir).
+  function isCandidateDir(rootDir, ent) {
+    if (ent.isDirectory()) return true;
+    if (!ent.isSymbolicLink()) return false;
+    try { return fs.statSync(path.join(rootDir, ent.name)).isDirectory(); } catch { return false; }
+  }
+
+  // The directory a plugin's paths are judged against. A SYMLINKED entry is
+  // collapsed so `insideDir` compares like with like — otherwise an entry inside
+  // a symlinked plugin resolves through the link target and fails a prefix test
+  // against the link path, or worse passes one it should not.
+  //
+  // Only symlinks are resolved, deliberately. Calling realpathSync on every
+  // directory also rewrites paths that contain no link at all — on macOS
+  // /var/... becomes /private/var/... — which changes the `dir`, `enginePath`
+  // and `rendererPath` every existing caller already sees. Caught by an existing
+  // rendererInfo test, which is the whole reason this is conditional.
+  function resolveDir(dir, isLink) {
+    if (!isLink) return dir;
+    try { return fs.realpathSync(dir); } catch { return dir; }
+  }
+
+  function discoverRoot(root, claimed, problems, shadowed) {
     let entries;
     try {
-      entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+      entries = fs.readdirSync(root.dir, { withFileTypes: true });
     } catch {
-      discoveryProblems = [];
-      return []; // no plugins/ dir at all is a legal, silent state
+      return []; // a root that does not exist is a legal, silent state
     }
-    const problems = [];
-    const note = (dir, why) => { problems.push({ dir, why: String(why) }); };
+    const note = (dir, why) => { problems.push({ dir, why: String(why), root: root.id }); };
     const out = [];
-    for (const ent of entries.filter((d) => d.isDirectory()).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      const dir = path.join(pluginsDir, ent.name);
+    for (const ent of entries.filter((d) => isCandidateDir(root.dir, d)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const dir = resolveDir(path.join(root.dir, ent.name), ent.isSymbolicLink());
       const manifestPath = path.join(dir, 'manifest.json');
       let manifest;
       try {
@@ -194,8 +234,19 @@ function createPluginLoader(deps) {
         }
         continue;
       }
+      // The dirname compared is the one in the ROOT, not the symlink target's:
+      // what the user named the directory is what they meant the id to be.
       const why = validateManifest(manifest, ent.name);
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
+      // PRECEDENCE. An id claimed by an earlier root wins; this copy is recorded
+      // and not loaded. Checked after validation so a shadowed row can only ever
+      // describe something that would otherwise have been a working plugin.
+      const owner = claimed.get(manifest.id);
+      if (owner) {
+        logIt(`skipping ${ent.name} in ${root.id}: shadowed by the ${owner.label} copy`);
+        shadowed.push({ id: manifest.id, dir, root: root.id, rootLabel: root.label || root.id, shadowedBy: owner.id, shadowedByLabel: owner.label });
+        continue;
+      }
       const entry = manifest.entry || {};
       for (const half of ['engine', 'renderer']) {
         if (entry[half] && !insideDir(path, dir, entry[half])) {
@@ -211,16 +262,29 @@ function createPluginLoader(deps) {
         note(ent.name, 'style escapes the plugin directory');
         continue;
       }
+      claimed.set(manifest.id, { id: root.id, label: root.label || root.id });
       out.push({
         id: manifest.id,
         dir,
+        root: root.id,
+        rootLabel: root.label || root.id,
         manifest,
         enginePath: entry.engine ? path.join(dir, entry.engine) : null,
         rendererPath: entry.renderer ? path.join(dir, entry.renderer) : null,
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
       });
     }
+    return out;
+  }
+
+  function discover() {
+    const problems = [];
+    const shadowed = [];
+    const claimed = new Map(); // id -> the root that owns it
+    const out = [];
+    for (const root of roots) out.push(...discoverRoot(root, claimed, problems, shadowed));
     discoveryProblems = problems;
+    discoveryShadowed = shadowed;
     return out;
   }
 
@@ -356,9 +420,15 @@ function createPluginLoader(deps) {
           quarantined: isQuarantined(rec.id),
           failCount: Number(f && f.count) || 0,
           lastError: (f && f.error) || null,
+          root: rec.root || null,
+          rootLabel: rec.rootLabel || null,
         };
       }),
       problems: discoveryProblems.slice(),
+      // Copies losing to a higher-precedence root. A row with no toggle, so a
+      // user editing a shadowed copy is told rather than left to wonder why
+      // their edits do nothing (plugin-sources.md §4).
+      shadowed: discoveryShadowed.slice(),
     };
   }
 

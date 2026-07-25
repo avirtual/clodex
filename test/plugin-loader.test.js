@@ -523,3 +523,166 @@ test('the in-repo workbench plugin is discovered and loads its engine half', () 
   assert.strictEqual(host.registered.length, 1);
   assert.ok(loader.rendererInfo('workbench').rendererPath.endsWith('renderer.js'));
 });
+
+// ── Multi-root discovery (docs/plugin-sources.md §3-§5) ─────────────────────
+//
+// The user root exists because a PACKAGED install cannot accept a plugin at all:
+// `pluginsDir` resolves inside app.asar, which is read-only and replaced
+// wholesale by every update. Everything below is therefore about inputs this
+// project did not author — the first real user plugin will be the first
+// directory in a plugins root that we did not put there ourselves.
+
+function mkMultiLoader(roots, uiState = {}) {
+  const ui = fakeUiSettings(uiState);
+  const logged = [];
+  const loader = createPluginLoader({
+    fs, path,
+    roots,
+    getUiSettings: () => ui.store,
+    log: { info: (scope, msg) => logged.push(`${scope}: ${msg}`) },
+    requireModule: (p) => require(p),
+  });
+  return { loader, ui, logged };
+}
+
+const engineFile = 'module.exports.activate = () => {};';
+
+test('discovery reads every configured root', () => {
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, id: 'alpha' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ beta: { manifest: { ...OK_MANIFEST, id: 'beta' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const ids = loader.discover().map((r) => r.id).sort();
+  assert.deepStrictEqual(ids, ['alpha', 'beta']);
+  // Each record knows which root it came from, because the Manage Plugins row
+  // has to be able to say so.
+  const byId = Object.fromEntries(loader.discover().map((r) => [r.id, r.root]));
+  assert.deepStrictEqual(byId, { alpha: 'core', beta: 'user' });
+});
+
+test('a root that does not exist is a legal, silent state', () => {
+  // The app never CREATES ~/.clodex/plugins — its absence is the honest
+  // representation of "no user plugins", so it must not be an error or a
+  // `problems` row.
+  const core = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: path.join(os.tmpdir(), 'clodex-no-such-root-' + Date.now()), label: 'User' },
+  ]);
+  assert.deepStrictEqual(loader.discover().map((r) => r.id), ['alpha']);
+  assert.deepStrictEqual(loader.status().problems, []);
+  assert.deepStrictEqual(loader.status().shadowed, []);
+});
+
+test('CORE WINS: a user copy of a core id is shadowed, not loaded', () => {
+  // The precedence decision, and the reason for it: user-wins fails LATE and
+  // QUIETLY — a forgotten fork keeps running after an update changed the core it
+  // was forked from, with the app reporting health. This asserts the loud
+  // failure instead.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '2.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '9.9.9' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const recs = loader.discover();
+  assert.strictEqual(recs.length, 1, 'exactly one copy is live');
+  assert.strictEqual(recs[0].root, 'core');
+  assert.strictEqual(recs[0].manifest.version, '2.0.0', 'the CORE copy is the one that runs');
+  // Reversing the root order reverses the winner — precedence is the list order
+  // and nothing else, so this is what makes "core wins" a configuration rather
+  // than a hardcoded rule.
+  const { loader: flipped } = mkMultiLoader([
+    { id: 'user', dir: user, label: 'User' },
+    { id: 'core', dir: core, label: 'Built in' },
+  ]);
+  assert.strictEqual(flipped.discover()[0].manifest.version, '9.9.9');
+});
+
+test('a shadowed copy is SURFACED, never silently dropped', () => {
+  // The failure this prevents: a user editing code that is not the code running.
+  // Without a row the plugin is present, enabled and working — and none of their
+  // edits do anything, with nothing on screen explaining why.
+  const core = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const st = loader.status();
+  assert.strictEqual(st.plugins.length, 1);
+  assert.strictEqual(st.shadowed.length, 1);
+  assert.strictEqual(st.shadowed[0].id, 'alpha');
+  assert.strictEqual(st.shadowed[0].root, 'user');
+  assert.strictEqual(st.shadowed[0].shadowedBy, 'core');
+  // The DIRECTORY is carried, because "which copy is not running" is the one
+  // question the row exists to answer and an id alone cannot answer it.
+  assert.strictEqual(st.shadowed[0].dir, path.join(user, 'alpha'));
+});
+
+test('a SYMLINKED plugin directory is followed', () => {
+  // The first input we did not choose, and it was already broken: readdirSync
+  // with withFileTypes reports a symlink-to-directory as isSymbolicLink() and
+  // NOT isDirectory(), so the obvious filter skips it — silently, since a
+  // directory with no readable manifest is not an error. Symlinking a plugin out
+  // of a working checkout is the likeliest thing a developer does in the user
+  // root.
+  const src = mkTree({ gamma: { manifest: { ...OK_MANIFEST, id: 'gamma' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-userroot-'));
+  fs.symlinkSync(path.join(src, 'gamma'), path.join(user, 'gamma'), 'dir');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const recs = loader.discover();
+  assert.strictEqual(recs.length, 1, 'a symlinked plugin directory is discovered');
+  assert.strictEqual(recs[0].id, 'gamma');
+  // Paths are RESOLVED, so every later check (insideDir, require) compares like
+  // with like rather than reasoning about a path that points somewhere else.
+  assert.strictEqual(recs[0].dir, fs.realpathSync(path.join(src, 'gamma')));
+  assert.ok(recs[0].enginePath.startsWith(recs[0].dir + path.sep));
+});
+
+test('a symlink cannot be used to escape the plugin directory', () => {
+  // insideDir runs against the RESOLVED dir, so the escape check is not weakened
+  // by the symlink following above.
+  const src = mkTree({ evil: { manifest: { ...OK_MANIFEST, id: 'evil', entry: { engine: '../../elsewhere.js' } }, files: { 'engine.js': engineFile } } });
+  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-userroot-'));
+  fs.symlinkSync(path.join(src, 'evil'), path.join(user, 'evil'), 'dir');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  assert.deepStrictEqual(loader.discover(), []);
+  const why = loader.status().problems.map((p) => p.why).join(' ');
+  assert.match(why, /escapes the plugin directory/);
+});
+
+test('a broken user manifest is reported against its own root', () => {
+  // A problems row has to say WHERE, or a user with the same dirname in both
+  // roots cannot tell which copy is broken.
+  const core = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ broken: { manifest: '{ not json' } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  loader.discover();
+  const probs = loader.status().problems;
+  assert.strictEqual(probs.length, 1);
+  assert.strictEqual(probs[0].dir, 'broken');
+  assert.strictEqual(probs[0].root, 'user');
+});
+
+test('a user directory with no manifest.json is not an error', () => {
+  // Unchanged behaviour, asserted across roots: an unrelated subdirectory a user
+  // happens to have is not a failed plugin.
+  const user = mkTree({ notes: { files: { 'README.md': 'hi' } } });
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  assert.deepStrictEqual(loader.discover(), []);
+  assert.deepStrictEqual(loader.status().problems, []);
+});
+
+test('the legacy single-root `pluginsDir` spelling still works', () => {
+  // Every existing caller passes pluginsDir; a list of one is exactly what it
+  // always meant, so this must not have become a breaking change.
+  const core = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkLoader(core);
+  assert.deepStrictEqual(loader.discover().map((r) => r.id), ['alpha']);
+});

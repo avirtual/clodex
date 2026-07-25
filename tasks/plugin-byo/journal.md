@@ -272,3 +272,108 @@ path.**
 
 **If Part 1 turns up something that makes Part 2 the wrong shape, STOP and report
 rather than building to a design you no longer believe. That is what 4a earned.**
+
+---
+
+### T16 phase 1 — source verification, before writing any doc
+
+**clodex's seam claims: both CONFIRMED.** `pluginsDir` is injected
+(`plugin-loader.js:64`) and `discover()` (`:170-224`) reads exactly that one
+directory. Only two production call sites exist — `engine.js:1762` and the tests.
+The seam is as clean as claimed.
+
+**The lint/parity watch-items need NO decision — they are already answered by
+construction.** Both tests compute their scan root from `__dirname` at dev time:
+`test/plugin-boundary.test.js:54` (`path.join(ROOT, 'plugins')`) and
+`test/plugin-web-parity.test.js:30` (same). They are static gates over the code
+*this repo ships*, run from the repo, and they cannot see a user root even in
+principle — there is no user root on a CI checkout. So "we do not lint code we did
+not ship" is not a posture to adopt; it is already true and unbreakable by this
+change. Parity likewise cannot start failing: `pluginsWithRendererHalf()` reads
+`<repo>/plugins`, so an external renderer half is never expected in the bundle.
+**State this in the doc as a verified property, not a decision.**
+
+**`~/.clodex/plugins/` is still the right choice, and it does NOT go through
+`clodex-paths.js`.** That module single-sources the **per-agent** grammar only:
+`runDirFor` builds `run/<name>/` and `pathFor` builds `run/<name>/<kind>` — those
+are the only two constructors it exports, and `KINDS` is a per-agent artifact
+table. Shared root-level dirs (`messages/`, `pending/`, `agents/`, `skills/`,
+`library/`) are *documented* in its header but not *constructed* by it. A plugins
+root is a shared dir, so it needs a line in that header's shared list and no entry
+in `KINDS`. Registering it as a kind would be wrong — it is not per-agent.
+
+**NEW FINDING, and it reframes the ticket.** `engine.js:1762` sets
+`pluginsDir: path.join(__dirname, 'plugins')`, and the comment two lines above
+says plainly that `__dirname` is "the app.asar root when packaged". `package.json`
+ships `plugins/**/*` inside that asar. So **in a packaged install the plugins
+directory is inside a read-only archive that is replaced wholesale on every
+update.** A user running the DMG — i.e. every non-developer — cannot add a plugin
+today at all, and could not keep one across an upgrade if they could.
+
+That changes the argument for this work. Bogdan framed the user root as avoiding
+merge conflicts and `git pull` friction, which is a developer's problem. It is
+also, and more fundamentally, **the only mechanism by which a packaged install can
+have a user plugin at all.** Worth reporting: it strengthens Part 2 rather than
+undermining it, so it is not a stop-and-report under the standing instruction, but
+clodex should have it before the doc argues its own motivation.
+
+Related, for the doc: `engine.js:1759` already names this as "GAP G8
+(packaged-.app resource layout) … deliberately not pre-solved here". Part 1 is
+where that gap gets an answer.
+
+### T16 DONE — `docs/plugin-sources.md` + the local root. Suite 2501/2501.
+
+Doc and code landed in ONE commit: the doc's §11 status table claims §3/§4/§5 are
+implemented, which is only true with the code beside it.
+
+**Doc** (`docs/plugin-sources.md`, 11 sections). Motivation leads with the
+packaged case per clodex's ruling — Phases 0–3 shipped an extension system only
+its authors can extend — with the merge-conflict framing demoted to a footnote.
+GAP G8 answered explicitly, `extraResources` considered and refused (chiefly:
+its contents are *still* replaced by an update, so a plugin there fails late and
+quietly, which is worse than a directory the user simply cannot write). §10 states
+plainly that there is no install flow and scopes what would have to exist.
+
+**Code.** `plugin-loader.js` takes `roots` (precedence order) and keeps
+`pluginsDir` as the one-element spelling — every existing caller passes it, so
+this is not a breaking change and there is a test saying so. `discoverRoot`
+iterates per root with a `claimed` map; a later root's copy of a claimed id is
+recorded in `discoveryShadowed` and not loaded. `status()` gains `shadowed` plus
+`root`/`rootLabel` per plugin; `problems` rows gain `root`. `engine.js` passes
+both roots (`REGISTRY_DIR + '/plugins'` for user, never created by the app).
+`renderer.js` renders no-toggle shadowed rows. `clodex-paths.js` header gains
+`plugins/` in the shared-dirs list, no `KINDS` entry.
+
+**Symlink following: the finding, and it was already broken.** Verified by
+execution that `readdirSync(withFileTypes)` reports a symlink-to-dir as
+`isSymbolicLink()` and NOT `isDirectory()`, so the old filter skipped it —
+silently, since a dir with no manifest is not an error. Now followed, with
+`insideDir` running against the resolved dir. Revert proof: test fails by message
+(`a symlinked plugin directory is discovered / 0 !== 1`), not by crash.
+
+**A regression I caused and an existing test caught.** My first `resolveDir`
+called `realpathSync` on *every* directory, which on macOS rewrites `/var/...`
+to `/private/var/...` — changing `dir`/`enginePath`/`rendererPath` for callers
+that have no symlink at all. `rendererInfo returns the renderer path and the
+stylesheet TEXT` went red on exactly that. Fixed by resolving **only** when the
+entry is a symlink. Worth recording: the test that caught it was pinning
+something unrelated, and the failure was a path-prefix diff — the cheapest
+possible way to learn that a "harmless" normalisation is not harmless.
+
+9 new tests in `test/plugin-loader.test.js`. `plugin-loader.js` is already in
+`free-identifier-leaks.test.js`'s SCANNED_MODULES, so no list update was needed.
+
+**Not built, per scope:** fetching, updating, pinning, any network path.
+
+---
+
+**Superseded phase-2 note:** write `docs/plugin-sources.md`. Design precedence and
+shadowing for **inputs we did not choose** — clodex's note, and it is the same
+insider-shaped-artifact pattern one level out, since every plugin that has
+exercised discovery so far was put in `<repo>/plugins` by us. Named cases to cover
+or explicitly exclude: a symlinked plugin directory, a manifest id disagreeing
+with its dirname (already refused at `plugin-loader.js:40` — check it still reads
+correctly across roots), a half-copied directory with no `manifest.json` (already
+silent-skipped at `:186-191`), a directory present in both roots, and case-folding
+collisions on macOS's case-insensitive default filesystem. **Where an input cannot
+be designed for, say which inputs were assumed.**

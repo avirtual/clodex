@@ -1753,13 +1753,31 @@ const toolCache = createToolCache({ whichBin });
         // which has no app menu to refresh).
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
       });
-      // `__dirname` is the repo root in dev and the app.asar root when packaged;
-      // §3.1 scans `<repo>/plugins/*/manifest.json` and nothing else until the
-      // BYO tier (Phase 5). GAP G8 (packaged-.app resource layout) is a W7
-      // question, deliberately not pre-solved here.
+      // TWO ROOTS, in precedence order (docs/plugin-sources.md §3-§4).
+      //
+      // `__dirname` is the repo root in dev and the app.asar root when packaged.
+      // That second case is why the user root exists at all: the packaged
+      // plugins dir is inside a READ-ONLY archive that an update replaces
+      // wholesale, so a DMG user cannot add a plugin and could not keep one if
+      // they could. This answers GAP G8 — core plugins stay in the asar, and
+      // user plugins live somewhere the app never writes.
+      //
+      // CORE WINS. A user copy of a core id is recorded as shadowed and not
+      // loaded, because user-wins fails late and quietly (a forgotten fork
+      // running against a core that moved under it) where core-wins fails
+      // immediately and visibly.
+      //
+      // ~/.clodex/plugins/ is a SHARED root-level dir, not per-agent, so it is
+      // deliberately absent from clodex-paths.js's KINDS table. The app never
+      // creates it: a directory that exists only because we made it teaches a
+      // user nothing, and its absence is the honest representation of "no user
+      // plugins".
       pluginLoader = createPluginLoader({
         fs, path,
-        pluginsDir: path.join(__dirname, 'plugins'),
+        roots: [
+          { id: 'core', dir: path.join(__dirname, 'plugins'), label: 'Built in' },
+          { id: 'user', dir: path.join(REGISTRY_DIR, 'plugins'), label: 'User' },
+        ],
         getUiSettings: () => uiSettings,
         log,
         requireModule: (p) => require(p),

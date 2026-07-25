@@ -5108,8 +5108,9 @@ async function renderPluginsDialog() {
   try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
   const plugins = (status && status.ok && status.plugins) || [];
   const problems = (status && status.ok && status.problems) || [];
+  const shadowed = (status && status.ok && status.shadowed) || [];
   pluginsList.innerHTML = '';
-  if (!plugins.length && !problems.length) {
+  if (!plugins.length && !problems.length && !shadowed.length) {
     // Reachable only by an explicit open under CLODEX_PLUGINS=0, where the
     // refusal comes back shaped and empty — the MENU that normally opens this
     // dialog is absent in that state.
@@ -5195,6 +5196,39 @@ async function renderPluginsDialog() {
     n.className = 'plugin-row-note warn';
     n.textContent = `Not loaded: ${pr.why}`;
     body.appendChild(n);
+    row.appendChild(body);
+    pluginsList.appendChild(row);
+  }
+  // Copies of an id a higher-precedence root already claimed. No toggle: the
+  // enabled flag is keyed by bare id and belongs to whichever copy WON, so a
+  // checkbox here would toggle the other plugin. Shown rather than dropped
+  // because the failure it prevents is a user editing code that is not running
+  // (docs/plugin-sources.md §4).
+  for (const sh of shadowed) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = sh.id;
+    if (sh.rootLabel) {
+      const r = document.createElement('span');
+      r.className = 'plugin-row-version';
+      r.textContent = sh.rootLabel;
+      nameEl.appendChild(r);
+    }
+    body.appendChild(nameEl);
+    const n = document.createElement('div');
+    n.className = 'plugin-row-note warn';
+    n.textContent = `Shadowed by the ${sh.shadowedByLabel || sh.shadowedBy} copy of the same id — this one is not running.`;
+    body.appendChild(n);
+    if (sh.dir) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = sh.dir;
+      body.appendChild(d);
+    }
     row.appendChild(body);
     pluginsList.appendChild(row);
   }
