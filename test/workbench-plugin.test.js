@@ -25,6 +25,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
+const { HOST_API_VERSION } = require('../plugin-api');
 const gitScm = require('../plugins/workbench/git-scm');
 const fsExplorer = require('../plugins/workbench/fs-explorer');
 const workbenchEngine = require('../plugins/workbench/engine');
@@ -93,7 +94,9 @@ function boot() {
       createWorktree: rec('wt', 'createWorktree'),
     },
   });
-  engine.register('workbench', workbenchEngine, { hostApi: '0' });
+  // Derived: this file tests the workbench's fourteen handlers, not versioning.
+  // A literal would fail every one of them on a bump, which says nothing.
+  engine.register('workbench', workbenchEngine, { hostApi: HOST_API_VERSION });
   const cleanup = () => { restore(); fs.rmSync(dir, { recursive: true, force: true }); };
   return { engine, calls, cleanup };
 }

@@ -245,10 +245,15 @@ test('a hostApi mismatch refuses to load with a named error', () => {
   const { engine } = makeHost();
   assert.throws(
     () => engine.register('demo', { activate() {} }, { hostApi: '99' }),
-    /wants hostApi "99" but this host is "0"/,
+    new RegExp(`wants hostApi "99" but this host is "${HOST_API_VERSION}"`),
     'a manifest predating the surface must not half-activate',
   );
-  assert.equal(HOST_API_VERSION, '0', 'the host API is explicitly unstable until Phase 3');
+  // THE freeze pin, and deliberately the only literal one in the suite (T6). The
+  // published version is a one-way door: docs/plugin-api.md documents "1", every
+  // out-of-tree plugin writes "1" in its manifest, and a change here silently
+  // refuses all of them. Changing this line is the decision, not a consequence
+  // of one — see plugin-api.js on what does and does not warrant a bump.
+  assert.equal(HOST_API_VERSION, '1', 'the host API is FROZEN at "1" (Phase 3)');
 });
 
 test('storage is atomic whole-file JSON under the plugin data dir', () => {

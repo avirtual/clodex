@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createPluginLoader, validateManifest } = require('../plugin-loader');
+const { HOST_API_VERSION } = require('../plugin-api');
 
 // A real temp plugins/ tree. Real fs rather than a mock because the thing under
 // test IS filesystem interpretation — a mocked readdir would pass a loader that
@@ -59,7 +60,12 @@ function mkLoader(pluginsDir, uiState = {}, overrides = {}) {
 }
 
 const OK_MANIFEST = {
-  id: 'alpha', name: 'Alpha', version: '1.0.0', hostApi: '0',
+  // Derived, not literal: this constant's job is "a manifest that is otherwise
+  // well-formed", so every test below varies ONE field against it. Pinning the
+  // version here too would make a bump look like a validation failure in a dozen
+  // unrelated tests. The version itself is pinned in exactly one place —
+  // plugin-host-engine.test.js's freeze assertion.
+  id: 'alpha', name: 'Alpha', version: '1.0.0', hostApi: HOST_API_VERSION,
   entry: { engine: 'engine.js', renderer: 'renderer.js' }, style: 'style.css',
 };
 
@@ -91,9 +97,14 @@ test('validateManifest refuses a manifest whose id does not match its directory'
 test('validateManifest refuses a hostApi mismatch by name', () => {
   // §3.1: a mismatch REFUSES rather than half-activating against a surface the
   // plugin predates. The error names both versions so the log says what to fix.
-  const why = validateManifest({ ...OK_MANIFEST, hostApi: '1' }, 'alpha');
-  assert.match(why, /wants hostApi "1"/);
-  assert.match(why, /host is "0"/);
+  // "99" rather than a real-looking version: the mismatching value has to be one
+  // this host will never serve, or the test starts passing/failing on the bump
+  // instead of on the refusal it is about. (It WAS "1" — which the Phase-3 freeze
+  // turned into the accepted version, i.e. into a test that asserted a valid
+  // manifest is refused.)
+  const why = validateManifest({ ...OK_MANIFEST, hostApi: '99' }, 'alpha');
+  assert.match(why, /wants hostApi "99"/);
+  assert.match(why, new RegExp(`host is "${HOST_API_VERSION}"`));
 });
 
 test('validateManifest refuses invalid ids, missing entry, and an empty entry', () => {
@@ -458,7 +469,10 @@ test('the in-repo workbench plugin is discovered and loads its engine half', () 
   const { loader } = mkLoader(path.join(__dirname, '..', 'plugins'));
   const rec = loader.discover().find((r) => r.id === 'workbench');
   assert.ok(rec, 'plugins/workbench is discoverable');
-  assert.strictEqual(rec.manifest.hostApi, '0');
+  // LOAD-BEARING against the constant, not against a literal: the pilot's
+  // manifest must track the host it ships with, and a bump that forgets the
+  // manifest is exactly the drift this test exists to catch.
+  assert.strictEqual(rec.manifest.hostApi, HOST_API_VERSION);
   assert.strictEqual(loader.isEnabled(rec), true, 'the pilot ships enabled (W7)');
 
   const host = fakeHost();

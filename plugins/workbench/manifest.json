@@ -2,7 +2,7 @@
   "id": "workbench",
   "name": "Workbench",
   "version": "1.0.0",
-  "hostApi": "0",
+  "hostApi": "1",
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
   "enabledByDefault": true,

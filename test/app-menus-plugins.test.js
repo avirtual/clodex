@@ -32,6 +32,7 @@ const path = require('node:path');
 const { initStores } = require('../stores.js');
 const { createPluginLoader } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
+const { HOST_API_VERSION } = require('../plugin-api');
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,11 @@ function writePlugin(root, id, { name, version, enabledByDefault, throws = false
     id,
     name: name || id,
     version: version || '1.0.0',
-    hostApi: '0',
+    // Derived: these fixtures exist to be DISCOVERED, so they must track the
+    // host's version rather than pin it — a literal here would turn a version
+    // bump into "the menu lists nothing", which is a confusing failure for a
+    // test about menu structure.
+    hostApi: HOST_API_VERSION,
     entry: { engine: 'engine.js' },
     enabledByDefault: enabledByDefault !== false,
     announce: `${name || id} does something`,

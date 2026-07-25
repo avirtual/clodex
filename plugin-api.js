@@ -9,11 +9,21 @@
 // Node test, in the browser bundle, and (critically) inside a plugin's engine
 // half, which must never reach core internals except through the host argument.
 
-// The published host-API version. "0" means EXPLICITLY UNSTABLE — the taxonomy
-// is not frozen until Phase 3, when the pilot has proven what the shapes want to
-// be (plan §3.1, §6). A manifest whose `hostApi` doesn't match refuses to load
-// with a named error rather than half-activating against a surface it predates.
-const HOST_API_VERSION = '0';
+// The published host-API version. "1" is FROZEN (Phase 3, plan §3.1/§6): the
+// workbench pilot proved the shapes, and the surface is now a published contract
+// documented in docs/plugin-api.md rather than an internal one. "0" — the
+// explicitly-unstable predecessor — is gone; a plugin written against it names a
+// version this host does not serve and is refused by name, which is the whole
+// point of the field.
+//
+// WHAT A BUMP MEANS. A manifest whose `hostApi` doesn't match refuses to load
+// with a named error rather than half-activating against a surface it predates,
+// so this string is the compatibility gate for every plugin in existence.
+// ADDITIVE changes — a new slot, a new `host`/`rhost` member, a new optional
+// manifest field — do NOT bump it; they ship as "1.1 behaviour" that older
+// plugins simply don't use, and docs/plugin-api.md records when each arrived.
+// Only a change that could break a conforming "1" plugin bumps to "2".
+const HOST_API_VERSION = '1';
 
 // Plugin ids and the tokens derived from them (intent verbs, dispatch methods,
 // DOM `data-plugin` attributes, storage dir names). Deliberately narrower than
