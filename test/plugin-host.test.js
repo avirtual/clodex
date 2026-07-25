@@ -728,3 +728,128 @@ test('activating the same plugin twice is refused', () => {
   activate(host, 'demo', () => {});
   assert.throws(() => activate(host, 'demo', () => {}), /already activated/);
 });
+
+
+// ── W9 GATE 1: two windows ──────────────────────────────────────────────────
+// The multi-window law (§3.3 law 1) says N windows ⇒ N renderer activations.
+// Everything above drives ONE host, which is one window. These drive TWO, which
+// is the shape gate 1 actually asks about: per-window overlay state, and a
+// disable that leaves nothing live in EITHER window.
+//
+// What this CANNOT prove, and does not claim to: that Electron delivers the
+// `plugin-state` broadcast to both BrowserWindows. That is a running-app check
+// (see the journal's gate-1 manual script). What it does prove is that when the
+// hint arrives, each window's teardown is complete.
+
+// Two hosts over two independent DOMs. `installDom` assigns global.document, so
+// the DOM must be swapped in around every call into a given host — which is
+// itself faithful: each window has its own document.
+function makeTwoWindows() {
+  const wins = [];
+  for (const id of ['win-a', 'win-b']) {
+    const initPluginHost = load();          // fresh module instance per window
+    const dom = installDom();
+    const footer = el('div', 'sidebar-footer');
+    dom.body.appendChild(footer);
+    const host = initPluginHost({
+      getActiveSession: () => 'seat-a',
+      sessionTypeOf: () => 'claude',
+      activeIsAgent: () => true,
+      activePeerQueryable: () => false,
+      activePeerConfigurable: () => false,
+      scheduleSidebarRelayout: () => {},
+      getWorkspaceId: () => id,
+    });
+    wins.push({ id, host, dom, footer, doc: global.document });
+  }
+  // `in(win, fn)` restores that window's document for the duration of the call.
+  const inWin = (w, fn) => { global.document = w.doc; return fn(); };
+  return { wins, inWin };
+}
+
+test('W9 gate 1: overlay state is INDEPENDENT per window', () => {
+  const { wins, inWin } = makeTwoWindows();
+  const [a, b] = wins;
+  const surfaces = {};
+  for (const w of wins) {
+    inWin(w, () => {
+      w.host.activate('demo', {
+        activate: (rhost) => {
+          surfaces[w.id] = rhost.ui.surfaces.overlay({
+            id: 'panel',
+            mount: (root) => { root.appendChild(el('div', null, 'guts')); },
+          });
+        },
+      }, { css: '.demo { color: red }' });
+    });
+  }
+
+  // Open in A only. B must be untouched — per-window state lives in the
+  // activation closure, which is the whole reason activation is per window.
+  inWin(a, () => surfaces['win-a'].open());
+  assert.ok(a.dom.body.querySelector('[data-plugin="demo"]'), 'A has an overlay container');
+  assert.equal(b.dom.body.querySelector('[data-plugin="demo"]'), null,
+    'B never mounted one — open() in one window does not open the other');
+
+  inWin(b, () => surfaces['win-b'].open());
+  assert.ok(b.dom.body.querySelector('[data-plugin="demo"]'), 'B opens its own, independently');
+
+  // Closing A's leaves B's open.
+  inWin(a, () => surfaces['win-a'].close());
+  assert.ok(a.dom.body.querySelector('[data-plugin="demo"]').classList.contains('hidden'));
+  assert.ok(!b.dom.body.querySelector('[data-plugin="demo"]').classList.contains('hidden'));
+});
+
+test('W9 gate 1: disable removes button, overlay, styles and rows from BOTH windows', () => {
+  const { wins, inWin } = makeTwoWindows();
+  const targets = {};
+  for (const w of wins) {
+    inWin(w, () => {
+      const target = el('div');
+      targets[w.id] = target;
+      w.host.activate('demo', {
+        activate: (rhost) => {
+          const ov = rhost.ui.surfaces.overlay({ id: 'panel', mount: (root) => { root.appendChild(el('div')); } });
+          rhost.ui.sidebar.footerButton({ id: 'open', glyph: '◫', label: 'Demo', onClick: () => {} });
+          rhost.ui.statusBar.addSegment({ id: 'seg', render: () => ({ text: 'x' }) });
+          rhost.ui.sessionMenu.addProvider({ id: 'm', entriesFor: () => [{ act: 'go', label: 'Go' }], onPick: () => {} });
+          rhost.ui.settings.section({ id: 'sec', title: 'Demo', render: () => {}, collect: () => ({}) });
+          rhost.addEventListener(target, 'click', () => {});
+          ov.open();
+        },
+      }, { css: '.demo { color: red }' });
+    });
+  }
+
+  // Both windows fully populated before the disable.
+  for (const w of wins) {
+    inWin(w, () => {
+      assert.ok(w.footer.querySelector('[data-plugin-footer="demo:open"]'), `${w.id} has the footer button`);
+      assert.ok(w.dom.body.querySelector('[data-plugin="demo"]'), `${w.id} has the overlay`);
+      assert.ok(w.dom.head.querySelector('[data-plugin-style="demo"]'), `${w.id} has the stylesheet`);
+      assert.notEqual(w.host.statusBarHtml(), '');
+    });
+  }
+
+  // The disable hint lands in each window; each disposes its OWN half.
+  for (const w of wins) inWin(w, () => assert.equal(w.host.dispose('demo'), true));
+
+  for (const w of wins) {
+    inWin(w, () => {
+      assert.equal(w.footer.querySelector('[data-plugin-footer="demo:open"]'), null, `${w.id}: button gone`);
+      assert.equal(w.dom.body.querySelector('[data-plugin="demo"]'), null, `${w.id}: overlay gone`);
+      assert.equal(w.dom.head.querySelector('[data-plugin-style="demo"]'), null, `${w.id}: styles gone`);
+      assert.equal(w.host.statusBarHtml(), '', `${w.id}: status rows gone`);
+      assert.deepEqual(w.host.menuEntriesFor('claude'), [], `${w.id}: menu rows gone`);
+      assert.deepEqual(w.host.settingsSectionOwners(), [], `${w.id}: settings section gone`);
+      // ZERO live timers/listeners — the gate's actual wording.
+      assert.deepEqual(w.host._liveResources('demo'), {
+        timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false,
+      }, `${w.id}: zero live resources`);
+      assert.deepEqual(w.host._counts(), {
+        actions: 0, segments: 0, footer: 0, badges: 0, menus: 0, sections: 0, overlays: 0,
+      }, `${w.id}: every registry empty`);
+      assert.equal(targets[w.id].listenerCount('click'), 0, `${w.id}: listener unregistered from the real target`);
+    });
+  }
+});

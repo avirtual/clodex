@@ -435,6 +435,21 @@ test('status() lists every plugin ON DISK plus the directories that were refused
   assert.match(s.problems.find((p) => p.dir === 'mismatch').why, /does not match its directory/);
 });
 
+// ── Packaging (GAP G8) ──────────────────────────────────────────────────────
+
+test('electron-builder SHIPS plugins/ — otherwise the DMG has no workbench at all', () => {
+  // GAP G8, resolved at W7. `discover()` scans `path.join(__dirname, 'plugins')`,
+  // which is the app.asar root when packaged — correct, but only if the packer
+  // put the directory there. `build.files` is an ALLOWLIST: everything not named
+  // is excluded, so an unlisted plugins/ means `readdirSync` throws, discover
+  // returns [] (its legal silent state), and the shipped app silently has no
+  // workbench while dev has one. The failure mode is invisible in every test
+  // that runs from a checkout, which is why it is pinned here.
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.ok(pkg.build.files.includes('plugins/**/*'),
+    'package.json build.files must list plugins/**/* or the packaged app ships none');
+});
+
 // ── The real workbench plugin (W1 scaffold) ─────────────────────────────────
 
 test('the in-repo workbench plugin is discovered and loads its engine half', () => {

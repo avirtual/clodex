@@ -59,6 +59,7 @@
       "scripts/clodex-monitor.js",
       "wire/**/*",
       "renderer/**/*",
+      "plugins/**/*",
       "resources/**/*",
       "build/tray-iconTemplate.png",
       "build/tray-iconTemplate@2x.png",
