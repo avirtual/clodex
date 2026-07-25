@@ -525,3 +525,90 @@ transports, and that ticket should carry the `build.files` change and the
 README update as part of its own cost.
 
 Awaiting clodex's ruling before building.
+
+## RULINGS on phase 1 (msg-93431-29)
+
+clodex verified (C) himself at stores.js:236-238 (`if (!url && !sshHost) continue;`)
+and **withdrew** his transport correction: the premise was wrong, the peer schema
+excluded k8s/Fargate long before this ticket.
+
+1. **Ship ssh-only**, limitation stated in the UI. Build the supervisor per the
+   approved design.
+2. The direction gate is its own ticket — **clodex files it, not me**. Same for
+   the peer-schema work, which he ranks above this ticket.
+
+# SPUN-OUT TICKET #1 (clodex files) — a gate on the cli/ ↔ app direction
+
+Written up here so a fresh spawn can file and build it without re-deriving the
+finding.
+
+**The invariant.** `cli/` is standalone by construction: `node:*` + its own
+siblings, never an app file. Asserted in prose at `cli/src/transport.js:12`,
+`cli/src/import.js:5`, `cli/README.md:7`. **No test enforces it, in either
+direction.** `pot-cli-closure.test.js` pins a different closure (pot-cli's
+materialized files); `plugin-loader.test.js` pins `build.files` for `plugins/`.
+
+**Why it is worth more than tidiness — the DMG asymmetry.** The two directions
+fail differently and the app→cli one is the dangerous half:
+
+- **cli → app** breaks clodexctl's standalone install (a box that has never seen
+  Clodex). Loud and local: `cli/test/load-smoke.test.js` requires every
+  `cli/src/*.js` in-process, so an app import that fails to resolve surfaces
+  there. Partially covered by luck, not design — an app file that *does* resolve
+  from a checkout would pass load-smoke and still break the published package.
+- **app → cli** is the silent one. `build.files` is an **allowlist**: `"*.js"`
+  matches root files ONLY (not subdirs), plus the named subdirs `wire/`,
+  `renderer/`, `plugins/`, `resources/` and two `scripts/` files. `cli/` is not
+  among them. So `require('./cli/src/transport')` resolves fine from a checkout,
+  passes the whole suite, passes `npm start`, and throws MODULE_NOT_FOUND in the
+  shipped DMG. Green in dev, fatal in release.
+
+**The check that catches it, and the one that does not.** Reading
+`package.json`'s `build.files` is NOT sufficient — it tells you the config, not
+the artifact. The real check is `npx asar list` on the built app:
+
+```
+npx asar list dist/mac-arm64/Clodex.app/Contents/Resources/app.asar | grep '^/cli'
+```
+
+which today returns exactly ONE line — `/cli-hooks.js`, the app's own root file
+(the `^/cli` prefix matches it; do not mistake that for the directory). The
+`cli/` directory is absent. `scripts/electron-smoke.js` does not cover this: it
+requires `wire/` files, not cli.
+
+**Shape of the fix.** A static test scanning both directions, in the spirit of
+`free-identifier-leaks.test.js`: every `require('…')` in `cli/**/*.js` must be a
+`node:`/bare builtin or a `./`-sibling inside `cli/`; every `require()` in root
+app files must not reach into `cli/`. Static source scan, no build needed — the
+asar check is the *reasoning* for why the gate matters, not the gate itself
+(a test must not depend on a built DMG).
+
+**Note if the direction is ever deliberately opened.** Adding `"cli/**/*"` to
+`build.files` is a one-line change, but it contradicts `cli/README.md:62` — "The
+desktop app's packaged DMG does **not** include `cli/` — it is a standalone
+package" — which is a deliberate shipping position. Opening the direction means
+changing that position and the README together, not just the glob.
+
+# SPUN-OUT TICKET #2 (clodex files, ranked ABOVE this one) — multi-transport peers
+
+A Fargate task or a k8s pod cannot be a Clodex peer at all today. Three places
+enforce it, all by construction rather than by validation-with-holes:
+`sanitizePeers` (stores.js:227) rebuilds each entry key by key, accepting only
+`url` + `sshHost`; `classifyPeerDest` (peer-deploy.js:253) returns exactly
+`ssh`/`url`/`empty`/`error`; `resolvePeerUrls` (peer-wiring.js:164) branches
+`sshHost` → tunnel URL, else `p.url`. Surface: peer schema + sanitizePeers +
+classifyPeerDest + the peers dialog + peer-wiring resolution.
+
+Ranked above the web view because it makes the **peer connection itself**
+multi-transport — the web view then follows for free, since the supervisor would
+read the same ctx. `cli/src/transport.js` is the reference implementation and
+`openTransport`'s `localPort` + `waitExit` seams already fit a supervisor.
+
+## Downstream option of ticket #2 (NOT an alternative to it) — a tunnel plugin
+
+Bogdan floated transports as a plugin point, so a new transport ships without a
+Clodex release. clodex checked the mechanism: engine halves are `require`d into
+the main process (engine.js:1793) with full Node, so it is mechanically
+possible. **Blocked by the same finding (C):** a plugin could not express a
+cloud transport the peer schema cannot persist. So it lands *after* ticket #2,
+as an extension of it — recording it here so the ordering isn't rediscovered.
