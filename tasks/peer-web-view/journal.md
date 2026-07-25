@@ -347,3 +347,77 @@ SCANNED_MODULES, so the new seam name is already gated in both directions.
 - [ ] Phase 2 — build, once clodex rules on the findings.
 - [ ] Phase 3 — tests, proved by reverting.
 - [ ] Phase 4 — full suite, report, close t30.
+
+## Phase 4 — tests written and PROVEN (commits `dfabbda`, `af76bda`)
+
+Two new files, 23 tests, all proved by reverting (HEAD held the fix, so
+`git checkout --` was safe — the t28 trigger).
+
+**`test/peer-web-host.test.js`** (18) — the wire contract, over real HTTP.
+Producer: hello carries `webHost` when the seam reports one; **present-and-null**
+when it does not (Electron), so "no web host" and "too old to say" are one case;
+malformed/out-of-range/non-integer/string ports refused (65535 explicitly NOT
+swept up); a **throwing** seam → null with hello still 200 and identity intact;
+`tokenGated` only ever a literal-true boolean. Consumer: `status().webHost`,
+normalization against a RAW hello, `identityChanged` on appear/move/vanish/gate,
+and **no** re-emit from a steady host (the key-comparison property).
+
+**`test/engine-web-info-seam.test.js`** (5) — the seam shape. Engine's default
+and its read-through behaviour driven through the REAL path (engine →
+`syncRemoteServer` → captured `RemoteServer` options, `CLODEX_REMOTE_ENABLE=1`,
+RemoteServer patched so no socket binds); `remote-wiring`'s non-callable guard;
+and headless-main's closure pinned **as source** — it boots a real host so it
+can't be required, and the regression that matters is textual (`webInfo: webHost`
+captures the null it holds at that point, forever).
+
+### The security assertion
+
+Stands a REAL token-gated `createWebHost` up and searches the **raw hello bytes**
+for the token, then pins `webHost`'s key set to exactly `['port','tokenGated']`.
+So it fails if anyone adds the token under any name, and fails again if a future
+field tries to smuggle it past the string search. Proved: mutating the hello to
+ship `token:` turns it red.
+
+### Two defects the tests found
+
+1. **`web-host.info.port` echoed the REQUESTED port**, so a host constructed with
+   `port: 0` (every ephemeral bind, and every test) advertised **port 0** — a port
+   nothing serves, which is exactly the class of lie this ticket exists to kill.
+   Now a **getter** reading `server.address().port`: null before listen and after
+   close, rather than claiming a dead port.
+2. **My own consumer-normalization test proved nothing.** It drove a real
+   `RemoteServer`, which normalizes first — the malformed values never reached the
+   consumer. Reverting peer-client's guard left it GREEN. Rewritten against a raw
+   http hello emitting bodies no producer of ours would send. **Carried trigger
+   confirmed again: an impossible fixture passes for the wrong reason** — and the
+   tell here was specific, *a test whose fixture must pass through a second guard
+   before reaching the one under test*.
+
+### Proof matrix (12 mutations, each failing BY MESSAGE, never by crash)
+
+drop the hello field → 14 · skip port validation → 1 · remove the try/catch → 1 ·
+coerce `tokenGated` → 1 · **ship the token → 3 incl. the security one** ·
+drop `status().webHost` → 8 · stop normalizing → 2 · absent-reads-as-undefined → 2 ·
+pass extra keys through → 1 · ignore webHost in `identityChanged` → 4 ·
+snapshot the seam → 1 · drop the non-callable guard → 1 · echo the requested
+port → 2 · headless captures by value → 1.
+
+## Phase 5 — RESULT
+
+**Suite green: 2600/2600, `ESCAPES: 0`** (baseline 2577 + 23). Branch
+`peer-web-view`, four code/test commits on top of master `ea0729e`. Nothing
+pushed, master untouched.
+
+- [x] Phase 4 — tests, proved by reverting.
+- [x] Phase 5 — full suite, reported. t30a awaiting clodex's merge.
+
+## t30b — NOT started (blocked on the merge)
+
+Carry-in for the tunnel half, beyond the design already recorded above:
+clodex's correction (msg-93431-22) — investigate whether the supervisor can drive
+`cli/src/transport.js` as a LIBRARY (ssh + SSM + kubectl + gcloud IAP + az
+bastion) rather than reimplementing `TunnelManager`'s ssh-only spawning. `cli/` is
+standalone-by-construction (node:* + siblings only), so app→cli may be fine where
+cli→app would not be; check that the direction actually holds and report. Not
+reversed: the supervision, the pinned port and the four closes stay Clodex-side.
+If reuse is ugly, say so and ship ssh-only with the limitation stated.
