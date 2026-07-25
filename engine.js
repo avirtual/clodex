@@ -542,8 +542,8 @@ const {
 } = createTeamManifest({ fs });
 const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
-const { intentEnabled, withoutPrivilegedIntents } = require('./intent-catalog');
-const { bodyModeFor, intentEnabledFor, pluginGrammarLines, pluginRowFor, validIntentNames } = require('./intent-registry');
+const { intentEnabled } = require('./intent-catalog');
+const { bodyModeFor, intentEnabledFor, withoutPrivilegedIntentsFor, pluginGrammarLines, pluginRowFor, validIntentNames } = require('./intent-registry');
 const { isFilenameToken, parseAndValidate, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
@@ -960,7 +960,7 @@ const SessionManager = createSessionManager({
     pluginRowFor,
     validIntentNames,
     intentEnabled,
-    withoutPrivilegedIntents,
+    withoutPrivilegedIntentsFor,
     isAlive,
     isDigested,
     isDraftOpen,

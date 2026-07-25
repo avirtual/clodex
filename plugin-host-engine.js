@@ -30,7 +30,7 @@
 //    landmine ordering that a plugin must not be able to re-break.
 
 const {
-  HOST_API_VERSION, isValidPluginId, namespaced, HOST_PSEUDO_ID,
+  HOST_API_VERSION, isValidPluginId, RESERVED_PLUGIN_IDS, namespaced, HOST_PSEUDO_ID,
   NO_SUCH_METHOD, errorEnvelope,
 } = require('./plugin-api');
 // The intent grammar table (§2.3). `registerIntent` enforces rules P1/P5 itself;
@@ -60,6 +60,28 @@ function createPluginHostEngine(deps) {
   const notifyStateChanged = () => {
     try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
   };
+
+  // ── host.lib's bound façade (t8 F2) ────────────────────────────────────────
+  // `Object.freeze({ gitWorktree })` froze the WRAPPER only. `gitWorktree` is
+  // the live module object core itself holds under the same require-cache entry
+  // (`ipc-handlers.js:35`), so `host.lib.gitWorktree.removeWorktree = mine` used
+  // to repoint CORE's calls — `worktree:remove`, the session-delete flow and
+  // New-Session's `createWorktree` — at the plugin's function, and it survived
+  // `deactivate`. Interception of core through the sanctioned door.
+  //
+  // So plugins get a frozen façade of BOUND wrappers instead: assigning to a
+  // member throws (frozen), and each wrapper delegates to the real module, which
+  // the plugin now has no reference to. Derived from the leaf's own keys rather
+  // than a hardcoded name list — the list would have to be re-edited whenever
+  // git-worktree.js gains an export, and getting that wrong silently NARROWS a
+  // frozen `"1"` surface. Functions only; the leaf is all functions, and a
+  // non-function member would need its own decision (handing one out by value
+  // would re-open exactly this hole for anything mutable).
+  const libGitWorktree = Object.freeze(Object.fromEntries(
+    Object.keys(gitWorktree || {})
+      .filter((k) => typeof gitWorktree[k] === 'function')
+      .map((k) => [k, (...a) => gitWorktree[k](...a)]),
+  ));
 
   // ── The dispatch map (§3.4) ────────────────────────────────────────────────
   // ONE Map, keyed `"<pluginId>:<method>"`, mutated by register/dispose/disable.
@@ -310,12 +332,26 @@ function createPluginHostEngine(deps) {
       // uses belongs in that plugin's directory instead; git-scm.js and
       // fs-explorer.js sat here through W2-W4 purely so the DOM move could land
       // as its own revertable commit, and moved into plugins/workbench/ at W5.
-      lib: Object.freeze({ gitWorktree }),
+      // A frozen façade of BOUND wrappers, NOT the module object — see
+      // libGitWorktree above for why the one-level freeze was a hole.
+      lib: Object.freeze({ gitWorktree: libGitWorktree }),
 
       // Read-only, may be null (no proxy linked / no telemetry for this session).
+      // "Read-only" was a COMMENT: the poller hands back its live payload — the
+      // same object core rebroadcasts to every window — so a plugin that kept or
+      // mutated it edited core's state and every other reader's view of it. Deep
+      // copy on the way out (t8), so read-only is a property of the value rather
+      // than a request. structuredClone is preferred and the JSON round-trip is
+      // the fallback for a payload it refuses (a function, a symbol); either way
+      // a failure yields null, because this API's documented normal case is null
+      // and it must never throw into a plugin.
       telemetry: Object.freeze({
         snapshot: (name) => {
-          try { return telemetrySnapshot ? telemetrySnapshot(name) : null; } catch { return null; }
+          let live;
+          try { live = telemetrySnapshot ? telemetrySnapshot(name) : null; } catch { return null; }
+          if (live == null || typeof live !== 'object') return live ?? null;
+          try { return structuredClone(live); } catch {}
+          try { return JSON.parse(JSON.stringify(live)); } catch { return null; }
         },
       }),
     });
@@ -365,6 +401,14 @@ function createPluginHostEngine(deps) {
   // walks plugins/*/manifest.json is Phase 2. `register` is the seam that loader
   // will call, and the in-tests fake plugin drives today.
   function register(pluginId, mod, manifest = {}) {
+    // Reserved first, for the same reason validateManifest does it: "invalid
+    // plugin id: enabled" reads like a typo for a string that satisfies the
+    // regex. The loader refuses such a manifest before it ever reaches here, so
+    // this is the backstop for the in-tests fake and any future non-loader
+    // caller — the invariant belongs at BOTH doors, not just the outer one.
+    if (RESERVED_PLUGIN_IDS.has(pluginId)) {
+      throw new Error(`plugin id "${pluginId}" is reserved — it is a key in uiSettings.plugins`);
+    }
     if (!isValidPluginId(pluginId)) throw new Error(`invalid plugin id: ${pluginId}`);
     if (registered.has(pluginId)) throw new Error(`plugin already registered: ${pluginId}`);
     const want = String(manifest.hostApi ?? HOST_API_VERSION);

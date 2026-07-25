@@ -862,7 +862,7 @@ test('fake plugin (renderer): dispose() leaves ZERO live resources and an untouc
   });
 });
 
-test('fake plugin (renderer): re-activating after dispose is clean, and double-activation is refused', () => {
+test('fake plugin (renderer): re-activating after dispose is clean, and double-activation is inert', () => {
   withRendererHost(({ host, dom }) => {
     activateFake(host);
     host.dispose('fake');
@@ -872,7 +872,13 @@ test('fake plugin (renderer): re-activating after dispose is clean, and double-a
     assert.strictEqual(host._counts().footer, 1, 'exactly one footer button, not two');
     assert.strictEqual(dom.footer.querySelectorAll('[data-plugin-footer="fake:foot"]').length, 1);
 
-    assert.throws(() => activateFake(host), /already activated/, 'one activation per window (law 1)');
+    // Law 1 is ONE activation per window, and that is what is asserted: a second
+    // call does not activate. It used to also THROW, which was the t8 bug — the
+    // renderer's `plugin-state` subscriber reports a throw here as a renderer
+    // failure, i.e. a quarantine strike against a healthy plugin.
+    const second = activateFake(host);
+    assert.strictEqual(second.record.activated, 0, 'the second module is never activated (law 1)');
+    assert.strictEqual(host._counts().footer, 1, 'and contributes nothing');
   });
 });
 
@@ -888,7 +894,7 @@ test('fake plugin (renderer): re-activating after dispose is clean, and double-a
 
 const { createSessionManager } = require('../session-manager');
 const { parseIntent, looksLikeIntent, fencedLines } = require('../intent-scanner');
-const { intentEnabled, withoutPrivilegedIntents } = require('../intent-catalog');
+const { intentEnabled } = require('../intent-catalog');
 
 // A manager wired to a REAL plugin host engine: the handle the dispatch tail
 // passes to a plugin handler is minted by the host, not rebuilt here.
@@ -904,7 +910,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
     notifyOS: () => {},
     log: () => {},
     intentEnabled,
-    withoutPrivilegedIntents,
+    withoutPrivilegedIntentsFor: intentRegistry.withoutPrivilegedIntentsFor,
     fencedLines,
     parseIntent,
     looksLikeIntent,

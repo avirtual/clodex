@@ -669,7 +669,136 @@ the raw fn, and a wrapper still delegates with args intact.
   `actual: undefined`. 27 pass / 1 fail. Restored from `/tmp/phe.bak`.
 `test/plugin-host-engine.test.js` 28/28 green with the fix.
 
-Next: F4, then the two smalls.
+### F2 follow-ups from clodex (done, with F2)
+
+clodex **approved deviation (s)** — *"you were right and my ticket was wrong…
+hardcoding my four would have silently narrowed a surface I froze this morning."*
+Two additions ruled and landed:
+1. **The seven names are pinned by NAME** in the F2 test. Deriving protects
+   against narrowing but would silently WIDEN the surface the day someone adds an
+   unrelated export to `git-worktree.js`, with no diff saying plugins can now
+   reach it. The assert says so and says the list must move in company with the
+   doc.
+2. **`docs/plugin-api.md` §`host.lib` now names all seven**, one line of purpose
+   each, in a table — clodex's wording ruling: *"an author can only rely on what
+   is documented, so if we lend seven we document seven."* Same principle that
+   made the handler signature a real defect. Explicitly NOT narrowing the lent set
+   to match the old three-name doc: narrowing could break a conforming `"1"`
+   plugin and the bump policy reserves that for `"2"`; documenting what already
+   ships is additive and stays inside the freeze. The doc also now states that a
+   plugin receives bound wrappers, not the module.
+
+### F4 (done — MODERATE, `enabled` is a reserved id)
+
+`RESERVED_PLUGIN_IDS = new Set(['enabled'])` added to `plugin-api.js` and folded
+into `isValidPluginId` itself, so **both doors inherit the refusal from the shared
+leaf** rather than each re-deriving it. On top of that, each door gets an EXPLICIT
+reserved check that runs BEFORE the regex one, because "invalid plugin id:
+enabled" reads like a typo for a string that satisfies `PLUGIN_ID_RE` and sends
+the author hunting for a malformation that isn't there:
+- `plugin-loader.js` `validateManifest` → a `problems` row reading *"plugin id
+  "enabled" is reserved — it is a key in uiSettings.plugins, so a plugin of that
+  name would overwrite the enabled list"*, which is what the Manage Plugins dialog
+  renders.
+- `plugin-host-engine.js` `register()` → throws `/reserved/`. The loader refuses
+  such a manifest first, so this is the backstop for the in-tests fake and any
+  future non-loader caller. An invariant enforced at one door only is the same
+  defect class as a comment enforcing nothing.
+
+Both stale loader comments that *claimed* reservation with nothing behind it
+(`:78` and `:230`) now point at the enforcement instead of asserting it.
+
+**VERDICT on `_failures` (the ticket asked me to decide and state it): it does NOT
+need reserving, and the ticket's own hint was right.** Ran it: `isValidPluginId`
+returns false for `_failures` and `_host`, true for `enabled` and `workbench`.
+`PLUGIN_ID_RE` = `/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/` requires a
+lowercase-alnum FIRST character, so a leading underscore can never match and
+`_failures` is collision-proof by construction — exactly as `_host` is. The set is
+for keys the regex ALLOWS. Asserted rather than left as prose: the test checks
+both `isValidPluginId('_failures') === false` and
+`!RESERVED_PLUGIN_IDS.has('_failures')`, so the reasoning is pinned, not just
+written down.
+
+Three tests, one REVERT PROOF covering all three (emptying the Set):
+- `t8 F4: 'enabled' is refused as a plugin id, and the reason says WHY` — fails:
+  *"the reservation is in the shared leaf, so both doors inherit it"*.
+- `t8 F4: a plugin directory named 'enabled' is refused at DISCOVERY, with a
+  problems row` — fails: *"the reserved-id plugin never becomes a catalog row"*.
+- `t8 F4: register() refuses the RESERVED id 'enabled', saying reserved rather
+  than invalid` — fails: *"Missing expected exception"*.
+61 pass / 3 fail reverted; 73/73 green with the fix (loader + engine + contract).
+
+### The two smalls (done)
+
+**(a) False quarantine strike on double activation.** `renderer/plugin-host.js`
+`activate()` threw on an already-active id; `renderer.js:3043` calls it
+unconditionally on the `plugin-state{enabled}` broadcast and its catch reports
+`renderer.report(id, false)` — a real strike, two of which quarantine. Now an
+idempotent no-op returning the rhost the plugin already holds. Required one
+supporting change: the resource record gained an `rhost` field (set at
+activation) so the repeat call can hand back the SAME object rather than
+building a second one — a fresh rhost would be a subtler version of the same bug,
+two live surfaces for one activation. `dispose()` deletes the whole record, so it
+clears with it, and re-activation after a disable works from scratch (asserted).
+- Test `t8: activating an ALREADY-active plugin is a silent no-op, not a throw`:
+  no throw, module activated ONCE, no duplicate contribution, same rhost back,
+  and a later re-enable really re-activates.
+- **An existing test asserted the old throw** — `activating the same plugin twice
+  is refused`. Not weakened: rewritten as `activating the same plugin twice does
+  not activate it twice`, which asserts the invariant that actually mattered (the
+  second activation does not RUN). The throw was the bug, not the guarantee.
+- REVERT PROOF: restoring the throw → `Got unwanted exception: a repeat
+  activation must not throw — the caller reports a throw as a quarantine strike`,
+  and the rewritten test fails too. 33 pass / 2 fail.
+
+**(b) `telemetry.snapshot` returned the live poller payload** — the same object
+core rebroadcasts to every window, so a plugin mutating it edited core's state and
+every other reader's view. Now `structuredClone`, falling back to a JSON round
+trip for a payload it refuses (function/symbol), and `null` on any failure —
+because null is this API's documented normal case and it must never throw into a
+plugin. Non-objects and null pass through unchanged.
+- Test `t8: telemetry.snapshot returns a deep copy` — same VALUE (a copy, not a
+  redaction), different object, different NESTED object, mutating the copy at
+  every level leaves the live payload byte-identical, two reads are independent,
+  and `null` still means null.
+- REVERT PROOF: restoring the passthrough → `AssertionError: but not the same
+  object`. 29 pass / 1 fail.
+
+`npm run build:web` run (renderer/plugin-host.js is bundled): `web-dist/index.html`
+and `renderer/web/plugin-registry.js` both updated. NOTE the registry now bundles
+**git-branches AND workbench** — clodex installed the cold-built acceptance plugin
+into this worktree while t8 was in flight.
+
+### Arriving mid-t8 (not mine to touch / not started)
+
+- **Uncommitted work in the tree that is CLODEX's, explicitly "leave them,
+  they're mine"**: `test/plugin-kill-switch.test.js` (two fixes for tests that
+  assumed one plugin would be the only plugin) and the regenerated
+  `renderer/web/plugin-registry.js`. Untracked `plugins/git-branches/` is the
+  acceptance build. All of it rides in my t8 commit because it is in the same
+  tree — flagged to clodex in the close.
+- **Ticket t11** (`ticket-t11.txt`) — four doc defects, documentation only, plus
+  an addendum ruling handler multiplicity: a verb fires EXACTLY ONCE per matched
+  line (`session-manager.js:1519` gates `_scanPtyOutput` behind `if (!agentType)`,
+  so the JSONL and PTY feeds are mutually exclusive per session), and §7's "live
+  on every input feed at once" must be reworded so it cannot be read as
+  multiplicity. Includes the acceptance builder's generalization about
+  non-idempotent callbacks, to be attributed in the journal, not the doc.
+- **Ticket t12** (`ticket-t12.txt`) — two doc items folding into t11 (the
+  `npm run build:web` step is unmentioned in the published contract; the
+  generated `renderer/web/plugin-registry.js` header still claims it is "the
+  EMPTY map" and now lists two plugins), plus one investigation: check whether any
+  OTHER test asserts over the intent registry's contents without controlling for
+  plugin-registered rows. Do not weaken assertions to accommodate a plugin.
+
+### T8 close
+
+Suite **2481/2481**. A SECOND test asserted the old activation throw —
+`test/plugin-fake.test.js:875` — and was found by the full suite, not by the
+targeted runs. Same treatment as the first: rewritten to assert law 1's real
+content (`record.activated === 0`, no extra footer button) rather than the throw.
+Neither rewrite weakens anything; both assert the invariant the throw was
+standing in for.
 
 ---
 

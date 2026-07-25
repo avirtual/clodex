@@ -22,7 +22,10 @@ const { pathFor } = require('./clodex-paths');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
-const { withoutPrivilegedIntents } = require('./intent-catalog');
+// Registry-aware strip (t8 F1). NOT intent-catalog's: its PRIVILEGED_INTENTS Set
+// knows only core's verbs, so it passes plugin verbs — which are forced
+// privileged — straight through to a remote caller's grant.
+const { withoutPrivilegedIntentsFor } = require('./intent-registry');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
@@ -226,7 +229,7 @@ function createRemoteWiring(deps) {
               // a remote viewer isn't the box's local operator, so it can't grant a
               // box session an app-relaunch capability — mirror of the exec-grant
               // wire strip above. null passes through untouched.
-              withoutPrivilegedIntents(Array.isArray(b.intents) ? b.intents : null),
+              withoutPrivilegedIntentsFor(Array.isArray(b.intents) ? b.intents : null),
               // Session env (T46) — 19th positional. Already sanitized above; pass
               // null (not {}) when empty so create()'s conditional-omit persist and
               // no-scopes byte-identity both hold exactly as for a local spawn.
@@ -352,7 +355,7 @@ function createRemoteWiring(deps) {
           // allowlist before the resolver sees it (a non-privileged intents edit still
           // applies; an absent/null intents key stays untouched).
           const safePatch = withoutLocalOnly(patch || {});
-          if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntents(safePatch.intents);
+          if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntentsFor(safePatch.intents);
           const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);

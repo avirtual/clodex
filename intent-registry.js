@@ -44,6 +44,7 @@ const {
   PRIVILEGED_INTENTS,
   intentEnabled,
   intentsAllowlistFromChecked,
+  withoutPrivilegedIntents,
 } = require('./intent-catalog');
 
 // ---------------------------------------------------------------------------
@@ -443,6 +444,24 @@ function intentEnabledFor(type, intentsList) {
   return intentEnabled(type, intentsList);
 }
 
+// The STRIP, registry-aware — the send-side twin of `intentEnabledFor`, and for
+// the same reason. `intent-catalog.withoutPrivilegedIntents` filters against
+// `PRIVILEGED_INTENTS`, a literal Set that knows only about core's own verbs;
+// `registerIntent` marks a plugin row `privileged: true` and never touches that
+// Set. So the catalog function silently PASSES every plugin verb through, and a
+// self-authored spawn template or a remote peer's create/setArgs could grant a
+// seat a forced-privileged plugin verb that `intentEnabledFor` then honours at
+// fire time — precisely the retroactive self-grant rule P1 exists to prevent.
+//
+// Every agent-initiated / over-the-wire writer of `intents` MUST call this one,
+// never the catalog's. The catalog's remains correct for a caller that provably
+// has no registry in play (the renderer's own core-only checklist math), but no
+// STRIP SITE may use it.
+function withoutPrivilegedIntentsFor(intentsList) {
+  if (!Array.isArray(intentsList)) return intentsList;
+  return withoutPrivilegedIntents(intentsList).filter((t) => !pluginRowFor(t));
+}
+
 // R-INT-4: the checklist projection. GATEABLE_INTENTS in ITS order (which owns
 // checklist row order), then plugin rows in registration order — so the
 // existing checklist is byte-identical and simply grows a plugin tail.
@@ -513,6 +532,7 @@ module.exports = {
   parseWithRegistry,
   bodyModeFor,
   intentEnabledFor,
+  withoutPrivilegedIntentsFor,
   catalogRows,
   allowlistFromChecked,
   pluginGrammarLines,

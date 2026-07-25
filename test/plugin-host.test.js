@@ -604,6 +604,45 @@ test('dispose is idempotent and a plugin-held disposer does not double-fire', ()
   assert.equal(host.dispose('demo'), false, 'second dispose is a no-op');
 });
 
+// ── t8: double activation is a NO-OP, never a fault ─────────────────────────
+// This used to throw. The one real caller — renderer.js's `plugin-state`
+// subscriber — catches around activation and reports the catch to `_host`
+// renderer.report as a renderer FAILURE, which is a genuine quarantine strike;
+// two strikes quarantine. So an enable broadcast reaching a window that had
+// already activated (two windows toggling, or a toggle racing the startup
+// catalog pull) quarantined a perfectly HEALTHY plugin. Double activation is the
+// expected shape of an unbuffered broadcast (§3.3 law 2) meeting a window that
+// already pulled — not a fault condition.
+test('t8: activating an ALREADY-active plugin is a silent no-op, not a throw', () => {
+  const { host } = makeHost();
+  let activations = 0;
+  const mod = {
+    activate: (rhost) => {
+      activations++;
+      rhost.ui.statusBar.addSegment({ id: 's', render: () => ({ text: 'x' }) });
+    },
+  };
+  const first = host.activate('demo', mod, {});
+  assert.equal(activations, 1);
+  assert.equal(host._counts().segments, 1);
+
+  let second;
+  assert.doesNotThrow(() => { second = host.activate('demo', mod, {}); },
+    'a repeat activation must not throw — the caller reports a throw as a quarantine strike');
+  assert.equal(activations, 1, 'the module is NOT activated twice');
+  assert.equal(host._counts().segments, 1, 'and registers no duplicate contribution');
+  assert.strictEqual(second, first, 'the caller gets back the rhost the plugin already holds');
+
+  // …and the plugin is still genuinely live: one dispose tears down the one
+  // activation, leaving nothing behind.
+  assert.equal(host.dispose('demo'), true);
+  assert.equal(host._counts().segments, 0);
+  // After teardown, activation works again from scratch — the no-op is keyed on
+  // being CURRENTLY active, not on having ever been.
+  host.activate('demo', mod, {});
+  assert.equal(activations, 2, 'a re-enable after disable really re-activates');
+});
+
 test('disposeAll tears down every plugin', () => {
   const { host } = makeHost();
   activate(host, 'one', (rhost) => { rhost.ui.statusBar.addSegment({ id: 's', render: () => ({ text: '1' }) }); });
@@ -723,10 +762,17 @@ test('registration refuses a missing id or a non-function callback', () => {
   assert.deepEqual(host._counts().segments, 0);
 });
 
-test('activating the same plugin twice is refused', () => {
+// The double-activation invariant itself moved (t8): what matters is that the
+// second activation does not RUN, and this asserted it by asserting a throw. The
+// throw was the bug — renderer.js reports it as a quarantine strike. The
+// non-duplication half is now asserted directly, in the t8 test above.
+test('activating the same plugin twice does not activate it twice', () => {
   const { host } = makeHost();
-  activate(host, 'demo', () => {});
-  assert.throws(() => activate(host, 'demo', () => {}), /already activated/);
+  let runs = 0;
+  const mod = { activate: () => { runs++; } };
+  host.activate('demo', mod, {});
+  host.activate('demo', mod, {});
+  assert.equal(runs, 1, 'the second call is inert');
 });
 
 

@@ -18,7 +18,7 @@
 // engine half is per-app-run; the renderer half is per-window; conflating them
 // is exactly the multi-window blind spot §3.3 exists to prevent.
 
-const { isValidPluginId, HOST_API_VERSION } = require('./plugin-api');
+const { isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS } = require('./plugin-api');
 
 // A manifest is refused rather than half-honoured. A plugin that loads with a
 // silently-defaulted id or entry point is worse than one that visibly fails:
@@ -26,6 +26,13 @@ const { isValidPluginId, HOST_API_VERSION } = require('./plugin-api');
 // releases later.
 function validateManifest(m, dirName) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
+  // Reserved BEFORE malformed, so the discovery `problems` row the Manage
+  // Plugins dialog renders says WHY rather than "invalid id" for a string that
+  // looks perfectly valid to its author. See plugin-api's RESERVED_PLUGIN_IDS
+  // for what such a plugin would destroy on its first settings write.
+  if (typeof m.id === 'string' && RESERVED_PLUGIN_IDS.has(m.id)) {
+    return `plugin id ${JSON.stringify(m.id)} is reserved — it is a key in uiSettings.plugins, so a plugin of that name would overwrite the enabled list`;
+  }
   if (!isValidPluginId(m.id)) return `invalid plugin id: ${JSON.stringify(m.id)}`;
   // The directory name IS the id. Allowing them to diverge means two names for
   // one plugin — one in settings, one on disk — and every later "which one is
@@ -76,8 +83,11 @@ function createPluginLoader(deps) {
   // settings row can say "disabled automatically … — Retry" with intent intact.
   //
   // `_failures` is collision-proof by construction: PLUGIN_ID_RE forbids a
-  // leading underscore, so no plugin can ever own this key. (`enabled` is not so
-  // lucky — it is a legal id, which is why it is explicitly reserved above.)
+  // leading underscore, so no plugin can ever own this key and it needs no
+  // reservation. (`enabled` is not so lucky — the regex accepts it, so it is
+  // reserved EXPLICITLY in plugin-api's RESERVED_PLUGIN_IDS and refused at both
+  // doors, validateManifest and register. Before t8 the reservation was a
+  // comment with nothing enforcing it.)
   const FAILURES_KEY = '_failures';
   // The SECOND consecutive failure, not the first: one throw is often transient
   // (a half-written file, a missing dir on first run), and quarantining on it
@@ -217,8 +227,10 @@ function createPluginLoader(deps) {
   // ── The enabled set (§3.1: `uiSettings.plugins.enabled`) ──────────────────
   // Shape: an ARRAY of ids under `uiSettings.plugins.enabled`, sitting beside
   // the per-plugin settings objects `uiSettings.plugins[<id>]` that §2.5 already
-  // writes. `enabled` is therefore a reserved id — rejected by isValidPluginId's
-  // caller? No: it is a legal id string, so it is explicitly reserved here.
+  // writes. Sharing one object is why `enabled` has to be a reserved ID and not
+  // merely a key name: a plugin called `enabled` would write its settings object
+  // straight over the user's list. `isValidPluginId` now refuses it (t8 F4) —
+  // this const is the key, plugin-api's RESERVED_PLUGIN_IDS is the enforcement.
   const RESERVED_SETTINGS_KEY = 'enabled';
 
   function enabledSet() {

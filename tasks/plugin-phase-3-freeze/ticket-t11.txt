@@ -23,4 +23,19 @@ Also from the same report, smaller:
 
 Where you are tempted to fix code instead of docs, stop and flag it to me. Every item here is a promise the doc should not have made; only #2 is a code-shaped thing and it is example code inside the doc.
 
-Commit on plugin-phase-1, no master, no push, suite digest in your close.
+Commit on plugin-phase-1, no master, no push, suite digest in your close.From: clodex
+Time: 14:36:38
+Size: 2101 bytes
+
+
+One addition to t11's §7 work, resolved from source so you don't have to dig — **the acceptance builder asked whether a plugin verb can fire more than once per emitted line, and could not defend against duplication without knowing.**
+
+**It fires exactly once.** `session-manager.js:1519` gates `_scanPtyOutput` behind `if (!agentType)` — PTY scanning is bash-only, agent intents come solely from the JSONL path, so the two feeds are mutually exclusive per session; `_dispatchPluginIntent` also refuses non-agent sessions. §7's "live on every input feed at once" describes where a verb is REGISTERED, not how many times it dispatches, and that sentence actively invites the wrong reading.
+
+Add to §7:
+1. **The guarantee, plainly**: `handler` is invoked exactly once per matched line, and rewrite the "every input feed" sentence so it can't be read as multiplicity. This retires a question every author doing a side effect in a handler will otherwise hit.
+2. **Whether `parse` or `handler` is the per-feed thing** — the asymmetry only bites on `handler`, because `parse` is pure and returns a value. Say which.
+3. **Throwing `handler` behaviour.** §7 specifies that a throwing `parse` means "no match" and says nothing about `handler`; §4 and §6 both specify their catch behaviour for the equivalent case. You already documented the bounce in t10 — make sure it reads as a guarantee an author can rely on rather than an implementation note, since the builder wrapped its handler defensively rather than find out.
+4. **The general rule, which I want stated once and referenced**: any callback that can fire more than once per logical event, whose handler performs a non-idempotent side effect, needs either a multiplicity guarantee or an emission id. `inject()` is non-idempotent. Put it wherever the doc's callback conventions live, and have §4's `onCreate`/`onExit` and §6's render callbacks point at it — each of those is a place the same question arises.
+
+That last item is the acceptance builder's generalization and it is better than anything in §7 today. Attribute it in the journal, not the doc.

@@ -79,7 +79,7 @@ function initPluginHost({
     if (!resources.has(pluginId)) {
       resources.set(pluginId, {
         disposers: new Set(), timers: new Set(), intervals: new Set(),
-        listeners: [], styleEl: null, ownDispose: null,
+        listeners: [], styleEl: null, ownDispose: null, rhost: null,
       });
     }
     return resources.get(pluginId);
@@ -564,7 +564,20 @@ function initPluginHost({
   // Once per BrowserWindow (law 1 of §3.3). `mod.activate(rhost)` MAY return a
   // dispose function; if it does, that runs before host teardown.
   function activate(pluginId, mod, { invoke, css } = {}) {
-    if (activated.has(pluginId)) throw new Error(`plugin already activated: ${pluginId}`);
+    // Already active in THIS window ⇒ an idempotent no-op returning the rhost the
+    // plugin already holds, NEVER a throw (t8). This used to throw, and the one
+    // real caller — renderer.js's `plugin-state` subscriber — catches around
+    // activation and reports the catch to `_host` renderer.report as a renderer
+    // FAILURE, which is a genuine quarantine strike. So an enable broadcast
+    // arriving at a window that had already activated (two windows toggling, a
+    // toggle racing the catalog pull at startup) put a strike on a perfectly
+    // HEALTHY plugin, and two of those quarantine it. Double activation is not a
+    // fault condition — it is the expected shape of an unbuffered broadcast
+    // (§3.3 law 2) reaching a window that already pulled.
+    if (activated.has(pluginId)) {
+      const prev = resources.get(pluginId);
+      return (prev && prev.rhost) || null;
+    }
     const r = res(pluginId);
     activated.set(pluginId, mod);
     if (css) {
@@ -578,6 +591,7 @@ function initPluginHost({
       r.styleEl = st;
     }
     const rhost = buildRhost(pluginId, invoke || (() => Promise.resolve({ ok: false, error: 'no transport' })));
+    r.rhost = rhost;   // so a repeat activate() hands back the same one
     let own = null;
     try {
       own = mod && typeof mod.activate === 'function' ? mod.activate(rhost) : null;

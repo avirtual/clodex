@@ -298,6 +298,104 @@ test('lib and telemetry are frozen read-only passthroughs', () => {
   assert.equal(host.telemetry.snapshot('b'), null, 'no telemetry is null, not a throw');
 });
 
+// ── t8: telemetry.snapshot hands out a DEEP COPY ────────────────────────────
+// "Read-only, may be null" was a COMMENT. The poller returns its LIVE payload —
+// the same object core rebroadcasts to every window — so a plugin that mutated
+// or merely kept it edited core's state and every other reader's view of it.
+// Read-only is now a property of the value rather than a request.
+test('t8: telemetry.snapshot returns a deep copy — a plugin cannot edit core\'s live payload', () => {
+  const live = { tok: 1234, nested: { model: 'opus', calls: [1, 2] } };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
+  let ui = {};
+  const engine = createPluginHostEngine({
+    manager: makeManager(),
+    getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
+    log: { info: () => {} },
+    userDataPath: dir,
+    fs, path,
+    gitWorktree: {},
+    telemetrySnapshot: (name) => (name === 'a' ? live : null),
+    getLoader: () => null,
+  });
+  const host = engine.register('demo', { activate() {} });
+
+  const snap = host.telemetry.snapshot('a');
+  assert.deepEqual(snap, live, 'the VALUE is the same — this is a copy, not a redaction');
+  assert.notStrictEqual(snap, live, 'but not the same object');
+  assert.notStrictEqual(snap.nested, live.nested, 'DEEP — a shallow copy still shares the interior');
+
+  snap.tok = 0;
+  snap.nested.model = 'MINE';
+  snap.nested.calls.push(99);
+  assert.deepEqual(live, { tok: 1234, nested: { model: 'opus', calls: [1, 2] } },
+    'core\'s live payload is untouched at every level');
+
+  // Two reads are independent of each other too, not one shared copy.
+  assert.notStrictEqual(host.telemetry.snapshot('a'), host.telemetry.snapshot('a'));
+  // The documented normal case is unchanged, and the API still never throws.
+  assert.strictEqual(host.telemetry.snapshot('b'), null, 'no telemetry is null, not a throw');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── t8 F2: host.lib is a bound façade, not the live module ──────────────────
+// The freeze above covers the WRAPPER. Before F2 the value inside it was the
+// git-worktree module object itself — the very object core holds under the same
+// require-cache entry (ipc-handlers.js:35) — so a plugin assigning a member
+// repointed CORE's worktree:remove / session-delete / New-Session calls at the
+// plugin's function, and it survived deactivate. This test uses the REAL module
+// as the injected leaf, because the whole claim is about identity with what core
+// requires; a stub object would prove nothing.
+test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', () => {
+  const realLeaf = require('../git-worktree');
+  const before = realLeaf.removeWorktree;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
+  let ui = {};
+  const engine = createPluginHostEngine({
+    manager: makeManager(),
+    getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
+    log: { info: () => {} },
+    userDataPath: dir,
+    fs, path,
+    gitWorktree: realLeaf,     // exactly what engine.js injects
+    telemetrySnapshot: () => null,
+    getLoader: () => null,
+  });
+  const host = engine.register('evil', { activate() {} });
+
+  // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
+  // a throw in strict (this file is strict) — either way it must not land.
+  assert.throws(() => { host.lib.gitWorktree.removeWorktree = () => 'INTERCEPTED'; },
+    TypeError, 'the leaf façade itself is frozen, not just the lib wrapper');
+  assert.strictEqual(realLeaf.removeWorktree, before,
+    'core still calls core: the module object is untouched');
+  assert.notStrictEqual(host.lib.gitWorktree, realLeaf,
+    'the plugin never holds the module object — only bound wrappers');
+  // …and the wrappers still WORK: every function export is present and delegates.
+  for (const k of Object.keys(realLeaf)) {
+    if (typeof realLeaf[k] !== 'function') continue;
+    assert.strictEqual(typeof host.lib.gitWorktree[k], 'function', `${k} is lent`);
+    assert.notStrictEqual(host.lib.gitWorktree[k], realLeaf[k], `${k} is bound, not the raw fn`);
+  }
+  // The lent SET is pinned by name. Deriving the façade from the leaf's own keys
+  // is what keeps a frozen "1" surface from being silently NARROWED — but the
+  // same derivation would silently WIDEN it the day someone adds an unrelated
+  // export to git-worktree.js, with no diff anywhere saying plugins can now
+  // reach it. So adding an export is a deliberate act with a visible failure
+  // here, and this list must be updated in company with docs/plugin-api.md §4.
+  assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), [
+    'createWorktree', 'defaultBranch', 'defaultWorktreePath', 'listWorktrees',
+    'removeWorktree', 'repoInfo', 'repoToplevel',
+  ], 'host.lib.gitWorktree lends exactly these seven — widening it is a published API change');
+
+  let delegated = null;
+  const origList = realLeaf.listWorktrees;
+  realLeaf.listWorktrees = (...a) => { delegated = a; return 'OK'; };
+  try {
+    assert.strictEqual(host.lib.gitWorktree.listWorktrees('/repo'), 'OK', 'the wrapper delegates');
+    assert.deepStrictEqual(delegated, ['/repo'], 'args pass through unchanged');
+  } finally { realLeaf.listWorktrees = origList; }
+});
+
 test('the host deliberately exposes no stores, manager, or transport seams', () => {
   const { engine } = makeHost();
   const host = engine.register('demo', { activate() {} });
@@ -321,6 +419,22 @@ test('an invalid id or a double registration is refused', () => {
   for (const bad of ['', 'Demo', '_host', 'a b', '-lead', 'trail-']) {
     assert.throws(() => engine.register(bad, { activate() {} }), /invalid plugin id/, `${bad} must be refused`);
   }
+});
+
+// t8 F4's second door. The loader refuses such a manifest at discovery, but the
+// invariant belongs at BOTH doors — register() is reachable by the in-tests fake
+// and by any future non-loader caller, and an invariant enforced at one door only
+// is the same defect class as a comment enforcing nothing.
+test('t8 F4: register() refuses the RESERVED id `enabled`, saying reserved rather than invalid', () => {
+  const { engine } = makeHost();
+  assert.throws(() => engine.register('enabled', { activate() {} }), /reserved/,
+    'a plugin named `enabled` would write its settings over the user\'s enabled ARRAY');
+  // Not "invalid": the id satisfies PLUGIN_ID_RE, and telling an author it is
+  // malformed sends them looking for a typo that isn't there.
+  assert.throws(() => engine.register('enabled', { activate() {} }),
+    (e) => !/invalid plugin id/.test(e.message));
+  // Nothing survives the refusal — no ledger row, no half-registration.
+  assert.deepEqual(engine._dispatchKeys(), []);
 });
 
 test('a failing activate is rolled back, not left half-registered', async () => {

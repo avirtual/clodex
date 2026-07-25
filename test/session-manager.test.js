@@ -23,7 +23,7 @@ function mk(overrides = {}) {
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
     intentEnabled, // real pure leaf — the fire-time gate needs it on every _handleIntent
-    withoutPrivilegedIntents: require('../intent-catalog').withoutPrivilegedIntents, // real leaf — _handleSpawnIntent strips privileged grants
+    withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor, // real leaf — _handleSpawnIntent strips privileged grants (core AND plugin verbs)
     fencedLines: require('../intent-scanner').fencedLines, // real pure leaf — _extractIntents maps fences unconditionally
     // The grammar table (intent-registry) — real pure leaf, like intent-catalog
     // above. _extractIntents asks it for every intent's body-capture mode and
@@ -629,6 +629,38 @@ test('reboot: an agent [agent:spawn] from a template STRIPS privileged intents (
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(createdIntents, ['dm'],
     'reboot filtered out of the template grant at the agent-spawn boundary');
+});
+
+// --- t8 F1: the strip must see PLUGIN verbs, not just core's PRIVILEGED_INTENTS.
+// A plugin verb is FORCED privileged (rule P1), but it lives on the registry row,
+// not in intent-catalog's literal Set — so the catalog's own strip passes it
+// straight through. The test above cannot catch that: `reboot` is in the Set.
+// Without the registry-aware strip, a self-authored template mints a seat holding
+// a forced-privileged plugin verb that intentEnabledFor then honours at fire time. ---
+test('t8 F1: an agent [agent:spawn] template carrying a PLUGIN verb has it stripped too (no self-grant)', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    let createdIntents = 'UNSET';
+    const m = mk({
+      AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+      getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
+      getTemplates: () => ({ list: () => [{ name: 'granter', type: 'claude', cwd: '/tmp/spawn-x', intents: ['dm', 'fake-grant', 'reboot'] }] }),
+      ensureDir: () => {},
+      os: require('node:os'),
+      path: require('node:path'),
+      log: { info: () => {}, error: () => {} },
+    });
+    m._injectText = () => {};
+    m._broadcast = () => {};
+    m._sendToSession = () => {};
+    m.create = async (...args) => { createdIntents = args[17]; return { name: args[0], type: args[1] }; };
+    const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
+    m.sessions.set('a', spawner);
+    m._handleSpawnIntent(spawner, { name: 'child', cwd: '/tmp/spawn-x', template: 'granter' });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(createdIntents, ['dm'],
+      'the plugin verb AND reboot are both stripped; only the ordinary grant survives');
+  });
 });
 
 // ── Task 28: the one-shot post-reboot notice ────────────────────────────────
@@ -2529,6 +2561,22 @@ test('team-review (T52): a template carrying a PRIVILEGED intent has it STRIPPED
   const intents = created[0][17]; // 0-indexed: intents(17)
   assert.deepStrictEqual(intents, ['dm', 'who'],
     'the privileged `reboot` is stripped at the consume point; the non-privileged intents survive');
+});
+
+// --- t8 F1, second strip site: the same hole at the REVIEWER template consume
+// point. `reboot` above is in intent-catalog's literal Set; a plugin verb is
+// privileged via its registry row instead, so only the registry-aware strip sees
+// it. The reviewer template is agent-writable, so this is a self-grant path. ---
+test('t8 F1: a reviewer template carrying a PLUGIN verb has it STRIPPED (registry-aware, not just core privileged)', async () => {
+  await withVerb({ type: 'fake-grant', parse: (c) => (c === '[agent:fake-grant]' ? {} : null) }, async () => {
+    const { m, created } = mkReview({ reviewTemplate: { intents: ['fake-grant', 'dm', 'who'] } });
+    m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+    m._handleTeamReview(m.sessions.get('lead'), 'scope');
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(created.length, 1, 'spawns');
+    assert.deepStrictEqual(created[0][17], ['dm', 'who'],
+      'the plugin verb is dropped at the reviewer consume point; ordinary intents survive');
+  });
 });
 
 // --- T52 NIT (defense-in-depth): a template systemPromptFile that could escape

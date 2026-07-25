@@ -298,7 +298,7 @@ function createSessionManager(deps) {
     isDraftOpen,
     isFilenameToken,
     isHumanPtyInput,
-    withoutPrivilegedIntents,
+    withoutPrivilegedIntentsFor,
     isInjectInFlight,
     canFireCompact,
     lastTranscriptWrite,
@@ -3950,7 +3950,7 @@ function createSessionManager(deps) {
             // carrying `reboot` (a file path the spawner authored, or a saved
             // template) can't self-grant the capability — only an operator's local
             // GUI create/edit may. null passes through untouched.
-            withoutPrivilegedIntents(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
+            withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
           );
           // stripLevel + autoCompact are NOT create() params — the poller asserts
           // strip on relink and reads autoCompact from persistence. Apply post-
@@ -4087,7 +4087,7 @@ function createSessionManager(deps) {
       // intents: template > built-in ([]), ALWAYS stripped of privileged intents
       // (agent-writable source, same posture as the tools cap). [] = every catalog
       // intent gated (the reviewer emits only the uncatalogued [agent:review-done]).
-      const reviewerIntents = withoutPrivilegedIntents(
+      const reviewerIntents = withoutPrivilegedIntentsFor(
         Array.isArray(reviewTpl && reviewTpl.intents) ? reviewTpl.intents : REVIEWER_FALLBACK.intents,
       );
 

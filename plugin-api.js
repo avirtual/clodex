@@ -32,8 +32,24 @@ const HOST_API_VERSION = '1';
 // separators and no leading/trailing punctuation.
 const PLUGIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
+// Ids the regex would happily accept but the SETTINGS LAYOUT cannot afford.
+// `uiSettings.plugins` is one object holding per-plugin settings under
+// `plugins[<id>]` AND the enabled list under `plugins.enabled` — so a plugin
+// literally named `enabled` writes its settings object over the user's enabled
+// ARRAY on its first `host.settings.set`. `sanitizePlugins` then coerces the
+// non-array to `[]`, `enabledSet()` reads `[]` as "the user turned everything
+// off", and every OTHER plugin is silently disabled at the next launch. The
+// comments in plugin-loader.js already called `enabled` reserved; nothing
+// enforced it, and the only artifact was a const holding the key name.
+//
+// `_failures` — the quarantine shadow, the other key in that object — needs no
+// entry here: PLUGIN_ID_RE forbids a leading underscore, so it is collision-proof
+// by construction, exactly as `_host` is. This set is for keys the regex ALLOWS.
+// Anything added to `uiSettings.plugins` under a regex-legal name belongs here.
+const RESERVED_PLUGIN_IDS = new Set(['enabled']);
+
 function isValidPluginId(id) {
-  return typeof id === 'string' && PLUGIN_ID_RE.test(id);
+  return typeof id === 'string' && PLUGIN_ID_RE.test(id) && !RESERVED_PLUGIN_IDS.has(id);
 }
 
 // Host-owned namespacing (plan §2.1/§2.4): every id a plugin registers — status
@@ -66,6 +82,7 @@ function errorEnvelope(error) {
 module.exports = {
   HOST_API_VERSION,
   PLUGIN_ID_RE,
+  RESERVED_PLUGIN_IDS,
   isValidPluginId,
   HOST_PSEUDO_ID,
   namespaced,

@@ -388,8 +388,23 @@ register is torn down for you when your plugin is disabled (§10).
 ### `host.lib`
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
-one entry, `gitWorktree`, offering `listWorktrees`, `createWorktree` and
-`removeWorktree`.
+one entry, `gitWorktree`, offering seven functions. All are `async` except
+`defaultWorktreePath`, and all are best-effort: they return a shaped result or
+`null` rather than throwing.
+
+| Function | What it does |
+|---|---|
+| `repoToplevel(cwd)` | The top-level working directory of the repo `cwd` lives in, or `null` if it isn't inside a git work tree. |
+| `repoInfo(cwd)` | Whether `cwd` is a repo, its default branch, and the candidate base refs to offer in a picker. A non-repo returns `{ isRepo: false }`. |
+| `defaultBranch(repo)` | The repo's default branch as a ref string, or `null`. Prefers the remote HEAD, falls back to a local `main`/`master`. |
+| `listWorktrees(cwd)` | `{ ok, repo, worktrees: [{ path, branch, head, isMain, detached, locked }] }`. The primary checkout is flagged `isMain` and comes first. |
+| `defaultWorktreePath(repoTop, branch)` | **Sync.** A safe default sibling path for a new worktree, `<repo>/../<repo>-<branch>`. Branch slashes become dashes. |
+| `createWorktree(cwd, branch, opts)` | Creates a worktree. With no explicit target the sibling default is chosen and disambiguated with a numeric suffix if taken. |
+| `removeWorktree(worktreePath)` | `{ ok }` or `{ ok: false, error }`. Refuses to remove the main working tree — the path must be a registered *linked* worktree. |
+
+You receive **bound wrappers**, not the module itself: the members cannot be
+reassigned, and core's own calls to these functions are unreachable from a
+plugin. Everything else about them is exactly what core uses.
 
 The membership rule, so you can predict what will and won't appear here: a
 utility that **core also uses** may be lent to plugins. A utility only your

@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createPluginLoader, validateManifest } = require('../plugin-loader');
-const { HOST_API_VERSION } = require('../plugin-api');
+const { HOST_API_VERSION, RESERVED_PLUGIN_IDS, isValidPluginId } = require('../plugin-api');
 
 // A real temp plugins/ tree. Real fs rather than a mock because the thing under
 // test IS filesystem interpretation — a mocked readdir would pass a loader that
@@ -113,6 +113,49 @@ test('validateManifest refuses invalid ids, missing entry, and an empty entry', 
   assert.match(validateManifest(noEntry, 'alpha'), /entry is missing/);
   assert.match(validateManifest({ ...OK_MANIFEST, entry: {} }, 'alpha'), /neither an engine nor a renderer/);
   assert.match(validateManifest(null, 'alpha'), /not a JSON object/);
+});
+
+// ── t8 F4: `enabled` is a RESERVED id, not merely a documented one ──────────
+// `uiSettings.plugins` is one object holding per-plugin settings under
+// `plugins[<id>]` AND the user's enabled list under `plugins.enabled`. A plugin
+// literally named `enabled` writes its settings object over that ARRAY on its
+// first host.settings.set; sanitizePlugins coerces the non-array to `[]`;
+// enabledSet() reads `[]` as "the user turned everything off" — and every OTHER
+// plugin is silently disabled at the next launch. Two comments in this loader
+// already called the id reserved and nothing enforced it: PLUGIN_ID_RE accepts
+// it, so isValidPluginId('enabled') was true.
+test('t8 F4: `enabled` is refused as a plugin id, and the reason says WHY', () => {
+  assert.strictEqual(isValidPluginId('enabled'), false,
+    'the reservation is in the shared leaf, so both doors inherit it');
+  const why = validateManifest({ ...OK_MANIFEST, id: 'enabled' }, 'enabled');
+  assert.ok(why, 'a manifest claiming the reserved id is refused');
+  assert.match(why, /reserved/, 'the discovery problems row says reserved…');
+  assert.match(why, /enabled list/, '…and names what it would overwrite');
+  // Ordering matters: the reserved check runs BEFORE the regex one, so the
+  // dialog does not tell an author their perfectly-formed id is malformed.
+  assert.doesNotMatch(why, /invalid plugin id/);
+  // The quarantine shadow needs no entry in the set — the regex already covers
+  // it, and this asserts that reasoning rather than restating it in prose.
+  assert.strictEqual(isValidPluginId('_failures'), false,
+    'PLUGIN_ID_RE forbids a leading underscore, so _failures is collision-proof already');
+  assert.ok(!RESERVED_PLUGIN_IDS.has('_failures'),
+    'and therefore does NOT need reserving — the set is for regex-LEGAL keys only');
+  // A normal id is untouched by any of this.
+  assert.strictEqual(validateManifest(OK_MANIFEST, 'alpha'), null);
+});
+
+test('t8 F4: a plugin directory named `enabled` is refused at DISCOVERY, with a problems row', () => {
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST },
+    enabled: { manifest: { ...OK_MANIFEST, id: 'enabled' } },
+  });
+  const { loader } = mkLoader(root);
+  const s = loader.status();
+  assert.deepStrictEqual(s.plugins.map((p) => p.id), ['alpha'],
+    'the reserved-id plugin never becomes a catalog row');
+  const row = s.problems.find((p) => p.dir === 'enabled');
+  assert.ok(row, 'it appears in the Manage Plugins problems list instead of vanishing');
+  assert.match(row.why, /reserved/);
 });
 
 // ── Discovery ───────────────────────────────────────────────────────────────
