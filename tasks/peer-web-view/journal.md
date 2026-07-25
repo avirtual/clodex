@@ -421,3 +421,107 @@ standalone-by-construction (node:* + siblings only), so app→cli may be fine wh
 cli→app would not be; check that the direction actually holds and report. Not
 reversed: the supervision, the pinned port and the four closes stay Clodex-side.
 If reuse is ugly, say so and ship ssh-only with the limitation stated.
+
+# t30b — phase 1: the transport investigation (INVESTIGATION ONLY, nothing built)
+
+Branch `peer-web-tunnel` off master `c32de90` (t30a merged). Question from
+clodex: can the web-tunnel supervisor drive `cli/src/transport.js` as a library
+— ssh, SSM, kubectl, gcloud IAP, az bastion — instead of reimplementing
+`TunnelManager`'s ssh-only spawning? Verify the direction constraint against
+the ACTUAL gates, not the prose.
+
+## (A) The standalone rule is PROSE ONLY — no gate enforces it
+
+Asserted in `cli/src/transport.js:12` ("Standalone by construction: node:* only,
+never require()s an app file"), `cli/src/import.js:5`, and `cli/README.md:7`.
+
+Verified true in fact: transport.js requires only `net`, `child_process`, `util`
+and `./errors`; errors.js requires **nothing**. So the reuse closure is exactly
+two files, both leaves.
+
+But **no test checks it**, in either direction. `pot-cli-closure.test.js` pins a
+different closure (pot-cli's materialized files); `plugin-loader.test.js` pins
+`build.files` for `plugins/`. Nothing scans `cli/` for app imports and nothing
+scans app files for cli imports. The 26 `cli/test/*.test.js` files ARE in the
+root suite's discovery (158 files total, 26 under `cli/`), so a cli regression
+is caught — but not a direction violation.
+
+## (B) app→cli would work in dev and CRASH in the packaged DMG
+
+`build.files` is an **allowlist**: `"*.js"` matches root files only (not
+subdirs), plus named subdirs — `wire/`, `renderer/`, `plugins/`, `resources/`,
+two `scripts/` files. **`cli/` is not in it.**
+
+Verified against the real artifact rather than the config: `npx asar list` on
+`dist/mac-arm64/Clodex.app/Contents/Resources/app.asar`, grepping `^/cli`,
+returns exactly ONE entry — `/cli-hooks.js`, the app's own root file. The `cli/`
+directory is absent.
+
+So `require('./cli/src/transport')` from app code resolves fine from a checkout
+and throws MODULE_NOT_FOUND in the shipped DMG. **Silent in dev, fatal in
+release** — and `npm start` is the dev path, so nothing local would ever catch
+it. `scripts/electron-smoke.js` requires `wire/` files, not cli.
+
+Fixable in one line (`"cli/**/*"` in `build.files`), but that contradicts
+`cli/README.md:62` — "The desktop app's packaged DMG does **not** include
+`cli/` — it is a standalone package" — which is a deliberate shipping position,
+not an accident.
+
+## (C) DECISIVE: no Clodex peer can express a cloud transport, so there is
+## nothing for multi-transport to reach
+
+`openTransport(ctx)` dispatches on `ctx.ssh` / `ctx.ssm` / `ctx.kubectl` /
+`ctx.gcloud` / `ctx.az` / `ctx.tunnel` / `ctx.url`. A Clodex **peer record** can
+carry none of the middle five:
+
+- `sanitizePeers` (stores.js:227) constructs each entry key by key and accepts
+  exactly `url` (http/https) and `sshHost` (charset-checked). Everything else is
+  dropped by reconstruction.
+- `classifyPeerDest` (peer-deploy.js:253) returns exactly `ssh` / `url` /
+  `empty` / `error`.
+- `resolvePeerUrls` (peer-wiring.js:164) branches exactly `sshHost` → tunnel
+  URL, else `p.url`.
+
+So importing transport.js buys multi-transport *capability* against data that
+cannot exist. The peers sidebar today holds three things, and none of them is a
+cloud-transport box: local sandbox containers (already have the ↗ arrow via
+`sandboxStatus().ports.web`), ssh peers, and direct-url peers.
+
+**This reframes clodex's concern.** His worry was that ruling "Clodex side"
+silently excluded k8s and Fargate. The exclusion is real but it is **already
+there, one layer down and independent of this ticket**: a Fargate task or a k8s
+pod cannot be a Clodex peer *at all* right now — that is precisely why clodexctl
+exists for them. The web view cannot exclude a peer type that cannot be added.
+
+Multi-transport peering is its own ticket, and a bigger one: peer schema +
+sanitizePeers + classifyPeerDest + the peers dialog + peer-wiring resolution.
+Its payoff is far larger than a web view — it would make the **peer connection
+itself** multi-transport, and the web view would then follow for free, because
+the supervisor would be reading the same ctx.
+
+## (D) Would the reuse actually fit, mechanically? Yes — worth recording
+
+`openTransport` is single-shot (open → wait for port → `{baseUrl, localPort,
+close, waitExit}`) with no supervision, backoff or respawn. Our design needs
+those. But two of its seams fit our model exactly:
+
+- **`localPort` (transport.js:252)** pins the local end instead of picking free
+  — this IS our pinned port, already implemented, with the same
+  `ExitOnForwardFailure` honest-failure reasoning in its comment.
+- **`waitExit()`** resolves when the child dies — the respawn trigger.
+
+So a Clodex-side supervisor could wrap it: open with the pinned port, await
+`waitExit`, back off, reopen. Supervision stays ours (clodex's ruling intact)
+and the one-shot open is borrowed. The fit is clean; the blockers are (B) and
+(C), not the shape.
+
+## RECOMMENDATION → ssh-only now, multi-transport as its own peering ticket
+
+Not "reuse is ugly" — reuse is mechanically clean. Ship ssh-only because the
+multi-transport benefit is **currently unreachable**: no peer record can carry a
+cloud transport, so the import would add a packaging hazard (B) for capability
+nothing can use (C). Reuse becomes correct the moment peer records gain cloud
+transports, and that ticket should carry the `build.files` change and the
+README update as part of its own cost.
+
+Awaiting clodex's ruling before building.
