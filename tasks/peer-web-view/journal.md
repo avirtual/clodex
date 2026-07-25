@@ -786,3 +786,63 @@ free-identifier-leaks, peer, peer-tunnel, peer-disable.
 8. **affordance leaf**: phases, ssh-only disabled arm, and never a composed URL.
 
 Baseline: **2600, ESCAPES: 0**.
+
+## Phase 2c (part 1) — supervisor tests, and a DEFECT they found (`4433dd5`)
+
+`test/web-tunnel.test.js`, 18 tests, all green. Structured around the three
+inversions, because each has a specific way of silently regressing back into
+peer-tunnel's behaviour.
+
+### DEFECT in my own supervisor: the give-up cap could never fire
+
+As first written, `_spawnOn` retired the give-up deadline on the FIRST `up`:
+
+```js
+const firstUp = !this._opened;
+if (firstUp) { this._opened = true; this._deadline = 0; }   // WRONG
+```
+
+But `up` here means only *the ssh process is alive*. `ssh -N` prints nothing on
+success, so a forward to an unreachable box is briefly `up` too — it reports up,
+then dies. Every tunnel therefore reached `firstUp` on its very first spawn and
+retired its own cap, so **close #4 could not fire at all**. The one close that
+depends on nobody doing anything was the one that did nothing.
+
+Fix: the clock is retired by SURVIVING, not by starting — a spawn that outlives
+`_stableMs` resets both the backoff and the deadline (same threshold and the same
+reasoning as `peer-tunnel.js`'s `STABLE_MS`, used for a different decision).
+`firstUp` keeps its own job (the once-only browser pop) and no longer doubles as
+a health signal. `_stableMs` scales with a supplied `giveUpMs` so a test can
+exercise the "it worked" branch without a 30s wait.
+
+Found because the test asserted the cap by DRIVING it, not by reading a flag.
+
+### A harness trap worth recording (my own, twice)
+
+`waitFor(() => tun.state === 'gave-up')` never fires on its own: the deadline is
+only consulted when a spawn DIES, and a faked child stays alive until the test
+kills it — correctly, since a tunnel whose ssh is up is not failing. So reaching
+the cap requires failing the box repeatedly *across the real backoff*. Extracted
+as `failUntilGaveUp(get, children, {stderr})`. The near-miss: had I "fixed" those
+three tests by loosening the assertion instead of driving the state, the defect
+above would have shipped green.
+
+### What the 18 cover
+
+pinned port across respawns (asserted on the ssh **argv**, not the field) ·
+the pin surviving a down state · the honest-failure flags · `url()` null in every
+non-up state · **the 127.0.0.1:1 sentinel never produced** · `firstUp` on exactly
+one emit and absent from `status()` · `firstUp` per-tunnel (a re-open pops again)
+· the cap firing with `lastError` kept · a tunnel that WORKED never capped ·
+closes #1/#2/#3 · #2 on a re-pointed ssh host · refusals (no ssh host, and six
+malformed remote ports) · idempotent re-open · replace-on-moved-web-port ·
+retry after gave-up · per-peer `statuses`/`urlFor`.
+
+### Still to write (part 2)
+
+- **peer-wiring**: the tokenGated NO-POP assertion (gated → `openExternal` never
+  called; ungated → called exactly once, with the supervisor's live URL), and
+  `openPeerWeb`'s refusals (no such peer / url-only peer / no webHost).
+- **the affordance leaf** (`renderer/lib/peer-web-view.js`): phases, the ssh-only
+  disabled arm, and that no URL is ever composed.
+- Then prove EACH by reverting, then the full suite (baseline 2600 + new).
