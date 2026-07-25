@@ -189,7 +189,33 @@ const DEFAULT_UI_SETTINGS = {
   // relaunch that never comes back leaves it set for the next manual launch
   // (the requested-at time in the body self-explains a late one).
   pendingRebootNotice: null,
+  // Plugin state (docs/plugin-plan.md §3.1): a bag keyed three ways at once —
+  // `enabled` (the reserved array of ids the user has explicitly chosen; ABSENT
+  // means "never chosen", which falls back to each manifest's enabledByDefault),
+  // `_failures` (the quarantine strike record, host-owned), and one key per
+  // plugin id holding that plugin's own settings via host.settings.get/set.
+  //
+  // Deliberately NOT sanitized field-by-field like everything else here: the
+  // per-plugin sub-objects are a plugin's own schema, which core does not know
+  // and must not narrow. `sanitizePlugins` therefore only guarantees the SHAPE
+  // core relies on (an object; `enabled` an array of strings if present) and
+  // passes the rest through untouched.
+  plugins: {},
 };
+
+// Shape-only, by design (see DEFAULT_UI_SETTINGS.plugins). Anything that isn't
+// an object collapses to {} — a corrupt value must not make every plugin
+// setting unreadable. Non-string entries in `enabled` are dropped rather than
+// coerced: an id is matched by exact string equality downstream, so a coerced
+// one would silently never match.
+function sanitizePlugins(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = { ...raw };
+  if ('enabled' in out) {
+    out.enabled = Array.isArray(out.enabled) ? out.enabled.filter((x) => typeof x === 'string') : [];
+  }
+  return out;
+}
 
 // `prior` (optional) is the CURRENT peers array — used to carry a peer's auth
 // token forward by id when an incoming entry OMITS `token` (docs/remote-auth-plan.md
@@ -1407,6 +1433,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           boxes: sanitizeBoxes(raw?.boxes) ?? DEFAULT_UI_SETTINGS.boxes,
           lastRebootAt: Number.isFinite(raw?.lastRebootAt) ? raw.lastRebootAt : DEFAULT_UI_SETTINGS.lastRebootAt,
           pendingRebootNotice: sanitizeRebootNotice(raw?.pendingRebootNotice),
+          plugins: sanitizePlugins(raw?.plugins) ?? { ...DEFAULT_UI_SETTINGS.plugins },
         };
       } catch { return DEFAULT_UI_SETTINGS; }
     },
@@ -1443,6 +1470,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         pendingRebootNotice: (partial && 'pendingRebootNotice' in partial)
           ? sanitizeRebootNotice(partial.pendingRebootNotice)
           : cur.pendingRebootNotice,
+        // WHOLE-BAG replace, not a merge: every writer (loader.setEnabledInSettings,
+        // writeFailureRecord, host.settings.set) already reads the current bag,
+        // spreads it and hands back the complete next value. Merging here as well
+        // would make a deletion — dropping an id out of `enabled`, clearing a
+        // failure record — unrepresentable.
+        plugins: (partial && 'plugins' in partial)
+          ? (sanitizePlugins(partial.plugins) ?? cur.plugins)
+          : cur.plugins,
       };
       try {
         atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
