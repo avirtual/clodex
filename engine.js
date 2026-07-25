@@ -111,6 +111,13 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // defaults ON so Electron (which omits the seam) is unchanged.
   const enableSandbox = seams.enableSandbox !== false;
 
+  // The browser frontend's host, for peers that want to REACH it (t30). A
+  // GETTER, not a value: web-host.js is started by headless-main.js AFTER
+  // createEngine returns, so there is nothing to pass at construction time.
+  // Electron omits the seam entirely and reports null — the desktop app has no
+  // web host, and a consumer must learn that rather than guess wire-port+1.
+  const getWebInfo = seams.webInfo || (() => null);
+
   // Clodex-owned runtime dir (~/.clodex): registry, sockets, hooks, spilled
   // messages, memory. A home-derived constant, identical across hosts, so the
   // engine computes it itself rather than taking it as a seam.
@@ -1526,6 +1533,9 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   resolveRemoteToken,
   appVersion,
   isPackaged,
+  // Read through on every hello, never snapshotted: the web host starts after
+  // this wiring is built, so a value captured here would always be null.
+  getWebInfo,
 });
 
 

@@ -430,6 +430,12 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       try { wss.close(); } catch {}
       try { server.close(); } catch {}
     },
+    // What this host is, for a consumer that wants to REACH it (t30). The port
+    // is the one we actually listened on, not a guess reconstructed from the
+    // wire port. `tokenGated` says a token is REQUIRED — never what it is:
+    // that a door is locked is not a secret, the key is. A consumer uses it to
+    // explain why a plain URL will 401 instead of claiming a working link.
+    info: { port, tokenGated: gate.configured },
     // Test/introspection handles (not part of the wire contract).
     _server: server, _handlers: handlers, _scrollback: scrollback, _workspaceConns: workspaceConns,
   };

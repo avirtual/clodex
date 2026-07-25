@@ -26,6 +26,14 @@ const REQUEST_TIMEOUT_MS = 5000;
 // reads the whole session capture) — give them their own, longer budget.
 const QUERY_TIMEOUT_MS = 20000;
 
+// Comparable identity for the hello's webHost field, so identityChanged can
+// treat "appeared", "vanished" and "moved to another port" alike. null and a
+// live host must never compare equal, hence the explicit sentinel rather than
+// optional-chaining into undefined.
+function webHostKey(w) {
+  return w ? `${w.port}:${w.tokenGated ? 1 : 0}` : '';
+}
+
 class PeerConnection {
   constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster }) {
     this.id = id;
@@ -99,6 +107,10 @@ class PeerConnection {
       caps: this.hello ? this.hello.caps : [],
       platform: this.hello ? this.hello.platform : null,
       srcDir: this.hello ? this.hello.srcDir : null,
+      // {port, tokenGated} or null — the box's browser frontend (t30). Rides
+      // status() so the renderer reads it from LIVE peer state on every
+      // peer-state emit, never from a value cached when a popover opened.
+      webHost: this.hello ? this.hello.webHost : null,
       sessions: this.sessions,
     };
   }
@@ -112,7 +124,14 @@ class PeerConnection {
       if (!err && body && body.ok && body.app === 'clodex') {
         const wasOffline = !this.online;
         const prev = this.hello;
-        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null };
+        // webHost: {port, tokenGated} or null — the box's browser frontend, so
+        // a consumer can tunnel to it rather than guessing wire-port+1 (t30).
+        // Normalized here so one malformed field can't reach the renderer.
+        const wh = body.webHost;
+        const webHost = (wh && Number.isInteger(wh.port) && wh.port > 0 && wh.port <= 65535)
+          ? { port: wh.port, tokenGated: wh.tokenGated === true }
+          : null;
+        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null, webHost };
         // Did the box's reported identity move since the last hello? (caps
         // compared as a joined string.) An in-place Update restarts the box
         // faster than the 15s hello cadence can observe an offline dip, so
@@ -123,6 +142,10 @@ class PeerConnection {
           prev.version !== next.version ||
           prev.platform !== next.platform ||
           prev.srcDir !== next.srcDir ||
+          // A web host appearing, vanishing or MOVING is an identity change: a
+          // consumer forwarding to the old port would tunnel to nothing (or,
+          // worse, to whatever took the port). Same-tick, not the 15s cadence.
+          webHostKey(prev.webHost) !== webHostKey(next.webHost) ||
           (prev.caps || []).join(',') !== (next.caps || []).join(',');
         this.hello = next;
         this._setOnline(true);
