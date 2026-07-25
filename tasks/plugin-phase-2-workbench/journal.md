@@ -1094,3 +1094,93 @@ end (renderer-side test: dispose removes footer button, overlay, style element,
 and zeroes _liveResources), confirm the packaged-app plugins/ dir resolves
 (GAP G8 — `__dirname` inside app.asar), and check `files` in package.json's
 build config actually ships plugins/.
+
+---
+
+## t4 W7 — DONE. Commit 714a826. Suite 2413 (+3).
+
+Enable-by-default was ALREADY true and already pinned (manifest
+`enabledByDefault: true` + `isEnabled` fallback + the "the pilot ships enabled
+(W7)" assertion). The two things W7 actually needed:
+
+### GAP G8 was real and would have shipped broken
+`package.json` `build.files` is an electron-builder ALLOWLIST and `plugins/**/*`
+was NOT on it. The packaged DMG would have contained no plugins directory at
+all: `discover()`'s `readdirSync` throws, it returns `[]` (its legal silent
+state), and the shipped app has no workbench while dev has one. Invisible to
+every test that runs from a checkout — so it is now pinned by one
+(plugin-loader.test.js, "electron-builder SHIPS plugins/").
+
+### The two-window teardown proof
+Every teardown test before this drove ONE host = one window. Two new tests in
+plugin-host.test.js drive TWO, over two independent fake DOMs:
+- overlay state is per-window (open in A does not open B; close A leaves B open);
+- after dispose in each window: footer button, overlay container, `<style>`,
+  status rows, menu rows and settings section all gone, `_liveResources` zero on
+  every axis, `_counts()` all zero, listener unregistered from the real target.
+
+What this does NOT prove, and does not claim to: that Electron delivers the
+`plugin-state` broadcast to both BrowserWindows. That is the running-app half of
+gate 1 (script below).
+
+---
+
+## t4 W8 — DONE. Commit fd22e56. Suite 2418 (+5).
+
+### WHAT build/build-web.js ACTUALLY IS (GAP G7, read not inferred)
+84 lines. esbuild bundles `renderer/web/boot.js` (iife, browser) + `app.css`,
+then takes `renderer/index.html`'s markup and does THREE regex substitutions,
+each asserted to match exactly once (xterm css link, styles.css link,
+`<script src="renderer.js">`), producing ONE self-contained
+`web-dist/index.html`. Single-request by design: a browser does not carry the
+page's `?token=` onto separate `<script>`/`<link>` requests. `web-dist` is
+TRACKED (T42) and `scripts/release.sh` rebuilds it in preflight so a stale
+bundle dirties the tree and fails the release.
+
+### TWO CONSEQUENCES THE PLAN COULD NOT HAVE KNOWN
+1. **The markup half of W8 needed nothing.** The bundle reads index.html, so
+   W2's deletion of the `#workbench-overlay` block already removed it from the
+   web build. Verified in the rebuilt bundle: `workbench-overlay` → 0 hits.
+2. **The CSS half needed nothing either** — see deviation (o).
+
+### DEVIATION (o) — W8's CSS half was already solved at W1
+The plan says the bundle needs "the plugin renderer module + CSS via a
+build-generated `web-plugin-registry.js` id→module map". Only the MODULE half
+was ever a problem. A plugin's stylesheet crosses as TEXT over the existing
+`_host` `renderer.info` call and becomes a per-plugin `<style>` — W1's decision
+to send css text rather than a path, taken precisely so it would work
+identically in the file:// window and the browser. Building a CSS pipeline here
+would have duplicated a working mechanism. Pinned by a test so a later "fix"
+that emits a path (which resolves nowhere in a browser) fails loudly.
+
+### What actually shipped
+- `renderer/web/plugin-registry.js` (NEW, committed with the generated block
+  filled) — `{ get(id), ids() }`, shaped like a Map's get so
+  `requirePluginRenderer` differs in exactly one branch.
+- `build/build-web.js` — `discoverPluginRenderers()` + `writePluginRegistry()`,
+  rewriting the marked block from `plugins/*/manifest.json`. Mirrors the
+  loader's refusals (id must match its directory, renderer entry must exist).
+  Writes only on change, so the release staleness guard stays a signal.
+- `renderer/web/boot.js` — installs `window.__CLODEX_PLUGIN_REGISTRY__` BEFORE
+  `require('../renderer.js')`, because renderer.js's module body calls
+  `loadPluginRenderers()` as it runs.
+- `test/plugin-web-parity.test.js` (5 tests) — the staleness gate (registry vs
+  plugins on disk), the no-backdoor property for the bundler (a bundled path
+  cannot escape `plugins/<id>/`), boot ordering, the one-branch resolver, and
+  the CSS-is-text pin.
+
+### Naming note
+The plan calls the file `web-plugin-registry.js`; it landed as
+`renderer/web/plugin-registry.js` — the directory already scopes it to web and
+every sibling there is named for what it is (`api-shim`, `os-shim`, `menubar`),
+so `web/web-plugin-registry.js` would have stuttered. Same artifact, same role.
+
+### DOCKER: REACHABLE, AND REBUILT
+`docker compose -f docker/web/compose.yaml build` → `web-clodex:latest`, exit 0.
+Verified INSIDE the image: `/app/plugins/workbench/` has all six files (the
+engine half loads — `COPY . .` picks it up, and `.dockerignore` does not exclude
+plugins/), and `/app/web-dist/index.html` contains the workbench renderer half.
+
+### NEXT: W9, the five acceptance gates.
+Gates 1 (partly) and 5 need a RUNNING APP. Write the manual script precisely,
+claim nothing on inference.
