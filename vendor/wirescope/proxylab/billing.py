@@ -119,6 +119,11 @@ def _parse_response_meta(raw_bytes):
 # this split, all opus-4.5+ captures (logs_opus) were over-priced ~3x.
 PRICES = {
     "claude-fable-5":  {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.00},
+    # opus-5 (2026-07-24): SAME rates as 4.8, but it needs its OWN entry —
+    # longest-PREFIX matching means "claude-opus-5" does NOT match the legacy
+    # "claude-opus-4" row (the "-4" is in the prefix), so without this line it
+    # falls through to UNPRICED (est_usd=None, totals become a floor).
+    "claude-opus-5":   {"in": 5.0,  "out": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.50},
     "claude-opus-4-5": {"in": 5.0,  "out": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.50},
     "claude-opus-4-6": {"in": 5.0,  "out": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.50},
     "claude-opus-4-7": {"in": 5.0,  "out": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.50},
@@ -194,6 +199,19 @@ _UNPRICED_WARNED = set()
 # priced at receipt time (= time of traffic), so no manual flip is needed —
 # but note captures store billing at write time: a receipt priced under the
 # old rate is NOT retro-repriced (that's correct — it reflects what was billed).
+# FAST MODE (research preview, beta `fast-mode-2026-02-01`): opus-5 / opus-4-8
+# run at a PREMIUM — $10/$50 vs $5/$25 — across the full context window. The
+# universal cache multipliers still apply on top (5m 1.25x, 1h 2x, read 0.1x),
+# so the effective row equals fable-5's. Detected from `usage.speed` on the
+# RESPONSE, which is authoritative for BILLING (the request's `speed:"fast"` is
+# only an ASK: opus-4-6 silently downgrades and a 429/529 can refuse it — in
+# both cases usage.speed says "standard" and standard rates are what's charged).
+# Absent field (every non-beta request) => standard, the base PRICES row.
+PRICES_SPEED_FAST = {
+    "claude-opus-5":   {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
+    "claude-opus-4-8": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
+}
+
 PRICES_DATED = {
     # sonnet-5 intro rate ends 2026-08-31; standard (== sonnet-4) after.
     "claude-sonnet-5": [("2026-09-01", {"in": 3.0, "out": 15.0,
@@ -203,11 +221,14 @@ PRICES_DATED = {
 }
 
 
-def _price_for(model, table=None, now=None):
+def _price_for(model, table=None, now=None, speed=None):
     """Longest-prefix match (the old first-dict-hit walk silently shadowed
     "claude-opus-4-8" with the legacy "claude-opus-4" entry). None = unpriced.
     Scheduled repricings (PRICES_DATED) overlay the base PRICES table once
-    their effective date is reached; `now` is injectable for tests."""
+    their effective date is reached; `now` is injectable for tests.
+    `speed="fast"` (from the response's usage.speed) overlays the fast-mode
+    premium row for the models that support it — matched on the SAME winning
+    prefix, so a fast-mode model without an entry just keeps standard rates."""
     if not model:
         return None
     best = None
@@ -222,6 +243,8 @@ def _price_for(model, table=None, now=None):
         for eff, dated in PRICES_DATED[pfx]:
             if today >= eff:
                 p = dated
+    if table is None and speed == "fast" and pfx in PRICES_SPEED_FAST:
+        p = PRICES_SPEED_FAST[pfx]
     return p
 
 
@@ -260,8 +283,10 @@ def _billing(kind, model_resolved=None, usage_final=None, usage_start=None, coun
                                           us.get("cache_creation_input_tokens")),
         "thinking_tokens": (uf.get("output_tokens_details") or {}).get("thinking_tokens"),
         "service_tier": us.get("service_tier"),
+        # fast mode (premium rates); final wins, absent => standard
+        "speed": uf.get("speed", us.get("speed")),
     }
-    p = _price_for(model_resolved)
+    p = _price_for(model_resolved, speed=tokens["speed"])
     est = None
     unpriced = False
     basis = "approx public list USD/1M; edit PRICES"
@@ -272,6 +297,8 @@ def _billing(kind, model_resolved=None, usage_final=None, usage_start=None, coun
             # the flat total at the cheaper 5m premium and say so in the basis.
             w5 = tokens["cache_write_flat_tokens"]
             basis += "; cache_creation split absent, flat total priced at 5m rate"
+        if tokens["speed"] == "fast" and p is not _price_for(model_resolved):
+            basis += "; FAST MODE premium rates (usage.speed=fast)"
         est = round(_usd(tokens["input_tokens"], p["in"])
                     + _usd(tokens["output_tokens"], p["out"])
                     + _usd(tokens["cache_read_input_tokens"], p["cache_read"])
