@@ -203,12 +203,28 @@ test('a plain failing test still exits non-zero and reports no escape', () => {
   } finally { s.clean(); }
 });
 
-test('a suite that cannot run at all fails LOUDLY, never green', () => {
-  // The swallowing failure mode clodex ruled out explicitly: if the run
-  // produces no summary the wrapper must not conclude "nothing escaped".
+test('a run that produced no tap stream says so LOUDLY and claims NO verdict', () => {
+  // The swallowing failure mode ruled out explicitly: when the wrapper cannot
+  // read the stream it analyses, it must not conclude "nothing escaped".
+  //
+  // Asserted on the MESSAGE, not the exit code, deliberately: `node --test`
+  // exits non-zero on this by itself, so an exit-code assertion here would pass
+  // with the guard deleted and prove nothing. The absence of `ESCAPES:` is the
+  // part only this wrapper can get wrong.
+  const { out, code } = runWrapper('/nope/no-such-file.test.js');
+  assert.match(out, /run-tests: the tap stream is missing/);
+  assert.doesNotMatch(out, /ESCAPES:/, 'a run it could not read must not be given an escape verdict');
+  assert.notStrictEqual(code, 0);
+});
+
+test('a file that explodes at load is passed through as a failure, not as an escape', () => {
+  // A load-time throw is an ordinary failure with a summary attached; the
+  // wrapper must report on it normally rather than mistaking it for the
+  // async-escape shape.
   const s = scratch("throw new Error('this file explodes at load');");
   try {
     const { out, code } = runWrapper(s.file);
+    assert.match(out, /ESCAPES: 0/);
     assert.notStrictEqual(code, 0, `a broken run must not exit 0:\n${out}`);
   } finally { s.clean(); }
 });
