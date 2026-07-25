@@ -112,7 +112,21 @@ code.
 
 - **Two windows** *[unrun prediction]*. Open a second workspace window with a git session. Expect both windows to show correct chips at once, each filled by its own renderer activation. The mechanism is real (`renderer.js:3040-3050`: the engine broadcasts `plugin-state` on the `_host` pseudo-id and each window activates or disposes its **own** renderer half). Whether two live windows actually paint together is what you are checking.
 - **Disable cleanly** *[source, for the teardown]*. Untick **Plugins ▸ Git Branches** with both windows open. Chips should vanish from both **immediately, without waiting for a relayout** — `renderer/plugin-host.js:649` removes every `[data-plugin-badge^="git-branches:"]` node directly, and `:644` removes the `<style>`. The **Preferences ▸ Git Branches** section going with it is the same teardown (`:645` purges `settingsSections`).
-- **Re-enable live** *[unrun prediction]*. Tick it again without restarting. Expect chips back in both windows within one refresh interval.
+- **Re-enable live** *[source, and previously OBSERVED TO FAIL]*. Tick it again without restarting. Expect chips back in **both** windows promptly — not one, and not after a wait.
+
+  **This is the step that failed on the first real run**, and it is worth knowing
+  what you are re-checking. Bogdan saw exactly one window repaint; the other came
+  back **30–60 seconds later, on its own, while he typed.** Root cause (t17): the
+  plugin's poll set is written only by `resolve()`, i.e. only when core renders a
+  row, so a re-enabled window polled an empty list forever — and the host paints
+  eagerly at teardown (`plugin-host.js:649`) but has no counterpart at activation,
+  and registering a row badge paints nothing (`:243`). The window therefore waited
+  for an unrelated relayout: core's 30 s `refreshSidebarMeta` interval
+  (`renderer/renderer.js:1172`) or the activity a keystroke produces — which is
+  where the 30–60 s and the "while I was typing" both come from. Fixed in the
+  plugin by requesting one relayout at the end of `activate()`, pinned by
+  `test/plugin-git-branches-renderer.test.js`. **If you see a single window
+  repaint again, or any wait at all, say so — the fix is wrong.**
 
 **Two corrections to what this step used to say**, both found by reading rather
 than running, and both of the "told you to expect the wrong thing" kind:

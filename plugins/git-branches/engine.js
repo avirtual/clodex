@@ -25,9 +25,17 @@
  *    only gives `deactivate()` a best-effort chance to run. No engine timer
  *    means nothing to leak. (The short-lived timers we do use are tracked and
  *    cleared; they are one-shot and sub-second.)
- *  - The TTL also makes the plugin correct with N windows open: every window's
- *    renderer polls independently, but they all land on one cache, so the
- *    number of `git` processes is bounded by time, not by window count.
+ *  - The TTL bounds the COST of N windows: every window's renderer polls
+ *    independently, but they all land on one cache, so the number of `git`
+ *    processes is bounded by time rather than by window count. It says nothing
+ *    about whether those windows agree on screen. This comment used to claim the
+ *    TTL "makes the plugin correct with N windows open", which running the app
+ *    falsified (t17): with two windows open, a disable/re-enable repainted one
+ *    and left the other blank for 30-60s. That was a renderer-half defect — no
+ *    relayout was requested at activation — and no engine-side cache property
+ *    could have prevented it, because the engine cannot reach a window's DOM.
+ *    Per-window correctness is a per-window concern; see renderer.js's closing
+ *    `queueRelayout()`.
  */
 
 const { execFile } = require('node:child_process');

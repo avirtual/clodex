@@ -365,6 +365,17 @@ module.exports.activate = (rhost) => {
   // call is slow; startPolling() replaces the timer rather than adding one.
   startPolling();
 
+  // Ask for one relayout on activation — the poll CANNOT bootstrap itself.
+  // `activeNames()` reads `seen`, and `seen` is written only by resolve(), which
+  // only core's render loop calls; a freshly activated closure therefore polls an
+  // empty name list forever. The host does not close this for us: it un-paints
+  // eagerly at dispose (plugin-host.js:649) but has no counterpart at activate,
+  // and registering a rowBadge paints nothing (:243), unlike footerButton (:236).
+  // Without this line a re-enable is invisible until something unrelated triggers
+  // a sidebar relayout — core's 30s meta refresh, or the user typing. That is the
+  // t17 defect Bogdan hit with two windows open.
+  queueRelayout();
+
   // --- teardown ------------------------------------------------------------
 
   // Returned from activate(), so it runs first, while our DOM still exists

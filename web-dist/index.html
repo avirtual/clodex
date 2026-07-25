@@ -7172,6 +7172,7 @@ body {
           if (alive()) startPolling();
         });
         startPolling();
+        queueRelayout();
         return () => {
           torn = true;
           stopTimers();
