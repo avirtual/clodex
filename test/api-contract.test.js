@@ -36,7 +36,9 @@ const PINNED_NAMES = [
   'onPtyData', 'onSessionExit', 'onIpcMessage', 'onSessionActivity',
   'onPendingCount', 'onSessionTicket', 'onSessionAttention', 'onSessionCtx', 'onSessionProxy',
   'onSessionFiles', 'sessionFiles', 'filePeek', 'fileDiff',
-  'fileOpen', 'onSessionFileView', 'openExternal', 'getProxySnapshot',
+  // fileReveal added by t22 — reveal-in-file-manager for Manage Plugins' "Open
+  // Plugins Folder", distinct from fileOpen (which opens the file itself).
+  'fileOpen', 'fileReveal', 'onSessionFileView', 'openExternal', 'getProxySnapshot',
   'getProxyContext', 'getProxyReport', 'getProxyBust', 'proxyHold',
   'wireHold', 'setStripLevel', 'setAutoCompact', 'getProxySubagentDetail',
   'onSessionMention', 'onRequestSwitchSession', 'onRequestOpenNewDialog', 'onRequestOpenDiscovery', 'onRequestRenameWorkspace',
@@ -121,8 +123,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 221-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 221, 'pinned list is the full 221-method surface');
+test('contract covers exactly the pinned 222-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 222, 'pinned list is the full 222-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -146,7 +148,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 221, 'window.api has exactly 221 methods');
+    assert.equal(generated.length, 222, 'window.api has exactly 222 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

@@ -952,3 +952,238 @@ test('the conflict clears when the plugin loads — it is per-run, never persist
   loader.loadAll(fakeHost()); // the holder is gone this run
   assert.strictEqual(loader.status().plugins[0].verbConflict, null);
 });
+
+// ── Re-scan without restarting (t22) ────────────────────────────────────────
+// The user root is only worth having if a plugin dropped into it can be reached
+// without quitting the app. What makes this subtle is that `require` caches by
+// resolved path, so the three things a re-scan can find are NOT symmetric: an
+// added plugin genuinely loads, a removed one genuinely goes, and a CHANGED one
+// cannot be swapped in-process at all. The tests below pin that asymmetry,
+// because the tempting bug is to treat all three as "re-discover and carry on".
+
+// The rescan surface needs more of the host than `register`: it deactivates
+// removed plugins and asks which ids are actually running. Separate from
+// fakeHost deliberately — the older tests prove the loader does NOT reach past
+// register, and widening that fake would silently retire the proof.
+function rescanHost() {
+  const live = new Map();
+  return {
+    live,
+    register(id, mod, manifest) {
+      if (mod && mod.boom) throw new Error('activate exploded');
+      live.set(id, { id, mod, manifest });
+    },
+    deactivate(id) { return live.delete(id); },
+    catalog() { return [...live.values()].map((r) => ({ id: r.id, version: r.manifest.version || null })); },
+  };
+}
+
+// A plugin whose engine file is unique per call, so `require` has no cached
+// entry from an earlier test. Without this the require cache leaks ACROSS tests
+// and a later test sees a module an earlier one loaded — the same cache
+// behaviour under test, biting the test suite itself.
+let uniq = 0;
+function freshTree(id, version, body = engineFile) {
+  uniq += 1;
+  return mkTree({
+    [id]: {
+      manifest: { ...OK_MANIFEST, id, version },
+      files: { 'engine.js': `${body}\nmodule.exports.__uniq = ${uniq};`, 'renderer.js': '', 'style.css': '' },
+    },
+  });
+}
+
+test('re-scan picks up a plugin ADDED after startup', () => {
+  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  assert.deepStrictEqual(host.catalog().map((p) => p.id), [], 'nothing on disk at boot');
+
+  // Drop a plugin in while the app is "running".
+  uniq += 1;
+  const dir = path.join(user, 'gamma');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '1.0.0' }));
+  fs.writeFileSync(path.join(dir, 'engine.js'), `${engineFile}\nmodule.exports.__uniq = ${uniq};`);
+  fs.writeFileSync(path.join(dir, 'renderer.js'), '');
+  fs.writeFileSync(path.join(dir, 'style.css'), '');
+
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.added, ['gamma']);
+  assert.deepStrictEqual(host.catalog().map((p) => p.id), ['gamma'],
+    'an added plugin is genuinely registered, not merely discovered');
+});
+
+test('re-scan DEACTIVATES a plugin removed from disk', () => {
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  assert.deepStrictEqual(host.catalog().map((p) => p.id), ['gamma']);
+
+  fs.rmSync(path.join(user, 'gamma'), { recursive: true, force: true });
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.removed, ['gamma']);
+  assert.deepStrictEqual(host.catalog().map((p) => p.id), [],
+    'the engine half is torn down, not just dropped from discovery');
+  assert.deepStrictEqual(loader.status().plugins, [], 'and it is gone from the dialog');
+});
+
+test('re-scan marks a CHANGED plugin restart-required and does NOT reload it', () => {
+  // THE honest-feature test. require caches by resolved path, so rewriting a
+  // running plugin's engine.js cannot take effect this run. The failure this
+  // pins is not a crash — it is the row showing the new version beside the old
+  // code, which is the badge bug in a new costume.
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  const loadedMod = host.live.get('gamma').mod;
+
+  fs.writeFileSync(path.join(user, 'gamma', 'manifest.json'),
+    JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '2.0.0' }));
+  const r = loader.rescan(host);
+
+  assert.deepStrictEqual(r.changed, ['gamma']);
+  assert.deepStrictEqual(r.added, [], 'a running plugin is not re-added');
+  assert.strictEqual(host.live.get('gamma').mod, loadedMod,
+    'the ORIGINAL module object is still the one registered');
+
+  const row = loader.status().plugins.find((p) => p.id === 'gamma');
+  assert.ok(row.restartRequired, 'the row must say so rather than show 2.0.0 silently');
+  assert.strictEqual(row.restartRequired.was, '1.0.0');
+  assert.strictEqual(row.restartRequired.now, '2.0.0');
+});
+
+test('re-scan takes NO strike when a plugin fails to activate', () => {
+  // A re-scan is not a launch (t20's reasoning). The counter exists for plugins
+  // that crash on a real activation; a user pressing Re-scan three times must
+  // not quarantine a plugin that was half-copied when they pressed it.
+  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const { loader, ui } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+
+  uniq += 1;
+  const dir = path.join(user, 'gamma');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '1.0.0' }));
+  fs.writeFileSync(path.join(dir, 'engine.js'), `module.exports.boom = true;\nmodule.exports.__uniq = ${uniq};`);
+  fs.writeFileSync(path.join(dir, 'renderer.js'), '');
+  fs.writeFileSync(path.join(dir, 'style.css'), '');
+
+  loader.rescan(host);
+  loader.rescan(host);
+  loader.rescan(host);
+
+  const row = loader.status().plugins.find((p) => p.id === 'gamma');
+  assert.strictEqual(row.failCount, 0, 'three failed re-scans must not record a single strike');
+  assert.strictEqual(row.quarantined, false, 'and must never quarantine');
+  assert.strictEqual(JSON.stringify(ui.read()).includes('_failures'), false,
+    'nothing is persisted by a re-scan');
+});
+
+test('a DISABLED plugin re-scans as loadable, not as restart-required', () => {
+  // Defect 1, caught while building. `loadedFrom` remembers which copy we loaded,
+  // but "is it running" is the HOST's fact: after a disable the host has
+  // deactivated it while our map still holds the entry. Trusting the map would
+  // report restart-required for a plugin that is simply off and could be loaded.
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  host.deactivate('gamma');            // what setEnabled(false) does
+
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.changed, [], 'nothing changed on disk, so nothing is restart-required');
+  assert.deepStrictEqual(r.added, ['gamma'], 'it is simply not running, so load it');
+});
+
+test('a disable/enable toggle does NOT clear restart-required', () => {
+  // Defect 2, and the one that matters most. An enable does not empty the require
+  // cache, so re-activating a plugin whose files changed re-runs the OLD module
+  // against the NEW manifest. If the toggle cleared the flag, the row would show
+  // the new version with the old code running — silently. That is precisely the
+  // disagreement this ticket exists to prevent.
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  const original = host.live.get('gamma').mod;
+
+  fs.writeFileSync(path.join(user, 'gamma', 'manifest.json'),
+    JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '2.0.0' }));
+  loader.rescan(host);
+  assert.ok(loader.status().plugins[0].restartRequired, 'flagged first');
+
+  host.deactivate('gamma');
+  loader.activateById('gamma', host);
+
+  assert.strictEqual(host.live.get('gamma').mod, original,
+    'the require cache handed back the OLD module — this is why the flag must survive');
+  assert.ok(loader.status().plugins[0].restartRequired,
+    'a toggle must not launder stale code into looking freshly installed');
+});
+
+test('re-scan does not resurrect a QUARANTINED plugin', () => {
+  // Quarantine shadows a re-scan for the same reason it shadows a launch: Retry
+  // is the explicit, counter-clearing path, and a re-scan that silently activated
+  // a quarantined plugin would make Retry meaningless.
+  const user = freshTree('gamma', '1.0.0', 'module.exports.boom = true;');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);   // strike 1
+  loader.loadAll(host);   // strike 2 → quarantined
+  assert.strictEqual(loader.isQuarantined('gamma'), true);
+
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.added, [], 'quarantine still shadows');
+  assert.deepStrictEqual(r.failed, [], 'and it is not even attempted, so it cannot fail again');
+});
+
+test('a re-scan can flip which copy of a shadow pair wins', () => {
+  // t21's swap on a new trigger. discover() is stateless, so this falls out for
+  // free — the test exists because suppressing it would need new state whose only
+  // job is making the dialog disagree with the disk.
+  const core = freshTree('gamma', '2.0.0');
+  const user = freshTree('gamma', '3.0.0');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  assert.strictEqual(loader.discover().find((r) => r.id === 'gamma').root, 'user',
+    'the higher user version wins first');
+
+  fs.writeFileSync(path.join(user, 'gamma', 'manifest.json'),
+    JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '0.9.0' }));
+
+  assert.strictEqual(loader.discover().find((r) => r.id === 'gamma').root, 'core',
+    'dropping the user version hands the id back to core mid-run');
+  const sh = loader.status().shadowed.find((s) => s.id === 'gamma');
+  assert.strictEqual(sh.root, 'user');
+  assert.strictEqual(sh.reason, 'precedence', 'and the row flips from superseded to precedence');
+});
+
+test('ensureUserRoot creates the directory it reveals', () => {
+  // §3 says startup never creates this dir, because its absence is the honest
+  // representation of "no user plugins". This is the exception the rule names:
+  // the user has explicitly asked to be shown where plugins go, and revealing a
+  // path that does not exist is a broken action.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const userDir = path.join(base, 'plugins');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: base, label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  assert.strictEqual(fs.existsSync(userDir), false, 'not created by construction');
+  assert.strictEqual(loader.ensureUserRoot(), userDir);
+  assert.strictEqual(fs.existsSync(userDir), true, 'created on demand');
+});
+
+test('ensureUserRoot returns null when there is no user root', () => {
+  // The legacy single-root form. Returning a path here would offer a button that
+  // reveals the read-only asar, which is worse than no button.
+  const { loader } = mkLoader(mkTree({}));
+  assert.strictEqual(loader.ensureUserRoot(), null);
+});

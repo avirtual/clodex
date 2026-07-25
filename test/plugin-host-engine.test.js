@@ -604,3 +604,76 @@ test('the enable path broadcasts too, and an ALREADY-enabled plugin still hints'
   const hint = manager.sent.find((s) => s.channel === 'plugin-event');
   assert.deepEqual(hint.args, ['_host', 'plugin-state', { id: 'demo', enabled: true }]);
 });
+
+// ── _host plugins.rescan / plugins.userRoot (t22) ──────────────────────────
+// Both ride the `_host` pseudo-id rather than becoming new `plugin:*` rows.
+// api-contract.js:270 freezes that transport at five rows "for every plugin,
+// forever", and a re-scan is host plumbing, not any plugin's method — the same
+// reasoning that already put plugins.status / renderer.info / renderer.report
+// here. test/api-contract.test.js pins the five-row count from the other side.
+
+test('_host plugins.rescan announces ADDED and REMOVED to every window', async () => {
+  // A newly loaded plugin's RENDERER half is per-BrowserWindow, and only the
+  // window holding it can activate it — so the engine reuses the same
+  // `plugin-state` hint enable/disable already broadcasts rather than inventing
+  // a second path that could drift from it.
+  const manager = makeManager();
+  const loader = fakeLoader({
+    rescan: () => ({ added: ['fresh'], removed: ['stale'], changed: [], failed: [] }),
+  });
+  const { engine } = makeHost({ manager, loader });
+
+  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.added, ['fresh']);
+
+  const states = manager.sent
+    .filter((s) => s.channel === 'plugin-event' && s.args[1] === 'plugin-state')
+    .map((s) => s.args[2]);
+  assert.deepEqual(states, [{ id: 'fresh', enabled: true }, { id: 'stale', enabled: false }]);
+  assert.ok(manager.sent.every((s) => s.to === 'all'), 'every window, not just the caller');
+});
+
+test('_host plugins.rescan does NOT announce a CHANGED plugin', async () => {
+  // The honest-feature rule. Nothing about a changed plugin moved in this
+  // process — require handed back the cached module — so telling windows to
+  // re-activate would re-run the OLD renderer half for a version the user
+  // believes they just installed. The row says restart required instead.
+  const manager = makeManager();
+  const loader = fakeLoader({
+    rescan: () => ({ added: [], removed: [], changed: ['gamma'], failed: [] }),
+  });
+  const { engine } = makeHost({ manager, loader });
+
+  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  assert.deepEqual(r.changed, ['gamma']);
+  assert.deepEqual(manager.sent.filter((s) => s.channel === 'plugin-event'), [],
+    'a changed plugin produces no state hint at all');
+});
+
+test('_host plugins.rescan degrades shaped with no loader', async () => {
+  const { engine } = makeHost();
+  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  assert.equal(r.ok, false, 'a shaped refusal, never an undefined resolution');
+});
+
+test('_host plugins.userRoot serves the path rather than letting the renderer rebuild it', async () => {
+  // The renderer has no business knowing the user root is ~/.clodex/plugins:
+  // the roots are configured at the engine bootstrap, and a consumer
+  // reconstructing a producer's fact is the defect shape this project keeps
+  // hitting. Serving it also means the directory is created by the code that
+  // owns it.
+  const loader = fakeLoader({ ensureUserRoot: () => '/home/u/.clodex/plugins' });
+  const { engine } = makeHost({ loader });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.userRoot', []),
+    { ok: true, dir: '/home/u/.clodex/plugins' });
+});
+
+test('_host plugins.userRoot refuses when no user root is configured', async () => {
+  // The legacy single-root form: answering with a path would point the reveal
+  // button at the read-only asar, which is worse than having no button.
+  const loader = fakeLoader({ ensureUserRoot: () => null });
+  const { engine } = makeHost({ loader });
+  const r = await engine.dispatch('_host', 'plugins.userRoot', []);
+  assert.equal(r.ok, false);
+});

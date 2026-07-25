@@ -1123,3 +1123,54 @@ implementation. Nothing to fill; `file:reveal` works in both hosts as-is.
    laundered stale code into looking fresh, showing the NEW manifest version
    beside the OLD running code. That is the badge bug exactly. Now derived from
    `requiredPaths` inside `loadOne`, so a toggle cannot clear it.
+
+### T22 phase 3 — tests, proofs, docs. DONE
+
+**15 new tests** (10 in `plugin-loader.test.js` → 66; 5 in
+`plugin-host-engine.test.js` → 35). Suite **2529/2529**.
+
+**Seven revert proofs, every one failing by its own assertion message, no
+crashes:** restart-required never set → 2 red; `count: false` → `true` → the
+no-strike test red; trusting `loadedFrom` over the host → defect-1 test red;
+announcing `changed` → the no-announce test red; dropping the announce entirely
+→ the added/removed test red; `userRoot` answering a path when there is none →
+the refusal test red.
+
+**One proof did NOT reproduce, and that is a finding.** Re-adding
+`restartRequired.delete()` to `activateById` alone left the suite GREEN — because
+`loadOne` re-derives the flag from `requiredPaths` immediately afterwards, so the
+delete is overwritten before anything observes it. The defect-2 test only goes
+red when BOTH guards are broken. So the test pins the OUTCOME (a toggle cannot
+launder stale code) rather than either mechanism, which is the right thing to
+pin, but it does mean the `delete` line is not independently load-bearing and its
+absence is belt-and-braces rather than the guard. Recorded because "I proved it"
+would otherwise be stronger than what I actually ran.
+
+**`test/api-contract.test.js` needed a deliberate update** — the pinned surface
+went 221 → 222 for `fileReveal`. That test exists precisely so a new
+`window.api` row cannot be added accidentally; the count and the name were
+updated together, with a comment saying why. Its sibling assertion ("every invoke
+channel has a registered handler") independently proves `file:reveal` is really
+wired in ipc-handlers rather than merely declared.
+
+**Docs.** §10 rewritten in place: steps 3-4 now describe reveal + re-scan, the
+scope statement moved from "possible, not usable" to **"reachable, not
+discoverable"**, and a table gives the four re-scan outcomes with
+replace-in-place stated as impossible rather than pending. A "Still not solved"
+subsection keeps the three real gaps stated as gaps — catalog/distribution
+(explicitly out of scope), an install affordance, and replacing a running plugin.
+Two stale §10 cross-references fixed: §4's no-pin rationale and §4a's
+install-time note both said "an install flow does not exist yet", which is now
+half-wrong — both now say install *affordance*, which is the part still missing.
+§11 table gained four rows.
+
+**Flagged deviation from the ticket, no letter needed** (it was a
+settle-against-source instruction, and source settled it): the re-scan is NOT a
+fourth `plugin:*` handler. `api-contract.js:270` freezes that transport at five
+rows "for every plugin, forever", so `plugins.rescan` + `plugins.userRoot` ride
+the `_host` pseudo-id alongside the three host methods already there.
+`fileReveal` is an ordinary capability row and does not touch the plugin
+transport.
+
+**Also corrected:** the headless `showItemInFolder` hole does not exist — see the
+phase-1 correction above. Nothing was filled because nothing was missing.

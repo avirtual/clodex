@@ -5733,6 +5733,8 @@ body {
       <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
       <div id="plugins-list"></div>
       <div class="dialog-actions">
+        <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
+        <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
         <div style="flex: 1;"></div>
         <button id="btn-plugins-close" class="secondary">Close</button>
       </div>
@@ -5943,6 +5945,12 @@ body {
         { name: "filePeek", kind: "invoke", channel: "file:peek" },
         { name: "fileDiff", kind: "invoke", channel: "file:diff" },
         { name: "fileOpen", kind: "invoke", channel: "file:open" },
+        // Reveal in the OS file manager, as distinct from opening the file itself.
+        // An ordinary capability row, NOT part of the frozen five-row plugin transport
+        // — its first caller is Manage Plugins (t22), pointing a user at
+        // ~/.clodex/plugins, which is a dot-directory Finder hides by default and the
+        // single largest obstacle to a packaged user installing a plugin at all.
+        { name: "fileReveal", kind: "invoke", channel: "file:reveal" },
         { name: "onSessionFileView", kind: "on", channel: "session-file-view" },
         { name: "openExternal", kind: "invoke", channel: "app:openExternal" },
         { name: "getProxySnapshot", kind: "invoke", channel: "proxy:snapshot" },
@@ -28410,6 +28418,13 @@ ${res.stderr}` : "");
             n.className = "plugin-row-note warn";
             n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb \u2014 disable one of them.`;
             body.appendChild(n);
+          } else if (p.restartRequired) {
+            const n = document.createElement("div");
+            n.className = "plugin-row-note warn";
+            const was = p.restartRequired.was ? `v${p.restartRequired.was}` : "no version";
+            const now = p.restartRequired.now ? `v${p.restartRequired.now}` : "no version";
+            n.textContent = p.restartRequired.dirChanged ? `Restart required: a different copy of this plugin (${now}) now wins, but the ${was} copy loaded at startup is still the one running.` : `Restart required: the files on disk changed (${was} \u2192 ${now}), but the ${was} code loaded at startup is still the one running. Quit and reopen Clodex to pick this up.`;
+            body.appendChild(n);
           } else if (p.quarantined || p.failCount) {
             const n = document.createElement("div");
             n.className = "plugin-row-note warn";
@@ -28492,6 +28507,44 @@ ${res.stderr}` : "");
           pluginsList.appendChild(row);
         }
       }
+      document.getElementById("btn-plugins-reveal").addEventListener("click", async () => {
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.userRoot");
+        } catch {
+        }
+        if (!r || !r.ok || !r.dir) {
+          showToast(`Could not locate the plugins folder: ${r && r.error || "unknown error"}`, { kind: "error" });
+          return;
+        }
+        try {
+          await window.api.fileReveal(r.dir);
+        } catch {
+        }
+      });
+      document.getElementById("btn-plugins-rescan").addEventListener("click", async () => {
+        const btn = document.getElementById("btn-plugins-rescan");
+        btn.disabled = true;
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.rescan");
+        } catch {
+        }
+        btn.disabled = false;
+        if (!r || !r.ok) {
+          showToast(`Re-scan failed: ${r && r.error || "unknown error"}`, { kind: "error" });
+          return;
+        }
+        const bits = [];
+        if (r.added.length) bits.push(`${r.added.length} added`);
+        if (r.removed.length) bits.push(`${r.removed.length} removed`);
+        if (r.changed.length) bits.push(`${r.changed.length} changed (restart required)`);
+        if (r.failed.length) bits.push(`${r.failed.length} failed`);
+        showToast(bits.length ? `Re-scan: ${bits.join(", ")}.` : "Re-scan: no changes.", {
+          kind: r.failed.length ? "error" : "peer-ui"
+        });
+        await renderPluginsDialog();
+      });
       document.getElementById("btn-plugins-close").addEventListener("click", closePluginsDialog);
       pluginsOverlay.addEventListener("mousedown", (e) => {
         if (e.target === pluginsOverlay) closePluginsDialog();

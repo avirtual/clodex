@@ -201,8 +201,10 @@ this clause exists to serve.
 **Automatic, with no persisted pin.** The obvious alternative is recording a
 chosen copy in settings. A pin is state that goes stale — the pinned directory is
 deleted, or a newly bundled version outranks the pinned one — and every
-stale-state answer would be a decision better made once an install flow (§10)
-exists to record real user intent. Automatic needs no new state. The cost is
+stale-state answer would be a decision better made once an install *affordance*
+(§10, still not built) exists to record real user intent — reveal and re-scan
+move a plugin onto disk and into the app, but neither captures a choice worth
+pinning. Automatic needs no new state. The cost is
 expressiveness: there is no way to deliberately run an *older* copy, and the
 recourse for someone who wants that is the same as it always was — give the fork
 its own id.
@@ -402,9 +404,10 @@ Two candidates were considered and rejected:
 
 Dressing an arbitrary rule in temporal clothing is the exact failure this section
 exists to prevent. If this ever needs solving properly, the answer is **recording
-install time at the moment of install** — which requires an install flow, which
-does not exist yet (§10). The limit is therefore tied to the real gap rather than
-left dangling.
+install time at the moment of install** — which requires an install *affordance*,
+the part of §10 that is still not built. Reveal and re-scan (t22) do not help
+here: neither is an install, so neither has an install moment to stamp. The limit
+is therefore tied to the real gap rather than left dangling.
 
 ### The mirror case: a core plugin can displace yours
 
@@ -634,33 +637,69 @@ End to end, today, with the user root implemented:
    in a terminal or a file manager.
 3. Place it at `~/.clodex/plugins/<id>/`, where `<id>` must equal the plugin's
    manifest id. **`~/.clodex` is a dot-directory**, so a Finder user needs
-   ⌘⇧. to see it, or ⌘⇧G to navigate to it. Nothing in the app tells them this.
-4. Restart Clodex. **Discovery runs once, at startup** — a plugin added while the
-   app is running is not seen. (Manage Plugins calls `status()`, which calls
-   `discover()`, so the *dialog* would list it; the engine half is loaded by
-   `loadAll` at boot. This asymmetry is a wart, not a design.)
+   ⌘⇧. to see it, or ⌘⇧G to navigate to it — but **Manage Plugins ▸ Open Plugins
+   Folder** now reveals it directly, creating it if it does not exist yet.
+4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
+   startup: `plugins.rescan` re-reads every root and loads what it finds.
 5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`.
 
-**So the honest scope statement is: this feature makes user plugins possible, not
-usable.** A person who is handed a directory and these five steps can run a
-plugin on a packaged install, which is strictly more than zero and is the point.
-Nobody discovers a plugin, nobody installs one without a terminal, and nobody
-finds `~/.clodex` without being told.
+**Revised scope statement: this feature makes user plugins reachable, not
+discoverable.** Steps 3 and 4 no longer need a terminal or a restart. Steps 1
+and 2 are untouched — nobody discovers a plugin, and nobody installs one without
+`git clone` or an unzip.
 
-What would have to exist before this is usable by a non-developer, listed so it
-is a known gap rather than a surprise:
+### What a re-scan can and cannot do
 
-- **A "reveal plugins folder" action** in Manage Plugins. Cheapest possible fix
-  for step 3, and it creates the directory as a side effect of a user asking for
-  it — which is the only good reason to create it (§3).
-- **Re-scan without restart**, closing the step-4 asymmetry.
-- **An install affordance** — even just "drop a folder here". This is where a
-  local-only design stays honest: dropping a directory is not a fetch.
-- **A place to find plugins at all.** Not a technical problem, and not solvable
-  by this document.
+Not symmetric, and the asymmetry is inherent rather than an unfinished corner.
+`discover()` is stateless and re-reads disk every call, so scanning is cheap;
+what is not cheap is what a scan may do to code **already running**. Node's
+`require` caches by resolved path (verified by probe, t22 — rewriting a running
+plugin's `engine.js` and re-requiring it returns the *original* export):
 
-None of these are in scope for the current implementation, and none of them
-require re-deciding anything above.
+| Change | Re-scan result |
+|---|---|
+| Plugin **added** | Loads. Never required this run ⇒ no cache entry. |
+| Plugin **removed** | Deactivated; engine half torn down, renderer halves dropped in every window. |
+| Plugin **changed in place** | **Cannot be applied. Restart required, and the row says so.** |
+| A **different copy** supersedes it (§4) | Loads only if the running copy is not already registered; otherwise restart-required. |
+
+The third row is the honest half. Busting `require.cache` would leave the old
+closure's registrations live while a second copy registers on top, which is worse
+than not reloading — so a changed plugin is reported, never silently half-applied.
+**A row showing a new version beside old running code is the failure this design
+refuses**; it is the same shape as the badge bug and the verb quarantine, a
+consumer displaying something the producer never confirmed.
+
+Consequences worth stating:
+
+- **A re-scan takes no strike.** The quarantine counter exists for plugins that
+  crash on a real activation; a user pressing Re-scan repeatedly must not
+  quarantine a plugin that was half-copied at the moment they pressed it. Same
+  reasoning as §4a's refused-not-punished verb collision.
+- **Quarantine still shadows a re-scan.** Retry is the explicit counter-clearing
+  path, and a re-scan that silently activated a quarantined plugin would make
+  Retry meaningless.
+- **A re-scan can flip which copy of a shadow pair wins**, since precedence is
+  recomputed from disk. Suppressing that would require new state whose only
+  purpose is making the dialog disagree with the disk.
+- **Enable/disable does not clear a restart-required flag.** An enable does not
+  empty the require cache, so re-activating a changed plugin re-runs the *old*
+  module against the *new* manifest.
+
+### Still not solved
+
+- **A place to find plugins at all.** No directory, no index, no in-app search.
+  This is a **distribution** question, not an install-flow one, and deliberately
+  not answered here or stubbed: step 1 above is unchanged, and a user still
+  learns a plugin exists from a README, a link, or a person.
+- **An install affordance** — even just "drop a folder here". Reveal + re-scan
+  shortens the manual path but does not remove it; obtaining the plugin is still
+  `git clone` or an unzip. This is where a local-only design stays honest:
+  dropping a directory is not a fetch.
+- **Replacing a running plugin without a restart**, per the table above. Reaching
+  it would mean deactivating and re-registering a live plugin against a fresh
+  module — a substantially larger change than an install flow, and one that
+  would need its own decision about what happens to state a plugin already holds.
 
 ---
 
@@ -680,4 +719,7 @@ require re-deciding anything above.
 | §7 trust posture | Posture; no code |
 | §8 npm dependencies | Sketch, not built |
 | §9 sources, remote fetch | Sketch, not built |
-| §10 install flow gaps | Not built, scoped |
+| §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
+| §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
+| §10 an install affordance (drop a folder) | Not built, scoped |
+| §10 a place to find plugins at all | Out of scope — distribution, not install flow |
