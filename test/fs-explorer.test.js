@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const fse = require('../fs-explorer');
+const fse = require('../plugins/workbench/fs-explorer');
 
 function makeRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-fse-'));

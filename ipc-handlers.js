@@ -33,8 +33,16 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-const gitScm = require('./git-scm');
-const fsExplorer = require('./fs-explorer');
+// TEMPORARY, DELETED IN W6 (docs/plugin-plan.md §4). W5 moved both files into
+// plugins/workbench/ — they implement the workbench and nothing else. The
+// fourteen scm:/fs: rows below are the workbench's PRE-migration path: the
+// plugin already reaches these same leaves through its own engine rows, no core
+// renderer code calls them any more, and W6 deletes the rows, these requires and
+// their api-contract entries together. Pointing core INTO a plugin directory is
+// exactly as wrong as it looks; it buys ONE commit of separation between the
+// file move and the contract shrink, and it dies in the next one.
+const gitScm = require('./plugins/workbench/git-scm');
+const fsExplorer = require('./plugins/workbench/fs-explorer');
 const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
 // The intent grammar table: `catalogRows` serves the renderer checklist over IPC
 // (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where

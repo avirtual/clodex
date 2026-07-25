@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const scm = require('../git-scm');
+const scm = require('../plugins/workbench/git-scm');
 
 function gitOk() { try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 

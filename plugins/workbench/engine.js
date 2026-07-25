@@ -9,20 +9,26 @@
 // notice, is a HOST guarantee, not this plugin's code to get right. A buggy or
 // careless plugin therefore cannot widen locality.
 //
-// W2 registers these against `host.lib.gitScm` / `host.lib.fsExplorer`, which
-// are TEMPORARY host entries: git-scm.js and fs-explorer.js are still at the
-// core root, where the no-backdoor lint forbids requiring them from here. W5
-// moves both files INTO this directory and switches these two references to a
-// local `require('./git-scm')` / `require('./fs-explorer')`, at which point
-// those host.lib entries are deleted. `host.lib.gitWorktree` is PERMANENT —
-// git-worktree.js stays core (the New-Session dialog and the delete flow use it).
+// W5 moved git-scm.js and fs-explorer.js OUT of the core root and into this
+// directory: they implement the workbench and nothing else, so they are the
+// plugin's own code, required plugin-locally. The two temporary `host.lib`
+// entries that carried them through W2-W4 are gone with them.
+//
+// `host.lib.gitWorktree` is PERMANENT and stays a host entry — git-worktree.js
+// is genuinely SHARED (the New-Session dialog and the session-delete flow use
+// it), so it stays core and reaches this plugin the sanctioned way (§3.2 lib).
+// That is the line: a leaf only the plugin uses moves in; a leaf core also uses
+// stays core and is lent.
 //
 // Electron-free by contract (test/electron-boundary.test.js walks this file) and
 // backdoor-free (test/plugin-boundary.test.js: only node builtins and requires
 // that stay inside this directory — core is reachable ONLY through `host`).
 
+const gitScm = require('./git-scm');
+const fsExplorer = require('./fs-explorer');
+
 module.exports.activate = (host) => {
-  const { gitScm, fsExplorer, gitWorktree } = host.lib;
+  const { gitWorktree } = host.lib;
 
   // The MUST-FIX 5 wrapper. Every row built with this resolves the session's cwd
   // through the host and refuses peers before the handler body ever runs; the
@@ -34,12 +40,12 @@ module.exports.activate = (host) => {
     return fn(r.cwd, ...rest);
   };
 
-  // ── File explorer + editor (fs-explorer.js). Confined to the session cwd. ──
+  // ── File explorer + editor (./fs-explorer). Confined to the session cwd. ──
   host.ipc.handle('fs.list', scoped((cwd, rel) => fsExplorer.listDir(cwd, rel || '')));
   host.ipc.handle('fs.read', scoped((cwd, rel) => fsExplorer.readFile(cwd, rel)));
   host.ipc.handle('fs.write', scoped((cwd, rel, content) => fsExplorer.writeFile(cwd, rel, content)));
 
-  // ── Source control (git-scm.js). ──
+  // ── Source control (./git-scm). ──
   host.ipc.handle('scm.status', scoped((cwd) => gitScm.status(cwd)));
   host.ipc.handle('scm.diff', scoped((cwd, filePath, opts) => gitScm.fileDiff(cwd, filePath, opts || {})));
   host.ipc.handle('scm.stage', scoped((cwd, paths) => gitScm.stage(cwd, paths)));

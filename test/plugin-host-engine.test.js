@@ -49,10 +49,6 @@ function makeHost({ manager = makeManager(), settings = {} } = {}) {
     userDataPath: dir,
     fs, path,
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
-    // TEMPORARY (W2→W4): the workbench's own leaves, exposed on host.lib only
-    // until W5 moves both files into plugins/workbench/. Deleted with them.
-    gitScm: { status: () => 'SCM_LEAF' },
-    fsExplorer: { listDir: () => 'FS_LEAF' },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
   });
   return { engine, manager, dir, logged, uiSettings: () => ui };
@@ -286,11 +282,12 @@ test('lib and telemetry are frozen read-only passthroughs', () => {
   const host = engine.register('demo', { activate() {} });
   assert.equal(host.lib.gitWorktree.list(), 'WORKTREE_LEAF');
   assert.ok(Object.isFrozen(host.lib));
-  // The two W2→W4 temporaries. This assertion is DELETED IN W5 together with
-  // the entries themselves — they exist only so the workbench's DOM move lands
-  // as a commit separate from its file move.
-  assert.equal(host.lib.gitScm.status(), 'SCM_LEAF');
-  assert.equal(host.lib.fsExplorer.listDir(), 'FS_LEAF');
+  // `lib` is the SHARED-leaf lending surface, not a dumping ground: a leaf only
+  // one plugin uses belongs in that plugin's directory. W5 proved the rule by
+  // moving git-scm.js / fs-explorer.js out of here and into plugins/workbench/,
+  // so gitWorktree — which core itself uses — is the only entry.
+  assert.deepEqual(Object.keys(host.lib), ['gitWorktree'],
+    'host.lib lends only leaves core also uses');
   assert.deepEqual(host.telemetry.snapshot('a'), { tok: 42 });
   assert.equal(host.telemetry.snapshot('b'), null, 'no telemetry is null, not a throw');
 });

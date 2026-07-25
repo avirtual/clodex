@@ -750,3 +750,110 @@ marked DELETE-IN-W5 in `test/plugin-host-engine.test.js`. Repoint
 `test/git-scm.test.js`, `test/fs-explorer.test.js`, and the two entries in
 `test/free-identifier-leaks.test.js`'s SCANNED_MODULES. `git-worktree.js` STAYS
 core as `host.lib.gitWorktree` (permanent). Use `git mv` so history follows.
+
+---
+
+## W5 — DONE. Suite 2396/2396 (W4 was 2398; the −2 is explained below).
+
+The workbench's data implementations are now the plugin's own files, and
+deviation (b)'s two temporary `host.lib` entries are gone as designed.
+
+### MOVED (via `git mv`, so history follows)
+- `git-scm.js` → `plugins/workbench/git-scm.js`
+- `fs-explorer.js` → `plugins/workbench/fs-explorer.js` (deviation (c) — the
+  plan named only git-scm.js; fs-explorer.js backs `fs.list/read/write`).
+
+Both require only node builtins (`child_process`; `fs`+`path`), so the
+no-backdoor lint passes them unchanged — nothing had to be rewritten to survive
+the move, which is the evidence they were plugin code sitting at the core root.
+
+### DELETED — the (b) temporaries, all five sites
+- `engine.js` — the two requires and the two pass-through args.
+- `plugin-host-engine.js` — the two deps and their entries in the `lib` freeze.
+  `lib` is now `Object.freeze({ gitWorktree })`.
+- `test/plugin-host-engine.test.js` — the fixture leaves and the two
+  DELETE-IN-W5 assertions.
+
+The `lib` comment now states the RULE the pilot established, rather than
+describing the temporaries: **a leaf CORE also uses is lent through `host.lib`;
+a leaf only one plugin uses belongs in that plugin's directory.** `gitWorktree`
+stays because the New-Session dialog and the delete flow use it. I replaced the
+deleted assertions with `deepEqual(Object.keys(host.lib), ['gitWorktree'])` —
+otherwise the rule is prose, and the next temporary entry would slip in green.
+
+### THE PROBLEM W5 EXPOSED, and the stopgap I took
+
+`ipc-handlers.js:36-37` still `require`s both files. After the move those
+requires resolve to nothing and **`ipc-handlers.js` fails to load at all** — not
+a test failure, a hard boot failure of the main process. Ten test files require
+it. The plan's W5/W6 split does not mention this: it assumes the files can move
+while core still uses them, and they cannot.
+
+Three options:
+1. Merge W5 and W6 into one commit. Loses the separation the phasing is for, and
+   W6 is the riskiest step (14 contract rows) — exactly the one that most wants
+   its own revert.
+2. Leave duplicate copies at the core root until W6. Two divergent copies of git
+   plumbing, even for one commit, is worse than any pointer.
+3. Point core's two requires INTO the plugin directory for one commit.
+
+**Took 3**, with a comment at the site stating it is deleted in W6 and that it
+is as wrong as it looks. It is honest about direction (core → plugin, the arrow
+this whole program exists to remove) but it is one commit long, it is the
+smallest diff of the three, and NOTHING else changes: no core renderer code
+calls those fourteen rows any more (grepped: zero hits for `scmStatus`,
+`fsList`, … under `renderer/`), so the rows are already dead weight waiting for
+W6 to delete them.
+
+**Flagged as deviation (l).** If a reviewer wants W5+W6 squashed instead, that
+is a one-line change to this branch's history and I have no objection — it is a
+judgment call about revert granularity, not about the end state, which is
+identical either way.
+
+### The leak-scanner question: DROPPED, not repointed
+
+The ticket asked me to check rather than assume, and the answer is that
+repointing would have been wrong. `test/free-identifier-leaks.test.js` scans a
+module against **main.js's module scope** — it answers "did an extraction from
+main.js leave a free identifier behind?". A plugin was never extracted from
+main.js and cannot see its scope, so scanning one would be asking a question
+with no meaning; it would pass vacuously forever and imply a guarantee it does
+not make.
+
+The real guarantee for plugin files is `test/plugin-boundary.test.js`'s
+no-backdoor walk, and it is strictly STRONGER: not "no leaked identifier from
+main.js" but "no require out of the plugin directory at all". So the two entries
+were **dropped**, with a comment in the list saying why and naming the test that
+covers them now. **That is the −2 in the suite count** — those were two
+per-module tests, and the modules they covered left the scanner's remit.
+Nothing lost: both files are still covered by their own test files.
+
+**Flagged as deviation (m)** — the ticket said "repoint the two SCANNED_MODULES
+entries"; I dropped them instead.
+
+### The workbench test's fake leaves had to change shape
+
+`test/workbench-plugin.test.js` injected all three leaves through the engine's
+deps. After W5 only `gitWorktree` is injectable — the other two are plugin-local
+requires with no seam. Rather than keep a seam production no longer has, the
+test now patches the REAL modules' exports for its duration and restores them in
+a `cleanup()` (module identity makes this work: the engine half's `require`
+resolves to the same objects). Stated at the site, because a test that could
+still inject them would be testing something that no longer exists.
+
+### Repointed
+- `test/git-scm.test.js` and `test/fs-explorer.test.js` — requires now
+  `../plugins/workbench/…`. Both pass unchanged otherwise.
+
+### NEXT: W6 — the contract shrink.
+Delete from `api-contract.js` the fourteen rows (`scmStatus`, `scmDiff`,
+`scmStage`, `scmUnstage`, `scmDiscard`, `scmCommit`, `scmBranches`,
+`scmCheckout`, `scmRemote`, `worktreeList`, `worktreeRemove`, `fsList`,
+`fsRead`, `fsWrite`), their `ipc-handlers.js` registrations (:325-386) and the
+two requires at :36-45 (deviation (l) retires here). Update the pinned count
+234 → 220 in `test/api-contract.test.js` (three places) and drop the fourteen
+names from PINNED_NAMES. Pre-delete grep for stray consumers — expected zero
+outside `web-dist/` (built artifact) and docs. NOTE `worktreeList`/`worktreeRemove`
+are core rows over `git-worktree.js`, which STAYS core — check whether the
+New-Session dialog or the delete flow calls either before deleting them; if they
+do, those two rows STAY and only twelve go.

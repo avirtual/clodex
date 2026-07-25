@@ -58,8 +58,6 @@ const SCANNED_MODULES = [
   'session-restore.js',
   'session-discovery.js',
   'git-worktree.js',
-  'git-scm.js',
-  'fs-explorer.js',
   'session-meta.js',
   'engine.js',
   'headless-main.js',
@@ -72,6 +70,15 @@ const SCANNED_MODULES = [
   // Phase 2: discovery + the enabled set. Deps-object factory, fs/path injected.
   'plugin-loader.js',
 ];
+
+// NOT scanned: anything under plugins/. This list answers "did an extraction
+// from main.js leave a free identifier behind?" — it scans a module against
+// MAIN.JS's module scope. A plugin was never extracted from main.js and cannot
+// see its scope; the guard that a plugin reaches core only through `host` is
+// test/plugin-boundary.test.js's no-backdoor walk, which is a strictly stronger
+// statement (no require out at all, not merely no leaked identifier).
+// git-scm.js and fs-explorer.js were on this list until W5 moved them into
+// plugins/workbench/; they were DROPPED rather than repointed for that reason.
 
 // The same guard for renderer.js extractions — these modules were carved out of
 // renderer/renderer.js, so they leak against ITS module scope, not main.js's.

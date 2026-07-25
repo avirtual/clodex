@@ -25,34 +25,44 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
+const gitScm = require('../plugins/workbench/git-scm');
+const fsExplorer = require('../plugins/workbench/fs-explorer');
 const workbenchEngine = require('../plugins/workbench/engine');
 
 // Every leaf method the plugin can call, recording (method, args) instead of
 // touching a real repo. Returning a tagged envelope lets each row's plumbing be
 // checked end to end.
-function makeLeaves(calls) {
-  const rec = (leaf, method) => (...args) => {
+//
+// W5 split how the three leaves are reached, and the fakes follow suit rather
+// than papering over it. `gitWorktree` is core's, lent through `host.lib`, so it
+// is still INJECTED as a host dep. `gitScm` / `fsExplorer` are the plugin's own
+// files now, required plugin-locally — nothing injects them, so they are stubbed
+// by patching the real modules' exports for the test's duration. That is the
+// honest shape: a test that could still inject them would be testing a seam the
+// production code no longer has.
+function makeRecorder(calls) {
+  return (leaf, method) => (...args) => {
     calls.push({ leaf, method, args });
     return { ok: true, from: `${leaf}.${method}`, args };
   };
-  return {
-    gitScm: {
-      status: rec('scm', 'status'), fileDiff: rec('scm', 'fileDiff'),
-      stage: rec('scm', 'stage'), unstage: rec('scm', 'unstage'),
-      discard: rec('scm', 'discard'), commit: rec('scm', 'commit'),
-      branches: rec('scm', 'branches'), checkout: rec('scm', 'checkout'),
-      remoteOp: rec('scm', 'remoteOp'),
-    },
-    fsExplorer: {
-      listDir: rec('fs', 'listDir'), readFile: rec('fs', 'readFile'),
-      writeFile: rec('fs', 'writeFile'),
-    },
-    gitWorktree: {
-      listWorktrees: rec('wt', 'listWorktrees'),
-      removeWorktree: rec('wt', 'removeWorktree'),
-      createWorktree: rec('wt', 'createWorktree'),
-    },
+}
+
+// Patch the plugin-local leaves in place; returns the undo. Module identity is
+// what makes this work: `require` in the engine half resolves to these same
+// objects, so replacing their methods replaces what the rows call.
+function stubLocalLeaves(calls) {
+  const rec = makeRecorder(calls);
+  const saved = [];
+  const patch = (mod, leaf, methods) => {
+    for (const m of methods) {
+      saved.push([mod, m, mod[m]]);
+      mod[m] = rec(leaf, m);
+    }
   };
+  patch(gitScm, 'scm', ['status', 'fileDiff', 'stage', 'unstage', 'discard',
+    'commit', 'branches', 'checkout', 'remoteOp']);
+  patch(fsExplorer, 'fs', ['listDir', 'readFile', 'writeFile']);
+  return () => { for (const [mod, m, fn] of saved) mod[m] = fn; };
 }
 
 const local = { name: 'seat', type: 'claude', cwd: '/repo/seat', workspaceId: 'ws-1' };
@@ -62,7 +72,8 @@ const nocwd = { name: 'bare', type: 'bash', cwd: null, workspaceId: 'ws-1' };
 function boot() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-workbench-test-'));
   const calls = [];
-  const leaves = makeLeaves(calls);
+  const rec = makeRecorder(calls);
+  const restore = stubLocalLeaves(calls);
   const map = new Map([[local.name, local], [peered.name, peered], [nocwd.name, nocwd]]);
   const engine = createPluginHostEngine({
     manager: {
@@ -75,10 +86,16 @@ function boot() {
     log: { info: () => {} },
     userDataPath: dir,
     fs, path,
-    ...leaves,
+    // Core's leaf, lent through host.lib — still a real injected seam after W5.
+    gitWorktree: {
+      listWorktrees: rec('wt', 'listWorktrees'),
+      removeWorktree: rec('wt', 'removeWorktree'),
+      createWorktree: rec('wt', 'createWorktree'),
+    },
   });
   engine.register('workbench', workbenchEngine, { hostApi: '0' });
-  return { engine, calls, dir };
+  const cleanup = () => { restore(); fs.rmSync(dir, { recursive: true, force: true }); };
+  return { engine, calls, cleanup };
 }
 
 // The fourteen rows that replace core's fourteen window.api rows, plus wt.create.
@@ -99,7 +116,7 @@ const NAME_SCOPED_ROWS = [
 ];
 
 test('the plugin registers exactly the migrated row set, namespaced by plugin id', () => {
-  const { engine, dir } = boot();
+  const { engine, cleanup } = boot();
   assert.deepEqual(engine._dispatchKeys().sort(), [
     'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.write',
     'workbench:scm.branches', 'workbench:scm.checkout', 'workbench:scm.commit',
@@ -107,11 +124,11 @@ test('the plugin registers exactly the migrated row set, namespaced by plugin id
     'workbench:scm.stage', 'workbench:scm.status', 'workbench:scm.unstage',
     'workbench:wt.create', 'workbench:wt.list', 'workbench:wt.remove',
   ]);
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('every session-scoped row resolves the cwd through the host and delegates', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   for (const [method, args] of NAME_SCOPED_ROWS) {
     calls.length = 0;
     const res = await engine.dispatch('workbench', method, args);
@@ -120,11 +137,11 @@ test('every session-scoped row resolves the cwd through the host and delegates',
     assert.equal(calls[0].args[0], '/repo/seat',
       `${method} must pass the HOST-resolved cwd, never the session name`);
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('MUST-FIX 5: EVERY session-scoped row refuses a peer session with "remote"', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   for (const [method, args] of NAME_SCOPED_ROWS) {
     calls.length = 0;
     const res = await engine.dispatch('workbench', method, ['far', ...args.slice(1)]);
@@ -132,21 +149,21 @@ test('MUST-FIX 5: EVERY session-scoped row refuses a peer session with "remote"'
       `${method} must refuse a peer session with the exact string the renderer renders`);
     assert.deepEqual(calls, [], `${method} must not touch the filesystem for a peer session`);
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('the other two fsScope refusals reach the caller unchanged', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   assert.deepEqual(await engine.dispatch('workbench', 'fs.list', ['nobody', '']),
     { ok: false, error: 'Session not found' });
   assert.deepEqual(await engine.dispatch('workbench', 'scm.status', ['bare']),
     { ok: false, error: 'Session has no working directory' });
   assert.deepEqual(calls, [], 'a refused scope never reaches a leaf');
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('scm.remote keeps the op allowlist on the ENGINE side', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   for (const op of ['push', 'pull', 'fetch']) {
     assert.equal((await engine.dispatch('workbench', 'scm.remote', ['seat', op])).ok, true);
   }
@@ -154,35 +171,35 @@ test('scm.remote keeps the op allowlist on the ENGINE side', async () => {
   assert.deepEqual(await engine.dispatch('workbench', 'scm.remote', ['seat', 'reset --hard']),
     { ok: false, error: 'Bad op' });
   assert.deepEqual(calls, [], 'a refused op never reaches git');
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('wt.remove takes a PATH and is deliberately unscoped, like core\'s row', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   const res = await engine.dispatch('workbench', 'wt.remove', ['/tmp/some-worktree']);
   assert.equal(res.ok, true);
   assert.deepEqual(calls, [{ leaf: 'wt', method: 'removeWorktree', args: ['/tmp/some-worktree'] }],
     'the path is passed straight through — core\'s worktree:remove has no sessionCwd guard either');
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('wt.create reaches core\'s permanent gitWorktree leaf, opts defaulted to null', async () => {
-  const { engine, calls, dir } = boot();
+  const { engine, calls, cleanup } = boot();
   await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature', { base: 'main' }]);
   await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature']);
   assert.deepEqual(calls.map((c) => c.args), [
     ['/repo', 'feature', { base: 'main' }],
     ['/repo', 'feature', null],
   ]);
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 test('deactivating the plugin removes every row from the dispatch map', () => {
-  const { engine, dir } = boot();
+  const { engine, cleanup } = boot();
   engine.deactivate('workbench');
   assert.deepEqual(engine._dispatchKeys(), [],
     'host-driven teardown, not the plugin\'s own deactivate()');
-  fs.rmSync(dir, { recursive: true, force: true });
+  cleanup();
 });
 
 // ── The RENDERER half's ENTRY POINT (§2.2 / W4) ─────────────────────────────

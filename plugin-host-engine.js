@@ -46,8 +46,6 @@ function createPluginHostEngine(deps) {
     userDataPath,     // createEngine's param — host.paths.dataDir derives from it
     fs, path,
     gitWorktree,      // the sanctioned shared leaf exposed as host.lib
-    gitScm,           // TEMPORARY (W2→W4) — see the `lib` registration below
-    fsExplorer,       // TEMPORARY (W2→W4) — ditto
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
                       // behavior — disable works, enable refuses, nothing loads.
@@ -295,21 +293,14 @@ function createPluginHostEngine(deps) {
       // alternatives were a private copy (drifts) and a raw relative require
       // (which the no-backdoor lint exists to kill).
       //
-      // `gitWorktree` is PERMANENT: git-worktree.js stays core because the
-      // New-Session worktree row and the delete flow's removeWorktree depend on
-      // it (§4 W5).
-      //
-      // `gitScm` and `fsExplorer` are **TEMPORARY — DELETED IN W5**. They exist
-      // only so W2 (the DOM move) can land as its own revertable commit: the
-      // moment the workbench's DOM lives in the plugin, its data calls must go
-      // through `rhost.invoke` → engine rows, and those rows must call something
-      // — but git-scm.js / fs-explorer.js are still at the core root, where the
-      // no-backdoor lint forbids the plugin from requiring them. Without these
-      // two entries W2+W4+W5+W6 would have to land as ONE commit. W5 moves both
-      // files into plugins/workbench/, switches that plugin to a local
-      // `require('./git-scm')`, and removes these two lines. They are NOT
-      // permanent host API.
-      lib: Object.freeze({ gitWorktree, gitScm, fsExplorer }),
+      // `gitWorktree` is PERMANENT and, since W5, the ONLY entry: git-worktree.js
+      // stays core because the New-Session worktree row and the delete flow's
+      // removeWorktree depend on it (§4 W5). That is the test for membership
+      // here — a leaf CORE also uses, lent to plugins. A leaf only one plugin
+      // uses belongs in that plugin's directory instead; git-scm.js and
+      // fs-explorer.js sat here through W2-W4 purely so the DOM move could land
+      // as its own revertable commit, and moved into plugins/workbench/ at W5.
+      lib: Object.freeze({ gitWorktree }),
 
       // Read-only, may be null (no proxy linked / no telemetry for this session).
       telemetry: Object.freeze({

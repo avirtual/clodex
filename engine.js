@@ -879,13 +879,6 @@ const { pluginsEnabled } = require('./plugin-api');
 // it rather than a private copy (drifts) or a relative require (which the
 // no-backdoor lint exists to kill).
 const gitWorktree = require('./git-worktree');
-// TEMPORARY (W2→W4), removed in W5. These two are the workbench's own data
-// implementations and they MOVE into plugins/workbench/ at W5; they are exposed
-// as host.lib entries in the meantime purely so the DOM move (W2) can land as a
-// separate revertable commit from the file move (W5). See the `lib` registration
-// in plugin-host-engine.js for the full reasoning. Not permanent host API.
-const gitScm = require('./git-scm');
-const fsExplorer = require('./fs-explorer');
 // Phase 2: discovery + the enabled set. Declared beside the host because
 // setEnabled reaches it through a getter — the loader is constructed AFTER the
 // host (it takes no host argument; loadAll receives one), so a captured value
@@ -1752,7 +1745,6 @@ const toolCache = createToolCache({ whichBin });
         userDataPath,
         fs, path,
         gitWorktree,
-        gitScm, fsExplorer,   // TEMPORARY (W2→W4) — both move into the plugin at W5
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
       });
