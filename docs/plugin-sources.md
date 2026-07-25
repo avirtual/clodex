@@ -206,6 +206,111 @@ share both. Consequences, stated because they are not obvious:
 
 ---
 
+## 4a. Verbs share one global namespace
+
+**Implemented.**
+
+Ids are not the only thing two plugins can collide on, and the other one is
+worse. A plugin can contribute an `[agent:…]` verb, and **verbs are one flat
+global namespace**: they are not prefixed by the plugin id, because the whole
+point is that an agent writes `[agent:branch]`, not `[agent:git-branches:branch]`.
+So two installed plugins that both want `notes` are in direct conflict, and only
+one of them can have it.
+
+This is the same pattern as id collisions, **one layer down** — and it is the
+layer where our tools are weaker. An id collision is visible to *discovery*: the
+id is in the manifest, so the loader can arbitrate before running a line of
+plugin code, and the loser gets a clean shadowed row. **A verb is not in the
+manifest.** It is declared inside the engine module, in the `activate()` call
+(`plugins/git-branches/engine.js:484`), so it is knowable only by requiring that
+module and running it. There is nothing to arbitrate at discovery time. That
+asymmetry is structural, not an oversight.
+
+### What happens
+
+The second plugin to register a contested verb is **refused**: its `activate()`
+throws, and it does not load. The Manage Plugins row says so, naming both the
+verb and the holder:
+
+```
+Notes Plus             User
+  Not running: it uses the intent verb [agent:notes], which the "scratch"
+  plugin already registered. Two plugins cannot share a verb — disable one
+  of them.
+```
+
+**A verb collision is not a strike and never quarantines.** Quarantine
+(`plugin-api.md` §10) is for plugins that crash; a collision is a knowable
+structural refusal against a plugin that is otherwise fine. The distinction is
+not academic — see the history at the end of this section.
+
+The remedy is the user's: disable one of the two, or change one plugin's verb.
+Disabling the holder and re-enabling the loser works immediately, with no
+restart.
+
+### The known limit: which plugin wins is arbitrary
+
+State this plainly, because it is a limit we chose to keep rather than a bug
+nobody noticed.
+
+Between roots, precedence decides — core beats user, as it does for ids.
+**Within a root, the winner is whichever plugin's directory sorts alphabetically
+first** (`plugin-loader.js:221`). That is arbitrary with respect to which plugin
+the user had first.
+
+It is arbitrary because **discovery is stateless and install order is not
+recorded anywhere.** `discover()` reads the disk on every call; nothing persists
+when a plugin arrived. Incumbency is a temporal fact and we have no temporal
+record, so there is no honest way to compute "who was here first".
+
+We deliberately did **not** invent a deterministic-looking rule to cover this.
+Two candidates were considered and rejected:
+
+- **Order of `uiSettings.plugins.enabled`**, which is append-ordered and looks
+  like install order. It is not: the first write materialises the whole current
+  set in *discovery* order, and a default-on plugin never appears until its first
+  toggle. It would be right often enough to be trusted and wrong without warning.
+- **A persisted verb-ownership ledger.** It would work until ownership was held
+  by a plugin the user deleted or disabled, at which point it would block a
+  plugin that is actually running.
+
+Dressing an arbitrary rule in temporal clothing is the exact failure this section
+exists to prevent. If this ever needs solving properly, the answer is **recording
+install time at the moment of install** — which requires an install flow, which
+does not exist yet (§10). The limit is therefore tied to the real gap rather than
+left dangling.
+
+### The mirror case: a core plugin can displace yours
+
+Root precedence cuts one way, so the consequence has to be said out loud: **a
+future version of Clodex can ship a built-in plugin that claims a verb your
+plugin already uses, and yours will be the one that stops loading.** Not because
+it did anything wrong, and not because it arrived later — core simply registers
+first.
+
+It fails safely: no strike, no quarantine, and the row names the built-in plugin
+holding the verb. But **the remedy is to change your own verb**, since you cannot
+ask a user to disable a built-in to keep a third-party plugin running. This is
+the honest cost of core-wins (§4), and it is the strongest practical reason for
+an author to choose a distinctive verb — see `plugin-api.md` §7.
+
+### Why this is written down at all
+
+Verbs got neither a precedence rule nor a visible row until a user actually
+installed two plugins, because until then **every plugin in existence was one we
+wrote**, and we would have caught a collision at review. The first real
+multi-plugin install found it immediately.
+
+It found it in its worst form. Before this was fixed, a collision took a
+quarantine strike like any other activation failure — so installing a new plugin
+could take down a *different* plugin that had been working, quarantine it two
+launches later under a message reading "activate() threw", and leave Retry unable
+to recover it, because the collision reproduces on every attempt. The plugin
+named in the error was the victim; the plugin that caused it looked healthy.
+That is fixed. The arbitrary winner above is what remains, and it is visible.
+
+---
+
 ## 5. Inputs we did not choose
 
 Every plugin that has exercised discovery so far lives in `<repo>/plugins` and
@@ -439,6 +544,8 @@ require re-deciding anything above.
 |---|---|
 | §3 multi-root discovery, user root at `~/.clodex/plugins/` | **Implemented** |
 | §4 core-wins precedence, shadowed rows in Manage Plugins | **Implemented** |
+| §4a verb collisions refused without a strike, holder named | **Implemented** |
+| §4a which plugin wins within a root | Arbitrary — known limit, needs §10 |
 | §5 symlink following; the case-folding assumption | **Implemented** / assumed |
 | §6 Electron-only, lint & parity unaffected | Verified property; no code |
 | §7 trust posture | Posture; no code |

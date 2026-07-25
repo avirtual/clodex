@@ -671,3 +671,34 @@ on `actual: undefined, expected: 'EVERBTAKEN'`.
 `docs/plugin-sources.md` and `docs/plugin-api.md`. t18's original sentence is
 superseded and must NOT be written — the loser is the alphabetically-later
 plugin, not the later-installed one.
+
+### T20 DOCS — landed. Suite 2506/2506 unchanged (docs-only).
+
+clodex accepted target 3's limit as a real limit and ruled **do not build
+ordering** — on record as a decision, not an omission. Any deterministic rule we
+invent is arbitrary with respect to who was there first, and dressing arbitrary
+in temporal clothing is the failure mode just fixed. The proper answer is
+recording install time AT INSTALL, which needs an install flow (§10) — so the
+limit is tied to the real gap instead of dangling.
+
+`docs/plugin-sources.md` — new **§4a Verbs share one global namespace**, placed
+after §4 so the id rule reads first and the verb rule reads as the same pattern
+one layer down. Covers: why the layer is weaker (a verb is not in the manifest,
+so discovery cannot arbitrate — structural, not an oversight); what the user
+sees, with the row text; no strike, never quarantines; the known limit stated
+plainly with BOTH rejected fakes and why; the mirror case in its own subsection
+(a future core plugin displaces a user's, remedy is to change your own verb);
+and the history, including the pre-fix behaviour. §11 status table gained two
+rows — one Implemented, one "Arbitrary — known limit, needs §10".
+
+`docs/plugin-api.md` — §7 gained **"Choosing a verb is a compatibility
+decision"**: every other name is namespaced by plugin id, a verb is the
+exception; a generic verb is a latent incompatibility with plugins that do not
+exist yet; concrete advice (`gitbranch` over `branch`); and "write your plugin so
+that losing is survivable information for the user, not a scenario you tried to
+win". §10 gained the collision exception to the strike rule, with the reason.
+Anchor links verified to resolve.
+
+No namespacing scheme proposed and no auto-prefixing — the freeze holds.
+
+**Next: t19** (wirescope stays vendored, Phase 4b dropped). Nothing else open.

@@ -962,7 +962,10 @@ const off = host.intents.register({
   Your plugin id does not namespace them and is not prefixed onto them: register
   `review` and the line agents write is `[agent:review …]`, never
   `[agent:yourid:review …]`. That single namespace is exactly why collisions are
-  refused — pick a verb distinctive enough to survive in it.
+  refused — pick a verb distinctive enough to survive in it. See
+  [choosing a verb](#choosing-a-verb-is-a-compatibility-decision) below: this is
+  the one field where a name collision with a plugin you have never seen stops
+  your plugin from running.
 - **`parse(line)`** receives one cleaned, trimmed line and returns your intent
   object or `null`. Your returned object always has `type` set to your verb by
   the host, whatever you put there; you cannot impersonate another verb. A
@@ -1011,6 +1014,36 @@ message than your exception's.
 **A returned promise is logged and ignored.** Handlers are synchronous, like the
 session hooks. An `async handler` will run, but nothing awaits it: its rejection
 escapes every guard above, so its failure becomes silence rather than a bounce.
+
+### Choosing a verb is a compatibility decision
+
+Every other name you pick is yours. Your plugin id namespaces your settings, your
+storage, your IPC methods and your DOM nodes, so two plugins can both have a
+`refresh` method and never meet. **A verb is the exception.** It is drawn from one
+global namespace shared with every plugin the user has installed — including
+plugins you have never seen, written by people you will never talk to, installed
+years after you shipped.
+
+So `host.intents.register` refuses a verb another plugin already holds, and the
+plugin that asked for it **does not load**. Not a degraded mode with the rest of
+its features working: its `activate()` threw, so nothing it registers survives.
+A generic verb is therefore not a style preference — it is a latent
+incompatibility with plugins that do not exist yet. `notes`, `run`, `sync`,
+`search` and `open` are the kind of name two authors pick independently. Prefer
+something recognisably yours: `gitbranch` over `branch`, `potdrawer` over
+`drawer`.
+
+The refusal is safe and legible — no strike, no quarantine, and the user is told
+which plugin holds the verb (see [failure and quarantine](#failure-and-quarantine)).
+But the remedy is to change one of the two verbs, and if yours is the one that
+shipped to other people, changing it changes the line their agents write. That is
+why the choice is worth a minute at design time and expensive afterwards.
+
+**Which plugin wins is not something you can rely on.** It is not who registered
+first in any meaningful sense — see
+[plugin-sources.md §4a](./plugin-sources.md#4a-verbs-share-one-global-namespace)
+for the ordering and its known limits. Write your plugin so that losing is
+survivable information for the user, not a scenario you tried to win.
 If you need async work, do the synchronous part, schedule the rest, and inject
 the result when it lands.
 
@@ -1197,7 +1230,8 @@ the user's point of view, but Node's module cache still holds your code.
 ### Failure and quarantine
 
 If your `activate()` throws — either half — that is a **strike**, recorded
-persistently.
+persistently. With one exception: **a verb collision is refused, not punished**
+(below).
 
 - Two consecutive strikes and the plugin is **quarantined**: it is skipped at
   the next launch. One throw is often transient (a half-written file, a missing
@@ -1219,6 +1253,22 @@ re-ticking it is the retry.
 Re-enabling clears the strike counter *first*, so a user who fixed the plugin is
 never refused by a stale strike, and a still-broken one starts counting again
 from zero.
+
+**A verb collision is the one activation failure that takes no strike.** If your
+`activate()` fails because another plugin holds your verb, your plugin does not
+load — but it is never quarantined, however many times it happens. The counter
+exists for plugins that *crash*, and a collision is a knowable structural
+refusal: your plugin is fine, the verb is taken. Striking for it used to
+quarantine a plugin that had been working for months because the user installed
+an unrelated one, under a message that named neither the verb nor the other
+plugin, and Retry could not clear it because the collision reproduces on every
+attempt.
+
+Instead, the `Plugins` menu row says which verb is contested and which plugin
+holds it, and the remedy — disable one of the two, or change one of the verbs —
+is the user's to make. The record is per app run and is never persisted: it
+describes which plugins are loaded right now, and a stored one could outlive the
+plugin that caused it.
 
 ### The kill switch
 
