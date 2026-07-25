@@ -871,6 +871,17 @@ staleness stated (the §14 "freshness is bounded by how often you re-ask" postur
 or expose flush separately, is the design question. A future designer should be
 able to disagree with all three.
 
+Note precisely why blocker 2 is the *sharpest* of the four rather than the
+softest: after the flush, `potSnapshot` reads **entirely from disk** —
+`readdirSync` over `run/` at `:2285`, then `readJsonSafe(pathFor(…, 'fileHeat'))`
+at `:2288` — so the flush's only function is making the on-disk state current
+before a read a plugin could otherwise perform itself. A raw-`fs` plugin
+therefore solves blockers 1, 3 and 4 and lands exactly on the failure mode this
+section rejects: numbers that look right and are quietly stale, with **nothing at
+the plugin's boundary able to say so**. That invisibility is what makes "hand
+back stale numbers with the staleness stated" a genuinely different option from
+the other two, rather than the lazy one.
+
 ---
 
 ## 7. Testing & guardrails (standing)
