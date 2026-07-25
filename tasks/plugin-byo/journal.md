@@ -898,3 +898,58 @@ because a fork under its own name gets its own settings object.
 beside `validateManifest`; `discoverRoot`'s precedence branch consults it;
 `shadowed` rows carry both versions and a direction; renderer states both
 directions naming both versions. Then docs, amending §4 in place.
+
+### T21 DONE — commits `8aa21e0` (code) + `8146d78` (docs). Suite 2514/2514.
+
+**Code.** `parseVersion`/`isNewerVersion` are pure module-level functions beside
+`validateManifest`; `isNewerVersion` is exported and on the `_isNewerVersion`
+test seam. `discoverRoot` now takes `out` and pushes into it directly, with
+`claimed` holding `{ rec, index }` so a superseding copy can take the
+incumbent's slot in place — the previous version returned a fresh array per root
+and could not retract a record it had already emitted. `shadowRow(loser, winner,
+reason)` builds both directions from one shape.
+
+**`reason` is stamped by the loader, and that was the one design call I changed
+mid-implementation.** My first renderer version inferred why a copy lost by
+diffing the two version strings. That is the "right often enough to be trusted,
+wrong without warning" pattern clodex named in t20: it reads correctly for two
+numeric versions and lies for an unparseable one, telling its author to bump a
+number that can never help. The loader knows the real reason, so it says it —
+`'superseded'` vs `'precedence'`, plus a `comparable` flag.
+
+**Revert proofs, all failing BY MESSAGE.** (a) `if (false)` on the supersede
+branch → 5 tests red, incl. `v99 wins — this is not prevented` and `the BUILT-IN
+copy is the one shadowed`. (b) string comparison instead of numeric → the
+`1.10`/`1.9` test and the malformed test red. (c) removing the digit-run guard
+from `parseVersion` → `nothing wins against ""`. No crashes in any of the three.
+
+**One existing test amended, and it earned it.** `CORE WINS: a user copy of a
+core id is shadowed` gave the user copy **v9.9.9** against core v2.0.0 while its
+own prose was about a *forgotten stale fork*. The fixture contradicted the story
+it was testing; a fork is by definition not newer. Retitled to `a STALE user
+copy`, version dropped to 1.4.0, and the comment records what moved and why.
+This is the same defect class as the ones t17/t20 hit — an assertion encoding an
+assumption nothing could violate.
+
+**One test I got wrong and fixed against the code, not the other way.** I
+asserted `"2.0.0 "` (trailing space) must lose; the parse trims. Trimming is
+right — surrounding whitespace is a JSON typo every other consumer would read
+through — so the case became an explicit positive assertion instead, with
+interior whitespace (`1..2`, `1.2.`) staying in the junk list.
+
+**8 new tests** (56 in `plugin-loader.test.js`, was 47): newer-supersedes with
+paths following the winner; the inverted row with both versions; the version-99
+hazard asserted as *visible*; the mirror (core reclaims on update); numeric vs
+string comparison; malformed-never-wins in both directions plus end-to-end;
+no-version-at-all still loads in either root; equal-versions-lose.
+
+**Answers to the four questions are in the phase-1 notes above and all four went
+into the doc.** Nothing hit the frozen surface, so no STOP was owed. `npm run
+build:web` re-run (`renderer/renderer.js` is a bundled source) and `web-dist`
+committed with the code.
+
+**Not built, and deliberately:** no persisted pin (clodex's ruling, and I found
+no case where automatic is actively *wrong* rather than less expressive — the
+"I want to run an older copy" case is answered by §4's existing advice to fork
+under a new id); no semver pre-release ordering, recorded in the §11 table as
+not-implemented so nobody later mistakes it for a bug.
