@@ -7208,6 +7208,8 @@ body {
     </div>
     <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
   </div>
+  <div id="wb-root-indicator" class="wb-root-indicator hidden" role="button" tabindex="0"
+       data-tip="Working in a selected worktree \u2014 click to return to the session directory"></div>
   <div class="workbench-body">
     <div class="workbench-left">
       <!-- Files: lazy tree -->
@@ -7216,6 +7218,8 @@ body {
           <span id="wb-files-scope" class="workbench-scope"></span>
           <button id="wb-files-refresh" type="button">Refresh</button>
         </div>
+        <input type="text" id="wb-locate" class="sidebar-search wb-locate" placeholder="Go to file\u2026 (type to filter)" spellcheck="false" autocomplete="off">
+        <div id="wb-locate-results" class="wb-locate-results hidden"></div>
         <div id="wb-tree" class="wb-tree"></div>
         <div id="wb-files-empty" class="hint hidden">No local session selected, or its directory isn't readable.</div>
       </div>
@@ -7332,6 +7336,61 @@ body {
             const s = localSessions().find((x) => x.name === selName);
             return s ? s.cwd : "";
           };
+          const rootIndicator = $("wb-root-indicator");
+          let activeRoot = null;
+          async function refreshRootIndicator() {
+            const name = activeName();
+            if (!name) {
+              activeRoot = null;
+              rootIndicator.classList.add("hidden");
+              return;
+            }
+            const res = await h.invoke("wt.selected", name);
+            if (!res || !res.ok) {
+              activeRoot = null;
+              rootIndicator.classList.add("hidden");
+              return;
+            }
+            if (res.dropped) toast("Selected worktree is gone \u2014 back to the session directory.");
+            activeRoot = res.selected;
+            if (!activeRoot) {
+              rootIndicator.classList.add("hidden");
+              rootIndicator.textContent = "";
+              return;
+            }
+            const leaf = activeRoot.split("/").filter(Boolean).pop() || activeRoot;
+            rootIndicator.innerHTML = `<span class="wb-root-label">worktree</span> ${esc(leaf)}<span class="wb-root-reset">\u2715 session dir</span>`;
+            rootIndicator.title = activeRoot;
+            rootIndicator.classList.remove("hidden");
+          }
+          async function clearWorktree() {
+            const name = activeName();
+            if (!name) return;
+            if (!confirmDiscardEdit()) return;
+            await h.invoke("wt.apply", name, null);
+            resetEditor();
+            await refreshRootIndicator();
+            refreshTab();
+          }
+          rootIndicator.addEventListener("click", clearWorktree);
+          rootIndicator.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              clearWorktree();
+            }
+          });
+          async function selectWorktree(name, worktreePath) {
+            if (!confirmDiscardEdit()) return;
+            const res = await h.invoke("wt.apply", name, worktreePath);
+            if (!res || !res.ok) {
+              toast(`Can't use that worktree: ${res && res.error || "unknown"}`);
+              return;
+            }
+            resetEditor();
+            expExpanded.clear();
+            await refreshRootIndicator();
+            refreshTab();
+          }
           sessionSel.addEventListener("change", () => {
             if (!confirmDiscardEdit()) {
               sessionSel.value = selName || "";
@@ -7339,7 +7398,9 @@ body {
             }
             selName = sessionSel.value || null;
             resetEditor();
-            refreshTab();
+            locate.value = "";
+            hideLocate();
+            refreshRootIndicator().then(refreshTab);
           });
           const edPath = $("wb-editor-path");
           const edDirty = $("wb-dirty");
@@ -7436,6 +7497,73 @@ body {
           const filesScope = $("wb-files-scope");
           const filesEmpty = $("wb-files-empty");
           const expExpanded = /* @__PURE__ */ new Set();
+          const locate = $("wb-locate");
+          const locateResults = $("wb-locate-results");
+          const LOCATE_DEBOUNCE_MS = 120;
+          const LOCATE_CAP = 50;
+          let locateTimer = null;
+          let locateSeq = 0;
+          function hideLocate() {
+            locateResults.classList.add("hidden");
+            locateResults.innerHTML = "";
+            tree.classList.remove("hidden");
+          }
+          async function runLocate() {
+            const name = activeName();
+            const q = locate.value.trim();
+            if (!name || !q) {
+              hideLocate();
+              return;
+            }
+            const seq = ++locateSeq;
+            const res = await h.invoke("fs.find", name, q, { cap: LOCATE_CAP });
+            if (seq !== locateSeq) return;
+            tree.classList.add("hidden");
+            locateResults.classList.remove("hidden");
+            locateResults.innerHTML = "";
+            if (!res || !res.ok) {
+              locateResults.innerHTML = `<div class="hint">${esc(res && res.error || "Search failed")}</div>`;
+              return;
+            }
+            if (!res.matches.length) {
+              locateResults.innerHTML = '<div class="hint">No matching files.</div>';
+              return;
+            }
+            for (const m of res.matches) {
+              const row = document.createElement("div");
+              row.className = "explorer-row wb-locate-row";
+              row.dataset.rel = m.rel;
+              const slash = m.rel.lastIndexOf("/");
+              row.innerHTML = `<span class="wb-locate-name">${esc(m.name)}</span>` + (slash > 0 ? `<span class="wb-locate-dir">${esc(m.rel.slice(0, slash))}</span>` : "");
+              row.addEventListener("click", () => openInEditor(name, m.rel));
+              locateResults.appendChild(row);
+            }
+            if (res.truncated) {
+              const more = document.createElement("div");
+              more.className = "hint";
+              more.textContent = `Showing the first ${res.matches.length} \u2014 narrow the search for more.`;
+              locateResults.appendChild(more);
+            }
+          }
+          locate.addEventListener("input", () => {
+            clearTimeout(locateTimer);
+            locateTimer = setTimeout(runLocate, LOCATE_DEBOUNCE_MS);
+          });
+          locate.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && locate.value) {
+              e.stopPropagation();
+              locate.value = "";
+              hideLocate();
+              return;
+            }
+            if (e.key === "Enter") {
+              const first = locateResults.querySelector(".wb-locate-row");
+              if (first) {
+                const name = activeName();
+                if (name) openInEditor(name, first.dataset.rel);
+              }
+            }
+          });
           async function renderExplorer() {
             const name = activeName();
             if (!name) {
@@ -7681,13 +7809,18 @@ body {
           function worktreeRow(name, w) {
             const row = document.createElement("div");
             row.className = "worktree-item";
+            if (w.path === activeRoot) row.classList.add("selected");
+            row.addEventListener("click", (e) => {
+              if (e.target.closest("button")) return;
+              selectWorktree(name, w.path);
+            });
             const meta = document.createElement("div");
             meta.className = "worktree-meta";
             meta.innerHTML = `<div class="worktree-branch">${esc(w.branch || (w.detached ? `(detached ${w.head})` : "(no branch)"))}${w.isMain ? ' <span class="worktree-main-badge">main</span>' : ""}</div><div class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</div>`;
             row.appendChild(meta);
             const openBtn = document.createElement("button");
-            openBtn.textContent = "Open";
-            openBtn.title = "Reveal in Finder";
+            openBtn.textContent = "Reveal";
+            openBtn.title = "Show this worktree in Finder";
             openBtn.addEventListener("click", () => h.ui.openPath(w.path));
             row.appendChild(openBtn);
             if (!w.isMain) {
@@ -7699,6 +7832,10 @@ body {
                 if (!r || !r.ok) {
                   toast(`Remove failed: ${r && r.error || "unknown"}`);
                   return;
+                }
+                if (w.path === activeRoot) {
+                  await h.invoke("wt.apply", name, null);
+                  await refreshRootIndicator();
                 }
                 renderWorktrees();
               });
@@ -7760,6 +7897,9 @@ body {
             await fetchSessions();
             populateSessions();
             resetEditor();
+            locate.value = "";
+            hideLocate();
+            await refreshRootIndicator();
             recenter();
             setTab(tab || "files");
           };

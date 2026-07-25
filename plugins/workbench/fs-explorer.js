@@ -79,4 +79,86 @@ function writeFile(root, rel, content) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
-module.exports = { listDir, readFile, writeFile, safeResolve, MAX_EDIT_BYTES };
+// ── File locator (find-as-you-type) ─────────────────────────────────────────
+// Bounds, chosen rather than discovered on a huge repo. A locator that walks an
+// enormous tree synchronously per keystroke is worse than no locator, so:
+//
+//   MAX_VISIT  — hard ceiling on directory entries examined; the walk STOPS
+//                there and says so (`truncated: true`) instead of running long.
+//   MAX_DEPTH  — depth ceiling, so a pathological tree can't recurse forever.
+//   cap        — result cap (default 50), passed by the caller.
+//
+// NOISE is reused verbatim, so `.git` and `node_modules` are skipped exactly as
+// the tree view skips them. Breadth-first on purpose: shallow files are what you
+// usually want, and truncation then loses the deepest matches rather than the
+// most likely ones. Matching is subsequence ("fuzzy") on the relative path,
+// scored so that earlier, tighter, basename-anchored matches sort first.
+const MAX_VISIT = 20000;
+const MAX_DEPTH = 12;
+
+// Skipped by the LOCATOR ONLY, never by the tree view: build output you did not
+// write and would not navigate to by name. Kept separate from NOISE on purpose —
+// NOISE is the tree's contract and widening it would silently hide these from
+// the explorer too, which is a different (and unasked-for) change. Not read from
+// .gitignore: honouring it properly means glob semantics and nested files, and a
+// wrong partial implementation hides files the user expects to find.
+const LOCATOR_SKIP = new Set(['dist', 'build', 'out', 'coverage', '.next', '.cache', 'web-dist', 'vendor']);
+
+// Subsequence match. Returns a score (lower = better) or -1 for no match.
+// Score rewards contiguity and a match that starts in the basename.
+function fuzzyScore(hay, needle) {
+  const h = hay.toLowerCase();
+  const n = needle.toLowerCase();
+  let hi = 0, gaps = 0, first = -1, last = -1;
+  for (let ni = 0; ni < n.length; ni++) {
+    const found = h.indexOf(n[ni], hi);
+    if (found === -1) return -1;
+    if (first === -1) first = found;
+    if (last !== -1 && found > last + 1) gaps++;
+    last = found; hi = found + 1;
+  }
+  const slash = h.lastIndexOf('/');
+  const inBase = first > slash ? 0 : 200; // basename matches win
+  return inBase + gaps * 10 + (last - first) + first * 0.1;
+}
+
+// Walk `root` breadth-first and return files whose relative path fuzzy-matches
+// `query`. Returns { ok, matches:[{ name, rel }], truncated, visited }.
+// An empty query returns no matches (the caller shows nothing, not everything).
+function findFiles(root, query, { cap = 50 } = {}) {
+  const abs = safeResolve(root, '');
+  if (!abs) return { ok: false, error: 'Path outside session directory' };
+  const q = String(query == null ? '' : query).trim();
+  if (!q) return { ok: true, matches: [], truncated: false, visited: 0 };
+
+  const scored = [];
+  let visited = 0;
+  let truncated = false;
+  const queue = [{ dir: abs, rel: '', depth: 0 }];
+
+  while (queue.length) {
+    const { dir, rel, depth } = queue.shift();
+    let dirents;
+    try { dirents = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch { continue; } // unreadable dir: skip, don't fail the whole search
+    for (const d of dirents) {
+      if (NOISE.has(d.name)) continue;
+      if (++visited > MAX_VISIT) { truncated = true; break; }
+      const childRel = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        if (LOCATOR_SKIP.has(d.name)) continue;
+        if (depth + 1 <= MAX_DEPTH) queue.push({ dir: path.join(dir, d.name), rel: childRel, depth: depth + 1 });
+        continue;
+      }
+      const score = fuzzyScore(childRel, q);
+      if (score >= 0) scored.push({ name: d.name, rel: childRel, score });
+    }
+    if (truncated) break;
+  }
+
+  scored.sort((a, b) => (a.score - b.score) || a.rel.length - b.rel.length || a.rel.localeCompare(b.rel));
+  const matches = scored.slice(0, cap).map(({ name, rel }) => ({ name, rel }));
+  return { ok: true, matches, truncated: truncated || scored.length > cap, visited };
+}
+
+module.exports = { listDir, readFile, writeFile, findFiles, safeResolve, MAX_EDIT_BYTES, MAX_VISIT, MAX_DEPTH, LOCATOR_SKIP };

@@ -33,26 +33,62 @@
 // backdoor-free (test/plugin-boundary.test.js: only node builtins and requires
 // that stay inside this directory — core is reachable ONLY through `host`).
 
+const fs = require('fs');
 const gitScm = require('./git-scm');
 const fsExplorer = require('./fs-explorer');
 
 module.exports.activate = (host) => {
   const { gitWorktree } = host.lib;
 
+  // ── Selected worktree, per session ──────────────────────────────────────
+  // sessionName → absolute worktree path. IN MEMORY ONLY, never persisted: a
+  // fresh launch starts at the true session cwd, and one plugin's UI state does
+  // not earn storage surface. Keyed by session so switching away and back
+  // restores your tree, and switching to a DIFFERENT session can never show you
+  // another session's.
+  //
+  // Only paths that `git worktree list` reports for that session's own repo
+  // ever land here — `wt.apply` is the single writer and it validates before it
+  // writes, so the confinement rule is enforced where the write happens.
+  const wtRoots = new Map();
+
+  // Re-validate at USE time, not only at selection time: a worktree can vanish
+  // under a stale selection (`git worktree remove` elsewhere, or our own Remove
+  // button). A dead selection DROPS to the session cwd rather than erroring —
+  // the operation still does the obvious right thing. `wt.selected` reports the
+  // drop so the renderer can say so.
+  function effectiveRoot(name, cwd) {
+    const sel = wtRoots.get(name);
+    if (!sel) return cwd;
+    try { if (fs.statSync(sel).isDirectory()) return sel; } catch {}
+    wtRoots.delete(name);
+    return cwd;
+  }
+
   // The MUST-FIX 5 wrapper. Every row built with this resolves the session's cwd
   // through the host and refuses peers before the handler body ever runs; the
   // envelope shape ({ ok:false, error }) reproduces ipc-handlers' verbatim, so
   // the renderer's existing "remote" branches keep matching.
+  //
+  // The worktree substitution lives HERE, deliberately, so all twelve fs./scm.
+  // rows follow the selected tree as one consequence of one change. Files and
+  // Source can therefore never read different roots. Note this makes the
+  // selection load-bearing: scm.commit/discard/checkout and push act on the
+  // selected worktree. That is the point of selecting it, and it is why the
+  // renderer keeps a persistent indicator whenever the root is not the cwd.
   const scoped = (fn) => async (name, ...rest) => {
     const r = host.sessions.fsScope(name);
     if (r.error) return { ok: false, error: r.error };
-    return fn(r.cwd, ...rest);
+    return fn(effectiveRoot(name, r.cwd), ...rest);
   };
 
   // ── File explorer + editor (./fs-explorer). Confined to the session cwd. ──
   host.ipc.handle('fs.list', scoped((cwd, rel) => fsExplorer.listDir(cwd, rel || '')));
   host.ipc.handle('fs.read', scoped((cwd, rel) => fsExplorer.readFile(cwd, rel)));
   host.ipc.handle('fs.write', scoped((cwd, rel, content) => fsExplorer.writeFile(cwd, rel, content)));
+  // The file locator's one row. Bounded inside fs-explorer (see its header) —
+  // an unbounded walk on every keystroke would be worse than no locator.
+  host.ipc.handle('fs.find', scoped((cwd, query, opts) => fsExplorer.findFiles(cwd, query, opts || {})));
 
   // ── Source control (./git-scm). ──
   host.ipc.handle('scm.status', scoped((cwd) => gitScm.status(cwd)));
@@ -81,6 +117,45 @@ module.exports.activate = (host) => {
   // to the same leaf, so no new renderer-side surface has to be invented for one
   // button. Takes a repo path (from a wt.list result), like core's row does.
   host.ipc.handle('wt.create', (repo, branch, opts) => gitWorktree.createWorktree(repo, branch, opts || null));
+
+  // ── Worktree SELECTION (the plugin's own state; no core equivalent) ──────
+  // ONE row writes `wtRoots`, and it is the row that validates. An earlier
+  // version split this in two — a `wt.select` that validated and a `wt.apply`
+  // that wrote — which put the confinement guarantee in the RENDERER's call
+  // sequence rather than in the engine: `wt.apply(name, '/any/real/dir')` set
+  // the root, `effectiveRoot`'s statSync passed because the directory existed,
+  // and every scoped row (fs.write and scm.commit included) then acted outside
+  // the session's repo. The split is gone; there is no reachable path that
+  // writes the map unvalidated.
+  //
+  // Deliberately NOT `scoped`: this needs the session NAME to key the map, and
+  // `scoped` hands the handler a cwd and drops the name. So it calls `fsScope`
+  // itself — which also keeps the peer refusal identical to every other row.
+  host.ipc.handle('wt.apply', async (name, worktreePath) => {
+    const r = host.sessions.fsScope(name);
+    if (r.error) return { ok: false, error: r.error };
+    if (!worktreePath) { wtRoots.delete(name); return { ok: true, root: null }; }
+    // Resolve the repo from the EFFECTIVE root: worktree listing answers the
+    // same set from any tree of the repo, so switching worktree-to-worktree
+    // works without first returning to the session cwd.
+    const list = await gitWorktree.listWorktrees(effectiveRoot(name, r.cwd));
+    if (!list.ok) return { ok: false, error: list.error || 'Not a git repository' };
+    const match = list.worktrees.find((w) => w.path === worktreePath);
+    // The confinement rule, enforced where the write happens: only a path that
+    // `git worktree list` returns for THIS session's own repo is selectable.
+    if (!match) return { ok: false, error: 'Not a worktree of this session\'s repository' };
+    wtRoots.set(name, match.path);
+    return { ok: true, root: match.path, isMain: match.isMain };
+  });
+  // What is the active root, and did a stale selection just drop? The renderer
+  // asks on every open/refresh so the indicator can never lie.
+  host.ipc.handle('wt.selected', (name) => {
+    const r = host.sessions.fsScope(name);
+    if (r.error) return { ok: false, error: r.error };
+    const had = wtRoots.get(name) || null;
+    const root = effectiveRoot(name, r.cwd);
+    return { ok: true, root, cwd: r.cwd, selected: root === r.cwd ? null : root, dropped: !!had && !wtRoots.has(name) };
+  });
 };
 
 module.exports.deactivate = () => {

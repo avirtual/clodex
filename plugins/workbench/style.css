@@ -117,9 +117,32 @@
 .wb-commit-box button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
 .wb-commit-box button:disabled { opacity: 0.45; cursor: default; }
 
+/* Active-root indicator — shown ONLY when the root is not the session cwd.
+   Deliberately loud: every fs/scm operation, including commit and push, follows
+   this root, so it must be impossible to miss. */
+.wb-root-indicator { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 11px; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); border-bottom: 1px solid var(--accent); color: var(--text); }
+.wb-root-indicator:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+#wb-root-indicator.hidden { display: none; }
+.wb-root-label { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; }
+.wb-root-reset { margin-left: auto; color: var(--text-dim); }
+.wb-root-indicator:hover .wb-root-reset { color: var(--text); }
+
+/* File locator */
+.wb-locate { margin: 6px 10px 4px; flex: none; }
+.wb-locate-results { flex: 1; overflow: auto; padding: 4px 0; min-height: 0; }
+#wb-locate-results.hidden { display: none; }
+.wb-locate-row { justify-content: flex-start; gap: 8px; }
+.wb-locate-name { color: var(--text); }
+.wb-locate-dir { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+
 /* Worktrees */
 .worktrees-list { flex: 1; overflow: auto; padding: 4px 0; min-height: 0; }
-.worktree-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.worktree-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+.worktree-item:hover { background: var(--sidebar-hover); }
+/* The row IS the select affordance (click to make it the active root). */
+.worktree-item.selected { background: var(--active-bg); }
+.worktree-item.selected .worktree-branch::after { content: 'active'; margin-left: 6px; font-size: 9px; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; font-weight: 400; }
 .worktree-meta { flex: 1; min-width: 0; }
 .worktree-branch { font-weight: 600; }
 .worktree-path { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
