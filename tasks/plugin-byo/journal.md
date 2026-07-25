@@ -159,6 +159,17 @@ registration while `rowBadge` does not, and nothing in `plugin-api.md` tells a
 plugin author that registering a row badge leaves the sidebar untouched. Every
 future rowBadge plugin walks into this. Belongs with 4a's findings.
 
+### Done — commit `05ed4d6`, suite 2492/2492
+
+`plugins/git-branches/renderer.js` — one `queueRelayout()` at the end of
+`activate()`. `plugins/git-branches/engine.js:28` — the N-windows claim corrected.
+`test/plugin-git-branches-renderer.test.js` — new, 3 tests; test 2 fails by
+message (not by crash) with the fix reverted, verified. `VERIFY.md` step 2 now
+records the failure and what to re-check. `web-dist/index.html` rebuilt
+(`npm run build:web`) since a bundled renderer half changed.
+
+No core edits. No deviation letter needed — (x) is still unused.
+
 ---
 
 ## T16 — multi-root plugin discovery (AFTER t17)
