@@ -2779,6 +2779,10 @@ window.api.onSessionAttention((name, attn) => {
 
 const peerStatuses = new Map(); // peerId -> status from peer-state events
 const peerTunnels = new Map();  // peerId -> managed-tunnel status (may lag peerStatuses)
+// peerId -> on-demand WEB-view tunnel status (t30b). Sparse by design: an entry
+// exists only while someone has asked to look at that peer's browser frontend,
+// unlike peerTunnels which has a row for every ssh peer.
+const peerWebTunnels = new Map();
 // Our own app version, cached once for the peer identity "outdated" hint (a peer
 // reporting a different version in its hello). null until fetched / if it fails.
 let ourAppVersion = null;
@@ -3871,7 +3875,7 @@ const {
   sessions, sessionList, getActiveSession: () => activeSession,
   createTerminal, switchSession, removeSession, updateSidebarActive,
   showToast, appendIpcEntry, remeasureReadonlyPeer,
-  peerStatuses, peerTunnels, getOurAppVersion: () => ourAppVersion,
+  peerStatuses, peerTunnels, peerWebTunnels, getOurAppVersion: () => ourAppVersion,
   getDeployLineHandlers: () => deployLineHandlers,
   proxyState, ctxPct, ctxTokens, peerFilesCount, filesUnseen,
   applyCtxBadge, applyWarmBadge, renderProxyBar,

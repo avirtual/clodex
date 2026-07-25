@@ -98,6 +98,10 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',
   'renderer/lib/env-edit.js',
+  // The peer web-view affordance decision (t30b). A pure leaf rather than an
+  // extraction, but it is read BY peers-ui (which is DOM-bound and untested), so
+  // the cheap guard that it never reaches for a renderer.js name is worth having.
+  'renderer/lib/peer-web-view.js',
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',
   'renderer/pot-drawer.js',

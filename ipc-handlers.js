@@ -82,6 +82,9 @@ function registerIpcHandlers(deps) {
     // read-only mutable singletons (get seams)
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
+    // Peer web view (t30b): the on-demand web-tunnel manager (null until someone
+    // opens one) plus the open/close toggle from peer-wiring.
+    getWebTunnelManager, openPeerWeb, closePeerWeb,
     // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
     // lazy so a host that omits them simply has no sandbox handlers reachable.
     getSandbox, getSandboxManager,
@@ -1230,9 +1233,25 @@ function registerIpcHandlers(deps) {
   handle('peer:list', () => {
     const out = getPeerManager() ? getPeerManager().statuses() : [];
     const tunnels = new Map((getTunnelManager() ? getTunnelManager().statuses() : []).map((t) => [t.id, t]));
-    for (const st of out) st.tunnel = tunnels.get(st.id) || null;
+    // Web tunnels are on-demand, so most peers have none — null means "nobody
+    // asked to look at this box", which is exactly what the affordance renders as
+    // its closed state. The manager itself may not exist yet.
+    const webTuns = new Map(
+      ((getWebTunnelManager && getWebTunnelManager()) ? getWebTunnelManager().statuses() : []).map((t) => [t.id, t]),
+    );
+    for (const st of out) {
+      st.tunnel = tunnels.get(st.id) || null;
+      st.webTunnel = webTuns.get(st.id) || null;
+    }
     return out;
   });
+  // Peer web view (t30b): open/close the on-demand ssh forward to a peer's
+  // browser frontend. Open pops the operator's browser ONCE, on the first
+  // successful up (peer-wiring's firstUp branch) — this handler returns as soon
+  // as the supervisor is running, so a slow ssh doesn't block the renderer, and
+  // the affordance follows the `peer-web-tunnel` broadcast for live state.
+  handle('peer:openWeb', (_e, id) => (openPeerWeb ? openPeerWeb(id) : { ok: false, error: 'unsupported host' }));
+  handle('peer:closeWeb', (_e, id) => (closePeerWeb ? closePeerWeb(id) : { ok: true }));
   handle('peer:attach', (_e, id, name) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return { ok: false, error: 'no such peer' };

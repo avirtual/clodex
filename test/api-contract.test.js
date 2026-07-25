@@ -61,6 +61,9 @@ const PINNED_NAMES = [
   'confirmPeerRestart', 'confirmPeerUpdate', 'confirmDeployFix', 'confirmPeerKill',
   'confirmPeerReload', 'onPeerContextAction', 'onPeerTelemetry', 'onPeerControlChange',
   'onPeerExit', 'onPeerRemoved', 'onPeerDisabled', 'onPeerTunnel',
+  // Peer web view (t30b): open/close the on-demand ssh forward to a peer's
+  // browser frontend, plus its live state.
+  'peerOpenWeb', 'peerCloseWeb', 'onPeerWebTunnel',
   'onSessionPeerControl', 'getSessionArgs', 'getSessionHistory', 'discoverSessions', 'setSessionArgs',
   'restartSession', 'setSessionTools', 'setSessionSkills', 'setSessionAgents',
   'setSessionIntents', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
@@ -123,8 +126,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 222-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 222, 'pinned list is the full 222-method surface');
+test('contract covers exactly the pinned 225-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 225, 'pinned list is the full 225-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -148,7 +151,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 222, 'window.api has exactly 222 methods');
+    assert.equal(generated.length, 225, 'window.api has exactly 225 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
