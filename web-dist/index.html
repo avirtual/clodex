@@ -28465,13 +28465,22 @@ ${res.stderr}` : "");
           if (sh.rootLabel) {
             const r = document.createElement("span");
             r.className = "plugin-row-version";
-            r.textContent = sh.rootLabel;
+            r.textContent = sh.version ? `${sh.rootLabel} v${sh.version}` : sh.rootLabel;
             nameEl.appendChild(r);
           }
           body.appendChild(nameEl);
           const n = document.createElement("div");
           n.className = "plugin-row-note warn";
-          n.textContent = `Shadowed by the ${sh.shadowedByLabel || sh.shadowedBy} copy of the same id \u2014 this one is not running.`;
+          const mine = sh.version ? `v${sh.version}` : "no version";
+          const winner = sh.shadowedByLabel || sh.shadowedBy;
+          const theirs = sh.shadowedByVersion ? `v${sh.shadowedByVersion}` : "no version";
+          if (sh.reason === "superseded") {
+            n.textContent = `Not running: this ${sh.rootLabel || sh.root} copy is ${mine} and the ${winner} copy is ${theirs} \u2014 the higher version wins.`;
+          } else if (!sh.comparable) {
+            n.textContent = `Not running: shadowed by the ${winner} copy (${theirs}). This copy's version (${sh.version ? JSON.stringify(sh.version) : "missing"}) is not a plain number like 1.2.0, so it can never take over \u2014 fix the version to supersede it.`;
+          } else {
+            n.textContent = `Not running: shadowed by the ${winner} copy of the same id (${theirs}). This copy is ${mine}; a user copy only takes over when its version is higher.`;
+          }
           body.appendChild(n);
           if (sh.dir) {
             const d = document.createElement("div");

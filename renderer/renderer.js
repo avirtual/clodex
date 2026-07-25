@@ -5208,11 +5208,19 @@ async function renderPluginsDialog() {
     row.appendChild(body);
     pluginsList.appendChild(row);
   }
-  // Copies of an id a higher-precedence root already claimed. No toggle: the
-  // enabled flag is keyed by bare id and belongs to whichever copy WON, so a
-  // checkbox here would toggle the other plugin. Shown rather than dropped
-  // because the failure it prevents is a user editing code that is not running
-  // (docs/plugin-sources.md §4).
+  // Copies of an id another root's copy beat. No toggle: the enabled flag is
+  // keyed by bare id and belongs to whichever copy WON, so a checkbox here would
+  // toggle the other plugin. Shown rather than dropped because the failure it
+  // prevents is a user editing code that is not running (docs/plugin-sources.md
+  // §4).
+  //
+  // THIS ROW IS A SAFETY MECHANISM, not a label. Since t21 the loser can be the
+  // BUILT-IN copy — a user-root copy with a higher version supersedes it — and
+  // the hazard that creates is a user plugin declaring version 99 that wins
+  // forever and can never be superseded by a real release. Nothing prevents
+  // that, so the row has to make it legible: name which copy is not running,
+  // which one beat it, and THE VERSION ON BOTH SIDES. A user who cannot see the
+  // two numbers has no way to work out why their update did nothing.
   for (const sh of shadowed) {
     const row = document.createElement('div');
     row.className = 'plugin-row';
@@ -5224,13 +5232,26 @@ async function renderPluginsDialog() {
     if (sh.rootLabel) {
       const r = document.createElement('span');
       r.className = 'plugin-row-version';
-      r.textContent = sh.rootLabel;
+      r.textContent = sh.version ? `${sh.rootLabel} v${sh.version}` : sh.rootLabel;
       nameEl.appendChild(r);
     }
     body.appendChild(nameEl);
     const n = document.createElement('div');
     n.className = 'plugin-row-note warn';
-    n.textContent = `Shadowed by the ${sh.shadowedByLabel || sh.shadowedBy} copy of the same id — this one is not running.`;
+    const mine = sh.version ? `v${sh.version}` : 'no version';
+    const winner = sh.shadowedByLabel || sh.shadowedBy;
+    const theirs = sh.shadowedByVersion ? `v${sh.shadowedByVersion}` : 'no version';
+    // Three wordings, and the REASON comes from the loader rather than being
+    // guessed from the two version strings — a copy whose version cannot be
+    // parsed lost as uncomparable, not as lower, and telling its author to bump
+    // the number would send them somewhere that cannot help.
+    if (sh.reason === 'superseded') {
+      n.textContent = `Not running: this ${sh.rootLabel || sh.root} copy is ${mine} and the ${winner} copy is ${theirs} — the higher version wins.`;
+    } else if (!sh.comparable) {
+      n.textContent = `Not running: shadowed by the ${winner} copy (${theirs}). This copy's version (${sh.version ? JSON.stringify(sh.version) : 'missing'}) is not a plain number like 1.2.0, so it can never take over — fix the version to supersede it.`;
+    } else {
+      n.textContent = `Not running: shadowed by the ${winner} copy of the same id (${theirs}). This copy is ${mine}; a user copy only takes over when its version is higher.`;
+    }
     body.appendChild(n);
     if (sh.dir) {
       const d = document.createElement('div');

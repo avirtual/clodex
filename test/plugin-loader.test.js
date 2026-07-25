@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createPluginLoader, validateManifest } = require('../plugin-loader');
+const { createPluginLoader, validateManifest, isNewerVersion } = require('../plugin-loader');
 const { HOST_API_VERSION, RESERVED_PLUGIN_IDS, isValidPluginId } = require('../plugin-api');
 
 // A real temp plugins/ tree. Real fs rather than a mock because the thing under
@@ -576,13 +576,19 @@ test('a root that does not exist is a legal, silent state', () => {
   assert.deepStrictEqual(loader.status().shadowed, []);
 });
 
-test('CORE WINS: a user copy of a core id is shadowed, not loaded', () => {
+test('CORE WINS: a STALE user copy of a core id is shadowed, not loaded', () => {
   // The precedence decision, and the reason for it: user-wins fails LATE and
   // QUIETLY — a forgotten fork keeps running after an update changed the core it
   // was forked from, with the app reporting health. This asserts the loud
   // failure instead.
+  //
+  // t21 NARROWED this rule to "core wins unless the user copy is strictly
+  // newer", and the fixture moved with it: it used to give the user copy v9.9.9,
+  // which contradicted the forgotten-fork story this test is actually about —
+  // a fork is by definition NOT newer than the core it was forked from. The
+  // stale version below is what the prose always meant.
   const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '2.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
-  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '9.9.9' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.4.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
   const { loader } = mkMultiLoader([
     { id: 'core', dir: core, label: 'Built in' },
     { id: 'user', dir: user, label: 'User' },
@@ -593,12 +599,30 @@ test('CORE WINS: a user copy of a core id is shadowed, not loaded', () => {
   assert.strictEqual(recs[0].manifest.version, '2.0.0', 'the CORE copy is the one that runs');
   // Reversing the root order reverses the winner — precedence is the list order
   // and nothing else, so this is what makes "core wins" a configuration rather
-  // than a hardcoded rule.
+  // than a hardcoded rule. Both copies are stale-vs-newer the other way round
+  // here, so this is root order acting alone.
   const { loader: flipped } = mkMultiLoader([
     { id: 'user', dir: user, label: 'User' },
     { id: 'core', dir: core, label: 'Built in' },
   ]);
-  assert.strictEqual(flipped.discover()[0].manifest.version, '9.9.9');
+  assert.strictEqual(flipped.discover()[0].manifest.version, '2.0.0', 'core is newer, so it wins from either position');
+});
+
+test('EQUAL versions lose: the incumbent root keeps the id', () => {
+  // The boundary of the t21 rule, and the direction it must fail in. "Newer" is
+  // STRICTLY greater — an identical copy in the user root does not take over,
+  // because the case that motivated the rule is a user running a genuine later
+  // release and an equal version is not one.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const recs = loader.discover();
+  assert.strictEqual(recs.length, 1);
+  assert.strictEqual(recs[0].root, 'core');
+  assert.strictEqual(loader.status().shadowed[0].reason, 'precedence', 'it lost to root order, not to a version');
 });
 
 test('a shadowed copy is SURFACED, never silently dropped', () => {
@@ -620,6 +644,158 @@ test('a shadowed copy is SURFACED, never silently dropped', () => {
   // The DIRECTORY is carried, because "which copy is not running" is the one
   // question the row exists to answer and an id alone cannot answer it.
   assert.strictEqual(st.shadowed[0].dir, path.join(user, 'alpha'));
+});
+
+// ── Version-aware precedence (t21, docs/plugin-sources.md §4) ───────────────
+// The bundled copy is a FLOOR, not a ceiling. Plugins ship inside app.asar,
+// which is read-only and replaced wholesale by every update, so without this a
+// packaged user could never run a newer plugin than the one their DMG shipped.
+
+test('a NEWER user copy supersedes the built-in one', () => {
+  // The whole point of the rule. Core-wins still holds by default; a strictly
+  // higher version is the one thing that overturns it.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.1.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const recs = loader.discover();
+  assert.strictEqual(recs.length, 1, 'still exactly one copy is live');
+  assert.strictEqual(recs[0].root, 'user');
+  assert.strictEqual(recs[0].manifest.version, '1.1.0');
+  // …and the paths follow the winner, not just the id. A record that named the
+  // new version but loaded the old directory would be the worst of both.
+  assert.strictEqual(recs[0].dir, path.join(user, 'alpha'));
+  assert.strictEqual(recs[0].enginePath, path.join(user, 'alpha', 'engine.js'));
+});
+
+test('the INVERTED shadow row names the built-in copy as the loser, with both versions', () => {
+  // THE DISPLAY IS THE SAFETY MECHANISM. When a user copy wins, the row has to
+  // invert: the built-in copy is the one not running. A row that could only say
+  // "your copy is shadowed" would be silent in exactly the direction that
+  // carries the hazard.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '2.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const st = loader.status();
+  assert.strictEqual(st.shadowed.length, 1);
+  const row = st.shadowed[0];
+  assert.strictEqual(row.root, 'core', 'the BUILT-IN copy is the one shadowed');
+  assert.strictEqual(row.version, '1.0.0', 'the loser names its version');
+  assert.strictEqual(row.shadowedBy, 'user');
+  assert.strictEqual(row.shadowedByVersion, '2.0.0', 'and the winner names its version');
+  assert.strictEqual(row.reason, 'superseded', 'it lost to a version, not to root order');
+  assert.strictEqual(row.dir, path.join(core, 'alpha'));
+});
+
+test('the version-99 hazard is not preventable, but it IS visible', () => {
+  // The cost of this rule, stated as a test rather than a hope. A user-root copy
+  // declaring version 99 wins forever and can never be superseded by any real
+  // release — that is the forgotten-fork case in a new outfit. Nothing stops it,
+  // so the ONLY thing making it recoverable is a row saying plainly which copy
+  // runs and what version each is. This asserts that row exists and carries both
+  // numbers, because a user staring at an app that ignores every update has
+  // nothing else to go on.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '3.5.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '99' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  assert.strictEqual(loader.discover()[0].root, 'user', 'v99 wins — this is not prevented');
+  const row = loader.status().shadowed[0];
+  assert.strictEqual(row.root, 'core');
+  assert.strictEqual(row.version, '3.5.0');
+  assert.strictEqual(row.shadowedByVersion, '99');
+  assert.strictEqual(row.reason, 'superseded');
+});
+
+test('THE MIRROR: core shipping a newer version reclaims an id a user copy held', () => {
+  // The update path, and the reason the rule is safe to make automatic. A user
+  // copy that won at v2.0.0 must LOSE once core ships v2.1.0 — otherwise "the
+  // bundled copy is a floor" would quietly become "the user copy is permanent".
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '2.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const before = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const after = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '2.1.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const roots = (core) => [
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ];
+  const { loader: old } = mkMultiLoader(roots(before));
+  assert.strictEqual(old.discover()[0].root, 'user', 'the user copy wins against the older core');
+  const { loader: updated } = mkMultiLoader(roots(after));
+  assert.strictEqual(updated.discover()[0].root, 'core', 'and loses once core ships newer');
+  const row = updated.status().shadowed[0];
+  assert.strictEqual(row.root, 'user', 'the user copy is now the one shadowed');
+  assert.strictEqual(row.version, '2.0.0');
+  assert.strictEqual(row.shadowedByVersion, '2.1.0');
+});
+
+test('"1.10" beats "1.9" — versions compare NUMERICALLY, not as strings', () => {
+  // The bite. String comparison puts "1.10" below "1.9", and the plugin that
+  // reaches its tenth patch release is exactly the plugin someone is actively
+  // shipping updates for — so a string compare would fail first for the most
+  // maintained plugin in the wild.
+  assert.strictEqual(isNewerVersion('1.10', '1.9'), true);
+  assert.strictEqual(isNewerVersion('1.9', '1.10'), false);
+  assert.strictEqual('1.10' > '1.9', false, 'string comparison really does get this backwards');
+  // Missing trailing segments are zero, so these TIE — and a tie loses.
+  assert.strictEqual(isNewerVersion('1.2', '1.2.0'), false);
+  assert.strictEqual(isNewerVersion('1.2.0', '1.2'), false);
+  assert.strictEqual(isNewerVersion('1.2.1', '1.2'), true);
+});
+
+test('a MALFORMED version never wins and never crashes discovery', () => {
+  // `version` was free text until t21 and is still not validated, so junk is a
+  // legal input rather than a hypothetical. The rule is that an unparseable
+  // version is UNCOMPARABLE, and uncomparable can never out-rank anything — so
+  // the failure mode of junk is "nothing changes", which is precisely the
+  // pre-t21 behaviour. Both directions, because a malformed version on the
+  // INCUMBENT must not let a candidate win by default either.
+  for (const junk of [undefined, null, '', 'the good one', '1.0.0-beta', 'v2', '1..2', '1.2.', {}, 3]) {
+    assert.strictEqual(isNewerVersion(junk, '1.0.0'), false, `${JSON.stringify(junk)} must not win`);
+    assert.strictEqual(isNewerVersion('9.9.9', junk), false, `nothing wins against ${JSON.stringify(junk)}`);
+  }
+  // SURROUNDING whitespace is not junk — it is a typo in a JSON file, and every
+  // other consumer of that string would read the same number. Tolerated on
+  // purpose, and pinned here so it reads as a decision rather than an accident
+  // of the parse. Interior whitespace is still junk (it is in the list above).
+  assert.strictEqual(isNewerVersion(' 2.0.0 ', '1.0.0'), true);
+  // And end to end: a user copy with a junk version is shadowed, discovery
+  // returns normally, and the row says the version could not be read rather
+  // than implying a bump would help.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: '1.0.0' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: 'the good one' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const recs = loader.discover();
+  assert.strictEqual(recs.length, 1);
+  assert.strictEqual(recs[0].root, 'core');
+  const row = loader.status().shadowed[0];
+  assert.strictEqual(row.root, 'user');
+  assert.strictEqual(row.comparable, false, 'the row says the version could not be read');
+  assert.strictEqual(row.reason, 'precedence');
+});
+
+test('a plugin with NO version at all still loads, in either root', () => {
+  // `version` is not required by validateManifest and t21 did not make it
+  // required — making a decorative field load-bearing must not un-install the
+  // manifests that omitted it. This is the regression that would matter most and
+  // would be invisible in the two-copy tests above.
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, version: undefined }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const user = mkTree({ beta: { manifest: { ...OK_MANIFEST, id: 'beta', version: undefined }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  assert.deepStrictEqual(loader.discover().map((r) => r.id).sort(), ['alpha', 'beta']);
+  assert.deepStrictEqual(loader.status().problems, [], 'a missing version is not a problem row');
 });
 
 test('a SYMLINKED plugin directory is followed', () => {

@@ -47,6 +47,48 @@ function validateManifest(m, dirName) {
   return null;
 }
 
+// ── Version comparison (docs/plugin-sources.md §4) ─────────────────────────
+// `version` was DECORATIVE until t21 — validateManifest never mentioned it, and
+// the loader used it only in a log line and a status() passthrough. Making a
+// user copy able to out-rank the bundled one is the only thing that gives a
+// packaged (app.asar) install any way to run a newer plugin, so the field
+// becomes load-bearing. Two rules keep that from being a new hazard:
+//
+//   1. A version we can compare is dot-separated runs of DIGITS, compared
+//      NUMERICALLY. String comparison puts "1.10" below "1.9", which is exactly
+//      backwards for the plugin most likely to be shipping updates.
+//   2. Anything else — absent, non-string, `1.0.0-beta`, `the good one` — is
+//      UNCOMPARABLE, and an uncomparable version can never out-rank anything.
+//
+// Rule 2 is the safe branch by construction: "uncomparable" collapses to the
+// pre-t21 behaviour (core wins, user copy shadowed), so a malformed version can
+// only ever fail to change something. It cannot crash discovery either — the
+// parse is total and returns null for every shape of junk including null itself.
+// Semver pre-release ordering is deliberately NOT implemented: getting
+// `1.0.0-beta < 1.0.0` right needs the whole grammar, nothing here needs it, and
+// a tag that loses VISIBLY is a fair trade for one that ties silently.
+function parseVersion(v) {
+  if (typeof v !== 'string') return null;
+  const parts = v.trim().split('.');
+  if (!parts.length || parts.some((p) => !/^\d+$/.test(p))) return null;
+  return parts.map(Number);
+}
+
+// True only when BOTH sides parse and `a` is strictly greater. Both, not one:
+// if the incumbent's version is junk we cannot say the candidate is newer than
+// it, and the safe answer to "cannot say" is that the incumbent keeps its place.
+// Missing trailing segments are 0, so "1.2" and "1.2.0" tie — and a tie loses.
+function isNewerVersion(a, b) {
+  const x = parseVersion(a);
+  const y = parseVersion(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d > 0;
+  }
+  return false;
+}
+
 // Refuse any entry path that escapes the plugin's own directory. This is the
 // runtime twin of test/plugin-boundary.test.js's static no-backdoor lint: the
 // lint reads requires inside plugins/, this refuses a manifest that points its
@@ -215,15 +257,45 @@ function createPluginLoader(deps) {
     try { return fs.realpathSync(dir); } catch { return dir; }
   }
 
-  function discoverRoot(root, claimed, problems, shadowed) {
+  // A losing copy, shaped for the settings row. Named on BOTH sides: which copy
+  // is not running and at what version, and which one won and at what version.
+  // Under version-aware precedence the loser can be the BUILT-IN copy, so a row
+  // that named only one side would be unreadable in the inverted direction — and
+  // the inverted direction is precisely the one carrying the hazard (a user copy
+  // declaring version 99 wins forever). This row is the only thing that makes
+  // that recoverable, so it is a safety mechanism, not a label.
+  //
+  // `reason` is stamped HERE rather than inferred in the renderer from a version
+  // diff, because that inference is wrong in the one case that matters: a copy
+  // with an unparseable version loses as UNCOMPARABLE, not as lower, and a row
+  // reading "superseded by a higher version" would send its author looking for a
+  // version bump that can never help them. `comparable` says the version could
+  // not be read at all, which is the actionable fact.
+  //   'precedence' — root order held (core wins; the default, pre-t21 behaviour)
+  //   'superseded' — the winner's version was strictly higher
+  function shadowRow(loser, winner, reason) {
+    return {
+      id: loser.manifest.id,
+      dir: loser.dir,
+      root: loser.root,
+      rootLabel: loser.rootLabel,
+      version: loser.manifest.version || null,
+      comparable: !!parseVersion(loser.manifest.version),
+      reason,
+      shadowedBy: winner.root,
+      shadowedByLabel: winner.rootLabel,
+      shadowedByVersion: winner.manifest.version || null,
+    };
+  }
+
+  function discoverRoot(root, claimed, problems, shadowed, out) {
     let entries;
     try {
       entries = fs.readdirSync(root.dir, { withFileTypes: true });
     } catch {
-      return []; // a root that does not exist is a legal, silent state
+      return; // a root that does not exist is a legal, silent state
     }
     const note = (dir, why) => { problems.push({ dir, why: String(why), root: root.id }); };
-    const out = [];
     for (const ent of entries.filter((d) => isCandidateDir(root.dir, d)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const dir = resolveDir(path.join(root.dir, ent.name), ent.isSymbolicLink());
       const manifestPath = path.join(dir, 'manifest.json');
@@ -244,15 +316,6 @@ function createPluginLoader(deps) {
       // what the user named the directory is what they meant the id to be.
       const why = validateManifest(manifest, ent.name);
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
-      // PRECEDENCE. An id claimed by an earlier root wins; this copy is recorded
-      // and not loaded. Checked after validation so a shadowed row can only ever
-      // describe something that would otherwise have been a working plugin.
-      const owner = claimed.get(manifest.id);
-      if (owner) {
-        logIt(`skipping ${ent.name} in ${root.id}: shadowed by the ${owner.label} copy`);
-        shadowed.push({ id: manifest.id, dir, root: root.id, rootLabel: root.label || root.id, shadowedBy: owner.id, shadowedByLabel: owner.label });
-        continue;
-      }
       const entry = manifest.entry || {};
       for (const half of ['engine', 'renderer']) {
         if (entry[half] && !insideDir(path, dir, entry[half])) {
@@ -268,8 +331,7 @@ function createPluginLoader(deps) {
         note(ent.name, 'style escapes the plugin directory');
         continue;
       }
-      claimed.set(manifest.id, { id: root.id, label: root.label || root.id });
-      out.push({
+      const rec = {
         id: manifest.id,
         dir,
         root: root.id,
@@ -278,17 +340,44 @@ function createPluginLoader(deps) {
         enginePath: entry.engine ? path.join(dir, entry.engine) : null,
         rendererPath: entry.renderer ? path.join(dir, entry.renderer) : null,
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
-      });
+      };
+      // PRECEDENCE. Built last, so a shadowed row can only ever describe
+      // something that would otherwise have been a working plugin — every
+      // refusal above produces a `problems` row instead, and the two must not
+      // be confused.
+      //
+      // The earlier root still owns the id BY DEFAULT (core wins, t16), and the
+      // one thing that overturns it is a STRICTLY HIGHER version (t21). That
+      // narrows core-wins without giving up what it protected: the forgotten
+      // experimental fork core-wins existed to stop is by definition not newer
+      // than the core it was forked from, so it still loses. What changes is
+      // only the case where the user copy is a genuine later release — which is
+      // the ONLY way a packaged install can ever run a newer plugin, since its
+      // core copies live in a read-only asar.
+      const held = claimed.get(manifest.id);
+      if (held) {
+        if (isNewerVersion(manifest.version, held.rec.manifest.version)) {
+          logIt(`${manifest.id}: the ${rec.rootLabel} copy v${manifest.version} supersedes the ${held.rec.rootLabel} copy v${held.rec.manifest.version || '?'}`);
+          shadowed.push(shadowRow(held.rec, rec, 'superseded'));
+          out[held.index] = rec;               // the winner takes the incumbent's slot
+          claimed.set(manifest.id, { rec, index: held.index });
+        } else {
+          logIt(`skipping ${ent.name} in ${root.id}: shadowed by the ${held.rec.rootLabel} copy`);
+          shadowed.push(shadowRow(rec, held.rec, 'precedence'));
+        }
+        continue;
+      }
+      claimed.set(manifest.id, { rec, index: out.length });
+      out.push(rec);
     }
-    return out;
   }
 
   function discover() {
     const problems = [];
     const shadowed = [];
-    const claimed = new Map(); // id -> the root that owns it
+    const claimed = new Map(); // id -> { rec, index } — the copy currently winning
     const out = [];
-    for (const root of roots) out.push(...discoverRoot(root, claimed, problems, shadowed));
+    for (const root of roots) discoverRoot(root, claimed, problems, shadowed, out);
     discoveryProblems = problems;
     discoveryShadowed = shadowed;
     return out;
@@ -466,10 +555,13 @@ function createPluginLoader(deps) {
     // section's data and the Retry path.
     status, noteRendererActivation, clearFailures, isQuarantined,
     // Test/introspection seam — the validator, so its refusals are directly
-    // assertable rather than only observable as a missing plugin.
+    // assertable rather than only observable as a missing plugin. Same for the
+    // version comparison: "malformed never wins" is a claim about inputs no
+    // fixture would think to build, so it deserves to be assertable directly.
     _validateManifest: validateManifest,
+    _isNewerVersion: isNewerVersion,
     _quarantineAfter: QUARANTINE_AFTER,
   };
 }
 
-module.exports = { createPluginLoader, validateManifest };
+module.exports = { createPluginLoader, validateManifest, isNewerVersion };
