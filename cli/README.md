@@ -59,8 +59,31 @@ not a fallback. Pick whichever fits your box:
    npm i -g ./cli
    ```
 
-The desktop app's packaged DMG does **not** include `cli/` — it is a
-standalone package, installable on a box that has never seen Clodex.
+`cli/` remains a standalone package — installable on a box that has never seen
+Clodex, requiring only `node:*` builtins and its own siblings, never an app
+file. That direction of the boundary is unchanged.
+
+**The desktop app's packaged DMG DOES ship `cli/`** (`"cli/**/*"` in
+`build.files`). This reverses an earlier position, so the reason is recorded
+here rather than left to be rediscovered: the app imports
+`cli/src/transport.js` so a Clodex peer can dial cloud transports (SSM,
+kubectl, gcloud IAP, az bastion) **without a second implementation of the
+dialing** — the whole point of clodexctl existing. An unshipped `cli/` makes
+that import resolve fine from a checkout, pass the full test suite, pass
+`npm start`, and throw `MODULE_NOT_FOUND` in the shipped DMG: green in dev,
+fatal in release.
+
+So the invariant is now asymmetric, and deliberately so — **`cli/` stays a leaf
+(it never imports an app file), and the app MAY import it *because* it ships.**
+Reading `build.files` is not sufficient to check this; the artifact is the
+check:
+
+```
+npx asar list dist/mac-arm64/Clodex.app/Contents/Resources/app.asar | grep '^/cli/'
+```
+
+(Note the trailing slash: a bare `^/cli` also matches the app's own root file
+`cli-hooks.js`, which is not this directory.)
 
 ## Contexts (the kubeconfig)
 
