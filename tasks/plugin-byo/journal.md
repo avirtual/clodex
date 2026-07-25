@@ -702,3 +702,38 @@ Anchor links verified to resolve.
 No namespacing scheme proposed and no auto-prefixing — the freeze holds.
 
 **Next: t19** (wirescope stays vendored, Phase 4b dropped). Nothing else open.
+
+## T19 — wirescope stays vendored, Phase 4b dropped. Suite 2506/2506 (docs-only).
+
+Struck 4b through like 4a, kept with the reasoning. Added **"Why 4b was dropped"**
+at the end of §6 carrying the standing rule verbatim: *a 1.1 addition must serve
+more than one caller, or it is a private extension wearing a version number.*
+Framed against 4a's finding (the API lends UI generously and core data thinly
+because its only consumer was co-designed with it) — migrating wirescope would
+repeat that error inverted, the API bending to fit one large plugin, with every
+gap becoming a 1.1 addition designed by its first and only caller. Named the
+`host.lib.fileHeat`/pot-drawer refusal as the precedent. Recorded that it costs
+nothing and forecloses nothing.
+
+### Downstream sweep — NO stop condition hit
+
+Nothing downstream had a DECISION resting on 4b; dropping it only removes future
+work. Four sites touched so it reads *unscheduled* rather than *pending*:
+
+- **§5.2** — banner at the top: unscheduled, not pending; A/B/C are no longer
+  proposals and nobody is designing them; retained as the record of what a
+  migration would require and as the analysis to reopen if a second consumer
+  appears.
+- **§5.2 verdict** — "feasible after A/B/C" kept as analysis, explicitly no
+  longer a plan. Its forcing-function argument is exactly what was reconsidered
+  (one plugin forcing three API points designs them for one caller — §6.1's error
+  in the other direction). Noted the workbench pilot decision it contrasts
+  against was settled on its own grounds and is untouched.
+- **GAP G3** — its `§5.2 gap C` half struck; the `onCreate` half stands alone.
+- **§7 grep gates** — the one real dangling assumption. It scheduled a gate
+  asserting `wirescope` appears only in its plugin dir "as those migrate". That
+  gate must NOT be built: core legitimately knows the word now, so it would fail
+  against a decision rather than a regression. Rewritten to say so.
+
+Phase 5 checked: its scope is Tier B, the `~/.clodex/plugins/` scan and personas,
+none of which reference 4b or A/B/C. Nothing needed.

@@ -690,6 +690,14 @@ data-on-stdin/argv-from-registry, `replyStderr` opt-in discipline [V exec-schema
 
 ### 5.2 wirescope — Tier A engine plugin, feasible with three named additions
 
+> **UNSCHEDULED, not pending.** Phase 4b was dropped by decision: wirescope stays
+> a vendored product and is not migrating. **A/B/C below are no longer proposals
+> and nobody is designing them** — they remain here as the honest record of what
+> a migration *would* require, and as the analysis to reopen if a second consumer
+> ever asks for the same capability. The feasibility verdict at the end of this
+> section is unchanged and untested; it was never acted on. See "Why 4b was
+> dropped" in §6.
+
 Mapping the corpus couplings:
 
 | Coupling | API today | Gap |
@@ -702,6 +710,12 @@ Mapping the corpus couplings:
 
 Verdict: **feasible after A/B/C**, which is precisely why wirescope is Phase-4 evidence work, not
 the pilot — its migration is the forcing function that designs those three points against reality.
+
+That verdict is retained as analysis and is **no longer a plan**. The forcing-function
+argument is exactly what was reconsidered: a single plugin forcing three API points
+designs them for one caller, which is the error §6.1 already found in the other
+direction. The pilot decision it contrasts against (workbench) was settled on its own
+grounds in Phase 2 and is untouched by this.
 
 ### 5.3 peering — partial by design; the remote server stays core-adjacent indefinitely
 
@@ -786,8 +800,12 @@ re-add the index.html block + rows from git history; plugin dir deleted.
   written; the pot-vs-inbox distinction this line used to draw was false. **Read
   "Phase 4a's result" at the end of this section before planning any further
   migration.**
-- 4b. wirescope-js design doc + the three named additions (§5.2 A/B/C) as `hostApi 1.1` proposals;
-  migrate only when they're designed against its real needs.
+- 4b. ~~wirescope-js design doc + the three named additions (§5.2 A/B/C) as `hostApi 1.1` proposals;
+  migrate only when they're designed against its real needs.~~ **DROPPED BY
+  DECISION. Wirescope is much more than a plugin; it stays a vendored product.**
+  Do not migrate it, do not write the design doc, do not propose A/B/C. See
+  "Why 4b was dropped" at the end of this section — it carries a standing rule
+  for every future `1.x` proposal.
 - 4c. Messaging inversion points (§5.3) + peering's outbound half; remote server stays core.
   Each 1.x addition is additive-only (SemVer discipline on the taxonomy).
 
@@ -937,6 +955,40 @@ non-co-designed consumer will find a third.
 
 ---
 
+### Why 4b was dropped — wirescope stays vendored
+
+**Decision, not an omission.** Wirescope is much more than a plugin; it stays a
+vendored product. The design doc is not being written, the migration is not
+happening, and §5.2's A/B/C are not proposals any more.
+
+The reasoning is reinforced by what this phase found. 4a established that the API
+**lends UI slots generously and core data thinly** — because its only consumer
+through Phases 0–3 was co-designed with it. Pushing wirescope through the surface
+would repeat that error *inverted*: rather than a plugin bending to fit the API,
+the API would bend to fit one large plugin. Every gap wirescope hit would become
+a `1.1` addition designed by its first and only caller. That is precisely what
+was already refused once, when `host.lib.fileHeat` was offered for pot-drawer
+(§6.1) — and the refusal there was right for the same reason.
+
+**The standing rule, which binds future planners:**
+
+> **A `1.1` addition must serve more than one caller, or it is a private
+> extension wearing a version number.**
+
+Wirescope alone cannot demonstrate that, and nothing else has ever asked for
+A, B or C. A version number on a surface with one consumer buys none of what
+versioning is for — it just makes a private arrangement look like a contract, and
+then freezes it.
+
+**This costs nothing and forecloses nothing.** Vendored works today; no
+capability is lost and no user notices. Migration stays available if a **second**
+consumer ever wants the same capability — at which point the two-caller test is
+satisfiable on its merits rather than by assertion, and §5.2's mapping is still
+there to start from. Dropping 4b removes future work; it does not undo any
+decision already made.
+
+---
+
 ## 7. Testing & guardrails (standing)
 
 - **No-backdoor lint** (Phase 0): scans `plugins/**` requires; whitelist = own dir + node builtins.
@@ -945,9 +997,10 @@ non-co-designed consumer will find a third.
 - **Byte pins preserved:** both `buildIpcPrompt` pins [V ipc-prompt.js], generated hook scripts
   untouched [V architecture.md cli-hooks pin], parse-table differential (Phase 1c).
 - **Near-miss oracle:** pinned test recomputed from the registry [F :578].
-- **Grep gates:** `workbench` absent from core (Phase 2); later, `wirescope`/peer words only in
-  their plugin dirs as those migrate (the vision doc's "core never learns the word" invariant,
-  mechanized).
+- **Grep gates:** `workbench` absent from core (Phase 2); later, peer words only in their plugin
+  dirs as those migrate (the vision doc's "core never learns the word" invariant, mechanized).
+  **`wirescope` is NOT gated and must not be** — 4b was dropped, it stays vendored, and core
+  legitimately knows the word. A gate here would fail against a decision, not a regression.
 - **Multi-window CI scenario:** two workspaces, enable → both get UI; disable → both lose it;
   close/reopen a window → plugin surfaces rebuild via pull (asserts the §3.3 law).
 - **onExit contract test:** subscriber sees `_dead` handle, `inject` no-ops, throw is swallowed,
@@ -961,7 +1014,7 @@ non-co-designed consumer will find a third.
 |----|------|--------|
 | G1 | session-manager.js ~:400-560 — the wire intent feed [F :474, :524]: confirm it funnels through `_extractIntents`/`_handleIntent` (registry then covers it for free) | Phase 1c claim "all three feeds by construction" for the wire path |
 | G2 | session-manager.js :2168-2179 — bash PTY scan body (calls `parseIntent` directly per findings): confirm registry rows are consulted and that no-body-capture semantics hold for plugin verbs there | Phase 1c |
-| G3 | session-restore.js + the persistence-removal ("forget") sites: does restore route through `create()` (→ `onCreate` fires for restored sessions)? where to hang a future `sessions.onForget` for per-session plugin-state cleanup | §3.2 onCreate note; §5.2 gap C |
+| G3 | session-restore.js + the persistence-removal ("forget") sites: does restore route through `create()` (→ `onCreate` fires for restored sessions)? where to hang a future `sessions.onForget` for per-session plugin-state cleanup | §3.2 onCreate note; ~~§5.2 gap C~~ (unscheduled with 4b — the `onCreate` half still stands on its own) |
 | G4 | git-scm.js (whole), the fs:list/read/write + worktree:list/remove handler bodies in ipc-handlers.js, and a repo grep for non-workbench consumers of the 14 rows slated for deletion | Pilot W5/W6 |
 | G5 | app-menus.js — View-menu "Workbench…" emit site (`request-open-workbench`) and the session context-menu builder | Pilot W4; sidebar row-menu deferral note §2.2 |
 | G6 | renderer/styles.css — the exact ~23 wb-* rules [F] to extract | Pilot W3 |
