@@ -1027,3 +1027,60 @@ happened". I reported the board clean twice without a roster, and the second
 time inferred one success from the ABSENCE of an error line — a consumer
 reconstructing something the producer never said, which is the exact defect class
 this project keeps hitting. **Confirm from `[agent:task list]`, always.**
+
+### T22 phase 1 — settled against source, by execution
+
+Probe at `scratchpad/probe-rescan.js` (throwaway, not committed), driving the
+REAL `createPluginLoader` over two temp roots. Results, all observed:
+
+| Question | Answer |
+|---|---|
+| `require` same path, changed bytes | **`ORIGINAL`** — same module object. Cache wins. |
+| `require` different path, same id | **`USER-COPY`** — different module object. Different cache key. |
+| `discover()` after a plugin is ADDED | picked up, no restart |
+| `discover()` after a plugin is REMOVED | dropped, no restart |
+| shadow pair flips mid-run | **yes** — dropping the user copy's version handed `alpha` back to core, `reason` flipping `superseded` → `precedence` |
+
+So clodex's hypothesis was exactly right in both directions, and the split is
+sharper than "mostly works":
+
+- **ADDED works.** Never-required path ⇒ no cache entry ⇒ fresh module.
+- **REMOVED works** for discovery, and `deactivate()` already tears the engine
+  half down. The disk record is gone from the next `status()`.
+- **REPLACED IN PLACE cannot work.** Same resolved path, cache hands back the
+  old module. This is not a bug to fix — busting `require.cache` would leave the
+  OLD closure's registrations live while a second copy registers, which is worse
+  than not reloading. **Restart-required, said in the UI.**
+- **REPLACED BY A DIFFERENT ROOT works**, and this is the case t21 created: a
+  user copy at `~/.clodex/plugins/x` superseding a core copy in the asar is a
+  different path, so it is a different cache key and genuinely loads. The
+  DMG-user upgrade path is the one that survives — which is the whole point.
+
+### Two rulings
+
+**Strikes: NO.** A re-scan is not a launch. `loadOne` already carries a dormant
+`{ count = true }` parameter with no caller today; the re-scan is its first user.
+Same reasoning as t20 — the counter exists for plugins that CRASH on a real
+activation, and a user pressing Re-scan three times must not quarantine a plugin.
+
+**Shadow flips: allowed, and they must be.** `discover()` is stateless, so the
+flip falls out for free; suppressing it would need new state whose only job is to
+make the dialog disagree with the disk.
+
+### One place source contradicts the ticket — FLAGGING, not silently deviating
+
+The ticket says the re-scan is "a fourth handler" beside the three at
+`ipc-handlers.js:1089-1098`. **Source says it must not be.** `api-contract.js:270`
+— "EXACTLY these five rows — the whole plugin surface, for every plugin, forever"
+— and `plugin-host-engine.js:497` spells out the established alternative: host
+plumbing rides the `_host` pseudo-id rather than becoming a sixth row, because
+"a new row here would be the first crack in that". `plugins.status`,
+`renderer.info` and `renderer.report` are all already there.
+
+So the re-scan ships as **`_host` `plugins.rescan`**, not a new `plugin:*` row.
+Same reachability, no crack in the freeze.
+
+**Reveal** is separate and does NOT touch the plugin transport: `file:reveal` is
+an ordinary non-plugin contract row beside the existing `file:open`. The headless
+seam at `headless-main.js:154` really is missing `showItemInFolder` beside its
+`openPath` stub — hole confirmed, filling it.
