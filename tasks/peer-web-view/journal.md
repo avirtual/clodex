@@ -636,3 +636,47 @@ Approved design is above ("What CLOSES it", "Never rendering the placeholder",
 - **ssh-only limitation stated in the UI** (ruling 1).
 
 Baseline for the suite: **2600, ESCAPES: 0**.
+
+## Phase 2a — surface CONFIRMED against the code (read, nothing written yet)
+
+Read: `peer-tunnel.js` (whole), `peer-wiring.js` (whole), `engine.js:1540-1590` +
+`1815-1865`, `ipc-handlers.js:1226-1245`, `preload.js`, `api-contract.js`,
+`renderer/peers-ui.js:1-260`. The planned surface holds; concrete call sites:
+
+- **`web-tunnel.js` (new, electron-free, `spawnFn` injectable)** — `WebTunnel`
+  + `WebTunnelManager`, modelled on peer-tunnel.js with three inversions:
+  `localPort` picked ONCE in `start()` and reused by every respawn (peer-tunnel
+  re-picks inside `_spawnTunnel`, peer-tunnel.js:99-102 — the (C) bug);
+  `onOpen(url)` fired exactly once on first up (supervisor owns the `_popped`
+  flag so the electron call stays in the wiring); a **give-up cap** replacing
+  `_scheduleRestart`'s forever-retry, landing in a terminal `gave-up` state that
+  keeps `lastError`. `url()` returns non-null only while `state === 'up'`, so
+  the placeholder can never be rendered — there is no placeholder to render.
+- **`peer-wiring.js`** — lazy-construct alongside the TunnelManager block
+  (peer-wiring.js:111-121); `syncPeerManager` already filters
+  `(s.peers||[]).filter(p => !p.disabled)` at :126 — feeding the same list to
+  the web manager's `sync()` gives close #2 (removed/disabled) for free.
+  Exports gain `openPeerWeb(id)` / `closePeerWeb(id)` (close #1, the toggle).
+- **`engine.js`** — `let webTunnelManager = null;` next to :1548; get+set into
+  `createPeerWiring`; `shutdown()` stops it at :1828 next to the peer tunnels
+  (close #3); `getWebTunnelManager` on the return object next to :1845.
+- **`ipc-handlers.js`** — web-tunnel statuses ride `peer:list` the way tunnels
+  do at :1230-1235 (`st.tunnel`), plus open/close handlers and a
+  `peer-web-tunnel` broadcast mirroring `peer-tunnel` (peer-wiring.js:118).
+- **`api-contract.js` (NOT preload.js)** — preload is a 22-line loop over
+  `API_CONTRACT`; a new method is a ROW, not a preload edit. Rows: the open,
+  the close, and `onPeerWebTunnel` (`{kind:'on'}`, like :244).
+- **`renderer/peers-ui.js`** — the ↗ button already exists for boxes
+  (:189/:210-214 → `openBoxWeb` :105). The peer arm is a sibling gated on live
+  `st.webHost` (peer-client.js:113 puts it in `status()`, so it rides
+  `peer-state` — live, never a popover snapshot).
+
+### One question to settle from the code before the UI arm is written
+
+`tokenGated: true` must "say the box requires a token rather than hand over a
+URL that will 401". Whether the honest response is *refuse and say so* or *say
+so and still open* depends on what the web host actually serves an
+unauthenticated browser: a **login form** makes opening correct (the user
+authenticates there), a bare **401** makes opening a dead end. Read `web-host.js`
++ `auth-token.js` and let the answer decide — do not guess the gate. (Same rule
+that produced `tokenGated` as a reported fact in t30a.)
