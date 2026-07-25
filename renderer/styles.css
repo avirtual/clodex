@@ -3265,6 +3265,16 @@ html, body {
 .peer-select:hover { color: var(--text); }
 .peer-select:disabled { opacity: 0.35; cursor: default; }
 .peer-select:disabled:hover { color: var(--text-dim); }
+/* Peer web view (↗, t30b): the icon carries its tunnel phase as colour, so an
+   open forward to a remote box is visible at a glance rather than only in a
+   tooltip — a tunnel nobody can see is the hole the give-up cap exists for.
+   closed = normal dim chrome (inherits .peer-select); connecting = warn;
+   open = the accent used for live/managed things; gave-up = error. Placed after
+   .peer-select to win the equal-specificity tie, like the severity tints below. */
+.peer-webview-connecting { color: var(--warn); }
+.peer-webview-open { color: var(--accent); }
+.peer-webview-gave-up { color: var(--error); }
+
 /* Version-severity tint, shared by the peer NAME (only for patch/minor/major —
    see renderer's nameSev), the ⓘ icon, and the popover's severity line.
    current/newer/unknown stay neutral (a peer AHEAD of us is informational, never

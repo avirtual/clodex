@@ -242,6 +242,12 @@ const API_CONTRACT = [
   { name: 'onPeerRemoved', kind: 'on', channel: 'peer-removed' },
   { name: 'onPeerDisabled', kind: 'on', channel: 'peer-disabled' },
   { name: 'onPeerTunnel', kind: 'on', channel: 'peer-tunnel' },
+  // Peer web view (t30b): the on-demand ssh forward to a peer's browser
+  // frontend, and its live state. Separate from the wire tunnel above — that one
+  // exists for every ssh peer, this one only while someone is looking.
+  { name: 'peerOpenWeb', kind: 'invoke', channel: 'peer:openWeb' },
+  { name: 'peerCloseWeb', kind: 'invoke', channel: 'peer:closeWeb' },
+  { name: 'onPeerWebTunnel', kind: 'on', channel: 'peer-web-tunnel' },
   { name: 'onSessionPeerControl', kind: 'on', channel: 'session-peer-control' },
   { name: 'getSessionArgs', kind: 'invoke', channel: 'session:getArgs' },
   { name: 'getSessionHistory', kind: 'invoke', channel: 'session:history' },

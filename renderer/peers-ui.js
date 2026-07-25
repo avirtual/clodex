@@ -40,11 +40,12 @@ const { esc, baseName } = require('./lib/format');
 const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
 const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
+const { webViewAffordance } = require('./lib/peer-web-view');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
   removeSession, updateSidebarActive, showToast, appendIpcEntry,
-  remeasureReadonlyPeer, peerStatuses, peerTunnels, getOurAppVersion,
+  remeasureReadonlyPeer, peerStatuses, peerTunnels, peerWebTunnels, getOurAppVersion,
   getDeployLineHandlers, proxyState, ctxPct, ctxTokens, peerFilesCount,
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
   isFilesPopoverForKey, openArgsDialog, openSkillsPopover,
@@ -111,6 +112,48 @@ function initPeersUi({
       return;
     }
     window.api.openExternal(sandboxOpenUrl(port));
+  }
+
+  // Open (or close) a PEER'S web frontend through an on-demand ssh forward
+  // (t30b). Distinct from openBoxWeb above: a managed box runs on this machine
+  // and its port is already published locally, while a peer's web UI lives on
+  // another host and is only reachable once Clodex forwards it.
+  //
+  // Everything here reads LIVE peer state — `st.webHost` comes off the hello via
+  // peer-client's status(), so a box that starts (or stops) serving is reflected
+  // on the next peer-state without this island caching anything.
+  // What a click does comes from the same pure decision the button rendered
+  // from, re-read at click time — so a peer that went offline (or a tunnel that
+  // came up) between paint and click is acted on as it is NOW, not as it looked.
+  async function togglePeerWeb(id, label) {
+    const a = webViewAffordance({
+      status: peerStatuses.get(id), tunnel: peerTunnels.get(id), webTunnel: peerWebTunnels.get(id),
+    });
+    if (a.action === 'close') {
+      await window.api.peerCloseWeb(id).catch(() => {});
+      peerWebTunnels.delete(id);
+      renderPeers();
+      showToast(`Closed the web view tunnel to ${label}.`, { kind: 'peer-ui' });
+      return;
+    }
+    if (a.action !== 'open') { showToast(a.tip, { kind: 'warm' }); return; }
+    // A gated box still gets its tunnel — that is what makes it reachable at all.
+    // What changes is that main does not pop a browser at a bare 401, and the URL
+    // arrives with the token instruction once it is LIVE (onPeerWebTunnel below),
+    // never promised before one exists.
+    const res = await window.api.peerOpenWeb(id).catch((e) => ({ ok: false, error: (e && e.message) || String(e) }));
+    if (!res || res.ok === false) {
+      showToast(`Can't open ${label}'s web UI: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
+      return;
+    }
+    if (res.status) peerWebTunnels.set(id, res.status);
+    renderPeers();
+    showToast(
+      a.tokenGated
+        ? `${label}'s web UI needs a token — connecting over ssh, then you'll get the URL to open with ?token=…`
+        : `Opening ${label}'s web UI — connecting over ssh…`,
+      { kind: a.tokenGated ? 'warm' : 'peer-ui' },
+    );
   }
 
   // Rebuild a box straight from its sidebar header (the box "upgrade" affordance —
@@ -180,6 +223,14 @@ function initPeersUi({
       // action for its served UI. The generic dot stays (online/offline is still
       // meaningful for a box); the chip is the "this is a box, not a laptop" mark.
       const isBox = boxIds.has(id);
+      // Peer web view (t30b): a ↗ for a NON-box peer that reports a web frontend
+      // in its hello. Every input is live — st.webHost rides peer-state and
+      // peerWebTunnels rides peer-web-tunnel — so this is never a snapshot from
+      // when something opened. All the judgment is in the pure leaf; this line
+      // only renders it. Boxes keep their own local-port ↗ (openBoxWeb).
+      const webView = isBox
+        ? { show: false }
+        : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
       header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
@@ -187,6 +238,7 @@ function initPeersUi({
         `<span class="peer-actions">` +
           (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
           (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}’s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : '') +
+          (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? '' : 'disabled'}>&#8599;</button>` : '') +
           `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button>` +
           `<button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` +
           // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
@@ -211,6 +263,11 @@ function initPeersUi({
       if (webBtn) webBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openBoxWeb(id, hostLabel);
+      });
+      const webViewBtn = header.querySelector('.peer-webview');
+      if (webViewBtn) webViewBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        togglePeerWeb(id, hostLabel);
       });
       header.querySelector('.peer-restart').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1021,9 +1078,38 @@ function initPeersUi({
     renderPeers();
   });
 
+  // Peer web view (t30b). The affordance repaints from this, so its state is the
+  // supervisor's, never a guess. A 'closed' status means the tunnel is gone —
+  // drop the entry so the button returns to its openable state.
+  window.api.onPeerWebTunnel((id, status) => {
+    if (status && status.state === 'closed') peerWebTunnels.delete(String(id));
+    else peerWebTunnels.set(String(id), status);
+    // First time it is genuinely up, tell the operator where it is. For an
+    // unGated box main has already popped the browser, so this is the receipt;
+    // for a gated one it is the ONLY handover, and it carries what to do with it
+    // rather than a link that would 401. The URL comes from the supervisor —
+    // this side never composes one.
+    if (status && status.firstUp && status.url) {
+      const st = peerStatuses.get(String(id));
+      const label = peerDisplayHost(st);
+      const gated = !!(st && st.webHost && st.webHost.tokenGated);
+      showToast(
+        gated
+          ? `${label}'s web UI is tunnelled to ${status.url} — it requires a token, so open it with ?token=…`
+          : `${label}'s web UI is open at ${status.url}`,
+        { kind: gated ? 'warm' : 'peer-ui', sticky: gated },
+      );
+    }
+    renderPeers();
+  });
+
   window.api.onPeerRemoved((id) => {
     peerStatuses.delete(id);
     peerTunnels.delete(id);
+    // Main closes the web tunnel for a removed/disabled peer (close #2, in
+    // syncPeerManager); drop the mirror so a re-enabled peer doesn't render a
+    // stale open state.
+    peerWebTunnels.delete(String(id));
     // A disabled peer's removal is a PAUSE, not a delete: soft-shed its tabs so the
     // durable attachment survives for re-enable. A genuine removal/URL-edit (not in
     // disabledPeers) still hard-detaches — that path's durable-forget is correct.
@@ -1075,6 +1161,10 @@ function initPeersUi({
     for (const st of statuses || []) {
       peerStatuses.set(st.id, st);
       if (st.tunnel) peerTunnels.set(st.id, st.tunnel);
+      // A web tunnel survives a window close (main owns it), so a reopened
+      // window seeds the affordance's open state rather than offering to open a
+      // second forward to the same box.
+      if (st.webTunnel) peerWebTunnels.set(String(st.id), st.webTunnel);
     }
     if (peerStatuses.size) renderPeers();
   }).catch(() => {});

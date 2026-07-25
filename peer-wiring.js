@@ -19,6 +19,8 @@ function createPeerWiring(deps) {
     getUiSettings,
     getPeerManager, setPeerManager,
     getTunnelManager, setTunnelManager,
+    getWebTunnelManager, setWebTunnelManager,
+    openExternal,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -124,6 +126,14 @@ function createPeerWiring(deps) {
     // sheds their tabs on the resulting peer-removed) while the record — and its
     // persisted attachments/claims — stays in s.peers for re-enable.
     getTunnelManager().sync((s.peers || []).filter((p) => !p.disabled));
+    // Same already-filtered list to the web tunnels — which is close #2 of the
+    // web view's four (peer removed or disabled). Only PRUNES: a web tunnel is
+    // never opened by reconciliation, only by someone asking to look (t30b).
+    // Skipped when nothing has ever been opened, so the on-demand manager isn't
+    // constructed just to iterate an empty map.
+    if (getWebTunnelManager && getWebTunnelManager()) {
+      getWebTunnelManager().sync((s.peers || []).filter((p) => !p.disabled));
+    }
     resolvePeerUrls();
     // Prune persisted attachments + visibility selections for peers that no
     // longer exist in settings.
@@ -171,9 +181,82 @@ function createPeerWiring(deps) {
     getPeerManager().sync(resolved);
   }
 
+  // ---- Peer web view (t30b) -------------------------------------------------
+  // A SEPARATE, on-demand ssh forward to a peer's browser frontend, opened only
+  // when someone asks to look at it. Distinct from the peer tunnel above on
+  // purpose: that one carries Clodex's own wire for every ssh peer and re-picks
+  // its local port on each respawn; this one exists per explicit request and
+  // pins its port, because the consumer is a browser tab Clodex cannot re-point.
+  // Full reasoning in web-tunnel.js's header.
+
+  // Peers whose web view may be popped in the operator's browser on first up.
+  // A TOKEN-GATED box is deliberately absent: web-host.js answers an
+  // unauthenticated request with a bare 401 (no login form, no redirect) and the
+  // token can only ride ?token= / Bearer / a cookie — none of which a freshly
+  // opened tab carries. Popping one would hand the operator a dead end they
+  // cannot fix from the browser, so the tunnel opens and the URL is reported
+  // instead. Keyed by peer id and set at open time, because tokenGated is a fact
+  // from the peer's hello, not something the supervisor could know.
+  const webPopAllowed = new Set();
+
+  function ensureWebTunnelManager() {
+    if (getWebTunnelManager()) return getWebTunnelManager();
+    const { WebTunnelManager } = require('./web-tunnel');
+    setWebTunnelManager(new WebTunnelManager({
+      // State moves (up / down / gave-up / closed) reach the renderer on their
+      // own channel so the affordance renders from live state — it never has to
+      // poll, and it never has to cache a URL from when a popover opened.
+      onState: (id, status) => {
+        try { manager._broadcast('peer-web-tunnel', id, status); } catch {}
+        // firstUp rides ONE emit, on the once-per-tunnel first success — so the
+        // browser opens once and a respawn after a wifi blip does not pop a
+        // second window (the pinned port means the existing tab just works).
+        // The pop lives here, not in the supervisor, which stays electron-free.
+        if (status && status.firstUp && status.url) {
+          if (webPopAllowed.has(String(id))) {
+            log.info('peer', `web view up for ${id} → ${status.url}`);
+            try { openExternal(status.url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
+          } else {
+            log.info('peer', `web view up for ${id} → ${status.url} (token required — not opened)`);
+          }
+        }
+      },
+    }));
+    return getWebTunnelManager();
+  }
+
+  // Open the web view for one peer. Refuses rather than guesses on every missing
+  // input: no ssh host (ssh-only, by ruling — a url-only peer has no transport
+  // we can drive), and no live webHost in the peer's hello (nothing to forward
+  // to; a guessed port is exactly the lie t30a exists to prevent).
+  function openPeerWeb(id) {
+    const key = String(id);
+    const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
+    if (!rec) return { ok: false, error: 'no such peer' };
+    if (!rec.sshHost) return { ok: false, error: 'ssh-only: this peer is reached by URL, not ssh' };
+    const conn = getPeerManager() && getPeerManager().get(key);
+    const st = conn ? conn.status() : null;
+    const webHost = st && st.webHost;
+    if (!webHost) return { ok: false, error: 'this peer reports no web frontend' };
+    const tokenGated = webHost.tokenGated === true;
+    // Decided BEFORE the tunnel starts, so the once-per-tunnel firstUp emit can
+    // never race ahead of the decision and pop a 401 at the operator.
+    if (tokenGated) webPopAllowed.delete(key); else webPopAllowed.add(key);
+    const res = ensureWebTunnelManager().open({ id: key, sshHost: rec.sshHost, remotePort: webHost.port });
+    // tokenGated rides the result so the renderer can say "this box wants a
+    // token" rather than implying a link is coming.
+    return { ...res, tokenGated };
+  }
+
+  function closePeerWeb(id) {
+    webPopAllowed.delete(String(id));
+    if (!getWebTunnelManager()) return { ok: true };
+    return getWebTunnelManager().close(String(id));
+  }
+
   return {
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
-    syncPeerManager, resolvePeerUrls,
+    syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
   };
 }
 

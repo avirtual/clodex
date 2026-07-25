@@ -4423,6 +4423,15 @@ body {
 .peer-select:disabled:hover {
   color: var(--text-dim);
 }
+.peer-webview-connecting {
+  color: var(--warn);
+}
+.peer-webview-open {
+  color: var(--accent);
+}
+.peer-webview-gave-up {
+  color: var(--error);
+}
 .peer-sev-current,
 .peer-sev-newer,
 .peer-sev-unknown {
@@ -6085,6 +6094,12 @@ body {
         { name: "onPeerRemoved", kind: "on", channel: "peer-removed" },
         { name: "onPeerDisabled", kind: "on", channel: "peer-disabled" },
         { name: "onPeerTunnel", kind: "on", channel: "peer-tunnel" },
+        // Peer web view (t30b): the on-demand ssh forward to a peer's browser
+        // frontend, and its live state. Separate from the wire tunnel above — that one
+        // exists for every ssh peer, this one only while someone is looking.
+        { name: "peerOpenWeb", kind: "invoke", channel: "peer:openWeb" },
+        { name: "peerCloseWeb", kind: "invoke", channel: "peer:closeWeb" },
+        { name: "onPeerWebTunnel", kind: "on", channel: "peer-web-tunnel" },
         { name: "onSessionPeerControl", kind: "on", channel: "session-peer-control" },
         { name: "getSessionArgs", kind: "invoke", channel: "session:getArgs" },
         { name: "getSessionHistory", kind: "invoke", channel: "session:history" },
@@ -22900,6 +22915,88 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // renderer/lib/peer-web-view.js
+  var require_peer_web_view = __commonJS({
+    "renderer/lib/peer-web-view.js"(exports, module) {
+      "use strict";
+      function isSshPeer(tunnel) {
+        return !!(tunnel && tunnel.sshHost);
+      }
+      function tunnelPhase(webTunnel) {
+        if (!webTunnel) return "closed";
+        if (webTunnel.state === "up") return "open";
+        if (webTunnel.state === "gave-up") return "gave-up";
+        if (webTunnel.state === "closed") return "closed";
+        return "connecting";
+      }
+      function webViewAffordance({ status, tunnel, webTunnel } = {}) {
+        const st = status || null;
+        const webHost = st && st.webHost;
+        const phase = tunnelPhase(webTunnel);
+        const ssh = isSshPeer(tunnel);
+        const label = st && (st.host || st.label) || "peer";
+        const tokenGated = !!(webHost && webHost.tokenGated);
+        const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
+        if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
+        if (!ssh && phase === "closed") {
+          return {
+            show: true,
+            enabled: false,
+            action: null,
+            phase,
+            url: null,
+            tokenGated,
+            tip: `${label} is reached by URL, not ssh \u2014 Clodex can only tunnel to a web UI over ssh`
+          };
+        }
+        if (phase === "open") {
+          return {
+            show: true,
+            enabled: true,
+            action: "close",
+            phase,
+            url,
+            tokenGated,
+            tip: tokenGated ? `${label}'s web UI is tunnelled to ${url} and requires a token (?token=\u2026). Click to close the tunnel` : `${label}'s web UI is open at ${url} \u2014 click to close the tunnel`
+          };
+        }
+        if (phase === "connecting") {
+          return {
+            show: true,
+            enabled: true,
+            action: "close",
+            phase,
+            url: null,
+            tokenGated,
+            tip: `Connecting to ${label}'s web UI over ssh\u2026 click to cancel`
+          };
+        }
+        if (phase === "gave-up") {
+          const why = webTunnel && webTunnel.error ? ` (${webTunnel.error})` : "";
+          return {
+            show: true,
+            enabled: true,
+            action: "open",
+            phase,
+            url: null,
+            tokenGated,
+            tip: `Couldn't reach ${label}'s web UI${why} \u2014 click to try again`
+          };
+        }
+        return {
+          show: true,
+          enabled: true,
+          action: "open",
+          phase,
+          url: null,
+          tokenGated,
+          tip: tokenGated ? `Open ${label}'s web UI over ssh \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI over ssh`
+        };
+      }
+      module.exports = { webViewAffordance, tunnelPhase, isSshPeer };
+    }
+  });
+
   // renderer/peers-ui.js
   var require_peers_ui = __commonJS({
     "renderer/peers-ui.js"(exports, module) {
@@ -22911,6 +23008,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { wireBulkToggles } = require_checklists();
       var { nextVisibleWithName } = require_peer_visibility();
       var { openUrl: sandboxOpenUrl } = require_sandbox_view();
+      var { webViewAffordance } = require_peer_web_view();
       function initPeersUi({
         sessions,
         sessionList,
@@ -22924,6 +23022,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         remeasureReadonlyPeer,
         peerStatuses,
         peerTunnels,
+        peerWebTunnels,
         getOurAppVersion,
         getDeployLineHandlers,
         proxyState,
@@ -22985,6 +23084,36 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           }
           window.api.openExternal(sandboxOpenUrl(port));
         }
+        async function togglePeerWeb(id, label) {
+          const a = webViewAffordance({
+            status: peerStatuses.get(id),
+            tunnel: peerTunnels.get(id),
+            webTunnel: peerWebTunnels.get(id)
+          });
+          if (a.action === "close") {
+            await window.api.peerCloseWeb(id).catch(() => {
+            });
+            peerWebTunnels.delete(id);
+            renderPeers();
+            showToast(`Closed the web view tunnel to ${label}.`, { kind: "peer-ui" });
+            return;
+          }
+          if (a.action !== "open") {
+            showToast(a.tip, { kind: "warm" });
+            return;
+          }
+          const res = await window.api.peerOpenWeb(id).catch((e) => ({ ok: false, error: e && e.message || String(e) }));
+          if (!res || res.ok === false) {
+            showToast(`Can't open ${label}'s web UI: ${res && res.error || "no response"}`, { kind: "warm" });
+            return;
+          }
+          if (res.status) peerWebTunnels.set(id, res.status);
+          renderPeers();
+          showToast(
+            a.tokenGated ? `${label}'s web UI needs a token \u2014 connecting over ssh, then you'll get the URL to open with ?token=\u2026` : `Opening ${label}'s web UI \u2014 connecting over ssh\u2026`,
+            { kind: a.tokenGated ? "warm" : "peer-ui" }
+          );
+        }
         const rebuildingBoxes = /* @__PURE__ */ new Set();
         async function rebuildBox(id, label) {
           if (rebuildingBoxes.has(id)) return;
@@ -23027,7 +23156,8 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             const canCreate = peerSupportsCreate(st);
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
-            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
+            const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
+            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
             // identity to show (online + version) — nothing to surface otherwise.
             (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
@@ -23048,6 +23178,11 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             if (webBtn) webBtn.addEventListener("click", (e) => {
               e.stopPropagation();
               openBoxWeb(id, hostLabel);
+            });
+            const webViewBtn = header.querySelector(".peer-webview");
+            if (webViewBtn) webViewBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              togglePeerWeb(id, hostLabel);
             });
             header.querySelector(".peer-restart").addEventListener("click", (e) => {
               e.stopPropagation();
@@ -23646,9 +23781,24 @@ ${detail}` });
           peerTunnels.set(id, status);
           renderPeers();
         });
+        window.api.onPeerWebTunnel((id, status) => {
+          if (status && status.state === "closed") peerWebTunnels.delete(String(id));
+          else peerWebTunnels.set(String(id), status);
+          if (status && status.firstUp && status.url) {
+            const st = peerStatuses.get(String(id));
+            const label = peerDisplayHost(st);
+            const gated = !!(st && st.webHost && st.webHost.tokenGated);
+            showToast(
+              gated ? `${label}'s web UI is tunnelled to ${status.url} \u2014 it requires a token, so open it with ?token=\u2026` : `${label}'s web UI is open at ${status.url}`,
+              { kind: gated ? "warm" : "peer-ui", sticky: gated }
+            );
+          }
+          renderPeers();
+        });
         window.api.onPeerRemoved((id) => {
           peerStatuses.delete(id);
           peerTunnels.delete(id);
+          peerWebTunnels.delete(String(id));
           const soft = disabledPeers.has(String(id));
           for (const [key, entry] of [...sessions.entries()]) {
             if (entry.peer && entry.peer.id === id) removeSession(key, { keepPersisted: soft });
@@ -23683,6 +23833,7 @@ ${detail}` });
           for (const st of statuses || []) {
             peerStatuses.set(st.id, st);
             if (st.tunnel) peerTunnels.set(st.id, st.tunnel);
+            if (st.webTunnel) peerWebTunnels.set(String(st.id), st.webTunnel);
           }
           if (peerStatuses.size) renderPeers();
         }).catch(() => {
@@ -26841,6 +26992,7 @@ ${detail}` });
       });
       var peerStatuses = /* @__PURE__ */ new Map();
       var peerTunnels = /* @__PURE__ */ new Map();
+      var peerWebTunnels = /* @__PURE__ */ new Map();
       var ourAppVersion = null;
       window.api.getVersion().then((v) => {
         ourAppVersion = v || null;
@@ -27589,6 +27741,7 @@ Click for live activity`;
         remeasureReadonlyPeer,
         peerStatuses,
         peerTunnels,
+        peerWebTunnels,
         getOurAppVersion: () => ourAppVersion,
         getDeployLineHandlers: () => deployLineHandlers,
         proxyState,

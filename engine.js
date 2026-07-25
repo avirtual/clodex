@@ -90,6 +90,11 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
   // seam optional so a host (headless) can omit the ones it lacks.
   const openPath = seams.openPath || (() => {});
+  // Open a URL in the operator's browser. Electron: shell.openExternal. Headless:
+  // there is no browser on that box, so the default is a logged no-op rather than
+  // a throw — a peer web view opened from a headless host has nowhere to go, and
+  // saying so beats pretending it worked.
+  const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${url}`); });
   const notifyOS = seams.notifyOS || (() => {});
   const setAppQuitting = seams.setAppQuitting || (() => {});
   const appVersion = seams.appVersion || require('./package.json').version;
@@ -1546,6 +1551,10 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
 
 let peerManager = null;
 let tunnelManager = null;
+// On-demand ssh forwards to a peer's WEB frontend (t30b). Stays null until
+// someone asks to look at one — unlike tunnelManager, which is constructed on
+// the first peer sync because every ssh peer needs its wire tunnel.
+let webTunnelManager = null;
 // Peer wiring — the peerOnlineLog map + the five reconcile/attach helpers moved
 // to peer-wiring.js (M5). peerManager/tunnelManager stay as the lets above and
 // cross as get+set; uiSettings crosses as a getter; scheduleAppMenuRefresh comes
@@ -1554,7 +1563,7 @@ let tunnelManager = null;
 const { createPeerWiring } = require('./peer-wiring');
 const {
   forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
-  syncPeerManager, resolvePeerUrls,
+  syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
 } = createPeerWiring({
   manager, log, SELF_LABEL, scheduleAppMenuRefresh,
   getUiSettings: () => uiSettings,
@@ -1562,6 +1571,12 @@ const {
   setPeerManager: (v) => { peerManager = v; },
   getTunnelManager: () => tunnelManager,
   setTunnelManager: (v) => { tunnelManager = v; },
+  getWebTunnelManager: () => webTunnelManager,
+  setWebTunnelManager: (v) => { webTunnelManager = v; },
+  // The peer web view opens in the operator's browser, which is a HOST concern:
+  // shell.openExternal under Electron, an open-external message to the browser
+  // tab under the web frontend. Same seam the renderer's app:openExternal uses.
+  openExternal: (url) => openExternalSeam(url),
 });
 
 // ---------------------------------------------------------------------------
@@ -1826,6 +1841,9 @@ const toolCache = createToolCache({ whichBin });
     if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
     if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
+    // Close #3 of the web view's four: app shutdown. A forgotten ssh forward to a
+    // remote box must not outlive the app that opened it.
+    if (webTunnelManager) { try { webTunnelManager.stopAll(); } catch {} webTunnelManager = null; }
     manager.killAll();
   }
 
@@ -1843,6 +1861,11 @@ const toolCache = createToolCache({ whichBin });
     getRemoteError: () => remoteError,
     getPeerManager: () => peerManager,
     getTunnelManager: () => tunnelManager,
+    // Peer web view (t30b): the open/close toggle for ipc-handlers, plus the
+    // manager itself so peer:list can hang each peer's web-tunnel status on its
+    // row the way it already does for the wire tunnel.
+    getWebTunnelManager: () => webTunnelManager,
+    openPeerWeb, closePeerWeb,
     // getSandbox(boxId) resolves a managed box instance (default: the shared
     // 'sandbox' box), or null for an unknown id. The manager itself is exposed for
     // list()/iteration (autostart, and the P2 box-list UI).

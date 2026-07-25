@@ -516,6 +516,10 @@ app.whenReady().then(() => {
     log,
     seams: {
       openPath: (p) => shell.openPath(p),
+      // Peer web view (t30b): the engine pops the operator's browser once, on the
+      // first successful web tunnel. Same shell call the app:openExternal handler
+      // makes; the engine never touches electron itself.
+      openExternal: (url) => shell.openExternal(url),
       notifyOS: (opts) => {
         try {
           if (Notification.isSupported()) new Notification(opts).show();
