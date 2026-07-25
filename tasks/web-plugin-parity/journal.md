@@ -128,8 +128,40 @@ rejects).
 - `styles.css`: `#plugins-folder` + `#plugins-folder.hidden { display:none }`
   (the t26 lesson: a class-toggled element with no hidden rule ships visible).
 
-## Next
+## Phase 4 — tests, build, suite
 
-Phase 4 — tests (menubar null rule + insert/remove; appVersion getter; the
-listUserRoot bound: no path argument reachable), `npm run build:web`, commit
-regenerated `web-dist/`, full suite via clodex-test-green, report.
+18 tests added (I had estimated 14 — undercounted the menubar file):
+`menubar.test.js` +8, `plugin-loader.test.js` +4, `plugin-host-engine.test.js`
++4, `api-shim.test.js` +2. **Suite 2547/2547** (baseline 2529).
+`npm run build:web` run, `web-dist/index.html` committed.
+
+All five load-bearing tests proved by REVERTING and failing BY MESSAGE:
+- null rule removed → "zero plugins AND zero problems — the desktop null rule
+  verbatim" (+ the mount-level one)
+- `refreshPluginsTop` made insert-only → "gone again", actual still lists Plugins
+- `listUserRoot(where)` accepting a path → "the configured root, not the one
+  handed in", actual = the decoy dir
+- `readdirSync(..., {recursive:true})` → actual `['demo','inner','manifest.json']`
+- `appVersion()` re-derived from package.json → actual `'4.0.0'` vs the wire's
+  `'9.9.9'` — i.e. the bundle confirming itself, exactly the failure clodex named
+
+### PROCESS ERROR, journaled as a trigger: `git checkout --` as an undo
+
+Mid-proof I reverted a revert with `git checkout -- renderer/web/menubar.js`
+while the FEATURE was still uncommitted. That does not undo the revert — it
+restores the file to HEAD, i.e. master, silently destroying ~110 lines of
+unstaged work. Caught immediately (`grep -c buildPluginsMenu` → 0) and rebuilt
+from the edits still in context, but nothing about the command warned me.
+
+**Trigger — `checkout --` is not undo:** when proving a test by reverting, the
+fix must be COMMITTED first, or the revert must be undone with `git stash`.
+`git checkout --` restores from HEAD, so on uncommitted work it deletes the
+thing you were proving. The tell is doing a destructive restore on a file whose
+work is not yet in a commit. Committed first thereafter, and the remaining
+proofs were safe because HEAD then held the fix.
+
+## Result
+
+Branch `web-plugin-parity` off master `5efa7da` (v4.0.0). Two commits:
+`2c93f32` (all three defects + tests), `8e0557d` (rebuilt `web-dist`).
+Not pushed. Master untouched. `workbench-features` untouched and unmerged.
