@@ -95,11 +95,14 @@ test('gate 5 non-vacuity: with the switch ON the workbench genuinely loads and c
   const results = loader.loadAll(host);
   const wb = results.find((r) => r.id === 'workbench');
   assert.ok(wb && wb.ok && !wb.skipped, 'the workbench engine half loads');
-  assert.deepStrictEqual(host.catalog().map((c) => c.id), ['workbench']);
+  // MEMBERSHIP, not the whole list: this is the control for the OFF case, and
+  // its claim is "the pilot is really there". Pinning the catalog to exactly
+  // ['workbench'] made a second shipped plugin fail a test about the first —
+  // the assertion drifted into counting plugins, which is nobody's invariant.
+  assert.ok(host.catalog().some((c) => c.id === 'workbench'), 'the workbench is in the catalog');
   // Its rows are actually in the dispatch map — the thing the switch removes.
-  const keys = host._dispatchKeys();
+  const keys = host._dispatchKeys().filter((k) => k.startsWith('workbench:'));
   assert.ok(keys.length >= 14, `expected the migrated row set, got ${keys.length}`);
-  assert.ok(keys.every((k) => k.startsWith('workbench:')), 'every row is the plugin\'s');
 });
 
 // ── Switch OFF: no host at all, and every seam still answers ────────────────
@@ -128,6 +131,17 @@ test('gate 5: the intent catalog is served from the REGISTRY, so core verbs surv
   const { registerIpcHandlers } = require('../ipc-handlers');
   const handlers = new Map();
   registerIpcHandlers(makeIpcDeps(handlers, () => null));
+
+  // The intent registry is a MODULE-LEVEL table, so a sibling test in this file
+  // that really loads the plugins leaves their verbs in it — a plugin shipping a
+  // verb is what exposed that. Clear plugin sources first so this measures the
+  // kill-switch state rather than a neighbour's leftovers. In the real CLODEX_
+  // PLUGINS=0 path no plugin ever loads, so nothing registers in the first
+  // place; the sweep reproduces that starting condition rather than papering
+  // over it, and `unregisterSource` is the same call teardown uses.
+  const { unregisterSource } = require('../intent-registry');
+  for (const id of ['workbench', 'git-branches']) unregisterSource(id);
+
   const rows = await handlers.get('intents:catalog')({});
   assert.ok(rows.length > 5, 'core intent rows are still served with no plugin host');
   assert.ok(rows.every((r) => r.source === 'core'), 'and every row is core\'s');

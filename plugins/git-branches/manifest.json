@@ -1,0 +1,10 @@
+{
+  "id": "git-branches",
+  "name": "Git Branches",
+  "version": "1.0.0",
+  "hostApi": "1",
+  "entry": { "engine": "engine.js", "renderer": "renderer.js" },
+  "style": "style.css",
+  "enabledByDefault": true,
+  "announce": "Shows each local session's current git branch as a badge on its sidebar row, and adds the [agent:branch] intent verb."
+}

@@ -6910,8 +6910,281 @@ body {
     }
   });
 
-  // plugins/workbench/renderer.js
+  // plugins/git-branches/renderer.js
   var require_renderer = __commonJS({
+    "plugins/git-branches/renderer.js"(exports, module) {
+      "use strict";
+      module.exports.activate = (rhost) => {
+        const cache = /* @__PURE__ */ new Map();
+        const seen = /* @__PURE__ */ new Map();
+        const pending = /* @__PURE__ */ new Set();
+        let settings = { refreshSeconds: 10, maxLength: 18 };
+        let flushTimer = null;
+        let pollTimer = null;
+        let relayoutTimer = null;
+        let torn = false;
+        let unroutable = false;
+        const FLUSH_DEBOUNCE_MS = 60;
+        const RELAYOUT_DEBOUNCE_MS = 120;
+        const FORGET_AFTER_MS = 5 * 60 * 1e3;
+        const alive = () => !torn && !unroutable;
+        function truncate(text, max) {
+          const s = String(text == null ? "" : text);
+          if (s.length <= max) return s;
+          return "\u2026" + s.slice(-(max - 1));
+        }
+        function badgeFor(entry) {
+          if (!entry) return null;
+          const max = settings.maxLength;
+          switch (entry.state) {
+            case "ok":
+              return {
+                text: truncate(entry.branch, max),
+                tip: `Git branch: ${entry.branch}`,
+                cls: "gb-branch"
+              };
+            case "unborn":
+              return {
+                text: truncate(entry.branch, max),
+                tip: `Git branch: ${entry.branch} \u2014 no commits yet`,
+                cls: "gb-unborn"
+              };
+            case "detached":
+              return {
+                text: entry.sha ? truncate(entry.sha, max) : "detached",
+                tip: entry.sha ? `Detached HEAD at ${entry.sha}` : "Detached HEAD",
+                cls: "gb-detached"
+              };
+            // Everything else is "this row has no branch to show": not a repo, a
+            // remote session, no working directory, git missing, or an error. A
+            // sidebar row is the wrong place to report any of those — the
+            // [agent:branch] intent gives the full reason on request.
+            default:
+              return null;
+          }
+        }
+        function queueRelayout() {
+          if (!alive() || relayoutTimer !== null) return;
+          relayoutTimer = rhost.setTimeout(() => {
+            relayoutTimer = null;
+            if (!alive()) return;
+            try {
+              rhost.ui.sidebar.requestRelayout();
+            } catch (e) {
+              rhost.log.error("requestRelayout failed", e);
+            }
+          }, RELAYOUT_DEBOUNCE_MS);
+        }
+        function applyResults(results) {
+          let changed = false;
+          for (const name of Object.keys(results || {})) {
+            const next = results[name];
+            if (next && next.state === "gone") {
+              if (cache.delete(name)) changed = true;
+              seen.delete(name);
+              continue;
+            }
+            const prev = cache.get(name);
+            cache.set(name, next);
+            if (!sameBadge(prev, next)) changed = true;
+          }
+          return changed;
+        }
+        function sameBadge(a, b) {
+          const x = badgeFor(a);
+          const y = badgeFor(b);
+          if (!x && !y) return true;
+          if (!x || !y) return false;
+          return x.text === y.text && x.tip === y.tip && x.cls === y.cls;
+        }
+        function applySettings(next) {
+          if (!next || typeof next !== "object") return;
+          const prevRefresh = settings.refreshSeconds;
+          const prevMax = settings.maxLength;
+          settings = {
+            refreshSeconds: Number(next.refreshSeconds) || prevRefresh,
+            maxLength: Number(next.maxLength) || prevMax
+          };
+          if (settings.refreshSeconds !== prevRefresh) startPolling();
+          if (settings.maxLength !== prevMax) queueRelayout();
+        }
+        function checkRoutable(res) {
+          if (res && res.ok === false && res.error === "no such plugin method") {
+            unroutable = true;
+            stopTimers();
+            rhost.log.info("engine half is not routable; stopping badge updates");
+            return false;
+          }
+          return true;
+        }
+        async function fetchNames(names, opts) {
+          if (!alive() || !names.length) return;
+          let res;
+          try {
+            res = await rhost.invoke("branch.getMany", names, opts || {});
+          } catch (e) {
+            rhost.log.error("branch.getMany failed", e);
+            return;
+          }
+          if (!alive()) return;
+          if (!checkRoutable(res)) return;
+          if (!res || res.ok !== true) return;
+          applySettings(res.settings);
+          if (applyResults(res.results)) queueRelayout();
+        }
+        function request(name) {
+          if (!alive() || pending.has(name)) return;
+          pending.add(name);
+          if (flushTimer !== null) return;
+          flushTimer = rhost.setTimeout(() => {
+            flushTimer = null;
+            if (!alive()) return;
+            const names = Array.from(pending);
+            pending.clear();
+            fetchNames(names);
+          }, FLUSH_DEBOUNCE_MS);
+        }
+        function activeNames() {
+          const cutoff = Date.now() - FORGET_AFTER_MS;
+          const names = [];
+          for (const [name, lastSeen] of seen) {
+            if (lastSeen < cutoff) {
+              seen.delete(name);
+              cache.delete(name);
+              continue;
+            }
+            names.push(name);
+          }
+          return names;
+        }
+        function poll() {
+          if (!alive()) return;
+          if (typeof document !== "undefined" && document.hidden) return;
+          fetchNames(activeNames());
+        }
+        function startPolling() {
+          if (pollTimer !== null) {
+            rhost.clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          if (!alive()) return;
+          pollTimer = rhost.setInterval(poll, Math.max(3, settings.refreshSeconds) * 1e3);
+        }
+        function stopTimers() {
+          if (flushTimer !== null) {
+            rhost.clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          if (relayoutTimer !== null) {
+            rhost.clearTimeout(relayoutTimer);
+            relayoutTimer = null;
+          }
+          if (pollTimer !== null) {
+            rhost.clearInterval(pollTimer);
+            pollTimer = null;
+          }
+        }
+        rhost.ui.sidebar.rowBadge({
+          id: "branch",
+          resolve(sessionName, meta) {
+            try {
+              if (typeof sessionName !== "string" || !sessionName) return null;
+              if (meta && meta.type === "remote") return null;
+              seen.set(sessionName, Date.now());
+              const entry = cache.get(sessionName);
+              if (entry === void 0) {
+                request(sessionName);
+                return null;
+              }
+              return badgeFor(entry);
+            } catch (e) {
+              try {
+                rhost.log.error("rowBadge.resolve failed", e);
+              } catch (_) {
+              }
+              return null;
+            }
+          }
+        });
+        const FIELDS = [
+          {
+            key: "refreshSeconds",
+            label: "Refresh interval (seconds)",
+            min: 3,
+            max: 600,
+            def: 10,
+            hint: "How often each window re-checks branches. The engine will not run git more often than this."
+          },
+          {
+            key: "maxLength",
+            label: "Maximum badge length (characters)",
+            min: 4,
+            max: 60,
+            def: 18,
+            hint: "Longer branch names are truncated from the left."
+          }
+        ];
+        rhost.ui.settings.section({
+          id: "prefs",
+          title: "Git Branches",
+          render(bodyEl, values) {
+            const v = values || {};
+            bodyEl.innerHTML = "";
+            for (const f of FIELDS) {
+              const row = document.createElement("div");
+              row.className = "gb-settings-row";
+              const label = document.createElement("label");
+              label.className = "gb-settings-label";
+              label.textContent = f.label;
+              const input = document.createElement("input");
+              input.type = "number";
+              input.min = String(f.min);
+              input.max = String(f.max);
+              input.step = "1";
+              input.className = "gb-settings-input";
+              input.setAttribute("data-gb-key", f.key);
+              input.value = String(Number(v[f.key]) || f.def);
+              const hint = document.createElement("div");
+              hint.className = "gb-settings-hint";
+              hint.textContent = f.hint;
+              label.appendChild(input);
+              row.appendChild(label);
+              row.appendChild(hint);
+              bodyEl.appendChild(row);
+            }
+          },
+          collect(bodyEl) {
+            const patch = {};
+            for (const f of FIELDS) {
+              const el = bodyEl.querySelector(`[data-gb-key="${f.key}"]`);
+              const n = el ? parseInt(el.value, 10) : NaN;
+              patch[f.key] = Number.isFinite(n) ? Math.min(f.max, Math.max(f.min, n)) : f.def;
+            }
+            applySettings(patch);
+            return patch;
+          }
+        });
+        rhost.invoke("settings.get").then((res) => {
+          if (!alive()) return;
+          if (!checkRoutable(res)) return;
+          if (res && res.ok) applySettings(res.values);
+        }).catch((e) => rhost.log.error("settings.get failed", e)).then(() => {
+          if (alive()) startPolling();
+        });
+        startPolling();
+        return () => {
+          torn = true;
+          stopTimers();
+          cache.clear();
+          seen.clear();
+          pending.clear();
+        };
+      };
+    }
+  });
+
+  // plugins/workbench/renderer.js
+  var require_renderer2 = __commonJS({
     "plugins/workbench/renderer.js"(exports, module) {
       "use strict";
       var WORKBENCH_HTML = `
@@ -7528,7 +7801,8 @@ body {
       "use strict";
       var MODULES = {
         // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
-        "workbench": require_renderer()
+        "git-branches": require_renderer(),
+        "workbench": require_renderer2()
         // >>> END BUILD-GENERATED PLUGIN MODULES
       };
       var registry = {
@@ -23538,7 +23812,8 @@ ${detail}` });
               intervals: /* @__PURE__ */ new Set(),
               listeners: [],
               styleEl: null,
-              ownDispose: null
+              ownDispose: null,
+              rhost: null
             });
           }
           return resources.get(pluginId);
@@ -24073,7 +24348,10 @@ ${detail}` });
           });
         }
         function activate(pluginId, mod, { invoke, css } = {}) {
-          if (activated.has(pluginId)) throw new Error(`plugin already activated: ${pluginId}`);
+          if (activated.has(pluginId)) {
+            const prev = resources.get(pluginId);
+            return prev && prev.rhost || null;
+          }
           const r = res(pluginId);
           activated.set(pluginId, mod);
           if (css) {
@@ -24084,6 +24362,7 @@ ${detail}` });
             r.styleEl = st;
           }
           const rhost = buildRhost(pluginId, invoke || (() => Promise.resolve({ ok: false, error: "no transport" })));
+          r.rhost = rhost;
           let own = null;
           try {
             own = mod && typeof mod.activate === "function" ? mod.activate(rhost) : null;
@@ -24196,7 +24475,7 @@ ${detail}` });
   });
 
   // renderer/renderer.js
-  var require_renderer2 = __commonJS({
+  var require_renderer3 = __commonJS({
     "renderer/renderer.js"() {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
@@ -28980,7 +29259,7 @@ ${res.stderr}` : "");
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
     window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
-    require_renderer2();
+    require_renderer3();
     menubar.mount(shim);
   }).catch((err) => {
     console.error("web boot failed", err);

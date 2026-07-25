@@ -33,6 +33,7 @@
 // the enabled set in at build time, would freeze a user setting into an artifact.
 const MODULES = {
   // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
+  "git-branches": require("../../plugins/git-branches/renderer.js"),
   "workbench": require("../../plugins/workbench/renderer.js"),
   // >>> END BUILD-GENERATED PLUGIN MODULES
 };
