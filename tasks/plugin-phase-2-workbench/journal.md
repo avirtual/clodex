@@ -426,7 +426,7 @@ REQUIRED 2. Verify before rebuilding.
 
 ---
 
-## W2 — DONE (pending suite + commit). DOM move into the plugin.
+## W2 — DONE. Commit cd618e1. Suite 2392/2392 (+12 over W1's 2380).
 
 ### What moved
 
@@ -526,3 +526,23 @@ phasing. **Flagged as deviation (g).**
   the workspace-scoped accessor" (asserts `listAll`/`list` are `undefined`).
 - **`test/plugin-host-engine.test.js`** — the two temporary lib entries added to
   the fake deps + one assertion; both marked DELETE-IN-W5 at the site.
+
+### NEXT: W3 — CSS move.
+Extract the wb-*/workbench-* rules from `renderer/styles.css` into
+`plugins/workbench/style.css` (already wired, currently empty; the loader passes
+its TEXT to `pluginBar.activate`). The block is contiguous: `renderer/styles.css`
+:2604 (`#workbench-overlay`) through the grouped `#…hidden { display:none }` rule
+that ends at :2725. Report the EXACT extracted rule count vs the plan's "~23"
+(G6 — the crude grep said 38 top-level heads).
+
+Three things to get right in W3:
+1. `.plugin-overlay` / `.plugin-overlay.hidden` (added in W2, :2604-ish) STAYS
+   core — it is the host's container, not the plugin's interior.
+2. `#workbench-overlay` and `#workbench-overlay.hidden` are now DEAD (no such
+   element exists any more) → delete, don't move.
+3. The other `#…​.hidden` ids in that grouped rule are LIVE — they are the
+   plugin's interior ids, now created by JS rather than shipped in index.html.
+   They must move to style.css. `test/css-hidden-invariant.test.js` scans
+   index.html only, so it will no longer see them at all — the invariant is not
+   violated, but nothing guards them either. Consider whether the plugin's
+   stylesheet wants its own equivalent gate; flag the decision.
