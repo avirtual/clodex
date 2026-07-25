@@ -92,12 +92,15 @@ function buildMenus(ctx) {
         { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
         { label: 'Preferences…', run: () => emit('request-open-preferences') },
-        // T5: the browser's route to the Manage Plugins dialog. The desktop gets
-        // a whole top-level Plugins menu with a live checkbox per plugin; this
-        // bar cannot mirror that, because its top-level labels are a fixed sync
-        // array and the desktop menu's defining property is being ABSENT when
-        // there is nothing to show. One item into the shared dialog keeps the
-        // two frontends at parity on capability without faking that structure.
+        // The browser's ALWAYS-AVAILABLE route to the Manage Plugins dialog.
+        // t28 added the real top-level Plugins menu (buildPluginsMenu below), so
+        // this is no longer the only route — it is kept deliberately as the
+        // fallback for the one case the top-level menu cannot cover: with zero
+        // plugins on disk the menu is absent by design, and removing this item
+        // would leave a fresh install with NO way to reach the dialog whose
+        // "Open Plugins Folder" button is how you install your first plugin.
+        // (The desktop has that hole; it is masked there only because a packaged
+        // build ships plugins/workbench, so the menu is never actually absent.)
         { label: 'Plugins…', run: () => emit('request-open-plugins-dialog') },
         { sep: true },
         { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
@@ -204,6 +207,54 @@ function buildMenus(ctx) {
   ];
 }
 
+// ── The top-level Plugins menu (t28) ───────────────────────────────────────
+// The browser's mirror of app-menus.js:342's buildPluginsMenu, and it reproduces
+// that function's NULL RULE verbatim, because that rule is the whole reason the
+// menu is trustworthy: an empty "Plugins" menu looks like a broken feature
+// rather than an absent one. Null on either of the desktop's two conditions —
+// no host/unreadable status, or zero plugins AND zero problems.
+//
+// Why this is possible at all, since the comment this replaced said it was not:
+// the top-level LABELS are a sync array, but mount() appends them imperatively
+// into a plain div, so a sixth can be inserted once an async status arrives —
+// and removed again when the last plugin goes. The sync-array property was a
+// description of the code, not a constraint of the medium.
+//
+// Takes an already-fetched status rather than fetching, so the null rule is a
+// pure function the tests can walk without a transport.
+function buildPluginsMenu(status, ctx) {
+  if (!status || !status.ok) return null;
+  const plugins = status.plugins || [];
+  const problems = status.problems || [];
+  if (!plugins.length && !problems.length) return null;
+  return {
+    label: 'Plugins',
+    // Re-read on every OPEN, so a checkbox can never show stale enablement —
+    // only the menu's PRESENCE is decided at insert time (and re-decided on the
+    // plugin-state broadcast; see refreshPluginsTop in mount).
+    items: async () => {
+      const st = await ctx.pluginStatus();
+      const ps = (st && st.plugins) || [];
+      const probs = (st && st.problems) || [];
+      const rows = ps.map((p) => ({
+        // No checkbox row type in this bar, so enablement rides the same ●/○
+        // glyph the Theme and Workspace menus already use for current-ness.
+        // Quarantine is a THIRD state and goes in the LABEL for the desktop's
+        // reason: an unticked box would be a lie about the user's choice.
+        label: p.quarantined
+          ? `● ${p.name || p.id} — held back after ${p.failCount || 0} failed launches`
+          : `${p.enabled ? '● ' : '○ '}${p.name || p.id}`,
+        run: () => ctx.setPluginEnabled(p.id, !p.enabled),
+      }));
+      // A directory that looks like a plugin but was refused. No toggle: there
+      // is no id to key one by when the manifest is what is broken.
+      for (const pr of probs) rows.push({ label: `${pr.dir} — not loaded`, disabled: true });
+      rows.push({ sep: true }, { label: 'Manage Plugins…', run: () => ctx.emit('request-open-plugins-dialog') });
+      return rows;
+    },
+  };
+}
+
 function tokenQuery() {
   try {
     const t = new URLSearchParams(location.search).get('token');
@@ -231,13 +282,24 @@ function mount(shim) {
       if (id) nav(id);
     } catch (err) { console.error('menubar newWorkspace', err); }
   };
+  const api = (typeof window !== 'undefined' && window.api) || {};
   const ctx = {
     emit: (ch, ...a) => shim.emit(ch, ...a),
     invoke: (ch, args) => shim.invoke(ch, args),
     nav,
     newWorkspace,
-    api: (typeof window !== 'undefined' && window.api) || {},
+    api,
     getTheme: () => { try { return localStorage.getItem('clodex-theme'); } catch { return null; } },
+    // Plugin state rides the frozen five-row transport (api-contract.js:284-287),
+    // which the browser inherits free — no new wire surface for this menu.
+    pluginStatus: async () => {
+      if (!api.pluginInvoke) return null;
+      try { return await api.pluginInvoke('_host', 'plugins.status'); } catch { return null; }
+    },
+    setPluginEnabled: async (id, on) => {
+      if (!api.pluginSetEnabled) return;
+      try { await api.pluginSetEnabled(id, on); } catch (err) { console.error('menubar setEnabled', id, err); }
+    },
   };
   const menus = buildMenus(ctx);
 
@@ -333,17 +395,46 @@ function mount(shim) {
     }).catch((err) => console.error('menubar items', menu.label, err));
   };
 
-  for (const menu of menus) {
+  const makeTop = (menu) => {
     const top = document.createElement('div');
     top.className = 'clx-top';
     top.textContent = menu.label;
     top.addEventListener('mousedown', (e) => { if (e.preventDefault) e.preventDefault(); openMenu(top, menu); });
     // Hover-follow once a menu is open, matching a native menu bar.
     top.addEventListener('mouseenter', () => { if (state && state.top !== top) openMenu(top, menu); });
-    bar.appendChild(top);
-  }
+    return top;
+  };
+
+  for (const menu of menus) bar.appendChild(makeTop(menu));
 
   (main || document.body).appendChild(bar);
+
+  // ── Plugins: inserted asynchronously, and removed again ────────────────────
+  // The null rule is enforced HERE, on every evaluation, not once at mount: a
+  // plugin removed by a re-scan must take the menu with it, or the bar keeps a
+  // top-level label for a feature that is no longer there. Re-runs on the
+  // engine's plugin-state broadcast — the same signal the renderer's own plugin
+  // teardown listens to — so enable/disable/rescan all reach it by one path.
+  let pluginsTop = null;
+  const refreshPluginsTop = async () => {
+    const menu = buildPluginsMenu(await ctx.pluginStatus(), ctx);
+    if (pluginsTop) { if (state && state.top === pluginsTop) closeAll(); pluginsTop.remove(); pluginsTop = null; }
+    if (!menu) return;
+    pluginsTop = makeTop(menu);
+    // Between View and Window, matching app-menus.js:609. insertBefore rather
+    // than append because the Window menu is built before we know whether there
+    // are plugins at all; falling back to append keeps the menu reachable if the
+    // anchor is ever missing, rather than dropping it silently.
+    const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === 'Window');
+    if (anchor && bar.insertBefore) bar.insertBefore(pluginsTop, anchor);
+    else bar.appendChild(pluginsTop);
+  };
+  refreshPluginsTop();
+  if (api.onPluginEvent) {
+    api.onPluginEvent((pluginId, topic) => {
+      if (pluginId === '_host' && topic === 'plugin-state') refreshPluginsTop();
+    });
+  }
 }
 
-module.exports = { mount, buildMenus, BAR_H, THEMES };
+module.exports = { mount, buildMenus, buildPluginsMenu, BAR_H, THEMES };

@@ -2088,6 +2088,12 @@ html, body {
    the dialog does, so a held-back plugin reads as a state, not as decoration. */
 .plugin-row-note.warn { color: var(--warn); opacity: 1; }
 .plugin-row button { align-self: center; }
+/* The browser frontend's plugins-folder panel (t28) — the path on the HOST plus
+   a one-level listing, shown where Electron reveals in Finder. Hidden until the
+   button fills it, and it needs its own .hidden rule for the usual reason: the
+   element is toggled by class and would otherwise ship always-visible. */
+#plugins-folder { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); word-break: break-all; }
+#plugins-folder.hidden { display: none; }
 /* A plugin's OWN section (§2.5) is appended by the host after core's; it uses an
    h3 where core's sections use h4, so it is normalized here rather than in every
    plugin. */
@@ -3448,3 +3454,16 @@ html, body {
 #main.has-web-menubar #terminal-container { top: 30px; }
 #main.has-web-menubar #peer-bar { top: 30px; }
 #main.has-web-menubar.has-peer-bar #terminal-container { top: 56px; } /* 30 + 26 */
+
+/* Browser frontend only: the engine's version line, appended to the sidebar
+   footer by renderer/web/boot.js (t28). The Electron app never creates this
+   element — it has the About panel — so no rule here can affect its layout.
+   Quiet by design: it is a fact an operator goes looking for, not a banner. */
+#sidebar-version {
+  padding: 4px 8px 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: .6;
+  text-align: center;
+  user-select: text; /* a version you cannot copy into a bug report is half useless */
+}

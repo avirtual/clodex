@@ -3243,6 +3243,15 @@ body {
 .plugin-row button {
   align-self: center;
 }
+#plugins-folder {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  word-break: break-all;
+}
+#plugins-folder.hidden {
+  display: none;
+}
 #prefs-dialog [data-plugin-section] h3 {
   margin: 12px 0 4px;
   font-size: 13px;
@@ -4735,6 +4744,14 @@ body {
 #main.has-web-menubar.has-peer-bar #terminal-container {
   top: 56px;
 }
+#sidebar-version {
+  padding: 4px 8px 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: .6;
+  text-align: center;
+  user-select: text;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -5732,6 +5749,11 @@ body {
       <h3>Plugins</h3>
       <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
       <div id="plugins-list"></div>
+      <!-- The browser frontend's substitute for revealing the folder in Finder:
+           host and viewer are different machines there, so a reveal would open
+           the WRONG machine's folder. Filled by renderer.js from the engine's
+           read-only listing; never created in Electron, which reveals instead. -->
+      <div id="plugins-folder" class="hidden"></div>
       <div class="dialog-actions">
         <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
         <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
@@ -6556,7 +6578,10 @@ body {
       function emit(channel, ...args) {
         dispatchEvent(channel, args);
       }
-      module.exports = { start, emit, toast, invoke, rewriteExternalUrl };
+      function appVersion() {
+        return welcomeInfo && welcomeInfo.appVersion || null;
+      }
+      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, appVersion };
     }
   });
 
@@ -6633,12 +6658,15 @@ body {
               { sep: true },
               { label: "Rename Workspace\u2026", run: () => emit("request-rename-workspace") },
               { label: "Preferences\u2026", run: () => emit("request-open-preferences") },
-              // T5: the browser's route to the Manage Plugins dialog. The desktop gets
-              // a whole top-level Plugins menu with a live checkbox per plugin; this
-              // bar cannot mirror that, because its top-level labels are a fixed sync
-              // array and the desktop menu's defining property is being ABSENT when
-              // there is nothing to show. One item into the shared dialog keeps the
-              // two frontends at parity on capability without faking that structure.
+              // The browser's ALWAYS-AVAILABLE route to the Manage Plugins dialog.
+              // t28 added the real top-level Plugins menu (buildPluginsMenu below), so
+              // this is no longer the only route — it is kept deliberately as the
+              // fallback for the one case the top-level menu cannot cover: with zero
+              // plugins on disk the menu is absent by design, and removing this item
+              // would leave a fresh install with NO way to reach the dialog whose
+              // "Open Plugins Folder" button is how you install your first plugin.
+              // (The desktop has that hole; it is masked there only because a packaged
+              // build ships plugins/workbench, so the menu is never actually absent.)
               { label: "Plugins\u2026", run: () => emit("request-open-plugins-dialog") },
               { sep: true },
               { label: "Restart Clodex\u2026", run: () => confirmRestart(invoke) }
@@ -6742,6 +6770,34 @@ body {
           }
         ];
       }
+      function buildPluginsMenu(status, ctx) {
+        if (!status || !status.ok) return null;
+        const plugins = status.plugins || [];
+        const problems = status.problems || [];
+        if (!plugins.length && !problems.length) return null;
+        return {
+          label: "Plugins",
+          // Re-read on every OPEN, so a checkbox can never show stale enablement —
+          // only the menu's PRESENCE is decided at insert time (and re-decided on the
+          // plugin-state broadcast; see refreshPluginsTop in mount).
+          items: async () => {
+            const st = await ctx.pluginStatus();
+            const ps = st && st.plugins || [];
+            const probs = st && st.problems || [];
+            const rows = ps.map((p) => ({
+              // No checkbox row type in this bar, so enablement rides the same ●/○
+              // glyph the Theme and Workspace menus already use for current-ness.
+              // Quarantine is a THIRD state and goes in the LABEL for the desktop's
+              // reason: an unticked box would be a lie about the user's choice.
+              label: p.quarantined ? `\u25CF ${p.name || p.id} \u2014 held back after ${p.failCount || 0} failed launches` : `${p.enabled ? "\u25CF " : "\u25CB "}${p.name || p.id}`,
+              run: () => ctx.setPluginEnabled(p.id, !p.enabled)
+            }));
+            for (const pr of probs) rows.push({ label: `${pr.dir} \u2014 not loaded`, disabled: true });
+            rows.push({ sep: true }, { label: "Manage Plugins\u2026", run: () => ctx.emit("request-open-plugins-dialog") });
+            return rows;
+          }
+        };
+      }
       function tokenQuery() {
         try {
           const t = new URLSearchParams(location.search).get("token");
@@ -6762,24 +6818,43 @@ body {
         };
         const newWorkspace = async () => {
           try {
-            const api = typeof window !== "undefined" && window.api || {};
-            const id = api.newWorkspace ? await api.newWorkspace() : null;
+            const api2 = typeof window !== "undefined" && window.api || {};
+            const id = api2.newWorkspace ? await api2.newWorkspace() : null;
             if (id) nav(id);
           } catch (err) {
             console.error("menubar newWorkspace", err);
           }
         };
+        const api = typeof window !== "undefined" && window.api || {};
         const ctx = {
           emit: (ch, ...a) => shim2.emit(ch, ...a),
           invoke: (ch, args) => shim2.invoke(ch, args),
           nav,
           newWorkspace,
-          api: typeof window !== "undefined" && window.api || {},
+          api,
           getTheme: () => {
             try {
               return localStorage.getItem("clodex-theme");
             } catch {
               return null;
+            }
+          },
+          // Plugin state rides the frozen five-row transport (api-contract.js:284-287),
+          // which the browser inherits free — no new wire surface for this menu.
+          pluginStatus: async () => {
+            if (!api.pluginInvoke) return null;
+            try {
+              return await api.pluginInvoke("_host", "plugins.status");
+            } catch {
+              return null;
+            }
+          },
+          setPluginEnabled: async (id, on) => {
+            if (!api.pluginSetEnabled) return;
+            try {
+              await api.pluginSetEnabled(id, on);
+            } catch (err) {
+              console.error("menubar setEnabled", id, err);
             }
           }
         };
@@ -6899,7 +6974,7 @@ body {
             clampX(drop);
           }).catch((err) => console.error("menubar items", menu.label, err));
         };
-        for (const menu of menus) {
+        const makeTop = (menu) => {
           const top = document.createElement("div");
           top.className = "clx-top";
           top.textContent = menu.label;
@@ -6910,11 +6985,32 @@ body {
           top.addEventListener("mouseenter", () => {
             if (state && state.top !== top) openMenu(top, menu);
           });
-          bar.appendChild(top);
-        }
+          return top;
+        };
+        for (const menu of menus) bar.appendChild(makeTop(menu));
         (main || document.body).appendChild(bar);
+        let pluginsTop = null;
+        const refreshPluginsTop = async () => {
+          const menu = buildPluginsMenu(await ctx.pluginStatus(), ctx);
+          if (pluginsTop) {
+            if (state && state.top === pluginsTop) closeAll();
+            pluginsTop.remove();
+            pluginsTop = null;
+          }
+          if (!menu) return;
+          pluginsTop = makeTop(menu);
+          const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === "Window");
+          if (anchor && bar.insertBefore) bar.insertBefore(pluginsTop, anchor);
+          else bar.appendChild(pluginsTop);
+        };
+        refreshPluginsTop();
+        if (api.onPluginEvent) {
+          api.onPluginEvent((pluginId, topic) => {
+            if (pluginId === "_host" && topic === "plugin-state") refreshPluginsTop();
+          });
+        }
       }
-      module.exports = { mount, buildMenus, BAR_H, THEMES };
+      module.exports = { mount, buildMenus, buildPluginsMenu, BAR_H, THEMES };
     }
   });
 
@@ -28647,7 +28743,41 @@ ${res.stderr}` : "");
           pluginsList.appendChild(row);
         }
       }
+      var pluginsFolderPanel = document.getElementById("plugins-folder");
+      async function showPluginsFolderListing() {
+        if (!pluginsFolderPanel) return;
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.listUserRoot");
+        } catch {
+        }
+        if (!r || !r.ok || !r.dir) {
+          showToast(`Could not locate the plugins folder: ${r && r.error || "unknown error"}`, { kind: "error" });
+          return;
+        }
+        pluginsFolderPanel.innerHTML = "";
+        const head = document.createElement("div");
+        head.className = "plugin-row-note";
+        head.textContent = `Plugins folder on the Clodex host: ${r.dir}`;
+        pluginsFolderPanel.appendChild(head);
+        const body = document.createElement("div");
+        body.className = "plugin-row-note";
+        if (r.entries === null) {
+          body.classList.add("warn");
+          body.textContent = `Could not read it: ${r.error || "unknown error"}`;
+        } else if (!r.entries.length) {
+          body.textContent = "Empty \u2014 drop a plugin directory here on the host, then Re-scan.";
+        } else {
+          body.textContent = r.entries.map((e) => e.isDir ? `${e.name}/` : e.name).join("   ");
+        }
+        pluginsFolderPanel.appendChild(body);
+        pluginsFolderPanel.classList.remove("hidden");
+      }
       document.getElementById("btn-plugins-reveal").addEventListener("click", async () => {
+        if (window.__CLODEX_WEB__) {
+          await showPluginsFolderListing();
+          return;
+        }
         let r = null;
         try {
           r = await window.api.pluginInvoke("_host", "plugins.userRoot");
@@ -28662,6 +28792,13 @@ ${res.stderr}` : "");
         } catch {
         }
       });
+      if (window.__CLODEX_WEB__) {
+        const revealBtn = document.getElementById("btn-plugins-reveal");
+        if (revealBtn) {
+          revealBtn.textContent = "Show Plugins Folder";
+          revealBtn.title = "Show the plugins folder on the machine running Clodex, and what is in it \u2014 a browser cannot open the host's file manager";
+        }
+      }
       document.getElementById("btn-plugins-rescan").addEventListener("click", async () => {
         const btn = document.getElementById("btn-plugins-rescan");
         btn.disabled = true;
@@ -29493,11 +29630,22 @@ ${res.stderr}` : "");
   var osShim = require_os_shim();
   var menubar = require_menubar();
   var pluginRegistry = require_plugin_registry();
+  function mountVersion() {
+    const footer = document.getElementById("sidebar-footer");
+    const v = shim.appVersion();
+    if (!footer || !v) return;
+    const el = document.createElement("div");
+    el.id = "sidebar-version";
+    el.textContent = `Clodex v${v}`;
+    el.title = "Version of the Clodex engine serving this page";
+    footer.appendChild(el);
+  }
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
     window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
     require_renderer3();
     menubar.mount(shim);
+    mountVersion();
   }).catch((err) => {
     console.error("web boot failed", err);
   });
