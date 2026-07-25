@@ -62,7 +62,7 @@ function stubLocalLeaves(calls) {
   };
   patch(gitScm, 'scm', ['status', 'fileDiff', 'stage', 'unstage', 'discard',
     'commit', 'branches', 'checkout', 'remoteOp']);
-  patch(fsExplorer, 'fs', ['listDir', 'readFile', 'writeFile']);
+  patch(fsExplorer, 'fs', ['listDir', 'readFile', 'writeFile', 'findFiles']);
   return () => { for (const [mod, m, fn] of saved) mod[m] = fn; };
 }
 
@@ -101,11 +101,13 @@ function boot() {
   return { engine, calls, cleanup };
 }
 
-// The fourteen rows that replace core's fourteen window.api rows, plus wt.create.
+// The fourteen rows that replace core's fourteen window.api rows, plus wt.create,
+// plus the locator row (fs.find) and worktree selection (wt.select/apply/selected).
 const NAME_SCOPED_ROWS = [
   ['fs.list', ['seat', 'sub']],
   ['fs.read', ['seat', 'a.txt']],
   ['fs.write', ['seat', 'a.txt', 'body']],
+  ['fs.find', ['seat', 'a', {}]],
   ['scm.status', ['seat']],
   ['scm.diff', ['seat', 'a.txt', {}]],
   ['scm.stage', ['seat', ['a.txt']]],
@@ -121,11 +123,12 @@ const NAME_SCOPED_ROWS = [
 test('the plugin registers exactly the migrated row set, namespaced by plugin id', () => {
   const { engine, cleanup } = boot();
   assert.deepEqual(engine._dispatchKeys().sort(), [
-    'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.write',
+    'workbench:fs.find', 'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.write',
     'workbench:scm.branches', 'workbench:scm.checkout', 'workbench:scm.commit',
     'workbench:scm.diff', 'workbench:scm.discard', 'workbench:scm.remote',
     'workbench:scm.stage', 'workbench:scm.status', 'workbench:scm.unstage',
-    'workbench:wt.create', 'workbench:wt.list', 'workbench:wt.remove',
+    'workbench:wt.apply', 'workbench:wt.create', 'workbench:wt.list',
+    'workbench:wt.remove', 'workbench:wt.select', 'workbench:wt.selected',
   ]);
   cleanup();
 });
@@ -311,4 +314,85 @@ test('W9 gate 2: the dropdown itself never offers a peer session', () => {
   const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(code, /listWorkspace\(/, 'the dropdown uses the workspace-scoped accessor');
   assert.ok(!/listAll\(/.test(code), 'and never the global one');
+});
+
+// ── Worktree selection: the active root every fs./scm. row follows ──────────
+// The selection is load-bearing (scm.commit/push act on it), so these pin the
+// three properties that make it safe: it moves ALL rows together, it only
+// accepts the session's own worktrees, and it drops rather than errors when the
+// selected tree disappears.
+
+test('wt.select refuses a path that is not one of THIS session\'s worktrees', async () => {
+  const { engine, cleanup } = boot();
+  // The stubbed listWorktrees returns { ok:true, from, args } — no `worktrees`
+  // array — so nothing can match, which is exactly the refusal path.
+  const res = await engine.dispatch('workbench', 'wt.select', ['seat', '/somewhere/else']);
+  assert.strictEqual(res.ok, false, 'an arbitrary directory is not selectable');
+  cleanup();
+});
+
+test('wt.select with null clears back to the session cwd', async () => {
+  const { engine, cleanup } = boot();
+  const res = await engine.dispatch('workbench', 'wt.select', ['seat', null]);
+  assert.deepStrictEqual(res, { ok: true, root: null });
+  cleanup();
+});
+
+test('wt.apply/selected round-trip: the selection is per SESSION and in memory', async () => {
+  const { engine, cleanup } = boot();
+  // Applying a root is deliberately separate from validating it, so this test
+  // can set one without a real git repo behind it.
+  await engine.dispatch('workbench', 'wt.apply', ['seat', '/repo/seat']);
+  const mine = await engine.dispatch('workbench', 'wt.selected', ['seat']);
+  assert.strictEqual(mine.ok, true);
+  assert.strictEqual(mine.cwd, '/repo/seat', 'the session cwd is reported alongside');
+
+  // A DIFFERENT session must never see it.
+  const other = await engine.dispatch('workbench', 'wt.selected', ['bare']);
+  assert.strictEqual(other.ok, false, 'a session with no cwd still refuses, unchanged');
+  cleanup();
+});
+
+test('a selected root that no longer exists DROPS to the session cwd, it does not error', async () => {
+  const { engine, calls, cleanup } = boot();
+  await engine.dispatch('workbench', 'wt.apply', ['seat', '/definitely/not/here']);
+  const sel = await engine.dispatch('workbench', 'wt.selected', ['seat']);
+  assert.strictEqual(sel.ok, true, 'reporting the root never fails');
+  assert.strictEqual(sel.root, '/repo/seat', 'it falls back to the session cwd');
+  assert.strictEqual(sel.selected, null, 'and reports no active selection');
+  assert.strictEqual(sel.dropped, true, 'while telling the renderer the drop happened');
+
+  // And the fs rows go back to the cwd rather than refusing.
+  calls.length = 0;
+  const res = await engine.dispatch('workbench', 'fs.list', ['seat', '']);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(calls[0].args[0], '/repo/seat', 'the row ran against the session cwd');
+  cleanup();
+});
+
+test('the selection moves EVERY scoped row together — Files and Source cannot diverge', async () => {
+  const { engine, calls, cleanup } = boot();
+  // Point at a directory that really exists so use-time validation keeps it.
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-'));
+  await engine.dispatch('workbench', 'wt.apply', ['seat', real]);
+  try {
+    for (const [method, args] of NAME_SCOPED_ROWS) {
+      calls.length = 0;
+      await engine.dispatch('workbench', method, args);
+      assert.strictEqual(calls[0].args[0], real,
+        `${method} must follow the selected worktree, not the session cwd`);
+    }
+  } finally {
+    fs.rmSync(real, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('the peer refusal is untouched by selection — fsScope still runs first', async () => {
+  const { engine, cleanup } = boot();
+  await engine.dispatch('workbench', 'wt.apply', ['far', '/anything']);
+  const res = await engine.dispatch('workbench', 'fs.list', ['far', '']);
+  assert.deepStrictEqual(res, { ok: false, error: 'remote' },
+    'a selection cannot smuggle a peer session past MUST-FIX 5');
+  cleanup();
 });

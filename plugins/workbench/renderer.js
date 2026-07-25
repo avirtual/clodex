@@ -41,6 +41,8 @@ const WORKBENCH_HTML = `
     </div>
     <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
   </div>
+  <div id="wb-root-indicator" class="wb-root-indicator hidden" role="button" tabindex="0"
+       data-tip="Working in a selected worktree — click to return to the session directory"></div>
   <div class="workbench-body">
     <div class="workbench-left">
       <!-- Files: lazy tree -->
@@ -49,6 +51,8 @@ const WORKBENCH_HTML = `
           <span id="wb-files-scope" class="workbench-scope"></span>
           <button id="wb-files-refresh" type="button">Refresh</button>
         </div>
+        <input type="text" id="wb-locate" class="sidebar-search wb-locate" placeholder="Go to file… (type to filter)" spellcheck="false" autocomplete="off">
+        <div id="wb-locate-results" class="wb-locate-results hidden"></div>
         <div id="wb-tree" class="wb-tree"></div>
         <div id="wb-files-empty" class="hint hidden">No local session selected, or its directory isn't readable.</div>
       </div>
@@ -189,13 +193,76 @@ module.exports.activate = (rhost) => {
       return s ? s.cwd : '';
     };
 
+    // =======================================================================
+    // Selected worktree — the ACTIVE ROOT indicator
+    // =======================================================================
+    // The engine owns the selection (per session, in memory). This half only
+    // reflects it, and never caches it: every open/refresh re-asks, so a
+    // selection that died under us cannot leave a lying indicator on screen.
+    //
+    // Why the indicator is part of the feature and not decoration: because all
+    // twelve fs./scm. rows follow the selection, `Commit` and `push` act on the
+    // selected worktree. The failure this prevents is committing into a tree you
+    // forgot you had selected.
+    const rootIndicator = $('wb-root-indicator');
+    let activeRoot = null; // absolute path when a worktree is selected, else null
+
+    async function refreshRootIndicator() {
+      const name = activeName();
+      if (!name) { activeRoot = null; rootIndicator.classList.add('hidden'); return; }
+      const res = await h.invoke('wt.selected', name);
+      if (!res || !res.ok) { activeRoot = null; rootIndicator.classList.add('hidden'); return; }
+      if (res.dropped) toast('Selected worktree is gone — back to the session directory.');
+      activeRoot = res.selected;
+      if (!activeRoot) { rootIndicator.classList.add('hidden'); rootIndicator.textContent = ''; return; }
+      const leaf = activeRoot.split('/').filter(Boolean).pop() || activeRoot;
+      rootIndicator.innerHTML = `<span class="wb-root-label">worktree</span> ${esc(leaf)}`
+        + `<span class="wb-root-reset">✕ session dir</span>`;
+      rootIndicator.title = activeRoot;
+      rootIndicator.classList.remove('hidden');
+    }
+
+    // Clear back to the session cwd. Also how you leave a tree you no longer want.
+    async function clearWorktree() {
+      const name = activeName(); if (!name) return;
+      if (!confirmDiscardEdit()) return;
+      await h.invoke('wt.apply', name, null);
+      resetEditor();
+      await refreshRootIndicator();
+      refreshTab();
+    }
+    rootIndicator.addEventListener('click', clearWorktree);
+    rootIndicator.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clearWorktree(); }
+    });
+
+    // Select a worktree as the active root. The engine validates the path
+    // against `wt.list` for this session, so an arbitrary directory is refused.
+    async function selectWorktree(name, worktreePath) {
+      if (!confirmDiscardEdit()) return;
+      const chk = await h.invoke('wt.select', name, worktreePath);
+      if (!chk || !chk.ok) { toast(`Can't use that worktree: ${(chk && chk.error) || 'unknown'}`); return; }
+      // Selecting the MAIN worktree is how you get back to it explicitly; it is
+      // still a real selection, not a clear, so the indicator stays truthful
+      // when the session cwd is itself a non-main worktree.
+      await h.invoke('wt.apply', name, chk.root);
+      resetEditor();
+      expExpanded.clear();
+      await refreshRootIndicator();
+      refreshTab();
+    }
+
     sessionSel.addEventListener('change', () => {
       // Confirm before dropping unsaved edits, same as leaving the Files tab.
       // Restore the select to the still-current scope if the user cancels.
       if (!confirmDiscardEdit()) { sessionSel.value = selName || ''; return; }
       selName = sessionSel.value || null;
       resetEditor();
-      refreshTab();
+      // Each session carries its OWN worktree selection (engine-side, keyed by
+      // name), so the indicator must re-resolve before the tab renders.
+      locate.value = '';
+      hideLocate();
+      refreshRootIndicator().then(refreshTab);
     });
 
     // =======================================================================
@@ -307,6 +374,81 @@ module.exports.activate = (rhost) => {
     const filesScope = $('wb-files-scope');
     const filesEmpty = $('wb-files-empty');
     const expExpanded = new Set();
+
+    // =======================================================================
+    // File locator — find-as-you-type over the active root
+    // =======================================================================
+    // Debounced, never per-keystroke: the walk is bounded engine-side
+    // (fs-explorer.js MAX_VISIT / MAX_DEPTH / LOCATOR_SKIP) but a keystroke-rate
+    // round trip would still be wasteful. Results replace the tree while the
+    // field has text and restore it when cleared, so the tree is never lost.
+    const locate = $('wb-locate');
+    const locateResults = $('wb-locate-results');
+    const LOCATE_DEBOUNCE_MS = 120;
+    const LOCATE_CAP = 50;
+    let locateTimer = null;
+    let locateSeq = 0; // drop out-of-order responses
+
+    function hideLocate() {
+      locateResults.classList.add('hidden');
+      locateResults.innerHTML = '';
+      tree.classList.remove('hidden');
+    }
+
+    async function runLocate() {
+      const name = activeName();
+      const q = locate.value.trim();
+      if (!name || !q) { hideLocate(); return; }
+      const seq = ++locateSeq;
+      const res = await h.invoke('fs.find', name, q, { cap: LOCATE_CAP });
+      if (seq !== locateSeq) return; // a newer query already went out
+      tree.classList.add('hidden');
+      locateResults.classList.remove('hidden');
+      locateResults.innerHTML = '';
+      if (!res || !res.ok) {
+        locateResults.innerHTML = `<div class="hint">${esc((res && res.error) || 'Search failed')}</div>`;
+        return;
+      }
+      if (!res.matches.length) {
+        locateResults.innerHTML = '<div class="hint">No matching files.</div>';
+        return;
+      }
+      for (const m of res.matches) {
+        const row = document.createElement('div');
+        row.className = 'explorer-row wb-locate-row';
+        row.dataset.rel = m.rel;
+        const slash = m.rel.lastIndexOf('/');
+        row.innerHTML = `<span class="wb-locate-name">${esc(m.name)}</span>`
+          + (slash > 0 ? `<span class="wb-locate-dir">${esc(m.rel.slice(0, slash))}</span>` : '');
+        row.addEventListener('click', () => openInEditor(name, m.rel));
+        locateResults.appendChild(row);
+      }
+      if (res.truncated) {
+        const more = document.createElement('div');
+        more.className = 'hint';
+        more.textContent = `Showing the first ${res.matches.length} — narrow the search for more.`;
+        locateResults.appendChild(more);
+      }
+    }
+
+    locate.addEventListener('input', () => {
+      clearTimeout(locateTimer);
+      locateTimer = setTimeout(runLocate, LOCATE_DEBOUNCE_MS);
+    });
+    locate.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && locate.value) {
+        // Escape clears the search first; the host's own Escape closes the
+        // overlay only once the field is empty.
+        e.stopPropagation();
+        locate.value = '';
+        hideLocate();
+        return;
+      }
+      if (e.key === 'Enter') {
+        const first = locateResults.querySelector('.wb-locate-row');
+        if (first) { const name = activeName(); if (name) openInEditor(name, first.dataset.rel); }
+      }
+    });
 
     async function renderExplorer() {
       const name = activeName();
@@ -534,6 +676,14 @@ module.exports.activate = (rhost) => {
     function worktreeRow(name, w) {
       const row = document.createElement('div');
       row.className = 'worktree-item';
+      // Clicking the row SELECTS this worktree as the active root for every
+      // Files/Source operation. The main worktree is selectable too — that is
+      // how you get back to it.
+      if (w.path === activeRoot) row.classList.add('selected');
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return; // Open/Remove keep their own jobs
+        selectWorktree(name, w.path);
+      });
       const meta = document.createElement('div');
       meta.className = 'worktree-meta';
       meta.innerHTML = `<div class="worktree-branch">${esc(w.branch || (w.detached ? `(detached ${w.head})` : '(no branch)'))}${w.isMain ? ' <span class="worktree-main-badge">main</span>' : ''}</div>`
@@ -551,6 +701,10 @@ module.exports.activate = (rhost) => {
           if (!confirm(`Remove worktree at ${w.path}? (git worktree remove --force)`)) return;
           const r = await h.invoke('wt.remove', w.path);
           if (!r || !r.ok) { toast(`Remove failed: ${(r && r.error) || 'unknown'}`); return; }
+          // Removing the tree you were working in: the engine's use-time
+          // re-validation would drop it anyway, but do it here too so the
+          // indicator updates now rather than on the next operation.
+          if (w.path === activeRoot) { await h.invoke('wt.apply', name, null); await refreshRootIndicator(); }
           renderWorktrees();
         });
         row.appendChild(rm);
@@ -615,6 +769,11 @@ module.exports.activate = (rhost) => {
       await fetchSessions();
       populateSessions();
       resetEditor();
+      locate.value = '';
+      hideLocate();
+      // Before the first render, so the tab paints against the right root and
+      // the indicator is truthful from the very first frame.
+      await refreshRootIndicator();
       recenter();
       setTab(tab || 'files');
     };
