@@ -1032,3 +1032,65 @@ try/catches per renderer half (W1 decision 8, "per-plugin failure isolation at
 three levels"). So REQUIRED 1 is largely present; the real new work is
 (a) RECORDING the failure rather than only logging it, (b) surfacing it in the
 §2.5 settings section, and (c) all of REQUIRED 2 (the quarantine set + counter).
+
+---
+
+## t4 PIECE 1 — fail-safe / quarantine. DONE. Commit e0dd361. Suite 2410 (+14).
+
+### VERIFIED FIRST, as the pickup note said
+REQUIRED 1 was indeed largely present: `plugin-loader.js:loadOne` already wraps
+`require` + `pluginHost.register` (i.e. `activate(host)`) in a try/catch,
+`discover()` already refuses a malformed manifest, and
+`renderer.js:loadPluginRenderers` already try/caught per renderer half. So the
+new work was exactly what the note predicted — RECORD, SURFACE, and all of
+REQUIRED 2.
+
+### What landed
+- **`plugin-loader.js`** — the failure record + quarantine. `_failures` key
+  under `uiSettings.plugins` (leading underscore ⇒ collision-proof, since
+  PLUGIN_ID_RE forbids one; unlike `enabled`, which is a legal id and so has to
+  be reserved explicitly). `recordFailure` / `clearFailures` / `isQuarantined`;
+  `loadAll` skips a quarantined plugin with `skipped: 'quarantined'`;
+  `activateById` clears the counter first, so it doubles as Retry. New
+  `status()` (every plugin ON DISK + refused directories) and
+  `noteRendererActivation(id, ok, error)`.
+- **`plugin-host-engine.js`** — two new `_host` methods, `plugins.status` and
+  `renderer.report`; `announceState()` broadcasting `plugin-state` on the
+  `_host` pseudo-id from both branches of `setEnabled`.
+- **`renderer/renderer.js`** — `activatePluginRenderer(id)` split out of
+  `loadPluginRenderers` (so the state hint can call it); reports outcome BOTH
+  ways; `requirePluginRenderer()` seam (the W8 registry hook, see below); an
+  `onPluginEvent` subscriber that disposes/activates this window's half; and
+  `renderPluginsSection()` — core's own §2.5 Plugins section.
+- **`renderer/index.html` + `styles.css`** — `#prefs-plugins-section` (hidden by
+  its own `#id.hidden` rule — no generic `.hidden` in this project) + the
+  `.plugin-row` styles.
+- **Tests** — 9 in plugin-loader.test.js, 5 in plugin-host-engine.test.js.
+
+### DEVIATION (n) — the renderer quarantine rule
+Only the FIRST renderer activation report per app run counts. A renderer half
+activates once per BrowserWindow, so counting every activation would quarantine
+a three-window user on their FIRST bad launch (3 strikes, threshold 2). A
+strike is therefore per LAUNCH, not per window: "consistent failure across
+activations" reads as "it failed the first time this launch tried it". The
+alternative — tally per window, require all of them to fail — is more correct
+and much fiddlier at the edges (windows open and close mid-run); the ticket
+explicitly says prefer a simple rule with a clear message. Flagged as asked.
+
+### Second call inside piece 1 (not a deviation, an unasked-for necessity)
+W7 says "disable removes … in EVERY window", which is unimplementable from the
+engine alone: `deactivate(id)` tears down the ENGINE half, and each renderer
+half lives in a BrowserWindow that only that window can dispose. So `setEnabled`
+now emits `plugin-state` on the existing `plugin-event` row and each window acts
+on it. No new api-contract row (§1 freezes the transport at five) — it rides the
+`_host` pseudo-id, the same way `renderer.info` already does.
+
+### NEXT: W7 (enable-by-default) — mostly VERIFY, not build.
+`plugins/workbench/manifest.json` already has `enabledByDefault: true` and
+`loader.isEnabled` already falls back to it, with a test pinning it
+(plugin-loader.test.js "the pilot ships enabled (W7)"). The real W7 work is the
+DISABLE path, which piece 1 just built. So W7 = prove the disable path end to
+end (renderer-side test: dispose removes footer button, overlay, style element,
+and zeroes _liveResources), confirm the packaged-app plugins/ dir resolves
+(GAP G8 — `__dirname` inside app.asar), and check `files` in package.json's
+build config actually ships plugins/.
