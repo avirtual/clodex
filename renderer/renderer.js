@@ -2980,34 +2980,70 @@ const pluginBar = initPluginHost({
 // Pull, not push: a window that opens later gets the same catalog, and a plugin
 // that arrives while this window is open is picked up by the plugin-state event
 // rather than by any buffered delta (§3.3 law 2 — events are unbuffered hints).
+async function activatePluginRenderer(id) {
+  let reported = false;
+  try {
+    const info = await window.api.pluginInvoke('_host', 'renderer.info', [id]);
+    if (!info || !info.ok || !info.rendererPath) return false;
+    const mod = requirePluginRenderer(info.rendererPath, id);
+    if (!mod) return false;
+    pluginBar.activate(id, mod, {
+      invoke: (pid, method, args) => window.api.pluginInvoke(pid, method, args),
+      css: info.css,
+    });
+    reported = true;
+    // Report the OUTCOME, not just the failure: a success is what clears a
+    // stale strike, and "consecutive" only means anything if success counts.
+    try { await window.api.pluginInvoke('_host', 'renderer.report', [id, true]); } catch {}
+    return true;
+  } catch (e) {
+    // One plugin's renderer half failing must not cost the others theirs, and
+    // must never take the window's own bootstrap down with it. The engine-side
+    // counter decides quarantine; this window only reports what it saw.
+    console.error(`[plugin:${id}] renderer activation failed`, e);
+    if (!reported) {
+      try { await window.api.pluginInvoke('_host', 'renderer.report', [id, false, String((e && e.message) || e)]); } catch {}
+    }
+    return false;
+  }
+}
+
+// `require` of an absolute path: contextIsolation is off by design in this app
+// (the renderer requires xterm modules directly), which is precisely what makes
+// a Tier-A in-process plugin possible without a bundler. The WEB bundle cannot
+// do this, so it resolves through the build-generated id→module registry
+// instead (plan GAP G7, step W8) — same module, different resolver.
+function requirePluginRenderer(rendererPath, id) {
+  const reg = window.__CLODEX_PLUGIN_REGISTRY__;
+  if (reg && typeof reg.get === 'function') return reg.get(id) || null;
+  if (window.__CLODEX_WEB__ || !window.require) return null;
+  return window.require(rendererPath);
+}
+
 async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
   let catalog = [];
   try { catalog = await window.api.pluginCatalog(); } catch { return; }
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;
-    try {
-      const info = await window.api.pluginInvoke('_host', 'renderer.info', [p.id]);
-      if (!info || !info.ok || !info.rendererPath) continue;
-      // `require` of an absolute path: contextIsolation is off by design in this
-      // app (the renderer requires xterm modules directly), which is precisely
-      // what makes a Tier-A in-process plugin possible without a bundler. The
-      // web bundle cannot do this — it needs the build-generated id→module
-      // registry (plan GAP G7, step W8), which is why this is guarded.
-      if (window.__CLODEX_WEB__ || !window.require) continue;
-      const mod = window.require(info.rendererPath);
-      pluginBar.activate(p.id, mod, {
-        invoke: (id, method, args) => window.api.pluginInvoke(id, method, args),
-        css: info.css,
-      });
-    } catch (e) {
-      // One plugin's renderer half failing must not cost the others theirs, and
-      // must never take the window's own bootstrap down with it.
-      console.error(`[plugin:${p.id}] renderer activation failed`, e);
-    }
+    await activatePluginRenderer(p.id);
   }
 }
 loadPluginRenderers();
+
+// The other half of W7's "disable removes it from EVERY window". The engine
+// broadcasts `plugin-state` on the `_host` pseudo-id when a plugin is toggled;
+// each open window disposes or activates its OWN renderer half in response,
+// because only the window holding those registries can tear them down. An
+// unbuffered hint by design (§3.3 law 2) — a window that opens later pulls the
+// catalog instead.
+if (window.api.onPluginEvent) {
+  window.api.onPluginEvent((pluginId, topic, payload) => {
+    if (pluginId !== '_host' || topic !== 'plugin-state' || !payload || !payload.id) return;
+    if (payload.enabled) activatePluginRenderer(payload.id);
+    else pluginBar.dispose(payload.id);
+  });
+}
 
 // Per-session quick-access icons on the left of the status bar. Claude gets a
 // Tools button (tool gating is Claude-only); both agent types get an Edit
@@ -5589,6 +5625,7 @@ async function openPrefs() {
   // section, appended before .dialog-actions. Values are pulled per plugin
   // through the one multiplexed channel; a disabled plugin's section does not
   // exist. No-op (and no invokes) while no plugin registers a section.
+  await renderPluginsSection();
   await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
@@ -5610,6 +5647,110 @@ async function renderPluginPrefs() {
     } catch {}
   }
   pluginBar.renderSettingsSections(values);
+}
+
+// CORE's own Plugins section (§2.5) — the on/off switch, and the only place a
+// plugin that FAILED to activate is visible. It reads `plugins.status`, not
+// `catalog()`: catalog lists what successfully registered, which by definition
+// excludes the plugin you came here to fix.
+//
+// Toggling applies IMMEDIATELY (its own await, outside the Save flow) because
+// enable/disable is not a form value — it tears down live DOM in every window,
+// and a Cancel that silently left the plugin gone would be a lie.
+async function renderPluginsSection() {
+  const section = document.getElementById('prefs-plugins-section');
+  const list = document.getElementById('prefs-plugins-list');
+  if (!section || !list) return;
+  let status = null;
+  try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
+  const plugins = (status && status.ok && status.plugins) || [];
+  const problems = (status && status.ok && status.problems) || [];
+  // Nothing installed (or CLODEX_PLUGINS=0, where the refusal comes back shaped
+  // and empty) ⇒ no section at all, rather than an empty heading.
+  section.classList.toggle('hidden', !plugins.length && !problems.length);
+  list.innerHTML = '';
+  for (const p of plugins) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    // The checkbox shows INTENT, never the quarantine shadow — that is the whole
+    // point of keeping the two separate.
+    cb.checked = !!p.enabled;
+    cb.addEventListener('change', async () => {
+      cb.disabled = true;
+      try { await window.api.pluginSetEnabled(p.id, cb.checked); } catch {}
+      cb.disabled = false;
+      await renderPluginsSection();
+      await renderPluginPrefs();
+    });
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = p.name || p.id;
+    if (p.version) {
+      const v = document.createElement('span');
+      v.className = 'plugin-row-version';
+      v.textContent = `v${p.version}`;
+      nameEl.appendChild(v);
+    }
+    body.appendChild(nameEl);
+    if (p.description) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = p.description;
+      body.appendChild(d);
+    }
+    if (p.quarantined || p.failCount) {
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      n.textContent = p.quarantined
+        ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches — ${p.lastError || 'unknown error'}`
+        : `Failed to activate once (${p.lastError || 'unknown error'}) — one more and it will be held back.`;
+      body.appendChild(n);
+    }
+    row.appendChild(cb);
+    row.appendChild(body);
+    if (p.quarantined) {
+      // Retry = clear the counter and try to activate now. It routes through
+      // pluginSetEnabled(true), which clears failures first — so a user who
+      // fixed the plugin is not refused by a stale strike.
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        let r = null;
+        try { r = await window.api.pluginSetEnabled(p.id, true); } catch {}
+        if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: 'peer-ui' });
+        else showToast(`${p.name || p.id} failed again: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
+        await renderPluginsSection();
+        await renderPluginPrefs();
+      });
+      row.appendChild(retry);
+    }
+    list.appendChild(row);
+  }
+  // Directories that look like a plugin but were refused. No toggle: there is no
+  // id to key anything by when the manifest itself is what is broken.
+  for (const pr of problems) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = pr.dir;
+    body.appendChild(nameEl);
+    const n = document.createElement('div');
+    n.className = 'plugin-row-note warn';
+    n.textContent = `Not loaded: ${pr.why}`;
+    body.appendChild(n);
+    row.appendChild(body);
+    list.appendChild(row);
+  }
 }
 
 function closePrefs() {

@@ -336,6 +336,16 @@ function createPluginHostEngine(deps) {
     return false;
   }
 
+  // The enable/disable hint, broadcast on the `_host` pseudo-id so it rides the
+  // EXISTING `plugin-event` row rather than becoming a sixth api-contract row
+  // (§1 freezes the transport at five). Every open window activates or disposes
+  // the plugin's renderer half itself when it lands — the engine cannot reach
+  // into a renderer's registries, and pretending otherwise is how the multi-
+  // window blind spot §3.3 exists to prevent gets re-introduced.
+  function announceState(pluginId, enabled) {
+    try { emitScoped(HOST_PSEUDO_ID, 'plugin-state', { id: String(pluginId), enabled: !!enabled }, 'all'); } catch {}
+  }
+
   // ── Registration + lifecycle ───────────────────────────────────────────────
   // Phase 1 ships NO plugins: core populates the registries and the loader that
   // walks plugins/*/manifest.json is Phase 2. `register` is the seam that loader
@@ -413,6 +423,22 @@ function createPluginHostEngine(deps) {
       const info = loader.rendererInfo(String(pluginId));
       return info ? { ok: true, ...info } : errorEnvelope('no such plugin');
     },
+    // ── The fail-safe surface (§2.5's Plugins section) ────────────────────
+    // Every plugin ON DISK, with the user's intent and any quarantine shadowing
+    // it — NOT `catalog()`, which lists only what successfully registered and so
+    // would hide the exact plugin the section exists to let you fix.
+    'plugins.status': () => {
+      const loader = getLoader && getLoader();
+      if (!loader) return { ok: true, plugins: [], problems: [] };
+      return { ok: true, ...loader.status() };
+    },
+    // A window reporting its renderer half's outcome. Only the FIRST report per
+    // app run counts (the loader's rule) — N windows must not mean N strikes.
+    'renderer.report': (pluginId, ok, error) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return { ok: true, counted: false };
+      return { ok: true, ...loader.noteRendererActivation(String(pluginId), !!ok, error) };
+    },
   };
 
   // Named rather than returned anonymously: `setEnabled` hands this same object
@@ -455,10 +481,21 @@ function createPluginHostEngine(deps) {
       // behavior (disable tears down, enable refuses), which is what keeps the
       // kill switch and a failed-loader run honest rather than half-working.
       if (loader) { try { loader.setEnabledInSettings(id, !!enabled); } catch {} }
-      if (!enabled) return { ok: deactivate(id) };
+      if (!enabled) {
+        const ok = deactivate(id);
+        // Tell EVERY window (§4 W7: "disable removes button, overlay, styles and
+        // dispatch entries in every window"). The engine half's teardown above is
+        // per-app-run; each renderer half is per-BrowserWindow and can only be
+        // torn down by the window holding it. 'all' is right here precisely
+        // because the payload is an invalidation hint with no data in it (§3.3).
+        announceState(id, false);
+        return { ok };
+      }
       if (!loader) return errorEnvelope('enabling requires the plugin loader (Phase 2)');
-      if (registered.has(id)) return { ok: true, already: true };
-      return loader.activateById(id, api);
+      if (registered.has(id)) { announceState(id, true); return { ok: true, already: true }; }
+      const r = loader.activateById(id, api);
+      if (r && r.ok) announceState(id, true);
+      return r;
     },
 
     // ── The engine-internal surface ──

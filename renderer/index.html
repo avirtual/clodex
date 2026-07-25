@@ -936,6 +936,18 @@
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
+      <!-- Plugins (docs/plugin-plan.md §2.5). CORE's own section — the one place
+           a plugin can be turned off, and the one place a plugin that failed to
+           activate is still visible. Populated from `_host` `plugins.status`,
+           which lists every plugin ON DISK rather than only the ones that loaded:
+           a quarantined plugin must still appear, or the only UI that could
+           clear it would be the one hiding it. Plugins' OWN sections are
+           appended after this one, by the plugin host, as [data-plugin-section]. -->
+      <section id="prefs-plugins-section" class="hidden">
+        <h4>Plugins</h4>
+        <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+        <div id="prefs-plugins-list"></div>
+      </section>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>

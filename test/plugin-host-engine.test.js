@@ -38,7 +38,7 @@ function makeManager(sessions = []) {
   };
 }
 
-function makeHost({ manager = makeManager(), settings = {} } = {}) {
+function makeHost({ manager = makeManager(), settings = {}, loader = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
   let ui = { ...settings };
   const logged = [];
@@ -50,6 +50,7 @@ function makeHost({ manager = makeManager(), settings = {} } = {}) {
     fs, path,
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
+    getLoader: () => loader,
   });
   return { engine, manager, dir, logged, uiSettings: () => ui };
 }
@@ -409,4 +410,78 @@ test('hooks.handleFor mints the same SessionHandle the hooks get (one owner)', (
   assert.deepEqual(Object.keys(h).sort(), ['cwd', 'inject', 'isAlive', 'name', 'type', 'workspaceId']);
   assert.equal(h.name, 'a');
   assert.equal(engine.hooks.handleFor('nope'), null);
+});
+
+// ── The fail-safe surface + the W7 cross-window state hint ──────────────────
+
+// A stand-in for the loader with exactly the methods the host reaches through.
+// A fake with only these proves the host isn't quietly using more of the loader
+// than its three named seams.
+function fakeLoader(over = {}) {
+  const calls = [];
+  return {
+    calls,
+    status: () => ({ plugins: [{ id: 'demo', name: 'Demo', enabled: true, quarantined: true, failCount: 2, lastError: 'kaboom' }], problems: [] }),
+    noteRendererActivation: (id, ok, error) => { calls.push({ id, ok, error }); return { counted: true, ok }; },
+    setEnabledInSettings: (id, on) => calls.push({ setEnabled: id, on }),
+    activateById: () => ({ ok: true }),
+    rendererInfo: () => null,
+    ...over,
+  };
+}
+
+test('_host plugins.status serves the settings section every plugin ON DISK', async () => {
+  const loader = fakeLoader();
+  const { engine } = makeHost({ loader });
+  const r = await engine.dispatch('_host', 'plugins.status', []);
+  assert.equal(r.ok, true);
+  // Quarantined AND enabled at once — the shadow, not a replacement. `catalog()`
+  // could never show this row: nothing registered.
+  assert.deepEqual(r.plugins[0], { id: 'demo', name: 'Demo', enabled: true, quarantined: true, failCount: 2, lastError: 'kaboom' });
+  assert.deepEqual(engine.catalog(), [], 'and the catalog is empty, which is exactly why status exists');
+});
+
+test('_host plugins.status degrades to empty with no loader (CLODEX_PLUGINS=0 shape)', async () => {
+  const { engine } = makeHost();
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.status', []), { ok: true, plugins: [], problems: [] });
+});
+
+test('_host renderer.report forwards a window\'s outcome to the loader', async () => {
+  const loader = fakeLoader();
+  const { engine } = makeHost({ loader });
+  await engine.dispatch('_host', 'renderer.report', ['demo', false, 'kaboom']);
+  await engine.dispatch('_host', 'renderer.report', ['demo', true]);
+  assert.deepEqual(loader.calls, [
+    { id: 'demo', ok: false, error: 'kaboom' },
+    { id: 'demo', ok: true, error: undefined },
+  ]);
+});
+
+test('setEnabled BROADCASTS plugin-state so every window tears its own half down', () => {
+  // W7: "disable removes button, overlay, styles and dispatch entries in EVERY
+  // window". The engine half's teardown is per-app-run; a renderer half is
+  // per-BrowserWindow and only the window holding it can dispose it — so the
+  // engine sends a hint and each window acts. 'all' is right precisely because
+  // the payload carries no data (§3.3 law 2: unbuffered invalidation hints).
+  const { engine, manager } = makeHost({ loader: fakeLoader() });
+  engine.register('demo', { activate() {} });
+  manager.sent.length = 0;
+  engine.setEnabled('demo', false);
+  const hint = manager.sent.find((s) => s.channel === 'plugin-event');
+  assert.ok(hint, 'a plugin-state hint went out');
+  assert.equal(hint.to, 'all');
+  assert.deepEqual(hint.args, ['_host', 'plugin-state', { id: 'demo', enabled: false }]);
+});
+
+test('the enable path broadcasts too, and an ALREADY-enabled plugin still hints', () => {
+  // A window that missed the first hint (opened later, or whose activation
+  // failed) must be able to catch up; re-announcing on a no-op enable is the
+  // cheap way to give it that, and re-activation is idempotent per window.
+  const { engine, manager } = makeHost({ loader: fakeLoader() });
+  engine.register('demo', { activate() {} });
+  manager.sent.length = 0;
+  const r = engine.setEnabled('demo', true);
+  assert.equal(r.already, true);
+  const hint = manager.sent.find((s) => s.channel === 'plugin-event');
+  assert.deepEqual(hint.args, ['_host', 'plugin-state', { id: 'demo', enabled: true }]);
 });

@@ -305,6 +305,136 @@ test('rendererInfo returns null for an unknown plugin', () => {
   assert.strictEqual(mkLoader(root).loader.rendererInfo('nope'), null);
 });
 
+// ── Fail-safe + quarantine (W7's follow-on) ─────────────────────────────────
+//
+// The posture is BEST EFFORT: a try/catch and a counter, not a rescue system.
+// What these pin is the ONE rule that would be expensive to get wrong — that
+// quarantine shadows the user's intent instead of overwriting it.
+
+const BOOM_TREE = () => mkTree({
+  alpha: { manifest: OK_MANIFEST, files: { 'engine.js': 'module.exports.activate = () => {};' } },
+  boom: { manifest: { ...OK_MANIFEST, id: 'boom' }, files: { 'engine.js': 'module.exports.activate = () => {};' } },
+});
+
+test('a failed activation is RECORDED, not merely logged', () => {
+  const { loader, ui } = mkLoader(BOOM_TREE());
+  loader.loadAll(fakeHost());
+  const rec = ui.read().plugins._failures.boom;
+  assert.strictEqual(rec.count, 1);
+  assert.match(rec.error, /activate\(\) threw/);
+  assert.ok(!('_failures' in (ui.read().plugins.enabled || {})), 'failures are their own key');
+});
+
+test('ONE failure is not quarantine — a single throw is often transient', () => {
+  const { loader } = mkLoader(BOOM_TREE());
+  loader.loadAll(fakeHost());
+  assert.strictEqual(loader.isQuarantined('boom'), false);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'boom').failCount, 1);
+});
+
+test('the SECOND consecutive failure quarantines — and the plugin is then SKIPPED', () => {
+  const root = BOOM_TREE();
+  const { loader } = mkLoader(root);
+  loader.loadAll(fakeHost());
+  loader.loadAll(fakeHost());
+  assert.strictEqual(loader.isQuarantined('boom'), true);
+
+  // Third run: the host is never asked to register it at all, and alpha is
+  // unaffected — the app boots regardless, which is the whole requirement.
+  const host = fakeHost();
+  const results = loader.loadAll(host);
+  assert.deepStrictEqual(host.registered.map((r) => r.id), ['alpha']);
+  assert.strictEqual(results.find((r) => r.id === 'boom').skipped, 'quarantined');
+});
+
+test('QUARANTINE NEVER TOUCHES uiSettings.plugins.enabled — intent survives', () => {
+  // THE rule. The enabled array is the user's decision; flipping it to hold a
+  // plugin back destroys the record of what they asked for, and a later fix
+  // would leave the plugin off with nothing saying why.
+  const { loader, ui } = mkLoader(BOOM_TREE(), { plugins: { enabled: ['alpha', 'boom'] } });
+  loader.loadAll(fakeHost());
+  loader.loadAll(fakeHost());
+  assert.strictEqual(loader.isQuarantined('boom'), true);
+  assert.deepStrictEqual(ui.read().plugins.enabled, ['alpha', 'boom'], 'intent intact');
+  const row = loader.status().plugins.find((p) => p.id === 'boom');
+  assert.strictEqual(row.enabled, true, 'the settings checkbox still shows the user their choice');
+  assert.strictEqual(row.quarantined, true, 'the quarantine shadows it rather than replacing it');
+});
+
+test('any successful activation clears the counter — consecutive means consecutive', () => {
+  const root = mkTree({
+    flaky: { manifest: { ...OK_MANIFEST, id: 'flaky' }, files: { 'engine.js': 'module.exports.activate = () => {};' } },
+  });
+  // A host that fails the first time and succeeds after — one strike, then a
+  // clean run, must NOT add up to quarantine on the next failure.
+  let failNext = true;
+  const host = {
+    registered: [],
+    register(id, mod, manifest) {
+      if (failNext) { failNext = false; throw new Error('transient'); }
+      host.registered.push({ id, mod, manifest });
+    },
+  };
+  const { loader, ui } = mkLoader(root);
+  loader.loadAll(host);
+  assert.strictEqual(loader.status().plugins[0].failCount, 1);
+  loader.loadAll(host);
+  assert.strictEqual(loader.status().plugins[0].failCount, 0);
+  assert.deepStrictEqual(ui.read().plugins._failures, {});
+});
+
+test('Retry (activateById) clears the strike count before trying again', () => {
+  const root = BOOM_TREE();
+  const { loader } = mkLoader(root);
+  loader.loadAll(fakeHost());
+  loader.loadAll(fakeHost());
+  assert.strictEqual(loader.isQuarantined('boom'), true);
+  // Still broken ⇒ it fails again, but from a CLEARED count: one strike, not
+  // three. A user who actually fixed the plugin is never refused by a stale one.
+  const r = loader.activateById('boom', fakeHost());
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'boom').failCount, 1);
+  assert.strictEqual(loader.isQuarantined('boom'), false);
+});
+
+test('the RENDERER rule: only the FIRST activation report per run counts', () => {
+  // A renderer half activates once per BrowserWindow. Counting every window
+  // would quarantine a three-window user on their FIRST bad launch, so a strike
+  // is per LAUNCH, not per window. Simple rule, clear message — flagged (n).
+  const { loader } = mkLoader(BOOM_TREE());
+  assert.strictEqual(loader.noteRendererActivation('boom', false, 'kaboom').counted, true);
+  assert.strictEqual(loader.noteRendererActivation('boom', false, 'kaboom').counted, false);
+  assert.strictEqual(loader.noteRendererActivation('boom', false, 'kaboom').counted, false);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'boom').failCount, 1,
+    'three windows, one launch, one strike');
+});
+
+test('a renderer half that succeeds clears an engine-half strike', () => {
+  const { loader } = mkLoader(BOOM_TREE());
+  loader.loadAll(fakeHost());
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'boom').failCount, 1);
+  loader.noteRendererActivation('boom', true);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'boom').failCount, 0);
+});
+
+test('status() lists every plugin ON DISK plus the directories that were refused', () => {
+  // Not catalog(): catalog lists what successfully registered, which by
+  // definition excludes the plugin the settings section exists to let you fix.
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST, files: { 'engine.js': 'module.exports.activate = () => {};' } },
+    off: { manifest: { ...OK_MANIFEST, id: 'off', enabledByDefault: false } },
+    junk: { manifest: '{ not json' },
+    mismatch: { manifest: { ...OK_MANIFEST, id: 'other' } },
+  });
+  const { loader } = mkLoader(root);
+  const s = loader.status();
+  assert.deepStrictEqual(s.plugins.map((p) => p.id), ['alpha', 'off']);
+  assert.strictEqual(s.plugins.find((p) => p.id === 'off').enabled, false);
+  assert.deepStrictEqual(s.problems.map((p) => p.dir).sort(), ['junk', 'mismatch']);
+  assert.match(s.problems.find((p) => p.dir === 'junk').why, /unreadable manifest/);
+  assert.match(s.problems.find((p) => p.dir === 'mismatch').why, /does not match its directory/);
+});
+
 // ── The real workbench plugin (W1 scaffold) ─────────────────────────────────
 
 test('the in-repo workbench plugin is discovered and loads its engine half', () => {
