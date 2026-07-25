@@ -1256,3 +1256,57 @@ reading catches them — the first defect class named today.
 **Expect the next defect to be behavioural.** Everything shipped on this branch
 that a machine can verify has been verified, so what is left for Bogdan's manual
 run to find is behaviour — which is where every real defect today actually lived.
+
+---
+
+## T23 (dispatched, not started) — read-and-report: does the FLEET story supersede what we built?
+
+**Not branch work. Read-only. The branch stays untouched — no code, no commits
+beyond this note.** Full dispatch: `~/.clodex/messages/clodex-hand/msg-26123-1.txt`.
+
+**Why it exists.** Bogdan corrected a bias clodex says he carried all session:
+
+1. **Workbench is FIRST-PARTY, not core** — Simon's idea, adapted, useful but not
+   load-bearing.
+2. **Headless is "the dark horse" and "our ticket to wide adoption."** The
+   evolution is DMG-on-a-laptop → deploying and controlling a FLEET of remote
+   headless clodexes (Fargate, EKS, EC2, docker, remote boxes) — attachable, or
+   exporting a web interface, commandable over SSM, or isolated and just
+   watching. Plus **`clodexctl`**, which neither of us has had in context.
+
+clodex's own words: *"I have been treating the DMG as the primary plugin target
+and headless as the degraded one, and I built the t22 install flow desktop-shaped
+on that assumption — 'Open Plugins Folder' and a Re-scan button both assume a
+human at a screen, which a Fargate container does not have."*
+
+**Read cold:** `docs/plugin-vision.md`, `docs/engine-as-substrate.md`,
+`docs/deployment-plan.md` (provisioning/updating a headless host), `cli/README.md`
++ enough of `cli/src` to know what clodexctl actually does.
+
+**Four questions, answered FROM THE DOCUMENTS rather than reconciled with what we
+shipped:**
+
+- **A.** Does plugin-vision already state a position on headless as a plugin
+  target, engine-only plugins, first-party vs core, out-of-tree plugins? *"Say
+  what it says even where it contradicts what we shipped today. Especially where
+  it contradicts. I would rather find out now that we spent a day building
+  against a superseded premise."*
+- **B.** How does a plugin actually REACH a headless host? Loading is NOT the
+  problem — clodex confirmed engine-only manifests load fully dynamically
+  everywhere (`plugin-loader.js:46` allows an engine-only manifest, `:476`
+  requires an absolute runtime path). **DELIVERY** is. Baked into the image?
+  Synced? Pulled? Does clodexctl or the deploy tooling have a path a plugin could
+  ride, the way peer "Rebuild"/"Update Clodex" already carry Clodex updates?
+- **C.** Is `~/.clodex/plugins` even right on a container — ephemeral fs, no
+  interactive user? t16 chose it for a desktop.
+- **D.** Does the fleet story break what t16/t21/t22 encode — core-wins
+  precedence, version-aware supersession, a user root as an upgrade channel,
+  restart-required for changed plugins? *"A restart means something different on
+  a laptop than on a container that might just be replaced."*
+
+**Reporting constraint:** file:line pointers, not document summaries — clodex's
+context is the binding constraint. **Flag contradictions loudly rather than
+smoothing them.**
+
+State at dispatch: HEAD `c316576`, 52 ahead of local master, suite 2529/2529,
+clean but for the untracked `node_modules` symlink. Nothing pushed.
