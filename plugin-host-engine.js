@@ -510,7 +510,7 @@ function createPluginHostEngine(deps) {
     // would hide the exact plugin the section exists to let you fix.
     'plugins.status': () => ({ ok: true, ...pluginsStatus() }),
     // Re-scan the plugin roots without restarting (t22). A HOST service on the
-    // `_host` pseudo-id, NOT a sixth `plugin:*` row: api-contract.js:270 freezes
+    // `_host` pseudo-id, NOT a sixth `plugin:*` row: api-contract.js:276 freezes
     // the plugin transport at five rows "for every plugin, forever", and this is
     // host plumbing rather than any plugin's method — the same reasoning that put
     // `plugins.status`, `renderer.info` and `renderer.report` here.

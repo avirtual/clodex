@@ -1070,7 +1070,7 @@ make the dialog disagree with the disk.
 ### One place source contradicts the ticket — FLAGGING, not silently deviating
 
 The ticket says the re-scan is "a fourth handler" beside the three at
-`ipc-handlers.js:1089-1098`. **Source says it must not be.** `api-contract.js:270`
+`ipc-handlers.js:1089-1098`. **Source says it must not be.** `api-contract.js:276`
 — "EXACTLY these five rows — the whole plugin surface, for every plugin, forever"
 — and `plugin-host-engine.js:497` spells out the established alternative: host
 plumbing rides the `_host` pseudo-id rather than becoming a sixth row, because
@@ -1166,7 +1166,7 @@ half-wrong — both now say install *affordance*, which is the part still missin
 
 **Flagged deviation from the ticket, no letter needed** (it was a
 settle-against-source instruction, and source settled it): the re-scan is NOT a
-fourth `plugin:*` handler. `api-contract.js:270` freezes that transport at five
+fourth `plugin:*` handler. `api-contract.js:276` freezes that transport at five
 rows "for every plugin, forever", so `plugins.rescan` + `plugins.userRoot` ride
 the `_host` pseudo-id alongside the three host methods already there.
 `fileReveal` is an ordinary capability row and does not touch the plugin
@@ -1174,3 +1174,50 @@ transport.
 
 **Also corrected:** the headless `showItemInFolder` hole does not exist — see the
 phase-1 correction above. Nothing was filled because nothing was missing.
+
+### T22 closing notes — branch handed off
+
+**Line-number correction (clodex).** My citation of the five-row freeze said
+`api-contract.js:270`; it is **:276**. Corrected in all three places, one of
+which was a CODE comment (`plugin-host-engine.js:513`) — a stale pointer there
+sends a future reader six lines short of the constraint the comment exists to
+justify, which is the only reason this was worth a commit.
+
+**Commit count correction.** I reported the branch as "49 ahead of local master"
+in my t22 close; `git rev-list --count master..HEAD` says **50** (47 at the t22
+dispatch, plus `267ee42`, `fc40586`, `10bfee5`, and this one makes 51). I stated
+49 from arithmetic rather than from reading the count — the same
+report-from-inference habit, in miniature, in the same message where I corrected
+two larger instances of it. Naming it here because the habit is evidently not
+yet automatic.
+
+**Inference-from-absence, three instances in one day** (clodex's tally): his
+truncated dm read as garbled rather than fired; my reading a missing error line
+as a successful close; my reading a missing grep hit as a missing seam. His
+framing of the common shape is worth keeping: *absence is cheap to observe and
+always available, which is precisely why it keeps getting used as evidence when
+nothing positive is at hand.* The counter-habit is the same one already recorded
+— name the artifact you read, and if the answer is "nothing, I inferred it", the
+report is not ready.
+
+**The recurring defect class is now at six instances** — trusting `loadedFrom`
+instead of asking `catalog()`, and the comment asserting an enable re-requires
+the entry point, are the fifth and sixth. Every one has been a consumer
+reconstructing a fact the producer already held.
+
+### Branch state at handoff
+
+**STOOD DOWN on further plugin work** per clodex: the branch is feature-complete
+for the BYO story and every additional commit raises the cost of the merge
+Bogdan owns. The remaining gaps — a plugin catalog, an install affordance — are
+distribution questions wanting a decision from Bogdan before any code, and they
+are stated as open gaps in §10 rather than stubbed.
+
+- HEAD: this commit, on `plugin-phase-1`. **51 ahead of local master.**
+- Suite **2529/2529** (verified at `10bfee5`; this commit touches only comments
+  and journal prose).
+- Tree clean apart from the deliberately untracked `node_modules` symlink.
+- **Nothing pushed. Master untouched.** Deviation letter **(x)** still unused.
+- Outstanding for Bogdan: the manual run (t17 badge repaint, t16 shadowed rows,
+  t20 conflict row, t21 inverted row, t22's two buttons + restart-required row),
+  and the merge.
