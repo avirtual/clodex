@@ -130,7 +130,150 @@ file:line.
 
 ---
 
-## T14 — pot-drawer migration (NOT STARTED)
+## T14 — pot-drawer migration: NOT ACHIEVABLE AT `"1"`. Finding delivered.
+
+**Closed. Ruling: take the finding, do not build the degraded variant, do not
+wait for a 1.1.** The result is recorded in `docs/plugin-plan.md` §6 —
+Phase 4a's 4a bullet is struck through and points at a new subsection,
+"Phase 4a's result — the API lends UI generously and core data thinly", placed
+at the end of §6 where a planner reaches it before planning another migration.
+
+No plugin was built. No core edits. That is the correct outcome, not a partial
+one: *"Phase 4a is not achievable at `"1"` and here is precisely why"* is the
+deliverable.
+
+### Deviation (v) — clodex's premise error, recorded as theirs
+
+The t14 ticket disqualified inbox-drawer for being driven from `app-menus.js` in
+the main process, and selected pot-drawer instead. **pot-drawer has that exact
+property** (`app-menus.js:559`, View ▸ "Boiling Pot…" → `request-open-boiling-pot`
+→ `pot-drawer.js:88`). The selection reason did not discriminate between the two
+candidates.
+
+The ruling that disproves it was already written by clodex, in the comment
+sitting *directly above* the very menu item in question (`app-menus.js:545-557`,
+the workbench note: a main-process menu "cannot… open a plugin's SURFACE").
+
+clodex verified all three findings and took the deviation as their own: *"my
+selection reason was worthless — I disqualified inbox-drawer for a property
+pot-drawer has… Deviation (v) is mine, not yours."*
+
+**Next letter is (w).**
+
+### Why this was worth stopping for (clodex's framing, recorded because it is
+### the phase's actual conclusion)
+
+Through Phases 0–3 the API's only consumer was the workbench, **designed
+alongside it** — a pilot never hits the wall, because the wall moves while the
+pilot is built. The Phase 3 cold-agent acceptance passed for the complementary
+reason: a plugin free to invent its own data needs never has to reproduce a core
+computation. pot-drawer is the first surface **not** co-designed with the API,
+and it hit the data wall in an afternoon. Same defect class as everything else
+this effort found, one level up: an insider-shaped artifact validated by
+insiders.
+
+### Round-1 source reads (the evidence behind the finding)
+
+t13 shipped as `1dda88b`, suite 2489/2489. Two of the ticket's premises were
+wrong and the third is a real gap; reported before committing to an approach,
+which is what produced the ruling above.
+
+### Premise 1 — "pot-drawer references inbox-drawer, untangling it is part of
+### the work". FALSE.
+
+The only occurrence of "inbox" in `renderer/pot-drawer.js` is `:16`, inside the
+header comment: "FACTORY (inbox-drawer's genus, not the CRUD library drawers)".
+It is a prose comparison naming a design family. There is no import, no call, no
+shared state, no shared DOM. Nothing to untangle.
+
+### Premise 2 — "inbox-drawer needs a menu slot BECAUSE it is referenced from
+### app-menus.js, so migrate pot-drawer instead". Does not discriminate.
+
+`app-menus.js:559` is a **View ▸ "Boiling Pot…"** item that does
+`win.webContents.send('request-open-boiling-pot')`; `pot-drawer.js:88` receives
+it via `window.api.onRequestOpenBoilingPot`. That is exactly the shape given as
+inbox-drawer's disqualifier (`app-menus.js:506` →
+`request-open-inbox-drawer`). **Both drawers are opened from a main-process menu
+item.** Picking pot-drawer over inbox-drawer does not avoid the menu-slot
+problem; it relocates it.
+
+Worse, clodex already wrote the ruling on this, in the comment sitting directly
+above that menu item (`app-menus.js:545-557`), for the workbench: a
+main-process menu "cannot do is open a plugin's SURFACE: the overlay lives in one
+BrowserWindow's DOM, mounted by that window's renderer half, and nothing here
+knows whether the focused window has it."
+
+A plugin renderer half also cannot legally receive the existing event: reaching
+`window.api` is precisely what the boundary lint's `GLOBAL_API_RE` /
+`BARE_API_RE` forbid (t9).
+
+**The escape that needs no new slot:** drop the View item and open the drawer
+from a **sidebar footer button** (§6.3), which is what the workbench does and
+what §14's menu-slot gap already names as "the conventional entry point today".
+That costs a core deletion (allowed — it is the removal exception) and changes
+where the operator clicks. It is a UX decision, so it is clodex's, not mine.
+
+### Premise 3 — the DATA is the harder blocker, and it is a genuine gap.
+
+`window.api.potSnapshot` → IPC `pot:snapshot` (`ipc-handlers.js:853`) →
+`session-manager.js:2278 potSnapshot()`. To reproduce it, a plugin engine half
+needs four things, and the frozen `"1"` surface lends **none** of them:
+
+1. **`file-heat.js`'s `normalizeState` / `aggregateStates` / `foldRedundancy`**
+   (`:72`, `:106`, `:158`). `host.lib` lends `gitWorktree` and nothing else
+   (`plugin-host-engine.js:348`). Note that `file-heat.js` **passes the stated
+   membership test** written right there at `:339-345` — "a leaf CORE also uses,
+   lent to plugins": core uses it from `session-manager.js` AND `pot-cli.js:23`.
+   So this is a well-formed v1.1 `host.lib` candidate, not a design objection.
+2. **`s.fileHeat.flush()` over live sessions** (`:2281-2283`). Not on the
+   handle (`plugin-host-engine.js:189-206` mints exactly `name/type/cwd/
+   workspaceId/isAlive/inject`), not anywhere on the host. Unreachable.
+   Consequence if migrated without it: the snapshot silently misses in-memory
+   carriage not yet flushed to disk — degraded numbers, not an error.
+3. **`pathFor(REGISTRY_DIR, name, 'fileHeat')`** — `clodex-paths.js`, core, not
+   lent. A plugin would hardcode `~/.clodex/run/{name}/fileHeat`, i.e. re-derive
+   a path grammar CLAUDE.md says is single-sourced. Fragile by construction.
+4. **`s.proxyBase` + `ProxyClient.potSeries`** for the tier-2 redundancy join.
+   No host member; `proxyBase` is not on the handle either. Tier 2 would be
+   dropped, and the drawer's redundancy column would never light up.
+
+A Tier-A plugin *could* brute-force 1–3 with a raw `require('fs')` and its own
+copy of ~150 lines of `file-heat.js`. That is possible, not clean: it duplicates
+core logic that will drift, and it re-derives a path grammar core single-sources.
+It is the "contortion" the ticket asks me to catalogue rather than something to
+quietly do.
+
+### The finding, stated plainly
+
+Migrating pot-drawer at `"1"` with **zero core edits** is not achievable as a
+faithful migration. The drawer is not a self-contained island in the way its
+header comment suggests: its DOM is self-contained, but its *data* is a
+session-manager method over live session state, and its *trigger* is a
+main-process menu item. What Phase 4a set out to validate — "a drawer-type
+surface migrates cheaply" — is answered **no**, and the reason is specific and
+useful: the plugin API lends UI slots generously and **core data thinly**.
+
+Three candidate 1.1 additions fall out, in descending confidence:
+- `host.lib.fileHeat` — passes the documented membership test as written.
+- a menu slot — already §14's named gap, now with a second witness.
+- something that answers "give me core's own computed snapshot", e.g. lending
+  read-only `potSnapshot` itself. This is the one I'd argue for: items 1–4 are
+  all symptoms of a plugin having to *rebuild* a core computation instead of
+  *asking* for it.
+
+### What was written (t14's only edits)
+
+- `docs/plugin-plan.md` — 4a bullet struck through with a pointer; new §6
+  subsection carrying the finding, the asymmetry, the "why earlier phases missed
+  it" reasoning, the three 1.1 candidates and the snapshot sketch.
+- this journal.
+
+**No plugin was created. No core file was edited.** The footer-button question
+is moot — clodex declined to put a UX change to Bogdan for a migration not
+being done.
+
+### Original ticket notes (kept for a fresh spawn — note premises 1 and 2 are
+### now known false, see deviation (v))
 
 Do not begin until t13 is reported. Notes captured from the ticket so a fresh
 spawn does not have to re-read it:

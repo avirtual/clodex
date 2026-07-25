@@ -779,9 +779,13 @@ re-add the index.html block + rows from git history; plugin dir deleted.
   box → "here's the sidebar seam").
 
 **Phase 4 — first-party evidence wave (L, background).**
-- 4a. Second trivial in-repo plugin from an existing self-contained island (pot-drawer or
-  inbox-drawer [V architecture.md: "self-contained, no core deps"]) to validate a drawer-type
-  surface cheaply.
+- 4a. ~~Second trivial in-repo plugin from an existing self-contained island (pot-drawer or
+  inbox-drawer) to validate a drawer-type surface cheaply.~~ **ATTEMPTED AND NOT
+  ACHIEVABLE AT `"1"`. The attempt is the result — see §6.1 below.** Neither
+  candidate migrates, and neither fails on its DOM. Do not re-attempt this as
+  written; the pot-vs-inbox distinction this line used to draw was false. **Read
+  "Phase 4a's result" at the end of this section before planning any further
+  migration.**
 - 4b. wirescope-js design doc + the three named additions (§5.2 A/B/C) as `hostApi 1.1` proposals;
   migrate only when they're designed against its real needs.
 - 4c. Messaging inversion points (§5.3) + peering's outbound half; remote server stays core.
@@ -792,6 +796,80 @@ Out-of-process host speaking the declarative subset over stdio/socket (the exec 
 [V :3406-3520]); `~/.clodex/plugins/` scan; personas = named enabled-set + settings bundles
 (vision doc modpacks) — cheap once §2.5/§3.1 exist, since a persona is literally a
 `uiSettings.plugins` preset.
+
+---
+
+### Phase 4a's result — the API lends UI generously and core data thinly
+
+4a set out to validate a drawer-type surface cheaply, by migrating an island
+`architecture.md` calls "self-contained, no core deps". **It is not achievable at
+`"1"`, and the attempt is worth more than the plugin would have been.** What
+follows is what the attempt found, recorded here rather than in a plugin's NOTES
+file because a future planner must not walk past it.
+
+**Both candidates fail, and neither fails on its DOM.** The pot-vs-inbox
+distinction the 4a line used to draw — inbox-drawer is menu-driven, pot-drawer is
+not — is simply false: `app-menus.js:559` is a View ▸ "Boiling Pot…" item sending
+`request-open-boiling-pot`, the same shape as inbox-drawer's `:506`. Both drawers
+are opened from a main-process menu item, and a plugin renderer half cannot
+receive that event anyway (reaching `window.api` is what the no-backdoor lint
+forbids). The workbench's own escape — a sidebar footer button it registers
+itself — remains available and needs no new slot, so the trigger is a UX
+question, not a blocker. **The blocker is data.**
+
+`window.api.potSnapshot` → `pot:snapshot` → `session-manager.js:2278`, a method
+over *live session state*. Reproducing it in a plugin engine half needs four
+things the frozen surface lends none of:
+
+1. `file-heat.js`'s `normalizeState` / `aggregateStates` / `foldRedundancy`;
+2. `s.fileHeat.flush()` across live sessions before the read (`:2281-2283`);
+3. `pathFor(REGISTRY_DIR, name, 'fileHeat')` — a path grammar `clodex-paths.js`
+   single-sources deliberately;
+4. `s.proxyBase` + `ProxyClient.potSeries` for the tier-2 redundancy join.
+
+A Tier-A plugin *could* brute-force 1–3 with raw `fs` and its own ~150-line copy
+of file-heat. That was rejected: duplicated core logic drifts, and here the drift
+would be **silent and numeric** in the operator's daily driver, with tier 2 gone
+so the redundancy column never lights. A migration that ships wrong numbers would
+also have put "a drawer migrated" on the board with the real finding buried.
+
+**The asymmetry, stated plainly: seven UI slots, and `host.lib` with one
+member.** That is the shape of the gap. It is *unbuilt, not disallowed* —
+`file-heat.js` passes the membership test written at `plugin-host-engine.js:339-345`
+("a leaf CORE also uses, lent to plugins") on its face, since both
+`session-manager.js` and `pot-cli.js:23` use it.
+
+**Why the earlier phases did not catch this.** Through Phases 0–3 the API's only
+consumer was the workbench, which was designed alongside it — a pilot never hits
+the wall, because the wall moves while the pilot is built. The Phase 3 cold-agent
+acceptance passed for the complementary reason: a plugin inventing its own data
+needs never has to reproduce a core computation. pot-drawer is the first surface
+that was **not** co-designed with the API, and it hit the wall immediately. This
+is the effort's recurring defect class one level up: an insider-shaped artifact
+validated by insiders.
+
+**Three v1.1 candidates fall out. All four blockers above are symptoms of one
+thing — a plugin forced to *rebuild* a core computation instead of *asking* for
+it — so the third is the one worth designing.**
+
+- `host.lib.fileHeat` — passes the documented membership bar already.
+- A menu slot — §14's existing gap in `plugin-api.md`, now with a second witness.
+- **A snapshot-shaped member**, sketched below.
+
+*Sketch only — deliberately not a spec, and deliberately not designed to fit
+pot-drawer, since an addition shaped by its first caller is how 4a got here.*
+Such a member would have to answer "give me core's own computed view of X",
+returning a deep-copied plain value (the `telemetry` precedent, t8) rather than
+lending the machinery to compute it. The hard part, and the reason the shape is
+not obvious, is **liveness**: `potSnapshot` first calls `flush()` on every live
+session, so the snapshot is a *side-effecting* read — it makes the on-disk state
+current, then aggregates it. A plugin cannot be handed "the current numbers"
+without something on the host side performing that flush at ask-time, which means
+such a member is not a passive getter and cannot be modelled as one. Whether core
+should flush on a plugin's behalf, hand back possibly-stale numbers with the
+staleness stated (the §14 "freshness is bounded by how often you re-ask" posture),
+or expose flush separately, is the design question. A future designer should be
+able to disagree with all three.
 
 ---
 
