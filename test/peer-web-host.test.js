@@ -237,15 +237,70 @@ test('status().webHost is null while offline and for a box with no web host', as
   });
 });
 
-test('a malformed webHost from an old or hostile box is normalized to null on the consumer', async () => {
-  // The producer normalizes, but a consumer talks to boxes it did not build.
-  // One bad field must not reach the renderer.
-  for (const bad of [{ port: 'eighty' }, { port: 0 }, { port: 70000 }, 'nope', 42]) {
-    await withPeer(bad, async ({ conn }) => {
+// A RAW hello server, bypassing RemoteServer entirely. The producer normalizes,
+// so driving the consumer through a real RemoteServer can only ever prove the
+// producer's guard — the malformed value would never survive to be handed over.
+// A consumer talks to boxes it did not build, so its own normalization is a
+// separate claim and needs a body no producer of ours would emit.
+function rawHelloServer(body) {
+  const server = http.createServer((req, res) => {
+    const p = req.url.split('?')[0];
+    if (p === '/api/peer/hello') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'raw', version: '1', caps: [], ...body() }));
+    } else if (p === '/api/sessions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
+    } else if (p === '/api/events') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(': connected\n\n');
+    } else { res.writeHead(404).end(); }
+  });
+  return server;
+}
+
+async function withRawPeer(body, fn) {
+  const server = rawHelloServer(body);
+  const port = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
+  const states = [];
+  const conn = new PeerConnection({
+    id: 'raw', label: 'raw', url: `http://127.0.0.1:${port}`, selfLabel: 'consumer',
+    helloIntervalMs: 30,
+    emit: (channel, ...args) => { if (channel === 'peer-state') states.push(args[1]); },
+  });
+  conn.start();
+  try { return await fn({ conn, states }); } finally { conn.stop(); server.close(); }
+}
+
+test('a malformed webHost from an old or hostile box is normalized to null on the CONSUMER', async () => {
+  // One bad field from a box we did not build must not reach the renderer as a
+  // port a tunnel would then try to forward to.
+  for (const bad of [{ port: 'eighty' }, { port: 0 }, { port: -1 }, { port: 70000 },
+                     { port: 8080.5 }, { tokenGated: true }, 'nope', 42, []]) {
+    await withRawPeer(() => ({ webHost: bad }), async ({ conn }) => {
       await waitFor(() => conn.online, 'online');
       assert.strictEqual(conn.status().webHost, null, `${JSON.stringify(bad)} → null`);
     });
   }
+});
+
+test('a valid webHost from a raw box survives, stripped to exactly {port, tokenGated}', async () => {
+  // The other half of the same claim: normalization must not be so blunt it
+  // drops a good host — and must not pass extra keys through, so a field a box
+  // invents (a token, say) cannot ride into the renderer.
+  await withRawPeer(() => ({ webHost: { port: 8080, tokenGated: true, token: 'leak', extra: 1 } }), async ({ conn }) => {
+    await waitFor(() => conn.online && conn.status().webHost, 'online with a web host');
+    assert.deepStrictEqual(conn.status().webHost, { port: 8080, tokenGated: true });
+  });
+});
+
+test('an OLD box that never heard of webHost reports null, not undefined', async () => {
+  // Every peer on the network predates this field. Absent must read exactly like
+  // "no web host", so the UI has one case to handle instead of two.
+  await withRawPeer(() => ({}), async ({ conn }) => {
+    await waitFor(() => conn.online, 'online');
+    assert.strictEqual(conn.status().webHost, null);
+  });
 });
 
 test('identityChanged: a web host APPEARING re-emits peer-state without an offline dip', async () => {
