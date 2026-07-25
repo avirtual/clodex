@@ -147,9 +147,82 @@ every shape). It is:
 Note (a) is a change to `~/.clodex/agents/test-runner.md`, which is OUTSIDE the
 repo and outside the ticket's stated scope — flagged to clodex, not taken.
 
+## clodex's ruling (msg-93431-11)
+
+Both corrections accepted; the ticket was wrong on the mechanism. The finding
+that matters most is the one he did not ask for: **the dot reporter deletes the
+diagnostic — our verification path was blind by configuration, not by Node's
+design.**
+
+- **(a) Both in scope.** Wrapper AND `~/.clodex/agents/test-runner.md`. Editing
+  a file outside the repo is authorised **specifically and only for that agent
+  definition**. Keep it minimal, say exactly what changed. "A repo-only fix that
+  leaves our actual verification path blind is not a fix — it is the same defect
+  with a new place to not look."
+- **(b) Named and red with attribution is acceptable. Do NOT wrap every
+  `test()`.** "Wrapping the suite to move one integer is a large change against
+  a small gain, and it would put a layer of our own code between us and the
+  runner's accounting." State the residual plainly in the journal.
+- Print the **attribution**, not just a count. "A wrapper that says '1 escape'
+  and makes me go hunting has recreated the problem."
+- **The absorbed case is the one that matters.** Prove it by reconstructing it.
+- **Do not let the wrapper swallow anything** — post-processing throwing or a
+  missing spec file must fail loudly, never report green.
+
+## RESIDUAL, stated plainly per (b)
+
+An escaped async failure is now **reported, attributed and red** — but the
+runner's **pass counter still counts that test as passed**. That is the
+runner's own accounting and moving it would mean wrapping every `test()` call
+in the suite. Deliberately not done. So `TOTALS: N pass` can include a test that
+did not pass; the `ESCAPES:` block below it is the correction, and the exit code
+is non-zero either way.
+
+## DATED FINDING — exposure at the time of the fix
+
+**2026-07-26, master `e5b577d` (v4.1.0): full suite 2560/2560 with ZERO live
+escapes.** Scanned by grepping the whole run for the diagnostic. So v4.0.0 and
+v4.1.0 rest on genuinely clean runs — the hole was latent, and the only time it
+is known to have hidden anything is t25 (four broken, two reported).
+
+## Phase 2 — the fix
+
+- `scripts/test-escapes.js` (new, pure, dependency-free): `parseEscapes(text)` →
+  `[{test,file,line,error,event,raw}]`, `formatEscapes()` → the report. Anchors
+  on the one stable substring `generated asynchronous activity after the test
+  ended`, present in tap/spec/junit and absent from dot. Undecorates the three
+  reporter prefixes (`# `, `ℹ `, `<!-- -->`). Attribution is null for the
+  ownerless shape (an escape firing after every test in the file has finished);
+  reported as such rather than given an invented owner.
+- `scripts/run-tests.js` (new): `npm test`. Runs `node --test` with TWO
+  reporters — the caller's on stdout, tap into a temp file — then scans the tap
+  stream. Prints `TOTALS:` + the escape block, exits non-zero if anything
+  escaped. `--reporter=X` selects the stdout reporter; the rest passes through
+  to `node --test` so single-file runs still work.
+- Fails LOUDLY, never green, on: spawn error, missing/empty tap file, no
+  summary in the output, or a throw inside the escape analysis.
+- `package.json`: `"test": "node scripts/run-tests.js"` (was `node --test`).
+
+### The absorbed case, reconstructed (clodex's required proof)
+
+One real sync failure + one async escape in the SAME file — t25's exact shape.
+
+BEFORE, through the old digest pipeline: `TOTALS: 1 pass, 1 fail`, one test
+named, **the escape produced no counter entry at all**.
+
+AFTER, same file through the wrapper:
+
+    TOTALS: 1 pass, 1 fail, 2 tests
+    ESCAPES: 1 — counted PASS by the runner, listed here because they are not:
+      ✖ ESCAPED "t25 B — equally broken, counted PASS (the two we did not see)"
+          at …/t25.test.js:8
+          Error: app.setAboutPanelOptions is not a function (unhandledRejection)
+
+Both named. `EXIT=1`. The ownerless shape also verified separately.
+
 ## Progress
 
-- [x] Phase 1 — mechanism established; reported to clodex, awaiting direction.
-- [ ] Phase 2 — fix.
-- [ ] Phase 3 — prove by deliberate async failure; check non-zero exit.
-- [ ] Phase 4 — full suite, report, close t29.
+- [x] Phase 1 — mechanism established; reported to clodex, ruling received.
+- [x] Phase 2 — wrapper + parser built; absorbed case reconstructed and proved.
+- [ ] Phase 3 — tests for the parser/wrapper; prove them by reverting.
+- [ ] Phase 4 — update `~/.clodex/agents/test-runner.md`; full suite; close t29.
