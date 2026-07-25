@@ -1221,3 +1221,38 @@ are stated as open gaps in §10 rather than stubbed.
 - Outstanding for Bogdan: the manual run (t17 badge repaint, t16 shadowed rows,
   t20 conflict row, t21 inverted row, t22's two buttons + restart-required row),
   and the merge.
+
+### Standing check, in its operative form
+
+The habit that survives today is a **trigger**, not a principle. Both attempts at
+the principle form failed within minutes of being written down, so the wording
+below is deliberately narrow:
+
+> **Any number or state claim in a report gets read from an artifact before it is
+> sent — regardless of whether it feels load-bearing.**
+
+The predictor is the feeling that a number is too small to bother checking. That
+feeling is what selects which claims get inferred: a number that feels important
+gets checked anyway, so the rule only ever bites on the cheap ones. "49 ahead"
+was inferred by arithmetic *inside a report about report-from-inference*, while
+two larger instances of the same failure were being correctly flagged in the same
+paragraph — which is the cleanest available evidence that vigilance about a named
+failure does not generalise to an unnamed instance of it. It fires only on the
+thing currently labelled.
+
+Related, same shape: **absence is not evidence.** Cheap to observe and always
+available, which is exactly why it gets used when nothing positive is at hand.
+Three instances today — a truncated dm read as garbled rather than fired; a
+missing error line read as a successful close; a missing grep hit read as a
+missing seam.
+
+**Where a wrong claim costs most: a code comment.** The `:270` → `:276` fix
+mattered not as a citation nit but because one instance sat in a comment
+explaining why `plugins.rescan` rides `_host`. Prose costs a reader seconds; a
+comment lands them short of the constraint it cites *and reads as authoritative
+while doing it*. Comments are where execution never passes, so nothing but
+reading catches them — the first defect class named today.
+
+**Expect the next defect to be behavioural.** Everything shipped on this branch
+that a machine can verify has been verified, so what is left for Bogdan's manual
+run to find is behaviour — which is where every real defect today actually lived.
