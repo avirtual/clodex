@@ -953,3 +953,74 @@ no case where automatic is actively *wrong* rather than less expressive — the
 "I want to run an older copy" case is answered by §4's existing advice to fork
 under a new id); no semver pre-release ordering, recorded in the §11 table as
 not-implemented so nobody later mistakes it for a bug.
+
+---
+
+## T22 — install flow: make the user root reachable without a restart
+
+**Why it exists.** t21 made the user root the ONLY channel by which a DMG user
+can receive a plugin fix, and `docs/plugin-sources.md` §10 still says user
+plugins are "possible, not usable" — no reveal-folder, no re-scan without a
+restart, no drop affordance. clodex: *"A mechanism that exists and cannot be
+reached is worth roughly what one that does not exist is worth."*
+
+### Scope — two in, one explicitly OUT
+
+1. **Reveal the user plugins folder** from Manage Plugins. `showItemInFolder` is
+   already a seam with a working web route (`main.js:581`, `web-host.js:260`).
+   **Check the headless seam** — `headless-main.js:154` stubs `openPath` and
+   clodex did not see `showItemInFolder` beside it. *"If it is missing there,
+   that is a hole to fill, not a reason to route around."*
+2. **Re-scan without restarting.** The plugin IPC surface is three handlers
+   (`ipc-handlers.js:1089-1098`); this is a fourth.
+3. **OUT: "nowhere to find plugins."** §10 lists it, but a directory/catalog of
+   available plugins is a **distribution** question, not an install-flow one.
+   *"I do not want it smuggled in as a stub. Leave it stated as an open gap."*
+
+### THE HARD PART — settle against source BEFORE building
+
+`discover()` is stateless and re-reads disk every call (my own t20 finding), so
+re-scanning the DISK is cheap. What is not obviously cheap is what a re-scan does
+to plugins already RUNNING:
+
+- **Renderer half** loads via `window.require(rendererPath)` at
+  `renderer/renderer.js:3020`. **`require` CACHES by resolved path.** So a
+  re-scan can plausibly pick up a NEWLY ADDED plugin, but picking up a CHANGED
+  version of an id already loaded this run may be impossible — the cache hands
+  back the old module for the same path. A superseding copy at a DIFFERENT path
+  is a different cache key and **might** work. **Determine which, do not
+  assume; this decides how much the feature can honestly claim.**
+- **Engine half** is activated per app run. Same question, different lifetime.
+
+**clodex's ruling on scope of effect (argue if source says otherwise):** re-scan
+must handle **ADDED and REMOVED** correctly, and where **REPLACING** a running
+plugin cannot be done safely it must **say so in the UI rather than appear to
+work**. *"A re-scan that silently leaves the old code running while the row shows
+the new version is the worst outcome available here — it is the badge bug and the
+verb quarantine again, a consumer displaying something the producer never
+confirmed. If replace requires a restart, the row says restart required, and that
+is an honest feature. Do NOT attempt deactivate/reactivate of a live plugin to
+force it; that is a much larger change and it is not what this ticket buys."*
+
+**Also settle:**
+- What a re-scan does to **strike/quarantine records**. A re-scan is not a
+  launch — should a failing plugin take a strike? clodex's instinct is **no**,
+  same reasoning as t20, but I must **rule on it**.
+- Whether a re-scan can **change which copy of a shadow pair wins mid-run** —
+  t21's swap with a new trigger.
+
+Tests + revert proofs as usual. Docs into **§10, amending what it says is
+impossible** rather than adding a contradicting section, and **leave the parts
+still unreachable stated as still unreachable**.
+
+### State at dispatch
+
+HEAD `f6b97ec`, suite **2514/2514**, 45 ahead of local master, tree clean apart
+from the untracked `node_modules` symlink. Nothing pushed, master untouched.
+Deviation letter **(x)** still unused.
+
+**Bookkeeping still unconfirmed:** the nine ticket closes (t13–t21) were
+re-emitted with the `t` prefix after bare numbers bounced; I have NOT yet seen a
+roster confirming they landed. Confirm from a `[agent:task list]` before telling
+anyone the board is clean — I reported that wrongly twice, both times by
+treating an emitted intent as a completed one.
