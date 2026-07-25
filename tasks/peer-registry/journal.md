@@ -225,3 +225,68 @@ Deliberately not "all five kinds and a redesigned dialog":
 Deploy/Test-&-Set-Up stays ssh-only throughout and must **say so** for a cloud
 kind rather than offering a wizard it cannot run — same ruling as t30b's
 ssh-only limitation being stated in the UI, for the same reason.
+
+## RULINGS (msg-93431-45) — (c) accepted, build step 1 only
+
+- Recommendation **(c) accepted**. Ship order approved as written: `ssm.target`
+  end-to-end FIRST, then kubectl/gcloud/az, `ssm.ecs` last, (b) import after.
+  **Do not run ahead into the other kinds in this pass** — clodex wants the
+  first kind reviewed end-to-end before three more ride on its shape.
+- **Own worktree**: `/Users/bogdan/projects/tmux/wb-wrap-ui-hand`, branch
+  `t32-peer-registry`, `node_modules` symlinked to the main tree. Separate HEAD;
+  the shared-HEAD collision class is gone. clodex keeps the main tree on master.
+  Git refuses to check out a branch live in another worktree — read master with
+  `git show master:path`.
+- Master merged: `7ab039a` (brings the v4.2.0 release commit `09348ff`).
+- **CORRECTION from clodex**: `contexts.js:148-150` exports only
+  `cliDir, contextsPath, load, save, validateEntry, resolve`. **`validateSsm`,
+  `validateAz`, `validateObjKind` are PRIVATE.** Prefer entering through
+  `validateEntry`; widening `cli/`'s public surface to serve a second consumer
+  "is how a leaf stops being a leaf". If a per-kind export is unavoidable, say
+  so and why — it is a boundary decision.
+- **Highest-risk detail, from clodex's own verification**: `sanitizeSandbox`
+  (stores.js:319-321) carries the warning I under-quoted — "this store is a
+  **WHITELIST** — any key NOT reconstructed here is silently dropped on every
+  write", with `mounts` named as a sub-key that shipped without its line and
+  vanished on every round-trip. **Every cloud-kind field must appear in the
+  reconstruction or it silently will not persist.**
+
+### `validateEntry` DOES serve as the entry point — no export widening needed
+
+`validateEntry({ ssm: {...} })` validates the ssm arm via the private
+`validateSsm` and enforces the one-transport rule. A peer record's transport
+block can be handed to it as a synthetic single-kind entry. No `cli/` export
+change. (Confirmed by reading contexts.js:56-72; to be pinned by a test.)
+
+### PREREQUISITE discovered — `cli/` is NOT actually in `build.files` yet
+
+`package.json` `build.files` today: `*.js`, two `scripts/` files, `wire/**/*`,
+`renderer/**/*`, `plugins/**/*`, `resources/**/*`, two tray icons,
+`node_modules/**/*`. **No `cli/`.** And `cli/README.md:61-62` still asserts the
+old position ("The desktop app's packaged DMG does **not** include `cli/`").
+
+clodex ruled both settled in the t32 amendment, but neither was ever
+implemented. Step 1 imports `cli/src/transport.js` into the main process, so
+without the packaging change step 1 is **green in dev and MODULE_NOT_FOUND in
+the shipped DMG** — finding (B) exactly. Therefore the `build.files` line and
+the README correction are IN step 1's necessary scope, not separate work.
+Verification is `npx asar list` on a real built artifact, not the config.
+
+## Step 1 plan — `ssm.target` end-to-end
+
+1. **`package.json`**: add `"cli/**/*"` to `build.files`. **`cli/README.md`**:
+   replace the stale assertion with the new position + why.
+2. **`stores.js` `sanitizePeers`**: new `sanitizePeerSsm(raw)` — per-kind
+   rebuild (`target` required non-empty string; `region`/`profile` optional
+   strings), returning null otherwise. `ssm.ecs` NOT accepted in this pass
+   (step 3). Admission test becomes `if (!url && !sshHost && !ssm) continue;`.
+   Every field in the reconstruction (the whitelist warning).
+3. **`peer-tunnel.js`**: `Tunnel` gains an ssm arm — argv from `ssmArgv` +
+   `substitutePort`, imported from `cli/src/transport.js`; ssh path unchanged.
+   `_spawnTunnel` STAYS SYNCHRONOUS (ssm.target needs no await).
+   `TunnelManager.sync` builds a tunnel for an ssm peer and restarts on change.
+4. **`peer-wiring.js` `resolvePeerUrls`**: the tunneled branch keys off "has a
+   managed tunnel", not `sshHost` specifically.
+5. **Renderer**: dest entry for an ssm target + the deploy wizard degrading
+   honestly (ssh-only, SAID not hidden — the t30b rule).
+6. Tests, each proven by reverting and failing BY MESSAGE.
