@@ -277,9 +277,70 @@ rather than silently forwarding to a stale port.
 - [x] Phase 1 — investigated; findings above; clodex ruled.
 - [x] Phase 1b — hello extension scoped; seam + token question raised.
 - [ ] Phase 2 — design the lifetime model (what opens/closes the tunnel), report.
-- [ ] Phase 3 — build.
+- [x] Phase 3 — t30a BUILT, committed `2542a30`.
 - [ ] Phase 4 — tests, proved by reverting.
-- [ ] Phase 5 — full suite (baseline 2577, ESCAPES: 0), report, close t30.
+- [ ] Phase 5 — full suite (baseline 2577, ESCAPES: 0), report, close t30a.
+
+## SPLIT — clodex ruled two tickets (msg-93431-20)
+
+Design approved as written. `ExitOnForwardFailure=yes` verified at
+peer-tunnel.js:32. Give-up cap called "the best part of the model". Rejecting
+the second `-L` correct on both counts, the second the stronger.
+
+**t30a (THIS branch) — plumbing, engine-side, NO UI, NO tunnel.** Ends with a
+peer's web host being *discoverable*: correct on headless, null on Electron, and
+a `webPort` change emitting `peer-state`. "Fully testable with no tunnel and no
+affordance."
+
+**t30b (NOT started, do not begin until clodex merges t30a)** — the pinned-port
+supervisor, the four closes including the give-up cap, and the peers-ui
+affordance rendering from live state.
+
+Reasons given: the seam and hello field are the load-bearing, hard-to-change
+parts and a seam shape is far cheaper to fix before a supervisor sits on it;
+and the split yields a green suite before the risky half starts.
+
+## t30a — what was built (commit `2542a30`)
+
+- **`web-host.js`** — `createWebHost` return gains
+  `info: { port, tokenGated: gate.configured }`. The port actually listened on,
+  not a guess. `tokenGated` = a token is REQUIRED, never its value.
+- **`engine.js:113`** — `const getWebInfo = seams.webInfo || (() => null);`
+  Getter, not value (web host starts after `createEngine` returns; absent under
+  Electron). Passed into `createRemoteWiring` as `getWebInfo`.
+- **`remote-wiring.js`** — destructures `getWebInfo`, passes
+  `getWebInfo: typeof getWebInfo === 'function' ? getWebInfo : () => null` into
+  the `RemoteServer` ctor.
+- **`remote.js`** — ctor takes `getWebInfo`; `_webHost()` normalizes to
+  `{port, tokenGated}` or null (port-range checked, **try/catch → null**:
+  identity is load-bearing, a web view is not worth breaking hello for);
+  hello gains `webHost: this._webHost()`.
+- **`headless-main.js`** — `webInfo: () => (webHost ? webHost.info : null)` in
+  the seams block, a closure over the `let webHost` declared BELOW it. No setter
+  needed. Null when `CLODEX_WEB_PORT` unset or the host failed to start.
+- **`peer-client.js`** — module-level `webHostKey(w)`; hello `next` gains a
+  normalized `webHost`; `identityChanged` compares `webHostKey(prev)` vs
+  `webHostKey(next)`; `status()` exposes `webHost` so the renderer reads LIVE
+  state, never a popover-open snapshot.
+
+Affected tests green: 134/134, ESCAPES: 0 (`free-identifier-leaks`, `peer`,
+`peer-manager-sync`, `remote-auth`, `electron-boundary`).
+
+## Phase 4 plan (NOT started)
+
+Tests to write, then prove EACH by reverting (safe — fix is committed):
+1. hello carries `webHost` when the seam reports a host; **null when it does
+   not** (the Electron case).
+2. `_webHost()` rejects a malformed/out-of-range port → null, and a THROWING
+   seam → null with hello still 200 (the degrade-not-break property).
+3. `tokenGated` reflects `gate.configured` — and the token value appears
+   NOWHERE in the hello body. This is the security assertion; write it so it
+   fails if anyone ever adds the token.
+4. `identityChanged` fires on webHost appear / vanish / port-move — the
+   re-resolution hook t30b depends on.
+5. `status()` exposes `webHost` (t30b reads live state through it).
+Note: `remote-wiring.js` + `engine.js` are BOTH in the leak-scanner's
+SCANNED_MODULES, so the new seam name is already gated in both directions.
 - [ ] Phase 1 — investigate: how a web view is served today, how a peer tunnel
       is established, and above all **tunnel lifetime**. Report to clodex
       BEFORE building anything.
