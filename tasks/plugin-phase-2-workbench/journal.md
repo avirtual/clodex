@@ -922,3 +922,113 @@ in full for whoever picks it up, including the note that `loadAll` and
 `loadPluginRenderers` already try/catch per plugin, so REQUIRED 1 is largely
 present and the real work is recording + surfacing the failure and the whole of
 REQUIRED 2.
+
+---
+
+# TICKET t4 — Plugin Phase 2, part 2: W7–W9 + the fail-safe/quarantine follow-on
+
+Verbatim, from clodex (msg-60180-57.txt). t2 (W1–W6) is CLOSED and verified by
+clodex independently: suite re-run in this worktree, 2396/2396.
+
+> [ticket t4] tasks/plugin-phase-2-workbench
+> Plugin Phase 2, part 2 — workbench pilot W7-W9 (enablement, web parity,
+> acceptance) + the fail-safe/quarantine follow-on
+>
+> t2 verified on my side: I re-ran the suite in the worktree myself, 2396/2396.
+> W9 gate 3 already effectively passes — every surviving `workbench` string in
+> core is a comment naming what moved. 235 → 220 on the api surface is the
+> thesis demonstrated numerically; that number goes in the final report.
+>
+> BOTH your flagged calls upheld. (l) the one-commit wrong-arrow require: the
+> W5/W6 split as written is genuinely unimplementable since ipc-handlers requires
+> both moved files — you picked the reversible option and commented it, right
+> call, no squash needed retroactively. (m) dropping the leak-scanner entries
+> rather than repointing: YOU ARE RIGHT AND MY TICKET WAS WRONG. A scanner asking
+> "did an extraction from main.js leak an identifier" passes vacuously forever
+> for a plugin that can't see main.js's scope, and a green light that verifies
+> nothing is worse than no light. The no-backdoor lint makes the stronger claim.
+> Keep it dropped.
+>
+> Your `sessionCwd` observation is the finding of the phase — the pilot didn't
+> just move rows, it replaced a per-handler discipline with a host guarantee. Put
+> that in the final report in those terms.
+>
+> SCOPE — three pieces, in this order:
+>
+> 1. THE FAIL-SAFE/QUARANTINE FOLLOW-ON (in your journal's INBOX; it belongs with
+>    W7 since that is where enable-by-default lands). Full spec was my earlier
+>    dm. Short form: try/catch per plugin around engine `activate(host)`,
+>    renderer `activate(rhost)`, and manifest parse — a throwing or malformed
+>    plugin is marked failed and SKIPPED, app boots regardless, failure visible
+>    in settings. Then quarantine on the SECOND consecutive failed activation,
+>    with a persisted per-plugin counter cleared on any success. THE RULE THAT
+>    MATTERS: do NOT clear `uiSettings.plugins.enabled` — that is the user's
+>    intent; keep a separate quarantine set that shadows it, so the settings row
+>    can say "disabled automatically: activate() threw on 2 consecutive launches
+>    — Retry" with intent intact. Renderer half activates per BrowserWindow, so
+>    quarantine on consistent failure across activations, not per-window; flag
+>    whatever rule you choose.
+>    CALIBRATION FROM BOGDAN, important for how much you build: this is BEST
+>    EFFORT, not a rescue system. A broken plugin is an annoyance, not a
+>    catastrophe — the code is on disk and a stock CLI in that cwd can read the
+>    git diff and fix or revert it. Match the posture the plan already sets for
+>    `deactivate()` ("best-effort; the honest full-unload is the restart
+>    boundary"). try/catch and a counter, not clever recovery logic. If
+>    quarantine gets fiddly at the edges, pick a simple rule with a clear message
+>    over elaborate correctness.
+>
+> 2. W7 — enable-by-default. Workbench ships enabled in the default persona so
+>    existing users see no change. The disable path must be real: disable removes
+>    button, overlay, styles and dispatch entries in EVERY window.
+>
+> 3. W8 — web parity. Regenerate web-dist; the bundle needs the plugin renderer
+>    module + CSS via a build-generated `web-plugin-registry.js` id→module map,
+>    since the browser can't `require()` arbitrary paths. This resolves GAP G7
+>    (`build/build-web.js` was unseen when the plan was written) — read it first
+>    and report what you find; the plan flags this step's mechanism as inference,
+>    not verified. Rebuild the Docker web image if that is reachable; if not, say
+>    so rather than guessing.
+>
+> 4. W9 — the five acceptance gates. Gate 1 (two windows: overlay independent per
+>    window, disable removes from both, ZERO live timers/listeners after disable)
+>    and gate 5 (CLODEX_PLUGINS=0 yields a working app with no workbench
+>    anywhere) are the two that need real rigor — gate 5 is the first time the
+>    kill switch is load-bearing, since t1's byte-equivalence passed with the
+>    switch ON only because nothing registered. Gate 2 is the peer/remote fsScope
+>    refusal keeping today's UX. Gate 3 you have effectively passed; make it a
+>    real CI grep. Gate 4 is leak-scanner + electron-boundary extended and green.
+>
+> Note W9 gate 1's two-window requirement and gate 5 may not be fully provable
+> from unit tests alone. Where a gate needs a running app, say so explicitly and
+> specify exactly what a human should click — Bogdan can run it from the worktree
+> (`npm start` there works; node_modules is symlinked). Do not claim a gate
+> passed on inference.
+>
+> STANDING, unchanged: CLAUDE.md FROZEN. Code wins over plan, flag
+> contradictions — your hit rate on that is 3 for 3. Suite via the
+> clodex-test-green skill with an explicit cd (the exec is blind to worktrees);
+> baseline 2396. Commit per step on `plugin-phase-1`. Journal as you go. Do NOT
+> touch master, do NOT push.
+
+## t4 OPERATING NOTES
+
+- Deviation letters CONTINUE from t2's (a)–(m). Next new flag is **(n)**.
+- Baseline **2396**. W1–W6 commits: 699aa15 · cd618e1 · 9a00d1c · 573db5a ·
+  2fd0200 · a864e3c. Master is at 2f3f8e1 (clodex's About-panel commit) and must
+  stay untouched.
+- Suite route unchanged: `clodex-test-green` skill → `test-runner` subagent with
+  an EXPLICIT cd into this worktree, plain `node --test`, no dir argument.
+- Order is fixed by the ticket: fail-safe/quarantine FIRST (it lands in the W1
+  loader and belongs with W7), then W7, then W8, then W9.
+- W8 has a REAL unknown: read `build/build-web.js` BEFORE designing anything.
+  The plan's mechanism for it is inference and clodex says so explicitly.
+- W9: do NOT claim a gate passed on inference. Gates 1 and 5 likely need a
+  running app — name exactly what Bogdan should click.
+
+### NEXT: the fail-safe/quarantine follow-on (piece 1).
+Verify BEFORE building — journal note from t2 says `loadAll` already
+try/catches per plugin and `renderer.js:loadPluginRenderers` already
+try/catches per renderer half (W1 decision 8, "per-plugin failure isolation at
+three levels"). So REQUIRED 1 is largely present; the real new work is
+(a) RECORDING the failure rather than only logging it, (b) surfacing it in the
+§2.5 settings section, and (c) all of REQUIRED 2 (the quarantine set + counter).
