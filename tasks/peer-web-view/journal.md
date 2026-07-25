@@ -846,3 +846,60 @@ retry after gave-up · per-peer `statuses`/`urlFor`.
 - **the affordance leaf** (`renderer/lib/peer-web-view.js`): phases, the ssh-only
   disabled arm, and that no URL is ever composed.
 - Then prove EACH by reverting, then the full suite (baseline 2600 + new).
+
+## Phase 2c (part 2) + PROOF + suite — t30b COMPLETE (`ae1eab3`)
+
+### Tests added (49 total, 2600 → 2650)
+
+- **`test/web-tunnel.test.js`** (18) — the supervisor. See part 1.
+- **`test/peer-web-open.test.js`** (14) — peer-wiring's half: the policy the
+  supervisor deliberately does not know. The pop decision (gated → no browser,
+  ungated → exactly one, at the supervisor's live URL), the pop riding `firstUp`
+  only, the decision being re-taken per open (a box that gains/drops its token
+  between opens), and every refusal (unknown peer · url-only peer · four shapes
+  of absent webHost · never a guessed port). Plus: state reaching the renderer,
+  close #2 riding the already-filtered list, and the manager staying UNBUILT
+  under reconciliation alone.
+- **`test/peer-web-view.test.js`** (17) — the affordance leaf. Both URL rules
+  (no URL unless the supervisor reported one; the `127.0.0.1:1` sentinel never
+  surfacing), all four phases, the ssh-only disabled arm, the token arm, and the
+  full-shape guarantee so a repaint can't read undefined.
+
+### A third-place inconsistency the leaf tests caught
+
+`tokenGated` was read as `=== true` in peer-wiring but TRUTHY in the leaf. That
+combination is the worst of both: a value like the string `'yes'` would have the
+UI say "needs a token" while main popped a browser at a 401 — the two halves
+disagreeing is worse than either rule alone. Now `=== true` in all three readers
+(peer-client normalizes, peer-wiring decides the pop, the leaf writes the
+message), with the reasoning in the code and a test that pins the agreement.
+
+### Proof: 28 mutations, every one failing BY MESSAGE, none by crash
+
+Script asserted the distinction explicitly — a mutation that only crashes counts
+as UNPROVED. Result: **proved 28 / 28**.
+
+pinned port re-picked → 1 · firstUp stored on status → 1 · firstUp on every up →
+1 · **cap deleted → 3** · **cap retired on first up (the defect I shipped) → 3** ·
+lastError dropped on give-up → 1 · URL from a pinned-but-down port → 2 (incl. the
+sentinel test) · sync OPENS → 2 · close() leaves it tracked → 5 · stopAll leaves
+children → 1 · guessed remote port → 1 · ssh-only refusal dropped (supervisor) →
+2 · stale tunnel on a moved port → 2 · **pop a gated box → 3** · **pop decision
+inverted → 3** · loose tokenGated in wiring → 1 · guessed port in wiring → 1 ·
+ssh-only refusal dropped (wiring) → 1 · state broadcast removed → 1 · eager
+reconciliation → 1 · unfiltered sync list → 1 · URL composed from localPort → 3 ·
+ssh-only button hidden → 1 · loose tokenGated in the leaf → 1 · token message
+dropped → 1 · give-up reason swallowed → 1 · open tunnel hidden when webHost
+vanishes → 1 · unknown state read as closed → 2.
+
+### Suite
+
+**2650 / 2650, `ESCAPES: 0`** — verified by running `npm test --silent` directly
+after the subagent's digest contradicted itself on the ESCAPES line (it claimed
+the reporter emits no such line, then reported 0; the line comes from
+`scripts/test-escapes.js` via `scripts/run-tests.js`).
+
+Branch `peer-web-tunnel`, nothing pushed, master untouched.
+
+- [x] t30b phase 1 — investigation, ruled.
+- [x] t30b phase 2 — build, tests, proof, suite. Awaiting clodex's merge.
