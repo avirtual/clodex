@@ -290,3 +290,54 @@ Verification is `npx asar list` on a real built artifact, not the config.
 5. **Renderer**: dest entry for an ssm target + the deploy wizard degrading
    honestly (ssh-only, SAID not hidden — the t30b rule).
 6. Tests, each proven by reverting and failing BY MESSAGE.
+
+## Step 0 LANDED (master `475d799`) — packaging + a latent harness race
+
+Two commits, merged by clodex ahead of ssm.target because the race was latent
+**on master**: `5c9f387` (packaging) and `c89342e` (harness fix).
+
+- **Packaging**: `"cli/**/*"` in `build.files`; `cli/README.md` states the new
+  position AND why. Verified on a REAL artifact, not the config: the shipped
+  v4.2.0 DMG had `grep -c '^/cli/'` = **0** (only `/cli-hooks.js`, the
+  trailing-slash false positive); a build from this worktree gives **64**,
+  including `src/transport.js` + `src/contexts.js`.
+- `test/cli-packaging.test.js` (2): pins the glob, and pins the README against
+  silent reversion. Header says plainly the test is NOT the real check.
+
+### NAMED TRIGGER — the harness can manufacture the condition the fix depends on
+
+`web-tunnel.test.js`'s `failUntilGaveUp` kills each child from a polling loop,
+so **the child's apparent lifetime IS the poll latency**. The supervisor retires
+its give-up clock when a spawn survives `_stableMs = floor(giveUpMs/2)`; at
+`giveUpMs` 40-50 that was 20-25ms against a 25ms poll — zero margin. A slipped
+timer made the child read as "genuinely worked", the clock retired, the cap
+could never fire, and the loop spun to its 6s timeout.
+
+In clodex's words, which is the durable framing:
+
+> In t30b the **product** retired its cap on a signal that proved nothing; here
+> the **harness** handed the product a signal that looked like survival but was
+> scheduler latency. **Fixing a cheap-liveness bug in the code while leaving the
+> harness able to manufacture the exact condition the fix now depends on** —
+> that generalizes well past this file.
+
+Two method notes worth keeping:
+
+- **It passed 5/5 alone, which is exactly why it slipped through** in t30b. A
+  flake that clears a short local loop is the hardest to catch and the easiest
+  to rationalize as environment.
+- **The clean deterministic reproduction (poll 30ms > stable 25ms) PASSED.**
+  Rather than tell a tidy threshold story, measured a rate: **2/25 failures
+  before, 0/25 after**. A probabilistic race described as probabilistic — most
+  ways to be wrong here involve a confident mechanism that is false.
+
+Contract now written at the helper: `POLL_MS << _stableMs == floor(giveUpMs/2)`,
+call sites at `giveUpMs >= 400`, plus the note that shrinking `giveUpMs` buys no
+speed because the cap is reached via `BACKOFF_MIN_MS` (1s), not the deadline.
+
+### Why the whole prefix was mergeable early
+
+`git diff master..branch` was packaging config, README, journal and tests —
+**zero product code**. clodex: "that's what made the whole prefix mergeable
+without touching your in-flight ssm work. Keep that separation." Worth holding
+to for the rest of t32.
