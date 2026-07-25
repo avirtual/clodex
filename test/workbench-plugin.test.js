@@ -70,11 +70,19 @@ const local = { name: 'seat', type: 'claude', cwd: '/repo/seat', workspaceId: 'w
 const peered = { name: 'far', type: 'claude', peer: 'box', cwd: '/remote', workspaceId: 'ws-1' };
 const nocwd = { name: 'bare', type: 'bash', cwd: null, workspaceId: 'ws-1' };
 
-function boot() {
+// `worktrees` (optional): paths that `git worktree list` should report for the
+// session's repo. Selection validates against exactly this, so a test that wants
+// a selection to SUCCEED declares the tree here — which is the honest shape,
+// since in production the set comes from git and not from the caller.
+function boot({ worktrees = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-workbench-test-'));
   const calls = [];
   const rec = makeRecorder(calls);
   const restore = stubLocalLeaves(calls);
+  const listWorktrees = worktrees
+    ? (cwd) => { calls.push({ leaf: 'wt', method: 'listWorktrees', args: [cwd] });
+        return { ok: true, repo: worktrees[0], worktrees: worktrees.map((p, i) => ({ path: p, isMain: i === 0, branch: 'b' })) }; }
+    : rec('wt', 'listWorktrees');
   const map = new Map([[local.name, local], [peered.name, peered], [nocwd.name, nocwd]]);
   const engine = createPluginHostEngine({
     manager: {
@@ -89,7 +97,7 @@ function boot() {
     fs, path,
     // Core's leaf, lent through host.lib — still a real injected seam after W5.
     gitWorktree: {
-      listWorktrees: rec('wt', 'listWorktrees'),
+      listWorktrees,
       removeWorktree: rec('wt', 'removeWorktree'),
       createWorktree: rec('wt', 'createWorktree'),
     },
@@ -102,7 +110,7 @@ function boot() {
 }
 
 // The fourteen rows that replace core's fourteen window.api rows, plus wt.create,
-// plus the locator row (fs.find) and worktree selection (wt.select/apply/selected).
+// plus the locator row (fs.find) and worktree selection (wt.apply/selected).
 const NAME_SCOPED_ROWS = [
   ['fs.list', ['seat', 'sub']],
   ['fs.read', ['seat', 'a.txt']],
@@ -128,7 +136,7 @@ test('the plugin registers exactly the migrated row set, namespaced by plugin id
     'workbench:scm.diff', 'workbench:scm.discard', 'workbench:scm.remote',
     'workbench:scm.stage', 'workbench:scm.status', 'workbench:scm.unstage',
     'workbench:wt.apply', 'workbench:wt.create', 'workbench:wt.list',
-    'workbench:wt.remove', 'workbench:wt.select', 'workbench:wt.selected',
+    'workbench:wt.remove', 'workbench:wt.selected',
   ]);
   cleanup();
 });
@@ -322,40 +330,69 @@ test('W9 gate 2: the dropdown itself never offers a peer session', () => {
 // accepts the session's own worktrees, and it drops rather than errors when the
 // selected tree disappears.
 
-test('wt.select refuses a path that is not one of THIS session\'s worktrees', async () => {
-  const { engine, cleanup } = boot();
-  // The stubbed listWorktrees returns { ok:true, from, args } — no `worktrees`
-  // array — so nothing can match, which is exactly the refusal path.
-  const res = await engine.dispatch('workbench', 'wt.select', ['seat', '/somewhere/else']);
-  assert.strictEqual(res.ok, false, 'an arbitrary directory is not selectable');
-  cleanup();
+test('wt.apply refuses a REAL directory that is not a worktree of this repo', async () => {
+  // The case that matters, and the one a non-existent path would dodge: the
+  // directory genuinely exists, so effectiveRoot's statSync would happily keep
+  // it. The refusal has to come from validation, not from the path being fake.
+  const { engine, calls, cleanup } = boot();
+  const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outsider-'));
+  try {
+    assert.ok(fs.statSync(outsider).isDirectory(), 'fixture really exists');
+    const res = await engine.dispatch('workbench', 'wt.apply', ['seat', outsider]);
+    assert.strictEqual(res.ok, false, 'an arbitrary real directory is not selectable');
+
+    // And nothing was written: the rows still read the session cwd.
+    calls.length = 0;
+    const list = await engine.dispatch('workbench', 'fs.list', ['seat', '']);
+    assert.strictEqual(list.ok, true);
+    assert.strictEqual(calls[0].args[0], '/repo/seat',
+      'a refused apply must leave the root at the session cwd');
+  } finally {
+    fs.rmSync(outsider, { recursive: true, force: true });
+    cleanup();
+  }
 });
 
-test('wt.select with null clears back to the session cwd', async () => {
+test('wt.apply with null clears back to the session cwd', async () => {
   const { engine, cleanup } = boot();
-  const res = await engine.dispatch('workbench', 'wt.select', ['seat', null]);
+  const res = await engine.dispatch('workbench', 'wt.apply', ['seat', null]);
   assert.deepStrictEqual(res, { ok: true, root: null });
   cleanup();
 });
 
-test('wt.apply/selected round-trip: the selection is per SESSION and in memory', async () => {
+test('no reachable row writes the selection without validating it', async () => {
+  // The guarantee is the ENGINE's, not the renderer's call sequence: there must
+  // be exactly one row that can write wtRoots, and it validates.
   const { engine, cleanup } = boot();
-  // Applying a root is deliberately separate from validating it, so this test
-  // can set one without a real git repo behind it.
-  await engine.dispatch('workbench', 'wt.apply', ['seat', '/repo/seat']);
+  const writers = engine._dispatchKeys().filter((k) => k.startsWith('workbench:wt.'));
+  assert.deepStrictEqual(writers.sort(),
+    ['workbench:wt.apply', 'workbench:wt.create', 'workbench:wt.list',
+     'workbench:wt.remove', 'workbench:wt.selected'],
+    'wt.select is gone — a row whose only purpose was to be called first');
+  cleanup();
+});
+
+test('wt.selected reports the session cwd and never leaks across sessions', async () => {
+  const { engine, cleanup } = boot();
   const mine = await engine.dispatch('workbench', 'wt.selected', ['seat']);
   assert.strictEqual(mine.ok, true);
   assert.strictEqual(mine.cwd, '/repo/seat', 'the session cwd is reported alongside');
+  assert.strictEqual(mine.selected, null, 'nothing selected by default');
 
-  // A DIFFERENT session must never see it.
   const other = await engine.dispatch('workbench', 'wt.selected', ['bare']);
   assert.strictEqual(other.ok, false, 'a session with no cwd still refuses, unchanged');
   cleanup();
 });
 
 test('a selected root that no longer exists DROPS to the session cwd, it does not error', async () => {
-  const { engine, calls, cleanup } = boot();
-  await engine.dispatch('workbench', 'wt.apply', ['seat', '/definitely/not/here']);
+  // Select a real worktree, then delete it underneath the selection — which is
+  // what `git worktree remove` (or our own Remove button) does in practice.
+  const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-gone-'));
+  const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', gone] });
+  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', gone]);
+  assert.strictEqual(applied.ok, true, 'a genuine worktree is selectable');
+  fs.rmSync(gone, { recursive: true, force: true });
+
   const sel = await engine.dispatch('workbench', 'wt.selected', ['seat']);
   assert.strictEqual(sel.ok, true, 'reporting the root never fails');
   assert.strictEqual(sel.root, '/repo/seat', 'it falls back to the session cwd');
@@ -371,10 +408,12 @@ test('a selected root that no longer exists DROPS to the session cwd, it does no
 });
 
 test('the selection moves EVERY scoped row together — Files and Source cannot diverge', async () => {
-  const { engine, calls, cleanup } = boot();
-  // Point at a directory that really exists so use-time validation keeps it.
+  // A real directory AND a declared worktree of the session's repo: both are
+  // required now, since apply validates and effectiveRoot re-checks at use time.
   const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-'));
-  await engine.dispatch('workbench', 'wt.apply', ['seat', real]);
+  const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', real] });
+  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', real]);
+  assert.strictEqual(applied.ok, true, 'selection succeeded');
   try {
     for (const [method, args] of NAME_SCOPED_ROWS) {
       calls.length = 0;

@@ -87,3 +87,36 @@ worktree" fail by message, not crash.
 so an id toggled with it would have been always-visible. Fixed before landing.
 The pinned row list in `test/workbench-plugin.test.js` also caught all four new
 rows, as designed.
+
+## Fix: confinement moved into the row that writes (clodex review)
+
+The first version split selection across two rows — `wt.select` validated and
+returned a match, `wt.apply` wrote `wtRoots` and validated NOTHING. The renderer
+called them in order, so the UI was safe, but **the guarantee lived in a
+renderer call sequence rather than in the engine**. `wt.apply(name,
+'/any/real/dir')` set the root, `effectiveRoot`'s statSync passed because the
+directory existed, and every scoped row — `fs.write` and `scm.commit` included —
+then acted outside the session's repo.
+
+My comment on `wt.select` asserted a caller "cannot point the workbench at an
+arbitrary directory". That was false as written: a stated property with no
+execution behind it.
+
+The old test used `/definitely/not/here`, which does not exist, so statSync
+rejected it for the wrong reason and the fixture dodged the very thing the prose
+claimed. **Class to watch: a fixture whose value avoids the case the assertion
+is supposed to cover.**
+
+Fixed by collapsing to ONE row. `wt.apply` now calls `fsScope`, then
+`listWorktrees`, then matches, then writes. `wt.select` is deleted rather than
+left as a row whose only purpose was to be called first.
+
+New test uses a REAL temp dir (statSync genuinely succeeds) and asserts both the
+refusal and that a subsequent `fs.list` still reads the session cwd. Proven by
+restoring the vulnerable shape and watching it fail by message.
+
+`boot()` now takes `{ worktrees }` so a test that wants a selection to SUCCEED
+declares the tree — honest, since in production that set comes from git and not
+from the caller.
+
+Suite 2542/2542.

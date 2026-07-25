@@ -47,9 +47,9 @@ module.exports.activate = (host) => {
   // restores your tree, and switching to a DIFFERENT session can never show you
   // another session's.
   //
-  // Only paths that `wt.list` returned for that session ever land here (see
-  // `wt.select`), so the reachable set is exactly that session's own repo's
-  // worktrees — which is the confinement rule for this feature.
+  // Only paths that `git worktree list` reports for that session's own repo
+  // ever land here — `wt.apply` is the single writer and it validates before it
+  // writes, so the confinement rule is enforced where the write happens.
   const wtRoots = new Map();
 
   // Re-validate at USE time, not only at selection time: a worktree can vanish
@@ -119,25 +119,33 @@ module.exports.activate = (host) => {
   host.ipc.handle('wt.create', (repo, branch, opts) => gitWorktree.createWorktree(repo, branch, opts || null));
 
   // ── Worktree SELECTION (the plugin's own state; no core equivalent) ──────
-  // Selecting is scoped: the candidate must be a path `wt.list` returns for
-  // THIS session, so a caller cannot point the workbench at an arbitrary
-  // directory by handing us a path. `null` clears back to the session cwd.
-  host.ipc.handle('wt.select', scoped(async (cwd, worktreePath) => {
-    // NB: `cwd` here is already the EFFECTIVE root, which is fine — worktree
-    // listing resolves the same repo from any of its trees.
-    if (!worktreePath) { return { ok: true, root: null }; }
-    const list = await gitWorktree.listWorktrees(cwd);
+  // ONE row writes `wtRoots`, and it is the row that validates. An earlier
+  // version split this in two — a `wt.select` that validated and a `wt.apply`
+  // that wrote — which put the confinement guarantee in the RENDERER's call
+  // sequence rather than in the engine: `wt.apply(name, '/any/real/dir')` set
+  // the root, `effectiveRoot`'s statSync passed because the directory existed,
+  // and every scoped row (fs.write and scm.commit included) then acted outside
+  // the session's repo. The split is gone; there is no reachable path that
+  // writes the map unvalidated.
+  //
+  // Deliberately NOT `scoped`: this needs the session NAME to key the map, and
+  // `scoped` hands the handler a cwd and drops the name. So it calls `fsScope`
+  // itself — which also keeps the peer refusal identical to every other row.
+  host.ipc.handle('wt.apply', async (name, worktreePath) => {
+    const r = host.sessions.fsScope(name);
+    if (r.error) return { ok: false, error: r.error };
+    if (!worktreePath) { wtRoots.delete(name); return { ok: true, root: null }; }
+    // Resolve the repo from the EFFECTIVE root: worktree listing answers the
+    // same set from any tree of the repo, so switching worktree-to-worktree
+    // works without first returning to the session cwd.
+    const list = await gitWorktree.listWorktrees(effectiveRoot(name, r.cwd));
     if (!list.ok) return { ok: false, error: list.error || 'Not a git repository' };
     const match = list.worktrees.find((w) => w.path === worktreePath);
+    // The confinement rule, enforced where the write happens: only a path that
+    // `git worktree list` returns for THIS session's own repo is selectable.
     if (!match) return { ok: false, error: 'Not a worktree of this session\'s repository' };
+    wtRoots.set(name, match.path);
     return { ok: true, root: match.path, isMain: match.isMain };
-  }));
-  // Selection is applied OUTSIDE `scoped` so it writes the map keyed by session
-  // name; `scoped` hands the handler a cwd and deliberately drops the name.
-  host.ipc.handle('wt.apply', (name, worktreePath) => {
-    if (!worktreePath) { wtRoots.delete(name); return { ok: true, root: null }; }
-    wtRoots.set(name, worktreePath);
-    return { ok: true, root: worktreePath };
   });
   // What is the active root, and did a stale selection just drop? The renderer
   // asks on every open/refresh so the indicator can never lie.

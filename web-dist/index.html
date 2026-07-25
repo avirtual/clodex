@@ -7381,12 +7381,11 @@ body {
           });
           async function selectWorktree(name, worktreePath) {
             if (!confirmDiscardEdit()) return;
-            const chk = await h.invoke("wt.select", name, worktreePath);
-            if (!chk || !chk.ok) {
-              toast(`Can't use that worktree: ${chk && chk.error || "unknown"}`);
+            const res = await h.invoke("wt.apply", name, worktreePath);
+            if (!res || !res.ok) {
+              toast(`Can't use that worktree: ${res && res.error || "unknown"}`);
               return;
             }
-            await h.invoke("wt.apply", name, chk.root);
             resetEditor();
             expExpanded.clear();
             await refreshRootIndicator();

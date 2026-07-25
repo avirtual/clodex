@@ -236,16 +236,17 @@ module.exports.activate = (rhost) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clearWorktree(); }
     });
 
-    // Select a worktree as the active root. The engine validates the path
-    // against `wt.list` for this session, so an arbitrary directory is refused.
+    // Select a worktree as the active root. `wt.apply` both validates against
+    // `wt.list` for this session and writes the selection — one row, so the
+    // refusal of an arbitrary directory is the engine's, not this call site's.
+    //
+    // Selecting the MAIN worktree is how you get back to it explicitly; it is
+    // still a real selection, not a clear, so the indicator stays truthful when
+    // the session cwd is itself a non-main worktree.
     async function selectWorktree(name, worktreePath) {
       if (!confirmDiscardEdit()) return;
-      const chk = await h.invoke('wt.select', name, worktreePath);
-      if (!chk || !chk.ok) { toast(`Can't use that worktree: ${(chk && chk.error) || 'unknown'}`); return; }
-      // Selecting the MAIN worktree is how you get back to it explicitly; it is
-      // still a real selection, not a clear, so the indicator stays truthful
-      // when the session cwd is itself a non-main worktree.
-      await h.invoke('wt.apply', name, chk.root);
+      const res = await h.invoke('wt.apply', name, worktreePath);
+      if (!res || !res.ok) { toast(`Can't use that worktree: ${(res && res.error) || 'unknown'}`); return; }
       resetEditor();
       expExpanded.clear();
       await refreshRootIndicator();
