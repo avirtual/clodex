@@ -157,6 +157,12 @@ const engine = createEngine({
     pathMergeFailed,   // login-shell PATH merge outcome → diagnostics banner (Task 12)
     // No docker-in-docker: a headless node offers no sandbox-box placement.
     enableSandbox: false,
+    // This box's browser frontend, for peers that want to reach it (t30). A
+    // closure over the `webHost` let below, which is assigned AFTER this call
+    // returns — so it reads live, and stays null when CLODEX_WEB_PORT is unset
+    // or the host failed to start. A consumer must see "no web host" rather
+    // than a port nothing serves.
+    webInfo: () => (webHost ? webHost.info : null),
     // App-menu / tray refresh hooks default to no-ops (there is no menu here).
     // restartHost: shut down cleanly and exit 64 so a supervisor relaunches.
     restartHost: () => {

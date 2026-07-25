@@ -60,6 +60,9 @@ function createRemoteWiring(deps) {
     readRemoteEnvToken, resolveRemoteToken,
     // host seams (former electron reads): version by value, isPackaged as getter
     appVersion, isPackaged,
+    // The browser frontend's host, or null when this host has none (t30). A
+    // getter because web-host.js starts after the engine builds this wiring.
+    getWebInfo,
   } = deps;
 
   function syncRemoteServer() {
@@ -429,6 +432,13 @@ function createRemoteWiring(deps) {
         // .app bundle isn't a git-pullable source and the ssh update path doesn't
         // apply. main.js sits at the repo root, so __dirname IS the checkout.
         srcDir: isPackaged() ? null : homeRelativize(__dirname, os.homedir()),
+        // Self-report the browser frontend's port so a consumer can tunnel to
+        // it instead of reconstructing wire-port+1 — a consumer guessing what
+        // the producer already knows is the class of bug that keeps biting us.
+        // A FUNCTION, read per hello: the web host starts after this wiring
+        // exists and can be absent entirely (Electron), so a value captured
+        // here would be null forever.
+        getWebInfo: typeof getWebInfo === 'function' ? getWebInfo : () => null,
         getAttachInfo: (name) => {
           const sess = manager.sessions.get(name);
           // Bash included: attach mirrors the raw PTY (scrollback + geometry),

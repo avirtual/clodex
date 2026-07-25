@@ -1,0 +1,423 @@
+# t30 — peer web view via clodexctl tunnel
+
+Dispatched by clodex in msg-93431-13 (00:55), as a one-liner rather than a full
+ticket — the backlog entry lives in clodex's context, not in the repo. Grepped
+`tasks/`, `docs/`, `.claude/` for a written spec: **none exists** (the `t303`
+hits in `.claude/memory-archive-2026-07-22.md` are an unrelated review).
+
+## The spec, verbatim and complete
+
+> Next: **t30** (peer web view via clodexctl tunnel) is yours, backlog no
+> longer — start when you pick this up. It is investigation-first and the real
+> question is **tunnel lifetime, not wiring**. Branch off master AFTER I merge
+> this; I will have pushed by then, so pull first.
+
+That is everything I was given. Two things are load-bearing in it:
+
+1. **Investigation-first.** Same shape as t29 — establish what is actually true
+   and report before building. t29's lesson is directly relevant: the ticket's
+   premise about the mechanism was wrong, and finding that out was the work.
+2. **The real question is tunnel LIFETIME.** clodex has pre-named where he
+   expects the difficulty. Not "can we wire a peer's web view through the
+   tunnel" but "how long does that tunnel live, and what happens to the view
+   when it does not". Investigation must answer lifetime first; wiring is the
+   part he is explicitly saying is not the problem.
+
+## Branch base — NOT yet available at pickup
+
+- `origin/master` is still at `e5b577d` (v4.1.0).
+- Local `master` is at `ea0729e` "Merge test-masking: …" — clodex merged t29
+  locally but **has not pushed yet**.
+- Instruction is explicit: branch off master AFTER the merge is pushed, and
+  **pull first**. So: `git fetch && git pull` on master, confirm origin carries
+  the merge, THEN branch. Do not branch off the local merge commit.
+- Investigation needs no branch; reading can start immediately.
+
+## Surface to read (not yet read — orientation only)
+
+- `docs/peering.md` — the subsystem flow doc. CLAUDE.md says read the matching
+  one BEFORE changing a subsystem.
+- `peer-tunnel.js` (TunnelManager), `peer-manager`/`peer-wiring.js`,
+  `peer-client.js`, `peer-deploy.js`.
+- `cli/` — clodexctl (`cli/src`, `cli/bin`, `cli/README.md`), plus
+  `cli/deploy/` for how tunnels are stood up in the deployed flavors.
+- The web frontend side: `web-host.js`, `renderer/web/`, and how a LOCAL web
+  view is served today — the peer case presumably reuses it.
+- Tests: `test/peer-tunnel.test.js`, `test/peer.test.js`,
+  `test/peer-manager-sync.test.js`, `test/peer-client-*.test.js`,
+  `test/relay-protocol.test.js`.
+
+## Constraints (standing, carried)
+
+- Do not push. Do not touch master. Do not commit on master.
+- `.claude/CLAUDE.md` and `.claude/memory.md` are never edited.
+- `hostApi` frozen at `"1"`.
+- `git reset -q node_modules` before staging; explicit path lists, never
+  `git add -A`.
+- Suite runs via `npm test --silent -- --reporter=dot` through the t29 wrapper
+  (or the `clodex-test-green` skill, whose agent definition now routes through
+  it). **A green run requires `ESCAPES: 0` as well as zero failures.**
+  Baseline after t29: **2577**.
+- `npm run build:web` if bundled sources change.
+- Prove tests by reverting and watching them fail BY MESSAGE.
+- t29 trigger, new: **an exit-code assertion in a wrapper test almost always
+  rides the wrapped tool's behaviour** — anchor on what only our code produces.
+- t28 trigger: **`git checkout --` is not undo.** Commit before proving by
+  reverting.
+
+## Phase 1 — findings (no branch yet; reading only)
+
+### (A) There are TWO servers, and peering carries the wrong one
+
+- **`remote.js` RemoteServer**, wire port **7900**. The peering protocol
+  (attach/control/input/dm/…) AND a **phone web UI** at `/`. This is what
+  Clodex's own `TunnelManager` forwards, and the only thing it forwards.
+- **`web-host.js`**, `webPort` **7810** (clodexctl assumes wire+1). The FULL
+  browser frontend — the real renderer bundle over WebSocket, driving the same
+  `registerIpcHandlers` map. Started **only by `headless-main.js` when
+  `CLODEX_WEB_PORT` is set**; Electron never loads it.
+
+So "peer web view" is the **web-host** surface, and Clodex's peering stack has
+no path to it at all: `Tunnel.args()` (peer-tunnel.js:88) forwards exactly one
+port, `remotePort` (default 7900). The phone UI on the wire port is a different,
+smaller thing — not what t30 is about.
+
+### (B) TUNNEL LIFETIME — the two models are opposites, by explicit design
+
+| | `TunnelManager` (peer-tunnel.js) | `clodexctl web` / `port-forward` |
+|---|---|---|
+| shape | supervised daemon | **foreground hold** |
+| death | **auto-restart**, 1s→60s capped backoff | **single-shot, NO reconnect** |
+| posture | calm (laptops sleep) | honest error, exit CONNECT |
+| stop | `stop()` / settings sync | Ctrl-C / SIGTERM / SIGHUP → exit 0 |
+| transport | **ssh only** (`-L`, needs `sshHost`) | ssh/ssm/kubectl/gcloud/az/custom |
+| local port | **fresh on EVERY (re)start** | pinned (`--port`) or 8080–8090 |
+
+port-forward.js:8-12 states the no-reconnect choice deliberately: *"a dropped
+tunnel ends the session with a clear error rather than silently masking a dead
+node (attach reconnects because a human is mid-keystroke; a port-forward's
+consumer reconnects itself)."* That last clause is the whole problem — **a
+browser tab is a consumer that does NOT reconnect itself.**
+
+### (C) The sharp edge: the local port changes on every tunnel restart
+
+`Tunnel._spawnTunnel` calls `pickFreePort` and assigns a NEW `this.localPort`
+every time (peer-tunnel.js:99-102). `peer-client.js` copes because it re-reads
+`urlFor(id)` through `onState`. **A browser tab, iframe or webview cannot** — it
+holds a URL string. After one wifi blip the view points at a port that is closed,
+or worse, has been reused by something else. Any design that hands a raw
+`http://127.0.0.1:PORT` to a browser and walks away is broken by the supervisor
+that is supposed to keep it alive. This is the lifetime question clodex named,
+and it has a concrete mechanism behind it.
+
+Also: while a tunnel is down the peer keeps the dead-placeholder URL
+`http://127.0.0.1:1` (docs/peering.md §3) — a view must not render that.
+
+### (D) Clodex has NO embedded-browser surface today
+
+Grepped `renderer/` + `main.js` for `webview` / `BrowserView` /
+`WebContentsView` / `<iframe>`: **zero hits.** So t30 is either
+(a) pop the system browser at a tunnel URL, or (b) introduce the **first**
+embedded browser surface in the app. (b) is not a wiring detail: the app runs
+`contextIsolation: false` + `nodeIntegration: true` (CLAUDE.md calls this out
+and says "revisit if the threat model changes"), so hosting remote-origin
+content in-window is a threat-model decision, not an implementation one.
+**Flagging, not choosing** — that is clodex's call.
+
+### Open question I could not settle by reading
+
+Whether t30 means *"Clodex opens a peer's web GUI"* (consumer-side feature) or
+*"clodexctl grows a supervised/background mode"* (CLI feature). The two share
+the lifetime problem but almost nothing else. Asked clodex before building.
+
+## clodex's rulings (msg-93431-16)
+
+- **(C) decisive.** "Do not build anything that hands out a raw port string and
+  walks away." The URL must be stable across restarts OR the consumer must be
+  re-resolvable.
+- **It is the Clodex side** — consumer-side feature in peers-ui, NOT a new
+  clodexctl mode. "clodexctl's foreground single-shot is correctly designed for
+  its actual consumers; do not bend it to serve a browser tab."
+- **(A) — the ticket was wrong.** "I said 'everything needed exists.' It does
+  not… That is the real work in this ticket, and it is more than wiring. Treat
+  my ticket's cost estimate as void."
+- **(D) out of scope. EXTERNAL BROWSER ONLY.** No embedded surface.
+- **The peer should advertise its `webPort`** — "a consumer guessing wire+1 is a
+  consumer reconstructing what the producer already knows." If extending hello
+  is more invasive than it looks, report before doing it.
+- **Second port vs separate tunnel: my call**, against (C)'s restart behaviour.
+- **Never render the placeholder** `http://127.0.0.1:1` — show "connecting".
+- **The tunnel must not outlive its reason to exist.** Decide what closes it and
+  say so explicitly. "A forgotten tunnel to a remote box is a quiet hole."
+
+## Phase 1b — the hello extension: NOT invasive, but it needs a seam
+
+Branch `peer-web-view` created off master `ea0729e` (pulled).
+
+**Hello is trivially extensible.** `remote.js:451-464` is a plain object literal;
+`srcDir` (:459) is the exact precedent — a self-reported, nullable field added
+later, with old viewers ignoring it. Consumer side: `peer-client.js:122-126`
+`identityChanged` compares version/platform/srcDir/caps, so **adding `webPort`
+there makes a web-host appearing or moving emit `peer-state` immediately**
+rather than waiting on the 15s cadence. That is the right hook and it already
+exists.
+
+**The non-trivial part is where the value comes from.** `RemoteServer` takes
+`srcDir`/`version` as constructor VALUES (remote.js:62-68, wired at
+remote-wiring.js:425-431). But the web host is:
+- started **only by `headless-main.js`** (:194-211) from `CLODEX_WEB_PORT`,
+- constructed **after** the engine, so the engine cannot be handed the value at
+  construction time,
+- **absent entirely** on desktop Electron — which must report null, not a guess.
+
+`engine.js:88` `createEngine({ userDataPath, seams, log })` is the established
+answer: every host-specific capability is an optional seam with a default. So a
+`seams.webInfo` getter (headless returns `{port, token?}`, Electron omits it →
+null) fits the existing pattern without inventing one. Reporting this shape to
+clodex rather than assuming it, since it touches the engine seam list.
+
+**A complication clodex will want to rule on: the web host can require a token.**
+`CLODEX_WEB_TOKEN` gates every route + the WS upgrade (`headless-main.js:207`,
+`web-host.js:104/383/391`), read from `?token=`, `Authorization: Bearer`, or a
+cookie (`auth-token.js:19-23`). So on a token-gated box, a tunnel alone does not
+open the GUI — the URL needs `?token=`. That means the consumer either receives
+the token over hello (**putting a secret in an unauthenticated identity
+endpoint** — I will NOT do this without an explicit ruling) or the operator
+pastes it. Advertising the PORT is safe; advertising the TOKEN is a different
+decision. Flagging, not choosing.
+
+## clodex's rulings (msg-93431-18)
+
+- **(1) approved — advertise the PORT only.** (2) refused outright; (3) "stays
+  available and unbuilt". **Do not fetch the token over any channel here.**
+- **My "unauthenticated hello" was wrong** — corrected by clodex and verified:
+  `_authGate` (remote.js:360) runs before ALL routing including hello, so with
+  `CLODEX_REMOTE_TOKEN` set, hello requires it. What is true is narrower: on a
+  loopback bind with no token, the gate passes everything. Hello is open *in
+  exactly the configuration where it is reachable only through a tunnel* — the
+  design, not a gap. Both branches argue against (2), so it is refused harder
+  than I argued for.
+- **`seams.webInfo` approved.** Keep it to what the consumer needs.
+- **The token-gated signal must be REAL, not guessed.** "If you cannot cheaply
+  know… prefer a URL that 401s with a clear explanation over a
+  confident-but-wrong claim. Do not invent a gated/ungated signal."
+- **Carry into the design:** `identityChanged` is the re-resolution hook. "Build
+  the consumer so the current URL is always read through that path, never cached
+  at open time — the (C) failure is a consumer holding a string across a respawn."
+
+### The gated signal IS cheaply knowable — no guess needed
+
+`web-host.js:104` builds `gate = makeTokenGate(token)` and `auth-token.js`
+exposes `gate.configured`. `createWebHost` already returns an object
+(`web-host.js:427`), so it can return `tokenGated: gate.configured` alongside
+`port`. That is the host reporting a **fact about itself**, and it is not a
+secret — knowing that a token is required reveals nothing about the token. So
+`seams.webInfo` → `{ port, tokenGated }`, and the UI claim is derived, never
+invented. clodex's 401 fallback is not needed.
+
+## Phase 2 — the lifetime model
+
+### The constraint an external browser imposes
+
+clodex's (C) ruling allows two escapes: a **stable** URL, or a **re-resolvable**
+consumer. For an external browser tab **only "stable" is available** — Clodex
+cannot re-point a tab it does not own. That single fact drives the whole design.
+
+### Decision: a SEPARATE, on-demand tunnel with a PINNED local port
+
+Rejected — a second `-L` on the existing peer tunnel:
+1. it would inherit `TunnelManager`'s re-pick-port-on-respawn, which is the (C)
+   bug itself; and
+2. it would open a web tunnel for **every** ssh peer whether or not anyone asked
+   to look — a tunnel with no reason to exist, which clodex forbade.
+
+So: a distinct supervisor, one per peer that has been explicitly opened.
+
+- **Local port is picked ONCE and pinned** for the life of that web tunnel, and
+  re-bound to the SAME port on every respawn. This is the deliberate inversion
+  of `Tunnel._spawnTunnel`'s fresh-port behaviour, and the reason is written into
+  the code: our consumer cannot re-resolve.
+- `ExitOnForwardFailure=yes` (already in `SSH_BASE_ARGS`) makes a taken pin an
+  honest failure + backoff, not a silent bind elsewhere.
+- **The browser is popped exactly once**, on the first successful up. Respawns
+  do NOT re-pop — the pinned port means the existing tab works again on reload.
+
+### What CLOSES it (clodex asked for this explicitly)
+
+The peer tunnel retries forever because Clodex needs the peer connection
+continuously. A web tunnel exists because a human asked to look at a GUI, and a
+human's attention is bounded. So it closes on:
+
+1. **Explicit close** — the affordance that opened it toggles closed.
+2. **Peer removed or disabled** — same rule as `TunnelManager.sync`.
+3. **App shutdown** — a `stopAll()` on the same path as the peer tunnels.
+4. **Give-up cap** — if it cannot establish for a bounded window, it stops and
+   surfaces that, instead of retrying at a dead box forever. This is the direct
+   answer to "a forgotten tunnel to a remote box is a quiet hole": every other
+   trigger depends on someone doing something, and this one does not.
+
+### Never rendering the placeholder
+
+`http://127.0.0.1:1` is `TunnelManager`'s dead-peer sentinel and is never a web
+URL. The web affordance reads its own tunnel's state (`down`/`up`) and shows
+"connecting…" until up; **no URL exists in the UI until there is a live one.**
+
+### Re-resolution, per clodex's carry-in
+
+The pin makes the URL stable, but two things still move: whether the peer HAS a
+web host, and which remote `webPort` it uses. Both ride hello, and
+`identityChanged` already forces a `peer-state` emit when `webPort` changes. So
+the affordance is rendered from **live peer state**, never from a snapshot taken
+when the popover opened — and a remote `webPort` change restarts the tunnel
+rather than silently forwarding to a stale port.
+
+## Progress
+
+- [x] Phase 0 — pulled master `ea0729e`; branch `peer-web-view` created.
+- [x] Phase 1 — investigated; findings above; clodex ruled.
+- [x] Phase 1b — hello extension scoped; seam + token question raised.
+- [ ] Phase 2 — design the lifetime model (what opens/closes the tunnel), report.
+- [x] Phase 3 — t30a BUILT, committed `2542a30`.
+- [ ] Phase 4 — tests, proved by reverting.
+- [ ] Phase 5 — full suite (baseline 2577, ESCAPES: 0), report, close t30a.
+
+## SPLIT — clodex ruled two tickets (msg-93431-20)
+
+Design approved as written. `ExitOnForwardFailure=yes` verified at
+peer-tunnel.js:32. Give-up cap called "the best part of the model". Rejecting
+the second `-L` correct on both counts, the second the stronger.
+
+**t30a (THIS branch) — plumbing, engine-side, NO UI, NO tunnel.** Ends with a
+peer's web host being *discoverable*: correct on headless, null on Electron, and
+a `webPort` change emitting `peer-state`. "Fully testable with no tunnel and no
+affordance."
+
+**t30b (NOT started, do not begin until clodex merges t30a)** — the pinned-port
+supervisor, the four closes including the give-up cap, and the peers-ui
+affordance rendering from live state.
+
+Reasons given: the seam and hello field are the load-bearing, hard-to-change
+parts and a seam shape is far cheaper to fix before a supervisor sits on it;
+and the split yields a green suite before the risky half starts.
+
+## t30a — what was built (commit `2542a30`)
+
+- **`web-host.js`** — `createWebHost` return gains
+  `info: { port, tokenGated: gate.configured }`. The port actually listened on,
+  not a guess. `tokenGated` = a token is REQUIRED, never its value.
+- **`engine.js:113`** — `const getWebInfo = seams.webInfo || (() => null);`
+  Getter, not value (web host starts after `createEngine` returns; absent under
+  Electron). Passed into `createRemoteWiring` as `getWebInfo`.
+- **`remote-wiring.js`** — destructures `getWebInfo`, passes
+  `getWebInfo: typeof getWebInfo === 'function' ? getWebInfo : () => null` into
+  the `RemoteServer` ctor.
+- **`remote.js`** — ctor takes `getWebInfo`; `_webHost()` normalizes to
+  `{port, tokenGated}` or null (port-range checked, **try/catch → null**:
+  identity is load-bearing, a web view is not worth breaking hello for);
+  hello gains `webHost: this._webHost()`.
+- **`headless-main.js`** — `webInfo: () => (webHost ? webHost.info : null)` in
+  the seams block, a closure over the `let webHost` declared BELOW it. No setter
+  needed. Null when `CLODEX_WEB_PORT` unset or the host failed to start.
+- **`peer-client.js`** — module-level `webHostKey(w)`; hello `next` gains a
+  normalized `webHost`; `identityChanged` compares `webHostKey(prev)` vs
+  `webHostKey(next)`; `status()` exposes `webHost` so the renderer reads LIVE
+  state, never a popover-open snapshot.
+
+Affected tests green: 134/134, ESCAPES: 0 (`free-identifier-leaks`, `peer`,
+`peer-manager-sync`, `remote-auth`, `electron-boundary`).
+
+## Phase 4 plan (NOT started)
+
+Tests to write, then prove EACH by reverting (safe — fix is committed):
+1. hello carries `webHost` when the seam reports a host; **null when it does
+   not** (the Electron case).
+2. `_webHost()` rejects a malformed/out-of-range port → null, and a THROWING
+   seam → null with hello still 200 (the degrade-not-break property).
+3. `tokenGated` reflects `gate.configured` — and the token value appears
+   NOWHERE in the hello body. This is the security assertion; write it so it
+   fails if anyone ever adds the token.
+4. `identityChanged` fires on webHost appear / vanish / port-move — the
+   re-resolution hook t30b depends on.
+5. `status()` exposes `webHost` (t30b reads live state through it).
+Note: `remote-wiring.js` + `engine.js` are BOTH in the leak-scanner's
+SCANNED_MODULES, so the new seam name is already gated in both directions.
+- [ ] Phase 1 — investigate: how a web view is served today, how a peer tunnel
+      is established, and above all **tunnel lifetime**. Report to clodex
+      BEFORE building anything.
+- [ ] Phase 2 — build, once clodex rules on the findings.
+- [ ] Phase 3 — tests, proved by reverting.
+- [ ] Phase 4 — full suite, report, close t30.
+
+## Phase 4 — tests written and PROVEN (commits `dfabbda`, `af76bda`)
+
+Two new files, 23 tests, all proved by reverting (HEAD held the fix, so
+`git checkout --` was safe — the t28 trigger).
+
+**`test/peer-web-host.test.js`** (18) — the wire contract, over real HTTP.
+Producer: hello carries `webHost` when the seam reports one; **present-and-null**
+when it does not (Electron), so "no web host" and "too old to say" are one case;
+malformed/out-of-range/non-integer/string ports refused (65535 explicitly NOT
+swept up); a **throwing** seam → null with hello still 200 and identity intact;
+`tokenGated` only ever a literal-true boolean. Consumer: `status().webHost`,
+normalization against a RAW hello, `identityChanged` on appear/move/vanish/gate,
+and **no** re-emit from a steady host (the key-comparison property).
+
+**`test/engine-web-info-seam.test.js`** (5) — the seam shape. Engine's default
+and its read-through behaviour driven through the REAL path (engine →
+`syncRemoteServer` → captured `RemoteServer` options, `CLODEX_REMOTE_ENABLE=1`,
+RemoteServer patched so no socket binds); `remote-wiring`'s non-callable guard;
+and headless-main's closure pinned **as source** — it boots a real host so it
+can't be required, and the regression that matters is textual (`webInfo: webHost`
+captures the null it holds at that point, forever).
+
+### The security assertion
+
+Stands a REAL token-gated `createWebHost` up and searches the **raw hello bytes**
+for the token, then pins `webHost`'s key set to exactly `['port','tokenGated']`.
+So it fails if anyone adds the token under any name, and fails again if a future
+field tries to smuggle it past the string search. Proved: mutating the hello to
+ship `token:` turns it red.
+
+### Two defects the tests found
+
+1. **`web-host.info.port` echoed the REQUESTED port**, so a host constructed with
+   `port: 0` (every ephemeral bind, and every test) advertised **port 0** — a port
+   nothing serves, which is exactly the class of lie this ticket exists to kill.
+   Now a **getter** reading `server.address().port`: null before listen and after
+   close, rather than claiming a dead port.
+2. **My own consumer-normalization test proved nothing.** It drove a real
+   `RemoteServer`, which normalizes first — the malformed values never reached the
+   consumer. Reverting peer-client's guard left it GREEN. Rewritten against a raw
+   http hello emitting bodies no producer of ours would send. **Carried trigger
+   confirmed again: an impossible fixture passes for the wrong reason** — and the
+   tell here was specific, *a test whose fixture must pass through a second guard
+   before reaching the one under test*.
+
+### Proof matrix (12 mutations, each failing BY MESSAGE, never by crash)
+
+drop the hello field → 14 · skip port validation → 1 · remove the try/catch → 1 ·
+coerce `tokenGated` → 1 · **ship the token → 3 incl. the security one** ·
+drop `status().webHost` → 8 · stop normalizing → 2 · absent-reads-as-undefined → 2 ·
+pass extra keys through → 1 · ignore webHost in `identityChanged` → 4 ·
+snapshot the seam → 1 · drop the non-callable guard → 1 · echo the requested
+port → 2 · headless captures by value → 1.
+
+## Phase 5 — RESULT
+
+**Suite green: 2600/2600, `ESCAPES: 0`** (baseline 2577 + 23). Branch
+`peer-web-view`, four code/test commits on top of master `ea0729e`. Nothing
+pushed, master untouched.
+
+- [x] Phase 4 — tests, proved by reverting.
+- [x] Phase 5 — full suite, reported. t30a awaiting clodex's merge.
+
+## t30b — NOT started (blocked on the merge)
+
+Carry-in for the tunnel half, beyond the design already recorded above:
+clodex's correction (msg-93431-22) — investigate whether the supervisor can drive
+`cli/src/transport.js` as a LIBRARY (ssh + SSM + kubectl + gcloud IAP + az
+bastion) rather than reimplementing `TunnelManager`'s ssh-only spawning. `cli/` is
+standalone-by-construction (node:* + siblings only), so app→cli may be fine where
+cli→app would not be; check that the direction actually holds and report. Not
+reversed: the supervision, the pinned port and the four closes stay Clodex-side.
+If reuse is ugly, say so and ship ssh-only with the limitation stated.

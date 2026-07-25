@@ -41,7 +41,7 @@ const RESIZE_DEBOUNCE_MS = 80;
 
 class RemoteServer {
   constructor({ port, host, pagePath, getSessions, getTranscript, send, restartApp,
-                hostLabel, version, srcDir, getAttachInfo, sendInput, resizePty, onControlChange,
+                hostLabel, version, srcDir, getWebInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
@@ -66,6 +66,10 @@ class RemoteServer {
     // null for a packaged .app (not a git-pullable source dir) and for old
     // owners — the hello simply omits it and viewers fall back to today's guess.
     this._srcDir = srcDir || null;
+    // The browser frontend's host, read per hello (t30). A getter, not a value:
+    // web-host.js starts after this server is constructed, and is absent
+    // entirely under Electron.
+    this._getWebInfo = typeof getWebInfo === 'function' ? getWebInfo : null;
     this._getAttachInfo = getAttachInfo || null;
     this._sendInput = sendInput || null;
     this._resizePty = resizePty || null;
@@ -354,6 +358,18 @@ class RemoteServer {
     }
   }
 
+  // Normalize whatever the host seam reports into the hello's `webHost` field:
+  // `{port, tokenGated}` or null. A throwing or malformed seam degrades to null
+  // rather than breaking hello — identity is load-bearing for every peer
+  // feature, and a web view is not worth taking it down for.
+  _webHost() {
+    if (!this._getWebInfo) return null;
+    let info;
+    try { info = this._getWebInfo(); } catch { return null; }
+    if (!info || !Number.isInteger(info.port) || info.port <= 0 || info.port > 65535) return null;
+    return { port: info.port, tokenGated: info.tokenGated === true };
+  }
+
   // Operator-auth gate — runs before ANY routing (viewer page, every /api/*, and
   // the SSE stream: transcripts are sensitive, read-only is not harmless).
   // Returns true to proceed; on refusal it has already written the response.
@@ -461,6 +477,16 @@ class RemoteServer {
         // appears here claims its outbox this tick. Empty/absent → nothing to
         // fetch, so old consumers (which ignore the field) simply never claim.
         dmOrigins: this._listDmOrigins ? this._listDmOrigins() : [],
+        // The browser frontend's port on THIS box, so a consumer can tunnel to
+        // it rather than reconstructing wire-port+1 (t30). null/absent = no web
+        // host here (every Electron desktop, and any headless box started
+        // without CLODEX_WEB_PORT) — old viewers ignore the field, exactly as
+        // they do srcDir. `tokenGated` says a token is REQUIRED, never what it
+        // is: that a door is locked is not a secret, the key is. The token
+        // itself is deliberately NOT advertised — hello is open on the common
+        // loopback-no-token deployment, and shipping a second service's secret
+        // through it would be indefensible.
+        webHost: this._webHost(),
       });
     }
     // Read side: raw PTY stream with best-effort scrollback replay. The

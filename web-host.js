@@ -430,6 +430,20 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       try { wss.close(); } catch {}
       try { server.close(); } catch {}
     },
+    // What this host is, for a consumer that wants to REACH it (t30). The port
+    // is the one we actually LISTENED on, read from the socket rather than
+    // echoed from the request: a caller may pass 0 ("pick one"), and reporting
+    // the request back would advertise a port nothing serves. A getter, because
+    // the address isn't assigned until the listen callback fires — and null
+    // before/after that, so a consumer learns "no web host" instead of a lie.
+    // `tokenGated` says a token is REQUIRED — never what it is: that a door is
+    // locked is not a secret, the key is. A consumer uses it to explain why a
+    // plain URL will 401 instead of claiming a working link.
+    get info() {
+      const addr = server.address();
+      if (!addr || typeof addr.port !== 'number' || addr.port <= 0) return null;
+      return { port: addr.port, tokenGated: gate.configured };
+    },
     // Test/introspection handles (not part of the wire contract).
     _server: server, _handlers: handlers, _scrollback: scrollback, _workspaceConns: workspaceConns,
   };
