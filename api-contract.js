@@ -124,6 +124,12 @@ const API_CONTRACT = [
   { name: 'filePeek', kind: 'invoke', channel: 'file:peek' },
   { name: 'fileDiff', kind: 'invoke', channel: 'file:diff' },
   { name: 'fileOpen', kind: 'invoke', channel: 'file:open' },
+  // Reveal in the OS file manager, as distinct from opening the file itself.
+  // An ordinary capability row, NOT part of the frozen five-row plugin transport
+  // — its first caller is Manage Plugins (t22), pointing a user at
+  // ~/.clodex/plugins, which is a dot-directory Finder hides by default and the
+  // single largest obstacle to a packaged user installing a plugin at all.
+  { name: 'fileReveal', kind: 'invoke', channel: 'file:reveal' },
   { name: 'onSessionFileView', kind: 'on', channel: 'session-file-view' },
   { name: 'openExternal', kind: 'invoke', channel: 'app:openExternal' },
   { name: 'getProxySnapshot', kind: 'invoke', channel: 'proxy:snapshot' },

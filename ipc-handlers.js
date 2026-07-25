@@ -854,6 +854,11 @@ function registerIpcHandlers(deps) {
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   handle('file:open', (_e, filePath) => openPath(filePath));
+  // Reveal, not open. The seam is already injected (main.js backs it with
+  // shell.showItemInFolder, web-host routes it to the connected browser); this
+  // is the renderer-reachable door onto it, which only the session-menu had
+  // before. Returns nothing useful by design — showItemInFolder is void.
+  handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
 
   // Focused per-session tool gating: persist disabledTools only (leaves
   // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;

@@ -5160,6 +5160,21 @@ async function renderPluginsDialog() {
       n.className = 'plugin-row-note warn';
       n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb — disable one of them.`;
       body.appendChild(n);
+    } else if (p.restartRequired) {
+      // The disk copy moved under a plugin that is already running. Node's
+      // require cache is keyed by path, so the code in memory is the OLD code no
+      // matter what the manifest beside it now says — and the version shown on
+      // this row comes from that manifest. Saying so is the entire point: a row
+      // that displayed the new version silently would be claiming an upgrade the
+      // process never performed.
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      const was = p.restartRequired.was ? `v${p.restartRequired.was}` : 'no version';
+      const now = p.restartRequired.now ? `v${p.restartRequired.now}` : 'no version';
+      n.textContent = p.restartRequired.dirChanged
+        ? `Restart required: a different copy of this plugin (${now}) now wins, but the ${was} copy loaded at startup is still the one running.`
+        : `Restart required: the files on disk changed (${was} → ${now}), but the ${was} code loaded at startup is still the one running. Quit and reopen Clodex to pick this up.`;
+      body.appendChild(n);
     } else if (p.quarantined || p.failCount) {
       const n = document.createElement('div');
       n.className = 'plugin-row-note warn';
@@ -5263,6 +5278,48 @@ async function renderPluginsDialog() {
     pluginsList.appendChild(row);
   }
 }
+
+// Reveal the user plugins folder. The single cheapest fix for the install flow:
+// ~/.clodex is a dot-directory Finder hides, so a user told to "put it in
+// ~/.clodex/plugins" has to know ⌘⇧G exists. The path comes from the engine
+// rather than being rebuilt here — the renderer does not own where roots live.
+document.getElementById('btn-plugins-reveal').addEventListener('click', async () => {
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.userRoot'); } catch {}
+  if (!r || !r.ok || !r.dir) {
+    showToast(`Could not locate the plugins folder: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  try { await window.api.fileReveal(r.dir); } catch {}
+});
+
+// Re-scan without restarting. Honest about the three outcomes it can produce:
+// added plugins really are running, removed ones really are gone, and a CHANGED
+// plugin cannot be swapped in-process — that one gets a restart-required row from
+// the loader rather than a version badge the running code does not match.
+document.getElementById('btn-plugins-rescan').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-plugins-rescan');
+  btn.disabled = true;
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.rescan'); } catch {}
+  btn.disabled = false;
+  if (!r || !r.ok) {
+    showToast(`Re-scan failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  // The renderer half of a newly loaded plugin activates from the plugin-state
+  // hint the engine broadcast, same as an enable — nothing to do here but say
+  // what happened and redraw the rows.
+  const bits = [];
+  if (r.added.length) bits.push(`${r.added.length} added`);
+  if (r.removed.length) bits.push(`${r.removed.length} removed`);
+  if (r.changed.length) bits.push(`${r.changed.length} changed (restart required)`);
+  if (r.failed.length) bits.push(`${r.failed.length} failed`);
+  showToast(bits.length ? `Re-scan: ${bits.join(', ')}.` : 'Re-scan: no changes.', {
+    kind: r.failed.length ? 'error' : 'peer-ui',
+  });
+  await renderPluginsDialog();
+});
 
 document.getElementById('btn-plugins-close').addEventListener('click', closePluginsDialog);
 pluginsOverlay.addEventListener('mousedown', (e) => { if (e.target === pluginsOverlay) closePluginsDialog(); });

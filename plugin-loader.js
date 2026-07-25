@@ -203,6 +203,34 @@ function createPluginLoader(deps) {
   // record survive the removal of the plugin that caused it (t20).
   const verbConflicts = new Map();
 
+  // What a re-scan CANNOT undo (t22). `require` caches by resolved path, so once
+  // an engine half has been required this run, re-requiring the same path hands
+  // back the SAME module object — the old code keeps running no matter what is on
+  // disk. Proven by probe, not assumed: rewriting a plugin's engine.js and
+  // re-requiring it returned the original export.
+  //
+  // A copy at a DIFFERENT path is a different cache key and would load — but
+  // swapping it in for a LIVE plugin means deactivating the running one and
+  // registering the new one, which is a much larger change than this buys and is
+  // explicitly out of scope. So any change to a plugin that is already running is
+  // restart-required, and the row SAYS so rather than showing the new version
+  // beside the old code. In memory, never persisted, exactly like verbConflicts:
+  // it is a fact about this app run, and a persisted copy would outlive the
+  // restart that resolves it.
+  const restartRequired = new Map(); // id -> { was, now, dirChanged }
+  // Entry paths this run has already handed to `requireModule`, with the manifest
+  // version they carried at the time. The CACHE KEY is the path, so this is the
+  // one place that can answer "would a require of this path return fresh code?"
+  // — and the answer is no for anything already in here. Keyed by path rather
+  // than by id deliberately: two copies of an id at two paths are two cache
+  // entries, which is exactly why a superseding user copy CAN load.
+  const requiredPaths = new Map(); // enginePath -> version first required
+  // Where each live engine half was loaded FROM, so a re-scan can tell "the same
+  // copy is still there" from "a different copy now wins". The loader is the
+  // producer of this fact; nothing else can reconstruct it once discover() has
+  // moved on.
+  const loadedFrom = new Map(); // id -> { dir, version }
+
   const rendererReportedThisRun = new Set();
   function noteRendererActivation(id, ok, error) {
     const key = String(id);
@@ -435,10 +463,23 @@ function createPluginLoader(deps) {
   // motivation for the catch, and why it is this broad.
   function loadOne(rec, pluginHost, { count = true } = {}) {
     try {
+      // Stale-code check BEFORE the require, because the require is what makes it
+      // unanswerable afterwards. If this exact path was required earlier this run
+      // under a different version, the module object coming back is the old code
+      // and the manifest beside it is the new metadata. Recording that here is
+      // what stops `status()` showing a version the running code does not match.
+      const priorVersion = rec.enginePath ? requiredPaths.get(rec.enginePath) : undefined;
+      const nowVersion = rec.manifest.version || null;
+      if (priorVersion !== undefined && priorVersion !== nowVersion) {
+        restartRequired.set(rec.id, { was: priorVersion, now: nowVersion, dirChanged: false });
+      }
       const mod = rec.enginePath ? requireModule(rec.enginePath) : {};
+      if (rec.enginePath && priorVersion === undefined) requiredPaths.set(rec.enginePath, nowVersion);
       pluginHost.register(rec.id, mod, rec.manifest);
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
       verbConflicts.delete(rec.id);
+      // Remember WHICH copy is live, for the re-scan's changed-vs-same test.
+      loadedFrom.set(rec.id, { dir: rec.dir, version: rec.manifest.version || null });
       if (count) clearFailures(rec.id); // a success clears the slate, always
       return { ok: true };
     } catch (e) {
@@ -490,7 +531,113 @@ function createPluginLoader(deps) {
     clearFailures(rec.id);
     verbConflicts.delete(String(id));
     rendererReportedThisRun.delete(String(id));
+    // NOT cleared here: `restartRequired` is a fact about the require cache, and
+    // an enable does not empty the cache. Re-enabling a plugin whose files changed
+    // re-runs activate() on the module object the cache still holds — the OLD
+    // code, against the NEW manifest. loadOne re-derives the flag from the cache
+    // itself, so a toggle cannot launder a stale copy into looking fresh.
     return loadOne(rec, pluginHost);
+  }
+
+  // ── Re-scan (t22) ─────────────────────────────────────────────────────────
+  // Discovery ran once at boot, so a plugin dropped into ~/.clodex/plugins while
+  // the app was running was invisible until a restart — which made the user root
+  // reachable in principle and not in practice. `discover()` is stateless and
+  // re-reads disk every call, so the SCAN is free; what this function is really
+  // about is being honest about the three different things a scan can find.
+  //
+  //   ADDED    — never required this run, so no cache entry: it genuinely loads.
+  //   REMOVED  — deactivated. The engine half's ledger tears down its dispatch
+  //              entries, hooks and intent rows; the renderer half goes when the
+  //              `plugin-state` hint reaches each window.
+  //   CHANGED  — the id is already RUNNING. Cannot be reloaded (see
+  //              restartRequired above). Recorded and reported, never faked.
+  //
+  // NO STRIKES. `loadOne`'s dormant `{ count }` parameter gets its first caller
+  // here, and it is passed false deliberately: the strike counter exists for
+  // plugins that crash on a real activation, and a user pressing Re-scan three
+  // times must not quarantine a plugin that was merely half-copied when they did.
+  // Same reasoning as t20's verb collision — refused is not punished.
+  function rescan(pluginHost) {
+    // "Is this id RUNNING?" is the host's fact, not ours — it is the thing that
+    // holds the registrations. `loadedFrom` answers only the narrower "which copy
+    // did we load", and trusting it alone would be wrong the moment a user
+    // disables a plugin: the host deactivates it, our map still holds the entry,
+    // and a re-scan would report restart-required for a plugin that is not
+    // running and could simply be loaded. Producer over reconstruction.
+    const running = new Set((pluginHost.catalog() || []).map((p) => p.id));
+    const before = new Set([...loadedFrom.keys()].filter((id) => running.has(id)));
+    const recs = discover();
+    const seen = new Set();
+    const added = [];
+    const failed = [];
+    const changed = [];
+
+    for (const rec of recs) {
+      seen.add(rec.id);
+      const live = running.has(rec.id) ? loadedFrom.get(rec.id) : null;
+      if (live) {
+        // Already running. The ONLY honest thing available is to notice that the
+        // copy on disk is no longer the copy in memory and say restart.
+        const movedDir = live.dir !== rec.dir;
+        const movedVersion = (live.version || null) !== (rec.manifest.version || null);
+        if (movedDir || movedVersion) {
+          restartRequired.set(rec.id, {
+            was: live.version, now: rec.manifest.version || null, dirChanged: movedDir,
+          });
+          changed.push(rec.id);
+        }
+        continue;
+      }
+      if (!isEnabled(rec)) continue;
+      // Quarantine still shadows: a re-scan is not a Retry, and silently
+      // activating a quarantined plugin would make Retry meaningless.
+      if (isQuarantined(rec.id)) continue;
+      const r = loadOne(rec, pluginHost, { count: false });
+      if (r.ok) added.push(rec.id);
+      else failed.push({ id: rec.id, error: r.error, ...(r.verbConflict ? { verbConflict: r.verbConflict } : {}) });
+    }
+
+    // Gone from disk. Deactivated rather than left running — a plugin whose
+    // directory a user deleted is one they have asked to be rid of, and the
+    // engine-half teardown is exactly what deactivate() already does well.
+    const removed = [];
+    for (const id of before) {
+      if (seen.has(id)) continue;
+      try { pluginHost.deactivate(id); } catch {}
+      loadedFrom.delete(id);
+      restartRequired.delete(id);
+      rendererReportedThisRun.delete(id);
+      removed.push(id);
+      logIt(`${id}: removed from disk — deactivated`);
+    }
+
+    logIt(`re-scan: ${added.length} added, ${removed.length} removed, ${changed.length} changed (restart required), ${failed.length} failed`);
+    return { added, removed, changed, failed };
+  }
+
+  // The directory a user drops a plugin INTO, created on demand (t22).
+  //
+  // §3's rule is that the app never creates this directory, because "a directory
+  // that exists only because we made it teaches a user nothing, and its absence
+  // is the honest representation of no user plugins". Creating it HERE does not
+  // break that rule, it is the exception the rule already names: this runs only
+  // when a user explicitly asks to be shown where plugins go, and revealing a
+  // path that does not exist is a broken action on every platform. Startup still
+  // never creates it.
+  //
+  // Returns null when there is no user root configured at all (the legacy
+  // single-root form), so the caller can hide the affordance rather than offer a
+  // button that reveals the read-only asar.
+  function ensureUserRoot() {
+    const root = roots.find((r) => r.id === 'user');
+    if (!root) return null;
+    try { fs.mkdirSync(root.dir, { recursive: true }); } catch (e) {
+      // Report the path anyway: a reveal that fails in Finder is a better
+      // diagnostic than a button that silently does nothing.
+      logIt(`could not create the user plugins dir: ${e && e.message}`);
+    }
+    return root.dir;
   }
 
   // What the renderer needs to activate a renderer half, published through the
@@ -535,6 +682,14 @@ function createPluginLoader(deps) {
           // shadowed copy this plugin is genuinely installed and keeps its toggle —
           // disabling the holder is exactly how a user resolves it.
           verbConflict: verbConflicts.get(rec.id) || null,
+          // The disk copy changed under a plugin that is already running (t22).
+          // Reported so the row can say "restart to pick this up" instead of
+          // showing the new version beside the old code still running — that
+          // silent disagreement is the failure this whole ticket exists to
+          // avoid, and it is the same shape as the badge bug and the verb
+          // quarantine: a consumer displaying something the producer never
+          // confirmed.
+          restartRequired: restartRequired.get(rec.id) || null,
           root: rec.root || null,
           rootLabel: rec.rootLabel || null,
         };
@@ -549,7 +704,7 @@ function createPluginLoader(deps) {
 
   return {
     discover, isEnabled, enabledSet, setEnabledInSettings,
-    loadAll, activateById, rendererInfo,
+    loadAll, activateById, rescan, ensureUserRoot, rendererInfo,
     // Fail-safe / quarantine surface. `noteRendererActivation` is what a WINDOW
     // reports its renderer half's outcome through; the rest is the settings
     // section's data and the Retry path.

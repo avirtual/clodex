@@ -1081,6 +1081,45 @@ So the re-scan ships as **`_host` `plugins.rescan`**, not a new `plugin:*` row.
 Same reachability, no crack in the freeze.
 
 **Reveal** is separate and does NOT touch the plugin transport: `file:reveal` is
-an ordinary non-plugin contract row beside the existing `file:open`. The headless
-seam at `headless-main.js:154` really is missing `showItemInFolder` beside its
-`openPath` stub — hole confirmed, filling it.
+an ordinary non-plugin contract row beside the existing `file:open`.
+
+**Correction — the suspected headless hole does NOT exist**, and my first note
+here said it did. I wrote "hole confirmed" off a grep showing `showItemInFolder`
+absent from `headless-main.js`, which is inference from absence; reading the
+wiring shows two DIFFERENT seam sets that happen to share a name:
+
+- `headless-main.js:154`'s `openPath` is an **engine** seam (`engine.js:92`),
+  consumed by session-manager for `[agent:file open]`. `showItemInFolder` is not
+  an engine seam at all, in any host — so nothing is missing beside it.
+- `ipc-handlers.js:53`'s `showItemInFolder` is a **capability** seam supplied
+  directly by each host. Both already supply it: `main.js:581` (shell) and
+  `web-host.js:260` (routed to the browser, where
+  `renderer/web/api-shim.js:102` degrades it to an honest toast).
+
+Headless reaches ipc-handlers THROUGH web-host, so it inherits the working
+implementation. Nothing to fill; `file:reveal` works in both hosts as-is.
+
+### T22 phase 2 — implemented (tests not yet written)
+
+- `plugin-loader.js` — `rescan(pluginHost)` returning `{added, removed, changed,
+  failed}`; `ensureUserRoot()`; two new in-memory maps (`restartRequired`,
+  `requiredPaths`, `loadedFrom`), none persisted; `status()` gained
+  `restartRequired`. `loadOne` records the require-cache fact BEFORE requiring.
+- `plugin-host-engine.js` — `_host` `plugins.rescan` + `plugins.userRoot`.
+  Announces added/removed to every window; deliberately does NOT announce
+  changed (re-activating would re-run the OLD cached module).
+- `api-contract.js` / `ipc-handlers.js` — `fileReveal` → `file:reveal`.
+- `renderer/` — two buttons, the restart-required row, both handlers.
+
+**Two defects caught while building, both the same shape as t20/t21:**
+
+1. First version trusted `loadedFrom` as "is this running". Wrong after a
+   disable: the host deactivates, the map keeps the entry, and a re-scan would
+   report restart-required for a plugin that is not running and could just be
+   loaded. Now asks `pluginHost.catalog()` — the producer of that fact.
+2. First version cleared `restartRequired` on `activateById`, with a comment
+   claiming an enable "re-requires the entry point". It does not — the cache is
+   keyed by path and an enable does not empty it, so a toggle would have
+   laundered stale code into looking fresh, showing the NEW manifest version
+   beside the OLD running code. That is the badge bug exactly. Now derived from
+   `requiredPaths` inside `loadOne`, so a toggle cannot clear it.

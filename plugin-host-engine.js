@@ -509,6 +509,42 @@ function createPluginHostEngine(deps) {
     // it — NOT `catalog()`, which lists only what successfully registered and so
     // would hide the exact plugin the section exists to let you fix.
     'plugins.status': () => ({ ok: true, ...pluginsStatus() }),
+    // Re-scan the plugin roots without restarting (t22). A HOST service on the
+    // `_host` pseudo-id, NOT a sixth `plugin:*` row: api-contract.js:270 freezes
+    // the plugin transport at five rows "for every plugin, forever", and this is
+    // host plumbing rather than any plugin's method — the same reasoning that put
+    // `plugins.status`, `renderer.info` and `renderer.report` here.
+    //
+    // Every window is told afterwards, because a newly loaded plugin's RENDERER
+    // half is per-BrowserWindow and only the window holding it can activate it —
+    // the engine reaching into a renderer is the multi-window blind spot §3.3
+    // exists to prevent. The `plugin-state` hint each window already handles for
+    // enable/disable does exactly this job, so a re-scan reuses it rather than
+    // inventing a second path that could drift from it.
+    // Where a user drops a plugin. Served rather than reconstructed in the
+    // renderer: the roots are configured at the engine bootstrap and the renderer
+    // has no business knowing that the user root is `~/.clodex/plugins` — that is
+    // exactly the consumer-rebuilding-a-producer-fact shape this project keeps
+    // hitting. Creates the directory (see ensureUserRoot for why that is not a
+    // violation of "the app never creates it").
+    'plugins.userRoot': () => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const dir = loader.ensureUserRoot();
+      return dir ? { ok: true, dir } : errorEnvelope('no user plugin root configured');
+    },
+    'plugins.rescan': () => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.rescan(api);
+      for (const id of r.added) announceState(id, true);
+      for (const id of r.removed) announceState(id, false);
+      // A CHANGED plugin gets no announce: nothing about it moved in this
+      // process, and telling windows to re-activate would re-run the OLD cached
+      // module's renderer half for a version the user thinks they just installed.
+      if (r.added.length || r.removed.length) notifyStateChanged();
+      return { ok: true, ...r };
+    },
     // A window reporting its renderer half's outcome. Only the FIRST report per
     // app run counts (the loader's rule) — N windows must not mean N strikes.
     'renderer.report': (pluginId, ok, error) => {

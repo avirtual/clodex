@@ -964,6 +964,8 @@
       <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
       <div id="plugins-list"></div>
       <div class="dialog-actions">
+        <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
+        <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
         <div style="flex: 1;"></div>
         <button id="btn-plugins-close" class="secondary">Close</button>
       </div>
