@@ -43,9 +43,16 @@ const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
 // Never came up within this long → stop trying (inversion 3). Measured from
 // start(), not from the last attempt, so a box that flaps without ever serving
-// still terminates. A tunnel that DID come up resets it: the operator is looking
-// at a box that works, and a blip should not count against them.
+// still terminates.
 const GIVE_UP_MS = 120000;
+// A spawn that survived this long counts as having genuinely WORKED, and retires
+// the give-up clock. The distinction matters because 'up' here means only "the
+// ssh process is alive" — ssh -N prints nothing on success, so a forward to an
+// unreachable box still reports up for the moment before it dies. Retiring the
+// clock on the first 'up' would therefore retire it on essentially every tunnel
+// and the cap would never fire. Same threshold and same reasoning as
+// peer-tunnel.js's STABLE_MS, used for a different decision.
+const STABLE_MS = 30000;
 
 const SSH_BASE_ARGS = [
   '-N',
@@ -74,6 +81,9 @@ class WebTunnel {
     this._spawn = spawnFn || spawn;
     this._onState = onState || (() => {});
     this._giveUpMs = Number.isInteger(giveUpMs) ? giveUpMs : GIVE_UP_MS;
+    // Scaled with the cap so a test that shortens the window doesn't need a
+    // 30-second-stable spawn to exercise the "it worked" branch.
+    this._stableMs = Number.isInteger(giveUpMs) ? Math.max(1, Math.floor(giveUpMs / 2)) : STABLE_MS;
     // Pinned for the life of this tunnel — assigned once in _spawnTunnel's first
     // pass and never reassigned, unlike peer-tunnel's per-spawn pick.
     this.localPort = null;
@@ -85,6 +95,7 @@ class WebTunnel {
     this._stopped = false;
     this._opened = false;            // browser popped? (inversion 2)
     this._deadline = 0;              // give-up wall-clock (inversion 3)
+    this._bornAt = 0;                // current spawn's start, for the stable check
   }
 
   start() {
@@ -162,21 +173,31 @@ class WebTunnel {
       this._child = null;
       this._scheduleRestart();
     });
+    this._bornAt = Date.now();
     child.on('exit', (code) => {
       this._child = null;
       const line = stderrTail.trim().split('\n').pop() || '';
       this.lastError = line || (code === 0 ? null : `ssh exited (${code})`);
+      // A spawn that lasted counts as a box that genuinely works: reset the
+      // backoff AND retire the give-up clock, so later blips are treated as
+      // outages rather than as evidence the box was never there.
+      if (Date.now() - this._bornAt > this._stableMs) {
+        this._backoff = BACKOFF_MIN_MS;
+        this._deadline = 0;
+      }
       this._scheduleRestart();
     });
     // ssh -N prints nothing on success; the live process IS the forward. Whether
     // the far end serves anything is the browser's problem, not this layer's.
     //
-    // firstUp marks the once-per-tunnel transition (inversion 2). The give-up
-    // clock is retired at the same moment rather than merely reset: a tunnel that
-    // has served a tab should keep retrying through a blip, and the cap exists for
-    // boxes that never worked at all.
+    // firstUp marks the once-per-tunnel transition (inversion 2) — the one emit
+    // the browser pop rides. It deliberately does NOT retire the give-up clock:
+    // 'up' here means only that the ssh process is alive, and a forward to an
+    // unreachable box is briefly 'up' too, so retiring on first up would retire
+    // on nearly every tunnel and the cap would never fire. The clock is retired
+    // by SURVIVING (the stable check above) instead.
     const firstUp = !this._opened;
-    if (firstUp) { this._opened = true; this._deadline = 0; }
+    if (firstUp) this._opened = true;
     this._setState('up', firstUp ? { firstUp: true } : null);
   }
 
