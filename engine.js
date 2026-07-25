@@ -879,7 +879,14 @@ const { pluginsEnabled } = require('./plugin-api');
 // it rather than a private copy (drifts) or a relative require (which the
 // no-backdoor lint exists to kill).
 const gitWorktree = require('./git-worktree');
+// Phase 2: discovery + the enabled set. Declared beside the host because
+// setEnabled reaches it through a getter — the loader is constructed AFTER the
+// host (it takes no host argument; loadAll receives one), so a captured value
+// would be null for the app's whole life. Same getter discipline as every other
+// bootstrap-assigned seam.
+const { createPluginLoader } = require('./plugin-loader');
 let pluginHost = null;
+let pluginLoader = null;
 
 
 
@@ -1739,11 +1746,30 @@ const toolCache = createToolCache({ whichBin });
         fs, path,
         gitWorktree,
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
+        getLoader: () => pluginLoader,
       });
+      // `__dirname` is the repo root in dev and the app.asar root when packaged;
+      // §3.1 scans `<repo>/plugins/*/manifest.json` and nothing else until the
+      // BYO tier (Phase 5). GAP G8 (packaged-.app resource layout) is a W7
+      // question, deliberately not pre-solved here.
+      pluginLoader = createPluginLoader({
+        fs, path,
+        pluginsDir: path.join(__dirname, 'plugins'),
+        getUiSettings: () => uiSettings,
+        log,
+        requireModule: (p) => require(p),
+      });
+      // Engine halves only. Renderer halves activate per BrowserWindow (§3.3
+      // law 1) — each window's plugin-host island pulls them via plugin:catalog.
+      pluginLoader.loadAll(pluginHost);
     } catch (e) {
       // A broken plugin host must not take the app down with it — degrade to
-      // "no plugins" and say so, loudly, in the log.
+      // "no plugins" and say so, loudly, in the log. Both halves are dropped:
+      // a live loader with a null host would offer enable/disable against
+      // nothing. (Per-plugin load failures never reach here — loadAll isolates
+      // them so one bad plugin cannot cost the others.)
       pluginHost = null;
+      pluginLoader = null;
       log.info('plugin', `host construction failed, continuing without plugins: ${e && e.message}`);
     }
   } else {

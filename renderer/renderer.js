@@ -2968,6 +2968,43 @@ const pluginBar = initPluginHost({
   getWorkspaceId: () => currentWorkspaceId,
 });
 
+// Renderer-half activation — ONCE PER WINDOW (§3.3 law 1). The engine loads
+// engine halves once per app run; each window pulls the catalog and requires the
+// renderer half of every loaded plugin itself, so per-window state lives in the
+// plugin's activation closure and dies with the window.
+//
+// Pull, not push: a window that opens later gets the same catalog, and a plugin
+// that arrives while this window is open is picked up by the plugin-state event
+// rather than by any buffered delta (§3.3 law 2 — events are unbuffered hints).
+async function loadPluginRenderers() {
+  if (!window.api.pluginCatalog) return;
+  let catalog = [];
+  try { catalog = await window.api.pluginCatalog(); } catch { return; }
+  for (const p of catalog || []) {
+    if (!p || !p.enabled) continue;
+    try {
+      const info = await window.api.pluginInvoke('_host', 'renderer.info', [p.id]);
+      if (!info || !info.ok || !info.rendererPath) continue;
+      // `require` of an absolute path: contextIsolation is off by design in this
+      // app (the renderer requires xterm modules directly), which is precisely
+      // what makes a Tier-A in-process plugin possible without a bundler. The
+      // web bundle cannot do this — it needs the build-generated id→module
+      // registry (plan GAP G7, step W8), which is why this is guarded.
+      if (window.__CLODEX_WEB__ || !window.require) continue;
+      const mod = window.require(info.rendererPath);
+      pluginBar.activate(p.id, mod, {
+        invoke: (id, method, args) => window.api.pluginInvoke(id, method, args),
+        css: info.css,
+      });
+    } catch (e) {
+      // One plugin's renderer half failing must not cost the others theirs, and
+      // must never take the window's own bootstrap down with it.
+      console.error(`[plugin:${p.id}] renderer activation failed`, e);
+    }
+  }
+}
+loadPluginRenderers();
+
 // Per-session quick-access icons on the left of the status bar. Claude gets a
 // Tools button (tool gating is Claude-only); both agent types get an Edit
 // shortcut so the crowded right-click menu isn't the only way in.

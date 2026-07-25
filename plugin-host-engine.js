@@ -47,6 +47,8 @@ function createPluginHostEngine(deps) {
     fs, path,
     gitWorktree,      // the sanctioned shared leaf exposed as host.lib
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
+    getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
+                      // behavior — disable works, enable refuses, nothing loads.
   } = deps;
 
   // ── The dispatch map (§3.4) ────────────────────────────────────────────────
@@ -387,9 +389,28 @@ function createPluginHostEngine(deps) {
       buildHost(String(pluginId)).settings.set(patch);
       return { ok: true };
     },
+    // What a WINDOW needs to activate a plugin's renderer half: the module path
+    // to require and the plugin's stylesheet TEXT (§2.6 injects a per-plugin
+    // <style>, and text works identically in the file:// window and the web
+    // bundle where no path resolves).
+    //
+    // This rides the `_host` pseudo-id rather than becoming a sixth api-contract
+    // row BECAUSE §1 freezes the plugin transport at five rows for every plugin
+    // forever. A new row here would be the first crack in that, for something
+    // that is by definition host plumbing, not a plugin's own method.
+    'renderer.info': (pluginId) => {
+      if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const info = loader.rendererInfo(String(pluginId));
+      return info ? { ok: true, ...info } : errorEnvelope('no such plugin');
+    },
   };
 
-  return {
+  // Named rather than returned anonymously: `setEnabled` hands this same object
+  // to the loader as the host to register INTO, so the loader has exactly the
+  // surface ipc-handlers has and no more.
+  const api = {
     // ── The ipc-handlers surface (the four Phase-0 handlers call these) ──
     // Unknown (pluginId, method) degrades LOUDLY: a shaped refusal the caller can
     // render, never an undefined resolution indistinguishable from success.
@@ -417,10 +438,19 @@ function createPluginHostEngine(deps) {
       }));
     },
     setEnabled(pluginId, enabled) {
-      // Phase 1 has no loader to re-activate from, so disable is the honest half:
-      // it tears down. Enable is Phase 2's, when a manifest scan exists to load.
-      if (!enabled) return { ok: deactivate(String(pluginId)) };
-      return errorEnvelope('enabling requires the plugin loader (Phase 2)');
+      const id = String(pluginId);
+      const loader = getLoader && getLoader();
+      // The persisted enabled set is updated FIRST and unconditionally, so a
+      // plugin whose activate() throws still records the user's decision — the
+      // alternative silently reverts the toggle and looks like the click was
+      // lost. Phase 1 had no loader; without one this degrades to exactly its
+      // behavior (disable tears down, enable refuses), which is what keeps the
+      // kill switch and a failed-loader run honest rather than half-working.
+      if (loader) { try { loader.setEnabledInSettings(id, !!enabled); } catch {} }
+      if (!enabled) return { ok: deactivate(id) };
+      if (!loader) return errorEnvelope('enabling requires the plugin loader (Phase 2)');
+      if (registered.has(id)) return { ok: true, already: true };
+      return loader.activateById(id, api);
     },
 
     // ── The engine-internal surface ──
@@ -430,6 +460,7 @@ function createPluginHostEngine(deps) {
     _dispatchKeys: () => [...dispatchMap.keys()],
     _hookCounts: () => ({ create: createHooks.size, exit: exitHooks.size }),
   };
+  return api;
 }
 
 module.exports = { createPluginHostEngine };

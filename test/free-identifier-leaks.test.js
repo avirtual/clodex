@@ -69,6 +69,8 @@ const SCANNED_MODULES = [
   // join the list by the same convention as every other extraction.
   'plugin-api.js',
   'plugin-host-engine.js',
+  // Phase 2: discovery + the enabled set. Deps-object factory, fs/path injected.
+  'plugin-loader.js',
 ];
 
 // The same guard for renderer.js extractions — these modules were carved out of

@@ -1,0 +1,7 @@
+/* plugins/workbench/style.css — injected as a per-plugin <style
+   data-plugin-style="workbench"> element by the renderer host at activate, and
+   removed as one node at disable (docs/plugin-plan.md §2.6 CSS decision).
+
+   W1 leaves this empty on purpose: W3 extracts the wb-*/workbench-* rules out
+   of renderer/styles.css into here, and an empty-but-wired stylesheet proves
+   the injection path works before it carries anything. */

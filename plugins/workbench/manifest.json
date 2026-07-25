@@ -1,0 +1,10 @@
+{
+  "id": "workbench",
+  "name": "Workbench",
+  "version": "1.0.0",
+  "hostApi": "0",
+  "entry": { "engine": "engine.js", "renderer": "renderer.js" },
+  "style": "style.css",
+  "enabledByDefault": true,
+  "announce": "Workbench enabled — Files, Source Control and Worktrees for any local session, in the sidebar footer."
+}
