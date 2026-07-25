@@ -25,6 +25,9 @@ function createAppMenus(deps) {
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
+    // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
+    // construction, in which case the Plugins menu is absent rather than empty.
+    getPluginHost,
   } = deps;
 
   let tray = null;
@@ -323,6 +326,65 @@ function createAppMenus(deps) {
     return items;
   }
 
+  // The top-level Plugins menu (T5, docs/plugin-plan.md §2.5). Returns null when
+  // there is nothing to show, and the caller then splices NOTHING into the
+  // template — an empty "Plugins" menu is worse than no menu, because it looks
+  // like a broken feature rather than an absent one. Two ways to get null:
+  // CLODEX_PLUGINS=0 (no host at all) and an install with no plugins on disk.
+  //
+  // WHY THIS CAN BE A MENU AT ALL. Enable/disable state is ENGINE-side — the
+  // loader's enabled set and quarantine record, both read through the host
+  // object main.js already holds. So the main process can answer "is this plugin
+  // on?" with no renderer round trip, which is exactly what a synchronously-built
+  // Menu template needs. (Contrast the View menu's absent "Workbench…" item: a
+  // plugin's SURFACES are renderer-side and the main process genuinely cannot
+  // see them.)
+  function buildPluginsMenu() {
+    const host = getPluginHost ? getPluginHost() : null;
+    if (!host || typeof host.status !== 'function') return null;
+    let plugins = [];
+    let problems = [];
+    try {
+      const st = host.status() || {};
+      plugins = st.plugins || [];
+      problems = st.problems || [];
+    } catch { return null; }
+    if (!plugins.length && !problems.length) return null;
+
+    const submenu = plugins.map((p) => ({
+      // The checkbox shows the user's INTENT, never the quarantine shadow —
+      // keeping those two separate is the whole point of the fail-safe design
+      // (a quarantine must not silently rewrite what the user asked for).
+      // Quarantine is a THIRD state a native checkbox cannot express, so it goes
+      // in the label: ticked + "held back" reads correctly, where an unticked
+      // box would be a lie about the user's choice.
+      label: p.quarantined
+        ? `${p.name || p.id} — held back after ${p.failCount || 0} failed launches`
+        : (p.name || p.id),
+      type: 'checkbox',
+      checked: !!p.enabled,
+      click: () => {
+        // Route through the SAME setEnabled the dialog's checkbox uses, so the
+        // every-window plugin-state broadcast tears down renderer halves for us.
+        // Enabling clears the quarantine strike first, which makes clicking a
+        // held-back plugin a retry with no second code path.
+        try { host.setEnabled(p.id, !p.enabled); } catch {}
+        scheduleAppMenuRefresh();
+      },
+    }));
+    // A directory that looks like a plugin but was refused (bad manifest, id/dir
+    // mismatch). No toggle: there is no id to key one by when the manifest is
+    // what is broken. Listed so it is not silently invisible.
+    for (const pr of problems) {
+      submenu.push({ label: `${pr.dir} — not loaded`, enabled: false });
+    }
+    submenu.push(
+      { type: 'separator' },
+      { label: 'Manage Plugins…', click: () => sendToFocused('request-open-plugins-dialog') }
+    );
+    return { label: 'Plugins', submenu };
+  }
+
   // Theme change from anywhere (View menu or a renderer's Preferences picker):
   // persist the canonical copy, refresh the menu radios, and push to every
   // window so all open workspaces retint together. exceptWc skips the renderer
@@ -484,9 +546,15 @@ function createAppMenus(deps) {
         submenu: [
           // No "Workbench…" item: the workbench is a plugin now and owns its
           // own entry point (a sidebar footer button it registers itself). A
-          // core menu item would be chrome that survives disabling the plugin
-          // and opens nothing — and menus are built in the MAIN process, which
-          // has no way to ask a renderer-side plugin whether it is loaded.
+          // core menu item here would be chrome that survives disabling the
+          // plugin and opens nothing.
+          //
+          // Note this is NOT the same claim the Plugins menu below disproves.
+          // That menu reads ENABLE state, which is engine-side and directly
+          // readable from the main process. What a main-process menu still
+          // cannot do is open a plugin's SURFACE: the overlay lives in one
+          // BrowserWindow's DOM, mounted by that window's renderer half, and
+          // nothing here knows whether the focused window has it.
           {
             label: 'Boiling Pot…',
             click: () => {
@@ -528,6 +596,9 @@ function createAppMenus(deps) {
           { role: 'togglefullscreen' },
         ],
       },
+      // Plugins sits between View and Window, and is ABSENT (not empty) when
+      // there is no host or nothing on disk — see buildPluginsMenu.
+      ...(() => { const m = buildPluginsMenu(); return m ? [m] : []; })(),
       {
         label: 'Window',
         submenu: [
@@ -711,7 +782,7 @@ function createAppMenus(deps) {
 
   return {
     buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
-    buildAgentsSubmenu, buildSkillsSubmenu, setUiTheme, buildAppMenu,
+    buildAgentsSubmenu, buildSkillsSubmenu, buildPluginsMenu, setUiTheme, buildAppMenu,
     refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
   };
 }

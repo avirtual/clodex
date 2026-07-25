@@ -1747,6 +1747,11 @@ const toolCache = createToolCache({ whichBin });
         gitWorktree,
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
+        // T5: the app menu's Plugins entry is built from enable/quarantine
+        // state, so it goes stale on every setEnabled. Debounced, and the seam
+        // is already injected here (it defaults to a no-op in the headless host,
+        // which has no app menu to refresh).
+        onPluginStateChanged: () => scheduleAppMenuRefresh(),
       });
       // `__dirname` is the repo root in dev and the app.asar root when packaged;
       // §3.1 scans `<repo>/plugins/*/manifest.json` and nothing else until the

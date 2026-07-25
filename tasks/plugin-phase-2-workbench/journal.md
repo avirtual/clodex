@@ -1252,7 +1252,8 @@ you would be testing master's build, not this branch's.
    → *This is the per-window state claim: activation is per BrowserWindow.*
 5. Now open it in window B as well. Both are open, independently. Switch tabs in
    one; the other must not change.
-6. **Preferences ▸ Plugins** (in either window) → untick **Workbench**.
+6. **The Plugins menu** (top level, between View and Window — T5, it is no
+   longer in Preferences) → untick **Workbench**.
 7. **Without restarting**, check BOTH windows:
    - the ◫ Workbench footer button is gone from both;
    - any open Workbench overlay has vanished from both;
@@ -1260,8 +1261,13 @@ you would be testing master's build, not this branch's.
    → *This is the claim a unit test cannot make: that the broadcast reaches
      every window. If it only cleared the window you clicked in, that is the
      failure to report.*
-8. Re-tick Workbench in Preferences. The button should come back in both windows
-   without a restart.
+8. Re-tick Workbench in the Plugins menu. The button should come back in both
+   windows without a restart.
+9. **T5 addition — the menu itself must stay correct.** Open the Plugins menu
+   again after step 6 and confirm the tick really cleared (it is rebuilt from
+   engine state, debounced ~500ms). Then open **Plugins ▸ Manage Plugins…** in
+   window A, and from window B's menu untick Workbench: window A's open dialog
+   must update its tick without being reopened.
 
 ### GATE 5 — the kill switch
 
@@ -1272,8 +1278,9 @@ you would be testing master's build, not this branch's.
    - the app boots normally and sessions restore;
    - **no ◫ Workbench button** in the sidebar footer;
    - **no Workbench item** in the View menu;
-   - **no Plugins section** in Preferences (it hides itself when the status call
-     refuses);
+   - **no Plugins menu at all** in the menu bar between View and Window — it
+     must be ABSENT, not present-and-empty (T5);
+   - Preferences opens and has no plugin rows in it either;
    - the app is otherwise completely usable — create a session, type in it,
      open Preferences, open the Inbox.
    → *The gate is "a WORKING app with no workbench anywhere". A missing
@@ -1283,10 +1290,208 @@ you would be testing master's build, not this branch's.
 ### OPTIONAL — the fail-safe, if you want to see it work
 1. Add `throw new Error('test');` as the first line of
    `plugins/workbench/engine.js`'s `activate`.
-2. `npm start` → the app boots, no workbench, Preferences ▸ Plugins shows
-   "Failed to activate once (…) — one more and it will be held back."
+2. `npm start` → the app boots, no workbench, and **Plugins ▸ Manage Plugins…**
+   shows "Failed to activate once (…) — one more and it will be held back."
 3. Quit and start again → now "Disabled automatically: activate() threw on 2
    consecutive launches — …" with a **Retry** button, and the checkbox still
-   TICKED (your intent was never overwritten).
+   TICKED (your intent was never overwritten). The Plugins MENU shows the same
+   plugin still ticked, labelled "Workbench — held back after 2 failed
+   launches" — quarantine is a third state a checkbox cannot draw, so it is
+   said in the label rather than by silently unticking your choice.
 4. Revert the throw (`git checkout plugins/workbench/engine.js`), click Retry →
    it activates and the warning clears.
+
+---
+
+## T5 — plugin management moves out of Preferences into a top-level Plugins menu
+
+Ticket t5 (clodex, 13:16). Baseline 2446/2446 at `b3f65c4`. Two defects were
+fixed by clodex before this ticket and change my assumptions: `4622a90` (a stray
+`*/` in prose killed the workbench modal rule) and `b3f65c4` (**uiSettings
+silently dropped the whole `plugins` key** — nothing plugin-side ever persisted;
+the eleven plugin tests all inject a keep-what-you-give-me `fakeUiSettings` and
+structurally could not see it). The lesson carried into this ticket: **where a
+fake would make an assertion vacuous, use the real thing.**
+
+### Survey (what the code actually looks like, before any edit)
+
+| Piece | Location |
+|---|---|
+| prefs section markup | `renderer/index.html:939-950` (`#prefs-plugins-section`) |
+| prefs section render | `renderer/renderer.js:5652-5754` (`renderPluginsSection`) |
+| its two call sites | `renderer.js:5628` (openPrefs) and `:5684`/`:5729` (self re-render) |
+| dead-after-move CSS | `renderer/styles.css:2060-2074` |
+| per-plugin sections — **STAY** | `renderPluginPrefs` at `renderer.js:5640`, CSS at `:2075-2078` |
+| menu template | `app-menus.js:363-686` (`buildAppMenu`), View at `:482`, Window at `:531` |
+| the false comment to update | `app-menus.js:485-489` |
+| debounced refresh | `app-menus.js:704` (`scheduleAppMenuRefresh`, 500ms) |
+| menu deps | `app-menus.js:21-28`, wired `main.js:307-321` |
+| engine seam to add | `engine.js:1823` `getPluginHost: () => pluginHost` — main.js has NO reference today |
+| state source | `host.dispatch('_host','plugins.status')` → `loader.status()` (`plugin-loader.js:330`) |
+| toggle path | `host.setEnabled(id, on)` (`plugin-host-engine.js:474`) — already broadcasts `plugin-state` to `'all'` |
+
+### Design decisions
+
+1. **The menu reads `pluginHost.dispatch('_host','plugins.status',[])`, not the
+   loader directly.** Same data the prefs section used, same shape, one source.
+   `dispatch` is sync for `_host` methods (`hostMethods` are plain fns) so a menu
+   template — which must be built synchronously — can consume it. Reaching for
+   `getLoader().status()` would need a second seam into main.js for no gain.
+2. **Toggle calls `host.setEnabled(id, on)` directly** (ticket §5). That is the
+   same call `pluginSetEnabled` IPC makes, so the every-window `plugin-state`
+   broadcast keeps working with no new teardown code.
+3. **The menu is absent, not empty**, when `getPluginHost()` is null
+   (`CLODEX_PLUGINS=0`) or `plugins` and `problems` are both empty — built by
+   conditionally splicing the entry into `template` rather than always pushing it.
+4. **A `Manage Plugins…` dialog** carries what the prefs section had. It is a new
+   overlay in `index.html` + a render fn in `renderer.js`, opened by a
+   `request-open-plugins-dialog` send on the existing `sendToFocused` path,
+   exactly like `request-open-peers-dialog` — that means ONE new api-contract
+   `on` row, which moves the pinned surface 220 → 221 (`test/api-contract.test.js`
+   pins the count in two places). §1 freezes the PLUGIN transport at five rows;
+   this is a core menu→renderer channel, not a plugin transport row, so it is not
+   a §1 violation — flagging it so clodex can overrule.
+5. **Refresh** — `scheduleAppMenuRefresh()` after a toggle, and the menu is
+   rebuilt on the same paths that already rebuild it.
+
+### The quarantine-retry shape (ticket's explicit "tell me if this is wrong")
+
+A native `type: 'checkbox'` cannot express three states, and quarantine IS a
+third state: intent=on, actually=held-back. Forcing it would draw a ticked box
+next to a plugin that is not running. Decision: keep the checkbox showing
+INTENT (ticket §2 says exactly this), and put the quarantine fact in the LABEL
+(`Workbench — held back after 2 failures`). Clicking a ticked-but-quarantined
+row calls `setEnabled(id, true)`, which clears the strike and retries — so the
+retry path exists in the menu without a fourth widget. The real error string
+and the explicit Retry button live in `Manage Plugins…` where there is room for
+them. No deviation letter: this is the ticket's own instruction, not an override.
+
+### Plan of record (phases, so the turns stay small)
+
+- **P1** — remove the prefs section (html, renderer fn + call sites, CSS), leave
+  `renderPluginPrefs` untouched.
+- **P2** — `app-menus.js`: `getPluginHost` dep, `buildPluginsMenu()`, splice
+  between View and Window, fix the `:485` comment; wire the getter in `main.js`.
+- **P3** — the `Manage Plugins…` dialog: api-contract row, html overlay, renderer
+  render fn + listener.
+- **P4** — tests (`test/app-menus-plugins.test.js` new; update
+  `plugin-kill-switch.test.js:146-149` and the api-contract count), full suite,
+  journal + manual-script update.
+
+### P1 + P2 done (not yet committed)
+
+**P1 — prefs section removed.** `#prefs-plugins-section` markup gone from
+`index.html` (replaced by a comment saying where the choosing went and that
+per-plugin sections still land there); `renderPluginsSection()` (103 lines) and
+its three call sites gone from `renderer.js`; `#prefs-plugins-section.hidden`
+gone from `styles.css`. `.plugin-row*` rules KEPT — the Manage Plugins dialog
+reuses them — with their comment rewritten to say why they still sit beside the
+prefs rules. `renderPluginPrefs` untouched, as the ticket requires.
+
+**P2 — the menu.** Three moving parts:
+
+1. `plugin-host-engine.js` grows `pluginsStatus()`, a named function BOTH the
+   `_host` `plugins.status` row and a new `api.status()` call. The menu needs
+   the same data the renderer gets but SYNCHRONOUSLY —
+   `Menu.buildFromTemplate` takes a template, not a promise — and one function
+   behind two shapes means the menu and the dialog can never disagree.
+2. `app-menus.js` grows `getPluginHost` (wired in `main.js` off
+   `engine.getPluginHost()`, the same seam ipc-handlers uses) and
+   `buildPluginsMenu()`, spliced between View and Window. Returns **null** —
+   caller splices nothing — when there is no host or nothing on disk.
+   Toggling calls `host.setEnabled(id, !p.enabled)` directly (ticket §5), so
+   the existing every-window broadcast does the teardown.
+3. The View menu's comment at `:485` is rewritten. The old sentence ("menus are
+   built in the MAIN process, which has no way to ask a renderer-side plugin
+   whether it is loaded") is now false next to the new menu, but only HALF of it
+   was ever about plugins-in-general: enable state is engine-side and readable,
+   a plugin's SURFACE is renderer-side and still isn't. The new comment draws
+   that line explicitly.
+
+**Refresh mechanism — a design call worth stating.** The ticket says "use
+`scheduleAppMenuRefresh()`; a toggle from the menu, from another window, or a
+quarantine trip must all leave every menu correct." Calling it from the menu's
+own click handler covers one of those three. So the host gained an optional
+`onPluginStateChanged` dep, invoked from `announceState()` — the one place all
+three converge, and already the place the renderer-side hint is broadcast. Both
+halves of the UI go stale at the same instant and are now refreshed from the
+same call. `engine.js` passes `() => scheduleAppMenuRefresh()`; the headless
+host passes nothing and the callback is a no-op, so this stays electron-free.
+
+### P3 done (not yet committed) — the Manage Plugins dialog
+
+`#plugins-overlay` / `#plugins-dialog` in `index.html`, wired into the shared
+overlay + `.hidden` grouped selectors in `styles.css` (the project gotcha: no
+generic `.hidden` rule, so a new hidden id needs a rule or it renders
+always-visible — `test/css-hidden-invariant.test.js` enforces it and passes).
+`renderPluginsDialog()` in `renderer.js` is the deleted `renderPluginsSection()`
+body, minus its `renderPluginPrefs()` re-render calls: that coupling existed
+because the two sections shared one dialog, and they no longer do.
+
+One Close button, no Save: toggling applies immediately, so a Cancel that left
+the plugin torn down would be a lie.
+
+The `plugin-state` subscriber now also re-renders this dialog when it is open,
+so a toggle from the MENU (or another window) doesn't leave a stale tick in a
+dialog the user is looking at. Guarded on `!hidden` — a closed dialog costs
+nothing, since it pulls on open.
+
+**DEVIATION (q) — one new api-contract row, 220 → 221.** `Manage Plugins…` needs
+a menu→renderer open request, so `onRequestOpenPluginsDialog` /
+`request-open-plugins-dialog` joins the table, modeled byte-for-byte on
+`onRequestOpenPeersDialog`. `test/api-contract.test.js` pins the count in two
+places; both updated, with the pinned-list comment saying why this is not a
+plugin row. **Plan §1 freezes the PLUGIN TRANSPORT at five rows** — `plugin:*` —
+and this is core chrome opening a core dialog; no plugin can see this channel.
+I believe that is the right reading, but the number in the t4 report was "the
+thesis demonstrated numerically", so clodex should overrule me if the number is
+meant to be a hard ceiling rather than a measure of the migration.
+
+**Also carried: the web frontend.** `renderer/web/menubar.js` is a SEPARATE menu
+implementation (the browser has no Electron menu) and it never had a plugins
+entry — the web frontend reached plugin management through the Preferences
+section I just deleted, so P1 silently removed the browser's only route to it.
+Added `Plugins…` under File, opening the same dialog. Deliberately NOT a
+top-level menu there: that bar's top-level labels are a fixed sync array, and
+the desktop menu's defining property is being absent when there is nothing to
+show, which the web bar cannot express. Parity on capability, not on structure.
+
+### P4 done — tests, suite, manual script
+
+**New: `test/app-menus-plugins.test.js` (13 tests).** Built on the b3f65c4
+lesson — where a fake would make the assertion vacuous, the real thing is used:
+the REAL loader over REAL plugin directories written to a temp dir, the REAL
+host engine, and the REAL `uiSettings` store. Only `electron` is stubbed (via
+`Module._load`, the `api-contract.test.js:134` pattern), because `app-menus.js`
+requires it at module scope. The stub's `Menu.buildFromTemplate` records the
+template, which makes menu ORDER directly assertable rather than inferred.
+
+Coverage, against the ticket's list: menu absent with no host; absent with zero
+plugins; absent when `status()` throws; one checkbox per discovered plugin;
+`checked` tracking intent **read back through a real store after a real write**
+(the assertion that would have caught b3f65c4); a quarantined plugin still
+listed, marked, and still ticked; a refused directory listed but untoggleable;
+a click really flipping persisted state; the quarantine-retry path clearing the
+strike; `onPluginStateChanged` firing on every `setEnabled`; the host tolerating
+no callback at all (headless); and Plugins sitting between View and Window in
+the real template, with no entry at all when the host is null.
+
+**Updated `test/plugin-kill-switch.test.js`** — the "no settings section" claim
+became "no Plugins menu at all", pointing at the new file which pins it against
+the real builder. The `plugins.status` refusal assertion stays: it is still
+true, and it is what the dialog would get if reached.
+
+**Suite: 2459/2459 green** in the worktree (2446 baseline + 13).
+
+**Manual script updated** — gate 1 step 6/8 now use the Plugins menu, plus a new
+step 9 covering the two things only a running app shows: that the menu's tick
+really clears after a toggle (it is rebuilt debounced, ~500ms), and that an open
+Manage Plugins dialog in window A updates when window B toggles. Gate 5 now asks
+for the menu to be ABSENT rather than present-and-empty. The fail-safe demo
+points at Manage Plugins… and adds the menu's held-back label.
+
+**`web-dist/index.html` rebuilt and committed.** It is a TRACKED artifact and
+`scripts/release.sh:45-54` makes a stale one a release failure. Three of this
+ticket's edits are bundled sources (`renderer.js`, `index.html`/CSS, and
+`renderer/web/menubar.js`), so the committed bundle was stale the moment P3
+landed. Rebuilt with `npm run build:web`; it carries the new channel.

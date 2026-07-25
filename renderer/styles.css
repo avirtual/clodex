@@ -1749,7 +1749,7 @@ html, body {
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay, #plugins-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -1759,7 +1759,7 @@ html, body {
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden, #plugins-overlay.hidden {
   display: none;
 }
 
@@ -1963,6 +1963,21 @@ html, body {
 }
 #peers-dialog h3 { margin-bottom: 12px; font-size: 16px; }
 #peers-dialog .hint-text { margin-bottom: 8px; display: block; }
+/* Manage Plugins dialog (T5) — the same frame as the peers dialog, narrower:
+   its rows are a checkbox, a name and a note, not three URL-width fields. */
+#plugins-dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 520px;
+  min-width: 380px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+#plugins-dialog h3 { margin-bottom: 12px; font-size: 16px; }
+#plugins-dialog .hint-text { margin-bottom: 8px; display: block; }
 /* New Session placement (Run in Host/Sandbox): rich fields greyed for sandbox
    placement until the create-on-peer wire carries them (M3/M5). */
 .placement-greyed { opacity: 0.4; pointer-events: none; }
@@ -2057,10 +2072,11 @@ html, body {
 .prefs-checkboxes { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; }
 .prefs-checkboxes label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .prefs-checkboxes input[type="checkbox"] { margin: 0; }
-/* Plugins section (docs/plugin-plan.md §2.5). Hidden when nothing is installed —
-   and hidden by its OWN #id.hidden rule, because there is no generic
-   `.hidden { display:none }` in this file (test/css-hidden-invariant.test.js). */
-#prefs-plugins-section.hidden { display: none; }
+/* Plugin ROWS (docs/plugin-plan.md §2.5). These used to live in a Preferences
+   section; enabling a plugin is not a preference — it tears down live DOM in
+   every window — so the choosing moved to the Plugins menu and its "Manage
+   Plugins…" dialog (T5). The rows are styled here, beside the prefs rules, only
+   because #plugins-dialog reuses the prefs dialog's own frame and typography. */
 .plugin-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--border); }
 .plugin-row:first-child { border-top: none; }
 .plugin-row input[type="checkbox"] { margin: 2px 0 0; }

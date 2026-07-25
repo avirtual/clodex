@@ -49,7 +49,17 @@ function createPluginHostEngine(deps) {
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
                       // behavior — disable works, enable refuses, nothing loads.
+    // Optional (T5): "the enabled/quarantine picture changed". The app menu's
+    // Plugins entry is built from that picture, and it must be right after a
+    // toggle from ANY window, from the menu itself, or from a quarantine trip —
+    // so the notification belongs at the one place all three converge rather
+    // than at each caller. Electron-free: this is a plain callback, and the
+    // headless host simply doesn't pass one.
+    onPluginStateChanged,
   } = deps;
+  const notifyStateChanged = () => {
+    try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
+  };
 
   // ── The dispatch map (§3.4) ────────────────────────────────────────────────
   // ONE Map, keyed `"<pluginId>:<method>"`, mutated by register/dispose/disable.
@@ -344,6 +354,10 @@ function createPluginHostEngine(deps) {
   // window blind spot §3.3 exists to prevent gets re-introduced.
   function announceState(pluginId, enabled) {
     try { emitScoped(HOST_PSEUDO_ID, 'plugin-state', { id: String(pluginId), enabled: !!enabled }, 'all'); } catch {}
+    // Renderers hear the hint above; the MAIN process hears this one. Both halves
+    // of the UI (every window's DOM, and the app menu's checkboxes) are stale at
+    // exactly the same moment, so they are refreshed from the same call.
+    notifyStateChanged();
   }
 
   // ── Registration + lifecycle ───────────────────────────────────────────────
@@ -397,6 +411,18 @@ function createPluginHostEngine(deps) {
   // plugin's teardown ledger and must never be disposable. `pluginId` is an
   // argument, and an unregistered one is refused, so a renderer cannot write
   // settings for a plugin that isn't loaded.
+  // Every plugin ON DISK, with the user's intent and any quarantine shadowing it.
+  // Named separately from the two surfaces that serve it because they need
+  // different shapes of the SAME read: `_host` `plugins.status` is the renderer's
+  // async round trip, and `api.status()` is the app menu's — the menu template is
+  // built synchronously (Menu.buildFromTemplate) and cannot await a dispatch.
+  // One function, so the menu and any renderer surface can never disagree.
+  function pluginsStatus() {
+    const loader = getLoader && getLoader();
+    if (!loader) return { plugins: [], problems: [] };
+    return loader.status();
+  }
+
   const hostMethods = {
     'settings.get': (pluginId) => {
       if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
@@ -427,11 +453,7 @@ function createPluginHostEngine(deps) {
     // Every plugin ON DISK, with the user's intent and any quarantine shadowing
     // it — NOT `catalog()`, which lists only what successfully registered and so
     // would hide the exact plugin the section exists to let you fix.
-    'plugins.status': () => {
-      const loader = getLoader && getLoader();
-      if (!loader) return { ok: true, plugins: [], problems: [] };
-      return { ok: true, ...loader.status() };
-    },
+    'plugins.status': () => ({ ok: true, ...pluginsStatus() }),
     // A window reporting its renderer half's outcome. Only the FIRST report per
     // app run counts (the loader's rule) — N windows must not mean N strikes.
     'renderer.report': (pluginId, ok, error) => {
@@ -462,6 +484,11 @@ function createPluginHostEngine(deps) {
         return errorEnvelope(String((e && e.message) || e));
       }
     },
+    // The app menu's read (T5). Same data `_host` `plugins.status` serves the
+    // renderer, minus the envelope — a MAIN-process caller has the host object
+    // in hand and would only be unwrapping its own answer. Sync by construction,
+    // because Menu.buildFromTemplate takes a template, not a promise.
+    status: pluginsStatus,
     catalog() {
       return [...registered.values()].map((r) => ({
         id: r.id,

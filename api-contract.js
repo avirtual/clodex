@@ -143,6 +143,11 @@ const API_CONTRACT = [
   { name: 'onRequestRenameWorkspace', kind: 'on', channel: 'request-rename-workspace' },
   { name: 'onRequestOpenPreferences', kind: 'on', channel: 'request-open-preferences' },
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
+  // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
+  // exactly like the peers row above — NOT a plugin transport row (the plugin
+  // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
+  // this channel).
+  { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
   { name: 'onRequestOpenPeerSession', kind: 'on', channel: 'request-open-peer-session' },
   { name: 'onRequestOpenAgentsDrawer', kind: 'on', channel: 'request-open-agents-drawer' },
   { name: 'onRequestOpenSkillsDrawer', kind: 'on', channel: 'request-open-skills-drawer' },

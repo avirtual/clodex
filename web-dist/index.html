@@ -2695,7 +2695,8 @@ body {
 #peers-overlay,
 #peer-session-overlay,
 #sandbox-overlay,
-#discovery-overlay {
+#discovery-overlay,
+#plugins-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -2710,7 +2711,8 @@ body {
 #peers-overlay.hidden,
 #peer-session-overlay.hidden,
 #sandbox-overlay.hidden,
-#discovery-overlay.hidden {
+#discovery-overlay.hidden,
+#plugins-overlay.hidden {
   display: none;
 }
 #discovery-overlay {
@@ -2957,6 +2959,25 @@ body {
   margin-bottom: 8px;
   display: block;
 }
+#plugins-dialog {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 520px;
+  min-width: 380px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+#plugins-dialog h3 {
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+#plugins-dialog .hint-text {
+  margin-bottom: 8px;
+  display: block;
+}
 .placement-greyed {
   opacity: 0.4;
   pointer-events: none;
@@ -3184,9 +3205,6 @@ body {
 }
 .prefs-checkboxes input[type=checkbox] {
   margin: 0;
-}
-#prefs-plugins-section.hidden {
-  display: none;
 }
 .plugin-row {
   display: flex;
@@ -5687,22 +5705,36 @@ body {
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
-      <!-- Plugins (docs/plugin-plan.md §2.5). CORE's own section — the one place
-           a plugin can be turned off, and the one place a plugin that failed to
-           activate is still visible. Populated from `_host` `plugins.status`,
-           which lists every plugin ON DISK rather than only the ones that loaded:
-           a quarantined plugin must still appear, or the only UI that could
-           clear it would be the one hiding it. Plugins' OWN sections are
-           appended after this one, by the plugin host, as [data-plugin-section]. -->
-      <section id="prefs-plugins-section" class="hidden">
-        <h4>Plugins</h4>
-        <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
-        <div id="prefs-plugins-list"></div>
-      </section>
+      <!-- No Plugins section here (T5): turning a plugin on or off is not a
+           preference — it tears down live DOM in every open window — so the
+           CHOOSING lives in the top-level Plugins menu and its "Manage
+           Plugins…" dialog. What still belongs here is each plugin's OWN
+           settings (docs/plugin-plan.md §2.5: "settings organized by plugin,
+           and you chose the plugins"): the host appends those after this point
+           as [data-plugin-section]. -->
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>
         <button id="btn-prefs-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Plugins dialog (opened from the Plugins menu, T5). The MENU is the
+       fast path — one checkbox per plugin — and this is where the detail that
+       does not fit a menu item lives: descriptions, versions, the real error
+       string behind a quarantine, and an explicit Retry. Populated from `_host`
+       `plugins.status`, which lists every plugin ON DISK rather than only the
+       ones that loaded: a quarantined plugin must still appear, or the only UI
+       that could clear it would be the one hiding it. -->
+  <div id="plugins-overlay" class="hidden">
+    <div id="plugins-dialog">
+      <h3>Plugins</h3>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+      <div id="plugins-list"></div>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="btn-plugins-close" class="secondary">Close</button>
       </div>
     </div>
   </div>
@@ -5930,6 +5962,11 @@ body {
         { name: "onRequestRenameWorkspace", kind: "on", channel: "request-rename-workspace" },
         { name: "onRequestOpenPreferences", kind: "on", channel: "request-open-preferences" },
         { name: "onRequestOpenPeersDialog", kind: "on", channel: "request-open-peers-dialog" },
+        // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
+        // exactly like the peers row above — NOT a plugin transport row (the plugin
+        // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
+        // this channel).
+        { name: "onRequestOpenPluginsDialog", kind: "on", channel: "request-open-plugins-dialog" },
         { name: "onRequestOpenPeerSession", kind: "on", channel: "request-open-peer-session" },
         { name: "onRequestOpenAgentsDrawer", kind: "on", channel: "request-open-agents-drawer" },
         { name: "onRequestOpenSkillsDrawer", kind: "on", channel: "request-open-skills-drawer" },
@@ -6588,6 +6625,13 @@ body {
               { sep: true },
               { label: "Rename Workspace\u2026", run: () => emit("request-rename-workspace") },
               { label: "Preferences\u2026", run: () => emit("request-open-preferences") },
+              // T5: the browser's route to the Manage Plugins dialog. The desktop gets
+              // a whole top-level Plugins menu with a live checkbox per plugin; this
+              // bar cannot mirror that, because its top-level labels are a fixed sync
+              // array and the desktop menu's defining property is being ABSENT when
+              // there is nothing to show. One item into the shared dialog keeps the
+              // two frontends at parity on capability without faking that structure.
+              { label: "Plugins\u2026", run: () => emit("request-open-plugins-dialog") },
               { sep: true },
               { label: "Restart Clodex\u2026", run: () => confirmRestart(invoke) }
             ]
@@ -26452,6 +26496,7 @@ ${detail}` });
           if (pluginId !== "_host" || topic !== "plugin-state" || !payload || !payload.id) return;
           if (payload.enabled) activatePluginRenderer(payload.id);
           else pluginBar.dispose(payload.id);
+          if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
         });
       }
       function renderSessionActions(holdHtml = "") {
@@ -28021,6 +28066,114 @@ ${res.stderr}` : "");
         if (e.target === peersOverlay) closePeersDialog();
       });
       window.api.onRequestOpenPeersDialog(() => openPeersDialog());
+      var pluginsOverlay = document.getElementById("plugins-overlay");
+      var pluginsList = document.getElementById("plugins-list");
+      function closePluginsDialog() {
+        pluginsOverlay.classList.add("hidden");
+      }
+      async function openPluginsDialog() {
+        await renderPluginsDialog();
+        pluginsOverlay.classList.remove("hidden");
+      }
+      async function renderPluginsDialog() {
+        if (!pluginsList) return;
+        let status = null;
+        try {
+          status = await window.api.pluginInvoke("_host", "plugins.status");
+        } catch {
+        }
+        const plugins = status && status.ok && status.plugins || [];
+        const problems = status && status.ok && status.problems || [];
+        pluginsList.innerHTML = "";
+        if (!plugins.length && !problems.length) {
+          const empty = document.createElement("div");
+          empty.className = "plugin-row-note";
+          empty.textContent = "No plugins are installed.";
+          pluginsList.appendChild(empty);
+        }
+        for (const p of plugins) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!p.enabled;
+          cb.addEventListener("change", async () => {
+            cb.disabled = true;
+            try {
+              await window.api.pluginSetEnabled(p.id, cb.checked);
+            } catch {
+            }
+            cb.disabled = false;
+            await renderPluginsDialog();
+          });
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = p.name || p.id;
+          if (p.version) {
+            const v = document.createElement("span");
+            v.className = "plugin-row-version";
+            v.textContent = `v${p.version}`;
+            nameEl.appendChild(v);
+          }
+          body.appendChild(nameEl);
+          if (p.description) {
+            const d = document.createElement("div");
+            d.className = "plugin-row-note";
+            d.textContent = p.description;
+            body.appendChild(d);
+          }
+          if (p.quarantined || p.failCount) {
+            const n = document.createElement("div");
+            n.className = "plugin-row-note warn";
+            n.textContent = p.quarantined ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches \u2014 ${p.lastError || "unknown error"}` : `Failed to activate once (${p.lastError || "unknown error"}) \u2014 one more and it will be held back.`;
+            body.appendChild(n);
+          }
+          row.appendChild(cb);
+          row.appendChild(body);
+          if (p.quarantined) {
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "secondary";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", async () => {
+              retry.disabled = true;
+              let r = null;
+              try {
+                r = await window.api.pluginSetEnabled(p.id, true);
+              } catch {
+              }
+              if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: "peer-ui" });
+              else showToast(`${p.name || p.id} failed again: ${r && r.error || "unknown error"}`, { kind: "error", duration: 9e3 });
+              await renderPluginsDialog();
+            });
+            row.appendChild(retry);
+          }
+          pluginsList.appendChild(row);
+        }
+        for (const pr of problems) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = pr.dir;
+          body.appendChild(nameEl);
+          const n = document.createElement("div");
+          n.className = "plugin-row-note warn";
+          n.textContent = `Not loaded: ${pr.why}`;
+          body.appendChild(n);
+          row.appendChild(body);
+          pluginsList.appendChild(row);
+        }
+      }
+      document.getElementById("btn-plugins-close").addEventListener("click", closePluginsDialog);
+      pluginsOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === pluginsOverlay) closePluginsDialog();
+      });
+      window.api.onRequestOpenPluginsDialog(() => openPluginsDialog());
       var sandboxOverlay = document.getElementById("sandbox-overlay");
       var sbDockerRow = document.getElementById("sandbox-docker");
       var sbStatusRow = document.getElementById("sandbox-status");
@@ -28456,7 +28609,6 @@ ${res.stderr}` : "");
         refreshPrefsEnv();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
-        await renderPluginsSection();
         await renderPluginPrefs();
         prefsOverlay.classList.remove("hidden");
         refreshWsStatus();
@@ -28475,99 +28627,6 @@ ${res.stderr}` : "");
           }
         }
         pluginBar.renderSettingsSections(values);
-      }
-      async function renderPluginsSection() {
-        const section = document.getElementById("prefs-plugins-section");
-        const list = document.getElementById("prefs-plugins-list");
-        if (!section || !list) return;
-        let status = null;
-        try {
-          status = await window.api.pluginInvoke("_host", "plugins.status");
-        } catch {
-        }
-        const plugins = status && status.ok && status.plugins || [];
-        const problems = status && status.ok && status.problems || [];
-        section.classList.toggle("hidden", !plugins.length && !problems.length);
-        list.innerHTML = "";
-        for (const p of plugins) {
-          const row = document.createElement("div");
-          row.className = "plugin-row";
-          const cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.checked = !!p.enabled;
-          cb.addEventListener("change", async () => {
-            cb.disabled = true;
-            try {
-              await window.api.pluginSetEnabled(p.id, cb.checked);
-            } catch {
-            }
-            cb.disabled = false;
-            await renderPluginsSection();
-            await renderPluginPrefs();
-          });
-          const body = document.createElement("div");
-          body.className = "plugin-row-body";
-          const nameEl = document.createElement("div");
-          nameEl.className = "plugin-row-name";
-          nameEl.textContent = p.name || p.id;
-          if (p.version) {
-            const v = document.createElement("span");
-            v.className = "plugin-row-version";
-            v.textContent = `v${p.version}`;
-            nameEl.appendChild(v);
-          }
-          body.appendChild(nameEl);
-          if (p.description) {
-            const d = document.createElement("div");
-            d.className = "plugin-row-note";
-            d.textContent = p.description;
-            body.appendChild(d);
-          }
-          if (p.quarantined || p.failCount) {
-            const n = document.createElement("div");
-            n.className = "plugin-row-note warn";
-            n.textContent = p.quarantined ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches \u2014 ${p.lastError || "unknown error"}` : `Failed to activate once (${p.lastError || "unknown error"}) \u2014 one more and it will be held back.`;
-            body.appendChild(n);
-          }
-          row.appendChild(cb);
-          row.appendChild(body);
-          if (p.quarantined) {
-            const retry = document.createElement("button");
-            retry.type = "button";
-            retry.className = "secondary";
-            retry.textContent = "Retry";
-            retry.addEventListener("click", async () => {
-              retry.disabled = true;
-              let r = null;
-              try {
-                r = await window.api.pluginSetEnabled(p.id, true);
-              } catch {
-              }
-              if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: "peer-ui" });
-              else showToast(`${p.name || p.id} failed again: ${r && r.error || "unknown error"}`, { kind: "error", duration: 9e3 });
-              await renderPluginsSection();
-              await renderPluginPrefs();
-            });
-            row.appendChild(retry);
-          }
-          list.appendChild(row);
-        }
-        for (const pr of problems) {
-          const row = document.createElement("div");
-          row.className = "plugin-row";
-          const body = document.createElement("div");
-          body.className = "plugin-row-body";
-          const nameEl = document.createElement("div");
-          nameEl.className = "plugin-row-name";
-          nameEl.textContent = pr.dir;
-          body.appendChild(nameEl);
-          const n = document.createElement("div");
-          n.className = "plugin-row-note warn";
-          n.textContent = `Not loaded: ${pr.why}`;
-          body.appendChild(n);
-          row.appendChild(body);
-          list.appendChild(row);
-        }
       }
       function closePrefs() {
         prefsOverlay.classList.add("hidden");

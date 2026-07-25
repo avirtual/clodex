@@ -936,22 +936,36 @@
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
-      <!-- Plugins (docs/plugin-plan.md §2.5). CORE's own section — the one place
-           a plugin can be turned off, and the one place a plugin that failed to
-           activate is still visible. Populated from `_host` `plugins.status`,
-           which lists every plugin ON DISK rather than only the ones that loaded:
-           a quarantined plugin must still appear, or the only UI that could
-           clear it would be the one hiding it. Plugins' OWN sections are
-           appended after this one, by the plugin host, as [data-plugin-section]. -->
-      <section id="prefs-plugins-section" class="hidden">
-        <h4>Plugins</h4>
-        <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
-        <div id="prefs-plugins-list"></div>
-      </section>
+      <!-- No Plugins section here (T5): turning a plugin on or off is not a
+           preference — it tears down live DOM in every open window — so the
+           CHOOSING lives in the top-level Plugins menu and its "Manage
+           Plugins…" dialog. What still belongs here is each plugin's OWN
+           settings (docs/plugin-plan.md §2.5: "settings organized by plugin,
+           and you chose the plugins"): the host appends those after this point
+           as [data-plugin-section]. -->
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>
         <button id="btn-prefs-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Plugins dialog (opened from the Plugins menu, T5). The MENU is the
+       fast path — one checkbox per plugin — and this is where the detail that
+       does not fit a menu item lives: descriptions, versions, the real error
+       string behind a quarantine, and an explicit Retry. Populated from `_host`
+       `plugins.status`, which lists every plugin ON DISK rather than only the
+       ones that loaded: a quarantined plugin must still appear, or the only UI
+       that could clear it would be the one hiding it. -->
+  <div id="plugins-overlay" class="hidden">
+    <div id="plugins-dialog">
+      <h3>Plugins</h3>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+      <div id="plugins-list"></div>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="btn-plugins-close" class="secondary">Close</button>
       </div>
     </div>
   </div>

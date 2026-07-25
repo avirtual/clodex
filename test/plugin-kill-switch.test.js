@@ -143,8 +143,12 @@ test('gate 5: with the switch off the workbench is absent from EVERY user-visibl
   // 1. No catalog row ⇒ the renderer's loadPluginRenderers loop body never runs
   //    ⇒ no footer button, no overlay, no stylesheet in any window.
   assert.deepStrictEqual(await handlers.get('plugin:catalog')({}), []);
-  // 2. No settings section: the Plugins section pulls plugins.status, which
-  //    refuses, and the renderer hides the section on an empty answer.
+  // 2. No Plugins menu: since T5 the on/off switch is a top-level menu, not a
+  //    Preferences section, and app-menus' buildPluginsMenu returns null with no
+  //    host — so the menu is ABSENT rather than empty (pinned directly in
+  //    test/app-menus-plugins.test.js, which drives the real builder). The
+  //    "Manage Plugins…" dialog it would open is unreachable for the same
+  //    reason, and would in any case get this refusal:
   assert.deepStrictEqual(await handlers.get('plugin:invoke')({}, '_host', 'plugins.status', []),
     { ok: false, error: NO_SUCH_METHOD });
   // 3. No data rows: the fourteen migrated methods are gone from core (W6) and

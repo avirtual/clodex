@@ -3042,6 +3042,11 @@ if (window.api.onPluginEvent) {
     if (pluginId !== '_host' || topic !== 'plugin-state' || !payload || !payload.id) return;
     if (payload.enabled) activatePluginRenderer(payload.id);
     else pluginBar.dispose(payload.id);
+    // A toggle from the menu, or from another window, while this window has the
+    // Manage Plugins dialog open. Re-render rather than leaving a stale tick —
+    // and only when it is open, so a closed dialog costs nothing (it pulls on
+    // open anyway).
+    if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
   });
 }
 
@@ -5075,6 +5080,130 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
 window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 
+// ── Manage Plugins dialog (T5, docs/plugin-plan.md §2.5) ────────────────────
+// The detail surface behind the Plugins menu. The menu is the fast path — tick
+// to enable, untick to disable — and this is where what does not fit a menu
+// item lives: descriptions, versions, the real error behind a quarantine, and
+// an explicit Retry.
+//
+// It reads `plugins.status`, not `catalog()`: catalog lists what successfully
+// registered, which by definition excludes the plugin you came here to fix.
+// Toggling applies IMMEDIATELY (its own await, no Save button) because
+// enable/disable is not a form value — it tears down live DOM in every window,
+// and a Cancel that silently left the plugin gone would be a lie. Hence a single
+// Close button.
+const pluginsOverlay = document.getElementById('plugins-overlay');
+const pluginsList = document.getElementById('plugins-list');
+
+function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
+
+async function openPluginsDialog() {
+  await renderPluginsDialog();
+  pluginsOverlay.classList.remove('hidden');
+}
+
+async function renderPluginsDialog() {
+  if (!pluginsList) return;
+  let status = null;
+  try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
+  const plugins = (status && status.ok && status.plugins) || [];
+  const problems = (status && status.ok && status.problems) || [];
+  pluginsList.innerHTML = '';
+  if (!plugins.length && !problems.length) {
+    // Reachable only by an explicit open under CLODEX_PLUGINS=0, where the
+    // refusal comes back shaped and empty — the MENU that normally opens this
+    // dialog is absent in that state.
+    const empty = document.createElement('div');
+    empty.className = 'plugin-row-note';
+    empty.textContent = 'No plugins are installed.';
+    pluginsList.appendChild(empty);
+  }
+  for (const p of plugins) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    // The checkbox shows INTENT, never the quarantine shadow — that is the whole
+    // point of keeping the two separate.
+    cb.checked = !!p.enabled;
+    cb.addEventListener('change', async () => {
+      cb.disabled = true;
+      try { await window.api.pluginSetEnabled(p.id, cb.checked); } catch {}
+      cb.disabled = false;
+      await renderPluginsDialog();
+    });
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = p.name || p.id;
+    if (p.version) {
+      const v = document.createElement('span');
+      v.className = 'plugin-row-version';
+      v.textContent = `v${p.version}`;
+      nameEl.appendChild(v);
+    }
+    body.appendChild(nameEl);
+    if (p.description) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = p.description;
+      body.appendChild(d);
+    }
+    if (p.quarantined || p.failCount) {
+      const n = document.createElement('div');
+      n.className = 'plugin-row-note warn';
+      n.textContent = p.quarantined
+        ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches — ${p.lastError || 'unknown error'}`
+        : `Failed to activate once (${p.lastError || 'unknown error'}) — one more and it will be held back.`;
+      body.appendChild(n);
+    }
+    row.appendChild(cb);
+    row.appendChild(body);
+    if (p.quarantined) {
+      // Retry = clear the counter and try to activate now. It routes through
+      // pluginSetEnabled(true), which clears failures first — so a user who
+      // fixed the plugin is not refused by a stale strike.
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        let r = null;
+        try { r = await window.api.pluginSetEnabled(p.id, true); } catch {}
+        if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: 'peer-ui' });
+        else showToast(`${p.name || p.id} failed again: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
+        await renderPluginsDialog();
+      });
+      row.appendChild(retry);
+    }
+    pluginsList.appendChild(row);
+  }
+  // Directories that look like a plugin but were refused. No toggle: there is no
+  // id to key anything by when the manifest itself is what is broken.
+  for (const pr of problems) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = pr.dir;
+    body.appendChild(nameEl);
+    const n = document.createElement('div');
+    n.className = 'plugin-row-note warn';
+    n.textContent = `Not loaded: ${pr.why}`;
+    body.appendChild(n);
+    row.appendChild(body);
+    pluginsList.appendChild(row);
+  }
+}
+
+document.getElementById('btn-plugins-close').addEventListener('click', closePluginsDialog);
+pluginsOverlay.addEventListener('mousedown', (e) => { if (e.target === pluginsOverlay) closePluginsDialog(); });
+window.api.onRequestOpenPluginsDialog(() => openPluginsDialog());
+
 // ── Managed Docker sandbox dialog (docs/sandbox-plan.md M2) ─────────────────
 const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
@@ -5624,8 +5753,9 @@ async function openPrefs() {
   // Plugin settings sections (§2.5) — one <section data-plugin> per registered
   // section, appended before .dialog-actions. Values are pulled per plugin
   // through the one multiplexed channel; a disabled plugin's section does not
-  // exist. No-op (and no invokes) while no plugin registers a section.
-  await renderPluginsSection();
+  // exist. No-op (and no invokes) while no plugin registers a section. Only a
+  // plugin's OWN settings live here — the on/off switch is the Plugins menu's
+  // (T5), so this dialog never lists a plugin the user hasn't already enabled.
   await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
@@ -5647,110 +5777,6 @@ async function renderPluginPrefs() {
     } catch {}
   }
   pluginBar.renderSettingsSections(values);
-}
-
-// CORE's own Plugins section (§2.5) — the on/off switch, and the only place a
-// plugin that FAILED to activate is visible. It reads `plugins.status`, not
-// `catalog()`: catalog lists what successfully registered, which by definition
-// excludes the plugin you came here to fix.
-//
-// Toggling applies IMMEDIATELY (its own await, outside the Save flow) because
-// enable/disable is not a form value — it tears down live DOM in every window,
-// and a Cancel that silently left the plugin gone would be a lie.
-async function renderPluginsSection() {
-  const section = document.getElementById('prefs-plugins-section');
-  const list = document.getElementById('prefs-plugins-list');
-  if (!section || !list) return;
-  let status = null;
-  try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
-  const plugins = (status && status.ok && status.plugins) || [];
-  const problems = (status && status.ok && status.problems) || [];
-  // Nothing installed (or CLODEX_PLUGINS=0, where the refusal comes back shaped
-  // and empty) ⇒ no section at all, rather than an empty heading.
-  section.classList.toggle('hidden', !plugins.length && !problems.length);
-  list.innerHTML = '';
-  for (const p of plugins) {
-    const row = document.createElement('div');
-    row.className = 'plugin-row';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    // The checkbox shows INTENT, never the quarantine shadow — that is the whole
-    // point of keeping the two separate.
-    cb.checked = !!p.enabled;
-    cb.addEventListener('change', async () => {
-      cb.disabled = true;
-      try { await window.api.pluginSetEnabled(p.id, cb.checked); } catch {}
-      cb.disabled = false;
-      await renderPluginsSection();
-      await renderPluginPrefs();
-    });
-    const body = document.createElement('div');
-    body.className = 'plugin-row-body';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'plugin-row-name';
-    nameEl.textContent = p.name || p.id;
-    if (p.version) {
-      const v = document.createElement('span');
-      v.className = 'plugin-row-version';
-      v.textContent = `v${p.version}`;
-      nameEl.appendChild(v);
-    }
-    body.appendChild(nameEl);
-    if (p.description) {
-      const d = document.createElement('div');
-      d.className = 'plugin-row-note';
-      d.textContent = p.description;
-      body.appendChild(d);
-    }
-    if (p.quarantined || p.failCount) {
-      const n = document.createElement('div');
-      n.className = 'plugin-row-note warn';
-      n.textContent = p.quarantined
-        ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches — ${p.lastError || 'unknown error'}`
-        : `Failed to activate once (${p.lastError || 'unknown error'}) — one more and it will be held back.`;
-      body.appendChild(n);
-    }
-    row.appendChild(cb);
-    row.appendChild(body);
-    if (p.quarantined) {
-      // Retry = clear the counter and try to activate now. It routes through
-      // pluginSetEnabled(true), which clears failures first — so a user who
-      // fixed the plugin is not refused by a stale strike.
-      const retry = document.createElement('button');
-      retry.type = 'button';
-      retry.className = 'secondary';
-      retry.textContent = 'Retry';
-      retry.addEventListener('click', async () => {
-        retry.disabled = true;
-        let r = null;
-        try { r = await window.api.pluginSetEnabled(p.id, true); } catch {}
-        if (r && r.ok) showToast(`${p.name || p.id} activated.`, { kind: 'peer-ui' });
-        else showToast(`${p.name || p.id} failed again: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
-        await renderPluginsSection();
-        await renderPluginPrefs();
-      });
-      row.appendChild(retry);
-    }
-    list.appendChild(row);
-  }
-  // Directories that look like a plugin but were refused. No toggle: there is no
-  // id to key anything by when the manifest itself is what is broken.
-  for (const pr of problems) {
-    const row = document.createElement('div');
-    row.className = 'plugin-row';
-    const body = document.createElement('div');
-    body.className = 'plugin-row-body';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'plugin-row-name';
-    nameEl.textContent = pr.dir;
-    body.appendChild(nameEl);
-    const n = document.createElement('div');
-    n.className = 'plugin-row-note warn';
-    n.textContent = `Not loaded: ${pr.why}`;
-    body.appendChild(n);
-    row.appendChild(body);
-    list.appendChild(row);
-  }
 }
 
 function closePrefs() {
