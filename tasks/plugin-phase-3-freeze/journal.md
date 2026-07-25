@@ -1195,3 +1195,123 @@ widened from "not foreign workspaces" to "neither scopes workspaces nor confines
 the cwd".
 
 Suite **2489/2489**.
+
+---
+
+# PICKUP NOTE — Phase 3 is closed
+
+Written for whoever starts Phase 4, which may be a fresh hand with none of this
+in context. This file is what to read first; nothing important lives only in a
+transcript.
+
+## Where Phase 3 landed
+
+Branch `plugin-phase-1`, **nothing pushed, master untouched**. Suite
+**2489/2489**. Eight commits, oldest first:
+
+| commit | what |
+|---|---|
+| `f36875c` | T6 — froze the plugin host API at `"1"`, published `docs/plugin-api.md` |
+| `964d599` | T7 — corrected `docs/plugin-plan.md` against what actually shipped |
+| `ab56253` | T7 addendum — the fsScope workspace gap as a scheduled v1.1 candidate |
+| `0942338` | T10 — the intent handler signature, published backwards |
+| `4a2d16b` | T8 — enforced three boundary invariants the code only claimed |
+| `8473d12` | clodex's acceptance build — installed the cold-built `git-branches` |
+| `b5be290` | T9 — hardened the no-backdoor lint |
+| `b70917a` | T11+T12 — made the contract say what it can deliver |
+
+**The thesis held.** A cold agent given only `docs/plugin-api.md` built a working
+two-half plugin, with an intent verb, needing **zero core edits**. Everything the
+build turned up was a documentation defect or a test that measured its own
+assumptions — never a missing capability. That is the result Phase 3 was for.
+
+## The one defect class this phase kept finding
+
+An assertion that encodes an assumption the suite cannot violate on its own, so
+it stays green through exactly the change it was meant to catch. It appeared
+five times, in different clothes:
+
+- fake-store tests that let the persistence bug through (before this phase);
+- `plugin-kill-switch` pinning the catalog to exactly `['workbench']` — invisible
+  to every run that doesn't add a second plugin;
+- T9's lint self-test asserting exactly THREE violations — a count is unchanged
+  by a class the scanner cannot see;
+- `intent-checklist-seam.test.js:34` asserting an equivalence over every catalog
+  row, passing only because that file registers no verb;
+- **my own first fixture for that fix**, which sat after the test it was proving
+  and so could not fail. Caught only by running the revert.
+
+The defence that worked every time: **revert the fix and watch the test go red.**
+Not reason about whether it would. Whoever picks up Phase 4 should assume they
+are equally capable of writing one of these.
+
+## What `VERIFY.md` will test (blocked on Bogdan's machine)
+
+`plugins/git-branches/VERIFY.md` — five behaviours no harness reaches, needing a
+running app and a real git repo. Reordered from the original brief because two
+are only observable after a badge has painted:
+
+1. **`requestRelayout()` actually causes a re-render.** The load-bearing one:
+   without it §6.4's documented cache-then-relayout idiom does not work at all,
+   and `rowBadge` can never show anything that took I/O.
+2. **`cls` becomes a real CSS class** on the chip.
+3. **Whether `style.css` is scoped** to the plugin.
+4. **The verb replies** — live proof of `handler(handle, intent)`, the T10 fix.
+5. **Once per line, or once per input feed** — the multiplicity guarantee now
+   documented in §7, confirmed against a running agent.
+
+A failure in 1 or 5 is a **doc/core finding, not a plugin bug**, and the file
+says so at each step. Nothing in it is softened.
+
+## Deviations, with rulings
+
+All four were flagged before or during execution and all four were approved.
+Letters (a)-(q) were spent in earlier phases; (r) is unused.
+
+- **(s) — `host.lib.gitWorktree` has SEVEN members, not the four the ticket
+  named.** Derived the façade from `Object.keys` filtered to functions rather
+  than hardcoding. *Ruling: approved — "you were right and my ticket was wrong…
+  hardcoding my four would have silently narrowed a surface I froze this
+  morning."* Consequences ruled: pin the seven by name (so the mirror risk,
+  silent widening, is closed too) and document all seven, because an author can
+  only rely on what is documented.
+- **(t) — the dynamic-require rule was blind to its own worked example.**
+  "Flag any `require(` not immediately followed by a quote" does not catch
+  `require('..' + '/x')`. Implemented the intent instead: `dynamicRequires` is
+  the exact complement of `requireSpecs`, so a call site is auditable or flagged,
+  never neither. *Ruling: approved — "a stronger property than what I asked for."*
+- **(u) — the `fsScope` overclaim was in FOUR places, not three.** The fourth was
+  the comment on `fsScope` itself, claiming a careless plugin "cannot widen
+  locality" and disproving it four lines later. Editing it meant touching a core
+  file under a doc-only ticket. *Ruling: approved — the guard is aimed at
+  behaviour changes smuggled into a doc ticket, not at correcting a false
+  comment.* All four now say: fsScope answers "what cwd, and is this local?" —
+  not workspace scoping, not cwd confinement, not a sandbox.
+
+**Next letter is (v).**
+
+## Standing constraints that outlive this phase
+
+- The `"1"` surface is **frozen**. Additive changes ship as "1.1 behaviour" and do
+  not bump; only a change that could break a conforming `"1"` plugin goes to
+  `"2"`. **Narrowing a lent surface is breaking** — that is what (s) turned on.
+- **Code wins over docs, always.** Four of clodex's written instructions diverged
+  from what executes this phase (the store count, the `gitWorktree` members, a
+  regex blind to its own example, the `onCreate` reasoning). Every one was caught
+  by checking source before implementing. Treat instructions as claims.
+- `web-dist/index.html` is a **tracked** artifact and `scripts/release.sh:45-54`
+  makes a stale one a release failure — run `npm run build:web` after touching any
+  bundled source. Adding or removing a renderer half also requires committing the
+  regenerated `renderer/web/plugin-registry.js`; §1 of the published contract now
+  says so.
+- The `node_modules` symlink stays **untracked**: `git reset -q node_modules`
+  before staging, and never a blind `git add -A` — two agents share this worktree.
+- `test/plugin-boundary.test.js` is **not a security control** and must never be
+  described as one. With `contextIsolation: false` a determined plugin reaches
+  everything; the lint catches accidents and drift.
+
+## Open, not started — Phase 4 scope is Bogdan's call
+
+Nothing is queued. The `VERIFY.md` run is blocked on his machine, and Phase 4's
+scope is a decision he has not made; he asked for slow and steady on this effort.
+Do not manufacture work against an unchosen direction.
