@@ -546,3 +546,96 @@ Three things to get right in W3:
    index.html only, so it will no longer see them at all — the invariant is not
    violated, but nothing guards them either. Consider whether the plugin's
    stylesheet wants its own equivalent gate; flag the decision.
+
+---
+
+## W3 — DONE. Suite 2395/2395 (+3 over W2's 2392).
+
+### The exact rule count (GAP G6 resolved)
+
+The plan says "~23 rules". The reconnaissance grep said 38 top-level heads.
+Both are wrong, in opposite directions — the grep counted only selector lines
+starting at column 0 with `.wb-`/`.workbench`/`#workbench`, which misses every
+descendant/`:hover`/`.active` variant AND every `.explorer-*`, `.scm-*`,
+`.worktree*` rule (the workbench's file tree, its SCM list and its worktree
+list are all named after what they show, not after the plugin).
+
+**Actual extracted block: `renderer/styles.css` :2601–2736, 136 lines,
+69 rule blocks. 68 moved, 1 deleted.**
+
+- MOVED: 68 rule blocks (`#workbench-modal`, `.workbench-*` ×13,
+  `.wb-*` ×22, `.explorer-*` ×7, `.scm-*` ×14, `.worktree*` ×10, plus the
+  grouped per-id hidden rule) → `plugins/workbench/style.css`.
+- DELETED, not moved: `#workbench-overlay { … }`. Dead since W2 — the element
+  does not exist; the host's `.plugin-overlay` container replaced it verbatim
+  (same six declarations).
+- Also deleted: the `#workbench-overlay.hidden` SELECTOR from the head of the
+  grouped hidden rule. The rule itself moved with its other 12 selectors.
+- KEPT core: `.plugin-overlay` + `.plugin-overlay.hidden` (W2's, deviation (f)).
+- KEPT core, dies in W4: `#btn-workbench` at :309/:323 — the sidebar footer
+  button, shared with `#inbox-open` in a grouped rule. Not part of the block.
+
+So the plan undercounted by 3×. **Flagged as deviation (i)** — not a design
+disagreement, just the number the ticket asked me to report, and it is large
+enough to matter if anyone sized W3 from "~23".
+
+Nothing outside the block references those classes: grepped every class the
+plugin's markup emits against the whole tree; the only non-plugin hits are
+`web-dist/index.html` (a BUILT artifact, regenerated — W8's problem, G7) and
+`renderer/renderer.js:190` / `index.html:521` which match `input-worktree-branch`,
+the New-Session dialog's own input, not the workbench's `wb-worktree-branch`.
+
+### THE DECISION W3 FORCED: the hidden-id invariant crossed the boundary
+
+`test/css-hidden-invariant.test.js` reads `renderer/index.html` against
+`renderer/styles.css`. That pairing was TOTAL while all hidden ids shipped in
+core markup. After W2/W3 it is not: the workbench's 9 `class="hidden"` ids are
+emitted by `plugins/workbench/renderer.js` and hidden by rules in
+`plugins/workbench/style.css`. Neither file is read by that test. The invariant
+is not violated — it is simply no longer enforced for anything in a plugin, and
+the project's own gotcha ("no generic `.hidden`; a missed per-id rule renders
+the element ALWAYS-VISIBLE and unstyled") is exactly the bug that shipped twice
+before that test existed.
+
+Leaving it unguarded was the cheap option and I rejected it: the guard would
+have silently stopped covering the pilot at the exact commit that moved it, and
+every future plugin would inherit the hole.
+
+**ADDED `test/plugin-style.test.js` (3 tests)** — the same invariant, per
+plugin, generic over `plugins/*/manifest.json`:
+1. For every plugin: scan its manifest's renderer entry for `id=…
+   class="… hidden …"` tags, parse its manifest's stylesheet, assert each id has
+   a `#id.hidden{display:none}` rule. Comments are stripped before the CSS parse
+   so a `#id.hidden` mentioned in prose cannot count as coverage.
+2. A non-vacuity check naming four real workbench ids — a regex that matches
+   nothing must not make test 1 pass silently. (The core test has the same
+   guard, for the same reason.)
+3. A W3 move-gate on CORE css: `.plugin-overlay` + `.plugin-overlay.hidden` must
+   still be there, and NO `wb-`/`workbench-` selector may remain (with
+   `#btn-workbench` excepted until W4 deletes it — the exception is written at
+   the assertion site so W4 has to come back and remove it).
+
+**Flagged as deviation (j)** — a NEW test file the plan does not ask for. It is
+additive, gates a real regression class, and is the answer to the question the
+W2 journal left open ("consider whether the plugin's stylesheet wants its own
+equivalent gate; flag the decision").
+
+### CHANGED
+- `renderer/styles.css` — :2601–2736 removed (136 lines). `.plugin-overlay`
+  pair kept in place, now sitting where the workbench comment used to.
+- `plugins/workbench/style.css` — was an empty wired placeholder; now carries
+  the 68 moved rules byte-identical, under a header explaining what stayed core
+  and why, and that the vars it reads (`--sidebar-bg`, `--accent`, …) are core's
+  `:root` ones — a plugin inherits the host theme rather than restating it,
+  which is what keeps the themes island working over plugin surfaces.
+- `test/plugin-style.test.js` — NEW, 3 tests.
+
+### NEXT: W4 — entry points.
+Plugin registers `sidebar.footerButton`; then delete, in order, with a grep
+before each: `#btn-workbench` (index.html + its `renderer/styles.css:309/323`
+grouped rule + `test/plugin-style.test.js`'s exception), the View-menu item and
+its `request-open-workbench` emit (`app-menus.js:489`), the
+`onRequestOpenWorkbench` contract row (`api-contract.js:151`) and its pin
+(`test/api-contract.test.js:88`), the renderer subscription
+(`renderer/renderer.js:~3781`), and W2's temporary `clodex:open-workbench`
+CustomEvent bridge on BOTH sides (deviation (g) retires here).
