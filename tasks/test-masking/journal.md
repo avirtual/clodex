@@ -220,9 +220,82 @@ AFTER, same file through the wrapper:
 
 Both named. `EXIT=1`. The ownerless shape also verified separately.
 
+## Phase 3 — tests (16 in `test/test-escapes.test.js`)
+
+Parser half runs on reporter text captured VERBATIM from node 25.8.1, not
+hand-written, so a wording change in Node's diagnostic fails these rather than
+silently returning `[]`. Wrapper half spawns `run-tests.js` against scratch
+files that really escape.
+
+### A test that proved nothing, caught by proving it
+
+`a suite that cannot run at all fails LOUDLY` originally asserted only
+`code !== 0`. Reverting the guard left it GREEN — because `node --test` already
+exits non-zero on a missing file, a load-time throw and every escape shape. The
+assertion was proving Node works, not that my wrapper refuses to report on a run
+it cannot read. Same trap as the impossible-fixture trigger, in a new shape:
+**an exit-code assertion in a wrapper test is almost always riding the wrapped
+tool's behaviour.**
+
+Split and re-anchored on what ONLY the wrapper produces (commit `b491535`):
+- missing tap → asserts the message AND `doesNotMatch(/ESCAPES:/)` — the point
+  is that a run it could not read gets NO verdict, green or otherwise;
+- explodes-at-load → asserts it is reported as an ordinary failure (`ESCAPES: 0`),
+  not mistaken for the escape shape.
+
+### Proofs (all by REVERTING and failing BY MESSAGE, fix committed first)
+
+1. ownerless variant (`which triggered` vs `and would have caused`) removed from
+   the error regex → actual = the whole diagnostic line, expected
+   `'Error: BOOM ownerless'`.
+2. tap→dot for the analysed stream → 5 tests fail, incl. "THE t25 CASE: escape
+   not reported". This is the bug itself, reproduced on demand.
+3. missing-tap `die()` → swallow → "did not match /run-tests: the tap stream is
+   missing/".
+4. `package.json` back to `node --test` → "did not match /scripts\/run-tests\.js/".
+
+**Not proved, stated honestly:** `if (escapes.length) process.exit(...)` in
+run-tests.js is NOT covered — reverting it changes nothing, because Node already
+exits non-zero on every escape shape I could construct. It is belt-and-braces
+against a future Node that stops doing so, not live behaviour.
+
+## Phase 4 — `~/.clodex/agents/test-runner.md` (outside the repo, authorised)
+
+Exactly what changed, minimal:
+- command `node --test --test-reporter=dot …` → `npm test --silent --
+  --reporter=dot …`, awk extended to pass the `TOTALS:`/`ESCAPES:` block
+  through (it previously only opened on `Failed tests:`);
+- an explicit "do NOT run `node --test` directly" with the reason — its dot
+  reporter drops the diagnostic, which is the bug t29 fixed;
+- report step gains: quote the `ESCAPES:` block verbatim whenever non-zero,
+  because escapes are counted PASS and will never show in the fail count;
+- report format gains: `N/N green` requires `ESCAPES: 0` too. "Never report
+  green with a non-zero ESCAPES count, however many tests passed."
+
+Verified end-to-end through the agent's exact pipeline against the t25
+reconstruction — output ends:
+
+    TOTALS: 1 pass, 1 fail, 2 tests
+    ESCAPES: 1 — counted PASS by the runner, listed here because they are not:
+      ✖ ESCAPED "t25 B — equally broken, counted PASS (the two we did not see)"
+
+## Result
+
+Branch `test-masking` off master `e5b577d`. **Suite 2577/2577, ESCAPES: 0**
+(baseline 2560, +17 — 16 new tests plus the file-level entry the runner adds).
+Verified through the NEW pipeline, i.e. the fix verifying itself is also the
+first run this suite has had that could have reported an escape.
+
+Commits: `81e7240` (phase-1 journal), `7730032` (wrapper + parser + package.json),
+`eb36b0a` (tests), `b491535` (the weak test, re-anchored). Plus this journal.
+Not pushed. Master untouched. Sibling branches untouched.
+
+Out-of-repo change, authorised: `~/.clodex/agents/test-runner.md` (not a repo
+file, so not in any commit — listed above in phase 4).
+
 ## Progress
 
 - [x] Phase 1 — mechanism established; reported to clodex, ruling received.
 - [x] Phase 2 — wrapper + parser built; absorbed case reconstructed and proved.
-- [ ] Phase 3 — tests for the parser/wrapper; prove them by reverting.
-- [ ] Phase 4 — update `~/.clodex/agents/test-runner.md`; full suite; close t29.
+- [x] Phase 3 — 16 tests; four proofs by reverting; one weak test caught and fixed.
+- [x] Phase 4 — `test-runner.md` updated and verified end to end.
