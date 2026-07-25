@@ -1,4 +1,4 @@
-// file-heat.js — the boiling pot's tier-1 producer (docs/boiling-pot-plan.md).
+// file-heat.js — the boiling pot's tier-1 producer (boiling-pot-plan.md [internal design doc, not in this repo]).
 // Per-file read/edit heat, day-bucketed, N-day rolling, persisted as ONE json
 // per agent at run/<name>/file-heat.json. Pure leaf + a thin factory: the record/
 // prune/aggregate/estimate math is electron-free and I/O-free (unit-tested against
@@ -144,7 +144,7 @@ function aggregateStates(states, { now = Date.now(), topN = 10, keepDays = DEFAU
   return { window: { from: cutoff, to: dateKey(now) }, files: top };
 }
 
-// Tier-2 join (docs/boiling-pot-plan.md): fold wirescope's redundancy rollup
+// Tier-2 join (boiling-pot-plan.md [internal design doc, not in this repo]): fold wirescope's redundancy rollup
 // into already-ranked tier-1 rows, matched by absolute path. `potFiles` is the
 // UNION of every distinct base's /_pot files (camelCase — mapped at the
 // wirescope-proxy seam, snake_case never reaches here). ADDITIVE + ALL-OR-NOTHING:

@@ -25,7 +25,7 @@ const ROOT = path.join(__dirname, '..');
 const WEB = path.join(ROOT, 'renderer', 'web');
 const OUT = path.join(ROOT, 'web-dist');
 
-// ── Plugin renderer halves (docs/plugin-plan.md §4 W8, GAP G7) ─────────────
+// ── Plugin renderer halves (plugin-plan.md [internal design doc, not in this repo] §4 W8, GAP G7) ─────────────
 // The Electron renderer activates a plugin's renderer half with
 // `window.require(absolutePath)`. A browser has no require and esbuild resolves
 // every import at BUILD time, so the modules must be baked in and keyed by id.

@@ -80,7 +80,7 @@
       <span id="diag-actions"></span>
     </div>
     <div id="sidebar-footer">
-      <!-- Plugin footer buttons (docs/plugin-plan.md §2.2) are appended here by
+      <!-- Plugin footer buttons (plugin-plan.md [internal design doc, not in this repo] §2.2) are appended here by
            the renderer plugin host and removed on disable — the Workbench one
            used to be hard-coded above this comment. -->
       <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
@@ -246,7 +246,7 @@
   </div>
 
   <!-- Boiling pot drawer. A global, cross-agent ranking of where token CARRIAGE
-       concentrates (docs/boiling-pot-plan.md). Pulled fresh on open, not live. -->
+       concentrates (boiling-pot-plan.md [internal design doc, not in this repo]). Pulled fresh on open, not live. -->
   <div id="pot-drawer" class="hidden">
     <div id="pot-header">
       <span class="prompts-title">Boiling Pot</span>
@@ -940,7 +940,7 @@
            preference — it tears down live DOM in every open window — so the
            CHOOSING lives in the top-level Plugins menu and its "Manage
            Plugins…" dialog. What still belongs here is each plugin's OWN
-           settings (docs/plugin-plan.md §2.5: "settings organized by plugin,
+           settings (plugin-plan.md [internal design doc, not in this repo] §2.5: "settings organized by plugin,
            and you chose the plugins"): the host appends those after this point
            as [data-plugin-section]. -->
       <div class="dialog-actions">

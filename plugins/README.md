@@ -1,7 +1,7 @@
 # `plugins/` — in-repo, first-party plugin directories
 
 One subdirectory per plugin, discovered by scanning `plugins/*/manifest.json`
-(see `docs/plugin-plan.md` §3.1). The directory is **empty of plugins in Phase 0
+(see `plugin-plan.md` (internal design doc, not in this repo) §3.1). The directory is **empty of plugins in Phase 0
 and Phase 1** — the registries land in core first and core populates them; the
 workbench pilot (Phase 2) is the first real inhabitant.
 

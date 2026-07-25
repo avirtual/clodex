@@ -1,6 +1,6 @@
 'use strict';
 
-// team-manifest: project/team resolution (docs/teams-design.md). Pure-leaf
+// team-manifest: project/team resolution (teams-design.md [internal design doc, not in this repo]). Pure-leaf
 // contract: teams live under ~/.clodex/teams/<name>/team.json (Bogdan ruling
 // 2026-07-19 — zero clodex droppings in project repos); resolution is by the
 // manifest's REQUIRED absolute `root` field containing a cwd, deepest wins.

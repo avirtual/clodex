@@ -189,7 +189,7 @@ const DEFAULT_UI_SETTINGS = {
   // relaunch that never comes back leaves it set for the next manual launch
   // (the requested-at time in the body self-explains a late one).
   pendingRebootNotice: null,
-  // Plugin state (docs/plugin-plan.md §3.1): a bag keyed three ways at once —
+  // Plugin state (plugin-plan.md [internal design doc, not in this repo] §3.1): a bag keyed three ways at once —
   // `enabled` (the reserved array of ids the user has explicitly chosen; ABSENT
   // means "never chosen", which falls back to each manifest's enabledByDefault),
   // `_failures` (the quarantine strike record, host-owned), and one key per
@@ -218,7 +218,7 @@ function sanitizePlugins(raw) {
 }
 
 // `prior` (optional) is the CURRENT peers array — used to carry a peer's auth
-// token forward by id when an incoming entry OMITS `token` (docs/remote-auth-plan.md
+// token forward by id when an incoming entry OMITS `token` (remote-auth-plan.md [internal design doc, not in this repo]
 // §4). The Peers dialog round-trips `hasToken` only, never the value, so a plain
 // label-edit save omits `token` and must not wipe it. An incoming string SETS the
 // token (trimmed, cap 256); an explicit `''` CLEARS it; a dropped row drops its
@@ -308,7 +308,7 @@ function sanitizePeerControlled(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
 }
 
-// A managed box's config block (docs/sandbox-plan.md, M6b). Bounds every field so
+// A managed box's config block (sandbox-plan.md [internal design doc, not in this repo], M6b). Bounds every field so
 // a hand-edited settings file can't feed sandbox.js junk: ports coerced to ints in
 // the ephemeral/registered range (else the default), workDir/image as non-empty
 // strings-or-null, autoStart a strict boolean, mounts a sanitized array (M6a).

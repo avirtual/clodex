@@ -3,11 +3,11 @@
 **Status: design, Phase 4b. Part of this is implemented (the local user root);
 most of it is deliberately not.** Every section says which.
 
-**Why this is its own file rather than a section of `plugin-plan.md` or
+**Why this is its own file rather than a section of `plugin-plan.md` (internal design doc, not in this repo) or
 `plugin-api.md`.** `plugin-api.md` is the frozen contract a plugin author writes
 against, published and version-pinned at `hostApi "1"`; nothing here changes that
 surface, so putting it there would imply a contract change where there is none.
-`plugin-plan.md` is the phase-by-phase build record, written for whoever
+`plugin-plan.md` (internal design doc, not in this repo) is the phase-by-phase build record, written for whoever
 implements the next phase. This document is neither: it is about **where code
 comes from and who is trusted to put it there**, which is a question a user asks
 and a security-minded reader asks, and both will keep asking it as remote sources
@@ -47,7 +47,7 @@ project's tree, and every `git pull` is a merge conflict waiting to happen. Real
 friction, but a developer's friction, with a developer's workarounds.
 
 **This is the same pattern the two Phase 4 findings share** (see
-`plugin-plan.md` §6, "Phase 4a's result" and "Phase 4's second finding"), showing
+`plugin-plan.md` (internal design doc, not in this repo) §6, "Phase 4a's result" and "Phase 4's second finding"), showing
 up a third time and one level further out. The plugin system was built alongside
 consumers who were all developers with a git checkout, so the path a packaged
 user would take was never exercised — exactly as the API was built alongside the

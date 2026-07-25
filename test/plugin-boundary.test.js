@@ -1,5 +1,5 @@
 'use strict';
-// plugin-boundary.test.js — the NO-BACKDOOR lint (docs/plugin-plan.md §7,
+// plugin-boundary.test.js — the NO-BACKDOOR lint (plugin-plan.md [internal design doc, not in this repo] §7,
 // Phase 0). Modelled on the leak/electron boundary scanners: a static walk of
 // `plugins/**`, failing on any require that reaches OUTSIDE the plugin's own
 // directory.

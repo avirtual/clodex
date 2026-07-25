@@ -72,7 +72,7 @@ function createRemoteWiring(deps) {
     const envEnabled = process.env.CLODEX_REMOTE_ENABLE === '1';
     const enabled = s.remoteEnabled || envEnabled;
     const bindHost = process.env.CLODEX_REMOTE_HOST || '127.0.0.1';
-    // Operator auth (docs/remote-auth-plan.md §2). CLODEX_REMOTE_TOKEN gates the
+    // Operator auth (remote-auth-plan.md [internal design doc, not in this repo] §2). CLODEX_REMOTE_TOKEN gates the
     // whole wire; CLODEX_REMOTE_INSECURE=1 is the loud escape hatch that lets a
     // non-loopback bind serve with no token (fleet-migration only) — logged so
     // it can never be silently on.

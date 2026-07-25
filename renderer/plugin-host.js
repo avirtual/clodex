@@ -1,4 +1,4 @@
-// plugin-host.js — the RENDERER half of the plugin host (docs/plugin-plan.md
+// plugin-host.js — the RENDERER half of the plugin host (plugin-plan.md [internal design doc, not in this repo]
 // §2.1-2.6, §3.3). Owns the six UI registries core reads from, and the `rhost`
 // object a plugin's renderer half is activated with. Phase 1 ships no plugins:
 // core populates nothing here, the registries sit empty, and every accessor

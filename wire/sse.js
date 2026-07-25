@@ -172,7 +172,7 @@ class UsageCollector {
 // the file — the CLI runs it (or the user denies it) after this stream ends.
 // Slight over-report is accepted; the peek/diff UI shows ground truth.
 //
-// Two channels, kept STRICTLY separate (the boiling pot, docs/boiling-pot-plan.md
+// Two channels, kept STRICTLY separate (the boiling pot, boiling-pot-plan.md [internal design doc, not in this repo]
 // tier 1): `files` = MUTATIONS (FILE_TOOLS) — the touched-files UI's semantic
 // contract, unchanged. `reads` = Read calls, captured with offset/limit when
 // present, for file-heat ranking. A Read never enters `files` and a mutation

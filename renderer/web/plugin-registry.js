@@ -1,6 +1,6 @@
 'use strict';
 // plugin-registry.js — the browser bundle's id→module map for plugin renderer
-// halves (docs/plugin-plan.md §4 W8, GAP G7).
+// halves (plugin-plan.md [internal design doc, not in this repo] §4 W8, GAP G7).
 //
 // THE PROBLEM this solves, and ONLY this. The Electron renderer activates a
 // plugin's renderer half with `window.require(info.rendererPath)` — an absolute

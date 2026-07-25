@@ -1381,7 +1381,7 @@ test('T54: a PASSIVE park still does NOT earn the boot/idle edge (only the activ
   assert.ok(hasPending(PENDING_DIR, session.name), 'the passive delta stays parked for an organic hook drain');
 });
 
-// --- team-retire (docs/teams-design.md): socket envelope → archive|discard --
+// --- team-retire (teams-design.md [internal design doc, not in this repo]): socket envelope → archive|discard --
 
 function mkRetire(rootByName, rolesByRoot) {
   // rootByName: cwd → project root map for the stub findProjectRoot.
@@ -1515,7 +1515,7 @@ test('team-retire: absent target is a silent no-op (socket outlived the session)
 });
 
 // --- teams composition wiring: initial roster + passive deltas ---------------
-// The context architecture (docs/teams-design.md): a seat's composition rides as
+// The context architecture (teams-design.md [internal design doc, not in this repo]): a seat's composition rides as
 // DATA, never the system prompt. _injectRoster delivers the one-time initial
 // roster (sender `team`); _notifyComposition fans a passive delta to the OTHER
 // live seats on spawn / archive / retire. Both funnel every seat-lifecycle
@@ -4839,7 +4839,7 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
 });
 
-// --- plugin intent verbs (docs/plugin-plan.md R-INT-2, rules P1/P4) ----------
+// --- plugin intent verbs (plugin-plan.md [internal design doc, not in this repo] R-INT-2, rules P1/P4) ----------
 //
 // These exercise the DISPATCH TAIL: the switch keeps every core case verbatim
 // and a registry lookup runs only for a type no core case claimed. The registry

@@ -1,5 +1,5 @@
 'use strict';
-// Unit tests for auth-token.js (docs/remote-auth-plan.md §1) — the shared
+// Unit tests for auth-token.js (remote-auth-plan.md [internal design doc, not in this repo] §1) — the shared
 // operator-token gate used by web-host.js and remote.js. Pure leaf: token in,
 // { check, fromReq, configured } out. These pin the precedence order and the
 // constant-time / no-token semantics both hosts rely on.

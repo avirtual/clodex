@@ -1,6 +1,6 @@
 'use strict';
 // plugins/workbench/renderer.js — the workbench pilot's RENDERER half
-// (docs/plugin-plan.md §4, steps W1-W6). The whole "Workbench" surface: Files
+// (plugin-plan.md [internal design doc, not in this repo] §4, steps W1-W6). The whole "Workbench" surface: Files
 // (lazy tree + editor), Source Control (git status/stage/discard/commit/branch/
 // remote), and Worktrees, for a chosen session.
 //

@@ -1,6 +1,6 @@
 'use strict';
 // plugin-loader.test.js — discovery, the enabled set, and the failure isolation
-// that makes one bad plugin cheap (docs/plugin-plan.md §3.1, Phase 2 W1).
+// that makes one bad plugin cheap (plugin-plan.md [internal design doc, not in this repo] §3.1, Phase 2 W1).
 //
 // The loader is the half Phase 1 deliberately omitted. Everything it decides is
 // a trust or a persistence decision — which directories are scanned, which

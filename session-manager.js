@@ -72,11 +72,11 @@ const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
-// Boiling-pot tier-1 producer + read-time merge (docs/boiling-pot-plan.md).
+// Boiling-pot tier-1 producer + read-time merge (boiling-pot-plan.md [internal design doc, not in this repo]).
 // Pure electron-free leaves, required directly like ./claude-env — no dep seam.
 const { createFileHeat, aggregateStates, normalizeState, foldRedundancy } = require('./file-heat');
 const { readJsonSafe } = require('./fs-util');
-// Spawn-time team-context block (docs/teams-design.md). Pure string formatting —
+// Spawn-time team-context block (teams-design.md [internal design doc, not in this repo]). Pure string formatting —
 // no fs — so it's required directly like relay-protocol/file-heat; the fs-backed
 // resolveTeam that feeds it crosses as an injected dep (engine's manifest
 // instance). Appended to the seat's prompt material at the assembly callsite in
@@ -345,7 +345,7 @@ function createSessionManager(deps) {
     writeSkillPlugin,
     // getter deps (whenReady-assigned; see header)
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
-    // Plugin session hooks (docs/plugin-plan.md §3.2) — a GETTER for the same
+    // Plugin session hooks (plugin-plan.md [internal design doc, not in this repo] §3.2) — a GETTER for the same
     // reason the stores above are: the plugin host is built at the createEngine
     // TAIL, after this class is constructed, so a captured value would be
     // undefined. Returns null on a host that builds no plugin host (headless,
@@ -1575,7 +1575,7 @@ function createSessionManager(deps) {
         if (!agentType && !session._shuttingDown && !session._userKilled && !session._archived) {
           getPersistence().remove(name);
         }
-        // Plugin sessions.onExit (docs/plugin-plan.md §3.2, MUST-FIX 4). ONE host
+        // Plugin sessions.onExit (plugin-plan.md [internal design doc, not in this repo] §3.2, MUST-FIX 4). ONE host
         // call site, positioned INSIDE the landmine: after the session-exit send
         // and the exit ipc-message broadcast (so the renderer has already resolved
         // session → workspace → window), and physically BEFORE _cleanup(name),
@@ -1594,7 +1594,7 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      // Teams context architecture (docs/teams-design.md): composition rides as
+      // Teams context architecture (teams-design.md [internal design doc, not in this repo]): composition rides as
       // DATA, never the system prompt. A seat born on a team gets one initial
       // roster message (sender `team`) as its first appended context, and every
       // OTHER live seat of the team gets a passive "spawned" delta — but ONLY on
@@ -1619,7 +1619,7 @@ function createSessionManager(deps) {
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor
         }
       }
-      // Plugin sessions.onCreate (docs/plugin-plan.md §3.2) — the create() tail,
+      // Plugin sessions.onCreate (plugin-plan.md [internal design doc, not in this repo] §3.2) — the create() tail,
       // after registration/notify, so a subscriber's handle resolves against a
       // session that is fully in the map. Sync-only + try/catch inside the host,
       // like onExit; wrapped again here so a hook can never fail a spawn.
@@ -2238,7 +2238,7 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never near the PTY/intent path */ }
     }
 
-    // Boiling pot (docs/boiling-pot-plan.md tier 1). Lazily bind the per-agent
+    // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo] tier 1). Lazily bind the per-agent
     // heat recorder at run/<name>/file-heat.json (created only once a turn
     // actually touches files, so idle sessions never mint an empty file).
     _fileHeatFor(session) {
@@ -3139,7 +3139,7 @@ function createSessionManager(deps) {
           break;
         }
         default:
-          // PLUGIN VERBS (docs/plugin-plan.md R-INT-2). The switch above keeps
+          // PLUGIN VERBS (plugin-plan.md [internal design doc, not in this repo] R-INT-2). The switch above keeps
           // every core case verbatim; a registry lookup runs only for a type no
           // core case claimed, so this tail cannot change core dispatch even if a
           // plugin registers something adjacent. Gate ORDER is preserved by
@@ -5671,7 +5671,7 @@ function createSessionManager(deps) {
         this._deliverPassive(targetName, sender, body, mtype);
         return;
       }
-      // Teams control envelope (docs/teams-design.md): retire = archive the
+      // Teams control envelope (teams-design.md [internal design doc, not in this repo]): retire = archive the
       // session this socket belongs to, requested by a teammate via the
       // clodex-team exec command. Routed here (not a new intent) because the
       // socket already identifies the target and the exec grant already gates

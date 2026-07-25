@@ -1,5 +1,5 @@
 'use strict';
-// plugin-host-engine.js — the ENGINE half of the plugin host (docs/plugin-plan.md
+// plugin-host-engine.js — the ENGINE half of the plugin host (plugin-plan.md [internal design doc, not in this repo]
 // §3.2/§3.3/§3.4). `createPluginHostEngine(deps)` returns the object the engine
 // hands to ipc-handlers as `getPluginHost()`, and the per-plugin `host` object
 // each plugin's `activate(host)` receives.
@@ -146,7 +146,7 @@ function createPluginHostEngine(deps) {
       try {
         const r = fn(arg);
         if (r && typeof r.then === 'function') {
-          try { log.info('plugin', `contract violation: ${label} subscriber returned a thenable — the hook is SYNCHRONOUS by definition (docs/plugin-plan.md §3.2); its result is ignored`); } catch {}
+          try { log.info('plugin', `contract violation: ${label} subscriber returned a thenable — the hook is SYNCHRONOUS by definition (plugin-plan.md [internal design doc, not in this repo] §3.2); its result is ignored`); } catch {}
         }
       } catch (e) {
         try { log.info('plugin', `${label} subscriber threw (ignored): ${e && e.message}`); } catch {}
@@ -389,7 +389,7 @@ function createPluginHostEngine(deps) {
       if (win) win.webContents.send('plugin-event', pluginId, t, payload);
       return true;
     }
-    logFor(pluginId).error(`events.emit('${t}') dropped — scope is REQUIRED and must be 'all', { session }, or { workspace } (docs/plugin-plan.md §3.3)`);
+    logFor(pluginId).error(`events.emit('${t}') dropped — scope is REQUIRED and must be 'all', { session }, or { workspace } (plugin-plan.md [internal design doc, not in this repo] §3.3)`);
     return false;
   }
 

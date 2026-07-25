@@ -1,5 +1,5 @@
 'use strict';
-// remote-auth.test.js — the RemoteServer operator-auth gate (docs/remote-auth-plan.md
+// remote-auth.test.js — the RemoteServer operator-auth gate (remote-auth-plan.md [internal design doc, not in this repo]
 // §2–3). Real HTTP requests against a port-0 server: the 401/200 matrix, the
 // fail-closed 503 on a non-loopback bind with no token, the CLODEX_REMOTE_INSECURE
 // escape hatch, the ?token= → HttpOnly cookie set + replay, and that SSE is gated

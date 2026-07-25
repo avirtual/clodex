@@ -1,5 +1,5 @@
 // team-manifest.js — project/team resolution for the teams feature
-// (docs/teams-design.md). Pure leaf like clodex-paths: no electron, injected
+// (teams-design.md [internal design doc, not in this repo]). Pure leaf like clodex-paths: no electron, injected
 // fs, NOT in the leak-scanner SCANNED lists.
 //
 // THE MODEL (Bogdan ruling 2026-07-19: NO clodex resource lives inside project

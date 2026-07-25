@@ -23,7 +23,7 @@
 
 const API_CONTRACT = [
   { name: 'createSession', kind: 'invoke', channel: 'session:create' },
-  // Teams front door (docs/teams-design.md): write the team manifest, then spawn.
+  // Teams front door (teams-design.md [internal design doc, not in this repo]): write the team manifest, then spawn.
   // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
   { name: 'teamCreate', kind: 'invoke', channel: 'team:create' },
   { name: 'teamJoin', kind: 'invoke', channel: 'team:join' },
@@ -52,7 +52,7 @@ const API_CONTRACT = [
   { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
   { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },
   // The workbench's fourteen rows (scm:* ×9, worktree:list/remove, fs:* ×3) were
-  // here until docs/plugin-plan.md §4 W6. The workbench is a PLUGIN now: it
+  // here until plugin-plan.md [internal design doc, not in this repo] §4 W6. The workbench is a PLUGIN now: it
   // registers those rows itself and they ride the one multiplexed plugin
   // transport, so the contract shrank by fourteen instead of growing by them.
   // That is the whole point of the pilot — the surface a feature costs core
@@ -265,7 +265,7 @@ const API_CONTRACT = [
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
   { name: 'newWorkspace', kind: 'invoke', channel: 'workspace:new' },
-  // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
   { name: 'potSnapshot', kind: 'invoke', channel: 'pot:snapshot' },
   // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
   // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
@@ -273,7 +273,7 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
-  // Plugin transport (docs/plugin-plan.md §1, §3.4). EXACTLY these five rows —
+  // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1, §3.4). EXACTLY these five rows —
   // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
   // multiplexed channel over an engine-owned dispatch Map: the injected
   // transport has no removeHandler, so per-plugin channels could never be

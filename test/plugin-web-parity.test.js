@@ -1,6 +1,6 @@
 'use strict';
 // plugin-web-parity.test.js — the browser frontend's half of the plugin story
-// (docs/plugin-plan.md §4 W8, GAP G7).
+// (plugin-plan.md [internal design doc, not in this repo] §4 W8, GAP G7).
 //
 // THE ASYMMETRY this pins. The Electron renderer activates a plugin's renderer
 // half with `window.require(info.rendererPath)` — an absolute path resolved at

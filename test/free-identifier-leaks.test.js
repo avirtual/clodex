@@ -62,7 +62,7 @@ const SCANNED_MODULES = [
   'engine.js',
   'headless-main.js',
   'sandbox.js',
-  // Plugin core (docs/plugin-plan.md Phase 0/1). plugin-api.js is a pure leaf
+  // Plugin core (plugin-plan.md [internal design doc, not in this repo] Phase 0/1). plugin-api.js is a pure leaf
   // (no requires at all); plugin-host-engine.js is a deps-object factory. Both
   // join the list by the same convention as every other extraction.
   'plugin-api.js',

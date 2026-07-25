@@ -1,6 +1,6 @@
 'use strict';
 // workbench-plugin.test.js — the workbench pilot's ENGINE half (plugins/workbench/
-// engine.js), driven through the REAL plugin host engine (docs/plugin-plan.md §4
+// engine.js), driven through the REAL plugin host engine (plugin-plan.md [internal design doc, not in this repo] §4
 // W2/W5). No electron, no PTY: a fake manager, fake scm/fs/worktree leaves.
 //
 // What this pins, beyond "the rows exist":

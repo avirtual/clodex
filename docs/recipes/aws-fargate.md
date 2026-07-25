@@ -1,6 +1,6 @@
 # Recipe: a Clodex node on AWS Fargate
 
-The node contract (docs/deployment-plan.md): the published image is
+The node contract (deployment-plan.md [internal design doc, not in this repo]): the published image is
 self-configuring — `ghcr.io/avirtual/clodex:<version>` boots
 `headless-main.js` with the peer wire enabled on port 7900. Fargate deployment
 is therefore *a task definition and nothing else*. Clodex contains zero AWS
@@ -223,7 +223,7 @@ clodexctl ctx add fargate --token <wire-token> --tunnel \
 </details>
 
 From here it's the normal surface: `spawn`, `run`, `logs`, `sessions`.
-Support boundary (docs/client-story.md): clodexctl substitutes `{port}`,
+Support boundary (client-story.md [internal design doc, not in this repo]): clodexctl substitutes `{port}`,
 waits for the port, relays `aws`'s own stderr verbatim on failure —
 `ctx test --verbose` is the diagnosis surface; the SSM plugin's errors are
 AWS's, not ours.

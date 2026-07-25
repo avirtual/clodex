@@ -113,8 +113,8 @@ host, then run `clodexctl deploy i-INSTANCE`. (SSM must permit
 `AWS-StartSSHSession` and the box must run sshd on loopback.)
 
 The instance role needs the standard `AmazonSSMManagedInstanceCore` policy;
-nothing is open inbound. All auditing lands in the customer's own
-CloudTrail/SSM session logs — usually a selling point in an engagement.
+nothing is open inbound. All auditing lands in your own CloudTrail/SSM
+session logs, under your existing retention and access controls.
 
 ## Which flavor?
 

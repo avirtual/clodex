@@ -1,5 +1,5 @@
 // engine.js — the electron-free application engine (Phase 3 of the engine
-// extraction, docs/engine-extraction-plan.md). createEngine() owns the whole
+// extraction, engine-extraction-plan.md [internal design doc, not in this repo]). createEngine() owns the whole
 // bootstrap that used to live inline in main.js's app.whenReady body: stores,
 // SessionManager, the wirescope supervisor + watchdog, remote/peer wiring, the
 // reminder scheduler, message/registry cleanup, and the legacy sweep — in the
@@ -532,7 +532,7 @@ const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { createTeamManifest } = require('./team-manifest');
-// Teams (docs/teams-design.md): project resolution is pure cwd+fs math. Core
+// Teams (teams-design.md [internal design doc, not in this repo]): project resolution is pure cwd+fs math. Core
 // consumes findProjectRoot (the team-retire authorization check, string root)
 // and the rich resolveTeam (spawn-time team-context injection, session-manager);
 // the front door's team:create / team:join IPC handlers call createTeam / addRole.
@@ -864,7 +864,7 @@ function spillToFile(sender, body, recipient) {
 // see session-manager.js's header for the full contract.
 const { createSessionManager } = require('./session-manager');
 
-// The plugin host (docs/plugin-plan.md §3.1/§3.2) — declared HERE so the
+// The plugin host (plugin-plan.md [internal design doc, not in this repo] §3.1/§3.2) — declared HERE so the
 // SessionManager's getPluginHooks getter can close over it, ASSIGNED at the
 // bootstrap tail below, after stores/manager/wiring exist and before the engine
 // handle returns (i.e. before any window exists, and therefore before the
@@ -1555,7 +1555,7 @@ const {
 });
 
 // ---------------------------------------------------------------------------
-// Managed Docker sandbox (sandbox.js, docs/sandbox-plan.md M1/M2) — one-button
+// Managed Docker sandbox (sandbox.js, sandbox-plan.md [internal design doc, not in this repo] M1/M2) — one-button
 // local container run as the `sandbox` peer. Electron-free: deps are the same
 // seams/getters everything else here rides. registerPeer writes through the
 // uiSettings peers path and calls syncPeerManager to reconcile.
@@ -1721,7 +1721,7 @@ const toolCache = createToolCache({ whichBin });
   // seats (the old ARCHIVE-retire corpses) before any window restores archived rows.
   try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }
 
-  // ── Plugin host (docs/plugin-plan.md §3.1 "Engine lifecycle") ──────────────
+  // ── Plugin host (plugin-plan.md [internal design doc, not in this repo] §3.1 "Engine lifecycle") ──────────────
   // Constructed at the bootstrap TAIL: stores, manager, pollers, remote and peer
   // wiring all exist, no window does yet, and the handle has not returned — so a
   // plugin's activate() runs exactly once per app run, strictly before the

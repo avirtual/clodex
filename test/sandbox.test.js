@@ -1,5 +1,5 @@
 'use strict';
-// Unit tests for sandbox.js (docs/sandbox-plan.md M1) — the pure parts (compose
+// Unit tests for sandbox.js (sandbox-plan.md [internal design doc, not in this repo] M1) — the pure parts (compose
 // bytes, port bump, image resolution, ps parsing) plus the factory's spawn/
 // docker-mocked behavior (detection, idempotent peer registration, up/down).
 

@@ -7,7 +7,7 @@
 // core markup. It is not any more: a plugin's markup is built by its renderer
 // half at mount time, and its rules live in its own `style.css` (injected as
 // one <style data-plugin-style=id> node, removed wholesale at disable —
-// docs/plugin-plan.md §2.6). So a plugin id that ships class="hidden" with no
+// plugin-plan.md [internal design doc, not in this repo] §2.6). So a plugin id that ships class="hidden" with no
 // `#id.hidden { display:none }` rule is the SAME always-visible bug, in a file
 // the core test cannot see. Without this test, moving the workbench out of
 // index.html (§4 W3) would have quietly dropped its ids out of the invariant.

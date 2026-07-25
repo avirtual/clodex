@@ -85,7 +85,7 @@ function registerIpcHandlers(deps) {
     // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
     // lazy so a host that omits them simply has no sandbox handlers reachable.
     getSandbox, getSandboxManager,
-    // Plugin host accessor (docs/plugin-plan.md §3.4) — lazy, like the sandbox
+    // Plugin host accessor (plugin-plan.md [internal design doc, not in this repo] §3.4) — lazy, like the sandbox
     // pair above: a host that omits it (or a CLODEX_PLUGINS=0 run, where the
     // engine never builds one) simply has no plugins, and the four plugin
     // handlers below degrade to a shaped refusal instead of throwing.
@@ -148,7 +148,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Teams front door (docs/teams-design.md "Front door"). Both handlers write the
+  // Teams front door (teams-design.md [internal design doc, not in this repo] "Front door"). Both handlers write the
   // manifest FIRST, then fall through to the normal spawn — the spawn resolves the
   // (now-written) team and attaches the role prompt + initial roster. A write
   // refusal (dup team, dup root, existing-role-with-different-def) surfaces as
@@ -308,7 +308,7 @@ function registerIpcHandlers(deps) {
   });
 
   // The fourteen scm:/worktree:/fs: rows that used to live here moved into
-  // plugins/workbench/engine.js (docs/plugin-plan.md §4 W6) — the workbench is a
+  // plugins/workbench/engine.js (plugin-plan.md [internal design doc, not in this repo] §4 W6) — the workbench is a
   // plugin now and reaches its own data over the plugin transport. Their
   // `sessionCwd` helper went with them: the host's `sessions.fsScope(name)` is
   // the same guarantee, offered to every plugin instead of re-implemented per
@@ -847,7 +847,7 @@ function registerIpcHandlers(deps) {
   // at the CURRENT disk/git state — created-vs-modified truth comes from git
   // here, never from the feed.
   handle('session:files', (_e, name) => fetchSessionFiles(name));
-  // Boiling pot (docs/boiling-pot-plan.md): cross-agent file-heat snapshot. A
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]): cross-agent file-heat snapshot. A
   // global read-time merge (not per-session), carriage-ranked. Tier-1 data is
   // all local, so it renders wire-off.
   handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
@@ -993,7 +993,7 @@ function registerIpcHandlers(deps) {
       // boolean, never the value (it lives in <userData>/remote.env, not
       // ui-settings). A host without the accessor (older wiring) reports false.
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
-      // Peer auth token is WRITE-ONLY (docs/remote-auth-plan.md §4): the renderer
+      // Peer auth token is WRITE-ONLY (remote-auth-plan.md [internal design doc, not in this repo] §4): the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
       // the array back, so an omitted `token` carries forward in sanitizePeers —
       // the value never has to round-trip through the UI.
@@ -1079,7 +1079,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ---- Plugin transport (docs/plugin-plan.md §3.4). FOUR handlers, registered
+  // ---- Plugin transport (plugin-plan.md [internal design doc, not in this repo] §3.4). FOUR handlers, registered
   // ONCE, carrying every plugin forever. `plugin:invoke` is the multiplexed
   // channel: it forwards to the engine-owned dispatch Map, which enable/disable/
   // dispose mutate. The injected transport has no removeHandler, so a per-plugin
@@ -1468,7 +1468,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ── Managed Docker sandbox (sandbox.js, docs/sandbox-plan.md M2 / M6b P1) ──
+  // ── Managed Docker sandbox (sandbox.js, sandbox-plan.md [internal design doc, not in this repo] M2 / M6b P1) ──
   // The engine's sandbox manager owns N box instances; these are thin relays.
   // getSandbox(boxId) resolves an instance lazily (default: the shared 'sandbox'
   // box), or null for an unknown id — withBox guards that so a bogus id yields an

@@ -91,3 +91,33 @@ recheck. Observed only — most agent heat files currently hold 1–2 day bucket
 (clodex-hand: `2026-07-25` alone), so a recheck against the 07-18 baseline may
 no longer have a comparable window. I did not determine why the buckets are
 that thin and am not guessing.
+
+## CORRECTION (2026-07-25, from clodex — supersedes the finding above)
+
+The "never captured" conclusion above is accurate about `pot-baselines/` and
+WRONG as a statement about the measurement. It should not be read as an open
+question.
+
+Bogdan's live pot drawer carries a **REDUNDANT** column — `pot-drawer.js:56`
+defines it as "tokens re-carried by same-range re-reads", which is precisely
+and only the waste the grok skill targets. It therefore answers the same
+question the missing `grok-<date>` AFTER file was meant to answer.
+
+It reads **0 on nine of ten top rows**. The exception is a `journal.md` at 354
+— an append-target, not source being re-walked. `plugin-plan.opus-5.md` shows
+an em-dash, meaning no wirescope data for that path, not zero. The sharpest row
+is `renderer.js`: 30 reads across 30 DISTINCT segments, every read a different
+range.
+
+So the instrument, pointed at a full day of heavy agent work on this codebase,
+reports that the waste it exists to detect is essentially not occurring. Two
+readings fit and the table cannot separate them: the redundancy problem was
+smaller than the plan assumed, or existing discipline already prevents it.
+Either way treatment 1 has little left to fix.
+
+**Caveat, load-bearing:** this is a LIVE OBSERVATION off the drawer, not a
+captured baseline in the pre-registered form. It does not satisfy the
+kill-criterion as written; it makes the answer visible without formalising it.
+The thin-day-bucket caveat above stands beside it and is the reason a formal
+recheck would likely need re-baselining from today rather than comparing to
+07-18. Bogdan owns the keep/delete decision.

@@ -193,7 +193,7 @@ const worktreeBaseList = document.getElementById('worktree-base-list');
 const worktreeFields = document.getElementById('worktree-fields');
 const worktreeRow = document.getElementById('worktree-row');
 const cwdSuggestionsList = document.getElementById('cwd-suggestions');
-// Teams front door (docs/teams-design.md): the New Session dialog's team section.
+// Teams front door (teams-design.md [internal design doc, not in this repo]): the New Session dialog's team section.
 // Its form depends on whether the cwd already resolves to a team — create mode
 // (no team) adopts this session as lead; join mode (cwd inside a team root) adds
 // a seat in a picked role. dialogTeamMode tracks which; dialogTeamName is the
@@ -213,7 +213,7 @@ let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
-// New Session placement selector (docs/sandbox-plan.md M3; N boxes in M6b P3) —
+// New Session placement selector (sandbox-plan.md [internal design doc, not in this repo] M3; N boxes in M6b P3) —
 // Host + one entry per registered sandbox box. The selected <option>'s value is the
 // placement: 'host' or a box id.
 const placementRow = document.getElementById('placement-row');
@@ -1942,7 +1942,7 @@ async function refreshWorktreeForCwd() {
   inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
 }
 
-// --- Teams front door (docs/teams-design.md) -------------------------------
+// --- Teams front door (teams-design.md [internal design doc, not in this repo]) -------------------------------
 
 // Slugify a dir basename into a team/seat-name-legal token (session charset).
 function slugifyTeamName(s) {
@@ -2955,7 +2955,7 @@ function activePeerConfigurable() {
 
 // --- Plugin host (renderer half) ---
 // Self-contained island (plugin-host.js) owning the six UI registries plugins
-// contribute through (docs/plugin-plan.md §2.1-2.6). Phase 1 ships NO plugins:
+// contribute through (plugin-plan.md [internal design doc, not in this repo] §2.1-2.6). Phase 1 ships NO plugins:
 // every registry is empty, so statusBarHtml() is '', hasVisibleContribution()
 // is false, menuEntriesFor() is [] and handleBarClick/handleMenuPick return
 // false — i.e. every seam below is byte-inert until a plugin registers.
@@ -5011,7 +5011,7 @@ function collectPeers() {
     // pre-fill still round-trips harmlessly (main re-validates at deploy time).
     peer.remotePort = v.port;
     if (v.folder) peer.deployFolder = v.folder;
-    // Operator auth token — write-only (docs/remote-auth-plan.md §4). A typed
+    // Operator auth token — write-only (remote-auth-plan.md [internal design doc, not in this repo] §4). A typed
     // value SETS it; the "clear" checkbox sends '' to delete it; leaving the field
     // blank OMITS the key so sanitizePeers carries the stored token forward (the
     // dialog only ever knows hasToken, never the value). Typed value wins over the
@@ -5080,7 +5080,7 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
 window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 
-// ── Manage Plugins dialog (T5, docs/plugin-plan.md §2.5) ────────────────────
+// ── Manage Plugins dialog (T5, plugin-plan.md [internal design doc, not in this repo] §2.5) ────────────────────
 // The detail surface behind the Plugins menu. The menu is the fast path — tick
 // to enable, untick to disable — and this is where what does not fit a menu
 // item lives: descriptions, versions, the real error behind a quarantine, and
@@ -5325,7 +5325,7 @@ document.getElementById('btn-plugins-close').addEventListener('click', closePlug
 pluginsOverlay.addEventListener('mousedown', (e) => { if (e.target === pluginsOverlay) closePluginsDialog(); });
 window.api.onRequestOpenPluginsDialog(() => openPluginsDialog());
 
-// ── Managed Docker sandbox dialog (docs/sandbox-plan.md M2) ─────────────────
+// ── Managed Docker sandbox dialog (sandbox-plan.md [internal design doc, not in this repo] M2) ─────────────────
 const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
 const sbStatusRow = document.getElementById('sandbox-status');
@@ -5486,7 +5486,7 @@ async function refreshSandboxStatus() {
   }
 }
 
-// The token field is WRITE-ONLY (docs/sandbox-plan.md M4): the value never
+// The token field is WRITE-ONLY (sandbox-plan.md [internal design doc, not in this repo] M4): the value never
 // crosses back out, so the field always opens blank and the placeholder is the
 // only "configured" signal — a blank Save keeps whatever's already stored.
 function applyTokenState(hasToken) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // pot-cli.js — the boiling pot's read-only command line, for the grok skill
-// (docs/boiling-pot-plan.md treatment 1). A running agent can't reach the
+// (boiling-pot-plan.md [internal design doc, not in this repo] treatment 1). A running agent can't reach the
 // pot:snapshot IPC (renderer→main only), so it reads the raw per-agent heat
 // files instead — but through the SAME aggregator the drawer uses, never an
 // ad-hoc re-implementation (that drift is the "skill decays into a stale map"

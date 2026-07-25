@@ -1,5 +1,5 @@
 'use strict';
-// plugin-fake.test.js — the Phase-1 END-TO-END gate (docs/plugin-plan.md §6,
+// plugin-fake.test.js — the Phase-1 END-TO-END gate (plugin-plan.md [internal design doc, not in this repo] §6,
 // Phase 1d). Every other plugin test drives ONE seam in isolation; this file
 // drives a whole plugin, through the real lifecycle, across both halves.
 //

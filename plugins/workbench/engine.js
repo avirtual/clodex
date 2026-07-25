@@ -1,6 +1,6 @@
 'use strict';
 // plugins/workbench/engine.js — the workbench pilot's ENGINE half
-// (docs/plugin-plan.md §4, steps W1-W6).
+// (plugin-plan.md [internal design doc, not in this repo] §4, steps W1-W6).
 //
 // Fifteen data rows, one per fs:/scm:/worktree: IPC handler the workbench used
 // to reach through window.api. Every filesystem-touching one's FIRST line is

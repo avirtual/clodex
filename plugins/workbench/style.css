@@ -1,6 +1,6 @@
 /* plugins/workbench/style.css — injected as a per-plugin <style
    data-plugin-style="workbench"> element by the renderer host at activate, and
-   removed as one node at disable (docs/plugin-plan.md §2.6 CSS decision).
+   removed as one node at disable (plugin-plan.md [internal design doc, not in this repo] §2.6 CSS decision).
 
    W3: the whole wb- / workbench- block moved here out of renderer/styles.css.
    (Written without a glob star before the slash on purpose: a literal `*` then

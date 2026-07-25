@@ -140,7 +140,7 @@ test('exec section adds ZERO bytes for an empty/absent grant (both byte-pins kee
   assert.ok(!buildIpcPrompt(null, []).includes('EXEC COMMANDS:'), 'no exec section for []');
 });
 
-// --- P3: plugin grammar lines (docs/plugin-plan.md §2.3) --------------------
+// --- P3: plugin grammar lines (plugin-plan.md [internal design doc, not in this repo] §2.3) --------------------
 
 const intentRegistry = require('../intent-registry');
 

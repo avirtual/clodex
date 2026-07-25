@@ -1,7 +1,7 @@
 'use strict';
 
 // clodex-team.js: teams control plane over the exec intent
-// (docs/teams-design.md, docs/exec-tools.md). Roster derivation (registry cwd
+// (teams-design.md [internal design doc, not in this repo], docs/exec-tools.md). Roster derivation (registry cwd
 // join + manifest under ~/.clodex/teams/<name>/, resolved by root-containment)
 // and the retire envelope contract (target socket, from=requester,
 // type=team-retire, byte-silent success; failures loud). Fake CLODEX_HOME;

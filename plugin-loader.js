@@ -1,5 +1,5 @@
 'use strict';
-// plugin-loader.js — DISCOVERY + the enabled set (docs/plugin-plan.md §3.1).
+// plugin-loader.js — DISCOVERY + the enabled set (plugin-plan.md [internal design doc, not in this repo] §3.1).
 //
 // Phase 1 built the host but deliberately no loader: `setEnabled(id, true)`
 // returned "enabling requires the plugin loader (Phase 2)" because there was

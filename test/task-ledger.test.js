@@ -1,7 +1,7 @@
 'use strict';
 
 // task-ledger: per-task cost attribution over Claude Code transcripts
-// (docs/teams-design.md, "Making the number real"). Teams live under
+// (teams-design.md [internal design doc, not in this repo], "Making the number real"). Teams live under
 // ~/.clodex/teams/<name>/ (Bogdan ruling 2026-07-19 — zero clodex droppings in
 // project repos); task artifacts at teams/<name>/tasks/<id>/. Committed
 // synthetic fixtures: a fake CLODEX_HOME with a team + task dirs, and a

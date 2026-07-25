@@ -1,5 +1,5 @@
 'use strict';
-// plugin-core-innocence.test.js — W9 GATE 3, made a CI grep (docs/plugin-plan.md
+// plugin-core-innocence.test.js — W9 GATE 3, made a CI grep (plugin-plan.md [internal design doc, not in this repo]
 // §4 W9.3): "`rg -i workbench` over core (excluding plugins/, docs, regenerated
 // web-dist) → zero — the vision doc's 'core never learns the word' test".
 //

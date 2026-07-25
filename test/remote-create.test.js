@@ -1,5 +1,5 @@
 'use strict';
-// remote-create.test.js — the M5 full-param wire create (docs/sandbox-plan.md M5).
+// remote-create.test.js — the M5 full-param wire create (sandbox-plan.md [internal design doc, not in this repo] M5).
 // Two levels:
 //   1. remote-wiring's createSession/getCatalogs mapping — captured by patching
 //      RemoteServer so we can call the real owner-side closures with a mock

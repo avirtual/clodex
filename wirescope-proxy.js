@@ -193,7 +193,7 @@ const ProxyClient = {
     return this._getJson(base, `/_bust?session=${encodeURIComponent(sessionId)}`, PROXY_REPORT_TIMEOUT);
   },
 
-  // Boiling-pot tier 2 (docs/boiling-pot-plan.md): wirescope's /_pot redundancy
+  // Boiling-pot tier 2 (boiling-pot-plan.md [internal design doc, not in this repo]): wirescope's /_pot redundancy
   // rollup — GLOBAL per base (the ?session= param is ignored, verified against
   // v0.6.33), so callers fetch it once per DISTINCT base, never per session. This
   // is the snake_case→camelCase SEAM: /_pot ships {files:[{file, reads,

@@ -27,7 +27,7 @@ const ROOT = path.join(__dirname, '..');
 //
 // SHRINKING this set is welcome — it means more of the tree went electron-free.
 // GROWING it re-couples an engine module to Electron and needs a documented
-// ruling (docs/engine-extraction-plan.md or docs/web-frontend-plan.md), not just
+// ruling (engine-extraction-plan.md [internal design doc, not in this repo] or web-frontend-plan.md [internal design doc, not in this repo]), not just
 // an edit here.
 const ALLOWED = new Set([
   'main.js',
@@ -54,7 +54,7 @@ function rootJsFiles() {
     .filter((f) => fs.statSync(path.join(ROOT, f)).isFile());
 }
 
-// Every plugin ENGINE half, as repo-relative paths (docs/plugin-plan.md §7).
+// Every plugin ENGINE half, as repo-relative paths (plugin-plan.md [internal design doc, not in this repo] §7).
 // A plugin's engine half is bootstrapped by the same electron-free engine as
 // the ~43 root modules above, so it inherits the same rule for the same reason:
 // the headless host stands the engine up with no Electron at all, and a plugin
@@ -82,7 +82,7 @@ test('require(electron) appears only in the host-adapter layer', () => {
   assert.deepStrictEqual(
     violators, [],
     `engine-side module(s) import electron — move the electron use behind a seam `
-    + `(see docs/engine-extraction-plan.md), or, with a documented ruling, add to `
+    + `(see engine-extraction-plan.md [internal design doc, not in this repo]), or, with a documented ruling, add to `
     + `ALLOWED: ${violators.join(', ')}`,
   );
 });
@@ -94,7 +94,7 @@ test('plugin engine halves never import electron', () => {
   assert.deepStrictEqual(
     violators, [],
     `plugin engine half/halves import electron — a plugin engine half is plain `
-    + `Node (docs/plugin-plan.md §1, §7); everything it needs from the host comes `
+    + `Node (plugin-plan.md [internal design doc, not in this repo] §1, §7); everything it needs from the host comes `
     + `through the host argument: ${violators.join(', ')}`,
   );
 });

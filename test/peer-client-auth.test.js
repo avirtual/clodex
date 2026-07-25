@@ -1,6 +1,6 @@
 'use strict';
 // peer-client-auth.test.js — the consumer side of the operator-auth wire
-// (docs/remote-auth-plan.md §4). A tokened PeerConnection must present
+// (remote-auth-plan.md [internal design doc, not in this repo] §4). A tokened PeerConnection must present
 // `Authorization: Bearer <token>` on BOTH transport paths: _request (hello,
 // sessions, control, …) and the _sse streams (events, attach). An untokened
 // peer sends no Authorization header, so the wire to an untokened box is

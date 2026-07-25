@@ -16,7 +16,7 @@ const { API_CONTRACT } = require('../api-contract');
 // from api-contract.js on purpose: if a change drops, renames, or adds a method
 // this list must be updated deliberately, and the mismatch is caught here.
 const PINNED_NAMES = [
-  // Teams front door (docs/teams-design.md) — added with the front-door build.
+  // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
   'teamCreate', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
   'teamGet', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog',
@@ -66,14 +66,14 @@ const PINNED_NAMES = [
   'setSessionIntents', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
   'newWorkspace',
-  // Managed Docker sandbox (docs/sandbox-plan.md M2) — appended deliberately as
+  // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
   'sandboxDetect', 'sandboxStatus', 'sandboxGetConfig', 'sandboxSetConfig',
   'sandboxTranslatePath',
   'sandboxUp', 'sandboxRebuild', 'sandboxDown', 'sandboxLogsTail', 'sandboxSetToken',
   'sandboxClearToken', 'sandboxListBoxes', 'sandboxCreateBox', 'sandboxDeleteBox',
   'onRequestOpenSandboxDialog',
-  // Boiling pot (docs/boiling-pot-plan.md) — cross-agent file-heat snapshot.
+  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
   'potSnapshot',
   // Opt-in git worktree at session spawn + New Session working-directory
   // suggestions (recent MRU + popular). Appended deliberately as the surface grew.
@@ -91,7 +91,7 @@ const PINNED_NAMES = [
   // Scoped env vars for wrapper PTYs (T46) — global/workspace editor +
   // New Session dialog. get masks secret values.
   'envScopesGet', 'envScopesSet', 'envScopesDelete',
-  // Plugin transport (docs/plugin-plan.md §1) — the five rows that carry EVERY
+  // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1) — the five rows that carry EVERY
   // plugin, present and future, plus the intent catalog moving from a static
   // renderer require to an IPC read (§2.3 R-INT-4).
   'pluginInvoke', 'pluginCatalog', 'pluginSetEnabled', 'onPluginEvent',

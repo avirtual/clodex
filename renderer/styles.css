@@ -307,7 +307,7 @@ html, body {
 
 /* Footer content-surface rows — glyph + label, full-width. Core ships one
    (Inbox); the rest are plugin footer buttons the host appends as
-   `button[data-plugin-footer]` (docs/plugin-plan.md §2.2). Styling them here,
+   `button[data-plugin-footer]` (plugin-plan.md [internal design doc, not in this repo] §2.2). Styling them here,
    by the host's own attribute, is deliberate: the chrome of the sidebar footer
    is core's, so a plugin gets a button that looks native without shipping — or
    being able to override — the footer's look. */
@@ -2072,7 +2072,7 @@ html, body {
 .prefs-checkboxes { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; }
 .prefs-checkboxes label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .prefs-checkboxes input[type="checkbox"] { margin: 0; }
-/* Plugin ROWS (docs/plugin-plan.md §2.5). These used to live in a Preferences
+/* Plugin ROWS (plugin-plan.md [internal design doc, not in this repo] §2.5). These used to live in a Preferences
    section; enabling a plugin is not a preference — it tears down live DOM in
    every window — so the choosing moved to the Plugins menu and its "Manage
    Plugins…" dialog (T5). The rows are styled here, beside the prefs rules, only
@@ -2644,7 +2644,7 @@ html, body {
 
 #agents-drawer.hidden, #skills-drawer.hidden, #templates-drawer.hidden, #exec-drawer.hidden, #inbox-drawer.hidden, #pot-drawer.hidden { display: none; }
 
-/* The container a plugin's `surfaces.overlay` mounts into (docs/plugin-plan.md
+/* The container a plugin's `surfaces.overlay` mounts into (plugin-plan.md [internal design doc, not in this repo]
    §2.6). CORE CSS by design, and it stays core: the host creates this element,
    centralizes hidden/Escape/one-open on it, and removes it wholesale on disable
    — a plugin styles only its own interior. Not a `.hidden` generic: the rule is

@@ -1,5 +1,5 @@
 'use strict';
-// plugin-host-engine.test.js — the engine-half host contract (docs/plugin-plan.md
+// plugin-host-engine.test.js — the engine-half host contract (plugin-plan.md [internal design doc, not in this repo]
 // §3.2/§3.3/§3.4, Phase 1a). Unit-level: a fake manager, a fake uiSettings, a tmp
 // userDataPath. No electron, no PTY, no engine bootstrap.
 //

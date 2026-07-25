@@ -1,5 +1,5 @@
 'use strict';
-// plugin-kill-switch.test.js — W9 GATE 5 (docs/plugin-plan.md §4 W9.5):
+// plugin-kill-switch.test.js — W9 GATE 5 (plugin-plan.md [internal design doc, not in this repo] §4 W9.5):
 // "CLODEX_PLUGINS=0 yields a working app with no workbench anywhere (proves the
 // app no longer depends on the pilot)".
 //

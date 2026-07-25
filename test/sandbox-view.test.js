@@ -1,6 +1,6 @@
 'use strict';
 // Unit tests for renderer/lib/sandbox-view.js — the Sandbox dialog's pure copy
-// selection (docs/sandbox-plan.md M2). The install-vs-daemon-down distinction is
+// selection (sandbox-plan.md [internal design doc, not in this repo] M2). The install-vs-daemon-down distinction is
 // the branch that matters (different remedy), so it's pinned here.
 
 const test = require('node:test');
