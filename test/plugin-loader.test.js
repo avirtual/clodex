@@ -1187,3 +1187,73 @@ test('ensureUserRoot returns null when there is no user root', () => {
   const { loader } = mkLoader(mkTree({}));
   assert.strictEqual(loader.ensureUserRoot(), null);
 });
+
+// ── listUserRoot (t28): what the browser frontend shows where Electron reveals.
+// Host and viewer are different machines on web, so a Finder reveal would open
+// the wrong one. The bound that keeps this from becoming a remote file browser
+// is that it takes no path and does not recurse — both pinned below.
+
+test('listUserRoot lists the user root one level deep, marking directories', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const userDir = path.join(base, 'plugins');
+  fs.mkdirSync(path.join(userDir, 'zeta'), { recursive: true });
+  fs.mkdirSync(path.join(userDir, 'alpha'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'notes.txt'), 'x');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: base, label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  const r = loader.listUserRoot();
+  assert.strictEqual(r.dir, userDir);
+  assert.deepStrictEqual(r.entries, [
+    { name: 'alpha', isDir: true },
+    { name: 'notes.txt', isDir: false },
+    { name: 'zeta', isDir: true },
+  ], 'sorted by name, directories marked');
+});
+
+test('listUserRoot does NOT descend into an entry', () => {
+  // Non-recursion is the security-relevant half of the bound: the row answers
+  // "what is in the plugin root", not "walk the host's filesystem for me". A
+  // nested name appearing here would mean the walk went one level too far.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const userDir = path.join(base, 'plugins');
+  fs.mkdirSync(path.join(userDir, 'demo', 'inner'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'demo', 'manifest.json'), '{}');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: base, label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  const names = loader.listUserRoot().entries.map((e) => e.name);
+  assert.deepStrictEqual(names, ['demo']);
+  for (const nested of ['inner', 'manifest.json']) {
+    assert.ok(!names.includes(nested), `${nested} is inside an entry and must not be listed`);
+  }
+});
+
+test('listUserRoot takes no argument that could redirect it', () => {
+  // The property in its executable form: hand it a real, readable directory that
+  // is NOT the plugin root and it must still answer with the plugin root. An
+  // argument the function ignores cannot steer a read — and a fake path would
+  // dodge the claim, since it would fail for merely not existing.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const userDir = path.join(base, 'plugins');
+  const elsewhere = path.join(base, 'elsewhere');
+  fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });
+  fs.mkdirSync(elsewhere, { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'secret.txt'), 'x');
+  assert.ok(fs.statSync(elsewhere).isDirectory(), 'the decoy is a real readable directory');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: base, label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  const r = loader.listUserRoot(elsewhere);
+  assert.strictEqual(r.dir, userDir, 'the configured root, not the one handed in');
+  assert.deepStrictEqual(r.entries.map((e) => e.name), ['mine']);
+  assert.strictEqual(loader.listUserRoot.length, 0, 'declares no parameter to pass one through');
+});
+
+test('listUserRoot returns null when there is no user root', () => {
+  const { loader } = mkLoader(mkTree({}));
+  assert.strictEqual(loader.listUserRoot(), null);
+});

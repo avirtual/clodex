@@ -677,3 +677,52 @@ test('_host plugins.userRoot refuses when no user root is configured', async () 
   const r = await engine.dispatch('_host', 'plugins.userRoot', []);
   assert.equal(r.ok, false);
 });
+
+// ── _host plugins.listUserRoot (t28) ───────────────────────────────────────
+// The browser frontend cannot reveal a folder in the HOST's file manager — and
+// a reveal there would be wrong rather than merely unsupported, since it would
+// open the viewer machine's folder. This row answers the same question over the
+// wire instead. Its whole safety property is that it is argument-free.
+
+test('_host plugins.listUserRoot serves the host path and its entries', async () => {
+  const loader = fakeLoader({
+    listUserRoot: () => ({ dir: '/home/u/.clodex/plugins', entries: [{ name: 'demo', isDir: true }] }),
+  });
+  const { engine } = makeHost({ loader });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.listUserRoot', []),
+    { ok: true, dir: '/home/u/.clodex/plugins', entries: [{ name: 'demo', isDir: true }] });
+});
+
+test('_host plugins.listUserRoot takes NO path from the caller', async () => {
+  // The bound that keeps this a plugin-folder listing rather than a remote file
+  // browser. A caller handing over a path must not be able to steer the read:
+  // arguments dispatch through to the loader row, and the loader row takes none.
+  const seen = [];
+  const loader = fakeLoader({
+    listUserRoot: (...args) => { seen.push(args); return { dir: '/home/u/.clodex/plugins', entries: [] }; },
+  });
+  const { engine } = makeHost({ loader });
+  const r = await engine.dispatch('_host', 'plugins.listUserRoot', ['/etc', '..', { dir: '/' }]);
+  assert.equal(r.ok, true);
+  assert.deepEqual(seen, [[]], 'the loader is called with no arguments at all');
+  assert.equal(r.dir, '/home/u/.clodex/plugins', 'the answer is the configured root, not the requested path');
+});
+
+test('_host plugins.listUserRoot reports the path even when the read fails', async () => {
+  // "Here is where plugins go, and I could not read it" is a usable diagnostic;
+  // a bare failure leaves the user with nowhere to put anything.
+  const loader = fakeLoader({
+    listUserRoot: () => ({ dir: '/home/u/.clodex/plugins', entries: null, error: 'EACCES' }),
+  });
+  const { engine } = makeHost({ loader });
+  const r = await engine.dispatch('_host', 'plugins.listUserRoot', []);
+  assert.equal(r.ok, true);
+  assert.equal(r.dir, '/home/u/.clodex/plugins');
+  assert.equal(r.entries, null, 'null entries, distinct from an empty directory');
+});
+
+test('_host plugins.listUserRoot refuses when no user root is configured', async () => {
+  const loader = fakeLoader({ listUserRoot: () => null });
+  const { engine } = makeHost({ loader });
+  assert.equal((await engine.dispatch('_host', 'plugins.listUserRoot', [])).ok, false);
+});

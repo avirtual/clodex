@@ -414,4 +414,16 @@ function start() {
 // incoming event frame, minus the wire.
 function emit(channel, ...args) { dispatchEvent(channel, args); }
 
-module.exports = { start, emit, toast, invoke, rewriteExternalUrl };
+// The ENGINE's version, as the host reported it in the welcome frame
+// (web-host.js:308). Deliberately one field rather than exporting `welcomeInfo`
+// wholesale: the frame also carries the token-bearing proxy reach, and a
+// module-wide getter would make every future field ambiently readable.
+//
+// Load-bearing, not decoration: `web-dist/index.html` is tracked, so a git-deployed
+// box gets a rebuilt bundle from a plain `git pull`, and this string is how an
+// operator confirms the pull actually took effect. It must therefore be the
+// RUNNING app's version off the wire — never re-derived browser-side, where the
+// answer would come from the very bundle whose freshness is in question.
+function appVersion() { return (welcomeInfo && welcomeInfo.appVersion) || null; }
+
+module.exports = { start, emit, toast, invoke, rewriteExternalUrl, appVersion };

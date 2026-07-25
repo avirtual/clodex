@@ -5283,7 +5283,50 @@ async function renderPluginsDialog() {
 // ~/.clodex is a dot-directory Finder hides, so a user told to "put it in
 // ~/.clodex/plugins" has to know ⌘⇧G exists. The path comes from the engine
 // rather than being rebuilt here — the renderer does not own where roots live.
+//
+// ON WEB THIS IS A DIFFERENT ACTION, not a degraded one (t28). Revealing in a
+// file manager is not merely unsupported in a browser — it is WRONG: it would
+// open the folder on the machine holding the browser, while the plugins live on
+// the machine running the engine. The button assumed those were one machine.
+// So the browser shows the engine's path and what is in it instead, which
+// answers the same question ("where do plugins go, and what is there?") with the
+// two machines kept straight. Desktop behaviour is untouched.
+const pluginsFolderPanel = document.getElementById('plugins-folder');
+
+async function showPluginsFolderListing() {
+  if (!pluginsFolderPanel) return;
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.listUserRoot'); } catch {}
+  if (!r || !r.ok || !r.dir) {
+    showToast(`Could not locate the plugins folder: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+    return;
+  }
+  pluginsFolderPanel.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'plugin-row-note';
+  // Named as the ENGINE's path explicitly. On a headless box the viewer's own
+  // filesystem has no such directory, and a bare path invites copying it into a
+  // local Finder window that will never contain anything.
+  head.textContent = `Plugins folder on the Clodex host: ${r.dir}`;
+  pluginsFolderPanel.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'plugin-row-note';
+  if (r.entries === null) {
+    body.classList.add('warn');
+    body.textContent = `Could not read it: ${r.error || 'unknown error'}`;
+  } else if (!r.entries.length) {
+    body.textContent = 'Empty — drop a plugin directory here on the host, then Re-scan.';
+  } else {
+    // One level, directories marked. Not a browser: there is no descending into
+    // an entry, because the engine row does not offer it.
+    body.textContent = r.entries.map((e) => (e.isDir ? `${e.name}/` : e.name)).join('   ');
+  }
+  pluginsFolderPanel.appendChild(body);
+  pluginsFolderPanel.classList.remove('hidden');
+}
+
 document.getElementById('btn-plugins-reveal').addEventListener('click', async () => {
+  if (window.__CLODEX_WEB__) { await showPluginsFolderListing(); return; }
   let r = null;
   try { r = await window.api.pluginInvoke('_host', 'plugins.userRoot'); } catch {}
   if (!r || !r.ok || !r.dir) {
@@ -5292,6 +5335,17 @@ document.getElementById('btn-plugins-reveal').addEventListener('click', async ()
   }
   try { await window.api.fileReveal(r.dir); } catch {}
 });
+
+// The label has to match what the button does on each frontend, or the browser
+// offers a Finder action it cannot perform. Set once at load; the title carries
+// the two-machines distinction that the label has no room for.
+if (window.__CLODEX_WEB__) {
+  const revealBtn = document.getElementById('btn-plugins-reveal');
+  if (revealBtn) {
+    revealBtn.textContent = 'Show Plugins Folder';
+    revealBtn.title = "Show the plugins folder on the machine running Clodex, and what is in it — a browser cannot open the host's file manager";
+  }
+}
 
 // Re-scan without restarting. Honest about the three outcomes it can produce:
 // added plugins really are running, removed ones really are gone, and a CHANGED

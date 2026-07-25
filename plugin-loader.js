@@ -640,6 +640,42 @@ function createPluginLoader(deps) {
     return root.dir;
   }
 
+  // What is IN the user plugin root, one level deep (t28). The browser frontend's
+  // substitute for "Open Plugins Folder": that button reveals in Finder, which on
+  // web would open the BROWSER machine's folder while the plugins live on the
+  // engine box — host and viewer are different machines there, and the button
+  // silently assumes they are one.
+  //
+  // Deliberately the NARROWEST thing that answers the question. No path argument
+  // (the root comes from `roots`, which the caller cannot influence), no
+  // recursion, one readdir, no writes. A caller that could pass a path would be a
+  // remote file browser rather than a plugin-folder listing, and that is a
+  // different feature with a security review attached.
+  //
+  // It does NOT peek inside an entry to say whether it looks like a real plugin —
+  // that would be reaching into a subdirectory for information `status()` already
+  // has. The dialog cross-references the two instead.
+  //
+  // Reuses ensureUserRoot so the directory exists for the same reason the reveal
+  // needed it to: an empty listing of a real path is a true answer, where ENOENT
+  // on a path we then print is a confusing one.
+  function listUserRoot() {
+    const dir = ensureUserRoot();
+    if (!dir) return null;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+        .map((d) => ({ name: d.name, isDir: d.isDirectory() }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) {
+      // The path is still worth reporting — "here is where they go, and I could
+      // not read it" is a better diagnostic than a bare failure.
+      logIt(`could not read the user plugins dir: ${e && e.message}`);
+      return { dir, entries: null, error: String((e && e.message) || e) };
+    }
+    return { dir, entries };
+  }
+
   // What the renderer needs to activate a renderer half, published through the
   // EXISTING `plugin:catalog` row — no new api-contract row, because §1 freezes
   // the plugin surface at five rows for every plugin forever. The css TEXT (not
@@ -704,7 +740,7 @@ function createPluginLoader(deps) {
 
   return {
     discover, isEnabled, enabledSet, setEnabledInSettings,
-    loadAll, activateById, rescan, ensureUserRoot, rendererInfo,
+    loadAll, activateById, rescan, ensureUserRoot, listUserRoot, rendererInfo,
     // Fail-safe / quarantine surface. `noteRendererActivation` is what a WINDOW
     // reports its renderer half's outcome through; the rest is the settings
     // section's data and the Retry path.

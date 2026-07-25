@@ -245,3 +245,30 @@ test('a second welcome (reconnect) reloads to re-run the restore flow', async ()
     assert.ok(global.location._reloaded, 'reconnect welcome triggers a reload');
   } finally { restore(); }
 });
+
+// ── appVersion (t28) ────────────────────────────────────────────────────────
+// The browser has no About panel, so on a headless box the sidebar footer's
+// version line is the only way to tell what is deployed — which makes it a
+// fleet-operations fact rather than chrome. `web-dist/index.html` is tracked, so
+// a git-deployed box gets a rebuilt bundle from a plain `git pull`, and this is
+// how an operator confirms the pull took effect. It must therefore come off the
+// WIRE: a version re-derived inside the bundle would only ever confirm itself.
+
+test('appVersion reports the ENGINE version from the welcome frame', async () => {
+  const { shim, restore } = await connected();
+  try {
+    assert.equal(shim.appVersion(), '9.9.9', 'the value the host sent, not anything client-side');
+  } finally { restore(); }
+});
+
+test('appVersion is null before a welcome, and exposes nothing else from the frame', async () => {
+  const { shim, restore } = loadShim();
+  try {
+    shim.start();
+    assert.equal(shim.appVersion(), null, 'no version yet → say nothing rather than guess');
+    // One field, not the frame. The welcome also carries the token-bearing proxy
+    // reach, and a whole-frame getter would make every future field ambiently
+    // readable by anything that can require the shim.
+    assert.ok(!Object.keys(shim).some((k) => /welcome/i.test(k)), 'welcomeInfo is not exported');
+  } finally { restore(); }
+});

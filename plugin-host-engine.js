@@ -533,6 +533,20 @@ function createPluginHostEngine(deps) {
       const dir = loader.ensureUserRoot();
       return dir ? { ok: true, dir } : errorEnvelope('no user plugin root configured');
     },
+    // What is in the plugin root, for a frontend that cannot open a file manager
+    // on the engine's machine (t28). READ-ONLY and argument-free by construction:
+    // the path comes from the loader's own roots, so there is nothing a caller can
+    // point this at. No recursion, no writes — see plugin-loader.listUserRoot.
+    //
+    // A `_host` service rather than a sixth `plugin:*` row, for the same reason
+    // `plugins.userRoot` above is one: the transport is frozen at five rows and
+    // this is host plumbing, not any plugin's method.
+    'plugins.listUserRoot': () => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.listUserRoot();
+      return r ? { ok: true, ...r } : errorEnvelope('no user plugin root configured');
+    },
     'plugins.rescan': () => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
