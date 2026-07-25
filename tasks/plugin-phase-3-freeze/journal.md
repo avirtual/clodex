@@ -1255,6 +1255,28 @@ claim asserted where nothing executed and nobody marked it. (A count recalled
 rather than run is the same thing: I reported this branch as eleven commits
 ahead of master when `git rev-list --count` says 31.)
 
+**A second variant, found in Phase 4b and genuinely different: the assumption
+that a transformation is a no-op for inputs that do not need it.** Multi-root
+discovery had to resolve a symlinked plugin directory, so `resolveDir` called
+`realpathSync` — on *every* directory, not only the symlinked ones. On macOS that
+rewrites `/var/...` to `/private/var/...` for paths containing no link at all,
+silently changing `dir`/`enginePath`/`rendererPath` for every caller that never
+asked.
+
+Note why this is not the class above. Every other instance was a claim written
+where nothing executed — a comment, a doc line, a ticket instruction. **This was
+code that ran, worked, and passed its own test**: the symlink test stayed green,
+because resolving a symlink is exactly what it asserts. The defect was entirely
+in the blast radius — a correct operation applied to inputs that never needed it.
+The revert discipline cannot catch this one, since the fix's own test is right.
+
+What caught it: an **unrelated** existing test (`rendererInfo returns the renderer
+path and the stylesheet TEXT`) failing on a path-prefix diff. Not review, not
+reasoning — the suite's existing specificity. Both clodex and I would have called
+that normalisation harmless if asked. **That is an argument for pinning things
+that seem too obvious to pin**, because the value of that assertion was never in
+what it was written to protect.
+
 ## What `VERIFY.md` will test (blocked on Bogdan's machine)
 
 `plugins/git-branches/VERIFY.md` — five behaviours no harness reaches, needing a
