@@ -186,6 +186,91 @@ endpoint** — I will NOT do this without an explicit ruling) or the operator
 pastes it. Advertising the PORT is safe; advertising the TOKEN is a different
 decision. Flagging, not choosing.
 
+## clodex's rulings (msg-93431-18)
+
+- **(1) approved — advertise the PORT only.** (2) refused outright; (3) "stays
+  available and unbuilt". **Do not fetch the token over any channel here.**
+- **My "unauthenticated hello" was wrong** — corrected by clodex and verified:
+  `_authGate` (remote.js:360) runs before ALL routing including hello, so with
+  `CLODEX_REMOTE_TOKEN` set, hello requires it. What is true is narrower: on a
+  loopback bind with no token, the gate passes everything. Hello is open *in
+  exactly the configuration where it is reachable only through a tunnel* — the
+  design, not a gap. Both branches argue against (2), so it is refused harder
+  than I argued for.
+- **`seams.webInfo` approved.** Keep it to what the consumer needs.
+- **The token-gated signal must be REAL, not guessed.** "If you cannot cheaply
+  know… prefer a URL that 401s with a clear explanation over a
+  confident-but-wrong claim. Do not invent a gated/ungated signal."
+- **Carry into the design:** `identityChanged` is the re-resolution hook. "Build
+  the consumer so the current URL is always read through that path, never cached
+  at open time — the (C) failure is a consumer holding a string across a respawn."
+
+### The gated signal IS cheaply knowable — no guess needed
+
+`web-host.js:104` builds `gate = makeTokenGate(token)` and `auth-token.js`
+exposes `gate.configured`. `createWebHost` already returns an object
+(`web-host.js:427`), so it can return `tokenGated: gate.configured` alongside
+`port`. That is the host reporting a **fact about itself**, and it is not a
+secret — knowing that a token is required reveals nothing about the token. So
+`seams.webInfo` → `{ port, tokenGated }`, and the UI claim is derived, never
+invented. clodex's 401 fallback is not needed.
+
+## Phase 2 — the lifetime model
+
+### The constraint an external browser imposes
+
+clodex's (C) ruling allows two escapes: a **stable** URL, or a **re-resolvable**
+consumer. For an external browser tab **only "stable" is available** — Clodex
+cannot re-point a tab it does not own. That single fact drives the whole design.
+
+### Decision: a SEPARATE, on-demand tunnel with a PINNED local port
+
+Rejected — a second `-L` on the existing peer tunnel:
+1. it would inherit `TunnelManager`'s re-pick-port-on-respawn, which is the (C)
+   bug itself; and
+2. it would open a web tunnel for **every** ssh peer whether or not anyone asked
+   to look — a tunnel with no reason to exist, which clodex forbade.
+
+So: a distinct supervisor, one per peer that has been explicitly opened.
+
+- **Local port is picked ONCE and pinned** for the life of that web tunnel, and
+  re-bound to the SAME port on every respawn. This is the deliberate inversion
+  of `Tunnel._spawnTunnel`'s fresh-port behaviour, and the reason is written into
+  the code: our consumer cannot re-resolve.
+- `ExitOnForwardFailure=yes` (already in `SSH_BASE_ARGS`) makes a taken pin an
+  honest failure + backoff, not a silent bind elsewhere.
+- **The browser is popped exactly once**, on the first successful up. Respawns
+  do NOT re-pop — the pinned port means the existing tab works again on reload.
+
+### What CLOSES it (clodex asked for this explicitly)
+
+The peer tunnel retries forever because Clodex needs the peer connection
+continuously. A web tunnel exists because a human asked to look at a GUI, and a
+human's attention is bounded. So it closes on:
+
+1. **Explicit close** — the affordance that opened it toggles closed.
+2. **Peer removed or disabled** — same rule as `TunnelManager.sync`.
+3. **App shutdown** — a `stopAll()` on the same path as the peer tunnels.
+4. **Give-up cap** — if it cannot establish for a bounded window, it stops and
+   surfaces that, instead of retrying at a dead box forever. This is the direct
+   answer to "a forgotten tunnel to a remote box is a quiet hole": every other
+   trigger depends on someone doing something, and this one does not.
+
+### Never rendering the placeholder
+
+`http://127.0.0.1:1` is `TunnelManager`'s dead-peer sentinel and is never a web
+URL. The web affordance reads its own tunnel's state (`down`/`up`) and shows
+"connecting…" until up; **no URL exists in the UI until there is a live one.**
+
+### Re-resolution, per clodex's carry-in
+
+The pin makes the URL stable, but two things still move: whether the peer HAS a
+web host, and which remote `webPort` it uses. Both ride hello, and
+`identityChanged` already forces a `peer-state` emit when `webPort` changes. So
+the affordance is rendered from **live peer state**, never from a snapshot taken
+when the popover opened — and a remote `webPort` change restarts the tunnel
+rather than silently forwarding to a stale port.
+
 ## Progress
 
 - [x] Phase 0 — pulled master `ea0729e`; branch `peer-web-view` created.
