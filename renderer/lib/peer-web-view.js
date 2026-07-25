@@ -49,7 +49,13 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const phase = tunnelPhase(webTunnel);
   const ssh = isSshPeer(tunnel);
   const label = (st && (st.host || st.label)) || 'peer';
-  const tokenGated = !!(webHost && webHost.tokenGated);
+  // `=== true`, matching peer-client's hello normalization (the single producer,
+  // which already coerces to a strict boolean) and peer-wiring's pop decision.
+  // One rule in all three places on purpose: if this read truthy while the pop
+  // read strict, a value like the string 'yes' would have the UI say "needs a
+  // token" while main opened a browser at a 401 — the two halves disagreeing is
+  // worse than either rule alone.
+  const tokenGated = !!(webHost && webHost.tokenGated === true);
   // Only a live 'up' status carries a URL, and only from the supervisor.
   const url = (phase === 'open' && webTunnel && webTunnel.url) ? webTunnel.url : null;
 

@@ -22935,7 +22935,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const phase = tunnelPhase(webTunnel);
         const ssh = isSshPeer(tunnel);
         const label = st && (st.host || st.label) || "peer";
-        const tokenGated = !!(webHost && webHost.tokenGated);
+        const tokenGated = !!(webHost && webHost.tokenGated === true);
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
         if (!ssh && phase === "closed") {
