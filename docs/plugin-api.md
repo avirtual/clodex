@@ -221,7 +221,8 @@ blank.** The sidebar asks, your cache is empty, you return `null`; you then
 resolve in the background and call `requestRelayout()`, and the chip appears on
 the next pass. That is the design working, not a race you can close. Design the
 badge so that "nothing yet" is a legitimate state rather than a flash of wrong
-data.
+data. §6.4 carries the corollary that bites hardest: **registration does not
+paint either**, so the pass that fills that first blank is one you must ask for.
 
 **Law 3 — sessions outlive windows.** A window closing does not kill its
 sessions; they keep running and reattach when a window reopens. Durable
@@ -803,6 +804,42 @@ Two consequences to design for rather than fight:
   [callback conventions](#callback-conventions). Kick your background fill off
   from a *guard* (a name you have not seen before), never from the resolve itself
   unconditionally, or every render pass launches another one.
+
+**Registration does not paint. Call `requestRelayout()` at the end of your
+`activate()`.**
+
+This is the one asymmetry in §6 worth stating outright, because the neighbouring
+paragraph teaches the opposite lesson. §6.3 says of `footerButton`: *"The host
+paints the button on registration and un-paints it on disposal — you never touch
+the DOM for it."* **That sentence is true of `footerButton` and false of
+`rowBadge`.** Registering a row badge schedules nothing; the first `resolve` runs
+whenever core next lays the sidebar out for reasons of its own. Disposal is *not*
+symmetric with it either — the host removes your chips immediately when your
+plugin is disabled.
+
+So a badge is un-painted eagerly and painted lazily, and the gap is invisible at
+startup — the sidebar lays out while the window boots, so a plugin enabled at
+launch appears to work. It becomes visible on a **live enable with the window
+already open**: nothing about that event touches the sidebar, so your badge does
+not appear until something unrelated does — a session's activity, a filter
+change, or core's periodic refresh. That wait can be tens of seconds, and it
+looks exactly like a plugin that failed to load.
+
+The remedy is one line and it is entirely within this API:
+
+```js
+module.exports.activate = (rhost) => {
+  rhost.ui.sidebar.rowBadge({ id: 'dirty', resolve });
+  …
+  rhost.ui.sidebar.requestRelayout();   // ask for the first pass; nothing else will
+};
+```
+
+Note the second-order trap if your badge polls: a poll driven by "sessions the
+sidebar has asked me about" is driven by `resolve`, and `resolve` has not run
+yet. Without the line above such a plugin polls an empty set forever and never
+recovers on its own — the poll is not a fallback for the missing first paint,
+because the missing first paint is what would have populated it.
 
 ### 6.5 `rhost.ui.sessionMenu.addProvider(spec)`
 

@@ -170,6 +170,39 @@ records the failure and what to re-check. `web-dist/index.html` rebuilt
 
 No core edits. No deviation letter needed — (x) is still unused.
 
+### clodex's rulings on the finding (msg-5178-9), and what they produced
+
+**Ruling 1 — document it in `plugin-api.md`, now.** Done: §6.4 gains
+"Registration does not paint", quoting §6.3's *"the host paints the button on
+registration"* and stating outright that the sentence is true of `footerButton`
+and false of `rowBadge`. Covers the live-enable-with-window-open case, why it is
+invisible at startup, the one-line remedy, and the second-order trap for a
+demand-driven poll. §3's Law-2 paragraph (`:219-224`) gained a one-line pointer,
+since that is where an author meets the blank-first-render idea.
+
+clodex's own observation, worth keeping: `plugin-host.js:234`'s comment on
+`addFooterButton` says *"the caller never has to remember either"* — and
+`rowBadge` sits two lines below it requiring precisely that. **The doc defect and
+the code defect are adjacent**, which is why neither was seen.
+
+**Ruling 2 — do NOT fix core's asymmetry now.** Making `rowBadge()` paint on
+registration changes *when `resolve()` is first called* for every plugin: it would
+fire during `activate()`, earlier than any existing plugin expects, possibly before
+that plugin's own state is built. git-branches tolerates it — one data point, not
+a guarantee. Specced in `plugin-plan.md` §6 as a v1.1 candidate with the
+resolve-timing hazard named as the reason it is not a two-line patch. Needs
+Bogdan awake.
+
+**Ruling 3 — the unproven claim stays unproven and stays labelled.** Unchanged.
+
+**The pattern, now written next to 4a's finding** (`plugin-plan.md` §6, "Phase 4's
+second finding"): this is the **second time the API's shape bit a consumer**.
+Different symptom — 4a's missing data surface, t17's missing paint-on-register —
+one cause: the host was built alongside the workbench, so behaviour the workbench
+did not happen to need was never made symmetric. **An insider-shaped artifact
+validated by insiders.** The lesson for Phase 5 is not "fix these two"; it is that
+the next non-co-designed consumer finds a third.
+
 ---
 
 ## T16 — multi-root plugin discovery (AFTER t17)

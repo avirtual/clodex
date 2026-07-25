@@ -882,6 +882,59 @@ the plugin's boundary able to say so**. That invisibility is what makes "hand
 back stale numbers with the staleness stated" a genuinely different option from
 the other two, rather than the lazy one.
 
+### Phase 4's second finding — the same root, a different symptom
+
+**Read this together with 4a's result above, not as a separate bug.** Two
+instances is a pattern, and the Phase 5 planner should see it as one.
+
+Bogdan found this one by *running* the app, which is why it survived a doc freeze
+and a full suite: two workspace windows showing badges, disable (both cleared
+correctly), re-enable — and only **one** window repainted. The other filled in
+30–60 seconds later, on its own, while he typed.
+
+Root cause, two legs, both required:
+
+- **The host un-paints eagerly and paints lazily, for the same surface.**
+  `renderer/plugin-host.js:649` removes every `[data-plugin-badge^="<id>:"]` node
+  directly at `dispose()` — which is why both windows cleared instantly and
+  correctly. `activate()` has no counterpart, and `rowBadge()` registration is a
+  bare `register(...)` (`:243`) that paints nothing. Its sibling `addFooterButton`
+  calls `renderFooterButtons()` on **both** registration and disposal (`:236-238`),
+  under a comment reading *"the caller never has to remember either"* — two lines
+  above the registration that requires precisely that. The doc defect and the code
+  defect are adjacent, which is why neither was seen.
+- **A demand-driven poll cannot bootstrap itself.** git-branches polls the
+  sessions the sidebar has asked it about; that set is written only by `resolve()`,
+  i.e. only when core renders a row. A freshly activated closure polls an empty
+  set forever. The poll is not a fallback for the missing first paint — the
+  missing first paint is what would have populated it.
+
+The window therefore waited for an unrelated relayout: core's 30 s
+`refreshSidebarMeta` interval (`renderer/renderer.js:1172`, which ends in
+`refreshSidebarView()`), or the activity a keystroke produces. One-to-two ticks of
+that interval is the observed 30–60 s.
+
+**Fixed in the plugin, inside the frozen surface** — `requestRelayout()` is
+already lent, and one call at the end of `activate()` closes both legs. Pinned by
+`test/plugin-git-branches-renderer.test.js`, and now documented in
+`plugin-api.md` §6.4 as a rule with the `footerButton` asymmetry stated
+explicitly, since an author who reads §6.3 will otherwise generalise from it.
+
+**A core fix is a v1.1 candidate, NOT a trivial change.** Making `rowBadge()`
+paint on registration — the obvious symmetry — changes **when `resolve()` is
+first called** for every plugin: it would fire during `activate()`, earlier than
+any existing plugin has been written to expect, possibly before that plugin's own
+state is constructed. git-branches tolerates it; that is one data point, not a
+guarantee, and the resolve-timing hazard is the reason this is a design decision
+rather than a two-line patch.
+
+**Why this is the same root as 4a.** The API was built alongside the workbench,
+so behaviour the workbench did not happen to need was never made symmetric —
+there 4a's missing data surface, here `rowBadge`'s missing paint-on-register.
+Different symptom, one cause: **an insider-shaped artifact validated by
+insiders.** The lesson for Phase 5 is not "fix these two"; it is that the next
+non-co-designed consumer will find a third.
+
 ---
 
 ## 7. Testing & guardrails (standing)
