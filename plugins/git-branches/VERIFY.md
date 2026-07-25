@@ -38,9 +38,23 @@ checklist**, grant the verb `branch` for the seat you are about to test (listed
 as **"Report git branch"**). §7 forces every plugin verb privileged: off for
 every seat until explicitly granted.
 
-**If you skip the grant, the failure is total silence** — no reply, no toast, no
-error, and nothing in the app log under `plugin:git-branches`, because the
-handler is never called. Silence means "not granted", not "plugin broken".
+**If you skip the grant, you get the standard gate bounce**, not silence:
+
+```
+[agent:branch] the branch intent is disabled for this session
+```
+
+The handler never runs — `session-manager.js:2825` refuses at the gate and
+returns before dispatch, injecting that line at `:2839`. Pinned by
+`test/plugin-fake.test.js:999-1009` ("refused at the gate, never at the
+handler"), which asserts both the empty handler record and the exact bounce.
+
+**So silence means something is genuinely wrong**, and is worth reporting: the
+plugin failed to load, or `parse` did not match the line. Note this file
+previously said the opposite — that an ungranted verb fails silently — which
+would have told you to dismiss a real failure as an expected one. That claim was
+carried over unchecked and is corrected here; the bounce above is what the code
+does.
 
 **Do:** in a granted session whose `cwd` is a git repo, have the agent emit exactly:
 
@@ -50,7 +64,7 @@ handler is never called. Silence means "not granted", not "plugin broken".
 
 **Observable:** on the agent's **next turn** it receives `[git-branches] branch: <name>`, and `<name>` matches the chip on that session's row. Exactly **one** such line, not two.
 **If not:**
-- **Verb absent from the checklist**, or ticking it changes nothing → the finding. The registry row exists (a plugin verb is privileged by construction), but the seat-facing path does not honour it. This is the leg no test covers.
+- **Verb absent from the checklist**, or ticking it changes nothing — i.e. you still get `the branch intent is disabled for this session` after granting → **the finding**. The registry row exists (a plugin verb is privileged by construction) and the gate is refusing anyway, so the seat-facing grant is not reaching `intentEnabledFor`. This is the leg no test covers, and the persisting bounce is how you will recognise it.
 - Reply names a *different* session, or the log shows `fired without a usable session handle` → contradicts `session-manager.test.js:4892`; tell me, because a green test is then lying.
 - **Two or more replies** → dispatch is per-feed, not per-line. Tell me the count: it is the number of live feeds, and it contradicts the three-legged source argument in step 5 below. `inject()` is not idempotent, so this is the one wrong answer that silently doubles every reply.
 
