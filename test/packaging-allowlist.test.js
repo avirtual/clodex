@@ -47,6 +47,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -215,11 +216,36 @@ test('layer 2: every repo tree read as a runtime asset is covered by build.files
 // derivation can reach.
 // ---------------------------------------------------------------------------
 
+// Git-ignored directories are developer-local (agent state, scratch deploys, a
+// local build output). They are not part of the repo, so they cannot be a
+// packaging decision anyone could get wrong — and asking about them would turn
+// this test red on one machine and green on another, which is the fastest way
+// to teach people to ignore it. Asked of git rather than a hardcoded list, so a
+// new .gitignore entry needs no edit here.
+function gitIgnored(names) {
+  if (!names.length) return new Set();
+  try {
+    const out = execFileSync('git', ['check-ignore', '--stdin'],
+      { cwd: ROOT, input: names.join('\n'), encoding: 'utf8' });
+    return new Set(out.split('\n').filter(Boolean).map((l) => l.replace(/\/$/, '')));
+  } catch (e) {
+    // Exit 1 means "none of them are ignored" and is not an error. Anything
+    // else (no git, not a checkout) must NOT silently widen the test into
+    // asking about untracked junk — fail loudly instead.
+    if (e.status === 1) return new Set();
+    throw new Error(`cannot ask git which directories are ignored: ${e.message}. `
+      + 'This test classifies only tracked trees; without git it would report '
+      + 'developer-local directories as packaging decisions.');
+  }
+}
+
 test('layer 3: every top-level directory is either shipped or explicitly excluded', () => {
-  const dirs = fs.readdirSync(ROOT, { withFileTypes: true })
+  const present = fs.readdirSync(ROOT, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== 'node_modules' && e.name !== '.git')
     .map((e) => e.name)
     .sort();
+  const ignored = gitIgnored(present);
+  const dirs = present.filter((d) => !ignored.has(d));
   const unclassified = dirs.filter((d) => !touchesTree(d) && !EXCLUDED[d + '/']);
   assert.deepStrictEqual(unclassified, [],
     'these top-level directories are neither covered by a build.files pattern nor listed in '
