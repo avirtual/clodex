@@ -134,6 +134,17 @@ gh release create "$TAG" "$DMG" \
 step "Pruning old release assets"
 "$(dirname "$0")/prune-releases.sh" --delete || echo "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
 
+# --- publish the sandbox image --------------------------------------------
+# Folded in after two manual runs proved it stable. Non-fatal for the same
+# reason as the prune above: the GitHub release is already published, and a
+# docker/buildx hiccup must not leave the caller thinking the release failed.
+# It IS load-bearing though — running it by hand let ghcr's :latest drift three
+# versions behind, which is undiagnosable from a deployed box (an old image's
+# hello carries no webHost, so features simply appear missing).
+step "Publishing container image $NEW_VERSION"
+"$(dirname "$0")/publish-image.sh" "$NEW_VERSION" \
+  || echo "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
+
 step "Done"
 echo "released $TAG"
 gh release view "$TAG" --json url -q .url
