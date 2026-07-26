@@ -42,6 +42,19 @@ function waitFor(pred, what, timeoutMs = 3000) {
   });
 }
 
+// Wait until `pred` holds OR the deadline lapses, and NEVER reject — the caller
+// asserts afterwards. Use this instead of waitFor whenever the thing being
+// waited for IS the thing under test: waitFor's rejection is a timeout, which
+// reads like a hung suite and says nothing about what was expected, while an
+// assert that follows a bounded settle names both sides. (waitFor stays right
+// for merely reaching a precondition, where a timeout genuinely is the story.)
+async function settleOr(pred, deadlineMs = 1000) {
+  const t0 = Date.now();
+  while (!pred() && Date.now() - t0 < deadlineMs) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 test('tunnel spawns ssh with batch/forward-failure/keepalive flags and correct -L', async () => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new Tunnel({ id: 'p1', sshHost: 'user@laptop2', remotePort: 7900, spawnFn, onState: () => {} });
@@ -189,7 +202,13 @@ test('manager: an ssm peer gets a tunnel, and a region change restarts it', asyn
   // comparison of two freshly-built objects would restart on every sync; a
   // target-only comparison would never restart here. Both are wrong.
   mgr.sync([{ id: 'a', label: 'a', ssm: { target: 'i-0abc', region: 'us-east-1' }, remotePort: 7900 }]);
-  await waitFor(() => calls.length === 2, 'respawn after region change');
+  // settleOr, not waitFor: this is the assertion that catches a sameSsm which
+  // ignores region, and a waitFor would surface that as a TIMEOUT — honest, but
+  // indistinguishable from a genuinely hung test and silent about what it
+  // expected. settleOr returns as soon as the spawn lands (no fixed sleep, no
+  // flake) and otherwise lets the assert below name the number it wanted.
+  await settleOr(() => calls.length === 2);
+  assert.equal(calls.length, 2, 'a region change must restart the tunnel — sameSsm has to compare region');
   assert.equal(calls[1].args[calls[1].args.indexOf('--region') + 1], 'us-east-1');
   // An unchanged destination must NOT restart — a sync runs on every settings
   // write, so a spurious restart would drop the wire on an unrelated edit.

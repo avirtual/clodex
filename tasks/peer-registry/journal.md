@@ -415,3 +415,58 @@ url peer. That is a hide, not a say, so it sits against the t30b rule. I did not
 change it: making it visible-but-disabled changes behaviour for URL peers too,
 which is a pre-t32 settled surface and clodex's call, not mine. Raised in the
 report instead.
+
+## Step 1 LANDED (master `129fe94`) + a NAMED TRIGGER
+
+`ff7eb30` (product + web bundle) and `3e2f958` (tests + journal), merged by
+clodex at 2667/2667, ESCAPES: 0.
+
+### NAMED TRIGGER — a rebuilt record silently drops what it doesn't name
+
+Twice in one ticket, same shape at two different layers:
+
+1. **The store.** `sanitizePeers`/`sanitizeSandbox` reconstruct field by field,
+   so a sub-key with no line is dropped on EVERY write. `mounts` shipped that
+   way and vanished on every round-trip.
+2. **The dialog.** `region`/`profile` are settings-file-only overrides with no
+   input of their own — so opening the Peers dialog and pressing Save would have
+   rebuilt the peer from the inputs it *has* and erased them. The store's own
+   tests cannot see this; it happens one layer up.
+
+In general form, which is the durable part:
+
+> **Any layer that rebuilds a record from named fields will silently drop what it
+> doesn't name — and dialogs do this as surely as stores.**
+
+So for every NEW field in steps 2-3: check the dialog round-trip as a matter of
+course, not as a discovery. A field with no input of its own is the dangerous
+case, because nothing on screen hints that it is being carried.
+
+### Test-shape note — `settleOr` vs `waitFor` (clodex's ruling, applied)
+
+The `sameSsm`-ignores-region case originally surfaced as a `waitFor` TIMEOUT:
+honest, but it fails the same way a genuinely hung test does and says nothing
+about what was expected. Replaced with `settleOr` (bounded wait that never
+rejects) + a direct `assert.equal(calls.length, 2, …)`. clodex: *"Match the
+file's existing shape where that shape is good, not where it's merely
+established."* `waitFor` stays correct for reaching a mere PRECONDITION, where a
+timeout genuinely is the story.
+
+### Deferred by clodex, not by me — `deployTargetFor`
+
+The header-menu "Update Clodex on …" item stays hidden for ssm AND url peers.
+Put to Bogdan; clodex's leaning is *show it disabled with a reason for both
+kinds*. Do not fix it inside step 2.
+
+## Step 2 plan — kubectl / gcloud / az
+
+Expected to be the cheap step: all three are pure argv builds with no async, the
+same shape `ssm.target` proved. **If any one of them needs something
+`ssm.target` did not, STOP and tell clodex before absorbing it.**
+
+Per kind, the same five seams: `sanitizePeerKind` in stores.js (every field a
+line) · a `Tunnel` arm via the CLI's builder · `TunnelManager.sync` +
+destination equality · `classifyPeerDest` prefix · dialog round-trip incl.
+fields with no input. Field lists come from cli/src/transport.js:
+`kubectlArgv({ target, namespace, context })`, `gcloudArgv({ instance, zone,
+project })`, `azArgv({ bastion, resourceGroup, target })` — az needs all three.
