@@ -4663,23 +4663,25 @@ function addPeerRow(peer, { expanded = false } = {}) {
   const folderVal = folderReported
     ? liveSrc.trim()
     : ((typeof peer.deployFolder === 'string' && peer.deployFolder) ? peer.deployFolder : '~/wb-wrap-ui');
-  // One smart destination field: ssh host / IP / alias, an http(s):// URL, or
-  // `ssm:TARGET`. The scheme prefix disambiguates (classifyPeerDest), so no
-  // protocol dropdown. The settings schema grows by addition — a classified
-  // 'ssh' saves peer.sshHost, 'url' saves peer.url, 'ssm' saves peer.ssm.
-  // Pre-fill from the stored sshHost, then ssm, then url (a legacy url-only peer).
-  const destVal = peer.sshHost || (peer.ssm && peer.ssm.target ? `ssm:${peer.ssm.target}` : '') || peer.url || '';
-  // region/profile are settings-file-only overrides with no input of their own.
-  // Stashed on the row so collectPeers can carry them back on save — without
-  // this, opening the dialog and pressing Save would silently erase a
-  // hand-configured region, which is the same silent-loss class as the store's
-  // whitelist hazard, just one layer up.
-  row._ssmExtra = (peer.ssm && typeof peer.ssm === 'object')
-    ? { ...(peer.ssm.region ? { region: peer.ssm.region } : {}), ...(peer.ssm.profile ? { profile: peer.ssm.profile } : {}) }
-    : null;
+  // One smart destination field: ssh host / IP / alias, an http(s):// URL, or a
+  // typed cloud destination (`ssm:` / `k8s:` / `gcp:`). The prefix disambiguates
+  // (classifyPeerDest), so no protocol dropdown. The settings schema grows by
+  // addition — a classified 'ssh' saves peer.sshHost, 'url' saves peer.url, and
+  // a cloud kind saves peer.<kind>. Pre-fill from sshHost, then a cloud block,
+  // then url (a legacy url-only peer).
+  const cloud = peerCloudDest(peer);
+  const destVal = peer.sshHost || (cloud ? cloud.text : '') || peer.url || '';
+  // Fields with NO input of their own (ssm region/profile, kubectl namespace/
+  // context, gcloud zone/project, and every az field) are stashed on the row so
+  // collectPeers can carry them back on save. Without this, opening the dialog
+  // and pressing Save would silently erase a hand-configured region — the same
+  // silent-loss class as the store's whitelist hazard, one layer up. Any layer
+  // that rebuilds a record from named fields drops what it doesn't name, and a
+  // dialog does that as surely as a store does.
+  row._cloudExtra = cloud ? { kind: cloud.kind, rest: cloud.rest } : null;
   row.innerHTML = `
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || '')}">
-    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias — http://… for direct — ssm:TARGET for AWS" value="${esc(destVal)}">
+    <input type="text" class="peer-row-dest" placeholder="user@host / http://… / ssm:TARGET / k8s:svc/name / gcp:INSTANCE" value="${esc(destVal)}">
     <button type="button" class="secondary peer-row-test" title="Test the ssh host and check for Clodex; offer to install if absent">Test &amp; Set Up</button>
     <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>
     <div class="peer-row-break"></div>
@@ -4765,6 +4767,48 @@ function peerRowDest(row) {
 // two happy paths (→ ssh tunnel / → direct), warn-colored inline text for a bad
 // value, and hidden when empty. Read-only feedback — the authoritative
 // validation runs in collectPeers on Save.
+// The UI half of the typed cloud kinds — one row per kind, mirroring the tables
+// in stores.js (PEER_CLOUD_KINDS) and peer-tunnel.js (CLOUD_KINDS). Kept here
+// rather than imported because those are main-process modules and this decides
+// only what the dialog SAYS.
+//
+//   name    — how the operator's cloud calls it
+//   cli     — the vendor binary the tunnel shells out to, named in the badge
+//             because "it needs that CLI on YOUR machine" is the misconfig a
+//             cloud destination invites and a bare "→ ssm tunnel" warns nobody
+//   field   — the block field the destination text carries
+//   prefix  — how it is typed back into the one destination input
+//
+// `az` is absent on purpose: it has no destination-field syntax (three required
+// values, one of them a slash-bearing resource id), so it arrives by import and
+// is carried through a save by _cloudExtra like any other unedited field.
+const PEER_CLOUD_UI = {
+  ssm:     { name: 'AWS SSM',   cli: 'aws',     field: 'target',   prefix: 'ssm:' },
+  kubectl: { name: 'kubectl',   cli: 'kubectl', field: 'target',   prefix: 'k8s:' },
+  gcloud:  { name: 'GCP IAP',   cli: 'gcloud',  field: 'instance', prefix: 'gcp:' },
+};
+
+// A peer's cloud transport as the dialog needs it: the text for the destination
+// input, plus EVERY other field of the block so a save can carry them back
+// untouched. Returns null for an ssh/url peer. An az block (or any kind with no
+// UI row) still returns `rest` with the whole block in it — unshowable, but
+// preserved, which is the point.
+function peerCloudDest(peer) {
+  for (const kind of ['ssm', 'kubectl', 'gcloud', 'az']) {
+    const block = peer && peer[kind];
+    if (!block || typeof block !== 'object') continue;
+    const ui = PEER_CLOUD_UI[kind];
+    const shown = ui ? ui.field : null;
+    const rest = {};
+    for (const [k, v] of Object.entries(block)) if (k !== shown && v) rest[k] = v;
+    return {
+      kind, rest,
+      text: (ui && block[ui.field]) ? `${ui.prefix}${block[ui.field]}` : '',
+    };
+  }
+  return null;
+}
+
 function updatePeerDestBadge(row) {
   const badge = row.querySelector('.peer-row-dest-badge');
   if (!badge) return;
@@ -4777,11 +4821,10 @@ function updatePeerDestBadge(row) {
   badge.className = 'peer-row-dest-badge';
   if (cls.kind === 'ssh') badge.innerHTML = '<span class="peer-status-dim">→ ssh tunnel</span>';
   else if (cls.kind === 'url') badge.innerHTML = '<span class="peer-status-dim">→ direct (no tunnel)</span>';
-  // Names the vendor CLI the tunnel will shell out to, because "it needs the aws
-  // CLI on YOUR machine" is the misconfig this destination invites and a bare
-  // "→ ssm tunnel" would not warn anyone.
-  else if (cls.kind === 'ssm') badge.innerHTML = '<span class="peer-status-dim">→ AWS SSM tunnel (needs the aws CLI locally)</span>';
-  else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
+  else if (PEER_CLOUD_UI[cls.kind]) {
+    const ui = PEER_CLOUD_UI[cls.kind];
+    badge.innerHTML = `<span class="peer-status-dim">→ ${esc(ui.name)} tunnel (needs the ${esc(ui.cli)} CLI locally)</span>`;
+  } else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
 }
 
 // Per-peer remote port, read live from the row's port input. Returns NaN for a
@@ -4833,17 +4876,18 @@ async function peerTestAndSetUp(row, status) {
     renderPeerStatus(status, `<span class="peer-status-dim">Direct URL — nothing to install over ssh; Save and it connects.</span>`);
     return;
   }
-  if (dest.kind === 'ssm') {
+  if (PEER_CLOUD_UI[dest.kind]) {
     // Genuinely ssh-only, and SAID so rather than hidden (t30b's rule): probe
-    // and deploy both run a shell and copy files over ssh, which an SSM
-    // port-forward — a single forwarded TCP port — cannot carry. Naming what
-    // does still work keeps this a limit, not a dead end. The port is still
-    // validated first, so a bad one is reported here rather than at Save.
+    // and deploy both run a shell and copy files over ssh, which a port-forward
+    // — a single forwarded TCP port — cannot carry. Naming what does still work
+    // keeps this a limit, not a dead end. The port is still validated first, so
+    // a bad one is reported here rather than at Save.
+    const ui = PEER_CLOUD_UI[dest.kind];
     const vs = validatePeerRowInputs(row);
     if (!vs.ok) { renderPeerStatus(status, `<span class="peer-status-warn">${esc(vs.error)}</span>`); return; }
     renderPeerStatus(status,
-      `<span class="peer-status-dim">AWS SSM tunnel — Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span>` +
-      `<div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save — the tunnel connects automatically. Needs the <code>aws</code> CLI and the Session Manager plugin on THIS machine.</div>`);
+      `<span class="peer-status-dim">${esc(ui.name)} tunnel — Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span>` +
+      `<div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save — the tunnel connects automatically. Needs the <code>${esc(ui.cli)}</code> CLI on THIS machine.</div>`);
     return;
   }
   const sshHost = dest.sshHost;
@@ -5014,7 +5058,18 @@ function collectPeers() {
   for (const row of peersListBox.querySelectorAll('.peer-row')) {
     const destEl = row.querySelector('.peer-row-dest');
     if (destEl) destEl.classList.remove('invalid');
-    const dest = classifyPeerDest(peerRowDest(row));
+    let dest = classifyPeerDest(peerRowDest(row));
+    // An UNSHOWABLE cloud peer (az: no destination-field syntax) leaves the dest
+    // input blank, so classifyPeerDest says 'empty'. Blank-because-unshowable is
+    // NOT blank-because-deleted — without this, opening the dialog and pressing
+    // Save would silently delete every imported az peer, because its row would
+    // just be skipped. Rewritten as an 'unshowable' dest so it flows through the
+    // one save path below (port, folder and token handling included) instead of
+    // duplicating it.
+    const unshowable = (dest.kind === 'empty' && row._cloudExtra && !PEER_CLOUD_UI[row._cloudExtra.kind])
+      ? { kind: row._cloudExtra.kind, [row._cloudExtra.kind]: { ...row._cloudExtra.rest } }
+      : null;
+    if (unshowable) dest = unshowable;
     if (dest.kind === 'empty') continue;
     const label = row.querySelector('.peer-row-label').value.trim();
     // A malformed destination now errors inline (marks the input, keeps the
@@ -5032,12 +5087,24 @@ function collectPeers() {
       if (status) renderPeerStatus(status, `<span class="peer-status-warn">${esc(v.error)}</span>`);
       return { ok: false, error: v.error, row };
     }
-    const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url || (dest.ssm && dest.ssm.target) };
+    const cloudBlock = (PEER_CLOUD_UI[dest.kind] || unshowable) ? dest[dest.kind] : null;
+    const peer = {
+      id: row.dataset.peerId,
+      label: label || dest.sshHost || dest.url
+        || (PEER_CLOUD_UI[dest.kind] && cloudBlock && cloudBlock[PEER_CLOUD_UI[dest.kind].field])
+        || dest.kind,
+    };
     if (dest.kind === 'ssh') peer.sshHost = dest.sshHost;
     else if (dest.kind === 'url') peer.url = dest.url;
-    // Carry the settings-file-only region/profile back through the save (stashed
-    // at render time) so editing anything else in the dialog doesn't erase them.
-    else if (dest.kind === 'ssm') peer.ssm = { ...dest.ssm, ...(row._ssmExtra || {}) };
+    else if (cloudBlock) {
+      // Carry back the settings-file-only fields stashed at render time (ssm
+      // region/profile, kubectl namespace/context, gcloud zone/project) so
+      // editing anything else in the dialog doesn't erase them. Only when the
+      // KIND is unchanged: retyping the destination as a different cloud would
+      // otherwise graft the old kind's selectors onto the new block.
+      const carried = (row._cloudExtra && row._cloudExtra.kind === dest.kind) ? row._cloudExtra.rest : {};
+      peer[dest.kind] = { ...cloudBlock, ...carried };
+    }
     // Port + folder are settings-file-only overrides (like wirescopePort): carry
     // the row's validated values through the save. A folder equal to the default
     // pre-fill still round-trips harmlessly (main re-validates at deploy time).

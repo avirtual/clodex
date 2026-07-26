@@ -315,6 +315,53 @@ test('classifyPeerDest: a blank or malformed ssm target errors, never falls thro
   assert.match(r.error, /SSM target/i);
 });
 
+test('classifyPeerDest: k8s:TARGET keeps kubectl`s own slash spelling', () => {
+  assert.deepStrictEqual(classifyPeerDest('k8s:svc/clodex'),
+    { kind: 'kubectl', kubectl: { target: 'svc/clodex' } });
+  assert.deepStrictEqual(classifyPeerDest('k8s:pod/clodex-0'),
+    { kind: 'kubectl', kubectl: { target: 'pod/clodex-0' } });
+  // The contrast that matters: a slash means ECS to ssm (rejected, step 3) and
+  // resource/name to kubectl (required). Same character, opposite rules —
+  // pinned so a future "tidy up the slash handling" has to argue with it.
+  assert.strictEqual(classifyPeerDest('ssm:cluster/family').kind, 'error');
+  assert.strictEqual(classifyPeerDest('k8s:svc/clodex').kind, 'kubectl');
+});
+
+test('classifyPeerDest: gcp:INSTANCE takes a bare Compute instance name', () => {
+  assert.deepStrictEqual(classifyPeerDest('gcp:clodex-box'),
+    { kind: 'gcloud', gcloud: { instance: 'clodex-box' } });
+  // Not a full resource path: gcloud takes the bare name plus --zone/--project,
+  // which are settings-file-only here.
+  const r = classifyPeerDest('gcp:projects/p/zones/z/instances/vm');
+  assert.strictEqual(r.kind, 'error', 'a full resource path is not an instance name');
+  assert.match(r.error, /instance name/i);
+});
+
+test('classifyPeerDest: blank / malformed cloud targets error, never fall through to ssh', () => {
+  for (const d of ['k8s:', 'k8s:   ', 'gcp:', 'gcp:   ']) {
+    assert.strictEqual(classifyPeerDest(d).kind, 'error', `${d} must not classify as ssh`);
+  }
+  // Assert the KIND before matching the message: a missing guard makes `.error`
+  // undefined, and assert.match on undefined throws a TypeError — a crash, not
+  // a failure that names what went wrong.
+  const k = classifyPeerDest('k8s:has space');
+  assert.strictEqual(k.kind, 'error', 'a spacey kubectl target must not classify as a target');
+  assert.match(k.error, /kubectl target/i);
+  const g = classifyPeerDest('gcp:Bad_Name');
+  assert.strictEqual(g.kind, 'error', 'an invalid Compute instance name must not classify as an instance');
+  assert.match(g.error, /instance name/i);
+});
+
+test('classifyPeerDest: az has NO destination syntax — it is import-only (t32)', () => {
+  // Three required values, one a slash-bearing resource id: not typable in one
+  // field, and a composite string would be syntax learnable only from source.
+  // So `az:...` is NOT a cloud destination — it falls through to the generic
+  // rules, which is honest, because there is no az input to offer.
+  const r = classifyPeerDest('az:bastion/rg/target');
+  assert.strictEqual(r.kind, 'error');
+  assert.ok(!('az' in r), 'no az block is ever produced from typed text');
+});
+
 test('classifyPeerDest: empty / whitespace-only ⇒ empty', () => {
   assert.deepStrictEqual(classifyPeerDest(''), { kind: 'empty' });
   assert.deepStrictEqual(classifyPeerDest('   '), { kind: 'empty' });

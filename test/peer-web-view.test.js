@@ -153,6 +153,35 @@ test('an ssm peer gets the same ssh-only refusal, but the TRUE reason (t32)', ()
   assert.doesNotMatch(a.tip, /reached by URL/, 'and does not misdescribe it as a URL peer');
 });
 
+test('cloudTransportName names each transport, so no tip misdescribes a peer', () => {
+  const { cloudTransportName } = require('../renderer/lib/peer-web-view');
+  // Each kind checked non-null BEFORE matching: a kind missing from the table
+  // returns null, and assert.match(null, …) throws a TypeError — which reads as
+  // a broken test rather than as "this transport has no name".
+  for (const [tunnel, re, what] of [
+    [{ ssm: { target: 'i-0a' } }, /SSM/, 'ssm'],
+    [{ kubectl: { target: 'svc/x' } }, /kubectl/, 'kubectl'],
+    [{ gcloud: { instance: 'vm' } }, /IAP|GCP/, 'gcloud'],
+    [{ az: { bastion: 'b' } }, /Azure/, 'az'],
+  ]) {
+    const name = cloudTransportName(tunnel);
+    assert.ok(name, `${what} must have a name — an unnamed kind falls back to "URL" and misdescribes the peer`);
+    assert.match(name, re);
+  }
+  // ssh and url peers have no cloud transport — the caller falls back to 'URL',
+  // which is the true description for them and only for them.
+  assert.strictEqual(cloudTransportName({ sshHost: 'box' }), null);
+  assert.strictEqual(cloudTransportName(null), null);
+});
+
+test('a kubectl peer`s ssh-only tip names kubectl, not URL and not SSM', () => {
+  const a = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', kubectl: { target: 'svc/x' } } });
+  assert.equal(a.show, true);
+  assert.equal(a.enabled, false);
+  assert.match(a.tip, /kubectl/, 'the tip names kubectl, so the operator is not sent looking for a URL');
+  assert.doesNotMatch(a.tip, /reached by URL/);
+});
+
 test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
   assert.equal(isSshPeer({ sshHost: 'box' }), true);
   assert.equal(isSshPeer({ id: 'p1' }), false, 'a tunnel row with no ssh host is not ssh');

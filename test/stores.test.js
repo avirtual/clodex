@@ -1239,6 +1239,77 @@ test('uiSettings: an ssm peer never persists a tunnel argv (DATA-only rule)', ()
   } finally { cleanup(); }
 });
 
+test('uiSettings: kubectl and gcloud blocks round-trip every field (whitelist pin)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.uiSettings.set({
+      peers: [
+        { id: 'k', kubectl: { target: 'svc/clodex', namespace: 'prod', context: 'eks-1' } },
+        { id: 'g', gcloud: { instance: 'clodex-box', zone: 'us-central1-a', project: 'proj-1' } },
+      ],
+    });
+    const by = Object.fromEntries(stores.uiSettings.get().peers.map((p) => [p.id, p]));
+    // Named field by field: a deepStrictEqual alone would still pass if BOTH
+    // the write and this test forgot the same key.
+    assert.strictEqual(by.k.kubectl.target, 'svc/clodex');
+    assert.strictEqual(by.k.kubectl.namespace, 'prod', 'namespace survives the write');
+    assert.strictEqual(by.k.kubectl.context, 'eks-1', 'context survives the write');
+    assert.strictEqual(by.g.gcloud.instance, 'clodex-box');
+    assert.strictEqual(by.g.gcloud.zone, 'us-central1-a', 'zone survives the write');
+    assert.strictEqual(by.g.gcloud.project, 'proj-1', 'project survives the write');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: an az block round-trips — reachable ONLY here (no dest syntax)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // az has no prefix in the Peers dialog (three required values, one a
+    // slash-bearing resource id), so it arrives by import or a hand-edited
+    // settings file. The store accepts it now so step 4's import is purely an
+    // import mechanism — which makes this test its only reachable path today.
+    const target = '/subscriptions/abc/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1';
+    stores.uiSettings.set({ peers: [{ id: 'a', az: { bastion: 'bast-1', resourceGroup: 'rg', target } }] });
+    const p = stores.uiSettings.get().peers.find((x) => x.id === 'a');
+    assert.ok(p, 'an az peer with no url and no sshHost is admitted');
+    assert.strictEqual(p.az.bastion, 'bast-1');
+    assert.strictEqual(p.az.resourceGroup, 'rg');
+    assert.strictEqual(p.az.target, target, 'the full resource id survives, slashes and all');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: az needs ALL THREE fields — a partial block is dropped', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const next = stores.uiSettings.set({
+      peers: [
+        { id: 'nobastion', az: { resourceGroup: 'rg', target: '/subs/x' } },
+        { id: 'nogroup', az: { bastion: 'b', target: '/subs/x' } },
+        { id: 'notarget', az: { bastion: 'b', resourceGroup: 'rg' } },
+        { id: 'full', az: { bastion: 'b', resourceGroup: 'rg', target: '/subs/x' } },
+      ],
+    });
+    assert.deepStrictEqual(next.peers.map((p) => p.id), ['full'],
+      'a half-configured az block cannot dial, so it is not admitted');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: two cloud blocks on one peer drops BOTH (no independent winner)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // Downstream readers — tunnel, wiring, dialog — would each pick a winner on
+    // their own, which is how two halves of the app end up dialling different
+    // boxes. Dropping is worse for one record and far better for the system,
+    // and it matches this store's existing drop-junk stance.
+    const next = stores.uiSettings.set({
+      peers: [
+        { id: 'both', ssm: { target: 'i-0abc' }, kubectl: { target: 'svc/x' } },
+        { id: 'one', ssm: { target: 'i-0keep' } },
+      ],
+    });
+    assert.deepStrictEqual(next.peers.map((p) => p.id), ['one']);
+  } finally { cleanup(); }
+});
+
 test('the CLI keeps its per-kind validators PRIVATE — validateEntry is the only door', () => {
   // stores.js validates a peer's ssm block through validateEntry so the GUI and
   // the CLI cannot drift into two ideas of a valid transport. Widening this

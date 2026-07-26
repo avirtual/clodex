@@ -247,6 +247,8 @@ function classifyDeployFolder(folder) {
 //   { kind: 'ssh',   sshHost }  — user@host / bare host / IP / ssh-config alias
 //   { kind: 'url',   url }      — a validated http(s):// direct endpoint
 //   { kind: 'ssm',   ssm }      — `ssm:TARGET`, an AWS SSM port-forward (t32)
+//   { kind: 'kubectl', kubectl }— `k8s:POD_OR_SVC`, a kubectl port-forward
+//   { kind: 'gcloud', gcloud }  — `gcp:INSTANCE`, a GCP IAP tunnel
 //   { kind: 'empty' }           — blank (skip the row)
 //   { kind: 'error', error }    — a targeted message for the common mistakes
 // Pure + testable; the settings schema grows by ADDITION only (ssh → peer.sshHost,
@@ -273,6 +275,29 @@ function classifyPeerDest(raw) {
       return { kind: 'error', error: "That doesn't look like an SSM target. Example: ssm:i-0abc123def456789" };
     }
     return { kind: 'ssm', ssm: { target } };
+  }
+  // `k8s:POD_OR_SVC` — kubectl port-forward. The target keeps kubectl's own
+  // `svc/name` / `pod/name` spelling verbatim (a slash is EXPECTED here, unlike
+  // ssm's), so what the operator types is what kubectl receives. namespace and
+  // context have no syntax: they are settings-file-only, like ssm's region.
+  if (/^k8s:/i.test(s)) {
+    const target = s.slice(4).trim();
+    if (!target) return { kind: 'error', error: 'k8s: needs a pod or service — e.g. k8s:svc/clodex or k8s:pod/clodex-0.' };
+    if (!/^[a-zA-Z0-9._\/-]{1,253}$/.test(target)) {
+      return { kind: 'error', error: "That doesn't look like a kubectl target. Example: k8s:svc/clodex" };
+    }
+    return { kind: 'kubectl', kubectl: { target } };
+  }
+  // `gcp:INSTANCE` — a GCP IAP tunnel to a Compute instance by NAME (not a
+  // full resource path; gcloud takes the bare name plus --zone/--project, which
+  // are settings-file-only here). The charset is GCE's own instance-name rule.
+  if (/^gcp:/i.test(s)) {
+    const instance = s.slice(4).trim();
+    if (!instance) return { kind: 'error', error: 'gcp: needs an instance name — e.g. gcp:clodex-box (add zone/project in settings if needed).' };
+    if (!/^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(instance)) {
+      return { kind: 'error', error: "That doesn't look like a Compute instance name (lowercase letters, digits and hyphens). Example: gcp:clodex-box" };
+    }
+    return { kind: 'gcloud', gcloud: { instance } };
   }
   // An http(s):// prefix is an explicit "direct URL" — validate the shape.
   if (/^https?:\/\//i.test(s)) {

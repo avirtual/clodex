@@ -230,47 +230,92 @@ function sanitizePlugins(raw) {
 // token (trimmed, cap 256); an explicit `''` CLEARS it; a dropped row drops its
 // token with the row. On a fresh disk load `prior` is absent — the persisted
 // string simply passes through the same set-on-string branch.
-// A peer's AWS SSM transport block — the first typed cloud kind to reach the
-// GUI registry (t32 step 1). Peers keep their OWN registry and their own record
-// shape; what is shared with the CLI is the VALIDATOR, entered through
-// `validateEntry` so the private per-kind checks stay private.
+// Typed cloud transports for peers (t32). Peers keep their OWN registry and
+// their own record shape; what is shared with the CLI is the VALIDATOR and the
+// argv builders, so the two sides cannot drift.
 //
-// DATA ONLY. The five typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud/az) are
-// declarative descriptions of a destination — safe to persist, safe to share.
-// A raw `tunnel` argv is CODE and must NEVER become a peer-record field: this
-// store is written from the renderer, so a persisted argv would be a
-// GUI-editable command line the app later executes.
+// CRITICAL — WHITELIST, the same hazard sanitizeSandbox documents below: every
+// sub-key MUST appear in the reconstruction or it is silently dropped on EVERY
+// write (a value the operator typed simply evaporates on the next save).
+// `test/stores.test.js` round-trips a full block of each kind through
+// set()/get() so a missing field fails loudly instead of quietly.
 //
-// CRITICAL — WHITELIST, same hazard sanitizeSandbox documents below: every
-// ssm sub-key MUST appear in the reconstruction or it is silently dropped on
-// EVERY write (a value the operator typed simply evaporates on the next save).
-// `test/stores.test.js` round-trips a full block through set()/get() so a
-// missing line fails loudly instead of quietly.
+// THE FIELD LIST, and the only one. Each typed cloud kind names its required
+// and optional fields; the sanitizer below rebuilds from this table and nothing
+// else. Making the whitelist a DECLARATION rather than a hand-written
+// reconstruction per kind is the direct answer to the trigger this ticket named
+// twice: a layer that rebuilds a record from named fields silently drops what it
+// doesn't name, so the names live in one checkable place. Adding a field to a
+// kind means adding it here — there is no second site to forget.
 //
-// `ecs` is deliberately NOT accepted yet (t32 step 3): resolving an ecs spec to
-// a concrete target needs two awaited `aws` calls, and peer-tunnel's
-// `_spawnTunnel` is synchronous. A block carrying `ecs` is rejected WHOLE rather
-// than half-accepted — an ssm entry this layer admits is one the tunnel can dial.
-function sanitizePeerSsm(raw) {
+// Field names are the CLI's, deliberately: these blocks are handed to
+// cli/src/transport.js's argv builders verbatim, so a rename here would be a
+// silent behaviour change there. `optional` fields are OMITTED when unset (never
+// null) because every builder tests presence to decide whether to emit a flag.
+//
+// `reject` marks a field this side cannot dial yet: present ⇒ the whole block is
+// refused rather than half-accepted, so anything the store admits is something
+// the tunnel can actually open. (ssm.ecs needs two awaited `aws` reads and
+// _spawnTunnel is synchronous — t32 step 3.)
+//
+// `az` IS accepted here but has NO destination-field syntax in the Peers dialog,
+// so today it can only arrive by import (t32 step 4) or from a hand-edited
+// settings file. That is deliberate, not an oversight: az needs three required
+// values and its `target` is a full slash-bearing Azure resource id
+// (/subscriptions/…/virtualMachines/x). Nobody types one of those twice — an az
+// destination arrives as a prepared context from whoever set up the
+// subscription. Accepting it at the store now means the import path is purely an
+// import, with no second pass through this layer. If az ever DOES want typing,
+// three revealed inputs on the row is the answer; a composite string crammed
+// into the one destination field is not, and that is settled, not open.
+const PEER_CLOUD_KINDS = {
+  ssm:     { required: ['target'],   optional: ['region', 'profile'], reject: ['ecs'] },
+  kubectl: { required: ['target'],   optional: ['namespace', 'context'] },
+  gcloud:  { required: ['instance'], optional: ['zone', 'project'] },
+  az:      { required: ['bastion', 'resourceGroup', 'target'] },
+};
+
+// One typed cloud transport block for a peer, rebuilt field by field from the
+// table above. Returns the clean block, or null (drop it) for anything
+// malformed, incomplete, or not-yet-dialable.
+//
+// DATA ONLY. The typed kinds are declarative descriptions of a destination —
+// safe to persist, safe to share. A raw `tunnel` argv is CODE and must NEVER
+// become a peer-record field: this store is written from the renderer, so a
+// persisted argv would be a GUI-editable command line the app later executes.
+function sanitizePeerCloud(kind, raw) {
+  const spec = PEER_CLOUD_KINDS[kind];
+  if (!spec) return null;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (raw.ecs != null && String(raw.ecs) !== '') return null;   // step 3, not this pass
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 256) : null);
-  const target = str(raw.target);
-  if (!target) return null;
-  const region = str(raw.region);
-  const profile = str(raw.profile);
-  const ssm = {
-    target,
-    // Optional AWS selectors — omitted (not null) when unset, because ssmArgv
-    // tests presence to decide whether to emit --region / --profile at all.
-    ...(region ? { region } : {}),
-    ...(profile ? { profile } : {}),
-  };
-  // Final say goes to the CLI's validator, through its public door. Anything it
-  // rejects is not persisted; a CliError here means the block was malformed, and
-  // dropping it is the same stance the rest of this store takes on junk.
-  try { validateEntry({ ssm }); } catch { return null; }
-  return ssm;
+  for (const f of spec.reject || []) {
+    if (raw[f] != null && String(raw[f]) !== '') return null;
+  }
+  const out = {};
+  for (const f of spec.required) {
+    const v = str(raw[f]);
+    if (!v) return null;
+    out[f] = v;
+  }
+  for (const f of spec.optional || []) {
+    const v = str(raw[f]);
+    if (v) out[f] = v;      // absent, not null — the builders test presence
+  }
+  // Final say goes to the CLI's validator, through its PUBLIC door. Reused
+  // rather than re-implemented so a peer's typed transport and a CLI context can
+  // never drift into two different ideas of a valid block; the per-kind checks
+  // (validateSsm et al.) stay private. A CliError means the block was malformed,
+  // and dropping it is the same stance the rest of this store takes on junk.
+  try { validateEntry({ [kind]: out }); } catch { return null; }
+  return out;
+}
+
+// The human-facing name of a cloud destination, for a peer with no label of its
+// own. Each kind's FIRST required field is the identifying one (ssm/kubectl
+// target, gcloud instance), which is exactly what the table already knows.
+function cloudLabel(cloud) {
+  if (!cloud) return null;
+  return cloud.block[PEER_CLOUD_KINDS[cloud.kind].required[0]] || null;
 }
 
 function sanitizePeers(raw, prior) {
@@ -284,11 +329,19 @@ function sanitizePeers(raw, prior) {
     const url = typeof p.url === 'string' && /^https?:\/\//.test(p.url) ? p.url : null;
     // ssh host or user@host — same charset ssh_config aliases allow.
     const sshHost = typeof p.sshHost === 'string' && /^[a-zA-Z0-9._@-]{1,128}$/.test(p.sshHost) ? p.sshHost : null;
-    // Typed cloud transport (t32). Like sshHost it makes a peer ADMISSIBLE with
-    // no url of its own — the url comes from whatever local port its managed
-    // tunnel lands on.
-    const ssm = sanitizePeerSsm(p.ssm);
-    if (!url && !sshHost && !ssm) continue;
+    // Typed cloud transports (t32). Like sshHost, one makes a peer ADMISSIBLE
+    // with no url of its own — the url comes from whatever local port its
+    // managed tunnel lands on. At most ONE may survive: two would leave every
+    // downstream reader (tunnel, wiring, dialog) picking a winner independently,
+    // which is how two halves of the app end up dialling different boxes.
+    let cloud = null;
+    for (const kind of Object.keys(PEER_CLOUD_KINDS)) {
+      const block = sanitizePeerCloud(kind, p[kind]);
+      if (!block) continue;
+      if (cloud) { cloud = null; break; }   // conflicting transports → drop both
+      cloud = { kind, block };
+    }
+    if (!url && !sshHost && !cloud) continue;
     // Optional per-peer deploy folder override (the clone dir on the box). Kept
     // as the raw operator string (~/… or /abs) — validated/rendered at deploy
     // time by classifyDeployFolder, not here; a blank/invalid value just falls
@@ -297,12 +350,12 @@ function sanitizePeers(raw, prior) {
       ? p.deployFolder.trim().slice(0, 256) : null;
     const entry = {
       id: p.id,
-      label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url || ssm.target),
+      label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url || cloudLabel(cloud)),
       url, sshHost,
       // Presence-encoded like disabled/relayAllowed: the key is ABSENT for an
       // ssh/url peer rather than written as null, so "has a typed transport" is
-      // a plain `p.ssm` test everywhere downstream.
-      ...(ssm ? { ssm } : {}),
+      // a plain `p.ssm` / `p.kubectl` / `p.gcloud` test everywhere downstream.
+      ...(cloud ? { [cloud.kind]: cloud.block } : {}),
       remotePort: Number.isInteger(p.remotePort) ? p.remotePort : 7900,
       deployFolder,
       // Pause flag: preserved STRICTLY. setDisabled's enable path deletes the

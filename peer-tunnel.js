@@ -32,7 +32,31 @@ const { spawn } = require('child_process');
 // The CLI's argv builders, reused verbatim. cli/ ships in the DMG (build.files,
 // t32 step 0), so this require resolves in a packaged app as well as a checkout;
 // the leaf direction is unchanged — cli/ never requires an app file.
-const { ssmArgv, substitutePort } = require('./cli/src/transport');
+const { ssmArgv, kubectlArgv, gcloudArgv, azArgv, substitutePort } = require('./cli/src/transport');
+
+// Typed cloud transports, one row per kind:
+//   argv     — the builder that turns the block into a {port}-bearing argv
+//   fields   — every field that identifies the DESTINATION. A change to any of
+//              them dials a different box and must restart the tunnel.
+//   required — the subset without which there is nothing to dial. A block
+//              missing one gets NO tunnel, rather than a half-built argv the
+//              vendor CLI would reject at connect time with a worse message.
+//
+// A table rather than a switch, so adding a kind is one row instead of four
+// edits in three files — and so `sameCloud` cannot fall out of step with the
+// builders. stores.js admits at most one cloud block per peer, so in practice
+// exactly one of these keys is present on a record.
+const CLOUD_KINDS = {
+  ssm:     { argv: ssmArgv,     fields: ['target', 'region', 'profile'],     required: ['target'] },
+  kubectl: { argv: kubectlArgv, fields: ['target', 'namespace', 'context'],  required: ['target'] },
+  gcloud:  { argv: gcloudArgv,  fields: ['instance', 'zone', 'project'],     required: ['instance'] },
+  // az has no destination-field syntax in the Peers dialog (see stores.js's
+  // PEER_CLOUD_KINDS), so today it is reachable only by import or a hand-edited
+  // settings file — the supervisor accepts it so step 4's import needs no
+  // second pass here. All three fields are required: the bastion is the tunnel
+  // endpoint, the target the VM behind it, and neither is optional to azArgv.
+  az:      { argv: azArgv,      fields: ['bastion', 'resourceGroup', 'target'], required: ['bastion', 'resourceGroup', 'target'] },
+};
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 60000;
@@ -49,13 +73,15 @@ const SSH_BASE_ARGS = [
   '-o', 'ConnectTimeout=10',
 ];
 
-// Destination equality for an ssm block — field-by-field, because a changed
-// region or profile dials a DIFFERENT box and must restart the tunnel, not be
-// waved through by an identity comparison of two freshly-built objects.
-function sameSsm(a, b) {
+// Destination equality for a cloud transport — kind first, then field by field
+// off the table. Field-by-field because a changed region/namespace/zone dials a
+// DIFFERENT box: an identity comparison of two freshly-built objects would
+// restart on every settings write, and a first-field-only comparison would never
+// restart on a selector change. Both are wrong in opposite directions.
+function sameCloud(a, b) {
   if (!a || !b) return !a && !b;
-  return a.target === b.target && (a.region || null) === (b.region || null)
-    && (a.profile || null) === (b.profile || null);
+  if (a.kind !== b.kind) return false;
+  return CLOUD_KINDS[a.kind].fields.every((f) => (a.block[f] || null) === (b.block[f] || null));
 }
 
 function pickFreePort(cb) {
@@ -68,10 +94,17 @@ function pickFreePort(cb) {
 }
 
 class Tunnel {
-  constructor({ id, sshHost, ssm, remotePort, spawnFn, onState }) {
+  // Options carry a cloud transport under its OWN kind key (`ssm: {…}`,
+  // `kubectl: {…}`, `gcloud: {…}`) — the same shape the peer record uses, so a
+  // settings entry can be handed straight in with no translation step to get
+  // wrong. Normalized internally to `this.cloud = { kind, block }`.
+  constructor({ id, sshHost, remotePort, spawnFn, onState, ...opts }) {
     this.id = id;
     this.sshHost = sshHost || null;
-    this.ssm = ssm || null;
+    this.cloud = null;
+    for (const kind of Object.keys(CLOUD_KINDS)) {
+      if (opts[kind]) { this.cloud = { kind, block: { ...opts[kind] } }; break; }
+    }
     this.remotePort = remotePort || 7900;
     this._spawn = spawnFn || spawn;
     this._onState = onState || (() => {});
@@ -101,8 +134,10 @@ class Tunnel {
   status() {
     return {
       id: this.id, sshHost: this.sshHost,
-      // The dialled destination, for the UI — the DATA, never an argv.
-      ...(this.ssm ? { ssm: { ...this.ssm } } : {}),
+      // The dialled destination, under its kind key, for the UI — the DATA,
+      // never an argv. The renderer reads this row (it never sees the peer
+      // record), so the kind is how it can say WHICH transport a peer uses.
+      ...(this.cloud ? { [this.cloud.kind]: { ...this.cloud.block } } : {}),
       remotePort: this.remotePort,
       state: this.state, localPort: this.localPort, error: this.lastError,
     };
@@ -115,20 +150,24 @@ class Tunnel {
     return [...SSH_BASE_ARGS, '-L', `${localPort}:127.0.0.1:${this.remotePort}`, this.sshHost];
   }
 
-  // The full argv INCLUDING the command word, per transport. Synchronous by
-  // construction: both arms are pure string assembly. `ssm.ecs` would break that
-  // (it needs two awaited `aws` reads to learn its target), which is exactly why
-  // this pass admits `ssm.target` only — see sanitizePeerSsm in stores.js.
+  // The full argv INCLUDING the command word, per transport. SYNCHRONOUS by
+  // construction: every arm is pure string assembly. `ssm.ecs` would break that
+  // (two awaited `aws` reads to learn its target), which is exactly why the
+  // store admits no `ecs` block — see PEER_CLOUD_KINDS in stores.js.
   argv(localPort) {
-    if (this.ssm) return substitutePort(ssmArgv(this.ssm, this.remotePort), localPort);
+    if (this.cloud) {
+      const build = CLOUD_KINDS[this.cloud.kind].argv;
+      return substitutePort(build(this.cloud.block, this.remotePort), localPort);
+    }
     return ['ssh', ...this.args(localPort)];
   }
 
-  // aws forks a session-manager-plugin helper that a plain child-kill orphans,
-  // so an ssm child leads its own process group and is killed by group (the same
-  // reasoning, and the same > 0 pid guard, as cli/src/transport.js's close()).
-  // ssh needs none of that and keeps its original non-detached spawn exactly.
-  _detached() { return !!this.ssm; }
+  // Every vendor CLI forks helpers a plain child-kill would orphan (aws its
+  // session-manager-plugin, kubectl and gcloud their own), so a cloud child
+  // leads its own process group and is killed by group — the same reasoning,
+  // and the same > 0 pid guard, as cli/src/transport.js's close(). ssh needs
+  // none of that and keeps its original non-detached spawn exactly.
+  _detached() { return !!this.cloud; }
 
   _killChild() {
     const child = this._child;
@@ -157,7 +196,8 @@ class Tunnel {
       if (!port) { this.lastError = 'no free local port'; return this._scheduleRestart(); }
       this.localPort = port;
       let child;
-      let cmdName = this.ssm ? 'aws' : 'ssh';   // named in errors even if argv() throws
+      // Named in errors even if argv() itself throws.
+      let cmdName = this.cloud ? this.cloud.kind : 'ssh';
       try {
         const [cmd, ...rest] = this.argv(port);
         cmdName = cmd;
@@ -220,37 +260,48 @@ class TunnelManager {
   }
 
   // peers: full settings entries; only those with a DIALABLE transport (sshHost
-  // or a typed cloud kind) get tunnels. A change to the destination — host, ssm
-  // target/region/profile, or the remote port — restarts that tunnel.
+  // or a typed cloud kind) get tunnels. A change to the destination — host, any
+  // field of a cloud block, or the remote port — restarts that tunnel.
   sync(peers) {
     const wanted = new Map();
     for (const p of Array.isArray(peers) ? peers : []) {
       if (!p || !p.id) continue;
       const remotePort = Number.isInteger(p.remotePort) ? p.remotePort : 7900;
       if (p.sshHost) {
-        wanted.set(String(p.id), { sshHost: String(p.sshHost), ssm: null, remotePort });
-      } else if (p.ssm && p.ssm.target) {
-        // Copy the fields we dial with, so a later mutation of the settings
-        // object can't silently change a running tunnel's identity.
-        const { target, region, profile } = p.ssm;
-        wanted.set(String(p.id), {
-          sshHost: null,
-          ssm: { target: String(target), ...(region ? { region: String(region) } : {}), ...(profile ? { profile: String(profile) } : {}) },
-          remotePort,
-        });
+        wanted.set(String(p.id), { sshHost: String(p.sshHost), cloud: null, remotePort });
+        continue;
+      }
+      for (const [kind, spec] of Object.entries(CLOUD_KINDS)) {
+        const raw = p[kind];
+        // Every required field must be present; without them there is nothing to
+        // dial, so the peer gets no tunnel rather than a malformed argv that
+        // fails later with a vendor CLI's own confusing message.
+        if (!raw || !spec.required.every((f) => raw[f])) continue;
+        // Copy only the fields we dial with, stringified — so a later mutation
+        // of the settings object can't silently change a running tunnel's
+        // identity, and an unexpected key can't reach the argv builder.
+        const block = {};
+        for (const f of spec.fields) if (raw[f]) block[f] = String(raw[f]);
+        wanted.set(String(p.id), { sshHost: null, cloud: { kind, block }, remotePort });
+        break;
       }
     }
     for (const [id, tun] of this._tunnels) {
       const w = wanted.get(id);
       if (!w || w.sshHost !== tun.sshHost || w.remotePort !== tun.remotePort
-          || !sameSsm(w.ssm, tun.ssm)) {
+          || !sameCloud(w.cloud, tun.cloud)) {
         tun.stop();
         this._tunnels.delete(id);
       }
     }
     for (const [id, w] of wanted) {
       if (!this._tunnels.has(id)) {
-        const tun = new Tunnel({ id, ...w, spawnFn: this._spawnFn, onState: this._onState });
+        // Hand the block back under its kind key — the constructor's shape.
+        const { cloud, ...rest } = w;
+        const tun = new Tunnel({
+          id, ...rest, ...(cloud ? { [cloud.kind]: cloud.block } : {}),
+          spawnFn: this._spawnFn, onState: this._onState,
+        });
         this._tunnels.set(id, tun);
         tun.start();
       }
@@ -270,4 +321,17 @@ class TunnelManager {
   }
 }
 
-module.exports = { TunnelManager, Tunnel };
+// Does this peer record name a typed cloud transport this supervisor can dial?
+// Exported so callers ask the module that OWNS the kind list rather than each
+// keeping its own `p.ssm || p.kubectl || …` chain — three such chains would be
+// three places to forget a kind, and forgetting one reads as a peer that
+// silently never connects.
+function hasCloudTransport(peer) {
+  if (!peer) return false;
+  return Object.entries(CLOUD_KINDS).some(([kind, spec]) => {
+    const raw = peer[kind];
+    return !!(raw && spec.required.every((f) => raw[f]));
+  });
+}
+
+module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS };

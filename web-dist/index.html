@@ -22860,6 +22860,22 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           }
           return { kind: "ssm", ssm: { target } };
         }
+        if (/^k8s:/i.test(s)) {
+          const target = s.slice(4).trim();
+          if (!target) return { kind: "error", error: "k8s: needs a pod or service \u2014 e.g. k8s:svc/clodex or k8s:pod/clodex-0." };
+          if (!/^[a-zA-Z0-9._\/-]{1,253}$/.test(target)) {
+            return { kind: "error", error: "That doesn't look like a kubectl target. Example: k8s:svc/clodex" };
+          }
+          return { kind: "kubectl", kubectl: { target } };
+        }
+        if (/^gcp:/i.test(s)) {
+          const instance = s.slice(4).trim();
+          if (!instance) return { kind: "error", error: "gcp: needs an instance name \u2014 e.g. gcp:clodex-box (add zone/project in settings if needed)." };
+          if (!/^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(instance)) {
+            return { kind: "error", error: "That doesn't look like a Compute instance name (lowercase letters, digits and hyphens). Example: gcp:clodex-box" };
+          }
+          return { kind: "gcloud", gcloud: { instance } };
+        }
         if (/^https?:\/\//i.test(s)) {
           try {
             new URL(s);
@@ -22933,6 +22949,19 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       function isSshPeer(tunnel) {
         return !!(tunnel && tunnel.sshHost);
       }
+      var CLOUD_TRANSPORT_NAMES = {
+        ssm: "an AWS SSM tunnel",
+        kubectl: "a kubectl port-forward",
+        gcloud: "a GCP IAP tunnel",
+        az: "an Azure Bastion tunnel"
+      };
+      function cloudTransportName(tunnel) {
+        if (!tunnel) return null;
+        for (const [kind, name] of Object.entries(CLOUD_TRANSPORT_NAMES)) {
+          if (tunnel[kind]) return name;
+        }
+        return null;
+      }
       function tunnelPhase(webTunnel) {
         if (!webTunnel) return "closed";
         if (webTunnel.state === "up") return "open";
@@ -22950,7 +22979,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
         if (!ssh && phase === "closed") {
-          const how = tunnel && tunnel.ssm ? "an AWS SSM tunnel" : "URL";
+          const how = cloudTransportName(tunnel) || "URL";
           return {
             show: true,
             enabled: false,
@@ -23005,7 +23034,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           tip: tokenGated ? `Open ${label}'s web UI over ssh \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI over ssh`
         };
       }
-      module.exports = { webViewAffordance, tunnelPhase, isSshPeer };
+      module.exports = { webViewAffordance, tunnelPhase, isSshPeer, cloudTransportName };
     }
   });
 
@@ -28396,11 +28425,12 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         const liveSrc = peer.id && peerStatuses.get(peer.id) && peerStatuses.get(peer.id).online ? peerStatuses.get(peer.id).srcDir || "" : "";
         const folderReported = !!(liveSrc && typeof liveSrc === "string" && liveSrc.trim());
         const folderVal = folderReported ? liveSrc.trim() : typeof peer.deployFolder === "string" && peer.deployFolder ? peer.deployFolder : "~/wb-wrap-ui";
-        const destVal = peer.sshHost || (peer.ssm && peer.ssm.target ? `ssm:${peer.ssm.target}` : "") || peer.url || "";
-        row._ssmExtra = peer.ssm && typeof peer.ssm === "object" ? { ...peer.ssm.region ? { region: peer.ssm.region } : {}, ...peer.ssm.profile ? { profile: peer.ssm.profile } : {} } : null;
+        const cloud = peerCloudDest(peer);
+        const destVal = peer.sshHost || (cloud ? cloud.text : "") || peer.url || "";
+        row._cloudExtra = cloud ? { kind: cloud.kind, rest: cloud.rest } : null;
         row.innerHTML = `
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || "")}">
-    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias \u2014 http://\u2026 for direct \u2014 ssm:TARGET for AWS" value="${esc(destVal)}">
+    <input type="text" class="peer-row-dest" placeholder="user@host / http://\u2026 / ssm:TARGET / k8s:svc/name / gcp:INSTANCE" value="${esc(destVal)}">
     <button type="button" class="secondary peer-row-test" title="Test the ssh host and check for Clodex; offer to install if absent">Test &amp; Set Up</button>
     <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>
     <div class="peer-row-break"></div>
@@ -28461,6 +28491,27 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         const el = row.querySelector(".peer-row-dest");
         return el ? el.value.trim() : "";
       }
+      var PEER_CLOUD_UI = {
+        ssm: { name: "AWS SSM", cli: "aws", field: "target", prefix: "ssm:" },
+        kubectl: { name: "kubectl", cli: "kubectl", field: "target", prefix: "k8s:" },
+        gcloud: { name: "GCP IAP", cli: "gcloud", field: "instance", prefix: "gcp:" }
+      };
+      function peerCloudDest(peer) {
+        for (const kind of ["ssm", "kubectl", "gcloud", "az"]) {
+          const block = peer && peer[kind];
+          if (!block || typeof block !== "object") continue;
+          const ui = PEER_CLOUD_UI[kind];
+          const shown = ui ? ui.field : null;
+          const rest = {};
+          for (const [k, v] of Object.entries(block)) if (k !== shown && v) rest[k] = v;
+          return {
+            kind,
+            rest,
+            text: ui && block[ui.field] ? `${ui.prefix}${block[ui.field]}` : ""
+          };
+        }
+        return null;
+      }
       function updatePeerDestBadge(row) {
         const badge = row.querySelector(".peer-row-dest-badge");
         if (!badge) return;
@@ -28473,8 +28524,10 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         badge.className = "peer-row-dest-badge";
         if (cls.kind === "ssh") badge.innerHTML = '<span class="peer-status-dim">\u2192 ssh tunnel</span>';
         else if (cls.kind === "url") badge.innerHTML = '<span class="peer-status-dim">\u2192 direct (no tunnel)</span>';
-        else if (cls.kind === "ssm") badge.innerHTML = '<span class="peer-status-dim">\u2192 AWS SSM tunnel (needs the aws CLI locally)</span>';
-        else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
+        else if (PEER_CLOUD_UI[cls.kind]) {
+          const ui = PEER_CLOUD_UI[cls.kind];
+          badge.innerHTML = `<span class="peer-status-dim">\u2192 ${esc(ui.name)} tunnel (needs the ${esc(ui.cli)} CLI locally)</span>`;
+        } else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
       }
       function peerRowPort(row) {
         const el = row.querySelector(".peer-row-port");
@@ -28516,7 +28569,8 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           renderPeerStatus(status, `<span class="peer-status-dim">Direct URL \u2014 nothing to install over ssh; Save and it connects.</span>`);
           return;
         }
-        if (dest.kind === "ssm") {
+        if (PEER_CLOUD_UI[dest.kind]) {
+          const ui = PEER_CLOUD_UI[dest.kind];
           const vs = validatePeerRowInputs(row);
           if (!vs.ok) {
             renderPeerStatus(status, `<span class="peer-status-warn">${esc(vs.error)}</span>`);
@@ -28524,7 +28578,7 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           }
           renderPeerStatus(
             status,
-            `<span class="peer-status-dim">AWS SSM tunnel \u2014 Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span><div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save \u2014 the tunnel connects automatically. Needs the <code>aws</code> CLI and the Session Manager plugin on THIS machine.</div>`
+            `<span class="peer-status-dim">${esc(ui.name)} tunnel \u2014 Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span><div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save \u2014 the tunnel connects automatically. Needs the <code>${esc(ui.cli)}</code> CLI on THIS machine.</div>`
           );
           return;
         }
@@ -28700,7 +28754,9 @@ ${res.stderr}` : "");
         for (const row of peersListBox.querySelectorAll(".peer-row")) {
           const destEl = row.querySelector(".peer-row-dest");
           if (destEl) destEl.classList.remove("invalid");
-          const dest = classifyPeerDest(peerRowDest(row));
+          let dest = classifyPeerDest(peerRowDest(row));
+          const unshowable = dest.kind === "empty" && row._cloudExtra && !PEER_CLOUD_UI[row._cloudExtra.kind] ? { kind: row._cloudExtra.kind, [row._cloudExtra.kind]: { ...row._cloudExtra.rest } } : null;
+          if (unshowable) dest = unshowable;
           if (dest.kind === "empty") continue;
           const label = row.querySelector(".peer-row-label").value.trim();
           if (dest.kind === "error") {
@@ -28715,10 +28771,17 @@ ${res.stderr}` : "");
             if (status) renderPeerStatus(status, `<span class="peer-status-warn">${esc(v.error)}</span>`);
             return { ok: false, error: v.error, row };
           }
-          const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url || dest.ssm && dest.ssm.target };
+          const cloudBlock = PEER_CLOUD_UI[dest.kind] || unshowable ? dest[dest.kind] : null;
+          const peer = {
+            id: row.dataset.peerId,
+            label: label || dest.sshHost || dest.url || PEER_CLOUD_UI[dest.kind] && cloudBlock && cloudBlock[PEER_CLOUD_UI[dest.kind].field] || dest.kind
+          };
           if (dest.kind === "ssh") peer.sshHost = dest.sshHost;
           else if (dest.kind === "url") peer.url = dest.url;
-          else if (dest.kind === "ssm") peer.ssm = { ...dest.ssm, ...row._ssmExtra || {} };
+          else if (cloudBlock) {
+            const carried = row._cloudExtra && row._cloudExtra.kind === dest.kind ? row._cloudExtra.rest : {};
+            peer[dest.kind] = { ...cloudBlock, ...carried };
+          }
           peer.remotePort = v.port;
           if (v.folder) peer.deployFolder = v.folder;
           const tokenInput = row.querySelector(".peer-row-token");
