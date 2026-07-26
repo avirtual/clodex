@@ -28,11 +28,15 @@
 'use strict';
 
 const net = require('net');
-const { spawn } = require('child_process');
 // The CLI's argv builders, reused verbatim. cli/ ships in the DMG (build.files,
 // t32 step 0), so this require resolves in a packaged app as well as a checkout;
 // the leaf direction is unchanged — cli/ never requires an app file.
 const { ssmArgv, kubectlArgv, gcloudArgv, azArgv, substitutePort } = require('./cli/src/transport');
+// The shared dial (t42/L1): spawn, stderr accumulation, ENOENT classification and
+// the process-group kill, which this module, web-tunnel.js and openTransport each
+// used to carry their own copy of. Supervision — backoff, the stable check, what
+// `up` means — stays HERE; the dial knows nothing about any of it.
+const { spawnDial, killDial, sshTunnelArgv, STDERR_TAIL_BYTES } = require('./cli/src/dial');
 
 // Typed cloud transports, one row per kind:
 //   argv     — the builder that turns the block into a {port}-bearing argv
@@ -62,16 +66,6 @@ const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 60000;
 // A tunnel that survived this long was genuinely up — reset backoff.
 const STABLE_MS = 30000;
-
-const SSH_BASE_ARGS = [
-  '-N',
-  '-o', 'BatchMode=yes',
-  '-o', 'ExitOnForwardFailure=yes',
-  '-o', 'StrictHostKeyChecking=accept-new',
-  '-o', 'ServerAliveInterval=15',
-  '-o', 'ServerAliveCountMax=2',
-  '-o', 'ConnectTimeout=10',
-];
 
 // Destination equality for a cloud transport — kind first, then field by field
 // off the table. Field-by-field because a changed region/namespace/zone dials a
@@ -106,7 +100,9 @@ class Tunnel {
       if (opts[kind]) { this.cloud = { kind, block: { ...opts[kind] } }; break; }
     }
     this.remotePort = remotePort || 7900;
-    this._spawn = spawnFn || spawn;
+    // null when not injected — spawnDial falls back to child_process.spawn, so
+    // this module no longer requires child_process at all.
+    this._spawn = spawnFn || null;
     this._onState = onState || (() => {});
     this.localPort = null;
     this.state = 'down';             // 'up' | 'down'
@@ -146,8 +142,10 @@ class Tunnel {
   url() { return this.state === 'up' && this.localPort ? `http://127.0.0.1:${this.localPort}` : null; }
 
   // ssh's argv TAIL (no leading 'ssh'), kept as-is for the original call shape.
+  // The bytes come from the shared dial's sshTunnelArgv — one place decides what
+  // a supervised `ssh -N -L` looks like, for this module and web-tunnel.js both.
   args(localPort) {
-    return [...SSH_BASE_ARGS, '-L', `${localPort}:127.0.0.1:${this.remotePort}`, this.sshHost];
+    return sshTunnelArgv(this.sshHost, this.remotePort, localPort).slice(1);
   }
 
   // The full argv INCLUDING the command word, per transport. SYNCHRONOUS by
@@ -173,14 +171,10 @@ class Tunnel {
     const child = this._child;
     if (!child) return;
     this._child = null;
-    try {
-      if (this._detached() && child.pid > 0) {
-        try { process.kill(-child.pid, 'SIGTERM'); }
-        catch { try { child.kill('SIGTERM'); } catch {} }
-      } else {
-        child.kill();
-      }
-    } catch {}
+    // `fallbackKill` stays on (the default): a non-detached ssh child, or a
+    // detached one with no usable pid, is still killed directly. openTransport
+    // has no such arm — see dial.js's killDial and drift D3.
+    killDial(child, { group: this._detached() });
   }
 
   _setState(state) {
@@ -195,41 +189,40 @@ class Tunnel {
       if (this._stopped) return;
       if (!port) { this.lastError = 'no free local port'; return this._scheduleRestart(); }
       this.localPort = port;
-      let child;
+      let dial;
       // Named in errors even if argv() itself throws.
       let cmdName = this.cloud ? this.cloud.kind : 'ssh';
       try {
-        const [cmd, ...rest] = this.argv(port);
-        cmdName = cmd;
-        child = this._spawn(cmd, rest, {
-          stdio: ['ignore', 'ignore', 'pipe'],
-          ...(this._detached() ? { detached: true } : {}),
+        const argv = this.argv(port);
+        cmdName = argv[0];
+        dial = spawnDial(argv, {
+          spawnFn: this._spawn,
+          detached: this._detached(),
+          stderrLimit: STDERR_TAIL_BYTES,
         });
       } catch (e) {
         this.lastError = e.message;
         return this._scheduleRestart();
       }
+      const child = dial.child;
       this._child = child;
       const bornAt = Date.now();
-      let stderrTail = '';
-      if (child.stderr) {
-        child.stderr.on('data', (chunk) => {
-          stderrTail = (stderrTail + chunk.toString()).slice(-500);
-        });
-      }
       child.on('error', (e) => {           // spawn failure (binary missing)
-        // A missing vendor CLI is the common ssm misconfig and reads as a bare
-        // ENOENT otherwise — name the binary, same copy as cli/src/transport.js.
-        this.lastError = (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || '')))
-          ? `${cmdName}: command not found — is ${cmdName} installed and on PATH?`
-          : e.message;
+        // The dial classifies; this layer decides what the UI sees. A missing
+        // vendor CLI is the common ssm misconfig and reads as a bare ENOENT
+        // otherwise, so the diagnosis replaces the raw message here — the CLI
+        // appends it to stderr instead (t40's "same information, rendered
+        // twice"). What the dial ALSO offers and this layer still does not show:
+        // the full stderr rather than its last line.
+        const f = dial.failure(e);
+        this.lastError = f.diagnosis || f.message;
         this._child = null;
         this._scheduleRestart();
       });
       child.on('exit', (code) => {
         this._child = null;
         this.localPort = null;
-        const line = stderrTail.trim().split('\n').pop() || '';
+        const line = dial.stderr().trim().split('\n').pop() || '';
         this.lastError = line || (code === 0 ? null : `${cmdName} exited (${code})`);
         if (Date.now() - bornAt > STABLE_MS) this._backoff = BACKOFF_MIN_MS;
         this._scheduleRestart();
