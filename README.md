@@ -88,6 +88,13 @@ The Clodex engine runs headless on Linux — plain Node, no display, kept alive 
 
 Every deployed node also serves the **full Clodex GUI in a browser** — sidebar, terminals, popovers — bound to `127.0.0.1` on the box, reachable only through the authenticated tunnel: `clodexctl web <ctx>` and you're looking at a cloud instance's fleet in a local browser tab, with zero ports open to the world. The same server (Preferences → Phone access on the desktop app) serves a chat-style view for your phone via tailnet or ssh tunnel.
 
+### Plugins: extend it yourself
+
+Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a Preferences section, a full-window overlay). The two shipped plugins are written against the same contract you get: a git-branch badge and the Workbench (Files, Source Control, Worktrees).
+
+- **Your plugins live outside the app** — drop a directory in `~/.clodex/plugins/` and it is discovered alongside the built-in ones, untouched by updates. Manage Plugins reveals the folder, re-scans without a restart, and is one checkbox per plugin; `CLODEX_PLUGINS=0` skips the system entirely.
+- **Start here** — [`plugins/`](plugins/) is the launchpad (copy `git-branches/` and gut it), [`docs/plugin-api.md`](docs/plugin-api.md) is the contract, and [`docs/plugin-sources.md`](docs/plugin-sources.md) covers where plugins come from — precedence, shadowing, and trust. No sandbox: an engine half runs with the app's privileges, so the API is a contract, not containment.
+
 ### Wire telemetry (wirescope)
 
 Route a session's API traffic through [wirescope](https://github.com/avirtual/wirescope), the companion proxy built for Clodex — a vendored copy ships inside the app, and Preferences can spawn and babysit it for you, or point at your own — and the app reads the truth off the wire:

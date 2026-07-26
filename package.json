@@ -60,6 +60,7 @@
       "wire/**/*",
       "renderer/**/*",
       "plugins/**/*",
+      "docs/**/*",
       "cli/**/*",
       "resources/**/*",
       "build/tray-iconTemplate.png",
