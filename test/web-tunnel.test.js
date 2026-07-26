@@ -1,5 +1,6 @@
 'use strict';
-// web-tunnel.test.js — t30b: the on-demand ssh forward to a PEER'S web frontend.
+// web-tunnel.test.js — t30b: the on-demand forward to a PEER'S web frontend,
+// over ssh or a typed cloud transport (t36).
 //
 // The supervisor is a deliberate near-copy of peer-tunnel.js, so what these
 // tests are really pinning is the set of places it must NOT behave like its
@@ -162,6 +163,187 @@ test('ssh argv carries the honest-failure flags, and ExitOnForwardFailure is the
   assert.ok(args.includes('ExitOnForwardFailure=yes'), 'a taken pin fails honestly');
   assert.equal(args[args.length - 1], 'user@box');
   tun.stop();
+});
+
+// ── t36: the typed cloud transports ──────────────────────────────────────────
+//
+// The bug this block exists against: `args()` built only `ssh -L`, so a kubectl
+// peer whose WIRE tunnel dialled fine (t32) had its web view refused. What each
+// test pins is a way that fix can regress — a re-copied kind table that misses a
+// kind, a cloud path that re-picks its port, a cloud child killed without its
+// group, or an ssh path quietly changed while making room for cloud.
+
+test('cloud argv comes from the CLI builders, and carries the PINNED port', async () => {
+  // Not a re-implementation check: the assertion is that the argv this module
+  // spawns is byte-for-byte what cli/src/transport.js builds with our pinned
+  // port substituted. Anyone who hand-rolls a `kubectl port-forward` string here
+  // fails this, which is the point — the argv builders are shared so the GUI and
+  // the CLI cannot drift into two ideas of how to dial one box.
+  const { ssmArgv, kubectlArgv, gcloudArgv, azArgv, substitutePort } = require('../cli/src/transport');
+  const cases = [
+    ['kubectl', { target: 'svc/clodex', namespace: 'ops', context: 'prod' }, kubectlArgv],
+    ['ssm', { target: 'i-0abc', region: 'eu-west-1', profile: 'ops' }, ssmArgv],
+    ['gcloud', { instance: 'vm-1', zone: 'europe-west1-b', project: 'p' }, gcloudArgv],
+    ['az', { bastion: 'bast', resourceGroup: 'rg', target: '/subscriptions/x/vm' }, azArgv],
+  ];
+  for (const [kind, block, build] of cases) {
+    const { calls, spawnFn } = makeSpawnRecorder();
+    const tun = new WebTunnel({ id: 'p1', [kind]: block, remotePort: 8080, spawnFn, onState: () => {} });
+    tun.start();
+    await waitFor(() => calls.length === 1, `${kind} spawn`);
+    const pinned = tun.localPort;
+    assert.ok(Number.isInteger(pinned) && pinned > 0, `${kind}: a port was picked`);
+    const expected = substitutePort(build(block, 8080), pinned);
+    assert.deepEqual([calls[0].cmd, ...calls[0].args], expected,
+      `${kind}: the argv is the CLI builder's, with the pinned local port`);
+    // The {port} token must be GONE — an unsubstituted one reaches the vendor CLI
+    // as a literal and fails with its own confusing message.
+    assert.ok(!JSON.stringify([calls[0].cmd, ...calls[0].args]).includes('{port}'),
+      `${kind}: no unsubstituted {port} token survives`);
+    tun.stop();
+  }
+});
+
+test('the pinned port survives a CLOUD respawn — the whole reason this supervisor exists', async () => {
+  // The regression the ticket names explicitly: copying peer-tunnel too
+  // faithfully would re-pick a free port on every attempt, which is right for
+  // the wire (its consumer is re-pointed through onState) and wrong here (the
+  // consumer is a browser tab holding a URL string Clodex cannot re-point).
+  // Asserted on the ARGV, not on tun.localPort — the argv decides where the
+  // forward actually lands.
+  const { calls, children, spawnFn } = makeSpawnRecorder();
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/clodex' }, remotePort: 8080, spawnFn, onState: () => {},
+  });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'first spawn');
+  const pinned = tun.localPort;
+  const spec = calls[0].args.find((a) => String(a).startsWith(`${pinned}:`));
+  assert.ok(spec, 'the first spawn forwards from the pinned port');
+
+  children[0].emit('exit', 255);                     // the wifi blip
+  await waitFor(() => calls.length === 2, 'respawn');
+  assert.equal(tun.localPort, pinned, 'the pin survives the respawn');
+  assert.ok(calls[1].args.includes(spec), 'and the cloud CLI re-binds the SAME local port');
+
+  children[1].emit('exit', 255);
+  await waitFor(() => calls.length === 3, 'second respawn');
+  assert.ok(calls[2].args.includes(spec), 'and again');
+  tun.stop();
+});
+
+test('a cloud child leads its own process group and is killed BY GROUP', async () => {
+  // aws/kubectl/gcloud/az each fork helpers a plain child.kill() orphans, and an
+  // orphaned forward to a REMOTE box is the worst failure available here: it
+  // outlives the operator's reason for it with nothing in the UI to close it.
+  for (const [kind, block] of [
+    ['kubectl', { target: 'svc/x' }],
+    ['ssm', { target: 'i-0abc' }],
+    ['gcloud', { instance: 'vm' }],
+    ['az', { bastion: 'b', resourceGroup: 'rg', target: '/s/x' }],
+  ]) {
+    const { calls, children, spawnFn } = makeSpawnRecorder();
+    const tun = new WebTunnel({ id: 'p1', [kind]: block, remotePort: 8080, spawnFn, onState: () => {} });
+    tun.start();
+    await waitFor(() => calls.length === 1, `${kind} spawn`);
+    assert.equal(calls[0].opts.detached, true, `${kind}: the child must lead its own group`);
+
+    // Intercept the group kill: a real process.kill(-pid) here would signal this
+    // test runner's own group.
+    const signalled = [];
+    const origKill = process.kill;
+    children[0].pid = 4242;
+    children[0].kill = () => { signalled.push('child.kill'); };
+    process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+    try { tun.stop(); } finally { process.kill = origKill; }
+    assert.deepEqual(signalled, [[-4242, 'SIGTERM']],
+      `${kind}: the whole group is signalled, and a plain child.kill is not what happened`);
+  }
+});
+
+test('the ssh path is untouched: no `detached`, and a plain child kill', async () => {
+  // The ssh spawn stays byte-identical through the cloud work — the same
+  // property peer-tunnel pins at its own layer. `!('detached' in opts)` rather
+  // than `=== undefined`: adding the key at all changes the spawn.
+  const { calls, children, spawnFn } = makeSpawnRecorder();
+  const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {} });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'spawn');
+  assert.ok(!('detached' in calls[0].opts), 'ssh keeps its original non-detached spawn');
+  const signalled = [];
+  const origKill = process.kill;
+  children[0].pid = 4242;
+  children[0].kill = () => { signalled.push('child.kill'); };
+  process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+  try { tun.stop(); } finally { process.kill = origKill; }
+  assert.deepEqual(signalled, ['child.kill'], 'and is killed directly, never by group');
+});
+
+test('a missing vendor CLI is named, not reported as a bare ENOENT', async () => {
+  // The common cloud misconfig. `spawn ENOENT` alone tells an operator nothing
+  // about WHICH binary to install. (ssh is always present, which is why the
+  // ssh-only version of this module had no such arm.)
+  const children = [];
+  const spawnFn = () => { const c = fakeChild(); children.push(c); return c; };
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, onState: () => {},
+  });
+  tun.start();
+  await waitFor(() => children.length === 1, 'spawn');
+  const err = new Error('spawn kubectl ENOENT');
+  err.code = 'ENOENT';
+  children[0].emit('error', err);
+  assert.ok(tun.lastError, 'an error was recorded');
+  assert.match(tun.lastError, /kubectl/, 'and it names the binary the operator must install');
+  tun.stop();
+});
+
+test('a cloud tunnel`s status carries its destination block, so the UI can name the transport', async () => {
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/x', namespace: 'ops' }, remotePort: 8080, spawnFn, onState: () => {},
+  });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'spawn');
+  const st = tun.status();
+  assert.deepEqual(st.kubectl, { target: 'svc/x', namespace: 'ops' }, 'the DATA, under its kind key');
+  assert.strictEqual(st.sshHost, null, 'and no phantom ssh host');
+  // The status is a UI row: an argv in it would be code crossing a boundary that
+  // only carries data.
+  assert.ok(!JSON.stringify(st).includes('port-forward'), 'never an argv');
+  tun.stop();
+});
+
+test('sync KEEPS a cloud web tunnel — an sshHost-only prune would close it instantly', async () => {
+  // The second bug the ssh-only gate hid: sync() compared `live.get(id)` (never
+  // set for a cloud peer) against `tun.sshHost` (null), so every cloud web
+  // tunnel would be pruned by the next settings write — an affordance that
+  // closes itself a moment after it opens, with nothing to say why.
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  const peer = { id: 'p1', kubectl: { target: 'svc/x', namespace: 'ops' } };
+  mgr.open({ ...peer, remotePort: 8080 });
+  await waitFor(() => calls.length === 1, 'spawn');
+  mgr.sync([peer]);
+  assert.ok(mgr.statusFor('p1'), 'a cloud peer that is still present KEEPS its web tunnel');
+
+  // …and a re-pointed one still loses it: a changed namespace is a different box.
+  mgr.sync([{ id: 'p1', kubectl: { target: 'svc/x', namespace: 'staging' } }]);
+  assert.equal(mgr.statusFor('p1'), null, 'a re-pointed cloud peer loses the stale forward');
+  mgr.stopAll();
+});
+
+test('re-opening a cloud tunnel is idempotent, but a changed field replaces it', async () => {
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'eu-west-1' }, remotePort: 8080 });
+  await waitFor(() => calls.length === 1, 'spawn');
+  mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'eu-west-1' }, remotePort: 8080 });
+  assert.equal(calls.length, 1, 'the same destination does not spawn a second forward');
+  // A changed region is a DIFFERENT instance, not the same one described twice.
+  mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'us-east-1' }, remotePort: 8080 });
+  await waitFor(() => calls.length === 2, 'replacement spawn');
+  mgr.stopAll();
 });
 
 // ── No placeholder: a URL exists only while the forward is up ────────────────
@@ -354,12 +536,19 @@ test('close #3 (app shutdown): stopAll kills every child and empties the map', a
 
 // ── Manager: refusals and identity ───────────────────────────────────────────
 
-test('open refuses rather than guessing: no ssh host, and no reported web port', () => {
+test('open refuses rather than guessing: no forwardable transport, and no reported web port', () => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
   const noSsh = mgr.open({ id: 'p1', sshHost: '', remotePort: 8080 });
   assert.equal(noSsh.ok, false);
-  assert.match(noSsh.error, /ssh/i, 'and says the limitation out loud');
+  // Matched on the REASON. /ssh/i would pass on the new message too (it lists
+  // ssh among the transports Clodex DOES dial), so it would no longer be
+  // evidence of anything.
+  assert.match(noSsh.error, /reached by URL/i, 'and says the limitation out loud');
+  const urlOnly = mgr.open({ id: 'p1', url: 'https://box.example', remotePort: 8080 });
+  assert.equal(urlOnly.ok, false, 'a url-only record is the one unforwardable case');
+  const incomplete = mgr.open({ id: 'p1', kubectl: {}, remotePort: 8080 });
+  assert.equal(incomplete.ok, false, 'and a cloud block with no target has nothing to dial');
   for (const bad of [undefined, null, 0, -1, 70000, '8080', 1.5]) {
     const r = mgr.open({ id: 'p1', sshHost: 'box', remotePort: bad });
     assert.equal(r.ok, false, `${JSON.stringify(bad)} is refused`);

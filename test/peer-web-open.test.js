@@ -11,9 +11,14 @@
 //     browser. The tunnel still opens (that is what makes the box reachable);
 //     the pop is what would lie.
 //   • WHAT TO REFUSE. Every missing input is refused rather than guessed: an
-//     unknown peer, a url-only peer (ssh-only, by ruling), and a peer whose
+//     unknown peer, a url-only peer (nothing to forward over), and a peer whose
 //     hello reports no web frontend. A guessed port is exactly the lie t30a
 //     exists to prevent.
+//
+// t36 moved the transport gate: this layer no longer names `sshHost`, it asks
+// web-tunnel's destinationOf. What the tests below pin is that the whole cloud
+// BLOCK reaches the supervisor — the bug was a kubectl peer refused at this
+// door while its wire tunnel dialled the same box fine.
 //
 // The real createPeerWiring runs; only its seams are faked. ssh never spawns —
 // the WebTunnelManager is stubbed through the module registry so no child
@@ -194,9 +199,10 @@ test('openPeerWeb refuses an unknown peer', () => {
   } finally { h.restore(); }
 });
 
-test('openPeerWeb refuses a URL-only peer, and SAYS ssh-only rather than failing mutely', () => {
-  // The ruled limitation. A silent failure would read as "this box has no web
-  // UI", which is a different and false claim.
+test('openPeerWeb refuses a URL-only peer, and SAYS why rather than failing mutely', () => {
+  // The one limitation that survives t36: Clodex reaches a url peer over a path
+  // it does not own, so there is no local end to bind. A silent failure would
+  // read as "this box has no web UI", which is a different and false claim.
   const h = makeWiring({
     peers: [{ id: 'p1', label: 'cloud', url: 'https://box.example' }],
     statuses: { p1: OPEN },
@@ -204,8 +210,56 @@ test('openPeerWeb refuses a URL-only peer, and SAYS ssh-only rather than failing
   try {
     const res = h.wiring.openPeerWeb('p1');
     assert.equal(res.ok, false);
-    assert.match(res.error, /ssh/i, 'the limitation is stated');
+    // Matched on the REASON, not on /ssh/i: the new message lists ssh among the
+    // transports Clodex does dial, so an /ssh/i match would pass on text that
+    // says the opposite of what this test is for.
+    assert.match(res.error, /reached by URL/i, 'the limitation is stated');
     assert.deepEqual(h.opened, [], 'no tunnel attempted');
+  } finally { h.restore(); }
+});
+
+test('t36: a CLOUD peer is NOT refused at the door, and its block reaches the supervisor', () => {
+  // The operator-reported bug: a kubectl peer imported from clodexctl had
+  // working SESSIONS (peer-tunnel learned cloud kinds in t32) and a web view
+  // refused with "this peer is reached by URL, not ssh" — a false sentence about
+  // a peer that is reached by neither. What must hold now is not just "ok" but
+  // that the DESTINATION FIELDS arrive: an open that forgot the block would
+  // spawn a kubectl with no target.
+  for (const [rec, expect, what] of [
+    [{ kubectl: { target: 'svc/clodex', namespace: 'ops', context: 'prod' } },
+     { kubectl: { target: 'svc/clodex', namespace: 'ops', context: 'prod' } }, 'kubectl'],
+    [{ ssm: { target: 'i-0abc', region: 'eu-west-1', profile: 'ops' } },
+     { ssm: { target: 'i-0abc', region: 'eu-west-1', profile: 'ops' } }, 'ssm'],
+    [{ gcloud: { instance: 'vm-1', zone: 'europe-west1-b', project: 'p' } },
+     { gcloud: { instance: 'vm-1', zone: 'europe-west1-b', project: 'p' } }, 'gcloud'],
+    // az is import-only in the dialog but dialable by the supervisor, so it is
+    // IN — excluding it would recreate this exact ticket for one kind.
+    [{ az: { bastion: 'bast', resourceGroup: 'rg', target: '/subscriptions/x/vm' } },
+     { az: { bastion: 'bast', resourceGroup: 'rg', target: '/subscriptions/x/vm' } }, 'az'],
+  ]) {
+    const h = makeWiring({ peers: [{ id: 'p1', label: 'box', ...rec }], statuses: { p1: OPEN } });
+    try {
+      const res = h.wiring.openPeerWeb('p1');
+      assert.equal(res.ok, true, `${what}: opened rather than refused`);
+      assert.equal(h.opened.length, 1, `${what}: exactly one tunnel`);
+      assert.deepEqual(h.opened[0], { id: 'p1', sshHost: null, remotePort: 8080, ...expect },
+        `${what}: the whole destination block reaches the supervisor`);
+    } finally { h.restore(); }
+  }
+});
+
+test('t36: a cloud peer missing a REQUIRED field is refused, not half-dialled', () => {
+  // An incomplete block has nothing to dial. Refusing beats spawning a vendor
+  // CLI that fails a moment later with its own worse message.
+  const h = makeWiring({
+    peers: [{ id: 'p1', label: 'box', az: { bastion: 'bast' } }],   // no rg, no target
+    statuses: { p1: OPEN },
+  });
+  try {
+    const res = h.wiring.openPeerWeb('p1');
+    assert.equal(res.ok, false);
+    assert.match(res.error, /reached by URL/i, 'falls back to the url-only refusal — nothing forwardable');
+    assert.deepEqual(h.opened, [], 'and no tunnel was attempted');
   } finally { h.restore(); }
 });
 
@@ -230,7 +284,8 @@ test('openPeerWeb forwards to the port the PEER reported, not a local guess', ()
   });
   try {
     h.wiring.openPeerWeb('p1');
-    assert.deepEqual(h.opened, [{ id: 'p1', sshHost: 'user@box', remotePort: 31337 }]);
+    assert.deepEqual(h.opened, [{ id: 'p1', sshHost: 'user@box', remotePort: 31337 }],
+      'an ssh peer opens with exactly its old shape — no cloud key appears');
   } finally { h.restore(); }
 });
 

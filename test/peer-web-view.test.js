@@ -127,30 +127,39 @@ test('gave-up with no error text still reads as a retry, not as a broken tip', (
   assert.doesNotMatch(a.tip, /undefined|null|\(\)/, 'no placeholder text leaks into the UI');
 });
 
-// ── The ssh-only limitation, stated rather than hidden ───────────────────────
+// ── The url-only limitation, stated rather than hidden ───────────────────────
 
-test('a URL-only peer gets a DISABLED button saying ssh-only — never a silent absence', () => {
+test('a URL-only peer gets a DISABLED button — never a silent absence', () => {
   // Hiding it would read as "this box has no web UI", which is a different and
   // false claim: the box may well serve one, we just cannot tunnel to it.
   const a = webViewAffordance({ status: online(WEB), tunnel: null });
   assert.equal(a.show, true, 'the limitation is visible');
   assert.equal(a.enabled, false, 'but not clickable');
   assert.equal(a.action, null);
-  assert.match(a.tip, /ssh/i, 'and it says why');
+  assert.match(a.tip, /reached by URL/i, 'and it says why');
   assert.strictEqual(a.url, null);
 });
 
-test('an ssm peer gets the same ssh-only refusal, but the TRUE reason (t32)', () => {
-  // Same answer as a URL peer (no button — the web view needs its own second
-  // forward and only the ssh template can open one), but a different reason.
-  // Telling this operator their box "is reached by URL" would be a false
-  // explanation of a true limit, and would send them looking for a URL that
-  // does not exist.
-  const a = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', ssm: { target: 'i-0abc' } } });
-  assert.equal(a.show, true);
-  assert.equal(a.enabled, false);
-  assert.match(a.tip, /SSM/i, 'names the transport it actually uses');
-  assert.doesNotMatch(a.tip, /reached by URL/, 'and does not misdescribe it as a URL peer');
+test('t36: a CLOUD peer gets a real, ENABLED button — the ssh-only refusal is gone', () => {
+  // The operator-reported bug, at the renderer end. Between t30 and t36 an ssm
+  // or kubectl peer landed in the url-only arm and got a disabled button whose
+  // tip said "Clodex can only tunnel to a web UI over ssh" — true when written,
+  // false one release later, and the reason a working peer looked broken. The
+  // assertion that must fail if anyone restores the sshHost gate.
+  for (const [tunnel, what] of [
+    [{ id: 'p1', ssm: { target: 'i-0abc' } }, 'ssm'],
+    [{ id: 'p1', kubectl: { target: 'svc/x' } }, 'kubectl'],
+    [{ id: 'p1', gcloud: { instance: 'vm' } }, 'gcloud'],
+    [{ id: 'p1', az: { bastion: 'b', resourceGroup: 'rg', target: '/s/x' } }, 'az'],
+  ]) {
+    const a = webViewAffordance({ status: online(WEB), tunnel });
+    assert.equal(a.show, true, `${what}: shown`);
+    assert.equal(a.enabled, true, `${what}: a peer whose wire tunnel Clodex dials can also be web-tunnelled`);
+    assert.equal(a.action, 'open', `${what}: and clicking it opens`);
+    assert.doesNotMatch(a.tip, /only tunnel to a web UI over ssh/i,
+      `${what}: the sentence that outlived its premise must not come back`);
+    assert.doesNotMatch(a.tip, /reached by URL/, `${what}: and it is not a URL peer`);
+  }
 });
 
 test('cloudTransportName names each transport, so no tip misdescribes a peer', () => {
@@ -168,25 +177,53 @@ test('cloudTransportName names each transport, so no tip misdescribes a peer', (
     assert.ok(name, `${what} must have a name — an unnamed kind falls back to "URL" and misdescribes the peer`);
     assert.match(name, re);
   }
-  // ssh and url peers have no cloud transport — the caller falls back to 'URL',
-  // which is the true description for them and only for them.
+  // ssh and url peers have no cloud transport — the caller says "over ssh" for
+  // the first and "reached by URL" for the second.
   assert.strictEqual(cloudTransportName({ sshHost: 'box' }), null);
   assert.strictEqual(cloudTransportName(null), null);
 });
 
-test('a kubectl peer`s ssh-only tip names kubectl, not URL and not SSM', () => {
-  const a = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', kubectl: { target: 'svc/x' } } });
-  assert.equal(a.show, true);
-  assert.equal(a.enabled, false);
-  assert.match(a.tip, /kubectl/, 'the tip names kubectl, so the operator is not sent looking for a URL');
-  assert.doesNotMatch(a.tip, /reached by URL/);
+test('every tip names the transport the operator is ACTUALLY getting', () => {
+  // A kubectl peer told "Open box's web UI over ssh" is the same category of
+  // false-but-plausible sentence t36 removed — it would send an operator to
+  // debug ssh at a box they never reach over ssh.
+  const kubectl = { id: 'p1', kubectl: { target: 'svc/x' } };
+  const closed = webViewAffordance({ status: online(WEB), tunnel: kubectl });
+  assert.match(closed.tip, /kubectl port-forward/, 'the open tip names kubectl');
+  assert.doesNotMatch(closed.tip, /over ssh/, 'and never claims ssh');
+
+  const connecting = webViewAffordance({
+    status: online(WEB), tunnel: kubectl, webTunnel: { id: 'p1', state: 'down' },
+  });
+  assert.equal(connecting.phase, 'connecting');
+  assert.match(connecting.tip, /kubectl port-forward/, 'the connecting tip too');
+  assert.doesNotMatch(connecting.tip, /over ssh/);
+
+  // And an ssh peer still says ssh — the phrase is per-transport, not removed.
+  const ssh = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', sshHost: 'box' } });
+  assert.match(ssh.tip, /over ssh/, 'an ssh peer is still described as ssh');
 });
 
 test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
+  // Still the NARROW question (the deploy/setup flow is genuinely ssh-only:
+  // it copies files and runs a shell, which a port-forward carries neither of).
+  // The web-view gate is isForwardablePeer, below — they must not be conflated.
   assert.equal(isSshPeer({ sshHost: 'box' }), true);
   assert.equal(isSshPeer({ id: 'p1' }), false, 'a tunnel row with no ssh host is not ssh');
+  assert.equal(isSshPeer({ kubectl: { target: 'svc/x' } }), false, 'a cloud peer is not an ssh peer');
   assert.equal(isSshPeer(null), false);
   assert.equal(isSshPeer(undefined), false);
+});
+
+test('isForwardablePeer: a tunnel row at all means Clodex dials it — url-only has none', () => {
+  const { isForwardablePeer } = require('../renderer/lib/peer-web-view');
+  assert.equal(isForwardablePeer({ sshHost: 'box' }), true);
+  for (const kind of ['ssm', 'kubectl', 'gcloud', 'az']) {
+    assert.equal(isForwardablePeer({ id: 'p1', [kind]: { target: 'x', instance: 'x', bastion: 'x' } }), true,
+      `${kind} is dialable — a kind missing here is a peer whose web view silently never opens`);
+  }
+  assert.equal(isForwardablePeer(null), false, 'a url-only peer has no tunnel row');
+  assert.equal(isForwardablePeer({ id: 'p1' }), false, 'and neither has a row with no transport');
 });
 
 // ── No web host reported ─────────────────────────────────────────────────────
