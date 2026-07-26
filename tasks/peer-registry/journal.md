@@ -720,3 +720,35 @@ commit, then tests.
   read for a file that is 0600 in every normal case. This is the asymmetry the
   token argument turned up — the destination had no read-side check — closed
   rather than argued around.
+
+## t32 CLOSED (master `bbde867`) — steps 0/1/2/4 shipped, step 3 not pending
+
+clodex merged step 4 at `bbde867`, verified the token claim at
+ipc-handlers.js:1270-1271 independently, and stood the ticket down. Suite
+2681 → **2703**, ESCAPES: 0 throughout.
+
+| step | on master | what shipped |
+|---|---|---|
+| 0 | `475d799` | `cli/**/*` in `build.files` (verified on a REAL artifact: 0 → 64 entries) + a latent harness race on master |
+| 1 | `129fe94` | `ssm.target` end-to-end, argv builder IMPORTED from the CLI |
+| 2 | `3f6d2f8` | kubectl + gcloud, both layers turned into TABLES; az accepted, not typable |
+| 4 | `bbde867` | contexts→peers import (az's only route in) + the settings mode warn |
+
+**Step 3 (`ssm.ecs`) is NOT pending work.** It is a question with Bogdan and
+clodex recommends against. Same for `deployTargetFor` (hide vs show-disabled).
+Either ruling is a fresh dispatch, not a resumption.
+
+### What generalizes past this ticket
+
+- **The named trigger, proven three times** (`mounts`, `region`/`profile`, the
+  az dest-blank deletion): any layer that rebuilds a record from named fields
+  silently drops what it doesn't name — and dialogs do this as surely as stores.
+  The structural answer is a DECLARED field table, not a careful reconstruction.
+- **The token routing argument** (clodex: the part that changed his position):
+  declining to copy a secret does not avoid the copy — it routes it through
+  `cat contexts.json`, i.e. scrollback and shell history. Same-principal-set was
+  necessary but not sufficient; the channel comparison is what settles it.
+- **Report from the READ-BACK when two copies of one contract exist.** Drift
+  then surfaces as "could not be saved" instead of a lie.
+- **Prove tests by reverting and failing BY MESSAGE** — and assert non-null
+  BEFORE `assert.match`, or the revert crashes instead of failing.
