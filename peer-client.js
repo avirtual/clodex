@@ -17,6 +17,16 @@ const http = require('http');
 const { URL } = require('url');
 const { RELAY_ENVELOPE_V } = require('./relay-protocol');
 const { withoutExecGrants } = require('./session-args');
+// The staleness watchdog, imported from the CLI's SSE guard rather than
+// reimplemented. That module's header names THIS file as the reason it exists
+// ("the half-open-socket bug that bit the GUI's peer-client.js") — the tested
+// answer was written on the other side and never came back. makeWatchdog is a
+// pure timer leaf with an injectable seam, and STALE_MS carries the timing
+// rationale (60s, >2x remote.js's 25s SSE_HEARTBEAT_MS), so importing it keeps
+// ONE home for "how long is too long". Same leaf direction peer-tunnel.js:35 and
+// web-tunnel.js:73 already take into cli/src/transport; cli/ never requires an
+// app file, and cli/ ships in the DMG (build.files).
+const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -35,7 +45,7 @@ function webHostKey(w) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -54,6 +64,11 @@ class PeerConnection {
     // Poll cadence; overridable so tests can drive multiple hellos in-window
     // (production always uses the 15s default).
     this._helloIntervalMs = helloIntervalMs || HELLO_INTERVAL_MS;
+    // SSE staleness bound and the timer seam the watchdog runs on. Both
+    // overridable ONLY so tests can drive the deadline without real sleeps;
+    // production takes STALE_MS and the global timers.
+    this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
+    this._timers = timers || { setTimeout, clearTimeout };
     // Our own label as the box will see it (the origin on outbound DMs and the
     // key we claim our inbox under). Computed once by the caller — never per
     // request — so it can't drift mid-session.
@@ -534,9 +549,40 @@ class PeerConnection {
     req.end();
   }
 
+  // Open an SSE stream. onClose is the ONE reconnect door: every death — server
+  // end, transport error, or the staleness watchdog — goes through it exactly
+  // once, so a watchdog-driven reconnect lands in the same place a socket-error
+  // one does rather than in a second path with its own backoff.
+  //
+  // THE WATCHDOG (the half-open-socket fix). A socket that stops delivering
+  // bytes emits no 'end' and no 'error': it reads as live forever, and both
+  // consumers here keep believing a dead feed. So we arm a staleness timer on
+  // connect and re-arm it on EVERY chunk — including remote.js's 25s `: ping`
+  // comment frames, which is the whole point: a heartbeat that stops arriving is
+  // the only evidence a half-open socket ever produces.
+  //
+  // On fire we destroy the socket AND walk the close door. In practice the
+  // destroy raises 'error' and that alone reaches the door — measured: removing
+  // the explicit close() keeps every test here green. It stays as the guarantee
+  // for the case where it does not (a request already past its own teardown
+  // emits nothing), and the redundancy is exactly why the one-shot guard below
+  // is mandatory rather than tidiness.
   _sse(path, { onEvent, onOpen, onClose }) {
     let u;
     try { u = new URL(this.url + path); } catch { return onClose(); }
+    // Fires onClose at most once. Needed the moment a second death path exists:
+    // a watchdog destroy also raises a socket error, and two onCloses on one
+    // stream would schedule two reconnects — i.e. two live streams for one
+    // attachment. Also stops the timer, so a closed stream leaves nothing armed
+    // (a stray timer would keep the event loop alive after teardown).
+    let closed = false;
+    let watchdog = null;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      if (watchdog) { watchdog.stop(); watchdog = null; }
+      onClose();
+    };
     const req = http.request({
       hostname: u.hostname, port: u.port || 80,
       path: u.pathname + u.search, method: 'GET',
@@ -545,9 +591,21 @@ class PeerConnection {
     }, (res) => {
       if (res.statusCode !== 200) { req.destroy(); return; }
       onOpen(req);
+      // Armed only once the stream is genuinely live (200 in hand). A request
+      // that never gets a response is a CONNECT-time problem, not a half-open
+      // one, and it has no onClose path here today — widening that is a
+      // different fix.
+      watchdog = makeWatchdog(this._staleMs, () => {
+        try { req.destroy(); } catch {}
+        close();
+      }, this._timers);
+      watchdog.pet();
       let buf = '';
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
+        // Re-arm FIRST, before any framing: a chunk carrying only heartbeat
+        // comments yields no event but is exactly the liveness signal we need.
+        if (watchdog) watchdog.pet();
         buf += chunk;
         // SSE frames are \n\n-separated; heartbeats are comment lines.
         let idx;
@@ -565,10 +623,10 @@ class PeerConnection {
           if (data !== null) { try { onEvent(event, data); } catch {} }
         }
       });
-      res.on('end', () => onClose());
-      res.on('error', () => onClose());
+      res.on('end', close);
+      res.on('error', close);
     });
-    req.on('error', () => onClose());
+    req.on('error', close);
     req.end();
   }
 }
