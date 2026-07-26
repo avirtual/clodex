@@ -4663,15 +4663,23 @@ function addPeerRow(peer, { expanded = false } = {}) {
   const folderVal = folderReported
     ? liveSrc.trim()
     : ((typeof peer.deployFolder === 'string' && peer.deployFolder) ? peer.deployFolder : '~/wb-wrap-ui');
-  // One smart destination field: ssh host / IP / alias, OR an http(s):// URL. The
-  // scheme prefix disambiguates (classifyPeerDest), so no protocol dropdown. The
-  // settings schema is unchanged — a classified 'ssh' saves peer.sshHost and a
-  // 'url' saves peer.url; only the input surface collapses. Pre-fill from the
-  // stored sshHost, falling back to url for a legacy url-only peer.
-  const destVal = peer.sshHost || peer.url || '';
+  // One smart destination field: ssh host / IP / alias, an http(s):// URL, or
+  // `ssm:TARGET`. The scheme prefix disambiguates (classifyPeerDest), so no
+  // protocol dropdown. The settings schema grows by addition — a classified
+  // 'ssh' saves peer.sshHost, 'url' saves peer.url, 'ssm' saves peer.ssm.
+  // Pre-fill from the stored sshHost, then ssm, then url (a legacy url-only peer).
+  const destVal = peer.sshHost || (peer.ssm && peer.ssm.target ? `ssm:${peer.ssm.target}` : '') || peer.url || '';
+  // region/profile are settings-file-only overrides with no input of their own.
+  // Stashed on the row so collectPeers can carry them back on save — without
+  // this, opening the dialog and pressing Save would silently erase a
+  // hand-configured region, which is the same silent-loss class as the store's
+  // whitelist hazard, just one layer up.
+  row._ssmExtra = (peer.ssm && typeof peer.ssm === 'object')
+    ? { ...(peer.ssm.region ? { region: peer.ssm.region } : {}), ...(peer.ssm.profile ? { profile: peer.ssm.profile } : {}) }
+    : null;
   row.innerHTML = `
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || '')}">
-    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias — or http://… for direct" value="${esc(destVal)}">
+    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias — http://… for direct — ssm:TARGET for AWS" value="${esc(destVal)}">
     <button type="button" class="secondary peer-row-test" title="Test the ssh host and check for Clodex; offer to install if absent">Test &amp; Set Up</button>
     <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>
     <div class="peer-row-break"></div>
@@ -4769,6 +4777,10 @@ function updatePeerDestBadge(row) {
   badge.className = 'peer-row-dest-badge';
   if (cls.kind === 'ssh') badge.innerHTML = '<span class="peer-status-dim">→ ssh tunnel</span>';
   else if (cls.kind === 'url') badge.innerHTML = '<span class="peer-status-dim">→ direct (no tunnel)</span>';
+  // Names the vendor CLI the tunnel will shell out to, because "it needs the aws
+  // CLI on YOUR machine" is the misconfig this destination invites and a bare
+  // "→ ssm tunnel" would not warn anyone.
+  else if (cls.kind === 'ssm') badge.innerHTML = '<span class="peer-status-dim">→ AWS SSM tunnel (needs the aws CLI locally)</span>';
   else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
 }
 
@@ -4819,6 +4831,19 @@ async function peerTestAndSetUp(row, status) {
   if (dest.kind === 'url') {
     // Probe + deploy are ssh-only; a direct URL peer just connects on Save.
     renderPeerStatus(status, `<span class="peer-status-dim">Direct URL — nothing to install over ssh; Save and it connects.</span>`);
+    return;
+  }
+  if (dest.kind === 'ssm') {
+    // Genuinely ssh-only, and SAID so rather than hidden (t30b's rule): probe
+    // and deploy both run a shell and copy files over ssh, which an SSM
+    // port-forward — a single forwarded TCP port — cannot carry. Naming what
+    // does still work keeps this a limit, not a dead end. The port is still
+    // validated first, so a bad one is reported here rather than at Save.
+    const vs = validatePeerRowInputs(row);
+    if (!vs.ok) { renderPeerStatus(status, `<span class="peer-status-warn">${esc(vs.error)}</span>`); return; }
+    renderPeerStatus(status,
+      `<span class="peer-status-dim">AWS SSM tunnel — Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span>` +
+      `<div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save — the tunnel connects automatically. Needs the <code>aws</code> CLI and the Session Manager plugin on THIS machine.</div>`);
     return;
   }
   const sshHost = dest.sshHost;
@@ -5007,9 +5032,12 @@ function collectPeers() {
       if (status) renderPeerStatus(status, `<span class="peer-status-warn">${esc(v.error)}</span>`);
       return { ok: false, error: v.error, row };
     }
-    const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url };
+    const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url || (dest.ssm && dest.ssm.target) };
     if (dest.kind === 'ssh') peer.sshHost = dest.sshHost;
     else if (dest.kind === 'url') peer.url = dest.url;
+    // Carry the settings-file-only region/profile back through the save (stashed
+    // at render time) so editing anything else in the dialog doesn't erase them.
+    else if (dest.kind === 'ssm') peer.ssm = { ...dest.ssm, ...(row._ssmExtra || {}) };
     // Port + folder are settings-file-only overrides (like wirescopePort): carry
     // the row's validated values through the save. A folder equal to the default
     // pre-fill still round-trips harmlessly (main re-validates at deploy time).

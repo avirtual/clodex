@@ -246,13 +246,34 @@ function classifyDeployFolder(folder) {
 // one of:
 //   { kind: 'ssh',   sshHost }  — user@host / bare host / IP / ssh-config alias
 //   { kind: 'url',   url }      — a validated http(s):// direct endpoint
+//   { kind: 'ssm',   ssm }      — `ssm:TARGET`, an AWS SSM port-forward (t32)
 //   { kind: 'empty' }           — blank (skip the row)
 //   { kind: 'error', error }    — a targeted message for the common mistakes
-// Pure + testable; the settings schema is unchanged (ssh → peer.sshHost, url →
-// peer.url), so this only reshapes the input surface, no migration.
+// Pure + testable; the settings schema grows by ADDITION only (ssh → peer.sshHost,
+// url → peer.url, ssm → peer.ssm), so this reshapes the input surface with no
+// migration and no change to what an existing peer record means.
 function classifyPeerDest(raw) {
   const s = (raw == null ? '' : String(raw)).trim();
   if (!s) return { kind: 'empty' };
+  // `ssm:TARGET` — the first typed cloud kind (t32 step 1). A prefix, like
+  // http://, because a bare instance id (`i-0abc…`) is indistinguishable from an
+  // ssh alias and guessing wrong would dial the wrong mechanism silently.
+  // Only the DATA is captured; the argv is built at dial time by
+  // cli/src/transport.js's ssmArgv and never stored.
+  if (/^ssm:/i.test(s)) {
+    const target = s.slice(4).trim();
+    if (!target) return { kind: 'error', error: 'ssm: needs a target — e.g. ssm:i-0abc123def456789 (an instance id or an SSM managed-instance id).' };
+    // ECS/Fargate is a CLUSTER/FAMILY spec resolved to a task at CONNECT time
+    // (two aws reads). The tunnel supervisor is synchronous today, so say that
+    // plainly instead of accepting a destination that would never dial.
+    if (target.includes('/')) {
+      return { kind: 'error', error: 'ECS/Fargate targets (CLUSTER/FAMILY) are not supported for peers yet — use a plain instance id, or the clodexctl CLI, which resolves ECS at connect time.' };
+    }
+    if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(target)) {
+      return { kind: 'error', error: "That doesn't look like an SSM target. Example: ssm:i-0abc123def456789" };
+    }
+    return { kind: 'ssm', ssm: { target } };
+  }
   // An http(s):// prefix is an explicit "direct URL" — validate the shape.
   if (/^https?:\/\//i.test(s)) {
     try { new URL(s); return { kind: 'url', url: s }; }

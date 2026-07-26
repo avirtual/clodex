@@ -38,6 +38,12 @@ const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { envKeyError } = require('./env-scopes');
 const { parseAgentFrontmatter } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
+// The CLI's own context validator, entered by its PUBLIC door (validateEntry).
+// Reused rather than re-implemented so a peer's typed cloud transport and a CLI
+// context can never drift into two different ideas of a valid ssm block. The
+// app may require cli/ because cli/ SHIPS (build.files, t32 step 0); the reverse
+// direction stays forbidden — cli/ is a leaf and never requires an app file.
+const { validateEntry } = require('./cli/src/contexts');
 const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
 const {
@@ -224,6 +230,49 @@ function sanitizePlugins(raw) {
 // token (trimmed, cap 256); an explicit `''` CLEARS it; a dropped row drops its
 // token with the row. On a fresh disk load `prior` is absent — the persisted
 // string simply passes through the same set-on-string branch.
+// A peer's AWS SSM transport block — the first typed cloud kind to reach the
+// GUI registry (t32 step 1). Peers keep their OWN registry and their own record
+// shape; what is shared with the CLI is the VALIDATOR, entered through
+// `validateEntry` so the private per-kind checks stay private.
+//
+// DATA ONLY. The five typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud/az) are
+// declarative descriptions of a destination — safe to persist, safe to share.
+// A raw `tunnel` argv is CODE and must NEVER become a peer-record field: this
+// store is written from the renderer, so a persisted argv would be a
+// GUI-editable command line the app later executes.
+//
+// CRITICAL — WHITELIST, same hazard sanitizeSandbox documents below: every
+// ssm sub-key MUST appear in the reconstruction or it is silently dropped on
+// EVERY write (a value the operator typed simply evaporates on the next save).
+// `test/stores.test.js` round-trips a full block through set()/get() so a
+// missing line fails loudly instead of quietly.
+//
+// `ecs` is deliberately NOT accepted yet (t32 step 3): resolving an ecs spec to
+// a concrete target needs two awaited `aws` calls, and peer-tunnel's
+// `_spawnTunnel` is synchronous. A block carrying `ecs` is rejected WHOLE rather
+// than half-accepted — an ssm entry this layer admits is one the tunnel can dial.
+function sanitizePeerSsm(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (raw.ecs != null && String(raw.ecs) !== '') return null;   // step 3, not this pass
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 256) : null);
+  const target = str(raw.target);
+  if (!target) return null;
+  const region = str(raw.region);
+  const profile = str(raw.profile);
+  const ssm = {
+    target,
+    // Optional AWS selectors — omitted (not null) when unset, because ssmArgv
+    // tests presence to decide whether to emit --region / --profile at all.
+    ...(region ? { region } : {}),
+    ...(profile ? { profile } : {}),
+  };
+  // Final say goes to the CLI's validator, through its public door. Anything it
+  // rejects is not persisted; a CliError here means the block was malformed, and
+  // dropping it is the same stance the rest of this store takes on junk.
+  try { validateEntry({ ssm }); } catch { return null; }
+  return ssm;
+}
+
 function sanitizePeers(raw, prior) {
   if (!Array.isArray(raw)) return null;
   const priorById = new Map(
@@ -235,7 +284,11 @@ function sanitizePeers(raw, prior) {
     const url = typeof p.url === 'string' && /^https?:\/\//.test(p.url) ? p.url : null;
     // ssh host or user@host — same charset ssh_config aliases allow.
     const sshHost = typeof p.sshHost === 'string' && /^[a-zA-Z0-9._@-]{1,128}$/.test(p.sshHost) ? p.sshHost : null;
-    if (!url && !sshHost) continue;
+    // Typed cloud transport (t32). Like sshHost it makes a peer ADMISSIBLE with
+    // no url of its own — the url comes from whatever local port its managed
+    // tunnel lands on.
+    const ssm = sanitizePeerSsm(p.ssm);
+    if (!url && !sshHost && !ssm) continue;
     // Optional per-peer deploy folder override (the clone dir on the box). Kept
     // as the raw operator string (~/… or /abs) — validated/rendered at deploy
     // time by classifyDeployFolder, not here; a blank/invalid value just falls
@@ -244,8 +297,12 @@ function sanitizePeers(raw, prior) {
       ? p.deployFolder.trim().slice(0, 256) : null;
     const entry = {
       id: p.id,
-      label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url),
+      label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url || ssm.target),
       url, sshHost,
+      // Presence-encoded like disabled/relayAllowed: the key is ABSENT for an
+      // ssh/url peer rather than written as null, so "has a typed transport" is
+      // a plain `p.ssm` test everywhere downstream.
+      ...(ssm ? { ssm } : {}),
       remotePort: Number.isInteger(p.remotePort) ? p.remotePort : 7900,
       deployFolder,
       // Pause flag: preserved STRICTLY. setDisabled's enable path deletes the

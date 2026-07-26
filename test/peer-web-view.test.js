@@ -140,6 +140,19 @@ test('a URL-only peer gets a DISABLED button saying ssh-only — never a silent 
   assert.strictEqual(a.url, null);
 });
 
+test('an ssm peer gets the same ssh-only refusal, but the TRUE reason (t32)', () => {
+  // Same answer as a URL peer (no button — the web view needs its own second
+  // forward and only the ssh template can open one), but a different reason.
+  // Telling this operator their box "is reached by URL" would be a false
+  // explanation of a true limit, and would send them looking for a URL that
+  // does not exist.
+  const a = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', ssm: { target: 'i-0abc' } } });
+  assert.equal(a.show, true);
+  assert.equal(a.enabled, false);
+  assert.match(a.tip, /SSM/i, 'names the transport it actually uses');
+  assert.doesNotMatch(a.tip, /reached by URL/, 'and does not misdescribe it as a URL peer');
+});
+
 test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
   assert.equal(isSshPeer({ sshHost: 'box' }), true);
   assert.equal(isSshPeer({ id: 'p1' }), false, 'a tunnel row with no ssh host is not ssh');

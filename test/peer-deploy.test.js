@@ -280,6 +280,41 @@ test('classifyPeerDest: http(s):// URLs pass through as url', () => {
   assert.deepStrictEqual(classifyPeerDest('HTTPS://host'), { kind: 'url', url: 'HTTPS://host' });
 });
 
+test('classifyPeerDest: ssm:TARGET is the typed AWS destination (t32)', () => {
+  assert.deepStrictEqual(classifyPeerDest('ssm:i-0abc123def456789'),
+    { kind: 'ssm', ssm: { target: 'i-0abc123def456789' } });
+  assert.deepStrictEqual(classifyPeerDest('  SSM:i-0abc  '),
+    { kind: 'ssm', ssm: { target: 'i-0abc' } }, 'prefix is case-insensitive, target trimmed');
+  // A managed-instance id (mi-…) and a colon-bearing ECS target id are both
+  // legitimate SSM targets, so the charset allows them.
+  assert.strictEqual(classifyPeerDest('ssm:mi-0abc').kind, 'ssm');
+});
+
+test('classifyPeerDest: a bare instance id is NOT sniffed as ssm', () => {
+  // The prefix exists precisely because `i-0abc123` is a valid ssh alias too.
+  // Guessing would silently dial the wrong mechanism, so an unprefixed id stays
+  // ssh — the operator opts in to SSM by typing the prefix.
+  assert.deepStrictEqual(classifyPeerDest('i-0abc123'), { kind: 'ssh', sshHost: 'i-0abc123' });
+});
+
+test('classifyPeerDest: an ECS CLUSTER/FAMILY ssm target is a targeted error', () => {
+  // ECS specs resolve to a task at CONNECT time (two aws reads) and the peer
+  // tunnel supervisor is synchronous, so this is said plainly rather than
+  // accepted as a destination that could never dial.
+  const r = classifyPeerDest('ssm:my-cluster/my-family');
+  assert.strictEqual(r.kind, 'error');
+  assert.match(r.error, /ECS/i);
+  assert.match(r.error, /clodexctl|CLI/, 'names what does support it, so it is a limit not a dead end');
+});
+
+test('classifyPeerDest: a blank or malformed ssm target errors, never falls through to ssh', () => {
+  assert.strictEqual(classifyPeerDest('ssm:').kind, 'error');
+  assert.strictEqual(classifyPeerDest('ssm:   ').kind, 'error');
+  const r = classifyPeerDest('ssm:has space');
+  assert.strictEqual(r.kind, 'error');
+  assert.match(r.error, /SSM target/i);
+});
+
 test('classifyPeerDest: empty / whitespace-only ⇒ empty', () => {
   assert.deepStrictEqual(classifyPeerDest(''), { kind: 'empty' });
   assert.deepStrictEqual(classifyPeerDest('   '), { kind: 'empty' });
