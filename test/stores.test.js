@@ -1586,9 +1586,12 @@ test('uiSettings: a pre-M6b file (sandbox key, no boxes) is ignored — no migra
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
   const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
   try {
+    // 0600 like a real settings file: this fixture is written by the test rather
+    // than by atomicWriteFileSync, and a 0644 one would (correctly) trip the
+    // token-mode warning and print noise unrelated to what this test checks.
     fs.writeFileSync(path.join(userData, 'ui-settings.json'), JSON.stringify({
       sandbox: { workDir: '/Users/me/w', webPort: 7999, autoStart: true, mounts: [{ host: '/m', ro: true }] },
-    }));
+    }), { mode: 0o600 });
     const stores = initStores(userData, { log: console, registryDir });
     const s = stores.uiSettings.get();
     assert.strictEqual('sandbox' in s, false, 'legacy key is not carried forward');
@@ -1726,6 +1729,47 @@ test('uiSettings: a boxes write leaves the other settings intact', () => {
     assert.strictEqual(s.peers.length, 1);
     assert.strictEqual(s.peers[0].id, 'p');
   } finally { cleanup(); }
+});
+
+// ui-settings.json holds peer auth tokens, so a group/world-readable one is
+// worth a word — the same stance cli/src/contexts.js takes for its own token
+// file. Warn, never fail: a settings read must keep working regardless.
+test('uiSettings: a group/world-readable settings file warns once, and still loads', () => {
+  const { stores, userData, cleanup } = freshStores();
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [{ id: 'p', label: 'P', url: 'http://p', token: 'sekrit' }] });
+    fs.chmodSync(path.join(userData, 'ui-settings.json'), 0o644);
+    const s = uiSettings.get();
+    assert.strictEqual(s.peers.length, 1, 'a loose mode must warn, never block the read');
+    const hit = warnings.filter((w) => /ui-settings\.json is mode/.test(w));
+    assert.strictEqual(hit.length, 1, `expected exactly one mode warning, got ${warnings.length} warnings`);
+    assert.match(hit[0], /chmod 600/);
+    // Checked once per process: a statSync on every _load would be a syscall per
+    // settings read for a file that is 0600 in every normal case.
+    uiSettings.get();
+    uiSettings.get();
+    assert.strictEqual(warnings.filter((w) => /ui-settings\.json is mode/.test(w)).length, 1,
+      'the mode check must run once per process, not once per read');
+  } finally { console.warn = realWarn; cleanup(); }
+});
+
+test('uiSettings: a 0600 settings file warns about nothing', () => {
+  const { stores, userData, cleanup } = freshStores();
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [{ id: 'p', label: 'P', url: 'http://p' }] });
+    assert.strictEqual((fs.statSync(path.join(userData, 'ui-settings.json')).mode & 0o777), 0o600,
+      'atomicWriteFileSync must land 0600 by construction');
+    uiSettings.get();
+    assert.deepStrictEqual(warnings.filter((w) => /ui-settings\.json is mode/.test(w)), []);
+  } finally { console.warn = realWarn; cleanup(); }
 });
 
 // --- envScopes store (T46) --------------------------------------------------

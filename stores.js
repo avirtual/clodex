@@ -1510,10 +1510,37 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // ---------------------------------------------------------------------------
   // UI preferences — statusline components per CLI, global
   // ---------------------------------------------------------------------------
+  // This file holds SECRETS — peer auth tokens (`peers[].token`) — so its mode
+  // is worth checking on read, not just setting on write. atomicWriteFileSync
+  // opens its temp file 0600 and renames over the target, so every write we make
+  // lands 0600 by construction; what this catches is a file that arrived some
+  // other way (restored from a backup, copied off another machine, a stray
+  // chmod -R) and is group/world-readable until the next save silently heals it.
+  //
+  // Warn, don't fail — exactly the stance cli/src/contexts.js:28-31 takes for
+  // the CLI's own token file. That symmetry is the point: the two token stores
+  // now have equal DETECTION, not merely equal permissions.
+  //
+  // Checked once per store bundle (so, once per process — initStores runs once
+  // in the app): _load runs on every settings read, and a statSync on each would
+  // be a syscall per read for a file that is 0600 in every normal case.
+  let uiSettingsModeChecked = false;
+  function warnUiSettingsMode() {
+    if (uiSettingsModeChecked) return;
+    uiSettingsModeChecked = true;
+    try {
+      const mode = fs.statSync(UI_SETTINGS_FILE).mode & 0o777;
+      if (mode & 0o077) {
+        console.warn(`ui-settings.json is mode ${mode.toString(8)} — peer tokens are group/world-readable; run: chmod 600 ${UI_SETTINGS_FILE}`);
+      }
+    } catch {}
+  }
+
   const uiSettings = {
     _load() {
       try {
         const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, 'utf-8'));
+        warnUiSettingsMode();
         return {
           statusline: {
             claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : DEFAULT_UI_SETTINGS.statusline.claude,

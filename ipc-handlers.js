@@ -38,6 +38,10 @@ const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
 // (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where
 // the live row set is authoritative.
 const { catalogRows, allowlistFromChecked } = require('./intent-registry');
+// contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
+// — an imported token must never round-trip through the renderer (see the
+// peer:import handlers below).
+const peerImport = require('./peer-import');
 
 function registerIpcHandlers(deps) {
   const {
@@ -1245,6 +1249,52 @@ function registerIpcHandlers(deps) {
     }
     return out;
   });
+  // ---- contexts→peers import (t32 step 4). The mirror of `clodexctl ctx
+  // import`, which seeds contexts FROM the peers array. Read-only on
+  // ~/.clodex/cli/contexts.json.
+  //
+  // BOTH halves run main-side, and that is the security shape, not an
+  // implementation detail: a context entry carries its TOKEN, and settings:get
+  // has always stripped peer tokens to a `hasToken` boolean. Previewing rows in
+  // the dialog and saving them back through collectPeers would have been the
+  // tidier reuse — and would have carried imported token VALUES through the
+  // renderer for the first time. So the renderer sees token STATE only, and
+  // apply re-derives the records here from names it sends back.
+  handle('peer:importPreview', () => {
+    const warnings = [];
+    const { store, error, file } = peerImport.loadContexts({ warn: (m) => warnings.push(m) });
+    if (error) return { ok: false, error, file };
+    const peers = uiSettings.get().peers || [];
+    // Strip `peer` on the way out — it holds the token. The renderer needs the
+    // NAME to send back, nothing else.
+    const candidates = peerImport.collectCandidates(store, peers)
+      .map(({ peer, ...rest }) => rest);
+    return { ok: true, file, warnings, candidates };
+  });
+  // Apply: re-collect from the CURRENT store and CURRENT peers (never from a
+  // preview stash — the same whole-array-round-trip lesson the Peers dialog
+  // learned about managed boxes), keep the named ones, write, then REPORT FROM
+  // THE READ-BACK. sanitizePeers is private to stores.js, so its admission rules
+  // and this module's are two copies of one contract; reading back what actually
+  // survived means a divergence shows up as an honest "not imported" rather than
+  // a success message about a peer that isn't there.
+  handle('peer:importApply', (_e, names) => {
+    const wanted = Array.isArray(names) ? names.filter((n) => typeof n === 'string') : null;
+    const { store, error, file } = peerImport.loadContexts();
+    if (error) return { ok: false, error, file };
+    const before = uiSettings.get().peers || [];
+    const candidates = peerImport.collectCandidates(store, before);
+    const chosen = candidates.filter((c) => c.action === 'add' && (!wanted || wanted.includes(c.name)));
+    if (chosen.length === 0) return { ok: true, imported: [], rejected: [], file };
+    const next = peerImport.applyCandidates(before, candidates, { names: wanted });
+    const after = uiSettings.set({ peers: next }).peers || [];
+    const kept = new Set(after.map((p) => p && p.id));
+    const imported = chosen.filter((c) => kept.has(c.peer.id)).map((c) => c.name);
+    const rejected = chosen.filter((c) => !kept.has(c.peer.id)).map((c) => c.name);
+    if (imported.length) syncPeerManager();
+    return { ok: true, imported, rejected, file };
+  });
+
   // Peer web view (t30b): open/close the on-demand ssh forward to a peer's
   // browser frontend. Open pops the operator's browser ONCE, on the first
   // successful up (peer-wiring's firstUp branch) — this handler returns as soon
