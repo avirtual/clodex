@@ -5127,6 +5127,116 @@ function collectPeers() {
 
 document.getElementById('peers-add').addEventListener('click', () => addPeerRow({}, { expanded: true }));
 
+// ---- Import from clodexctl's contexts file (t32 step 4) ------------------
+// The mirror of `clodexctl ctx import`, which seeds contexts from these peers.
+//
+// The whole exchange is by NAME: preview returns each context's kind/target and
+// a token STATE, apply takes back the names to import. An imported token value
+// never reaches this file — settings:get has always stripped peer tokens to a
+// `hasToken` boolean, and routing imported ones through the dialog would have
+// been the first exception. So no row is injected here: apply writes main-side
+// and we re-open the dialog, which renders the new peers through the ordinary
+// path with the ordinary token handling.
+const peersImportBox = document.getElementById('peers-import-box');
+
+function closePeersImport() {
+  peersImportBox.classList.add('hidden');
+  peersImportBox.innerHTML = '';
+}
+
+async function openPeersImport() {
+  peersImportBox.classList.remove('hidden');
+  peersImportBox.innerHTML = '<span class="peer-status-dim">Reading clodexctl contexts…</span>';
+  let res;
+  try { res = await window.api.peerImportPreview(); }
+  catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
+  if (!res || !res.ok) {
+    peersImportBox.innerHTML = `<span class="peer-status-err">${esc((res && res.error) || 'could not read the contexts file')}</span>`;
+    return;
+  }
+  renderPeersImport(res);
+}
+
+function renderPeersImport(res) {
+  const cands = Array.isArray(res.candidates) ? res.candidates : [];
+  const addable = cands.filter((c) => c.action === 'add');
+  const parts = [];
+  parts.push(`<div class="peer-status-dim">${esc(res.file || 'contexts.json')}</div>`);
+  // The CLI's own loader warnings (today: the 0600 mode check) are SHOWN, not
+  // swallowed — a token file the whole machine can read is exactly the thing an
+  // operator should learn about while looking at an import screen.
+  for (const w of Array.isArray(res.warnings) ? res.warnings : []) {
+    parts.push(`<div class="peer-status-warn">${esc(w)}</div>`);
+  }
+  if (cands.length === 0) {
+    parts.push('<div class="peer-status-note">No contexts found. Add one with <code>clodexctl ctx add</code>.</div>');
+  }
+  for (const c of cands) {
+    const tok = c.tokenState === 'set' ? 'token set' : 'no token';
+    if (c.action === 'add') {
+      parts.push(
+        `<label class="peers-import-row">`
+        + `<input type="checkbox" class="peers-import-check" data-name="${esc(c.name)}" checked>`
+        + `<span class="peers-import-name">${esc(c.name)}</span>`
+        + `<span class="peers-import-target">${esc(c.kind)} · ${esc(c.target)} · ${esc(tok)}</span>`
+        + `</label>`,
+      );
+    } else {
+      // Skips carry the module's reason verbatim: "already a peer", a refused
+      // tunnel argv, an ECS family. Saying WHICH and why beats a silent absence.
+      parts.push(
+        `<div class="peers-import-row">`
+        + `<span style="flex:0 0 14px"></span>`
+        + `<span class="peers-import-name peer-status-dim">${esc(c.name)}</span>`
+        + `<span class="peers-import-target">${esc(c.reason || 'skipped')}</span>`
+        + `</div>`,
+      );
+    }
+  }
+  parts.push('<div class="peer-status-note">Importing COPIES the destination and its token. Editing the context later does not change the peer, and editing the peer does not change the context.</div>');
+  parts.push(
+    '<div class="peer-status-actions">'
+    + `<button type="button" class="peers-import-go"${addable.length ? '' : ' disabled'}>Import ${addable.length || ''}</button>`
+    + '<button type="button" class="secondary peers-import-cancel">Cancel</button>'
+    + '</div>',
+  );
+  peersImportBox.innerHTML = parts.join('');
+  peersImportBox.querySelector('.peers-import-cancel').addEventListener('click', closePeersImport);
+  peersImportBox.querySelector('.peers-import-go').addEventListener('click', async () => {
+    const names = [...peersImportBox.querySelectorAll('.peers-import-check')]
+      .filter((el) => el.checked).map((el) => el.dataset.name);
+    if (names.length === 0) return;
+    peersImportBox.innerHTML = '<span class="peer-status-dim">Importing…</span>';
+    let out;
+    try { out = await window.api.peerImportApply(names); }
+    catch (e) { out = { ok: false, error: e && e.message ? e.message : String(e) }; }
+    if (!out || !out.ok) {
+      peersImportBox.innerHTML = `<span class="peer-status-err">${esc((out && out.error) || 'import failed')}</span>`;
+      return;
+    }
+    // Re-open from settings so imported peers arrive through the normal render
+    // path (unsaved edits in the dialog are discarded — the import wrote
+    // straight to settings, so leaving stale rows on screen would let a
+    // following Save clobber what was just imported).
+    closePeersImport();
+    await openPeersDialog();
+    // The read-back is the truth: main reports which names the store actually
+    // kept. A rejected name means the peer store refused a record this side
+    // previewed as importable, and saying so is the whole point of checking.
+    if (Array.isArray(out.rejected) && out.rejected.length) {
+      peersImportBox.classList.remove('hidden');
+      peersImportBox.innerHTML =
+        `<span class="peer-status-warn">Imported ${out.imported.length}; `
+        + `${esc(out.rejected.join(', '))} could not be saved as ${out.rejected.length === 1 ? 'a peer' : 'peers'}.</span>`;
+    }
+  });
+}
+
+document.getElementById('peers-import').addEventListener('click', () => {
+  if (peersImportBox.classList.contains('hidden')) openPeersImport();
+  else closePeersImport();
+});
+
 // Managed boxes register themselves as peers (sandbox.js registerPeer), but they
 // have their own management surface (the Sandboxes panel) and must NOT be
 // double-managed in this dialog. They're filtered out of the row list for display
@@ -5142,6 +5252,7 @@ async function boxPeerIds() {
 async function openPeersDialog() {
   const s = await window.api.getSettings();
   peersListBox.innerHTML = '';
+  closePeersImport();   // never leave a stale preview from a previous open
   const boxIds = await boxPeerIds();
   const peers = s.peers || [];
   const genuine = peers.filter((p) => !(p && boxIds.has(p.id)));

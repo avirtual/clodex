@@ -3384,6 +3384,23 @@ html, body {
    srcDir. Indented to align with the folder field. */
 #peers-list .peer-row-folder-hint { flex: 0 0 100%; margin-left: 116px; font-size: 11px; }
 
+/* clodexctl import preview: one panel under the buttons, same muted chrome as
+   the per-row status panel but full width (it isn't tied to a row). */
+#peers-import-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#peers-import-box.hidden { display: none; }
+#peers-import-box .peers-import-row { display: flex; gap: 8px; align-items: baseline; }
+#peers-import-box .peers-import-row input { margin: 0; }
+#peers-import-box .peers-import-name { font-weight: 500; flex: 0 0 120px; }
+#peers-import-box .peers-import-target { flex: 1; color: var(--text-dim); word-break: break-all; }
+
 /* Wizard status / deploy-progress panel under a peer row. Indented to the
    inputs, muted chrome, grows without reflowing the row above it. */
 #peers-list .peer-row-wrap { margin-top: 6px; }

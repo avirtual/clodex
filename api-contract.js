@@ -199,6 +199,11 @@ const API_CONTRACT = [
   { name: 'peerDeployFix', kind: 'invoke', channel: 'peer:deployFix' },
   { name: 'onPeerDeployLine', kind: 'on', channel: 'peer-deploy-line' },
   { name: 'peerList', kind: 'invoke', channel: 'peer:list' },
+  // contexts→peers import (t32 step 4). Preview returns token STATE only and
+  // apply takes context NAMES, not records — the imported token value never
+  // crosses this boundary (see the handlers in ipc-handlers.js).
+  { name: 'peerImportPreview', kind: 'invoke', channel: 'peer:importPreview' },
+  { name: 'peerImportApply', kind: 'invoke', channel: 'peer:importApply' },
   { name: 'peerAttach', kind: 'invoke', channel: 'peer:attach' },
   { name: 'peerDetach', kind: 'invoke', channel: 'peer:detach' },
   { name: 'peerAttachedNames', kind: 'invoke', channel: 'peer:attachedNames' },

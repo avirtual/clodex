@@ -4618,6 +4618,35 @@ body {
   margin-left: 116px;
   font-size: 11px;
 }
+#peers-import-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#peers-import-box.hidden {
+  display: none;
+}
+#peers-import-box .peers-import-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+#peers-import-box .peers-import-row input {
+  margin: 0;
+}
+#peers-import-box .peers-import-name {
+  font-weight: 500;
+  flex: 0 0 120px;
+}
+#peers-import-box .peers-import-target {
+  flex: 1;
+  color: var(--text-dim);
+  word-break: break-all;
+}
 #peers-list .peer-row-wrap {
   margin-top: 6px;
 }
@@ -5779,6 +5808,8 @@ body {
       <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. <strong>Test &amp; Set Up</strong> checks the host over SSH and, if no Clodex is running there yet, offers to install one. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
       <div id="peers-list"></div>
       <button id="peers-add" class="secondary" type="button" style="margin-top: 6px;">Add Peer</button>
+      <button id="peers-import" class="secondary" type="button" style="margin-top: 6px;" title="Copy destinations from clodexctl's contexts file">Import from clodexctl…</button>
+      <div id="peers-import-box" class="hidden"></div>
       <div class="dialog-actions">
         <button id="btn-peers-sandbox" class="secondary" type="button" title="Manage the local Docker sandboxes">Sandboxes…</button>
         <div style="flex: 1;"></div>
@@ -6051,6 +6082,11 @@ body {
         { name: "peerDeployFix", kind: "invoke", channel: "peer:deployFix" },
         { name: "onPeerDeployLine", kind: "on", channel: "peer-deploy-line" },
         { name: "peerList", kind: "invoke", channel: "peer:list" },
+        // contexts→peers import (t32 step 4). Preview returns token STATE only and
+        // apply takes context NAMES, not records — the imported token value never
+        // crosses this boundary (see the handlers in ipc-handlers.js).
+        { name: "peerImportPreview", kind: "invoke", channel: "peer:importPreview" },
+        { name: "peerImportApply", kind: "invoke", channel: "peer:importApply" },
         { name: "peerAttach", kind: "invoke", channel: "peer:attach" },
         { name: "peerDetach", kind: "invoke", channel: "peer:detach" },
         { name: "peerAttachedNames", kind: "invoke", channel: "peer:attachedNames" },
@@ -28794,6 +28830,81 @@ ${res.stderr}` : "");
         return { ok: true, peers: out };
       }
       document.getElementById("peers-add").addEventListener("click", () => addPeerRow({}, { expanded: true }));
+      var peersImportBox = document.getElementById("peers-import-box");
+      function closePeersImport() {
+        peersImportBox.classList.add("hidden");
+        peersImportBox.innerHTML = "";
+      }
+      async function openPeersImport() {
+        peersImportBox.classList.remove("hidden");
+        peersImportBox.innerHTML = '<span class="peer-status-dim">Reading clodexctl contexts\u2026</span>';
+        let res;
+        try {
+          res = await window.api.peerImportPreview();
+        } catch (e) {
+          res = { ok: false, error: e && e.message ? e.message : String(e) };
+        }
+        if (!res || !res.ok) {
+          peersImportBox.innerHTML = `<span class="peer-status-err">${esc(res && res.error || "could not read the contexts file")}</span>`;
+          return;
+        }
+        renderPeersImport(res);
+      }
+      function renderPeersImport(res) {
+        const cands = Array.isArray(res.candidates) ? res.candidates : [];
+        const addable = cands.filter((c) => c.action === "add");
+        const parts = [];
+        parts.push(`<div class="peer-status-dim">${esc(res.file || "contexts.json")}</div>`);
+        for (const w of Array.isArray(res.warnings) ? res.warnings : []) {
+          parts.push(`<div class="peer-status-warn">${esc(w)}</div>`);
+        }
+        if (cands.length === 0) {
+          parts.push('<div class="peer-status-note">No contexts found. Add one with <code>clodexctl ctx add</code>.</div>');
+        }
+        for (const c of cands) {
+          const tok = c.tokenState === "set" ? "token set" : "no token";
+          if (c.action === "add") {
+            parts.push(
+              `<label class="peers-import-row"><input type="checkbox" class="peers-import-check" data-name="${esc(c.name)}" checked><span class="peers-import-name">${esc(c.name)}</span><span class="peers-import-target">${esc(c.kind)} \xB7 ${esc(c.target)} \xB7 ${esc(tok)}</span></label>`
+            );
+          } else {
+            parts.push(
+              `<div class="peers-import-row"><span style="flex:0 0 14px"></span><span class="peers-import-name peer-status-dim">${esc(c.name)}</span><span class="peers-import-target">${esc(c.reason || "skipped")}</span></div>`
+            );
+          }
+        }
+        parts.push('<div class="peer-status-note">Importing COPIES the destination and its token. Editing the context later does not change the peer, and editing the peer does not change the context.</div>');
+        parts.push(
+          `<div class="peer-status-actions"><button type="button" class="peers-import-go"${addable.length ? "" : " disabled"}>Import ${addable.length || ""}</button><button type="button" class="secondary peers-import-cancel">Cancel</button></div>`
+        );
+        peersImportBox.innerHTML = parts.join("");
+        peersImportBox.querySelector(".peers-import-cancel").addEventListener("click", closePeersImport);
+        peersImportBox.querySelector(".peers-import-go").addEventListener("click", async () => {
+          const names = [...peersImportBox.querySelectorAll(".peers-import-check")].filter((el) => el.checked).map((el) => el.dataset.name);
+          if (names.length === 0) return;
+          peersImportBox.innerHTML = '<span class="peer-status-dim">Importing\u2026</span>';
+          let out;
+          try {
+            out = await window.api.peerImportApply(names);
+          } catch (e) {
+            out = { ok: false, error: e && e.message ? e.message : String(e) };
+          }
+          if (!out || !out.ok) {
+            peersImportBox.innerHTML = `<span class="peer-status-err">${esc(out && out.error || "import failed")}</span>`;
+            return;
+          }
+          closePeersImport();
+          await openPeersDialog();
+          if (Array.isArray(out.rejected) && out.rejected.length) {
+            peersImportBox.classList.remove("hidden");
+            peersImportBox.innerHTML = `<span class="peer-status-warn">Imported ${out.imported.length}; ${esc(out.rejected.join(", "))} could not be saved as ${out.rejected.length === 1 ? "a peer" : "peers"}.</span>`;
+          }
+        });
+      }
+      document.getElementById("peers-import").addEventListener("click", () => {
+        if (peersImportBox.classList.contains("hidden")) openPeersImport();
+        else closePeersImport();
+      });
       async function boxPeerIds() {
         try {
           return new Set((await window.api.sandboxListBoxes() || []).map((b) => b && b.id).filter(Boolean));
@@ -28804,6 +28915,7 @@ ${res.stderr}` : "");
       async function openPeersDialog() {
         const s = await window.api.getSettings();
         peersListBox.innerHTML = "";
+        closePeersImport();
         const boxIds = await boxPeerIds();
         const peers = s.peers || [];
         const genuine = peers.filter((p) => !(p && boxIds.has(p.id)));
