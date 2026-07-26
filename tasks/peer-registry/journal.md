@@ -341,3 +341,77 @@ speed because the cap is reached via `BACKOFF_MIN_MS` (1s), not the deadline.
 **zero product code**. clodex: "that's what made the whole prefix mergeable
 without touching your in-flight ssm work. Keep that separation." Worth holding
 to for the rest of t32.
+
+## Step 1 IN PROGRESS — `ssm.target` end-to-end
+
+### Done (product code, uncommitted)
+
+- **`stores.js`**: `sanitizePeerSsm(raw)` — per-kind rebuild (`target` required
+  non-empty string, cap 256; `region`/`profile` optional, OMITTED not null so
+  `ssmArgv`'s presence test works). `ecs` present → returns null WHOLE (step 3).
+  Final say goes to `validateEntry({ ssm })` — the CLI's PUBLIC door; the
+  private `validateSsm` is never touched, so a future export-widening is not
+  something this code invites. Admission is now
+  `if (!url && !sshHost && !ssm) continue;` and the entry carries
+  `...(ssm ? { ssm } : {})` (presence-encoded, like disabled/relayAllowed).
+  Label fallback gained `|| ssm.target` for a peer with neither url nor host.
+- **`peer-tunnel.js`**: `Tunnel` takes `ssm`; new `argv(localPort)` returns the
+  FULL argv incl. command word — `substitutePort(ssmArgv(...))` for ssm, the
+  original `['ssh', ...this.args(port)]` otherwise. `args()` kept verbatim so the
+  ssh shape and its tests are untouched. `_spawnTunnel` STAYS SYNCHRONOUS.
+  ssm children spawn `detached: true` and are killed by process GROUP
+  (`_killChild`, `pid > 0` guard) — aws forks a session-manager-plugin helper a
+  plain kill orphans; ssh keeps its original non-detached spawn exactly.
+  ENOENT now names the binary. `TunnelManager.sync` admits ssm peers and
+  restarts on ANY destination change via `sameSsm` (region/profile count —
+  a different region is a different box).
+- **`peer-wiring.js` `resolvePeerUrls`**: branch is `p.sshHost || p.ssm` with a
+  comment saying WHY (both land on a TunnelManager-owned local port; testing
+  sshHost would have left cloud peers with `url: undefined`).
+
+### Next (this pass)
+
+4. Renderer entry surface + honest degradation. **Open question to settle by
+   reading, not guessing**: `peer-deploy.js` (scp's an installer) and
+   `web-tunnel.js` (the t30b peer web view) are both genuinely ssh-only — you
+   cannot scp over an SSM port-forward. Those must SAY ssh-only for an ssm peer,
+   not silently hide the affordance (the t30b rule).
+5. Tests: stores round-trip through `set()`/`get()` (the WHITELIST pin), the
+   `validateEntry`-is-the-only-door pin, tunnel argv + group-kill, sync restart
+   on region change, `resolvePeerUrls` for an ssm peer. Each proven by reverting
+   and failing BY MESSAGE.
+
+### Phase 2 done — renderer surface + honest degradation (still uncommitted)
+
+- **`peer-deploy.js` `classifyPeerDest`**: new `{ kind: 'ssm', ssm: { target } }`
+  on an `ssm:TARGET` prefix. A PREFIX, not a sniff — a bare `i-0abc…` is
+  indistinguishable from an ssh alias and guessing would dial the wrong
+  mechanism silently. A `/` in the target (an ECS CLUSTER/FAMILY spec) is a
+  targeted ERROR naming the CLI as the thing that does support it, rather than
+  accepting a destination that could never dial (step 3).
+- **`renderer.js`**: dest pre-fill `ssm:<target>`; placeholder names the third
+  form; badge says `→ AWS SSM tunnel (needs the aws CLI locally)` — naming the
+  vendor CLI because "you need aws on YOUR machine" is the misconfig this
+  invites. `collectPeers` saves `peer.ssm`. **region/profile are stashed on the
+  row (`row._ssmExtra`) and carried back on save** — without that, opening the
+  dialog and pressing Save would erase a hand-configured region: the same
+  silent-loss class as the store's whitelist hazard, one layer up.
+- **Test & Set Up** for an ssm dest: SAYS ssh-only and WHY (install runs a shell
+  and copies files over ssh; a port-forward carries neither), names what the
+  operator must do instead, and still validates the port so a bad one is caught
+  here rather than at Save.
+- **`renderer/lib/peer-web-view.js`**: the ssh-only tip now distinguishes
+  `an AWS SSM tunnel` from `URL`. Same answer (no button), different TRUE
+  reason — telling an ssm operator their box "is reached by URL" would send
+  them looking for a URL that does not exist. `isSshPeer` deliberately still
+  tests `sshHost`, not "has a tunnel": an ssm peer HAS a wire tunnel but the web
+  view needs a SECOND forward and only the ssh template can open one.
+
+### FLAGGED, deliberately NOT changed — the header-menu "Update Clodex on …" item
+
+`deployTargetFor` (ipc-handlers.js:1748) returns null without an `sshHost`, so
+the menu item is HIDDEN for an ssm peer — and has always been hidden for a
+url peer. That is a hide, not a say, so it sits against the t30b rule. I did not
+change it: making it visible-but-disabled changes behaviour for URL peers too,
+which is a pre-t32 settled surface and clodex's call, not mine. Raised in the
+report instead.

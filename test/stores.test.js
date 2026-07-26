@@ -1165,6 +1165,95 @@ test('uiSettings: peer disabled flag round-trips (strict true only)', () => {
   } finally { cleanup(); }
 });
 
+// --- peer ssm transport (t32 step 1) ---------------------------------------
+//
+// The whitelist pin. sanitizePeers rebuilds every entry field by field, so a
+// sub-key missing from the reconstruction is dropped on EVERY write — that is
+// how `mounts` vanished from the sandbox config. These assert the disk
+// round-trip (get() re-loads and re-sanitizes), not just set()'s return value,
+// because strip-on-write is invisible to the return.
+
+test('uiSettings: a full peer ssm block survives the disk round-trip (whitelist pin)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.uiSettings.set({
+      peers: [{ id: 'aws', label: 'prod', ssm: { target: 'i-0abc123', region: 'eu-west-1', profile: 'prod-admin' } }],
+    });
+    const p = stores.uiSettings.get().peers.find((x) => x.id === 'aws');
+    assert.ok(p, 'an ssm peer with no url and no sshHost is admitted');
+    // Every field named individually: a deepStrictEqual alone would still pass
+    // if BOTH the write and this test forgot the same key.
+    assert.strictEqual(p.ssm.target, 'i-0abc123', 'target survives the write');
+    assert.strictEqual(p.ssm.region, 'eu-west-1', 'region survives the write');
+    assert.strictEqual(p.ssm.profile, 'prod-admin', 'profile survives the write');
+    assert.deepStrictEqual(Object.keys(p.ssm).sort(), ['profile', 'region', 'target'],
+      'no extra keys, and none silently dropped');
+    assert.strictEqual(p.url, null);
+    assert.strictEqual(p.sshHost, null);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: optional ssm fields stay ABSENT when unset (ssmArgv tests presence)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.uiSettings.set({ peers: [{ id: 'bare', ssm: { target: 'i-0bare' } }] });
+    const p = stores.uiSettings.get().peers.find((x) => x.id === 'bare');
+    // Not `region: null` — ssmArgv emits --region only when the key is truthy,
+    // and a null would read the same, but the record shape is what the CLI's
+    // validator and any future import path compare against.
+    assert.ok(!('region' in p.ssm), 'unset region is absent, not null');
+    assert.ok(!('profile' in p.ssm), 'unset profile is absent, not null');
+    assert.strictEqual(p.ssm.target, 'i-0bare');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: malformed / not-yet-supported ssm blocks are dropped whole', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const next = stores.uiSettings.set({
+      peers: [
+        { id: 'ecs', ssm: { ecs: 'my-cluster/my-family' } },   // step 3, not yet dialable
+        { id: 'blank', ssm: { target: '   ' } },               // whitespace target
+        { id: 'notobj', ssm: 'i-0abc' },                       // string, not an object
+        { id: 'arr', ssm: ['aws', 'ssm'] },                    // an argv-shaped thing
+        { id: 'keep', ssm: { target: 'i-0keep' } },            // the control
+      ],
+    });
+    assert.deepStrictEqual(next.peers.map((p) => p.id), ['keep'],
+      'a peer whose only transport is an unusable ssm block is not admitted');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: an ssm peer never persists a tunnel argv (DATA-only rule)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    // The ruling: the five typed cloud kinds are DATA and may be persisted; a
+    // raw argv is CODE and must never become a peer-record field. This store is
+    // written from the renderer, so a persisted argv would be a GUI-editable
+    // command line the app later executes.
+    stores.uiSettings.set({
+      peers: [{ id: 'aws', ssm: { target: 'i-0abc' }, tunnel: ['aws', 'ssm', 'start-session', '--target', 'i-evil'] }],
+    });
+    const p = stores.uiSettings.get().peers.find((x) => x.id === 'aws');
+    assert.ok(!('tunnel' in p), 'a tunnel argv is not a peer-record field');
+  } finally { cleanup(); }
+});
+
+test('the CLI keeps its per-kind validators PRIVATE — validateEntry is the only door', () => {
+  // stores.js validates a peer's ssm block through validateEntry so the GUI and
+  // the CLI cannot drift into two ideas of a valid transport. Widening this
+  // module's surface to serve a second consumer is how a leaf stops being a
+  // leaf, so the export list is pinned: if someone exports validateSsm to make
+  // a call site tidier, they argue with this test first.
+  const contexts = require('../cli/src/contexts');
+  assert.deepStrictEqual(Object.keys(contexts).sort(),
+    ['cliDir', 'contextsPath', 'load', 'resolve', 'save', 'validateEntry']);
+  // And the door actually enforces the rule stores.js relies on.
+  assert.throws(() => contexts.validateEntry({ ssm: { target: 'i-0a', ecs: 'c/f' } }),
+    /exactly one of/, 'validateEntry rejects target+ecs together');
+  assert.throws(() => contexts.validateEntry({ ssm: {} }), /ssm needs one of/);
+});
+
 // --- execLibrary — the exec-command registry (string twin of agentLibrary) ---
 
 const execFile = (registryDir, name) =>
