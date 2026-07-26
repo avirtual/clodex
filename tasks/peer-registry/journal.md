@@ -557,3 +557,166 @@ a second path would be a second place for the token logic to drift.
 This is exactly the trigger clodex named, third instance: a layer rebuilding a
 record from named fields drops what it can't name. Worth noting that the FIX for
 "az isn't typable" is what created it.
+
+## Step 4 — contexts→peers import. POSITIONS SETTLED BEFORE BUILDING
+
+clodex asked for two decisions argued rather than defaulted. Both below, with
+the facts they rest on re-read this pass (not carried from memory).
+
+### Q1 — import is a COPY. No link, and no provenance field either.
+
+**Decision: an imported peer keeps NO relationship to its context entry.** Not
+a `fromContext` name, not a back-reference, nothing. Reasons, strongest first:
+
+1. **A stored context name is a pointer that can go stale and lie.**
+   `ctx rm prod && ctx add prod --url …` leaves a peer claiming a lineage that
+   now points at a different box. A copy claims nothing, so it cannot be wrong.
+2. **Any link field would have to mean something behaviourally, and every
+   meaning is bad.** *Re-sync on change*: nothing watches contexts.json, and if
+   it did, the GUI would be writing on the CLI's schedule — inverting the
+   ownership `contexts.js:2` states ("CLI-owned, deliberately separate from the
+   GUI's peers array"). *Don't re-import this one*: that is dedupe, and dedupe
+   belongs on the DESTINATION (below), which stays true after the operator
+   renames the peer. *Provenance only*: a field with no behaviour that still
+   costs a whitelist line in `sanitizePeers` AND a dialog carry-back
+   (`_cloudExtra`-style) — the named trigger's price, paid for a tooltip.
+3. **The mirror already works this way.** `import.js` (peers→contexts) writes
+   url/ssh + token and no back-reference to the peer id. Symmetry is free and
+   that shape has already been reviewed.
+
+Consequences, stated rather than implied:
+
+- **A later context edit does NOT reach the imported peer.** The import UI must
+  say this — a one-time copy that looks like a subscription is the surprise.
+- **Re-import is a collision, resolved by DESTINATION, not by name.** A
+  candidate is "already present" when an existing peer has the same transport
+  (same url, or same sshHost, or same cloud kind with every field equal). The
+  label is operator-editable free text and the id is a UUID, so the destination
+  is the only stable identity a copy retains.
+- **Label collisions are cosmetic and are kept, not de-conflicted.** Peers are
+  keyed by UUID; unlike sessions there is no global name namespace. Two peers
+  named `prod` pointing at different boxes is a thing the operator did.
+
+### Q2 — the TOKEN. Copy it, main-process only, and level up the destination.
+
+The facts, re-verified this pass:
+
+| | contexts.json | ui-settings.json |
+|---|---|---|
+| write | `writeFileSync(…, {mode:0600})` **in place**, then explicit `chmodSync` (contexts.js:45-48 — needed *because* an existing file keeps its old mode) | `atomicWriteFileSync`: tmp `openSync(…,'w',0o600)` → **rename over the target** (fs-util.js:28,35) |
+| resulting mode | 0600, asserted | 0600 **by construction** — rename replaces the inode, so a previously-loose file cannot leak its mode forward |
+| read | mode checked, warns on `& 0o077` (contexts.js:28-31) | **no check** |
+
+**So the write side is not the asymmetry — if anything the destination is the
+stronger of the two** (rename-replace can't inherit a loose mode; the CLI needs
+an explicit chmod precisely because it can). `openSync`'s mode is umask-masked,
+and a umask can only REMOVE bits, so 0600 is a ceiling, never a floor breach.
+
+**Does the copy widen who can read a token? No.** Same user, same machine, both
+0600, both under a directory the user owns. The set of principals is unchanged:
+the owning user and root. The disqualifier is cleared on its own terms.
+
+**The two real deltas, stated rather than waved past:**
+
+1. **The destination has no read-side warning.** A ui-settings.json that is
+   somehow 0644 (restored from a backup, copied off another machine, a
+   `chmod -R`) heals itself on the next settings write but is silent until then.
+   contexts.json would have warned. So while the import doesn't *drop* an
+   existing warning, it is what makes "this file holds tokens and nobody checks
+   its mode" load-bearing.
+2. **A secret in two files is a secret with two chances to leak** — backups,
+   sync tools, a support bundle. Not a widening of who *can* read; a widening of
+   where it lives.
+
+**Ruling on (1): close it rather than argue around it.** Add the contexts.js
+read-side check to ui-settings.json — warn once per process on `& 0o077`. This
+is NARROWING, it is the pattern the codebase already has twice (contexts.js:29,
+stores.js env-scopes post-rename chmod), and it means the copy lands somewhere
+with equal detection, not merely equal permissions. **FLAGGED as a scope
+judgment: it is a store-wide change, not a peers change. Kept in its own commit
+so clodex can drop it with one revert if he wants it separate.**
+
+**Ruling on (2): the copy is the SAFER of the available options.** The
+alternative — import the peer without its token and let the operator supply it
+— sounds conservative and is not. It leaves the peer imported-but-dead, and it
+sends the operator to `cat ~/.clodex/cli/contexts.json`, putting the secret on a
+terminal, in a scrollback, and possibly in shell history. **Declining to copy
+does not avoid the copy; it routes it through a worse channel.**
+
+**Ruling on the RENDERER, which is the part that could actually widen it:**
+the token value MUST NOT cross into the renderer. `getSettings` today strips
+peer tokens to a `hasToken` boolean — the renderer has never held a stored token
+value, only one the operator just typed. So:
+
+- **Import APPLIES in the main process**, not by injecting rows into the Peers
+  dialog. Dialog-injection was the tempting shape (it reuses `collectPeers`'
+  one save path) but it would have to carry the imported token through the
+  renderer to survive, which is a genuine first-time widening and exactly the
+  thing the disqualifier names.
+- The renderer sees `{ name, kind, target, tokenState: 'set'|'none', action,
+  reason }` — `import.js:206`'s discipline verbatim: **token state, never a
+  value.**
+
+### Step 4 build plan
+
+1. **`peer-import.js`** — electron-free, pure. Contexts store + current peers →
+   candidates. Refusals each with a reason: `tunnel` (**the never-tunnel
+   invariant in the OTHER direction** — a raw argv is CODE and must never become
+   a peer field), `ssm.ecs` (message names clodexctl for families and says a
+   concrete target is required — clodex's likely-permanent answer, in the error
+   text), an ssh string outside the peer charset, a url that isn't `^https?://`.
+2. **A candidate must not claim what the store will drop.** `sanitizePeers` is
+   private (`stores.js` exports only `initStores`), so the apply path **reads
+   back** what the store kept and reports from that, rather than from what the
+   preview hoped. Drift shows up as a candidate that previewed `add` and is
+   reported not-added — and that is a test.
+3. **IPC**: preview + apply, both main-side, tokens never returned.
+4. **Renderer**: an "Import from clodexctl…" affordance on the Peers dialog;
+   preview list, confirm, apply, reopen the dialog fresh.
+5. **az arrives here** — it is the only kind with no route in, and after this it
+   needs no second pass through the store (step 2 put its row in deliberately).
+
+### Step 4 phase 2 — main-side done (uncommitted)
+
+- **`peer-import.js`** (new, electron-free). `classifyEntry` refuses `tunnel`
+  (never-tunnel, the OTHER direction), `ssm.ecs` (names clodexctl for families
+  and says a peer needs a concrete target — clodex's likely-permanent answer put
+  in the error text where an operator meets it), an ssh outside the peer charset,
+  a non-http url. Cloud kinds are read off `peer-tunnel.js`'s `CLOUD_KINDS`
+  rather than re-listed — the field list keeps ONE home. `sameDestination`
+  compares url/sshHost/every cloud field; **candidates dedupe against each other
+  as well as against existing peers**, or two contexts naming one box would make
+  a duplicate in a single pass that no later run could tell apart.
+- **`ipc-handlers.js`**: `peer:importPreview` strips `peer` (it holds the token)
+  and returns `tokenState` only; `peer:importApply` takes NAMES, re-collects from
+  the current store + current peers, writes through `uiSettings.set`, and reports
+  from the **read-back** (`kept` = ids present after the write) rather than from
+  what the preview hoped. sanitizePeers is private, so its rules and this
+  module's are two copies of one contract — the read-back is what makes a
+  divergence surface as an honest "not imported".
+- **`api-contract.js`**: two rows.
+
+Next: the renderer affordance, then the ui-settings read-mode warn as its own
+commit, then tests.
+
+### Step 4 phase 3 — renderer + the mode warn (uncommitted)
+
+- **`renderer/index.html` + `styles.css`**: an "Import from clodexctl…" button
+  beside Add Peer, and one full-width preview panel (`#peers-import-box`) in the
+  same muted chrome as the per-row status panel.
+- **`renderer/renderer.js`**: `openPeersImport` → `peerImportPreview`, a checkbox
+  per importable context (name · kind · target · token set/none) and skips shown
+  WITH their reason verbatim; Import → `peerImportApply(names)` → `closePeersImport`
+  + `openPeersDialog()` so the new peers render through the ORDINARY path (and
+  stale dialog rows can't clobber a fresh import on a following Save). The
+  one-time-copy sentence is on screen, and the loader's warnings (the CLI's 0600
+  check) are DISPLAYED, not swallowed. `rejected` names from the read-back are
+  reported as a warning rather than folded into a success count.
+  `openPeersDialog` clears any stale preview on open.
+- **`stores.js`** (SEPARATE COMMIT, trimmable): `warnUiSettingsMode()` in
+  `uiSettings._load` — `mode & 0o077` → one `console.warn`, mirroring
+  contexts.js:28-31. Checked once per PROCESS, not once per warning: `_load`
+  runs on every settings read and a statSync each time would be a syscall per
+  read for a file that is 0600 in every normal case. This is the asymmetry the
+  token argument turned up — the destination had no read-side check — closed
+  rather than argued around.
