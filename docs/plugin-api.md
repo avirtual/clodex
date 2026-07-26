@@ -63,8 +63,13 @@ plugin. Skip it and `test/plugin-web-parity.test.js` fails, naming the remedy;
 the Electron app itself will not notice, which is exactly why it is easy to miss.
 An engine-only plugin needs no build step at all.
 
-Discovery scans `<repo>/plugins/*/manifest.json` and nothing else. `~/.clodex/plugins/`
-is not scanned in this version — see [Known gaps](#14-known-gaps-and-unspecified-behaviour).
+Discovery scans two roots in precedence order — the plugins directory shipped
+with the app, then `~/.clodex/plugins/`, which is where **your** plugin goes if
+you are not working in a checkout. Precedence, shadowing between two copies of
+one id, symlink following and the re-scan are specified in
+[`plugin-sources.md`](./plugin-sources.md) §3–§4 and §10, which is the one
+authority on where plugins come from; none of it is observable from inside
+`activate()`, so none of it is part of this contract.
 
 Plugins are **in-process JavaScript**, first-party or curated. There is no
 sandbox: an engine half runs with the privileges of the app's main process, and
@@ -1441,11 +1446,13 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   `true` for everything in the catalog by construction, since the catalog lists
   what successfully activated. The user's *intent*, and the quarantine state, are
   not part of a plugin's own view of the world.
-- **BYO plugins outside the repo** (`~/.clodex/plugins/`) are not discovered. A
-  scan path is a trust boundary, and widening one is a decision, not a
-  convenience.
-- **Packaged builds**: the plugins directory is included in the packaged app;
-  a plugin added to an installed copy is not.
+- **Packaged builds**: the plugins directory shipped with the app lives inside
+  `app.asar`, which is read-only and replaced wholesale by every update — so a
+  plugin cannot be added *there*. Add it to `~/.clodex/plugins/` instead, which
+  is scanned as a second root and which no update touches
+  ([`plugin-sources.md`](./plugin-sources.md) §2). The two roots are not
+  interchangeable: a user copy sharing an id with a shipped plugin is shadowed
+  rather than merged (§4 there).
 
 ---
 
