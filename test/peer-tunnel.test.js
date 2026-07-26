@@ -231,3 +231,107 @@ test('manager: a peer with neither sshHost nor a usable ssm target gets no tunne
   assert.equal(mgr.statuses().length, 0);
   mgr.stopAll();
 });
+
+// --- the other typed cloud kinds (t32 step 2) --------------------------------
+
+test('tunnel dials kubectl and gcloud through the CLI`s own builders', async () => {
+  for (const [opts, cmd, check] of [
+    [{ kubectl: { target: 'svc/clodex', namespace: 'prod', context: 'eks-1' } }, 'kubectl',
+      (a) => {
+        assert.ok(a.includes('port-forward'));
+        assert.equal(a[a.indexOf('-n') + 1], 'prod');
+        assert.equal(a[a.indexOf('--context') + 1], 'eks-1');
+        assert.ok(a.includes('svc/clodex'), 'kubectl`s own target spelling, slash intact');
+      }],
+    [{ gcloud: { instance: 'clodex-box', zone: 'us-central1-a', project: 'proj-1' } }, 'gcloud',
+      (a) => {
+        assert.ok(a.includes('start-iap-tunnel'));
+        assert.ok(a.includes('clodex-box'));
+        assert.equal(a[a.indexOf('--zone') + 1], 'us-central1-a');
+        assert.equal(a[a.indexOf('--project') + 1], 'proj-1');
+      }],
+    // az is reachable only by import — no destination syntax — so this is the
+    // only place its argv is exercised. The row exists so step 4's import needs
+    // no second pass through the store or the supervisor.
+    [{ az: { bastion: 'bast-1', resourceGroup: 'rg', target: '/subs/x/vm1' } }, 'az',
+      (a) => {
+        assert.ok(a.includes('bastion') && a.includes('tunnel'));
+        assert.equal(a[a.indexOf('--name') + 1], 'bast-1');
+        assert.equal(a[a.indexOf('--resource-group') + 1], 'rg');
+        assert.equal(a[a.indexOf('--target-resource-id') + 1], '/subs/x/vm1');
+      }],
+  ]) {
+    const { calls, spawnFn } = makeSpawnRecorder();
+    const tun = new Tunnel({ id: 'p1', ...opts, remotePort: 7900, spawnFn, onState: () => {} });
+    tun.start();
+    await waitFor(() => calls.length === 1, `spawn for ${cmd}`);
+    assert.equal(calls[0].cmd, cmd, 'the command word comes from the CLI`s builder');
+    check(calls[0].args);
+    // A surviving literal would be handed to the vendor CLI as a port named
+    // "{port}" and fail at dial time, not here.
+    assert.ok(!calls[0].args.some((a) => String(a).includes('{port}')),
+      `no literal {port} survives for ${cmd}`);
+    assert.ok(calls[0].args.some((a) => String(a).includes(String(tun.localPort))),
+      `the picked local port reaches ${cmd}`);
+    assert.equal(calls[0].opts.detached, true, `${cmd} forks helpers — it must lead its own group`);
+    tun.stop();
+  }
+});
+
+test('manager: a namespace or zone change restarts the tunnel, an identical sync does not', async () => {
+  for (const [a, b, flag, want] of [
+    [{ kubectl: { target: 'svc/x', namespace: 'prod' } }, { kubectl: { target: 'svc/x', namespace: 'staging' } }, '-n', 'staging'],
+    [{ gcloud: { instance: 'vm', zone: 'us-central1-a' } }, { gcloud: { instance: 'vm', zone: 'europe-west1-b' } }, '--zone', 'europe-west1-b'],
+  ]) {
+    const { calls, spawnFn } = makeSpawnRecorder();
+    const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+    mgr.sync([{ id: 'a', ...a, remotePort: 7900 }]);
+    await waitFor(() => calls.length === 1, 'first tunnel');
+    await waitFor(() => mgr.urlFor('a'), 'a up');
+    mgr.sync([{ id: 'a', ...b, remotePort: 7900 }]);
+    // settleOr + a direct assert: a waitFor here would surface a sameCloud that
+    // ignores the selector as a TIMEOUT, which reads like a hung suite and says
+    // nothing about what was expected.
+    await settleOr(() => calls.length === 2);
+    assert.equal(calls.length, 2, `a ${flag} change must restart — sameCloud has to compare every field`);
+    assert.equal(calls[1].args[calls[1].args.indexOf(flag) + 1], want);
+    mgr.sync([{ id: 'a', ...b, remotePort: 7900 }]);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(calls.length, 2, 'an identical sync is a no-op — sync runs on every settings write');
+    mgr.stopAll();
+  }
+});
+
+test('manager: retyping a destination as a DIFFERENT kind restarts the tunnel', async () => {
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+  // The SAME identifying value under two different kinds — deliberately, so
+  // this test isolates the kind check. With different values it would pass even
+  // with the kind comparison removed, on the field difference alone, and would
+  // silently stop testing the thing it is named for.
+  mgr.sync([{ id: 'a', ssm: { target: 'same-value' }, remotePort: 7900 }]);
+  await waitFor(() => calls.length === 1, 'ssm tunnel');
+  await waitFor(() => mgr.urlFor('a'), 'a up');
+  mgr.sync([{ id: 'a', kubectl: { target: 'same-value' }, remotePort: 7900 }]);
+  await settleOr(() => calls.length === 2);
+  assert.equal(calls.length, 2, 'a kind change must restart — sameCloud compares kind first');
+  assert.equal(calls[1].cmd, 'kubectl');
+  mgr.stopAll();
+});
+
+test('hasCloudTransport: every kind, and only with its required fields', () => {
+  const { hasCloudTransport } = require('../peer-tunnel');
+  assert.equal(hasCloudTransport({ ssm: { target: 'i-0a' } }), true);
+  assert.equal(hasCloudTransport({ kubectl: { target: 'svc/x' } }), true);
+  assert.equal(hasCloudTransport({ gcloud: { instance: 'vm' } }), true);
+  assert.equal(hasCloudTransport({ az: { bastion: 'b', resourceGroup: 'rg', target: '/s/x' } }), true);
+  // az needs all three: a partial block has nothing dialable, and answering
+  // true here would give the peer a placeholder URL and a tunnel that never
+  // opens — an eternally "offline" peer with no explanation.
+  assert.equal(hasCloudTransport({ az: { bastion: 'b' } }), false,
+    'a partial az block has nothing dialable — answering true gives the peer a placeholder URL and a tunnel that never opens');
+  assert.equal(hasCloudTransport({ gcloud: { zone: 'z' } }), false, 'a selector alone is not a destination');
+  assert.equal(hasCloudTransport({ url: 'http://x' }), false);
+  assert.equal(hasCloudTransport({ sshHost: 'box' }), false, 'ssh is not a CLOUD transport');
+  assert.equal(hasCloudTransport(null), false);
+});

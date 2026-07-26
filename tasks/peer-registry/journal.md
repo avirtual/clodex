@@ -470,3 +470,90 @@ destination equality · `classifyPeerDest` prefix · dialog round-trip incl.
 fields with no input. Field lists come from cli/src/transport.js:
 `kubectlArgv({ target, namespace, context })`, `gcloudArgv({ instance, zone,
 project })`, `azArgv({ bastion, resourceGroup, target })` — az needs all three.
+
+## Step 2 IN PROGRESS — kubectl + gcloud generalized; az BLOCKED on the UI
+
+### Main-process layers done (uncommitted)
+
+Generalized rather than triplicated, per clodex: **two tables, one row per kind.**
+
+- **`stores.js`**: `PEER_CLOUD_KINDS` — `{ required, optional, reject }` per kind.
+  `sanitizePeerCloud(kind, raw)` rebuilds from the TABLE, so the whitelist is a
+  DECLARATION, not a hand-written reconstruction per kind. That is the direct
+  answer to the named trigger: adding a field is one row, and there is no second
+  site to forget. `sanitizePeers` admits **at most one** cloud block — two would
+  leave every downstream reader picking a winner independently, which is how two
+  halves of the app dial different boxes.
+- **`peer-tunnel.js`**: `CLOUD_KINDS` — `{ argv, fields }` per kind. `Tunnel`
+  takes the block under its own kind key (the peer record's shape, so a settings
+  entry can be handed in with no translation to get wrong) and normalizes to
+  `this.cloud = { kind, block }`. `sameCloud` compares kind + every field off
+  the table. `_detached()` is now `!!this.cloud` — kubectl and gcloud fork
+  helpers exactly as aws does. `_spawnTunnel` STILL SYNCHRONOUS.
+- **`peer-wiring.js`**: new exported `hasCloudTransport(peer)` — asked of the
+  module that owns the kind list, so there is no `p.ssm || p.kubectl || …` chain
+  to forget a kind in. Note it deliberately does NOT ask the manager "do you have
+  a tunnel for this id": the manager answers null while a tunnel is merely DOWN,
+  which is exactly when the placeholder URL must keep the peer alive.
+
+### BLOCKED — az does not fit the single destination field
+
+kubectl and gcloud are `ssm.target`'s shape exactly (one identifying field +
+two optional selectors). **az is not**: `azArgv({ bastion, resourceGroup,
+target })` needs THREE required values, and its `target` is a full Azure
+resource id — `/subscriptions/…/resourceGroups/…/providers/…/virtualMachines/x`
+— which is slash-bearing and long.
+
+The peers dialog has ONE smart destination input. Three required values cannot
+be typed into it without inventing a composite syntax
+(`az:BASTION/GROUP/TARGET`), and the target's own slashes make that ambiguous to
+parse. Options, none of which is a hand's call:
+
+  (a) three extra inputs on the peer row, shown only for an az destination;
+  (b) a composite syntax with a non-slash separator;
+  (c) az via `ctx import` from the CLI's contexts file only — i.e. step 4's
+      import path, not a typed destination at all.
+
+Store + tunnel + wiring would take az with one row each. **Only the entry
+surface blocks.** Stopped and asked rather than inventing a syntax the operator
+would have to learn from source.
+
+### Ruling taken — (c) az by import, WITH clodex's refinement
+
+az rows ARE in both tables (store + tunnel), tested, but **unreachable by typing**:
+`classifyPeerDest` has no az prefix. Stated in the commit, not left to be
+discovered. Step 4's import then needs no second pass through the store.
+
+**(a) three revealed inputs stays the FUTURE answer, not a rejected one** — if
+anyone ever wants to type az destinations, that is the shape. **(b) a composite
+string is dead**: syntax the operator can only learn from source. Recorded so
+neither is re-litigated from scratch.
+
+### Renderer, generalized (uncommitted)
+
+- **`PEER_CLOUD_UI`** in renderer.js — `{ name, cli, field, prefix }` per kind,
+  the UI mirror of the two main-process tables. Drives the badge, the ssh-only
+  copy and the dest pre-fill, so a kind is one row here too. Badge names the
+  VENDOR CLI (`needs the kubectl CLI locally`) because that is the misconfig a
+  cloud destination invites.
+- **Prefixes**: `k8s:svc/name` (kubectl's own spelling verbatim — a slash is
+  EXPECTED here, unlike ssm's, where it means ECS), `gcp:INSTANCE` (bare name;
+  gcloud takes zone/project as separate flags).
+- **`row._cloudExtra`** replaces `_ssmExtra`, carrying every field with no input
+  of its own — and only when the KIND is unchanged, or retyping a destination as
+  a different cloud would graft the old kind's selectors onto the new block.
+
+### The az round-trip trap — found by applying the named trigger, not by luck
+
+An az peer's dest input is BLANK (nothing can render it), so `classifyPeerDest`
+returns `empty` and `collectPeers` would have **skipped the row entirely**:
+opening the Peers dialog and pressing Save would have silently deleted every
+imported az peer. Blank-because-unshowable is not blank-because-deleted.
+
+Fixed by rewriting such a row as an `unshowable` dest that flows through the ONE
+save path (port, folder, token handling included) rather than duplicating it —
+a second path would be a second place for the token logic to drift.
+
+This is exactly the trigger clodex named, third instance: a layer rebuilding a
+record from named fields drops what it can't name. Worth noting that the FIX for
+"az isn't typable" is what created it.
