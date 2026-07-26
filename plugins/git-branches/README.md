@@ -10,8 +10,14 @@ things a stub harness cannot reach.
 
 ## Install
 
-Drop this directory into `<repo>/plugins/` and restart the app. It is enabled by
-default; toggle it under the **Plugins** menu.
+Copy this directory to `~/.clodex/plugins/git-branches/`, then press **Re-scan**
+in Plugins ▸ Manage Plugins… — no restart needed. (Manage Plugins ▸ **Open
+Plugins Folder** reveals that directory and creates it if it does not exist yet.)
+
+Working in a checkout of the Clodex repo instead? It is already in
+`<repo>/plugins/`, which is the other root discovery scans.
+
+Either way it is enabled by default; toggle it under the **Plugins** menu.
 
 ## What you should see
 
