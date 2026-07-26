@@ -17,6 +17,12 @@ const net = require('net');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const { CliError, EXIT } = require('./errors');
+// The shared dial (t42/L1) — the spawn, the stderr accumulator, the ENOENT
+// sentence and the process-group kill this file, peer-tunnel.js and web-tunnel.js
+// each carried their own copy of. Everything ABOVE the dial (the bounded wait,
+// the CONNECT errors, the SSM post-mortem) stays here: that is supervision, and
+// it is the part that genuinely differs between the CLI and the GUI.
+const { spawnDial } = require('./dial');
 
 const execFileP = promisify(execFile);
 
@@ -278,47 +284,40 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
   }
 
   const port = localPort != null ? (localPort | 0) : await pickFreePort();
-  const [cmd, ...rest] = substitutePort(argv, port);
 
-  let stderrBuf = '';
   let exited = false;
   // Resolves when the tunnel child exits — port-forward's foreground hold races
   // it against a signal so a mid-session tunnel drop ends the hold honestly.
   let resolveExit;
   const exitP = new Promise((res) => { resolveExit = res; });
-  // detached:true → the child leads its own process group, so kill(-pid)
-  // sweeps helpers it forked. No shell: argv is passed literally.
-  const child = spawnFn(cmd, rest, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
-  if (child.stderr) child.stderr.on('data', (d) => { stderrBuf += d.toString(); });
+  // detached: true unconditionally — the child leads its own process group so
+  // kill(-pid) sweeps helpers it forked. The GUI supervisors detach only for
+  // cloud kinds and keep ssh non-detached (drift D1, tested on both sides);
+  // stderrLimit 0 keeps this side's UNBOUNDED buffer (drift D2). Both preserved
+  // rather than reconciled — see tasks/l1-dial/journal.md.
+  const dial = spawnDial(substitutePort(argv, port), { spawnFn, detached: true, stderrLimit: 0 });
+  const { child, cmd } = dial;
   child.on('error', (e) => {
     exited = true;
     // A missing vendor binary (aws/kubectl/gcloud/az/ssh) is the common misconfig
     // — surface a pointed hint alongside the raw error (matches deploy.js's docker
-    // ENOENT copy). The waitForPort reject relays stderrBuf verbatim.
-    if (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || ''))) {
-      stderrBuf += `\n${cmd}: command not found — is ${cmd} installed and on PATH?`;
-    } else {
-      stderrBuf += `\n${e.message}`;
-    }
+    // ENOENT copy). Appended to stderr rather than replacing it, because the
+    // waitForPort reject relays stderrBuf verbatim; the GUI puts the same
+    // sentence in `lastError` instead. Same information, two renderings.
+    const f = dial.failure(e);
+    dial.appendStderr(`\n${f.diagnosis || f.message}`);
     resolveExit();
   });
   child.on('exit', () => { exited = true; resolveExit(); });
 
-  const close = () => {
-    try {
-      // Kill the whole group (negative pid). Falls back to a plain child kill
-      // if the platform/spawn didn't give us a group leader. Guard is > 0, not
-      // non-null: kill(-0) would signal OUR OWN process group (spawnFn is an
-      // injectable seam, so a fake child's pid shape isn't guaranteed).
-      if (child.pid > 0) {
-        try { process.kill(-child.pid, 'SIGTERM'); }
-        catch { try { child.kill('SIGTERM'); } catch {} }
-      }
-    } catch {}
-  };
+  // Group-kill only: no plain-child fallback, so a child with no usable pid is
+  // never signalled (drift D3 — the GUI supervisors DO fall back). Preserved as
+  // it was; cli/test/transport.test.js:39 relies on exactly this to keep its
+  // in-process fake safe.
+  const close = () => dial.kill({ group: true, fallbackKill: false });
 
   try {
-    await waitForPort(port, { deadlineMs, isDead: () => exited, stderr: () => stderrBuf.trim() });
+    await waitForPort(port, { deadlineMs, isDead: () => exited, stderr: () => dial.stderr().trim() });
   } catch (e) {
     close();
     // SSM's control plane happily starts sessions to sick instances, so the
@@ -331,7 +330,7 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     }
     throw e;
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, localPort: port, close, stderr: () => stderrBuf.trim(), waitExit: () => exitP };
+  return { baseUrl: `http://127.0.0.1:${port}`, localPort: port, close, stderr: () => dial.stderr().trim(), waitExit: () => exitP };
 }
 
 module.exports = {

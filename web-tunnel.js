@@ -61,7 +61,12 @@
 'use strict';
 
 const net = require('net');
-const { spawn } = require('child_process');
+// The shared dial (t42/L1) — spawn, stderr tail, ENOENT classification, the
+// process-group kill. Imported for the same reason the kind table below is: this
+// module's copy and the wire supervisor's were byte-identical, and two copies of
+// a kill path drift without anyone noticing. The three INVERSIONS above are all
+// supervision, so none of them moves; the dial has no opinion about them.
+const { spawnDial, killDial, sshTunnelArgv, STDERR_TAIL_BYTES } = require('./cli/src/dial');
 // The wire supervisor owns the kind table (kinds, destination fields, required
 // fields, argv builder per kind) and `sameCloud`. Imported rather than restated:
 // two copies of "which cloud kinds exist" is precisely the drift that produced
@@ -93,16 +98,6 @@ const PROBE_MS = WAIT_PORT_MS;
 // accepts straight away, so it must not pay a poll interval it doesn't need.
 const PROBE_POLL_MS = 100;
 
-const SSH_BASE_ARGS = [
-  '-N',
-  '-o', 'BatchMode=yes',
-  '-o', 'ExitOnForwardFailure=yes',
-  '-o', 'StrictHostKeyChecking=accept-new',
-  '-o', 'ServerAliveInterval=15',
-  '-o', 'ServerAliveCountMax=2',
-  '-o', 'ConnectTimeout=10',
-];
-
 function pickFreePort(cb) {
   const srv = net.createServer();
   srv.on('error', () => cb(null));
@@ -124,7 +119,8 @@ class WebTunnel {
       if (opts[kind]) { this.cloud = { kind, block: { ...opts[kind] } }; break; }
     }
     this.remotePort = remotePort;
-    this._spawn = spawnFn || spawn;
+    // null when not injected — spawnDial falls back to child_process.spawn.
+    this._spawn = spawnFn || null;
     this._probe = probeFn || portAccepts;
     this._probeMs = Number.isInteger(probeMs) ? probeMs : PROBE_MS;
     this._onState = onState || (() => {});
@@ -186,8 +182,10 @@ class WebTunnel {
   url() { return this.state === 'up' && this.localPort ? `http://127.0.0.1:${this.localPort}` : null; }
 
   // ssh's argv TAIL (no leading 'ssh'), kept as-is for the original call shape.
+  // Bytes from the shared dial's sshTunnelArgv — the wire supervisor's copy and
+  // this one were byte-identical, so they are now one definition.
   args(localPort) {
-    return [...SSH_BASE_ARGS, '-L', `${localPort}:127.0.0.1:${this.remotePort}`, this.sshHost];
+    return sshTunnelArgv(this.sshHost, this.remotePort, localPort).slice(1);
   }
 
   // The full argv INCLUDING the command word, per transport — the wire
@@ -215,14 +213,7 @@ class WebTunnel {
     const child = this._child;
     if (!child) return;
     this._child = null;
-    try {
-      if (this._detached() && child.pid > 0) {
-        try { process.kill(-child.pid, 'SIGTERM'); }
-        catch { try { child.kill('SIGTERM'); } catch {} }
-      } else {
-        child.kill();
-      }
-    } catch {}
+    killDial(child, { group: this._detached() });
   }
 
   // State transitions only — it returns early when the state is unchanged, which
@@ -251,40 +242,37 @@ class WebTunnel {
 
   _spawnOn(port) {
     if (this._stopped || this._child) return;
-    let child;
+    let dial;
     // Named in errors even if argv() itself throws.
     let cmdName = this.cloud ? this.cloud.kind : 'ssh';
     try {
-      const [cmd, ...rest] = this.argv(port);
-      cmdName = cmd;
-      child = this._spawn(cmd, rest, {
-        stdio: ['ignore', 'ignore', 'pipe'],
-        ...(this._detached() ? { detached: true } : {}),
+      const argv = this.argv(port);
+      cmdName = argv[0];
+      dial = spawnDial(argv, {
+        spawnFn: this._spawn,
+        detached: this._detached(),
+        stderrLimit: STDERR_TAIL_BYTES,
       });
     } catch (e) {
       this.lastError = e.message;
       return this._scheduleRestart();
     }
+    const child = dial.child;
     this._child = child;
-    let stderrTail = '';
-    if (child.stderr) {
-      child.stderr.on('data', (chunk) => { stderrTail = (stderrTail + chunk.toString()).slice(-500); });
-    }
     child.on('error', (e) => {
-      // A missing vendor CLI is the common cloud misconfig and reads as a bare
-      // ENOENT otherwise — name the binary, same copy as peer-tunnel.js and
-      // cli/src/transport.js. (ssh is always installed, which is why the ssh-only
-      // version of this module had no such arm.)
-      this.lastError = (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || '')))
-        ? `${cmdName}: command not found — is ${cmdName} installed and on PATH?`
-        : e.message;
+      // The dial classifies a spawn failure; this layer renders it. A missing
+      // vendor CLI is the common cloud misconfig and reads as a bare ENOENT
+      // otherwise. (ssh is always installed, which is why the ssh-only version of
+      // this module had no such arm.)
+      const f = dial.failure(e);
+      this.lastError = f.diagnosis || f.message;
       this._child = null;
       this._scheduleRestart();
     });
     this._bornAt = Date.now();
     child.on('exit', (code) => {
       this._child = null;
-      const line = stderrTail.trim().split('\n').pop() || '';
+      const line = dial.stderr().trim().split('\n').pop() || '';
       this.lastError = line || (code === 0 ? null : `${cmdName} exited (${code})`);
       // A spawn that lasted counts as a box that genuinely works: reset the
       // backoff AND retire the give-up clock, so later blips are treated as

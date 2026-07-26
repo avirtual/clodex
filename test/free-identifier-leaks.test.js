@@ -69,6 +69,15 @@ const SCANNED_MODULES = [
   'plugin-host-engine.js',
   // Phase 2: discovery + the enabled set. Deps-object factory, fs/path injected.
   'plugin-loader.js',
+  // The shared dial (t42/L1), collapsing three copies of spawn-and-kill. Listed
+  // because the ticket requires every new extraction to join this list — but be
+  // honest about what it proves HERE: this is a cli/ leaf that was never carved
+  // out of main.js, so the forward scan can only catch it accidentally using a
+  // name main.js happens to define. That is a weak statement compared to what
+  // this test does for a real main.js extraction. The strong guard for cli/ is
+  // its leaf property (no upward require at all), which cli/test/load-smoke.js
+  // and the packaging tests speak to.
+  'cli/src/dial.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
