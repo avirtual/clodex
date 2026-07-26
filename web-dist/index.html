@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -8077,9 +8077,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -14136,9 +14136,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -14172,9 +14172,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -17133,9 +17133,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -22849,6 +22849,17 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       function classifyPeerDest(raw) {
         const s = (raw == null ? "" : String(raw)).trim();
         if (!s) return { kind: "empty" };
+        if (/^ssm:/i.test(s)) {
+          const target = s.slice(4).trim();
+          if (!target) return { kind: "error", error: "ssm: needs a target \u2014 e.g. ssm:i-0abc123def456789 (an instance id or an SSM managed-instance id)." };
+          if (target.includes("/")) {
+            return { kind: "error", error: "ECS/Fargate targets (CLUSTER/FAMILY) are not supported for peers yet \u2014 use a plain instance id, or the clodexctl CLI, which resolves ECS at connect time." };
+          }
+          if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(target)) {
+            return { kind: "error", error: "That doesn't look like an SSM target. Example: ssm:i-0abc123def456789" };
+          }
+          return { kind: "ssm", ssm: { target } };
+        }
         if (/^https?:\/\//i.test(s)) {
           try {
             new URL(s);
@@ -22939,6 +22950,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
         if (!ssh && phase === "closed") {
+          const how = tunnel && tunnel.ssm ? "an AWS SSM tunnel" : "URL";
           return {
             show: true,
             enabled: false,
@@ -22946,7 +22958,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: `${label} is reached by URL, not ssh \u2014 Clodex can only tunnel to a web UI over ssh`
+            tip: `${label} is reached by ${how}, not ssh \u2014 Clodex can only tunnel to a web UI over ssh`
           };
         }
         if (phase === "open") {
@@ -28384,10 +28396,11 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         const liveSrc = peer.id && peerStatuses.get(peer.id) && peerStatuses.get(peer.id).online ? peerStatuses.get(peer.id).srcDir || "" : "";
         const folderReported = !!(liveSrc && typeof liveSrc === "string" && liveSrc.trim());
         const folderVal = folderReported ? liveSrc.trim() : typeof peer.deployFolder === "string" && peer.deployFolder ? peer.deployFolder : "~/wb-wrap-ui";
-        const destVal = peer.sshHost || peer.url || "";
+        const destVal = peer.sshHost || (peer.ssm && peer.ssm.target ? `ssm:${peer.ssm.target}` : "") || peer.url || "";
+        row._ssmExtra = peer.ssm && typeof peer.ssm === "object" ? { ...peer.ssm.region ? { region: peer.ssm.region } : {}, ...peer.ssm.profile ? { profile: peer.ssm.profile } : {} } : null;
         row.innerHTML = `
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || "")}">
-    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias \u2014 or http://\u2026 for direct" value="${esc(destVal)}">
+    <input type="text" class="peer-row-dest" placeholder="user@host, IP, or ssh alias \u2014 http://\u2026 for direct \u2014 ssm:TARGET for AWS" value="${esc(destVal)}">
     <button type="button" class="secondary peer-row-test" title="Test the ssh host and check for Clodex; offer to install if absent">Test &amp; Set Up</button>
     <button type="button" class="secondary peer-row-remove" title="Remove peer">&times;</button>
     <div class="peer-row-break"></div>
@@ -28460,6 +28473,7 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         badge.className = "peer-row-dest-badge";
         if (cls.kind === "ssh") badge.innerHTML = '<span class="peer-status-dim">\u2192 ssh tunnel</span>';
         else if (cls.kind === "url") badge.innerHTML = '<span class="peer-status-dim">\u2192 direct (no tunnel)</span>';
+        else if (cls.kind === "ssm") badge.innerHTML = '<span class="peer-status-dim">\u2192 AWS SSM tunnel (needs the aws CLI locally)</span>';
         else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
       }
       function peerRowPort(row) {
@@ -28500,6 +28514,18 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
         }
         if (dest.kind === "url") {
           renderPeerStatus(status, `<span class="peer-status-dim">Direct URL \u2014 nothing to install over ssh; Save and it connects.</span>`);
+          return;
+        }
+        if (dest.kind === "ssm") {
+          const vs = validatePeerRowInputs(row);
+          if (!vs.ok) {
+            renderPeerStatus(status, `<span class="peer-status-warn">${esc(vs.error)}</span>`);
+            return;
+          }
+          renderPeerStatus(
+            status,
+            `<span class="peer-status-dim">AWS SSM tunnel \u2014 Test &amp; Set Up is ssh-only, because installing runs a shell and copies files over ssh and a port-forward carries neither.</span><div class="peer-status-note">Clodex must already be running on the target, listening on port ${esc(String(vs.port))}. Install it there yourself, then Save \u2014 the tunnel connects automatically. Needs the <code>aws</code> CLI and the Session Manager plugin on THIS machine.</div>`
+          );
           return;
         }
         const sshHost = dest.sshHost;
@@ -28689,9 +28715,10 @@ ${res.stderr}` : "");
             if (status) renderPeerStatus(status, `<span class="peer-status-warn">${esc(v.error)}</span>`);
             return { ok: false, error: v.error, row };
           }
-          const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url };
+          const peer = { id: row.dataset.peerId, label: label || dest.sshHost || dest.url || dest.ssm && dest.ssm.target };
           if (dest.kind === "ssh") peer.sshHost = dest.sshHost;
           else if (dest.kind === "url") peer.url = dest.url;
+          else if (dest.kind === "ssm") peer.ssm = { ...dest.ssm, ...row._ssmExtra || {} };
           peer.remotePort = v.port;
           if (v.folder) peer.deployFolder = v.folder;
           const tokenInput = row.querySelector(".peer-row-token");

@@ -17,13 +17,17 @@
 //
 // ssh-only, by ruling: a peer reached by plain URL has no transport Clodex can
 // drive a forward over, so the affordance says so rather than silently hiding.
+// Since t32 that ruling has a SECOND way to be false — a peer dialled over a
+// typed cloud transport (ssm) does have a managed wire tunnel, but the web view
+// needs its OWN second forward and only the ssh template can open one. Same
+// answer (no button), a different true reason, and the tip must say which.
 
 'use strict';
 
-// Is this peer reached over a Clodex-managed ssh tunnel? The wire tunnel exists
-// for exactly the peers that have an sshHost (TunnelManager.sync), so its
-// presence IS the ssh signal on this side — the renderer never sees the peer
-// record itself.
+// Is this peer reached over a Clodex-managed ssh tunnel? The wire tunnel row IS
+// the signal on this side — the renderer never sees the peer record itself. Note
+// a cloud-transport peer HAS a tunnel row (carrying `ssm`) but no sshHost, so
+// this stays a test for sshHost specifically, not for "has a tunnel".
 function isSshPeer(tunnel) { return !!(tunnel && tunnel.sshHost); }
 
 // state: 'closed' (nothing open) | 'connecting' | 'open' | 'gave-up'
@@ -68,9 +72,13 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (!ssh && phase === 'closed') {
     // ssh-only limitation, stated rather than hidden — a silently missing button
     // reads as "this box has no web UI", which is a different and false claim.
+    // Which non-ssh transport it is matters: telling an ssm peer's operator it
+    // "is reached by URL" would be a false explanation of a true limit, and
+    // they'd go looking for a URL that doesn't exist.
+    const how = (tunnel && tunnel.ssm) ? 'an AWS SSM tunnel' : 'URL';
     return {
       show: true, enabled: false, action: null, phase, url: null, tokenGated,
-      tip: `${label} is reached by URL, not ssh — Clodex can only tunnel to a web UI over ssh`,
+      tip: `${label} is reached by ${how}, not ssh — Clodex can only tunnel to a web UI over ssh`,
     };
   }
 

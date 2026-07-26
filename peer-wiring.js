@@ -171,7 +171,12 @@ function createPeerWiring(deps) {
       // the far side and usually need no token — but if that node sets one, it
       // rides through here too.
       const token = (typeof p.token === 'string' && p.token) ? p.token : null;
-      if (p.sshHost) {
+      // Keyed off "this peer is dialled through a MANAGED TUNNEL", not off
+      // sshHost specifically — ssh and the typed cloud kinds (t32) both land on
+      // a local port TunnelManager owns, and both need the dead placeholder
+      // while that tunnel is down. Testing sshHost here would have left every
+      // cloud peer resolving to `undefined` url.
+      if (p.sshHost || p.ssm) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
         resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token });
       } else {
