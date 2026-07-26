@@ -39,6 +39,7 @@ function makeWiring({ peers = [], statuses = {} } = {}) {
   const closed = [];
   const externals = [];      // every URL handed to the operator's browser
   const broadcasts = [];
+  const logs = [];           // ops-log lines, so a FALLBACK pop is distinguishable
   let onState = () => {};
 
   const synced = [];
@@ -58,7 +59,7 @@ function makeWiring({ peers = [], statuses = {} } = {}) {
   let webTunnelManager = null;
   const wiring = createPeerWiring({
     manager: { _broadcast: (...a) => broadcasts.push(a), _deliverClaimedDms() {} },
-    log: { info() {}, error() {} },
+    log: { info: (...a) => logs.push(a.join(' ')), error() {} },
     SELF_LABEL: 'self',
     scheduleAppMenuRefresh: () => {},
     getUiSettings: () => uiSettings,
@@ -75,9 +76,11 @@ function makeWiring({ peers = [], statuses = {} } = {}) {
   });
 
   return {
-    wiring, opened, closed, externals, broadcasts, synced,
-    // Fire what the supervisor would fire on its first successful up.
-    emitUp: (id, url) => onState(id, { id, state: 'up', url, firstUp: true }),
+    wiring, opened, closed, externals, broadcasts, synced, logs,
+    // Fire what the supervisor would fire on its first successful up. `ready`
+    // is the t37 flag: true when the local port was confirmed accepting, false
+    // when the probe bound lapsed and the supervisor popped anyway.
+    emitUp: (id, url, extra) => onState(id, { id, state: 'up', url, firstUp: true, ...extra }),
     emitState: (id, st) => onState(id, st),
     restore: () => { mod.WebTunnelManager = origCtor; },
   };
@@ -126,6 +129,37 @@ test('the pop rides firstUp ONLY — a respawn after a blip does not open a seco
     h.emitState('p1', { id: 'p1', state: 'up', url: 'http://127.0.0.1:45001' });   // no firstUp
     h.emitState('p1', { id: 'p1', state: 'up', url: 'http://127.0.0.1:45001' });
     assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'still exactly one');
+  } finally { h.restore(); }
+});
+
+test('t37: an UNCONFIRMED pop still opens the browser, but is logged as the fallback it is', () => {
+  // The supervisor pops anyway when its probe bound lapses — the operator asked
+  // for a browser, and after the full bound giving them the tab they clicked
+  // beats swallowing the request. What must NOT happen is the two cases reading
+  // identically afterwards: a fallback nobody can tell from the happy path is
+  // one nobody can debug when the blip is reported again.
+  const h = makeWiring({ peers: [{ id: 'p1', label: 'box', kubectl: { target: 'svc/x' } }], statuses: { p1: OPEN } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.emitUp('p1', 'http://127.0.0.1:45001', { ready: false });
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'the browser still opens');
+    const line = h.logs.find((l) => l.includes('45001'));
+    assert.ok(line, 'the pop was logged at all');
+    assert.match(line, /never confirmed/i, 'and says the port was never confirmed');
+  } finally { h.restore(); }
+});
+
+test('t37: a CONFIRMED pop is logged plainly — no scary wording on the happy path', () => {
+  // The other half of the same rule. If the confirmed case carried the caveat
+  // too, the caveat would stop meaning anything.
+  const h = makeWiring({ peers: [{ id: 'p1', label: 'box', sshHost: 'box' }], statuses: { p1: OPEN } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.emitUp('p1', 'http://127.0.0.1:45002', { ready: true });
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45002']);
+    const line = h.logs.find((l) => l.includes('45002'));
+    assert.ok(line, 'the pop was logged');
+    assert.doesNotMatch(line, /never confirmed/i, 'without the unconfirmed caveat');
   } finally { h.restore(); }
 });
 
