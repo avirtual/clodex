@@ -61,6 +61,7 @@
       "renderer/**/*",
       "plugins/**/*",
       "docs/**/*",
+      "peering/**/*",
       "cli/**/*",
       "resources/**/*",
       "build/tray-iconTemplate.png",
