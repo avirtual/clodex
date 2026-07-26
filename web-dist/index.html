@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -8113,9 +8113,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -14172,9 +14172,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -14208,9 +14208,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -17169,9 +17169,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -22982,6 +22982,9 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
   var require_peer_web_view = __commonJS({
     "renderer/lib/peer-web-view.js"(exports, module) {
       "use strict";
+      function isForwardablePeer(tunnel) {
+        return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel)));
+      }
       function isSshPeer(tunnel) {
         return !!(tunnel && tunnel.sshHost);
       }
@@ -22998,6 +23001,11 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         }
         return null;
       }
+      function transportPhrase(tunnel) {
+        const cloud = cloudTransportName(tunnel);
+        if (cloud) return `over ${cloud}`;
+        return "over ssh";
+      }
       function tunnelPhase(webTunnel) {
         if (!webTunnel) return "closed";
         if (webTunnel.state === "up") return "open";
@@ -23009,13 +23017,13 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const st = status || null;
         const webHost = st && st.webHost;
         const phase = tunnelPhase(webTunnel);
-        const ssh = isSshPeer(tunnel);
+        const forwardable = isForwardablePeer(tunnel);
+        const how = transportPhrase(tunnel);
         const label = st && (st.host || st.label) || "peer";
         const tokenGated = !!(webHost && webHost.tokenGated === true);
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
-        if (!ssh && phase === "closed") {
-          const how = cloudTransportName(tunnel) || "URL";
+        if (!forwardable && phase === "closed") {
           return {
             show: true,
             enabled: false,
@@ -23023,7 +23031,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: `${label} is reached by ${how}, not ssh \u2014 Clodex can only tunnel to a web UI over ssh`
+            tip: `${label} is reached by URL \u2014 Clodex can only tunnel to a web UI over a transport it dials itself`
           };
         }
         if (phase === "open") {
@@ -23045,7 +23053,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: `Connecting to ${label}'s web UI over ssh\u2026 click to cancel`
+            tip: `Connecting to ${label}'s web UI ${how}\u2026 click to cancel`
           };
         }
         if (phase === "gave-up") {
@@ -23067,10 +23075,17 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           phase,
           url: null,
           tokenGated,
-          tip: tokenGated ? `Open ${label}'s web UI over ssh \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI over ssh`
+          tip: tokenGated ? `Open ${label}'s web UI ${how} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI ${how}`
         };
       }
-      module.exports = { webViewAffordance, tunnelPhase, isSshPeer, cloudTransportName };
+      module.exports = {
+        webViewAffordance,
+        tunnelPhase,
+        isSshPeer,
+        isForwardablePeer,
+        cloudTransportName,
+        transportPhrase
+      };
     }
   });
 

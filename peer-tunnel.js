@@ -334,4 +334,8 @@ function hasCloudTransport(peer) {
   });
 }
 
-module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS };
+// CLOUD_KINDS and sameCloud are exported for the WEB tunnel supervisor
+// (web-tunnel.js), which dials the same destinations for a different reason.
+// Exported rather than copied: a second copy of the kind table is how the web
+// view came to refuse transports the wire already dialled (t36).
+module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS, sameCloud };
