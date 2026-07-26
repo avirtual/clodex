@@ -42,6 +42,14 @@ function makeSpawnRecorder() {
   return { calls, children, spawnFn };
 }
 
+// A local port that accepts immediately — the ssh case, where the forward is
+// live the moment the child is (t37). Injected rather than opening a real
+// socket: the suite must not depend on a listener existing on a timer.
+//
+// Tests that care about the GAP (a cloud CLI whose process starts before its
+// forward accepts) build their own probe instead; see the t37 block.
+function okProbe() { return Promise.resolve(true); }
+
 function waitFor(pred, what, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -393,6 +401,163 @@ test('SECURITY-adjacent: 127.0.0.1:1 never appears — the dead-peer sentinel is
   }
 });
 
+// ── Inversion 4 (t37): the pop waits for the PORT, not for the process ───────
+//
+// Reported from live use against a kubectl peer: the browser opened before the
+// forward accepted, showed an error page for ~half a second, then self-refreshed.
+// `kubectl port-forward` is alive well before it listens; `ssh -N` is not. What
+// these tests pin is that ONLY the pop moved — supervision keeps its old timing,
+// because re-timing the give-up clock or the UI phase to fix a cosmetic bug
+// would trade half a second of ugliness for a class of changes nobody asked for.
+
+// A probe that refuses `n` times and then accepts — the cloud gap, in miniature.
+function probeAfter(n) {
+  let seen = 0;
+  const fn = () => { seen += 1; return Promise.resolve(seen > n); };
+  fn.count = () => seen;
+  return fn;
+}
+
+test('t37: the pop waits until the port ACCEPTS — a live child is not a live forward', async () => {
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  const probeFn = probeAfter(3);
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, probeFn,
+    onState: (_id, st) => emits.push(st),
+  });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'spawn');
+  // The supervision emit is immediate — the UI phase must NOT wait for the port,
+  // or the button would feel laggier than it does today.
+  await waitFor(() => emits.some((e) => e.state === 'up'), 'the up emit');
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 0,
+    'but nothing has popped: the port is not accepting yet');
+
+  await waitFor(() => emits.some((e) => e.firstUp === true), 'the pop, once the port accepts');
+  const pop = emits.find((e) => e.firstUp === true);
+  assert.strictEqual(pop.ready, true, 'and it is flagged as a CONFIRMED port, not a fallback');
+  assert.match(pop.url, /^http:\/\/127\.0\.0\.1:\d+$/, 'carrying the live URL');
+  assert.ok(probeFn.count() >= 4, 'the probe actually retried rather than succeeding by luck');
+  tun.stop();
+});
+
+test('t37: ssh pops on the FIRST probe — no polling delay for a forward that is already live', async () => {
+  // ssh -N accepts the moment the child is up, so it must not pay a poll
+  // interval it does not need. Asserted as "exactly one probe call", which is
+  // the honest statement: the pop IS one async turn later than before (the probe
+  // is awaited), but never a timer tick.
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  const probeFn = probeAfter(0);
+  const tun = new WebTunnel({
+    id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, probeFn,
+    onState: (_id, st) => emits.push(st),
+  });
+  tun.start();
+  await waitFor(() => emits.some((e) => e.firstUp === true), 'the pop');
+  assert.equal(probeFn.count(), 1, 'one probe, no retry loop');
+  assert.strictEqual(emits.find((e) => e.firstUp === true).ready, true);
+  tun.stop();
+});
+
+test('t37: a child that dies mid-probe does NOT pop, and the respawn still owes the pop', async () => {
+  // The failure the probe introduces if it is written carelessly: a loop that
+  // outlives its child would open a browser at a port nothing is listening on —
+  // strictly worse than the blip it was meant to fix. And because the pop is
+  // still OWED, the respawn (same pinned port) must pop when it does come up:
+  // marking the tunnel 'opened' at spawn time would spend the operator's single
+  // pop on a tunnel that never served.
+  // The window that matters is between the child's exit and its respawn (a full
+  // backoff, 1s). The probe is made to ACCEPT during exactly that window: a loop
+  // that doesn't check whether it still owns the tunnel would pop right there,
+  // at a port whose child is gone. A test that instead kept the port refusing
+  // until after the respawn would pass either way — it would never exercise the
+  // check it claims to.
+  const { calls, children, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  let accepting = false;
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn,
+    probeFn: () => Promise.resolve(accepting),
+    onState: (_id, st) => emits.push(st),
+  });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'spawn');
+  children[0].emit('exit', 255);                       // dies while the probe polls
+  assert.equal(calls.length, 1, 'the respawn has not happened yet — we are in the gap');
+  accepting = true;                                     // …and the port starts accepting NOW
+  await new Promise((r) => setTimeout(r, 300));        // well past a poll interval
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 0,
+    'the abandoned probe never popped a browser at a forward whose child is dead');
+
+  // The pop is still OWED: the respawn (same pinned port) pops when it serves.
+  await waitFor(() => calls.length === 2, 'respawn');
+  await waitFor(() => emits.some((e) => e.firstUp === true), 'the respawn pops');
+  assert.strictEqual(emits.find((e) => e.firstUp === true).ready, true);
+  tun.stop();
+});
+
+test('t37: the probe is BOUNDED — a port that never accepts pops anyway, flagged unconfirmed', async () => {
+  // The bound must lapse rather than hang. Popping anyway is the deliberate
+  // choice: the operator asked for a browser, and after the full bound giving
+  // them the tab they clicked (worst case: the old behaviour, a page they
+  // reload) beats silently swallowing the request. `ready: false` is what makes
+  // the fallback distinguishable in the log from the happy path.
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  const probeFn = probeAfter(Infinity);                 // never accepts
+  const tun = new WebTunnel({
+    id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, probeFn,
+    probeMs: 250, onState: (_id, st) => emits.push(st),
+  });
+  tun.start();
+  await waitFor(() => calls.length === 1, 'spawn');
+  await waitFor(() => emits.some((e) => e.firstUp === true), 'the bounded fallback pop', 4000);
+  const pop = emits.find((e) => e.firstUp === true);
+  assert.strictEqual(pop.ready, false, 'flagged UNCONFIRMED — a fallback the log can tell apart');
+  assert.match(pop.url, /^http:\/\/127\.0\.0\.1:\d+$/, 'still a real URL, not a placeholder');
+  assert.ok(probeFn.count() > 1, 'and it genuinely retried before giving in');
+  tun.stop();
+});
+
+test('t37: a tunnel that never comes up still reaches gave-up — the probe does not block the cap', async () => {
+  // The probe runs alongside supervision, never in front of it. If it ever
+  // gated the restart path, a box that is down would sit in a probe loop
+  // instead of reaching the cap — recreating exactly the forgotten-forward hole
+  // the cap exists to close.
+  const { calls, children, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  const mgr = new WebTunnelManager({
+    spawnFn, giveUpMs: 400, probeFn: probeAfter(Infinity), probeMs: 60000,
+    onState: (_id, st) => emits.push(st),
+  });
+  mgr.open({ id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080 });
+  await waitFor(() => calls.length === 1, 'spawn');
+  assert.ok(await failUntilGaveUp(() => mgr.statusFor('p1'), children), 'the cap still fires');
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 0,
+    'and a box that never served never popped a browser');
+  mgr.stopAll();
+});
+
+test('t37: stop() abandons a pending probe — a closed tunnel never pops later', async () => {
+  // Click ↗, change your mind, click again to close. A probe still polling
+  // would pop a window at a tunnel the operator explicitly closed.
+  const { calls, spawnFn } = makeSpawnRecorder();
+  const emits = [];
+  let accepting = false;
+  const mgr = new WebTunnelManager({
+    spawnFn, probeFn: () => Promise.resolve(accepting), onState: (_id, st) => emits.push(st),
+  });
+  mgr.open({ id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080 });
+  await waitFor(() => calls.length === 1, 'spawn');
+  mgr.close('p1');
+  accepting = true;                                     // the port comes up AFTER the close
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 0,
+    'a closed tunnel pops nothing, however healthy the port turns out to be');
+});
+
 // ── Inversion 2: the browser opens EXACTLY once ──────────────────────────────
 
 test('firstUp rides exactly one emit, and never a later status() read', async () => {
@@ -403,22 +568,22 @@ test('firstUp rides exactly one emit, and never a later status() read', async ()
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const emits = [];
   const tun = new WebTunnel({
-    id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn,
+    id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, probeFn: okProbe,
     onState: (_id, st) => emits.push(st),
   });
   tun.start();
-  await waitFor(() => calls.length === 1, 'spawn');
-  const ups = emits.filter((e) => e.state === 'up');
-  assert.equal(ups.length, 1, 'one up emit');
-  assert.strictEqual(ups[0].firstUp, true, 'carrying firstUp');
-  assert.strictEqual(tun.status().firstUp, undefined, 'but the stored status does NOT carry it');
+  await waitFor(() => emits.some((e) => e.firstUp === true), 'the pop emit');
+  assert.equal(emits.filter((e) => e.state === 'up').length, 2,
+    'two up-state emits: the supervision one, then the pop once the port accepts');
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 1, 'but only ONE carries firstUp');
+  assert.strictEqual(tun.status().firstUp, undefined, 'and the stored status does NOT carry it');
 
   // A respawn is up again — and must NOT re-pop.
   children[0].emit('exit', 255);
   await waitFor(() => calls.length === 2, 'respawn');
-  const ups2 = emits.filter((e) => e.state === 'up');
-  assert.equal(ups2.length, 2, 'two up emits total');
-  assert.notStrictEqual(ups2[1].firstUp, true, 'the SECOND up does not carry firstUp');
+  await new Promise((r) => setTimeout(r, 50));    // let any stray probe settle
+  assert.equal(emits.filter((e) => e.firstUp === true).length, 1,
+    'the respawn does NOT pop a second window — the pinned port means the tab already works');
   assert.strictEqual(tun.status().firstUp, undefined, 'still absent from the stored status');
   tun.stop();
 });
@@ -429,13 +594,12 @@ test('firstUp is per-tunnel: a fresh tunnel to the same peer pops again', async 
   // peer's, or a re-open would silently do nothing visible.
   const { calls, spawnFn } = makeSpawnRecorder();
   const emits = [];
-  const mgr = new WebTunnelManager({ spawnFn, onState: (_id, st) => emits.push(st) });
+  const mgr = new WebTunnelManager({ spawnFn, probeFn: okProbe, onState: (_id, st) => emits.push(st) });
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
-  await waitFor(() => calls.length === 1, 'first spawn');
+  await waitFor(() => emits.filter((e) => e.firstUp === true).length === 1, 'first pop');
   mgr.close('p1');
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
-  await waitFor(() => calls.length === 2, 'second spawn');
-  assert.equal(emits.filter((e) => e.firstUp === true).length, 2, 'each tunnel pops once');
+  await waitFor(() => emits.filter((e) => e.firstUp === true).length === 2, 'each tunnel pops once');
   mgr.stopAll();
 });
 

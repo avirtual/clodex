@@ -26,6 +26,19 @@
 //      dead box forever leaves a forgotten forward open to a remote machine. After
 //      GIVE_UP_MS without ever coming up it stops and reports 'gave-up', which is
 //      the only close that needs nobody to do anything.
+//   4. THE POP WAITS FOR THE PORT, not for the process (t37). Everything else
+//      here treats "the child is alive" as up, which is all `ssh -N` can offer
+//      and is right for supervision. But a browser is a harder consumer than a
+//      socket client: `kubectl port-forward` lives for a few hundred ms before
+//      it accepts, and a tab opened into that gap shows an error page and
+//      self-refreshes — reported from live use. So the ONE emit a browser rides,
+//      `firstUp`, waits until 127.0.0.1:<localPort> actually accepts a TCP
+//      connection. Only that emit: `state: 'up'`, the give-up clock, the stable
+//      check and sync() all keep their existing timing, because re-timing them
+//      would change supervision to fix a cosmetic bug. A TCP probe rather than
+//      the CLI's own "Forwarding from …" line, because a per-kind
+//      success-pattern table is vendor knowledge this layer does not want and
+//      would need its own fallback for when the pattern never matches.
 //
 // TRANSPORTS: ssh AND the typed cloud kinds (t36). This module was ssh-only at
 // t30 on the ruling that "no Clodex peer record can express SSM/kubectl/gcloud/az
@@ -42,7 +55,8 @@
 // Clodex reaches over somebody else's network path, with no forward to drive.
 // That refusal stays, and says so.
 //
-// spawnFn is injectable for tests; production uses child_process.spawn.
+// spawnFn and probeFn are injectable for tests; production uses
+// child_process.spawn and cli/src/transport's portAccepts.
 
 'use strict';
 
@@ -53,7 +67,10 @@ const { spawn } = require('child_process');
 // two copies of "which cloud kinds exist" is precisely the drift that produced
 // this ticket, one layer down.
 const { CLOUD_KINDS, sameCloud } = require('./peer-tunnel');
-const { substitutePort } = require('./cli/src/transport');
+// portAccepts: a one-shot TCP connect to 127.0.0.1:<port>. Imported rather than
+// rewritten — the CLI has asked this exact question since day one, and
+// WAIT_PORT_MS is the bound it already settled on for it.
+const { substitutePort, portAccepts, WAIT_PORT_MS } = require('./cli/src/transport');
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
@@ -69,6 +86,12 @@ const GIVE_UP_MS = 120000;
 // and the cap would never fire. Same threshold and same reasoning as
 // peer-tunnel.js's STABLE_MS, used for a different decision.
 const STABLE_MS = 30000;
+// How long to keep asking "does the local port accept yet?" before popping the
+// browser anyway (inversion 4). Same bound the CLI uses for the same question.
+const PROBE_MS = WAIT_PORT_MS;
+// Gap between probe attempts. The first attempt is immediate — an ssh forward
+// accepts straight away, so it must not pay a poll interval it doesn't need.
+const PROBE_POLL_MS = 100;
 
 const SSH_BASE_ARGS = [
   '-N',
@@ -93,7 +116,7 @@ class WebTunnel {
   // A cloud transport arrives under its OWN kind key (`kubectl: {…}`) — the same
   // shape the peer record and the wire supervisor use, so a settings entry needs
   // no translation step to get wrong. Normalized to `this.cloud = { kind, block }`.
-  constructor({ id, sshHost, remotePort, spawnFn, onState, giveUpMs, ...opts }) {
+  constructor({ id, sshHost, remotePort, spawnFn, onState, giveUpMs, probeFn, probeMs, ...opts }) {
     this.id = id;
     this.sshHost = sshHost || null;
     this.cloud = null;
@@ -102,6 +125,8 @@ class WebTunnel {
     }
     this.remotePort = remotePort;
     this._spawn = spawnFn || spawn;
+    this._probe = probeFn || portAccepts;
+    this._probeMs = Number.isInteger(probeMs) ? probeMs : PROBE_MS;
     this._onState = onState || (() => {});
     this._giveUpMs = Number.isInteger(giveUpMs) ? giveUpMs : GIVE_UP_MS;
     // Scaled with the cap so a test that shortens the window doesn't need a
@@ -119,6 +144,7 @@ class WebTunnel {
     this._opened = false;            // browser popped? (inversion 2)
     this._deadline = 0;              // give-up wall-clock (inversion 3)
     this._bornAt = 0;                // current spawn's start, for the stable check
+    this._probeTimer = null;         // pending probe retry (inversion 4)
   }
 
   start() {
@@ -132,6 +158,8 @@ class WebTunnel {
     this._stopped = true;
     clearTimeout(this._timer);
     this._timer = null;
+    clearTimeout(this._probeTimer);
+    this._probeTimer = null;
     this._killChild();
     this._setState('down');
   }
@@ -197,13 +225,16 @@ class WebTunnel {
     } catch {}
   }
 
-  // `extra` rides the EMIT only, never the stored status — firstUp is a property
-  // of one transition, and a consumer polling status() later must not read it as
-  // still true and pop a second browser window.
-  _setState(state, extra) {
+  // State transitions only — it returns early when the state is unchanged, which
+  // is why the firstUp emit cannot ride it (by the time the probe succeeds the
+  // state is already 'up') and builds its own payload instead. The invariant
+  // that survives from t30b: firstUp is a property of ONE emit and never of the
+  // stored status, so a consumer polling status() later cannot read it as still
+  // true and pop a second browser window.
+  _setState(state) {
     if (this.state === state) return;
     this.state = state;
-    try { this._onState(this.id, extra ? { ...this.status(), ...extra } : this.status()); } catch {}
+    try { this._onState(this.id, this.status()); } catch {}
   }
 
   _spawnTunnel() {
@@ -264,28 +295,59 @@ class WebTunnel {
       }
       this._scheduleRestart();
     });
-    // UP = "the child is alive". Derived for ssh (`ssh -N` prints nothing on
-    // success, so there is no success line to wait for) and it carries to the
-    // cloud kinds for a different reason rather than by assumption: those CLIs
-    // are CHATTY on success (kubectl prints "Forwarding from 127.0.0.1:… -> …"),
-    // but that chatter goes to STDOUT, which this spawn ignores. Nothing here
-    // ever waited for a success token, so nothing regresses — what changes is
-    // only that "up" is now slightly LESS informative for a chatty CLI than it
-    // could be, since a success line exists and we don't read it. Deliberate:
-    // reading one would mean a per-kind success-pattern table, i.e. exactly the
-    // vendor-behaviour knowledge this layer avoids, and the failure mode it
-    // would fix (a child that lives without forwarding) is already covered by
-    // the give-up cap. See the report for t36.
+    // UP = "the child is alive" — for SUPERVISION. That is all `ssh -N` can
+    // offer (it prints nothing on success) and it is the right signal for the
+    // give-up clock, the stable check, sync() and the UI phase, all of which ask
+    // "is this tunnel being maintained", not "is it serving yet". Left exactly
+    // as it was: re-timing supervision to fix a cosmetic bug would trade a
+    // half-second of ugliness for a class of timing changes nobody asked for.
     //
-    // firstUp marks the once-per-tunnel transition (inversion 2) — the one emit
-    // the browser pop rides. It deliberately does NOT retire the give-up clock:
-    // 'up' here means only that the ssh process is alive, and a forward to an
-    // unreachable box is briefly 'up' too, so retiring on first up would retire
-    // on nearly every tunnel and the cap would never fire. The clock is retired
-    // by SURVIVING (the stable check above) instead.
-    const firstUp = !this._opened;
-    if (firstUp) this._opened = true;
-    this._setState('up', firstUp ? { firstUp: true } : null);
+    // The BROWSER is the one consumer that needs the stronger fact, and it rides
+    // exactly one emit — see _probeThenPop.
+    this._setState('up');
+    if (!this._opened) this._probeThenPop(child, port);
+  }
+
+  // Wait until 127.0.0.1:<port> accepts, then emit the once-per-tunnel firstUp
+  // the browser pop rides (inversions 2 + 4). Notes on the shape:
+  //
+  //   • `_opened` is set HERE, not at spawn time, and only when the emit
+  //     actually goes out — so a child that dies mid-probe leaves the pop still
+  //     owed, and the respawn (with the same PINNED port) probes again. Setting
+  //     it at spawn time would spend the operator's single pop on a tunnel that
+  //     never served.
+  //   • The emit is its own _onState call rather than a _setState: _setState
+  //     only fires ON CHANGE, and by now the state is already 'up', so riding it
+  //     would drop the emit entirely. The payload is the same
+  //     `{...status(), firstUp: true}` shape peer-wiring already reads.
+  //   • Every await is followed by a re-check that this loop still owns the
+  //     tunnel (`_stopped`, and `_child === child`). A probe that outlived its
+  //     child would pop a browser at a port nothing is listening on.
+  //   • On TIMEOUT it pops ANYWAY, with `ready: false`. The operator asked for a
+  //     browser; after the full bound, giving them the tab they clicked (worst
+  //     case: today's behaviour, a page they reload) beats silently swallowing
+  //     the request. `ready` distinguishes the two in the log — a fallback that
+  //     reads identically to the happy path is not a fallback anyone can debug.
+  async _probeThenPop(child, port) {
+    const deadline = Date.now() + this._probeMs;
+    const mine = () => !this._stopped && this._child === child && this._opened === false;
+    for (;;) {
+      if (!mine()) return;
+      let ok = false;
+      try { ok = await this._probe(port); } catch { ok = false; }
+      if (!mine()) return;
+      if (ok) break;
+      if (Date.now() >= deadline) {
+        // Bound lapsed with the child still alive. Pop unconfirmed, and say so.
+        this._opened = true;
+        try { this._onState(this.id, { ...this.status(), firstUp: true, ready: false }); } catch {}
+        return;
+      }
+      await new Promise((resolve) => { this._probeTimer = setTimeout(resolve, PROBE_POLL_MS); });
+    }
+    if (!mine()) return;
+    this._opened = true;
+    try { this._onState(this.id, { ...this.status(), firstUp: true, ready: true }); } catch {}
   }
 
   _scheduleRestart() {
@@ -337,8 +399,10 @@ function destinationOf(rec) {
 // merely exists. open()/close() are the toggle; sync() prunes tunnels whose peer
 // went away or was disabled; stopAll() is app shutdown.
 class WebTunnelManager {
-  constructor({ spawnFn, onState, giveUpMs } = {}) {
+  constructor({ spawnFn, onState, giveUpMs, probeFn, probeMs } = {}) {
     this._spawnFn = spawnFn || null;
+    this._probeFn = probeFn || null;
+    this._probeMs = probeMs;
     this._onState = onState || (() => {});
     this._giveUpMs = giveUpMs;
     this._tunnels = new Map();       // peerId -> WebTunnel
@@ -377,6 +441,7 @@ class WebTunnelManager {
       id: key, sshHost: dest.sshHost, remotePort,
       ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
       spawnFn: this._spawnFn, onState: this._onState, giveUpMs: this._giveUpMs,
+      probeFn: this._probeFn, probeMs: this._probeMs,
     });
     this._tunnels.set(key, tun);
     tun.start();
