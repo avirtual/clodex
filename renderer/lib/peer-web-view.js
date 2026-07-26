@@ -15,26 +15,30 @@
 //     no ?token=/Bearer/cookie. So a gated peer's affordance says the box needs
 //     a token rather than promising something to click.
 //
-// ssh-only, by ruling: a peer reached by plain URL has no transport Clodex can
-// drive a forward over, so the affordance says so rather than silently hiding.
-// Since t32 that ruling has a SECOND way to be false — a peer dialled over a
-// typed cloud transport (ssm) does have a managed wire tunnel, but the web view
-// needs its OWN second forward and only the ssh template can open one. Same
-// answer (no button), a different true reason, and the tip must say which.
+// A peer reached by plain URL has no transport Clodex can drive a forward over,
+// so the affordance says so rather than silently hiding. That is now the ONLY
+// such peer: between t30 and t36 a cloud-transport peer was refused here too
+// (the supervisor could only build an `ssh -L`), and the tip said "Clodex can
+// only tunnel to a web UI over ssh" — a sentence that was true when written and
+// false one release later. It is gone; a cloud peer gets a real button.
 
 'use strict';
 
-// Is this peer reached over a Clodex-managed ssh tunnel? The wire tunnel row IS
-// the signal on this side — the renderer never sees the peer record itself. Note
-// a cloud-transport peer HAS a tunnel row (carrying `ssm`) but no sshHost, so
-// this stays a test for sshHost specifically, not for "has a tunnel".
+// Is this peer reached over a transport Clodex dials itself? The wire tunnel row
+// IS the signal on this side — the renderer never sees the peer record. A row
+// exists for exactly the peers TunnelManager could dial, so its mere presence is
+// the answer; a url-only peer has no row at all.
+function isForwardablePeer(tunnel) { return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel))); }
+
+// Kept for callers that need the narrower question (ssh specifically — e.g. the
+// deploy/setup flow, which copies files and runs a shell and genuinely is ssh-only).
 function isSshPeer(tunnel) { return !!(tunnel && tunnel.sshHost); }
 
 // Which typed cloud transport dials this peer, phrased for a sentence, or null
 // for an ssh/url peer. The tunnel row carries the block under its kind key, so
-// naming the real transport costs nothing — and telling an SSM operator their
-// box "is reached by URL" would be a false explanation of a true limit, sending
-// them to look for a URL that does not exist.
+// naming the real transport costs nothing — the tips below say which forward is
+// being opened, and an SSM operator told their box "is reached by URL" would go
+// looking for a URL that does not exist.
 const CLOUD_TRANSPORT_NAMES = {
   ssm: 'an AWS SSM tunnel',
   kubectl: 'a kubectl port-forward',
@@ -47,6 +51,16 @@ function cloudTransportName(tunnel) {
     if (tunnel[kind]) return name;
   }
   return null;
+}
+
+// "over ssh" / "over a kubectl port-forward" — the forward the operator is
+// actually getting, for the tips. A tip that says "over ssh" at a kubectl peer
+// would be the same category of false-but-plausible sentence this file just
+// finished removing.
+function transportPhrase(tunnel) {
+  const cloud = cloudTransportName(tunnel);
+  if (cloud) return `over ${cloud}`;
+  return 'over ssh';
 }
 
 // state: 'closed' (nothing open) | 'connecting' | 'open' | 'gave-up'
@@ -70,7 +84,8 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const st = status || null;
   const webHost = st && st.webHost;
   const phase = tunnelPhase(webTunnel);
-  const ssh = isSshPeer(tunnel);
+  const forwardable = isForwardablePeer(tunnel);
+  const how = transportPhrase(tunnel);
   const label = (st && (st.host || st.label)) || 'peer';
   // `=== true`, matching peer-client's hello normalization (the single producer,
   // which already coerces to a strict boolean) and peer-wiring's pop decision.
@@ -88,16 +103,13 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   // to prevent, and hiding its only close button would be the same bug.
   if (!webHost && phase === 'closed') return { show: false, enabled: false, action: null, phase, tip: '', url: null, tokenGated };
 
-  if (!ssh && phase === 'closed') {
-    // ssh-only limitation, stated rather than hidden — a silently missing button
-    // reads as "this box has no web UI", which is a different and false claim.
-    // Which non-ssh transport it is matters: telling an ssm peer's operator it
-    // "is reached by URL" would be a false explanation of a true limit, and
-    // they'd go looking for a URL that doesn't exist.
-    const how = cloudTransportName(tunnel) || 'URL';
+  if (!forwardable && phase === 'closed') {
+    // The url-only limitation, stated rather than hidden — a silently missing
+    // button reads as "this box has no web UI", which is a different and false
+    // claim. (Before t36 a cloud peer landed here too; it no longer does.)
     return {
       show: true, enabled: false, action: null, phase, url: null, tokenGated,
-      tip: `${label} is reached by ${how}, not ssh — Clodex can only tunnel to a web UI over ssh`,
+      tip: `${label} is reached by URL — Clodex can only tunnel to a web UI over a transport it dials itself`,
     };
   }
 
@@ -112,7 +124,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (phase === 'connecting') {
     return {
       show: true, enabled: true, action: 'close', phase, url: null, tokenGated,
-      tip: `Connecting to ${label}'s web UI over ssh… click to cancel`,
+      tip: `Connecting to ${label}'s web UI ${how}… click to cancel`,
     };
   }
   if (phase === 'gave-up') {
@@ -125,9 +137,12 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   return {
     show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
     tip: tokenGated
-      ? `Open ${label}'s web UI over ssh — the box requires a token, so you'll get a URL to open with ?token=…`
-      : `Open ${label}'s web UI over ssh`,
+      ? `Open ${label}'s web UI ${how} — the box requires a token, so you'll get a URL to open with ?token=…`
+      : `Open ${label}'s web UI ${how}`,
   };
 }
 
-module.exports = { webViewAffordance, tunnelPhase, isSshPeer, cloudTransportName };
+module.exports = {
+  webViewAffordance, tunnelPhase, isSshPeer, isForwardablePeer,
+  cloudTransportName, transportPhrase,
+};

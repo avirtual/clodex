@@ -193,10 +193,10 @@ function createPeerWiring(deps) {
     getPeerManager().sync(resolved);
   }
 
-  // ---- Peer web view (t30b) -------------------------------------------------
-  // A SEPARATE, on-demand ssh forward to a peer's browser frontend, opened only
+  // ---- Peer web view (t30b; cloud transports t36) ---------------------------
+  // A SEPARATE, on-demand forward to a peer's browser frontend, opened only
   // when someone asks to look at it. Distinct from the peer tunnel above on
-  // purpose: that one carries Clodex's own wire for every ssh peer and re-picks
+  // purpose: that one carries Clodex's own wire for every dialable peer and re-picks
   // its local port on each respawn; this one exists per explicit request and
   // pins its port, because the consumer is a browser tab Clodex cannot re-point.
   // Full reasoning in web-tunnel.js's header.
@@ -238,14 +238,28 @@ function createPeerWiring(deps) {
   }
 
   // Open the web view for one peer. Refuses rather than guesses on every missing
-  // input: no ssh host (ssh-only, by ruling — a url-only peer has no transport
-  // we can drive), and no live webHost in the peer's hello (nothing to forward
-  // to; a guessed port is exactly the lie t30a exists to prevent).
+  // input: an unknown peer, a peer with no forwardable transport (url-only — the
+  // supervisor phrases that one, since it owns the kind list), and no live
+  // webHost in the peer's hello (nothing to forward to; a guessed port is exactly
+  // the lie t30a exists to prevent).
+  //
+  // The whole record's transport fields are handed to the supervisor rather than
+  // sshHost alone (t36). Naming one field here was the door a kubectl peer was
+  // refused at while its WIRE tunnel dialled fine: any layer that rebuilds a
+  // record from named fields silently drops what it doesn't name, so this passes
+  // the record and lets the module that owns the kind table decide.
   function openPeerWeb(id) {
     const key = String(id);
     const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     if (!rec) return { ok: false, error: 'no such peer' };
-    if (!rec.sshHost) return { ok: false, error: 'ssh-only: this peer is reached by URL, not ssh' };
+    // Asked of the supervisor, which owns the kind table — not re-derived here
+    // from a `rec.sshHost || rec.ssm || …` chain, which is a list to forget a
+    // kind from. Required lazily, like the managers below.
+    const { destinationOf } = require('./web-tunnel');
+    const dest = destinationOf(rec);
+    if (!dest) {
+      return { ok: false, error: 'this peer is reached by URL — Clodex can only tunnel to a web UI over a transport it dials itself (ssh, SSM, kubectl, GCP IAP, Azure Bastion)' };
+    }
     const conn = getPeerManager() && getPeerManager().get(key);
     const st = conn ? conn.status() : null;
     const webHost = st && st.webHost;
@@ -254,7 +268,10 @@ function createPeerWiring(deps) {
     // Decided BEFORE the tunnel starts, so the once-per-tunnel firstUp emit can
     // never race ahead of the decision and pop a 401 at the operator.
     if (tokenGated) webPopAllowed.delete(key); else webPopAllowed.add(key);
-    const res = ensureWebTunnelManager().open({ id: key, sshHost: rec.sshHost, remotePort: webHost.port });
+    const res = ensureWebTunnelManager().open({
+      id: key, sshHost: dest.sshHost, remotePort: webHost.port,
+      ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
+    });
     // tokenGated rides the result so the renderer can say "this box wants a
     // token" rather than implying a link is coming.
     return { ...res, tokenGated };

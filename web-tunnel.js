@@ -1,4 +1,4 @@
-// web-tunnel.js — on-demand `ssh -N -L` forwards to a PEER'S WEB FRONTEND, so
+// web-tunnel.js — on-demand port forwards to a PEER'S WEB FRONTEND, so
 // "look at that box's GUI" is a click instead of a hand-run ssh command. A
 // sibling of peer-tunnel.js, deliberately NOT the same object: the peer tunnel
 // carries Clodex's own wire and exists for as long as the peer does, while this
@@ -27,10 +27,20 @@
 //      GIVE_UP_MS without ever coming up it stops and reports 'gave-up', which is
 //      the only close that needs nobody to do anything.
 //
-// ssh-only, by ruling: `cli/src/transport.js` could drive SSM/kubectl/gcloud/az,
-// but no Clodex peer record can express those transports (sanitizePeers accepts
-// url + sshHost and drops everything else), so the capability would have nothing
-// to reach. See tasks/peer-web-view/journal.md.
+// TRANSPORTS: ssh AND the typed cloud kinds (t36). This module was ssh-only at
+// t30 on the ruling that "no Clodex peer record can express SSM/kubectl/gcloud/az
+// (sanitizePeers accepts url + sshHost and drops everything else), so the
+// capability would have nothing to reach". t32 falsified that premise —
+// PEER_CLOUD_KINDS in stores.js now admits all four — and the ruling outlived it
+// by one release, which is how a kubectl peer shipped with working sessions and a
+// refused web view. The kind table and the argv builders are IMPORTED from the
+// wire supervisor (which imports them in turn from cli/src/transport.js), so
+// "which transports can Clodex dial" has exactly one answer and a fifth kind
+// cannot arrive here late again.
+//
+// What remains genuinely impossible is a URL-ONLY peer: it names a destination
+// Clodex reaches over somebody else's network path, with no forward to drive.
+// That refusal stays, and says so.
 //
 // spawnFn is injectable for tests; production uses child_process.spawn.
 
@@ -38,6 +48,12 @@
 
 const net = require('net');
 const { spawn } = require('child_process');
+// The wire supervisor owns the kind table (kinds, destination fields, required
+// fields, argv builder per kind) and `sameCloud`. Imported rather than restated:
+// two copies of "which cloud kinds exist" is precisely the drift that produced
+// this ticket, one layer down.
+const { CLOUD_KINDS, sameCloud } = require('./peer-tunnel');
+const { substitutePort } = require('./cli/src/transport');
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
@@ -74,9 +90,16 @@ function pickFreePort(cb) {
 }
 
 class WebTunnel {
-  constructor({ id, sshHost, remotePort, spawnFn, onState, giveUpMs }) {
+  // A cloud transport arrives under its OWN kind key (`kubectl: {…}`) — the same
+  // shape the peer record and the wire supervisor use, so a settings entry needs
+  // no translation step to get wrong. Normalized to `this.cloud = { kind, block }`.
+  constructor({ id, sshHost, remotePort, spawnFn, onState, giveUpMs, ...opts }) {
     this.id = id;
-    this.sshHost = sshHost;
+    this.sshHost = sshHost || null;
+    this.cloud = null;
+    for (const kind of Object.keys(CLOUD_KINDS)) {
+      if (opts[kind]) { this.cloud = { kind, block: { ...opts[kind] } }; break; }
+    }
     this.remotePort = remotePort;
     this._spawn = spawnFn || spawn;
     this._onState = onState || (() => {});
@@ -109,7 +132,7 @@ class WebTunnel {
     this._stopped = true;
     clearTimeout(this._timer);
     this._timer = null;
-    if (this._child) { try { this._child.kill(); } catch {} this._child = null; }
+    this._killChild();
     this._setState('down');
   }
 
@@ -118,7 +141,12 @@ class WebTunnel {
   // is pinned but not currently forwarded is not a URL). One producer, one rule.
   status() {
     return {
-      id: this.id, sshHost: this.sshHost, remotePort: this.remotePort,
+      id: this.id, sshHost: this.sshHost,
+      // The dialled destination under its kind key — the DATA, never an argv,
+      // the same row shape the wire tunnel's status carries. The renderer never
+      // sees the peer record, so this is how it can name WHICH transport.
+      ...(this.cloud ? { [this.cloud.kind]: { ...this.cloud.block } } : {}),
+      remotePort: this.remotePort,
       state: this.state, localPort: this.localPort, error: this.lastError,
       url: this.url(),
     };
@@ -129,8 +157,44 @@ class WebTunnel {
   // mistake — the peer tunnel's http://127.0.0.1:1 sentinel has no analogue here.
   url() { return this.state === 'up' && this.localPort ? `http://127.0.0.1:${this.localPort}` : null; }
 
+  // ssh's argv TAIL (no leading 'ssh'), kept as-is for the original call shape.
   args(localPort) {
     return [...SSH_BASE_ARGS, '-L', `${localPort}:127.0.0.1:${this.remotePort}`, this.sshHost];
+  }
+
+  // The full argv INCLUDING the command word, per transport — the wire
+  // supervisor's `argv()` with one difference that matters: `localPort` here is
+  // the PINNED port, so every respawn substitutes the same value. Synchronous by
+  // construction, every arm pure string assembly (`ssm.ecs` would break that,
+  // which is why the store admits no `ecs` block).
+  argv(localPort) {
+    if (this.cloud) {
+      const build = CLOUD_KINDS[this.cloud.kind].argv;
+      return substitutePort(build(this.cloud.block, this.remotePort), localPort);
+    }
+    return ['ssh', ...this.args(localPort)];
+  }
+
+  // aws/kubectl/gcloud/az each fork helpers a plain child-kill orphans, and an
+  // orphaned forward to a REMOTE box is the worst outcome this module has (it
+  // outlives the operator's reason for it — the same hole the give-up cap
+  // exists to close, arrived at from the other side). So a cloud child leads its
+  // own process group and is killed by group. ssh needs none of that and keeps
+  // its original non-detached spawn byte-identical.
+  _detached() { return !!this.cloud; }
+
+  _killChild() {
+    const child = this._child;
+    if (!child) return;
+    this._child = null;
+    try {
+      if (this._detached() && child.pid > 0) {
+        try { process.kill(-child.pid, 'SIGTERM'); }
+        catch { try { child.kill('SIGTERM'); } catch {} }
+      } else {
+        child.kill();
+      }
+    } catch {}
   }
 
   // `extra` rides the EMIT only, never the stored status — firstUp is a property
@@ -157,8 +221,15 @@ class WebTunnel {
   _spawnOn(port) {
     if (this._stopped || this._child) return;
     let child;
+    // Named in errors even if argv() itself throws.
+    let cmdName = this.cloud ? this.cloud.kind : 'ssh';
     try {
-      child = this._spawn('ssh', this.args(port), { stdio: ['ignore', 'ignore', 'pipe'] });
+      const [cmd, ...rest] = this.argv(port);
+      cmdName = cmd;
+      child = this._spawn(cmd, rest, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        ...(this._detached() ? { detached: true } : {}),
+      });
     } catch (e) {
       this.lastError = e.message;
       return this._scheduleRestart();
@@ -169,7 +240,13 @@ class WebTunnel {
       child.stderr.on('data', (chunk) => { stderrTail = (stderrTail + chunk.toString()).slice(-500); });
     }
     child.on('error', (e) => {
-      this.lastError = e.message;
+      // A missing vendor CLI is the common cloud misconfig and reads as a bare
+      // ENOENT otherwise — name the binary, same copy as peer-tunnel.js and
+      // cli/src/transport.js. (ssh is always installed, which is why the ssh-only
+      // version of this module had no such arm.)
+      this.lastError = (e && (e.code === 'ENOENT' || /ENOENT/.test(e.message || '')))
+        ? `${cmdName}: command not found — is ${cmdName} installed and on PATH?`
+        : e.message;
       this._child = null;
       this._scheduleRestart();
     });
@@ -177,7 +254,7 @@ class WebTunnel {
     child.on('exit', (code) => {
       this._child = null;
       const line = stderrTail.trim().split('\n').pop() || '';
-      this.lastError = line || (code === 0 ? null : `ssh exited (${code})`);
+      this.lastError = line || (code === 0 ? null : `${cmdName} exited (${code})`);
       // A spawn that lasted counts as a box that genuinely works: reset the
       // backoff AND retire the give-up clock, so later blips are treated as
       // outages rather than as evidence the box was never there.
@@ -187,8 +264,18 @@ class WebTunnel {
       }
       this._scheduleRestart();
     });
-    // ssh -N prints nothing on success; the live process IS the forward. Whether
-    // the far end serves anything is the browser's problem, not this layer's.
+    // UP = "the child is alive". Derived for ssh (`ssh -N` prints nothing on
+    // success, so there is no success line to wait for) and it carries to the
+    // cloud kinds for a different reason rather than by assumption: those CLIs
+    // are CHATTY on success (kubectl prints "Forwarding from 127.0.0.1:… -> …"),
+    // but that chatter goes to STDOUT, which this spawn ignores. Nothing here
+    // ever waited for a success token, so nothing regresses — what changes is
+    // only that "up" is now slightly LESS informative for a chatty CLI than it
+    // could be, since a success line exists and we don't read it. Deliberate:
+    // reading one would mean a per-kind success-pattern table, i.e. exactly the
+    // vendor-behaviour knowledge this layer avoids, and the failure mode it
+    // would fix (a child that lives without forwarding) is already covered by
+    // the give-up cap. See the report for t36.
     //
     // firstUp marks the once-per-tunnel transition (inversion 2) — the one emit
     // the browser pop rides. It deliberately does NOT retire the give-up clock:
@@ -220,6 +307,32 @@ class WebTunnel {
   }
 }
 
+// The forwardable destination of one record — an ssh host, or a cloud block with
+// every required field — in the shape the constructor takes, or null for a record
+// with nothing to forward over (a url-only peer). ssh wins when both are present,
+// matching TunnelManager.sync.
+//
+// Shared by open() and sync() so the destination a sync KEEPS and the destination
+// an open BUILDS are computed by one rule. Two rules is how a cloud web tunnel
+// would open and then be pruned by the very next settings write.
+function destinationOf(rec) {
+  if (!rec) return null;
+  if (rec.sshHost) return { sshHost: String(rec.sshHost), cloud: null };
+  for (const [kind, spec] of Object.entries(CLOUD_KINDS)) {
+    const raw = rec[kind];
+    // Every required field or no tunnel — a half-built argv fails later with the
+    // vendor CLI's own worse message.
+    if (!raw || !spec.required.every((f) => raw[f])) continue;
+    // Copy only the fields we dial with, stringified: a later mutation of the
+    // settings object can't change a running tunnel's identity, and an unexpected
+    // key can't reach the argv builder.
+    const block = {};
+    for (const f of spec.fields) if (raw[f]) block[f] = String(raw[f]);
+    return { sshHost: null, cloud: { kind, block } };
+  }
+  return null;
+}
+
 // One tunnel per peer the operator has explicitly opened — never per peer that
 // merely exists. open()/close() are the toggle; sync() prunes tunnels whose peer
 // went away or was disabled; stopAll() is app shutdown.
@@ -231,28 +344,38 @@ class WebTunnelManager {
     this._tunnels = new Map();       // peerId -> WebTunnel
   }
 
-  // Open (or re-open) the web tunnel for one peer. remotePort comes from the
-  // peer's hello (webHost.port) — a caller with no live webHost has nothing to
-  // forward to and gets a refusal rather than a guessed port.
-  open({ id, sshHost, remotePort }) {
+  // Open (or re-open) the web tunnel for one peer. The transport rides in under
+  // its own key — `sshHost`, or a cloud block like `kubectl: {…}` — the same
+  // shape the peer record uses. remotePort comes from the peer's hello
+  // (webHost.port): a caller with no live webHost has nothing to forward to and
+  // gets a refusal rather than a guessed port.
+  open({ id, remotePort, ...rec }) {
     const key = String(id);
-    if (!sshHost) return { ok: false, error: 'ssh-only: this peer has no ssh host' };
+    const dest = destinationOf(rec);
+    // A url-only peer is the one genuinely unforwardable case left: Clodex
+    // reaches it over a path it does not own, so there is no local end to bind.
+    // Said out loud rather than hidden — see the module header.
+    if (!dest) return { ok: false, error: 'no forwardable transport: this peer is reached by URL, so there is nothing to tunnel over' };
     if (!Number.isInteger(remotePort) || remotePort <= 0 || remotePort > 65535) {
       return { ok: false, error: 'peer reports no web frontend' };
     }
     const existing = this._tunnels.get(key);
     // A live tunnel to the same place is already the answer. A tunnel to a
     // DIFFERENT place (the box moved its web port, or the peer was re-pointed at
-    // another host) is stale: replace it rather than forwarding to the old one.
+    // another host/cluster/instance) is stale: replace it rather than forwarding
+    // to the old one. Cloud destinations compare field by field via the wire
+    // supervisor's sameCloud — a changed namespace or region is a different box.
     if (existing) {
-      if (existing.sshHost === sshHost && existing.remotePort === remotePort && existing.state !== 'gave-up') {
+      if (existing.sshHost === dest.sshHost && sameCloud(dest.cloud, existing.cloud)
+          && existing.remotePort === remotePort && existing.state !== 'gave-up') {
         return { ok: true, status: existing.status(), url: existing.url() };
       }
       existing.stop();
       this._tunnels.delete(key);
     }
     const tun = new WebTunnel({
-      id: key, sshHost, remotePort,
+      id: key, sshHost: dest.sshHost, remotePort,
+      ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
       spawnFn: this._spawnFn, onState: this._onState, giveUpMs: this._giveUpMs,
     });
     this._tunnels.set(key, tun);
@@ -274,15 +397,24 @@ class WebTunnelManager {
 
   // peers: the same already-filtered list peer-wiring feeds TunnelManager.sync
   // (disabled peers excluded upstream). A tunnel whose peer is no longer in the
-  // list — removed, disabled, or its ssh host changed — is closed. Nothing is
-  // ever OPENED here: on-demand only.
+  // list — removed, disabled, or re-pointed at a different destination — is
+  // closed. Nothing is ever OPENED here: on-demand only.
+  //
+  // Destination comparison goes through destinationOf/sameCloud rather than
+  // sshHost: a cloud peer has no sshHost, so an sshHost-only test would find
+  // `undefined !== null` for every one of them and prune its web tunnel on the
+  // next settings write — an affordance that closes itself a moment after it
+  // opens, with nothing in the log to say why.
   sync(peers) {
     const live = new Map();
     for (const p of Array.isArray(peers) ? peers : []) {
-      if (p && p.id && p.sshHost) live.set(String(p.id), String(p.sshHost));
+      if (!p || !p.id) continue;
+      const dest = destinationOf(p);
+      if (dest) live.set(String(p.id), dest);
     }
     for (const [id, tun] of [...this._tunnels]) {
-      if (live.get(id) !== tun.sshHost) this.close(id);
+      const dest = live.get(id);
+      if (!dest || dest.sshHost !== tun.sshHost || !sameCloud(dest.cloud, tun.cloud)) this.close(id);
     }
   }
 
@@ -304,4 +436,4 @@ class WebTunnelManager {
   }
 }
 
-module.exports = { WebTunnelManager, WebTunnel, GIVE_UP_MS };
+module.exports = { WebTunnelManager, WebTunnel, destinationOf, GIVE_UP_MS };
