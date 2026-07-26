@@ -160,6 +160,10 @@ function createPeerWiring(deps) {
   // (and its sidebar presence) stays alive, just offline — calm, like a
   // sleeping laptop.
   function resolvePeerUrls() {
+    // Required lazily, like the managers below, so this factory keeps its
+    // load-order freedom; peer-tunnel owns the kind list, so the question
+    // "does this peer use a managed cloud transport" is asked of it.
+    const { hasCloudTransport } = require('./peer-tunnel');
     if (!getPeerManager()) return;
     const s = getUiSettings().get();
     const resolved = [];
@@ -175,8 +179,11 @@ function createPeerWiring(deps) {
       // sshHost specifically — ssh and the typed cloud kinds (t32) both land on
       // a local port TunnelManager owns, and both need the dead placeholder
       // while that tunnel is down. Testing sshHost here would have left every
-      // cloud peer resolving to `undefined` url.
-      if (p.sshHost || p.ssm) {
+      // cloud peer resolving to `undefined` url. Asking the tunnel manager
+      // "do you have a tunnel for this peer?" is not enough: it answers null
+      // while the tunnel is merely DOWN, which is exactly when the placeholder
+      // has to keep the connection object alive.
+      if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
         resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token });
       } else {

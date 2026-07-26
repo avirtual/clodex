@@ -30,6 +30,25 @@
 // this stays a test for sshHost specifically, not for "has a tunnel".
 function isSshPeer(tunnel) { return !!(tunnel && tunnel.sshHost); }
 
+// Which typed cloud transport dials this peer, phrased for a sentence, or null
+// for an ssh/url peer. The tunnel row carries the block under its kind key, so
+// naming the real transport costs nothing — and telling an SSM operator their
+// box "is reached by URL" would be a false explanation of a true limit, sending
+// them to look for a URL that does not exist.
+const CLOUD_TRANSPORT_NAMES = {
+  ssm: 'an AWS SSM tunnel',
+  kubectl: 'a kubectl port-forward',
+  gcloud: 'a GCP IAP tunnel',
+  az: 'an Azure Bastion tunnel',
+};
+function cloudTransportName(tunnel) {
+  if (!tunnel) return null;
+  for (const [kind, name] of Object.entries(CLOUD_TRANSPORT_NAMES)) {
+    if (tunnel[kind]) return name;
+  }
+  return null;
+}
+
 // state: 'closed' (nothing open) | 'connecting' | 'open' | 'gave-up'
 function tunnelPhase(webTunnel) {
   if (!webTunnel) return 'closed';
@@ -75,7 +94,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
     // Which non-ssh transport it is matters: telling an ssm peer's operator it
     // "is reached by URL" would be a false explanation of a true limit, and
     // they'd go looking for a URL that doesn't exist.
-    const how = (tunnel && tunnel.ssm) ? 'an AWS SSM tunnel' : 'URL';
+    const how = cloudTransportName(tunnel) || 'URL';
     return {
       show: true, enabled: false, action: null, phase, url: null, tokenGated,
       tip: `${label} is reached by ${how}, not ssh — Clodex can only tunnel to a web UI over ssh`,
@@ -111,4 +130,4 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   };
 }
 
-module.exports = { webViewAffordance, tunnelPhase, isSshPeer };
+module.exports = { webViewAffordance, tunnelPhase, isSshPeer, cloudTransportName };
