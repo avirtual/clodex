@@ -224,9 +224,18 @@ function createPeerWiring(deps) {
         // browser opens once and a respawn after a wifi blip does not pop a
         // second window (the pinned port means the existing tab just works).
         // The pop lives here, not in the supervisor, which stays electron-free.
+        //
+        // Since t37 that emit waits for the local port to ACCEPT, not merely for
+        // the child to be alive — a browser opened into a `kubectl port-forward`
+        // that has not started listening shows an error page and self-refreshes.
+        // `ready: false` means the probe bound lapsed and the supervisor popped
+        // anyway; logged distinctly, because a fallback that reads exactly like
+        // the happy path is one nobody can debug from the log.
         if (status && status.firstUp && status.url) {
           if (webPopAllowed.has(String(id))) {
-            log.info('peer', `web view up for ${id} → ${status.url}`);
+            log.info('peer', status.ready === false
+              ? `web view up for ${id} → ${status.url} (port never confirmed — opening anyway)`
+              : `web view up for ${id} → ${status.url}`);
             try { openExternal(status.url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
           } else {
             log.info('peer', `web view up for ${id} → ${status.url} (token required — not opened)`);
