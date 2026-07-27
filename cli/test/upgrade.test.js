@@ -240,6 +240,38 @@ test('helm: with no --tag the target is the version this clodexctl SHIPS', async
     'the packaged pin must be passed EXPLICITLY too — leaving it to the chart default would work today and silently stop working the moment a carried image.tag exists');
 });
 
+test('helm: --force-conflicts reaches the delegate, and is absent by default (t56)', async () => {
+  // upgrade is the verb where this flag matters most: a node whose image tag
+  // was hand-edited (the very operator upgrade exists for) fails the SSA
+  // ownership check, and the error tells them to re-run with this flag. If it
+  // stopped at the upgrade verb and never reached helm, that instruction would
+  // be a dead end — the operator would run exactly what the tool told them to
+  // and get the identical failure.
+  const withFlag = {};
+  const { code } = await cli(['upgrade', 'mynode', '--force-conflicts'], {
+    contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(withFlag), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  // Exit first: --force-conflicts is a BARE boolean, and a parser not told so
+  // eats the next argv item (or rejects it), so helm never runs — asserting the
+  // argv first would surface that as a crash rather than as the cause.
+  assert.strictEqual(code, EXIT.OK,
+    '--force-conflicts must PARSE as a boolean flag — undeclared, it fails the run before helm is ever reached');
+  assert.ok(withFlag.helmArgs && withFlag.helmArgs.includes('--force-conflicts'),
+    'the flag must survive the delegation into helm — the conflict error names it as the remedy, so a flag that stops here makes our own advice fail');
+
+  // And the default stays off THROUGH the delegation too. `upgrade` spreads the
+  // operator's flags into deployHelmVerb, so this also pins that the spread
+  // cannot manufacture a truthy value from an absent flag.
+  const without = {};
+  await cli(['upgrade', 'mynode'], {
+    contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(without), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  assert.ok(!without.helmArgs.includes('--force-conflicts'),
+    'a plain upgrade must NEVER force — taking ownership of whatever disagrees is not something an operator should get without asking');
+});
+
 // ── fargate: the silent-success defect ───────────────────────────────────────
 
 function fakeAws(rec, { exists = true, params = {} } = {}) {

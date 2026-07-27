@@ -46,6 +46,26 @@ test('helmArgv: oauth set-file, non-default port, --set/--values passthrough in 
   assert.doesNotMatch(b.join(' '), /--kube-context/);
 });
 
+test('helmArgv: --force-conflicts is ABSENT by default and present only when asked (t56)', () => {
+  const base = { name: 'n', chart: '/c', namespace: 'ns', wireTokenFile: '/t/wire' };
+  // THE DEFAULT IS THE DECISION. --force-conflicts takes ownership of every
+  // conflicting field, including fields a controller legitimately owns (an HPA
+  // on replicas, a sidecar injector's patch). "Silently take ownership of
+  // whatever disagrees" is the wrong default for a tool touching someone's
+  // cluster: the operator opts in, having read WHICH manager they override.
+  // This assertion exists so a later "just default it on, it fixes the error"
+  // cannot pass quietly.
+  assert.ok(!D.helmArgv(base).includes('--force-conflicts'),
+    'the default helm argv must NOT force conflicts — the flag is opt-in by design, not a convenience we can flip');
+  assert.ok(!D.helmArgv({ ...base, forceConflicts: false }).includes('--force-conflicts'));
+  assert.ok(D.helmArgv({ ...base, forceConflicts: true }).includes('--force-conflicts'),
+    'and it must actually reach argv when asked, or the documented remedy is a no-op');
+  // It is a bare boolean flag: a value after it would be read by helm as the
+  // chart argument.
+  const a = D.helmArgv({ ...base, forceConflicts: true });
+  assert.strictEqual(a[a.indexOf('--force-conflicts') + 1], '--wait', 'must take no value');
+});
+
 test('helmStatusArgs / releaseSecretArgs: shapes', () => {
   assert.deepStrictEqual(D.helmStatusArgs({ name: 'n', namespace: 'ns', kubeContext: 'c' }),
     ['helm', 'status', 'n', '--namespace', 'ns', '--kube-context', 'c']);
@@ -663,6 +683,50 @@ test('deploy helm: helm failure mid---wait → SERVER + "exists; fix and re-run"
   assert.strictEqual(fs.existsSync(contextsFile), false);
   // token tempfile is GONE even on the failure path (finally cleanup).
   assert.ok(!fs.existsSync(rec.setFilePaths['secrets.wireToken']), 'wire-token tempfile removed on failure');
+});
+
+test('deploy helm: an SSA field conflict REPLACES the re-run hint (t56)', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  // The operator's real failure, verbatim — hand-edited image tag, so
+  // "kubectl-edit" owns the field helm needs.
+  const conflict = 'Error: UPGRADE FAILED: conflict occurred while applying object clodex/clodex apps/v1, Kind=StatefulSet: Apply failed with 1 conflict: conflict with "kubectl-edit" using apps/v1: .spec.template.spec.containers[name="clodex"].image';
+  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+    execFn: fakeK8s(rec, { helmFail: conflict }),
+    probeHelm: async () => ({}),
+    contextsFile,
+  });
+  assert.strictEqual(code, EXIT.SERVER);
+  assert.match(stderr, /conflict with "kubectl-edit"/, "helm's own stderr is still relayed — we add to it, never replace it");
+  assert.match(stderr, /--force-conflicts/, 'and the actionable hint must be there');
+  // The POINT of the whole change: the generic hint must be GONE for this case.
+  // "fix the cause and re-run: the same command upgrades in place" is false
+  // here — the same command fails identically every time, and an operator who
+  // believes it burns their afternoon proving it.
+  assert.doesNotMatch(stderr, /partial state/,
+    'the generic "partial state, fix and re-run" hint must NOT appear for a conflict — nothing is partial, and re-running is precisely what cannot work');
+});
+
+test('deploy helm: --force-conflicts reaches helm, and is absent without the flag (t56)', async () => {
+  const withFlag = {};
+  const { code } = await cli(['deploy', 'helm', 'n', '--force-conflicts'], {
+    execFn: fakeK8s(withFlag), probeHelm: async () => ({}), contextsFile: tmpCtxFile(),
+  });
+  // Checked BEFORE the argv: --force-conflicts is a BARE boolean, and a parser
+  // that has not been told so consumes the next argv item as its value (or
+  // rejects the flag outright) — helm then never runs at all, and asserting on
+  // an argv that was never built would report a crash instead of the cause.
+  assert.strictEqual(code, EXIT.OK,
+    '--force-conflicts must PARSE as a boolean flag — if it is not declared as one the deploy fails before helm is reached');
+  assert.ok(withFlag.helmArgs && withFlag.helmArgs.includes('--force-conflicts'),
+    'the flag must reach the real helm argv, not just the dry-run preview');
+
+  const without = {};
+  await cli(['deploy', 'helm', 'n'], {
+    execFn: fakeK8s(without), probeHelm: async () => ({}), contextsFile: tmpCtxFile(),
+  });
+  assert.ok(!without.helmArgs.includes('--force-conflicts'),
+    'and a plain deploy must never force — this is the pin against the flag leaking into the default path');
 });
 
 test('deploy helm: verify failure → nonzero exit; ctx already saved, message points at ctx test', async () => {
