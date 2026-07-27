@@ -7,7 +7,7 @@ image:
   # FULL image reference. For a real engagement: mirror into your own
   # scanned registry and pin BY DIGEST (repository@sha256:…, tag ignored).
   repository: ghcr.io/avirtual/clodex
-  tag: "4.5.0"
+  tag: "4.6.0"
   digest: ""            # when set, used INSTEAD of tag
   pullPolicy: IfNotPresent
 
