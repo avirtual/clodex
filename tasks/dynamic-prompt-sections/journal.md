@@ -88,14 +88,42 @@ flagged for clodex as the place a cache ticket would actually pay.
 ## Consequences for the other tickets
 
 - **t69: close.** The flag is a no-op on this setup.
-- **t70 (replace the CLI system prompt): the blocking objection is GONE.** The
-  worry was that `--system-prompt` would forfeit the flag's benefit. There is
-  no benefit to forfeit. t70 now stands or falls on its own merits — note
-  though that seg[2] (the CLI's own prompt, 12.4-12.8k) is what a version bump
-  churns, so replacing it would actually make the system block *more* stable
-  across CLI upgrades. That cuts in t70's favour and was not previously on the
-  board.
+- **t70 (replace the CLI system prompt): the blocker is measured away, AND SO
+  IS THE CACHE JUSTIFICATION.** The worry was that `--system-prompt` forfeits
+  this flag's benefit; there is no benefit to forfeit. I initially added that
+  replacing seg[2] would make the system block more stable across CLI
+  upgrades, and offered it as a point in t70's favour. **clodex overruled that
+  and is right:** the entire prize is 31,506 tokens, once, on a CLI upgrade.
+  That is noise. t70 goes back to standing on **instruction hygiene alone**,
+  which is where it was filed and explicitly not a cost argument. Recorded here
+  so that if anyone later revives t70 as a token win, it is pre-refuted.
 - **t68:** not folded by this result; unaffected either way.
+
+## Priors that were wrong, recorded deliberately
+
+- **clodex's**, at their own instruction: t69 was ranked above t70 on the
+  theory that git status in the system block armed a bust on every commit. It
+  is not there. The mechanism they were most worried about does not exist on
+  what we ship.
+- **Mine**: I took "the blocker is gone" and argued it as a point *for* t70.
+  Wrong axis — a removed objection is not a reason to act, and the number I
+  cited to support it (31.5k, once) refutes rather than supports.
+
+The ticket asked "do these sections churn." The real answer was "they were
+never there" — one level earlier than the question assumed, which is the
+second time this week the answer sat upstream of the question.
+
+**Independently confirmed from a second seat**: clodex checked their own
+context window and found the same — `# Environment` attached to the first user
+message, git state as the `Is a git repository: true` boolean. So the "this
+seat, this machine" caveat above is narrower than I stated it.
+
+## THE ACTUAL TARGET (buried here originally — it is the real deliverable)
+
+`conversation` busts: **60 occurrences, 1,991,047 cache-creation tokens — 85%
+of all bust cost, roughly 63x everything t68/t69/t70 touch combined.** Three
+tickets went to the 15%; the 85% had never had one. clodex has now opened it,
+superseding the prompt-hygiene cluster in priority.
 
 ## Method (reproducible)
 
