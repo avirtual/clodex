@@ -275,7 +275,49 @@ reason this was a cleanup and not an incident — the default was chosen for
 this, and it did its job. That is a point in favour of the design, not in
 favour of the survey.
 
-## The pin question — open, decided in phase 3
+## RULED (clodex, msg-81580-34): TAKE THE REKEY
+
+Full scope approved as a day, protocol migration included. Not the one-liner,
+and not split into a follow-up. The ruling's own argument for refusing the
+cheap fix, which is sharper than mine: the one-liner leaves (c) guarded by a
+destructive prophylactic that must fire on every name-freeing path forever,
+including paths not yet written — the same construction as `_userKilled`, and
+**the third instance of that class in three tickets (MF3, the pending rm, now
+this). At three you stop paying the fee and fix the shape.**
+
+The sentence clodex asked to be recorded here, which is the generalization of
+the whole judgement:
+
+> **A flag records what the SYSTEM did; a stamp records what was TRUE at the
+> time. Only the second survives a path nobody has written yet.**
+
+And the corrected diagnosis of the comment/gate relationship, in the terms the
+ruling asked for — the failure is NOT "comments drift". The comment is
+accurate and even names the hazard. The failure is that `_userKilled` was
+chosen as the mechanism for "not unconditional", and **a flag cannot answer the
+question its name implies.** That is why the fix stops asking flags.
+
+### Conditions attached to the rekey (all four carried into phase 3)
+
+1. **The old-format entry case must be decided EXPLICITLY, with the reasoning
+   in a comment.** Ruled: **DELIVER an unstamped entry.** It was parked by a
+   version in which the rm made (c) unreachable in practice, so its provenance
+   is as good as the old system could make it; dropping it loses a real message
+   to defend against a case that version already guarded. The comment must
+   state the window in which that holds and note that it expires once no
+   old-format entries can exist.
+2. **Pin the new generated hook bytes deliberately** — they are test-pinned
+   already and template-literal interiors are byte-sensitive under moves
+   (CLAUDE.md names this). Changing them is expected; changing them by accident
+   is the hazard.
+3. **State the drain/create interleaving** and why the bad one is UNREACHABLE
+   rather than unlikely — same standard as t61's drain ordering and t58's
+   register-then-bind. The drain runs out of process and can race a `create()`.
+4. **Comment (b)'s inert residue as DELIBERATE**, citing the prompt-cache
+   precedent ("four small texts and is harmless"). A future reader will want to
+   add an rm back; the comment is what stops them.
+
+## The pin question — RESOLVED (phase 2, shipped)
 
 The ticket asks for a pin "if a cheap pin exists," because a future call site
 added without `mint` is silently wrong the same way. The obvious shapes:
@@ -295,3 +337,55 @@ recomputes "is this a front door?" in the harness proves nothing. The pin can
 only assert against a hand-maintained table that a HUMAN updates when adding a
 site — its value is the forced pause, not the computation. I will say that in
 the test's own comment so nobody later "improves" it into inferring the answer.
+
+### Built: `test/create-mint-census.test.js`, 3 tests
+
+Took the census shape, **keyed by file + source order, NOT by line number** —
+line numbers churn on every edit above them and would false-fail constantly.
+Each row carries a human-written label. The header states, at length, that the
+test must never DECIDE whether a site is a mint, and why: a predicate that
+inferred it would be a copy of the product's, which is the exact vacuity t63's
+revert B exposed.
+
+The mislabelling hazard is written up where the pin lives, per the ruling: the
+failure mode in an audit table is not "forgot a row" but "named one row after a
+different thing" — the table then names the path it omits and the reader ticks
+it off as covered. A census catches the first and cannot catch the second.
+
+The three tests: the census (count + order), the per-row mint assertion, and a
+pin on `mint = false` being the parameter DEFAULT — the eight restore rows all
+omit the argument and depend on it, so a flipped default would make every one
+of them silently wrong with nothing else failing.
+
+### The probe that caught my own scanner being wrong
+
+First version stripped comments and strings across the WHOLE FILE before
+scanning. A regex literal containing an apostrophe opened a phantom string that
+swallowed `ipc-handlers.js:1218` entirely — **the scan reported 10 sites and
+looked perfectly healthy.** A census that silently loses a row is worse than no
+census, which is this ticket's own lesson arriving one layer down. Fixed by
+localizing: start at each `.create(` and walk forward only, so nothing upstream
+can drift the parse. Found only because I ran the count against clodex's 11
+rather than trusting my own output.
+
+### Reverts — four, all proven BY ASSERTION MESSAGE, `NODE_EXIT=1`, no crashes
+
+- **A** — the t71 defect restored (remote-wiring's `true` removed) → the
+  remote-wiring row fails: *"is a MINT, so it must pass the 20th positional
+  explicitly — omitting it takes the default (false)… Found arity 19."*
+- **B** — `mint = false` flipped to `true` in the signature → the default pin
+  fires alone.
+- **C** — a NEW mint-less `create()` site added to ipc-handlers → count
+  mismatch, *"found 12, table has 11 … this test cannot tell you whether your
+  new site is a mint — go read it."* **This is the future regression the pin
+  exists for, and it fires.**
+- **D** — a RESTORE path (`session-restore.js`) made to claim `mint=true` →
+  *"is a RESTORE path and must not claim to be a mint… Found mint=true."*
+  Proves the restore branch is reachable and not vacuously true.
+
+**A harness bug worth recording**: my restore list omitted `session-restore.js`,
+so revert D stayed applied after the script exited and the next census run
+showed 2/3. Caught by diffing the tree against HEAD rather than trusting the
+trap. The trap only restores what you list — same class as the SIGPIPE lesson
+(the harness lying quietly), and the reason the post-revert tree diff is not
+optional.

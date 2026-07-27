@@ -23,7 +23,7 @@ const IDX = {
   name: 0, type: 1, cwd: 2, extraArgs: 3, resumeId: 4, workspaceId: 5,
   systemPromptBody: 6, fork: 7, proxy: 8, agents: 9, denyBuiltins: 10,
   disabledTools: 11, disabledSkills: 12, injectSkills: 13, systemPromptFile: 14,
-  appendPromptFiles: 15, execCommands: 16, intents: 17, env: 18,
+  appendPromptFiles: 15, execCommands: 16, intents: 17, env: 18, mint: 19,
 };
 
 // A createRemoteWiring dep bundle sufficient to reach `new RemoteServer(...)`.
@@ -102,9 +102,16 @@ test('createSession: bare {name,type,cwd} maps to the exact M3 defaults (compat)
   // envKeys: [] rides EVERY ack now (the old-box negotiation echo) — a bare body
   // applied no env, so the set is empty but the key is present.
   assert.deepStrictEqual(ack, { ok: true, name: 'worker', type: 'claude', pid: 4242, envKeys: [] });
+  // The trailing `true` is the mint flag (t71). It is a DELIBERATE break in this
+  // vector's "exact M3 defaults" claim: the M3 call predates the mint parameter,
+  // so reproducing it byte-for-byte now means passing the DEFAULT (false), and
+  // false is wrong here — this path is a front door, and a mint that inherits a
+  // dead same-named session's frozen prompt baseline is the bug this vector would
+  // otherwise pin in place. Compat with M3 holds for every argument that existed
+  // when M3 was written; the 20th did not.
   assert.deepStrictEqual(createCalls[0], [
     'worker', 'claude', path.resolve('/tmp/w'),
-    [], null, 'default', null, false, null, [], [], [], [], [], null, [], [], null, null,
+    [], null, 'default', null, false, null, [], [], [], [], [], null, [], [], null, null, true,
   ]);
   assert.deepStrictEqual(stripCalls, [], 'no stripLevel seed for a bare body');
 });
@@ -136,6 +143,15 @@ test('createSession: every wire key lands in the right create() position', async
   assert.strictEqual(c[IDX.systemPromptFile], '/sp.md');
   assert.deepStrictEqual(c[IDX.appendPromptFiles], ['/ap.md']);
   assert.deepStrictEqual(c[IDX.intents], ['dm']);
+  // mint (t71 defect 2): TRUE even though this body carries a resumeId. The axis
+  // is front-door-vs-restore-path, NOT resumeId — a remote ADOPT carries one and
+  // is still a mint. Asserted here, on the body that has a resumeId, because that
+  // is the only combination where getting it wrong is invisible: the peer front
+  // door refuses live-and-persisted names, so a mint-less spawn only inherits a
+  // stale baseline when a same-named session died earlier.
+  assert.strictEqual(c[IDX.mint], true,
+    'the peer spawn front door must declare itself a mint — omitting it takes create()\'s '
+    + 'default (false), which freezes the new session onto a dead same-named session\'s prompt baseline');
 });
 
 // ── createSession: session env (T46) — sanitize inbound + ack envKeys echo ───
