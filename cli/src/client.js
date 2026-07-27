@@ -14,6 +14,10 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { CliError, EXIT, exitForStatus } = require('./errors');
+// SSE framing lives in ONE place (t47) — this side and the GUI's peer-client
+// both feed it. parseSseBlock is re-exported below because it was part of this
+// module's surface before the move and its tests import it from here.
+const { parseSseBlock, makeSseDecoder } = require('./sse-frame');
 
 // Redact anything that looks like our bearer token from a string before it can
 // reach stderr. Belt-and-suspenders: we never intentionally build such a
@@ -78,10 +82,11 @@ class WireClient {
   get(pathAndQuery, verb, opts) { return this._call('GET', pathAndQuery, verb || 'request', undefined, opts); }
   post(pathAndQuery, verb, jsonBody, opts) { return this._call('POST', pathAndQuery, verb || 'request', jsonBody == null ? {} : jsonBody, opts); }
 
-  // Open a text/event-stream over the wire and parse SSE frames by hand (zero
-  // deps: node:http/https, blank-line block framing, `event:`/`data:` lines,
-  // `:`-lead comments ignored). The Bearer token rides the header, same as
-  // every other call — it never leaves this module.
+  // Open a text/event-stream over the wire. The FRAMING is sse-frame.js's (one
+  // decoder, shared with the GUI's peer-client since t47); what stays here is
+  // the transport: the request, the Bearer header, the status handling and the
+  // CliError typing. The token rides the header, same as every other call — it
+  // never leaves this module.
   //
   //   onOpen()              — the response reached 200 (stream is live/subscribed)
   //   onEvent(name, data)   — one parsed frame; `data` is the JSON-parsed payload
@@ -115,22 +120,14 @@ class WireClient {
       }
       if (onOpen) onOpen();
       res.setEncoding('utf8');
-      let buf = '';
+      // No buffer bound and unparseable data delivered raw — this side's two
+      // preserved divergences from the GUI's copy (sse-frame.js D4/D5).
+      const decoder = makeSseDecoder({
+        onEvent: (name, data) => { if (onEvent) onEvent(name, data); },
+      });
       res.on('data', (chunk) => {
         if (onChunk) onChunk(chunk);
-        buf += chunk;
-        // SSE separates events with a blank line. Tolerate CRLF and LF.
-        let idx;
-        while ((idx = buf.search(/\r?\n\r?\n/)) !== -1) {
-          const block = buf.slice(0, idx);
-          buf = buf.slice(idx + buf.slice(idx).match(/^\r?\n\r?\n/)[0].length);
-          const frame = parseSseBlock(block);
-          if (frame && onEvent) {
-            let data = frame.data;
-            try { data = JSON.parse(frame.data); } catch {}
-            onEvent(frame.event || 'message', data);
-          }
-        }
+        decoder.push(chunk);
       });
       res.on('end', () => fail(new CliError(EXIT.CONNECT, scrub('event stream closed by the engine', this._token))));
       res.on('error', (e) => fail(new CliError(EXIT.CONNECT, scrub(`event stream error: ${e.message}`, this._token))));
@@ -141,23 +138,7 @@ class WireClient {
   }
 }
 
-// Parse one SSE block (the text between blank lines) into { event, data }.
-// Multiple `data:` lines concatenate with '\n' (SSE spec); `:`-lead lines are
-// comments. Returns null for a comment-only / dataless block.
-function parseSseBlock(block) {
-  let event = null;
-  const dataLines = [];
-  for (const raw of block.split(/\r?\n/)) {
-    if (!raw || raw[0] === ':') continue;
-    const colon = raw.indexOf(':');
-    const field = colon === -1 ? raw : raw.slice(0, colon);
-    let value = colon === -1 ? '' : raw.slice(colon + 1);
-    if (value[0] === ' ') value = value.slice(1);
-    if (field === 'event') event = value;
-    else if (field === 'data') dataLines.push(value);
-  }
-  if (dataLines.length === 0) return null;
-  return { event, data: dataLines.join('\n') };
-}
-
+// parseSseBlock moved to sse-frame.js (t47) and is re-exported unchanged: it
+// was part of this module's public surface, and cli/test/client.test.js pins it
+// from here. Re-export rather than repoint so no existing test needs editing.
 module.exports = { WireClient, scrub, parseSseBlock };
