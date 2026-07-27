@@ -107,3 +107,72 @@ test('resolve: --url and --ssh together is rejected, not silently ordered', () =
     () => C.resolve(STORE, { env: {}, flags: { url: 'http://flag', ssh: 'user@box' } }),
     /either --url or --ssh, not both/);
 });
+
+// ── t54: the deploy-flavor record ────────────────────────────────────────────
+//
+// `upgrade <ctx>` cannot route without knowing which flavor built the node, and
+// the transport cannot answer it: the ssh flavor and a REMOTE-DOCKER deploy
+// both save `{ssh: user@host}`. Ambiguous by construction — hence a field.
+
+test('validateEntry: a deploy record is accepted, and is OPTIONAL (old ctxs need no migration)', () => {
+  // The no-migration property, stated as a test: every context written before
+  // this field existed still validates. A consumer that needs the flavor must
+  // say what it cannot determine rather than guess.
+  assert.doesNotThrow(() => C.validateEntry({ ssh: 'user@box' }));
+  assert.doesNotThrow(() => C.validateEntry({ ssh: 'user@box', deploy: { flavor: 'ssh', host: 'user@box' } }));
+  assert.doesNotThrow(() => C.validateEntry({
+    kubectl: { target: 'svc/n', namespace: 'clodex' },
+    deploy: { flavor: 'helm', release: 'n', namespace: 'clodex', kubeContext: 'docker-desktop' },
+  }));
+  // Every case here goes through validateEntry, never a direct validateDeploy:
+  // the per-kind validators are private by rule (test/stores.test.js pins the
+  // export list), and reaching past the one door in a test is how the next
+  // person justifies exporting it in product code.
+});
+
+test('validateDeploy: the flavor enum is CHECKED on read, and a missing flavor is named', () => {
+  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { flavor: 'kubernetes' } }),
+    /unknown deploy flavor "kubernetes" — expected one of ssh, docker, ssm, helm, fargate/,
+    'an off-enum flavor must be REJECTED on read — a flavor nothing can route is one we must refuse to carry, not pass along for a consumer to trip over');
+  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { release: 'n' } }),
+    /"deploy" needs a flavor/,
+    'a deploy record with no flavor at all must be rejected — the names are meaningless without the flavor that interprets them');
+  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: 'helm' }),
+    /"deploy" must be an object/,
+    'a bare string must be rejected rather than treated as a flavor by convention');
+});
+
+test('validateDeploy: an argv CANNOT fit through the shape — arrays and blobs are rejected', () => {
+  // The constraint is "store DATA, not CODE", and the scalar rule is what makes
+  // that mechanical rather than a convention someone has to remember: an argv is
+  // an ARRAY and a flag blob is an OBJECT, so both are refused by the shape
+  // itself. This file is user-editable, and a persisted argv is a command line
+  // the tool would later execute.
+  assert.throws(
+    () => C.validateEntry({ ssh: 'h', deploy: { flavor: 'helm', argv: ['helm', 'upgrade', '--install', 'n'] } }),
+    /"deploy\.argv" must be a scalar .*got an array — "deploy" records identifying NAMES, never an argv/,
+    'a persisted ARGV was accepted — that is a command line the tool would later execute, sitting in a user-editable file; the scalar rule is what makes "data, not code" mechanical instead of a convention');
+  assert.throws(
+    () => C.validateEntry({ ssh: 'h', deploy: { flavor: 'helm', flags: { set: 'image.tag=4.5.0' } } }),
+    /"deploy\.flags" must be a scalar .*got object/,
+    'an opaque blob of flags-to-re-run was accepted — same defect as an argv, one indirection away');
+  // scalars of every stripe are fine, and a null field is simply absent.
+  assert.doesNotThrow(() => C.validateEntry({
+    ssh: 'h', deploy: { flavor: 'ssm', target: 'i-1', port: 7900, persistent: true, region: null },
+  }));
+});
+
+test('validateDeploy: an ssh-flavor and a docker-flavor context are DISTINGUISHABLE (the whole point)', () => {
+  // Byte-identical transports. Before this field the only difference was
+  // nothing — which is why an upgrade would have had to guess between re-running
+  // the installer and pulling a new container image.
+  const sshCtx = { ssh: 'user@box', webPort: 7901, deploy: { flavor: 'ssh', host: 'user@box' } };
+  const dockerCtx = { ssh: 'user@box', deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: 'ssh://user@box' } };
+  assert.strictEqual(sshCtx.ssh, dockerCtx.ssh, 'premise: the transports really are identical');
+  assert.doesNotThrow(() => C.validateEntry(sshCtx));
+  assert.doesNotThrow(() => C.validateEntry(dockerCtx));
+  assert.notStrictEqual(sshCtx.deploy.flavor, dockerCtx.deploy.flavor,
+    'the flavor is the only thing that tells these two apart — if this ever fails, upgrade routing is guessing again');
+  assert.strictEqual(dockerCtx.deploy.container, 'clodexctl-edge',
+    'and the docker record carries the container name, which the ctx key alone does not give you');
+});

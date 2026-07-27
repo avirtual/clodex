@@ -100,12 +100,21 @@ test('HELM_RELEASE_RE: DNS-1123 — rejects dots, underscores, uppercase, edges'
 // `oauthB64`: value of the Secret's oauth-token key; null mirrors kubectl's
 // real missing-jsonpath-key behavior (EMPTY stdout, exit 0), not an error.
 // `statusFail`: override the helm-status stderr (default: the not-found shape).
-function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null, nsExists = true, nsCreateFail = null, helmFail = null, statusFail = null } = {}) {
+// `priorValues`: what `helm get values -o json` returns for an existing release
+// (t54's carry-forward). `null` is helm's own rendering of "no overrides", so
+// that is the default — an existing release with nothing carried.
+// `getValuesFail`: make the read-back fail, for the hard-error path.
+function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null, nsExists = true, nsCreateFail = null, helmFail = null, statusFail = null, priorValues = null, getValuesFail = null } = {}) {
   rec.calls = [];
   return async (cmd, args) => {
     rec.calls.push([cmd, ...args]);
     const j = cmd + ' ' + args.join(' ');
     if (cmd === 'helm' && args[0] === 'version') return { stdout: 'v3.14.0+g0000000' };
+    if (cmd === 'helm' && args[0] === 'get' && args[1] === 'values') {
+      if (getValuesFail) { const e = new Error('helm get values failed'); e.stderr = getValuesFail; throw e; }
+      // helm prints the JSON literal `null` when a release has no overrides.
+      return { stdout: priorValues == null ? 'null' : JSON.stringify(priorValues) };
+    }
     if (cmd === 'kubectl' && args[0] === 'version') return { stdout: 'clientVersion:\n  gitVersion: v1.29.0' };
     if (j.includes('config current-context')) return { stdout: 'docker-desktop\n' };
     if (cmd === 'kubectl' && args.includes('get') && args.includes('namespace')) {
@@ -135,6 +144,16 @@ function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null
         rec.setFiles[key] = fs.readFileSync(file, 'utf8');
         rec.setFileModes[key] = fs.statSync(file).mode & 0o777;
         rec.setFilePaths[key] = file;
+      });
+      // --values PATHS in argv order, plus the CONTENTS of any that exist at
+      // exec time. The carried-values file lives in the same tempdir the verb
+      // wipes in a finally, so this is the only window in which it is readable
+      // — the same reason setFiles is captured here.
+      rec.valuesPaths = []; rec.valuesBodies = {};
+      args.forEach((a, i) => {
+        if (args[i - 1] !== '--values') return;
+        rec.valuesPaths.push(a);
+        try { rec.valuesBodies[a] = fs.readFileSync(a, 'utf8'); } catch {}
       });
       if (helmFail) { const e = new Error('helm upgrade failed'); e.stderr = helmFail; throw e; }
       return { stdout: 'Release has been upgraded. Happy Helming!' };
@@ -191,6 +210,10 @@ test('deploy helm happy path: preflight→mint→helm→ctx (kubectl kind + toke
     kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'docker-desktop' },
     webPort: 8080,
     token: wireTok,
+    // deploy (t54): the three names a helm upgrade addresses the release by.
+    // `release` equals the ctx key today and is stored anyway — a ctx rename
+    // must not silently retarget the upgrade.
+    deploy: { flavor: 'helm', release: 'mynode', namespace: 'clodex', kubeContext: 'docker-desktop' },
   });
   assert.strictEqual(saved.current, 'mynode');
   // only vendor CLIs were ever exec'd.
@@ -290,6 +313,225 @@ test('deploy helm: flagless re-run with NO oauth key in the Secret stages no oau
   assert.strictEqual(rec.setFiles['secrets.oauthToken'], undefined);
   assert.doesNotMatch(rec.helmArgs.join(' '), /oauthToken/);
   assert.doesNotMatch(stdout, /preserving existing claude oauth/);
+});
+
+// ── t54: the carry-forward ───────────────────────────────────────────────────
+//
+// Until t54, a re-run built a fresh value set from THIS run's flags alone, so
+// every non-token override the operator had ever set fell back to the chart
+// default: a pinned image.tag, a storageClassName, a resources bump. Tokens
+// were the one exception (carried by hand above). Now the prior USER-SUPPLIED
+// values are read back off the release and re-applied.
+//
+// The two directions precedence can break each get a test, and they are
+// genuinely different failures: carrying nothing is the silent revert, and
+// carrying too eagerly means a flag typed on THIS run does nothing.
+
+test('deploy helm: helmGetValuesArgs has NO -a — user-supplied values only, never the computed set', () => {
+  const a = D.helmGetValuesArgs({ name: 'n', namespace: 'ns', kubeContext: 'c' });
+  // The -a check comes FIRST, before the exact-argv equality below: an argv
+  // diff would fail on this too, but it would report "these two arrays differ"
+  // where the thing that matters is WHY. -a/--all dumps the COMPUTED set (chart
+  // defaults merged in), and re-applying THAT as an override freezes every
+  // chart default at the values of the day the release was last touched —
+  // including image.tag, which t53 made the authoritative version pin. That is
+  // the --reuse-values defect arriving by another route.
+  assert.ok(!a.includes('-a') && !a.includes('--all'),
+    'helm get values must NEVER ask for the computed set (-a/--all): re-applying chart defaults as overrides freezes them forever, which is precisely the --reuse-values defect this read-back exists to avoid');
+  assert.deepStrictEqual(a, ['helm', 'get', 'values', 'n', '--namespace', 'ns', '--kube-context', 'c', '-o', 'json']);
+  assert.ok(!D.helmGetValuesArgs({ name: 'n', namespace: 'ns' }).includes('--kube-context'));
+});
+
+test('parseCarriedValues: helm\'s empty renderings, the secrets drop, and a non-object refusal', () => {
+  // `null` is what helm prints for a release with no overrides; empty stdout is
+  // the same statement. Neither is a parse failure.
+  for (const empty of ['null', '', '   ', null]) {
+    assert.deepStrictEqual(D.parseCarriedValues(empty), { values: {}, carried: [], dropped: [] });
+  }
+  const r = D.parseCarriedValues(JSON.stringify({ image: { tag: '4.5.0' }, secrets: { wireToken: 'SECRET' }, wirePort: 8100 }));
+  // secrets.* is dropped: --set-file makes the token part of the release's
+  // user-supplied values, so the read-back hands the VALUE back, and the log
+  // line below names what was carried. The Secret read-back owns that value.
+  assert.deepStrictEqual(r.values, { image: { tag: '4.5.0' }, wirePort: 8100 });
+  assert.deepStrictEqual(r.carried.sort(), ['image', 'wirePort']);
+  assert.deepStrictEqual(r.dropped, ['secrets']);
+  assert.strictEqual(JSON.stringify(r.values).includes('SECRET'), false, 'no secret value survives into the carried set');
+  // Garbage and a non-object both REFUSE rather than degrade to "nothing to
+  // carry" — that degradation is the silent revert this exists to prevent.
+  assert.throws(() => D.parseCarriedValues('{not json'), /could not parse the release's prior values/);
+  assert.throws(() => D.parseCarriedValues('[1,2]'), /not a JSON object \(got an array\)/);
+});
+
+test('deploy helm re-run: a prior override SURVIVES (the silent revert, direction 1)', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'helm', 'n'], {   // NO flags: the flagless re-run
+    execFn: fakeK8s(rec, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      // the operator pinned an image tag and a storage class on an earlier run
+      priorValues: { image: { tag: '4.5.0' }, persistence: { storageClassName: 'gp3' } },
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  // The carried set reached helm as a --values file, with the pin intact. Note
+  // the ASSERTION IS ON THE FILE'S BYTES, not on the flag's presence: a
+  // --values pointing at an empty object would satisfy "we passed a file" and
+  // still revert every override.
+  const carried = rec.valuesPaths.filter((p) => /carried-values\.json$/.test(p));
+  assert.strictEqual(carried.length, 1, 'exactly one carried-values file');
+  assert.deepStrictEqual(JSON.parse(rec.valuesBodies[carried[0]]), {
+    image: { tag: '4.5.0' }, persistence: { storageClassName: 'gp3' },
+  });
+  // and the operator is TOLD, by key name — a silent carry-forward is the same
+  // class of invisible behaviour as the silent revert.
+  assert.match(stdout, /carrying forward your prior values: image, persistence/);
+  // NOT --reuse-values, whose whole defect is that it also freezes chart defaults.
+  assert.ok(!rec.helmArgs.includes('--reuse-values'), 'never --reuse-values');
+  assert.ok(!rec.helmArgs.includes('--reset-then-reuse-values'), 'nor the 3.14+ flag we cannot require');
+  // the carried file is cleaned up with the tokens (same tempdir, same finally).
+  assert.ok(!fs.existsSync(carried[0]), 'carried-values tempfile removed');
+});
+
+test('deploy helm re-run: a flag on THIS run BEATS a carried value (precedence, direction 2)', async () => {
+  const rec = {};
+  const { code } = await cli(['deploy', 'helm', 'n', '--set', 'image.tag=4.6.0', '--values', '/op/mine.yaml', '--no-ctx'], {
+    execFn: fakeK8s(rec, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      priorValues: { image: { tag: '4.5.0' } },
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  // --set beats every values file regardless of argv position (helm applies
+  // sets after all files — verified against helm v4.1.0, not assumed), so the
+  // carried tag loses to the flag by helm's own rule.
+  assert.ok(rec.helmArgs.includes('--set') && rec.helmArgs.includes('image.tag=4.6.0'));
+  // The operator's OWN --values file is the case ordering can break: values
+  // files merge left-to-right, later wins, so the carried file must come
+  // FIRST. Asserting the index, because "both files are present" is true in the
+  // broken ordering too.
+  const iCarried = rec.helmArgs.findIndex((a) => /carried-values\.json$/.test(a));
+  const iOperator = rec.helmArgs.indexOf('/op/mine.yaml');
+  assert.ok(iCarried >= 0 && iOperator >= 0, 'both values files present');
+  assert.ok(iCarried < iOperator,
+    `the carried file must precede the operator's own --values (got carried@${iCarried}, operator@${iOperator}) — later files win, so this order is the difference between "your prior values are a fallback" and "your prior values override the file you just passed"`);
+});
+
+test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAVED CTX, and a flag still wins', async () => {
+  // The half that is easy to miss: the carry-forward looks finished once helm
+  // has the file, but this verb DERIVES two ctx fields from the run's flags.
+  // Carrying the release's port without carrying it into the ctx saves a ctx
+  // whose transport port-forwards to 7900 — a port the release does not serve.
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code } = await cli(['deploy', 'helm', 'n'], {   // flagless
+    execFn: fakeK8s(rec, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      priorValues: { wirePort: 8100, web: { enabled: false } },
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.n.remotePort, 8100,
+    'the ctx must name the port the release actually serves, not the default the flags fell back to');
+  assert.strictEqual(saved.contexts.n.webPort, undefined,
+    'web.enabled=false was carried, so the Service publishes no web port and the ctx must not claim one');
+
+  // Same release, but this run says otherwise: the flags win both.
+  const rec2 = {};
+  const contextsFile2 = tmpCtxFile();
+  const { code: c2 } = await cli(['deploy', 'helm', 'n', '--port', '8200', '--set', 'web.enabled=true'], {
+    execFn: fakeK8s(rec2, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      priorValues: { wirePort: 8100, web: { enabled: false } },
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile: contextsFile2,
+  });
+  assert.strictEqual(c2, 0);
+  const saved2 = JSON.parse(fs.readFileSync(contextsFile2, 'utf8'));
+  assert.strictEqual(saved2.contexts.n.remotePort, 8200, 'this run\'s --port beats the carried wirePort');
+  assert.strictEqual(saved2.contexts.n.webPort, 8080, 'this run\'s --set web.enabled=true beats the carried false');
+});
+
+test('deploy helm re-run: an UNREADABLE prior-values set is a hard error, never a silent revert', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+    execFn: fakeK8s(rec, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      getValuesFail: 'Error from server (Forbidden): secrets is forbidden',
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile,
+  });
+  // The only other branch is "proceed with no carried values" — i.e. perform
+  // the exact silent revert, at the moment we have the most evidence something
+  // is wrong. Same posture as the wire-token read-back, which hard-errors
+  // rather than mint fresh.
+  assert.strictEqual(code, EXIT.SERVER,
+    `an unreadable prior-values set must ABORT (exit ${EXIT.SERVER}); exit ${code} means the run continued and deployed a value set with every operator override missing — the silent revert, performed at the moment we had the most evidence something was wrong`);
+  assert.match(stderr, /prior values could not be read/);
+  assert.match(stderr, /would silently revert every override you set/);
+  // and nothing was deployed or saved on the way out.
+  assert.ok(!rec.helmArgs, 'helm upgrade never ran');
+  assert.ok(!fs.existsSync(contextsFile), 'no ctx written');
+});
+
+test('deploy helm FRESH install: no read-back at all (there is no release to read)', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+    execFn: fakeK8s(rec),   // releaseExists: false
+    probeHelm: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('get values')), 'no get values on a fresh install');
+  assert.doesNotMatch(stdout, /carrying forward/);
+  assert.doesNotMatch(rec.helmArgs.join(' '), /carried-values/);
+});
+
+test('deploy helm re-run with NO prior overrides: says so, and passes no empty values file', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+    execFn: fakeK8s(rec, { releaseExists: true, secretB64: Buffer.from('e'.repeat(48)).toString('base64'), priorValues: null }),
+    probeHelm: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /no prior values to carry forward/);
+  assert.doesNotMatch(rec.helmArgs.join(' '), /carried-values/);
+});
+
+test('deploy helm re-run: the release\'s own token is NOT re-applied through values (secrets stay the Secret\'s)', async () => {
+  const rec = {};
+  const wire = 'e'.repeat(48);
+  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+    execFn: fakeK8s(rec, {
+      releaseExists: true,
+      secretB64: Buffer.from(wire).toString('base64'),
+      // --set-file put the token into the release's user-supplied values, so
+      // this is what a REAL `helm get values` hands back on any release this
+      // verb installed. It must not survive into the carried file or the log.
+      priorValues: { secrets: { wireToken: wire }, image: { tag: '4.5.0' } },
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(code, 0);
+  const carried = rec.valuesPaths.filter((p) => /carried-values\.json$/.test(p));
+  assert.strictEqual(carried.length, 1);
+  const body = rec.valuesBodies[carried[0]];
+  assert.ok(!body.includes(wire), 'the token value never reaches a file we wrote from values');
+  assert.deepStrictEqual(JSON.parse(body), { image: { tag: '4.5.0' } });
+  assert.ok(!stdout.includes(wire), 'token value never printed');
+  assert.match(stdout, /not carried \(owned by the release Secret[^)]*\): secrets/);
 });
 
 test('deploy helm: --claude-token-file on re-run WINS over the release oauth (rotation path)', async () => {
