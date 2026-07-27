@@ -5160,3 +5160,134 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
     assert.strictEqual(out[0].body, 'first\nsecond line');
   });
 });
+
+// --- t57: the EEXIST branch asks the SOCKET, not the pid ---------------------
+//
+// The registry records a bare pid. After an unclean shutdown the socket file
+// survives and the OS recycles the pid, so `isAlive(existing.pid)` reports a
+// stranger's process as our agent: the name is wedged with no in-app recovery
+// (audit.md §5.1). create() now probes the socket before deciding.
+//
+// These drive the REAL create() registry block. A bash create cannot: agentType
+// is null for type 'bash' (session-manager.js:870), so the whole `if (agentType)`
+// block — the EEXIST branch included — is skipped and the test would pass
+// without ever reaching the code it claims to cover. Hence a codex-typed create,
+// the lighter of the two agent arms (claude's arm pulls the wire/hook/library
+// stack for machinery this has nothing to do with).
+function mkAgentCreateProbe() {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t57-'));
+  const { isAlive, registry, Transport } = require('../agent-transport')
+    .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 });
+  const m = mk({
+    REGISTRY_DIR, registry, Transport, isAlive,   // the real registry + transport, on a temp dir
+    fs: fsReal, os: osReal, path: pathReal,
+    pathFor: pathForReal, runDirFor: runDirForReal,
+    ensureDir: require('../fs-util').ensureDir,
+    getPersistence: () => ({
+      list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {},
+    }),
+    pty: { spawn: () => ({ onData() {}, onExit() {}, kill() {}, pid: 4242 }) },
+    resolveProxyBase: () => null,
+    lastTranscriptWrite: () => null,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    JsonlWatcher: class { start() {} stop() {} },
+    // Codex-arm leaves, stubbed to their shapes — none of them is under test here.
+    mergeCodexInstructions: () => ({ cleaned: [], merged: 'instructions' }),
+    readAppendBodies: () => [], buildIpcPrompt: () => 'ipc', pluginGrammarLines: () => [],
+    codexStatusLineArg: () => 'tui.status_line=x',
+    resolveProxyAgentId: () => 'clodex-probe-x', resolveTeam: () => null,
+    memoryStore: { list: () => [] }, composeDigest: () => null,
+    whichBin: () => '/usr/bin/codex',
+    MSG_DIR: pathReal.join(REGISTRY_DIR, 'messages'),
+    // setupCodexHook's real job here is just making run/<name>/ exist before the
+    // instructions file is written into it.
+    setupCodexHook: (n) => require('../fs-util').ensureDir(runDirForReal(REGISTRY_DIR, n)),
+    getEnvScopes: () => ({ get: () => ({}) }),
+    getPluginHooks: () => ({ emit: () => {} }),
+    getUserDataPath: () => REGISTRY_DIR,
+    refreshAppMenu: () => {}, refreshTrayMenu: () => {},
+  });
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  const agentCreate = (name) => m.create(
+    name, 'codex', osReal.tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null,
+  );
+  // A created agent session owns a REAL listening net.Server. Left running it
+  // holds the event loop open and `node --test` never exits — the whole file
+  // then fails by hanging, which is the least diagnosable failure there is. Every
+  // test using this harness must close its sessions.
+  const closeAll = async () => {
+    for (const s of m.sessions.values()) if (s.transport) await s.transport.stop();
+  };
+  return { m, REGISTRY_DIR, registry, Transport, agentCreate, closeAll };
+}
+
+// Seed a blocking agent.json whose pid is LIVE and is NOT ours, which is what an
+// OS pid recycle leaves behind. isStaleRegistration says "not stale" for this, so
+// the ONLY thing that can free the name is the socket probe — a test that seeds a
+// dead pid, or our own pid, would ride isStaleRegistration's existing force-clean
+// path and pass whether or not the probe exists.
+function seedGhost(REGISTRY_DIR, name, socketPath) {
+  // A live pid that is not this process: the pty stub's own pid is irrelevant, so
+  // use a real child we control. pid 1 (launchd) is alive, is never us, and needs
+  // no cleanup — process.kill(1, 0) succeeds for any user on macOS/Linux (EPERM,
+  // which isAlive counts as alive, exactly as it does in production).
+  const ghostPid = 1;
+  assert.notStrictEqual(ghostPid, process.pid, 'the seeded pid must not be ours or isStaleRegistration frees the name by itself');
+  assert.strictEqual(isStaleRegistration(ghostPid, process.pid, require('../agent-transport')
+    .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 1 }).isAlive), false,
+    'the seeded registration must read NOT-stale to the pid-only check — otherwise this test never exercises the probe');
+  fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, name), { recursive: true });
+  fsReal.writeFileSync(pathForReal(REGISTRY_DIR, name, 'registry'),
+    JSON.stringify({ name, socket: socketPath, pid: ghostPid }));
+}
+
+test('create: a pid-recycle GHOST (live foreign pid, nothing listening) self-heals and the session starts (t57)', async () => {
+  const { m, REGISTRY_DIR, agentCreate, closeAll } = mkAgentCreateProbe();
+  const sock = pathForReal(REGISTRY_DIR, 'ghost', 'socket');
+  fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, 'ghost'), { recursive: true });
+  fsReal.writeFileSync(sock, '');            // the socket file an unclean shutdown leaves
+  seedGhost(REGISTRY_DIR, 'ghost', sock);
+
+  try {
+    await agentCreate('ghost');              // must NOT throw "already running elsewhere"
+
+    assert.ok(m.sessions.has('ghost'), 'the session must start — a dead agent whose pid got recycled must not wedge its own name forever');
+    const rec = JSON.parse(fsReal.readFileSync(pathForReal(REGISTRY_DIR, 'ghost', 'registry'), 'utf-8'));
+    assert.strictEqual(rec.pid, process.pid, 'the ghost record must have been replaced by ours, not merely tolerated');
+  } finally {
+    await closeAll();
+  }
+});
+
+test('create: a name whose socket is genuinely LISTENING still refuses, by message (t57)', async () => {
+  const { m, REGISTRY_DIR, Transport, agentCreate, closeAll } = mkAgentCreateProbe();
+  const sock = pathForReal(REGISTRY_DIR, 'busy', 'socket');
+  fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, 'busy'), { recursive: true });
+
+  const other = new Transport(sock, () => {});
+  await other.start();                       // a REAL server: the name is truly taken
+  try {
+    seedGhost(REGISTRY_DIR, 'busy', sock);
+    await assert.rejects(() => agentCreate('busy'), /already running elsewhere/,
+      'a live socket means the name really is in use — the probe must not turn the honest refusal into a stomp');
+    assert.ok(!m.sessions.has('busy'), 'and no session may be created behind that refusal');
+    // The victim's registry ENTRY must survive: a refusal that unregistered the
+    // agent it just refused to displace would hand the name over on the next try.
+    const rec = JSON.parse(fsReal.readFileSync(pathForReal(REGISTRY_DIR, 'busy', 'registry'), 'utf-8'));
+    assert.strictEqual(rec.pid, 1, 'the refused-against registration must be left intact, not consumed by the attempt');
+    // NOT asserted: that `sock` still exists. It does not, and that is a
+    // PRE-EXISTING defect this test found rather than one it should paper over —
+    // create() binds its transport (which unlinks the path) BEFORE it consults
+    // the registry, so by the time it refuses it has already taken the victim's
+    // socket out from under it and stop() unlinks it again. The victim's
+    // net.Server keeps listening on an unlinked inode: silently unreachable,
+    // the same failure shape as the cleanup TOCTOU (audit.md §5.2), on a third
+    // path. Fixing it means binding after the registry check, which restructures
+    // session start — out of scope for t57 and reported to clodex separately.
+  } finally {
+    await closeAll();
+    await other.stop();
+  }
+});
