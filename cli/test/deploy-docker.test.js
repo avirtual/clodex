@@ -119,7 +119,13 @@ test('deploy docker happy path: argv composed, verified, local url ctx saved', a
   assert.match(stdout, /context "mybox" saved/);
   assert.deepStrictEqual(pollCalls, [{ url: 'http://127.0.0.1:7900' }]);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.mybox, { url: 'http://127.0.0.1:7900' });
+  // deploy (t54): flavor + the container name. The ctx is "mybox"; the
+  // container is clodexctl-mybox, and that prefix is the identifying name an
+  // upgrade needs. No dockerHost — this is a LOCAL daemon.
+  assert.deepStrictEqual(saved.contexts.mybox, {
+    url: 'http://127.0.0.1:7900',
+    deploy: { flavor: 'docker', container: 'clodexctl-mybox' },
+  });
   assert.strictEqual(saved.current, 'mybox');
   // T55 audit: dockerRunArgs publishes ONLY the wire port (-p …:7900) — the web
   // GUI (8080) is mapped to NO host port, so a webPort pin would point `web` at
@@ -151,7 +157,10 @@ test('deploy docker --tag/--image/--port/--volume: argv + non-default url', asyn
   assert.match(rec.args.join(' '), /-p 127\.0\.0\.1:8100:7900/);
   assert.match(rec.args.join(' '), /-v \/h:\/c:ro/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.n, { url: 'http://127.0.0.1:8100' });
+  assert.deepStrictEqual(saved.contexts.n, {
+    url: 'http://127.0.0.1:8100',
+    deploy: { flavor: 'docker', container: 'clodexctl-n' },
+  });
 });
 
 test('deploy docker --image overrides repo+tag entirely', async () => {
@@ -178,7 +187,14 @@ test('deploy docker --host: DOCKER_HOST in child env, remote ssh ctx saved', asy
   assert.deepStrictEqual(pollCalls, [{ ssh: 'user@box', remotePort: 8100 }]);
   assert.match(stdout, /context "edge" saved/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.edge, { ssh: 'user@box', remotePort: 8100 });
+  // deploy (t54): the REMOTE docker entry's transport is byte-identical to what
+  // the ssh flavor saves ({ssh: user@host}) — see the ambiguity test in
+  // deploy.test.js. dockerHost is the normalized DOCKER_HOST, not the ssh dest:
+  // a tcp:// daemon has no ssh dest at all.
+  assert.deepStrictEqual(saved.contexts.edge, {
+    ssh: 'user@box', remotePort: 8100,
+    deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: 'ssh://user@box' },
+  });
 });
 
 test('deploy docker --env-file: passed to docker argv, never read (no fs access)', async () => {
@@ -203,7 +219,10 @@ test('deploy docker: 401 during verify → success-with-note, ctx still saved', 
   assert.match(stdout, /token-gated \(401\)/);
   assert.match(stdout, /context "gated" saved.*token-gated/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.gated, { url: 'http://127.0.0.1:7900' });
+  assert.deepStrictEqual(saved.contexts.gated, {
+    url: 'http://127.0.0.1:7900',
+    deploy: { flavor: 'docker', container: 'clodexctl-gated' },
+  });
   assert.strictEqual(saved.contexts.gated.token, undefined);
 });
 
@@ -387,4 +406,70 @@ test('pollHello: unreachable url retries then times out → EXIT.SERVER', async 
     () => D.pollHello({ url: 'http://127.0.0.1:1' }, { timeoutMs: 300, pollMs: 50 }),
     (e) => e.exitCode === EXIT.SERVER && /did not answer within/.test(e.message),
   );
+});
+
+// ── t54: the ambiguity this pins ─────────────────────────────────────────────
+
+// A fake ssh child for the SSH flavor (deploy.test.js's fakeSsh, minimal): the
+// installer script rides stdin, a marker transcript plays back, exit 0.
+function fakeSsh(rec) {
+  return (cmd, args) => {
+    rec.cmd = cmd; rec.args = args; rec.stdin = '';
+    const child = new EventEmitter();
+    child.pid = null;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { write: (s) => { rec.stdin += s; }, end: () => {
+      setImmediate(() => {
+        for (const l of ['::step clone', '::ok clone', '::done']) child.stdout.emit('data', Buffer.from(l + '\n'));
+        child.emit('exit', 0, null);
+      });
+    } };
+    child.kill = () => {};
+    return child;
+  };
+}
+
+test('t54: an ssh-flavor and a docker-flavor deploy of the SAME host are distinguishable in the store', async () => {
+  // Both flavors really do write `{ssh: user@box}` — this test runs BOTH real
+  // verbs into ONE contexts file and reads back what an `upgrade <ctx>` would
+  // see. The premise is asserted, not assumed: if the transports ever stopped
+  // colliding the field would be less load-bearing and this test should say so.
+  const contextsFile = tmpCtxFile();
+  const sshRec = {};
+  const { code: sshCode } = await cli(['deploy', 'user@box', '--name', 'viassh'], {
+    spawnFn: fakeSsh(sshRec),
+    probeHello: async () => ({ app: 'clodex', host: 'box', version: '9.9.9' }),
+    contextsFile,
+  });
+  assert.strictEqual(sshCode, 0);
+
+  const dockRec = {};
+  const { code: dockCode } = await cli(['deploy', 'docker', 'viadocker', '--host', 'user@box'], {
+    spawnFn: fakeDocker(dockRec),
+    pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
+    contextsFile,
+  });
+  assert.strictEqual(dockCode, 0);
+
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  const a = saved.contexts.viassh, b = saved.contexts.viadocker;
+  // The premise: identical transports, written by two different flavors.
+  assert.strictEqual(a.ssh, 'user@box');
+  assert.strictEqual(b.ssh, 'user@box');
+  assert.strictEqual(a.ssh, b.ssh, 'premise: the transport really is ambiguous between these two flavors');
+  // The field is what tells them apart — and it is the ONLY thing that does.
+  assert.strictEqual(a.deploy.flavor, 'ssh',
+    'the ssh flavor must stamp flavor "ssh"; anything else and an upgrade routes this node down the wrong path');
+  assert.strictEqual(b.deploy.flavor, 'docker',
+    'the docker flavor must stamp flavor "docker" — these two entries have IDENTICAL transports, so a wrong or missing flavor here means an upgrade would re-run the ssh installer against a container node');
+  // …with the names each flavor's upgrade would actually need: a host to
+  // re-run the installer over, versus a container to re-pull and recreate.
+  assert.strictEqual(a.deploy.host, 'user@box');
+  assert.strictEqual(b.deploy.container, 'clodexctl-viadocker');
+  assert.strictEqual(b.deploy.dockerHost, 'ssh://user@box');
+  // Both survive a real validating load — no migration, no special-casing.
+  const loaded = require('../src/contexts').load(contextsFile, { warn: () => {} });
+  assert.doesNotThrow(() => require('../src/contexts').validateEntry(loaded.contexts.viassh));
+  assert.doesNotThrow(() => require('../src/contexts').validateEntry(loaded.contexts.viadocker));
 });

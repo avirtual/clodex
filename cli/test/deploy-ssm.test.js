@@ -373,7 +373,13 @@ test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + 
   // The token that was sent to the box (in the drop-in) matches the one saved + verified.
   assert.ok(rec.sentScript.includes(`Environment=CLODEX_REMOTE_TOKEN=${verifiedWith.token}`));
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.mybox, { ssm: { target: 'i-1', region: 'us-west-2', profile: 'p' }, webPort: 7901, token: verifiedWith.token });
+  // deploy (t54): flavor + the SSM identity. It mirrors the ssm transport for
+  // THIS flavor only — fargate's ssm transport names an ECS task while its
+  // deploy identity is a CF stack, so a consumer reads `deploy`, not the kind.
+  assert.deepStrictEqual(saved.contexts.mybox, {
+    ssm: { target: 'i-1', region: 'us-west-2', profile: 'p' }, webPort: 7901, token: verifiedWith.token,
+    deploy: { flavor: 'ssm', target: 'i-1', region: 'us-west-2', profile: 'p' },
+  });
   assert.strictEqual(saved.current, 'mybox');
 });
 

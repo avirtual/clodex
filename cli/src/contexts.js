@@ -53,6 +53,45 @@ function save(store, file = contextsPath()) {
 // stays a scalar string and tunnel a raw argv array. Unknown sibling fields
 // inside a kind object are IGNORED (forward compat), never rejected.
 const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az'];
+
+// `deploy` (t54) — WHICH flavor created this node, so a later `upgrade <ctx>`
+// can route without archaeology. The transport alone cannot answer it: the ssh
+// flavor and a REMOTE-DOCKER deploy both save `{ssh: user@host}`, identical
+// bytes, different upgrade path. Ambiguous by construction, hence a field.
+//
+// Optional and unvalidated-when-absent: contexts written before this field
+// simply lack it, so there is no migration. A consumer that needs the flavor
+// must say what it cannot determine rather than guess.
+//
+// DATA, NOT CODE, and the shape check is what makes that mechanical rather
+// than a convention: the flavor comes from a fixed enum, and every other field
+// must be a scalar (string/number/boolean). An argv is an ARRAY and a flag blob
+// is an OBJECT, so both are rejected by the shape rule itself — there is no
+// spelling of "the command line we ran" that fits through here. That matters
+// because this file is user-editable and a persisted argv is a command line
+// the tool would later execute.
+const DEPLOY_FLAVORS = ['ssh', 'docker', 'ssm', 'helm', 'fargate'];
+function validateDeploy(dep) {
+  if (!dep || typeof dep !== 'object' || Array.isArray(dep)) {
+    throw new CliError(EXIT.USAGE, 'context "deploy" must be an object (e.g. {"flavor":"helm","release":"n","namespace":"clodex"})');
+  }
+  if (dep.flavor == null || String(dep.flavor) === '') {
+    throw new CliError(EXIT.USAGE, `context "deploy" needs a flavor — one of ${DEPLOY_FLAVORS.join(', ')}`);
+  }
+  if (!DEPLOY_FLAVORS.includes(dep.flavor)) {
+    throw new CliError(EXIT.USAGE, `unknown deploy flavor "${dep.flavor}" — expected one of ${DEPLOY_FLAVORS.join(', ')}; a newer clodexctl may have written it, so upgrade rather than hand-edit`);
+  }
+  for (const k of Object.keys(dep)) {
+    const v = dep[k];
+    if (v == null) continue;
+    const t = typeof v;
+    if (t !== 'string' && t !== 'number' && t !== 'boolean') {
+      throw new CliError(EXIT.USAGE, `context "deploy.${k}" must be a scalar (string/number/boolean), got ${Array.isArray(v) ? 'an array' : t} — "deploy" records identifying NAMES, never an argv or a blob of flags to re-run`);
+    }
+  }
+  return dep;
+}
+
 function validateEntry(entry) {
   if (!entry || typeof entry !== 'object') throw new CliError(EXIT.USAGE, 'context entry must be an object');
   const kinds = TRANSPORT_KINDS.filter((k) => entry[k] != null);
@@ -68,6 +107,7 @@ function validateEntry(entry) {
   if (entry.kubectl != null) validateObjKind(entry.kubectl, 'kubectl', 'target', '--kubectl');
   if (entry.gcloud != null) validateObjKind(entry.gcloud, 'gcloud', 'instance', '--gcloud-iap');
   if (entry.az != null) validateAz(entry.az);
+  if (entry.deploy != null) validateDeploy(entry.deploy);
   return entry;
 }
 
@@ -145,6 +185,10 @@ function resolve(store, { ctxName = null, env = process.env, flags = {} } = {}) 
 
 function defaultWarn(msg) { process.stderr.write(`clodexctl: warning: ${msg}\n`); }
 
+// validateDeploy and DEPLOY_FLAVORS stay PRIVATE, like every other per-kind
+// validator here: validateEntry is the only door (pinned by
+// test/stores.test.js, which explains why widening this surface is how a leaf
+// stops being a leaf).
 module.exports = {
   cliDir, contextsPath, load, save, validateEntry, resolve,
 };

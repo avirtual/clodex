@@ -159,6 +159,30 @@ around the operator's own vendor CLI (no AWS/GCP/Azure SDKs, ever; we spawn
 `remotePort` is a top-level sibling (default `7900`), same as `--ssh`. `--ssm`
 and `--ssm-ecs` are mutually exclusive; `az` requires all three of its fields.
 
+#### `deploy` — which flavor built this node
+
+Every `clodexctl deploy` stamps a `deploy` sibling onto the context it saves:
+
+```json
+"deploy": { "flavor": "helm", "release": "mynode", "namespace": "clodex", "kubeContext": "docker-desktop" }
+```
+
+`flavor` is one of `ssh` / `docker` / `ssm` / `helm` / `fargate`, plus the
+identifying **names** that flavor needs (helm release + namespace, CF stack,
+container name, SSM target). It exists because the **transport cannot answer
+the question**: the ssh flavor and a remote `deploy docker` both save
+`{ssh: user@host}`, byte for byte.
+
+Same **data, not code** rule as the cloud kinds above, and it is enforced
+rather than merely intended — the flavor is checked against the enum on read
+and every other field must be a scalar, so an argv (an array) or a blob of
+flags (an object) is rejected by the shape itself. This file is user-editable,
+and a persisted argv is a command line the tool would later execute.
+
+The field is **optional**: contexts written before it simply lack it, so there
+is no migration, and anything that needs the flavor says what it cannot
+determine rather than guessing.
+
 **`--ssm-ecs` resolves at connect time.** Fargate task ids are ephemeral — a
 stored `ecs:…` target goes stale on every redeploy — so a `--ssm-ecs
 CLUSTER/FAMILY` context does two `aws ecs` reads when you open it (`list-tasks`
@@ -546,12 +570,20 @@ clodexctl deploy helm mynode --set persistence.enabled=false --dry-run
   or use the manual install in `docs/recipes/kubernetes.md`. More nodes = more
   **releases** (one release, one pod, one PVC — agents are stateful PTYs, not
   replicas).
-- **Re-runs don't `--reuse-values`.** `helm upgrade` is invoked with a full
-  fresh value set, so prior `--set` / `--values` / `--port` choices fall back
-  to chart defaults unless you **repeat them on every run**. Tokens are the
-  deliberate exception: the wire token is re-read from the release Secret, and
-  the claude oauth token is carried forward when `--claude-token-file` is
-  absent (pass it again to rotate).
+- **Re-runs carry your values forward.** Prior `--set` / `--values` / `--port`
+  choices are read back off the release (`helm get values` — the values *you*
+  supplied, not the computed set) and re-applied, so an explicit pin
+  **survives**: `--set image.tag=4.5.0` stays 4.5.0 even after the chart
+  default moves on. Precedence is **chart defaults < carried-forward < this
+  run's flags**, and the carried keys are named in the output. Tokens ride
+  their own path: the wire token is re-read from the release Secret, the claude
+  oauth token is carried forward when `--claude-token-file` is absent (pass it
+  again to rotate), and `secrets.*` is never re-applied from values.
+  Deliberately **not** `--reuse-values` — that reuses prior values *and*
+  ignores new chart defaults, which would freeze the chart's own image tag
+  (helm ships `--reset-then-reuse-values` because of exactly that, but it needs
+  helm 3.14+ and we don't control your helm). A prior-values read that fails is
+  a **hard error**, not a quiet fall-back to reverting your overrides.
 - Collision on the ctx name is **kept** unless `--force`; `--no-ctx` opts out.
   `--dry-run` prints the cluster/namespace/release/chart, the exact helm argv
   (placeholder token paths), and the ctx entry to be written. A host literally

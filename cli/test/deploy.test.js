@@ -229,7 +229,12 @@ test('deploy happy path: env delivered, script on stdin, hello verified, ctx sav
   assert.deepStrictEqual(probeCalls, [{ dest: 'user@box', port: 7900 }]);
   // context persisted with no token
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.box, { ssh: 'user@box', webPort: 7901 });
+  // deploy (t54): flavor + host. See the ambiguity test below for why the
+  // flavor cannot be read off the transport.
+  assert.deepStrictEqual(saved.contexts.box, {
+    ssh: 'user@box', webPort: 7901,
+    deploy: { flavor: 'ssh', host: 'user@box' },
+  });
   assert.strictEqual(saved.contexts.box.token, undefined);
   assert.strictEqual(saved.current, 'box');
 });
@@ -289,7 +294,10 @@ test('deploy --port non-default: remotePort recorded in the saved context', asyn
   assert.strictEqual(code, 0);
   assert.match(rec.stdin, /PORT='8100'/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(saved.contexts.box, { ssh: 'user@box', remotePort: 8100, webPort: 8101 });
+  assert.deepStrictEqual(saved.contexts.box, {
+    ssh: 'user@box', remotePort: 8100, webPort: 8101,
+    deploy: { flavor: 'ssh', host: 'user@box' },
+  });
 });
 
 test('deploy: ::fail transcript, exit 1 → EXIT.SERVER, no verify, no ctx', async () => {

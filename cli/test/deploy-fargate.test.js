@@ -227,6 +227,10 @@ test('deploy fargate happy path: preflight→deploy→oauth→wire-token→ctx�
     ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' },
     webPort: 8080,   // T55: the image's fixed web GUI port, pinned so `web` lands on 8080
     token: WIRE,
+    // deploy (t54): the CF stack, which is NOT the ssm target above — that
+    // names the ECS task family this stack happens to run. Recovering the
+    // stack from the transport means splitting off a "-node" suffix.
+    deploy: { flavor: 'fargate', stack: 'clodex-node', region: 'us-west-2' },
   });
   assert.strictEqual(saved.current, 'clodex-node');
   // only aws was ever exec'd.
