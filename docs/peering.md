@@ -8,7 +8,8 @@ tailnet. The same server also serves the phone web UI. Companion to
 
 Reading guide for a change: **owner endpoints** → remote.js + the callbacks
 built in remote-wiring.js · **consumer protocol** → peer-client.js ·
-**tunnels** → peer-tunnel.js · **settings reconciliation** → peer-wiring.js ·
+**tunnels** → tunnel-supervisor.js (one forward) + peer-tunnel.js (the set) ·
+**settings reconciliation** → peer-wiring.js ·
 **all UI** → renderer/peers-ui.js · **deploy** → peer-deploy.js + ssh-run.js.
 
 ## 1. Trust model (SETTLED)
@@ -93,8 +94,10 @@ stop+restart that connection; removal emits `peer-removed`. **`peer-removed`
 fires even on URL/label edits** (attachments died with the old connection —
 the UI must shed its tabs; the new connection re-announces).
 
-`TunnelManager` (peer-tunnel.js) supervises `ssh -N -L` per ssh-configured
-peer; while a tunnel is down the peer keeps a dead-placeholder URL
+`TunnelManager` (peer-tunnel.js) holds one `SupervisedTunnel`
+(tunnel-supervisor.js) per ssh-configured peer — the supervisor carries the
+forward, the manager decides which forwards should exist. While a tunnel is
+down the peer keeps a dead-placeholder URL
 (`http://127.0.0.1:1`) so the connection object and sidebar presence stay
 alive-but-offline.
 

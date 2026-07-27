@@ -159,6 +159,14 @@ function hasCloudTransport(peer) {
   });
 }
 
+// Module-local by design. It was briefly exported in the t49 merge with no
+// consumer and was not on the pre-merge surface — and `cli/src/transport.js`
+// already exports a DIFFERENT `pickFreePort` (promise-returning, no callback),
+// so a second one of the same name is a miswire waiting for the wrong import.
+// Nothing needs it out here, tests included: `_spawnTunnel` closes over this
+// const, so reassigning an export could never have changed what it calls. The
+// seam that does work is `net.createServer`, resolved on the module object at
+// call time below.
 function pickFreePort(cb) {
   const srv = net.createServer();
   srv.on('error', () => cb(null));
@@ -207,18 +215,31 @@ class SupervisedTunnel {
     this._stopped = false;
     this._announced = false;         // readiness: the one-shot has gone out
     this._deadline = 0;              // give-up wall-clock; 0 = never
-    this._probeTimer = null;
-    this._probeWake = null;          // resolver for the pending probe sleep
-    // The outstanding readiness loop, or null. Held so that "is an announcement
-    // still pending?" is an answerable question rather than an invisible async
-    // frame — which is what let the sleep below sit parked forever unnoticed.
-    this._probing = null;
+    // One record per LIVE readiness loop — `{ wake, timer, done }` — and never a
+    // per-instance slot, for the same reason `bornAt` below is a closure const
+    // (t51). `_spawnOn` starts one loop per CHILD, so two can be alive at once
+    // whenever a probe outlives its child, and every shared slot they would
+    // share is a slot the newer loop silently takes from the older: the wake
+    // resolver (older loop parked forever, the exact bug the wake was added to
+    // close), the sleep timer (older loop's timer survives stop()), and the
+    // outstanding-promise slot (settled() answering for the wrong loop).
+    //
+    // Held as ONE set of records rather than three collections because all three
+    // are keyed by the same thing — one live loop — and three collections is
+    // three chances to drift. The set is the only reason stop() can reach a loop
+    // it has no other name for; a closure alone cannot serve state that
+    // something OUTSIDE the loop must read.
+    this._probes = new Set();
   }
 
   start() {
     if (!this._stopped && this._child) return;   // already running
     this._stopped = false;
-    if (this._giveUpMs) this._deadline = Date.now() + this._giveUpMs;
+    // `!= null`, not truthiness: `giveUpMs: 0` means give up on the first
+    // failure, and the pre-merge web side said so with `Number.isInteger`. Under
+    // a truthy test 0 silently becomes "retry forever" — the opposite policy,
+    // for the arm whose whole purpose is a bound. No call site passes 0 today.
+    if (this._giveUpMs != null) this._deadline = Date.now() + this._giveUpMs;
     this._spawnTunnel();
   }
 
@@ -226,27 +247,39 @@ class SupervisedTunnel {
     this._stopped = true;
     clearTimeout(this._timer);
     this._timer = null;
-    clearTimeout(this._probeTimer);
-    this._probeTimer = null;
-    // Wake a probe that is asleep between attempts. Without this the await never
-    // settles and the async frame is retained for the life of the process — the
-    // timer it was waiting on has just been cleared, so nothing else will ever
-    // resolve it. It re-checks ownership on wake and returns without announcing.
-    const wake = this._probeWake;
-    this._probeWake = null;
-    if (wake) wake();
+    // Wake EVERY probe that is asleep between attempts, not just the newest.
+    // Without this the await never settles and the async frame is retained for
+    // the life of the process — the timer it was waiting on has just been
+    // cleared, so nothing else will ever resolve it. Each loop re-checks
+    // ownership on wake and returns without announcing.
+    for (const p of this._probes) {
+      clearTimeout(p.timer);
+      p.timer = null;
+      const wake = p.wake;
+      p.wake = null;
+      if (wake) wake();
+    }
     this._killChild();
     this._releasePort();
     this._setState('down');
   }
 
-  // Resolves when no readiness announcement is outstanding. A stopped or
-  // never-probing tunnel settles immediately; otherwise it is the probe loop's
-  // own completion. Exists so a caller — a test, or anything that must know the
-  // supervisor has genuinely finished — can wait for it instead of guessing a
-  // duration, and so the parked-sleep bug the wake above closes cannot come back
-  // silently: without that wake, this never settles.
-  settled() { return this._probing || Promise.resolve(); }
+  // Resolves when no readiness announcement is outstanding — ALL of them, which
+  // is what the sentence has always claimed and what a single slot could not
+  // express: with one slot, whichever loop finished LAST wrote null and answered
+  // for loops still running (measured: settled() resolved while a live loop went
+  // on to make five more probe calls). A stopped or never-probing tunnel settles
+  // immediately.
+  //
+  // Snapshots at call time, exactly as the single slot did: a loop that STARTS
+  // after this call is not awaited. The question is "is anything outstanding
+  // now", not "will anything ever start again".
+  //
+  // Exists so a caller — a test, or anything that must know the supervisor has
+  // genuinely finished — can wait for it instead of guessing a duration, and so
+  // the parked-sleep bug the wake above closes cannot come back silently:
+  // without that wake, this never settles.
+  settled() { return Promise.all([...this._probes].map((p) => p.done)); }
 
   status() {
     return {
@@ -348,6 +381,12 @@ class SupervisedTunnel {
       });
     } catch (e) {
       this.lastError = e.message;
+      // The THIRD death path, and it releases like the other two. D5's rule is
+      // "both paths or neither"; a synchronous spawn failure is a path that
+      // arrived later and was left out, so `status().localPort` named a port
+      // nothing ever bound. Cosmetic today — `url()` gates on `state === 'up'`
+      // — and free, which is exactly the class this module closes on sight.
+      this._releasePort();
       return this._scheduleRestart();
     }
     const child = dial.child;
@@ -393,7 +432,16 @@ class SupervisedTunnel {
     });
     this._setState('up');
     if (this._readiness && !this._announced) {
-      this._probing = this._probeThenAnnounce(child, port).finally(() => { this._probing = null; });
+      // One record per loop, created here and handed IN — the loop never reaches
+      // for a slot on the supervisor, so a later child cannot take one from it.
+      // Removed by its own `.finally`, so the set holds exactly the live loops
+      // and `settled()`'s snapshot is the true outstanding set. Identity does
+      // the work an ownership re-check would otherwise have to do, and cannot be
+      // got wrong the way a guarded shared slot can.
+      const rec = { wake: null, timer: null, done: null };
+      this._probes.add(rec);
+      rec.done = this._probeThenAnnounce(child, port, rec)
+        .finally(() => { this._probes.delete(rec); });
     }
   }
 
@@ -414,7 +462,10 @@ class SupervisedTunnel {
   //     silently swallowing the request. `ready` distinguishes the two in the
   //     log — a fallback that reads identically to the happy path is not a
   //     fallback anyone can debug.
-  async _probeThenAnnounce(child, port) {
+  //   • `rec` is this loop's OWN record (its sleep resolver and timer). It is a
+  //     parameter rather than a lookup because that is what makes the state
+  //     per-child by construction: there is no shared slot to reach for.
+  async _probeThenAnnounce(child, port, rec) {
     const { probe, timeoutMs, pollMs } = this._readiness;
     const deadline = Date.now() + timeoutMs;
     const mine = () => !this._stopped && this._child === child && this._announced === false;
@@ -430,10 +481,12 @@ class SupervisedTunnel {
         return;
       }
       await new Promise((resolve) => {
-        this._probeWake = resolve;
-        this._probeTimer = setTimeout(resolve, pollMs);
+        rec.wake = resolve;
+        rec.timer = setTimeout(resolve, pollMs);
       });
-      this._probeWake = null;
+      clearTimeout(rec.timer);
+      rec.timer = null;
+      rec.wake = null;
     }
     if (!mine()) return;
     this._announced = true;
@@ -462,5 +515,5 @@ class SupervisedTunnel {
 }
 
 module.exports = {
-  SupervisedTunnel, CLOUD_KINDS, sameCloud, destinationOf, hasCloudTransport, pickFreePort,
+  SupervisedTunnel, CLOUD_KINDS, sameCloud, destinationOf, hasCloudTransport,
 };
