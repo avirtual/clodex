@@ -202,7 +202,12 @@ adapter that hosts it. The modules below are what the engine assembles.
   owner side).
 - **peer-client.js** — consuming side of the peering protocol (hello loop,
   SSE attach, reconnect).
-- **peer-tunnel.js** — managed `ssh -N -L` tunnel supervisor.
+- **tunnel-supervisor.js** — ONE supervised local port forward (`ssh -N -L` or
+  a vendor CLI's own), under three consumer-decided parameters: retry, port
+  stability, readiness. Both tunnel managers below are built on it.
+- **peer-tunnel.js** — `TunnelManager`: reconciles the peer settings list into
+  a set of supervised tunnels (supervision OF supervision lives here, not in
+  the supervisor).
 - **peer-deploy.js** + **ssh-run.js** — deploy-wizard classification +
   one-shot ssh transport.
 - **peer-input-queue.js** — PendingInput buffer behind type-to-take.
