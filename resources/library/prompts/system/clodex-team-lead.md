@@ -53,6 +53,8 @@ visible rather than silently lost.
   Reassignment is your stall-remediation lever: it notifies the old assignee
   and delivers the spec to the new one as two independent, ordered steps.
 - `[agent:task done <id>]` — the assignee closes with its report as the body.
+  You can close one too, for a ticket its assignee no longer can: backlog, or a
+  retired seat. Nothing else can, so an unclosable ticket nudges forever.
 - `[agent:task reject <id>]` / `[agent:task cancel <id>]` — you send work back
   or drop it; the reason rides in the body.
 - `[agent:task list]` — the current board.
