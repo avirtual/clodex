@@ -4583,6 +4583,9 @@ function createSessionManager(deps) {
       reply(reassigning ? `ticket ${ticket.id}: ${prev} → ${assignee}${suffix}` : `ticket ${ticket.id} → ${assignee}${suffix}`);
     }
 
+    // Close an open ticket with a report. The assignee closes its own; the LEAD
+    // can close any, which is what keeps a backlog ticket or one whose seat
+    // retired from being un-closable forever — see the gate below.
     _taskDone(session, team, teamDir, intent, reply) {
       if (!intent.id) { reply('error: done needs a ticket id — [agent:task done <id>] <report>'); return; }
       const report = String(intent.body == null ? '' : intent.body).trim();
@@ -4591,26 +4594,49 @@ function createSessionManager(deps) {
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open`); return; }
-      // Assignee-only: the sender's seat resolves to the ticket's assignee (its
-      // role for a role-addressed ticket, or its name).
+      // The assignee (its role for a role-addressed ticket, or its name) OR the
+      // team lead. The lead is here because THE STALL PATH REQUIRES NO ACTOR, SO
+      // THE CLOSE PATH MUST HAVE ONE WHO ALWAYS EXISTS. Assignee-only left two
+      // legitimate tickets nobody was permitted to close — a backlog ticket
+      // (`task add` with no assignee, which is a deliberate dispatch shape) and
+      // one whose seat retired — while the watchdog went on nudging for both,
+      // because nudging needs no actor at all. `team.lead` is structural (reject
+      // and cancel already gate on it), so it is the actor that always exists.
       const myRole = matchSeatRole(team, session.name);
       const isAssignee = ticket.assignee != null && (ticket.assignee === session.name || ticket.assignee === myRole);
-      if (!isAssignee) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) can close it`); return; }
+      const isLead = team.lead === session.name;
+      if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it`); return; }
       // Deliver the report to the opener (lead) BEFORE stamping done — same
       // ordering + {error} discipline as review-done (T24 MF3): an absent/dead lead
       // means the report went nowhere, so keep the ticket OPEN and bounce so the
       // assignee can retry, rather than closing it with the report stranded.
+      //
+      // A LEAD closing skips both: there is no delivery (the same refusal
+      // `_deliverTicketSpec` makes with `{ self }` — the lead is the one writing
+      // the report, so echoing it back is noise), and therefore no keep-open
+      // bounce either. That bounce exists to protect a third party's report from
+      // being stranded by the close; when the sender is the lead there is no
+      // third party, and keeping the ticket open would strand nothing but the
+      // ticket.
       const lead = team.lead;
-      const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
-      if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable`); return; }
+      if (!isLead) {
+        const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
+        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable`); return; }
+      }
       ticket.state = 'done';
       ticket.closedAt = Date.now();
+      // Who actually closed it — audit only, and additive. With two permitted
+      // actors "it is done" no longer implies "its assignee said so", and a
+      // ticket closed by the lead over a silent seat is exactly the case worth
+      // being able to tell apart later. Not a column in the board (see
+      // scripts/clodex-team.js): the list answers what is open, not who ended it.
+      ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(teamDir, tickets);
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
-      reply(`ticket ${ticket.id} closed (done) — report delivered to ${lead}`);
+      reply(isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`);
     }
 
     _taskReject(session, team, teamDir, intent, reply) {
@@ -4627,6 +4653,7 @@ function createSessionManager(deps) {
       // sender is at risk, so there's nothing to keep alive for a retry.
       ticket.state = 'open';
       ticket.closedAt = null;
+      ticket.closedBy = null;          // cleared alongside closedAt — it is open again
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       ticketsStore.save(teamDir, tickets);
@@ -4648,6 +4675,7 @@ function createSessionManager(deps) {
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel`); return; }
       ticket.state = 'cancelled';
       ticket.closedAt = Date.now();
+      ticket.closedBy = session.name;  // one shape across both close verbs
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(teamDir, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);

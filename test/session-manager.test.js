@@ -2818,7 +2818,108 @@ test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
   f.m._handleTask(f.seat('team-reviewer-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'not mine' });
   assert.strictEqual(f.one('t1').state, 'open');
   assert.deepStrictEqual(f.gated, []);
-  assert.ok(f.injected.some((x) => /only ticket t1's assignee \(hand\) can close it/.test(x)));
+  // The sentence names BOTH permitted actors since t52. Naming only the
+  // assignee would send a lead that just hit this bounce looking for a seat to
+  // chase, when it is itself the actor that can close the thing.
+  assert.ok(f.injected.some((x) => /only ticket t1's assignee \(hand\) or the team lead \(lead\) can close it/.test(x)),
+    `the bounce does not name the lead as a permitted closer: ${JSON.stringify(f.injected.filter((x) => /close it/.test(x)))}`);
+});
+
+// --- t52: the close path's actor ---------------------------------------------
+//
+// THE STALL PATH REQUIRES NO ACTOR, SO THE CLOSE PATH MUST HAVE ONE WHO ALWAYS
+// EXISTS. Assignee-only left two legitimate tickets nobody could close — a
+// backlog ticket, and one whose seat retired — while the watchdog kept nudging
+// for both. The lead is that actor (team.lead is structural).
+//
+// The window question these tests have to answer, and the reason each asserts a
+// precondition before acting: a test that closes a ticket the sender happens to
+// be ASSIGNEE of proves nothing about the lead branch, because the old code
+// passes it too. So each lead test first establishes that the sender would have
+// FAILED the assignee check — the ticket's assignee is neither `lead` nor the
+// lead seat's role — and only then closes.
+
+test('task done: the LEAD closes a BACKLOG ticket — the case nobody could close', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'someday task' });
+  assert.strictEqual(f.one('t1').assignee, null,
+    'window: unassigned, so the assignee branch cannot be what admits this close');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'did it myself' });
+
+  const t = f.one('t1');
+  assert.strictEqual(t.state, 'done',
+    'a backlog ticket stayed open: no seat is its assignee, so under assignee-only NOTHING could close it while the watchdog nudged on');
+  assert.strictEqual(t.closedBy, 'lead', 'recorded who ended it');
+  assert.deepStrictEqual(f.gated, [],
+    'the lead wrote the report — self-delivering it back is the echo {self} already refuses one verb earlier');
+  assert.ok(f.injected.some((x) => /ticket t1 closed \(done\)/.test(x)));
+  assert.ok(!f.injected.some((x) => /report delivered to/.test(x)),
+    'and the reply must not claim a delivery that did not happen');
+});
+
+test('task done: the LEAD closes a ticket assigned to SOMEONE ELSE (retired seat)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  // The seat retires with its ticket open — the other half of the hole.
+  f.m.sessions.delete('team-hand');
+  const t0 = f.one('t1');
+  assert.strictEqual(t0.assignee, 'hand', 'window: assigned to a role the LEAD does not hold…');
+  assert.notStrictEqual(t0.assignee, 'lead', '…so the sender is not the assignee by name…');
+  assert.strictEqual(f.m.sessions.has('team-hand'), false, '…and no live seat holds that role either');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'closing for a seat that is gone' });
+
+  const t = f.one('t1');
+  assert.strictEqual(t.state, 'done', 'the lead could not close a ticket whose assignee no longer exists');
+  assert.strictEqual(t.closedBy, 'lead');
+  assert.deepStrictEqual(f.gated, [], 'no self-dm to the lead');
+});
+
+test('task done: a non-assignee, non-lead seat is STILL bounced', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-reviewer-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'not mine' });
+
+  assert.strictEqual(f.one('t1').state, 'open',
+    'the gate widened to admit anyone, not just the lead — a third seat closed a ticket it has no part in');
+  assert.strictEqual(f.one('t1').closedBy, undefined, 'and nothing was stamped');
+  assert.deepStrictEqual(f.gated, []);
+  assert.ok(f.injected.some((x) => /can close it/.test(x)), 'bounced');
+});
+
+test('task done: the ASSIGNEE path is unchanged — delivery, and the keep-open bounce', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0;
+  // The lead is unreachable. For an ASSIGNEE this must still keep the ticket
+  // open — the report has a third party to strand, which is the whole reason
+  // that bounce exists and exactly what the lead's skip must not have removed.
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { error: 'no such agent "lead"' }; };
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+
+  assert.strictEqual(f.one('t1').state, 'open',
+    'the assignee`s close no longer keeps the ticket open on an undelivered report — its report is stranded and the ticket reads done');
+  assert.strictEqual(f.gated.length, 1, 'and it must still have ATTEMPTED the delivery');
+  assert.ok(f.injected.some((x) => /report NOT delivered, ticket kept open/.test(x)));
+
+  // Same sender, reachable lead: closes, delivers, and says so.
+  f.gated.length = 0;
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { delivered: true }; };
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  assert.strictEqual(f.one('t1').state, 'done');
+  assert.strictEqual(f.one('t1').closedBy, 'team-hand', 'the closer is the seat, not the role');
+  assert.deepStrictEqual(f.gated, [{ target: 'lead', sender: 'team-hand', body: '[ticket t1 done] shipped it' }],
+    'the assignee`s report still rides to the lead');
+  assert.ok(f.injected.some((x) => /closed \(done\) — report delivered to lead/.test(x)));
 });
 
 test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee kept', () => {
