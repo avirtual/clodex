@@ -332,6 +332,7 @@ const VERB_REGISTRY = [
       ['--force', 're-run even when already at the target; also repairs a node that is not answering [ssh/ssm]'],
       ['--dry-run', 'print the plan and the flavor\'s own dry-run; touch nothing'],
       ['--branch B', 'the version knob for the source-installed flavors [ssh/ssm]'],
+      ['--force-conflicts', 'take ownership of fields another manager owns [helm] — see the conflict note below'],
     ],
     examples: [
       'clodexctl upgrade mynode',
@@ -345,6 +346,7 @@ const VERB_REGISTRY = [
       'It delegates to the flavor\'s own deploy verb rather than reimplementing it — so a helm upgrade keeps the release\'s wire token, preserves its claude auth, and carries every prior --set/--values forward (an explicit --tag on this run still beats a carried image.tag). fargate always passes ImageUri explicitly: omitting it makes CloudFormation reuse the prior value and report SUCCESS — a silent no-op that looks like it worked.',
       'The source-installed flavors (ssh/ssm) track a BRANCH and deploy no pinned artifact, so they have no target version and never no-op. Flags a context does not store REVERT on a re-run (--no-wirescope, --repo, --branch, --src, --ssh-opt, --claude-token-file) — they are named before anything runs, so pass them again if you set them. `deploy ssm` also MINTS A FRESH WIRE TOKEN each run: an ssm upgrade ROTATES the token, and any other holder of the old one stops being able to reach the node.',
       'docker is deliberately NOT upgradable: a container is remove-and-recreate, and the recreate needs run arguments a context does not store (--env-file, --volume) and must not recover — reading them back from `docker inspect` would spell resolved secrets into argv. It refuses with the two-step undeploy --keep-data / deploy path instead.',
+      '[helm] "Apply failed with N conflicts" means someone changed a field OUT OF BAND (`kubectl edit`/`patch`), which permanently claimed it — and a release that applies server-side may not change a field it does not own. Re-running cannot help; the error names the owning manager and field. Either revert the out-of-band change, or re-run with --force-conflicts to take the field. Check first that the owner is not a controller entitled to it (an HPA on replicas, a sidecar injector) — forcing takes the field from that too, which is why it is opt-in. Whether a release applies server-side is per-RELEASE, inherited from the helm that installed it: `helm get metadata <release> -n <ns>`.',
     ],
   },
 

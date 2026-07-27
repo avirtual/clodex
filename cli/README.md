@@ -358,7 +358,7 @@ contract (task ids, completion events) is T38.
 | `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
 | `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
-| `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
+| `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
 | `deploy fargate <stack> [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
@@ -565,6 +565,20 @@ clodexctl deploy helm mynode --set persistence.enabled=false --dry-run
   cause and re-run (**the same command upgrades in place**; no auto-rollback).
   A verify failure after a green helm still keeps the saved context and points
   you at `clodexctl --ctx <name> ctx test --verbose`.
+- **Field conflicts (`Apply failed with N conflicts`) get their own error**,
+  because for them "re-run" is the one hint that cannot work. It means someone
+  changed a field **out of band** (`kubectl edit`/`patch`) and thereby
+  permanently claimed it, and a release that applies **server-side** may not
+  change a field it does not own. The error names the owning **manager** and
+  the **field**, and gives you the `managedFields` command to see every owner.
+  Two ways out: revert the out-of-band change (hands the field back), or re-run
+  with **`--force-conflicts`** to take ownership of it. That flag is **opt-in
+  by design** — forcing takes *every* conflicting field, including from
+  controllers that legitimately own theirs (an HPA on `replicas`, a sidecar
+  injector), so you read who you are overriding first. Whether a release
+  applies server-side at all is **per release**, inherited from the helm that
+  installed it (`helm get metadata <name> -n <ns>`): a release first installed
+  by helm 3 applies client-side and silently overwrites the hand-edit instead.
 - **Local/docker-desktop shape today.** EKS identity (IRSA service accounts)
   rides the chart's `serviceAccount` values — pass them with `--set`/`--values`
   or use the manual install in `docs/recipes/kubernetes.md`. More nodes = more
