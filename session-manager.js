@@ -1221,6 +1221,37 @@ function createSessionManager(deps) {
         // created the dir first.
         ensureDir(runDirFor(REGISTRY_DIR, name));
         socketPath = pathFor(REGISTRY_DIR, name, 'socket');
+
+        // Ask the socket whether a blocking registration is a LIVE agent — and
+        // ask it HERE, before we bind, because binding destroys the answer.
+        //
+        // Socket paths are derived from the name, so a blocking record's
+        // `socket` is byte-identical to the `socketPath` we are about to take.
+        // Transport.start() unlinks that path before it listens, so any probe
+        // made after the bind is a probe of OUR OWN server: it reports "live"
+        // unconditionally, for a ghost exactly as for a real agent. The pre-bind
+        // instant is the only one at which the question is still answerable.
+        //
+        // Why the question needs asking at all: the registry records a bare pid.
+        // After an unclean shutdown the socket file survives and the OS recycles
+        // the pid, so isAlive() reports a stranger's process as our agent and
+        // wedges the name with no in-app recovery (audit.md §5.1). A socket with
+        // nothing listening on it cannot be a running agent, whatever its pid
+        // says; a socket that accepts a connection means the name is genuinely
+        // taken and the EEXIST error below is true rather than misleading.
+        //
+        // Best-effort: no blocking record, or an unreadable one, leaves this null
+        // and the EEXIST branch falls back to the pid-only verdict it always had.
+        let blockerLive = null;
+        try {
+          const blocker = JSON.parse(
+            fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
+          );
+          if (blocker && blocker.socket) {
+            blockerLive = await Transport.isSocketLive(blocker.socket);
+          }
+        } catch {}
+
         transport = new Transport(socketPath, (msg) => {
           this._onIncoming(name, msg);
         });
@@ -1235,10 +1266,18 @@ function createSessionManager(deps) {
               const existing = JSON.parse(
                 fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
               );
+              // The pre-bind probe above is the authority here, and it
+              // deliberately OVERRIDES isStaleRegistration: proven-not-live wins
+              // even when the pid check says "live, and not ours", because that
+              // check answers from the pid alone — the thing that just lied.
+              // `blockerLive === null` means we never got an answer (no record to
+              // read at probe time, or an unreadable one), so the pid-only
+              // verdict stands, exactly as before this existed.
+              //
               // Stale (dead pid, or our own pid for a session we don't run — the
               // deterministic-pid Docker case) → force-clean and re-register. See
               // isStaleRegistration above for the full rationale.
-              if (isStaleRegistration(existing.pid, process.pid, isAlive)) {
+              if (blockerLive === false || isStaleRegistration(existing.pid, process.pid, isAlive)) {
                 registry.unregister(name);
                 try { fs.unlinkSync(existing.socket); } catch {}
                 registry.register(name, socketPath, cwd);

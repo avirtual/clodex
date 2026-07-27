@@ -20,6 +20,16 @@ const net = require('net');
 const { ensureDir } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 
+// How long Transport.isSocketLive waits before calling a socket dead. Much
+// shorter than send()'s 2000ms, and deliberately so: send() is dialing a peer we
+// already believe in, where a slow answer is still an answer worth waiting for.
+// The probe runs on the session-start path with the operator watching, and a
+// Unix-domain connect to a listening socket is a same-host kernel operation with
+// no network in it — it succeeds in microseconds or nothing is bound there.
+// Spending 2s to conclude "dead" would put that delay in front of every recovery
+// from an unclean shutdown, which is exactly the case the probe exists to fix.
+const SOCKET_PROBE_TIMEOUT = 250;
+
 function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
   function isAlive(pid) {
     try { process.kill(pid, 0); return true; }
@@ -92,7 +102,19 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
           const info = JSON.parse(fs.readFileSync(regPath, 'utf-8'));
           if (!fs.existsSync(info.socket) || !isAlive(info.pid)) {
             fs.unlinkSync(regPath);
-            if (fs.existsSync(info.socket)) fs.unlinkSync(info.socket);
+            // The socket file is deliberately NOT unlinked here, and re-adding
+            // that as tidying would reintroduce a silent-unreachability bug.
+            // This read-then-delete never re-validates: if another host
+            // re-registers this name in the gap, we would unlink a LIVE socket —
+            // and a net.Server whose inode has been unlinked keeps listening with
+            // no error and no event, so that agent becomes permanently
+            // unreachable with nothing to notice by.
+            //
+            // Leaving the file behind costs nothing. Nothing enumerates socket
+            // files (regEntries yields agent.json paths only), every reader
+            // reaches a socket THROUGH a registry entry, and Transport.start
+            // unlinks the path itself before it binds — so an orphan neither
+            // advertises a dead agent nor blocks a live one from rebinding.
             removed++;
           }
         } catch {}
@@ -143,6 +165,38 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
         } else {
           resolve();
         }
+      });
+    }
+
+    // Is something actually LISTENING on this socket path? The registry records a
+    // bare pid, which after an unclean shutdown plus a pid recycle reads as alive
+    // for a corpse — so `existsSync(socket) && isAlive(pid)` cannot tell a running
+    // agent from a leftover file next to a reused pid number. A connect can: only
+    // a live server accepts one.
+    //
+    // Resolves true ONLY on a successful connect. ECONNREFUSED (file there,
+    // nothing bound — the ghost), ENOENT (no file at all), and timeout all mean
+    // not-live; every one of them is a socket we cannot deliver to, which is the
+    // question being asked. Never rejects — callers decide policy, not error
+    // handling.
+    //
+    // The probe writes NOTHING and closes immediately. That is safe by
+    // construction rather than by luck: the server discards zero-length frames
+    // before parsing (see the length check in start()'s 'end' handler), so a
+    // connect-and-close cannot be mistaken for a message and never reaches
+    // onMessage.
+    static isSocketLive(socketPath) {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (live) => {
+          if (done) return;
+          done = true;
+          try { conn.destroy(); } catch {}
+          resolve(live);
+        };
+        const conn = net.createConnection(socketPath, () => finish(true));
+        conn.on('error', () => finish(false));
+        conn.setTimeout(SOCKET_PROBE_TIMEOUT, () => finish(false));
       });
     }
 
