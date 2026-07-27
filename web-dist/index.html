@@ -22108,10 +22108,49 @@ This starts a NEW conversation \u2014 the current session's history will be clea
     }
   });
 
+  // renderer/lib/mcp-group.js
+  var require_mcp_group = __commonJS({
+    "renderer/lib/mcp-group.js"(exports, module) {
+      "use strict";
+      var MCP_TOOL_RE = /^mcp__(.+?)__/;
+      function mcpServerOf(toolName) {
+        const m = MCP_TOOL_RE.exec(typeof toolName === "string" ? toolName : "");
+        return m ? m[1] : null;
+      }
+      function groupMcpTools(perTool) {
+        if (!Array.isArray(perTool)) return [];
+        const byServer = /* @__PURE__ */ new Map();
+        for (const t of perTool) {
+          if (!t || typeof t !== "object") continue;
+          const server = mcpServerOf(t.name);
+          if (!server) continue;
+          let g = byServer.get(server);
+          if (!g) {
+            g = { server, tools: [], toolCount: 0, estTokens: 0, usedTotal: 0, unusedCount: 0 };
+            byServer.set(server, g);
+          }
+          g.tools.push(t);
+          g.toolCount += 1;
+          g.estTokens += Number(t.est_tokens) || 0;
+          const used = Number(t.used) || 0;
+          g.usedTotal += used;
+          if (used === 0) g.unusedCount += 1;
+        }
+        return [...byServer.values()].sort((a, b) => b.estTokens - a.estTokens);
+      }
+      function mcpTotalTokens(groups) {
+        if (!Array.isArray(groups)) return 0;
+        return groups.reduce((n, g) => n + (g.estTokens || 0), 0);
+      }
+      module.exports = { mcpServerOf, groupMcpTools, mcpTotalTokens, MCP_TOOL_RE };
+    }
+  });
+
   // renderer/popovers/context-popover.js
   var require_context_popover = __commonJS({
     "renderer/popovers/context-popover.js"(exports, module) {
       var { esc, fmtTokens } = require_format();
+      var { groupMcpTools, mcpTotalTokens } = require_mcp_group();
       function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
         const ctxPopover = document.getElementById("ctx-popover");
         const ctxPopoverName = document.getElementById("ctx-popover-name");
@@ -22222,6 +22261,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return `<div class="ctx-util">${head}${conf}${body}</div>`;
         }
+        function renderMcpServers(a) {
+          const groups = groupMcpTools(a.tools && a.tools.per_tool);
+          if (!groups.length) return "";
+          const total = mcpTotalTokens(groups);
+          const turns = a.utilization && a.utilization.evaluable_turns || 0;
+          const conclusive = turns >= UTIL_MIN_TURNS;
+          const head = `<div class="ctx-util-head"><span>MCP servers</span><span class="ctx-util-stat" title="Char-based estimate (\u2248chars/4); a tokenizer reads ~25% higher.">${groups.length} loaded \xB7 <b>~${fmtTokens(total)}/turn</b></span></div>`;
+          const rows = groups.map((g) => {
+            const usage = turns === 0 ? "" : g.usedTotal > 0 ? ` \xB7 ${g.usedTotal}\xD7` : conclusive ? " \xB7 <b>unused</b>" : " \xB7 idle";
+            return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(g.estTokens)} \xB7 ${g.toolCount} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div></div>`;
+          }).join("");
+          const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0) : [];
+          const hint = deadServers.length ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run <code>claude mcp remove ${esc(deadServers[0].server)}</code> yourself \u2014 Clodex never edits your MCP config. It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see <code>claude mcp reset-project-choices</code>.</div>` : "";
+          return `<div class="ctx-util">${head}${rows}${hint}</div>`;
+        }
         function renderUtilization(a) {
           return renderUtilBlock(a.utilization, a.tools && a.tools.per_tool, "Tool utilization");
         }
@@ -22258,7 +22312,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             withComp.sort((a, b) => a.line === "main" ? -1 : b.line === "main" ? 1 : 0);
             const stripLevel = proxyState.get(name)?.payload?.stripLevel || 0;
             const compCol = withComp.map((a) => renderCompositionLine(a, stripLevel)).join("");
-            const utilCol = withComp.map((a) => renderUtilization(a) + renderSkillUtilization(a)).join("");
+            const utilCol = withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join("");
             html = utilCol.trim() ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>` : compCol;
           } else {
             const main = agents.find((a) => a.line === "main") || agents[0];
