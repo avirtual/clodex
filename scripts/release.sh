@@ -71,6 +71,55 @@ echo "new version: $NEW_VERSION  ->  tag $TAG"
 
 git tag | grep -qx "$TAG" && die "tag $TAG already exists"
 
+# --- sync the packaged deploy assets to the new version --------------------
+# cli/deploy/ ships one reviewable asset per deploy flavor, and each NAMES the
+# container image it runs. The image is published at $NEW_VERSION below
+# (publish-image.sh), but nothing updated the assets that name it — so they
+# drifted from the app and from each other (a 4.5.0 app shipping a chart pinned
+# at 4.1.0 and an appVersion of 3.5.3). That is live, not cosmetic: a fresh
+# `clodexctl deploy helm <name>` brings up a three-version-old node, and a
+# re-run REVERTS an operator's hand-upgraded cluster back to it.
+#
+# Same defect one layer up from the one recorded at the publish step below, and
+# the same fix: fold it in rather than trust a human to remember.
+#
+# Anchored, one edit per file, and LOUD on a miss. A blanket version-shaped sed
+# across the tree would rewrite unrelated pins (the CHART version, a sample
+# digest, a doc example) and would silently rewrite nothing at all if a file
+# moved — which is exactly the invisible drift being fixed. So each pin must
+# match its anchor EXACTLY ONCE before the edit, and the expected line must be
+# there EXACTLY ONCE after it. Verifying after is not belt-and-braces: it is the
+# half that catches a substitution that ran and produced the wrong bytes.
+#
+# NOT synced: Chart.yaml's `version:`. Helm's two version fields answer
+# different questions — appVersion is "which application does this deploy",
+# `version` is the CHART's own revision, which helm records per release and
+# reports in `helm history`/`rollback`. Moving it every patch would assert a
+# structural change that did not happen, and an operator reading that history
+# could no longer tell a chart change from an app rebuild. Hand-managed, and
+# pinned as such in test/deploy-version-pin.test.js.
+#
+# `sed -i ''` is the BSD form. This script is macOS-only by construction
+# already (it builds an arm64 DMG and ad-hoc-codesigns it), so that is the
+# right dialect here rather than portability the rest of the file does not have.
+step "Syncing deploy assets to $NEW_VERSION"
+sync_pin() {
+  local file="$1" anchor="$2" want="$3" n
+  [ -f "$file" ] || die "deploy asset missing: $file (the release would ship an unpinned image reference)"
+  n="$(grep -cE "$anchor" "$file" || true)"
+  [ "$n" = "1" ] || die "deploy asset $file: version anchor matched $n times, expected exactly 1 — the file was restructured, so this sync is no longer updating it and the pin would silently stay at the old version"
+  sed -E -i '' "s|$anchor|$want|" "$file"
+  n="$(grep -cFx "$want" "$file" || true)"
+  [ "$n" = "1" ] || die "deploy asset $file: after the edit the expected line appeared $n times, expected exactly 1 — the substitution did not produce what it claimed"
+  echo "  pinned $file"
+}
+sync_pin cli/deploy/helm/clodex/values.yaml \
+  '^  tag: "[^"]+"$' "  tag: \"$NEW_VERSION\""
+sync_pin cli/deploy/helm/clodex/Chart.yaml \
+  '^appVersion: "[^"]+"$' "appVersion: \"$NEW_VERSION\""
+sync_pin cli/deploy/clodex-fargate.yaml \
+  "^    Default: 'ghcr\.io/avirtual/clodex:[^']+'\$" "    Default: 'ghcr.io/avirtual/clodex:$NEW_VERSION'"
+
 # --- release notes (auto from commits, or the provided file) ---------------
 step "Preparing release notes"
 NOTES="$(mktemp)"
