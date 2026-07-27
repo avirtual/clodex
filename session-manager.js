@@ -1243,10 +1243,15 @@ function createSessionManager(deps) {
         // Best-effort: no blocking record, or an unreadable one, leaves this null
         // and the EEXIST branch falls back to the pid-only verdict it always had.
         let blockerLive = null;
+        // The exact bytes the verdict describes. The probe awaits, so another
+        // actor can replace the record while we are dialing; a verdict about the
+        // record we READ must not be applied to a different record we find later
+        // (that is how `blockerLive === false` would force-clean a live agent).
+        // Compared byte-wise at the re-read below.
+        let blockerRaw = null;
         try {
-          const blocker = JSON.parse(
-            fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
-          );
+          blockerRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
+          const blocker = JSON.parse(blockerRaw);
           if (blocker && blocker.socket) {
             blockerLive = await Transport.isSocketLive(blocker.socket);
           }
@@ -1267,6 +1272,14 @@ function createSessionManager(deps) {
         // So: register (and settle EEXIST) first, bind second. Every unlink
         // then happens while nothing of ours is listening, and a refusal
         // returns having touched nothing at all.
+        //
+        // This does create a state that did not exist before: for the duration
+        // of listen(), a registry entry whose socket file is not there yet, and
+        // cleanup() prunes exactly that shape. Considered and deliberately left
+        // uncovered — cleanup() runs once at boot (engine.js:1724), so hitting
+        // it needs a SECOND engine sharing this ~/.clodex booting inside a
+        // sub-millisecond window, and the shipped Docker layout gives each box a
+        // private volume (audit.md §5.3). Not worth a lock.
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
@@ -1276,9 +1289,13 @@ function createSessionManager(deps) {
           // below, there is no transport yet and the wrapper only rethrew what
           // it caught, so it is gone rather than kept as a no-op.)
           if (e.code !== 'EEXIST') throw e;
-          const existing = JSON.parse(
-            fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
-          );
+          const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
+          const existing = JSON.parse(existingRaw);
+          // If the record changed under us while the probe was awaiting, the
+          // verdict describes bytes that are no longer there — discard it and
+          // fall back to the pid-only check, the same conservative default t57
+          // chose for a record it could not read.
+          if (existingRaw !== blockerRaw) blockerLive = null;
           // The pre-bind probe above is the authority here, and it
           // deliberately OVERRIDES isStaleRegistration: proven-not-live wins
           // even when the pid check says "live, and not ours", because that
@@ -1290,7 +1307,22 @@ function createSessionManager(deps) {
           // Stale (dead pid, or our own pid for a session we don't run — the
           // deterministic-pid Docker case) → force-clean and re-register. See
           // isStaleRegistration above for the full rationale.
-          if (blockerLive === false || isStaleRegistration(existing.pid, process.pid, isAlive)) {
+          //
+          // A PROVEN-live socket also vetoes that pid check (`blockerLive !==
+          // true`), because the own-pid clause fires on any record naming our
+          // pid — including one a concurrent create() of the same name wrote
+          // moments ago. `this.sessions.has(name)` at the top of create() cannot
+          // catch that: the map is not written until well past the bind, so two
+          // in-flight creates both sail through it, and the second would unlink
+          // the first's socket and rebind, leaving a live server on a detached
+          // inode one branch after the probe explicitly proved it alive.
+          // This does not re-wedge the Docker case: the listening server belongs
+          // to the ENGINE process, so "our pid AND something is listening" can
+          // only mean this very process is bound to that name right now. After a
+          // Docker restart the previous engine is gone and its PTY children
+          // never inherited the listen fd, so nothing accepts and the probe
+          // returns false or null there — the veto never closes on it.
+          if (blockerLive === false || (blockerLive !== true && isStaleRegistration(existing.pid, process.pid, isAlive))) {
             registry.unregister(name);
             try { fs.unlinkSync(existing.socket); } catch {}
             registry.register(name, socketPath, cwd);
