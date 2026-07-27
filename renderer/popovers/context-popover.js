@@ -11,6 +11,7 @@
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { esc, fmtTokens } = require('../lib/format');
+const { groupMcpTools, mcpTotalTokens } = require('../lib/mcp-group');
 
 function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
   // --- Context-breakdown popover -------------------------------------------
@@ -192,6 +193,64 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
+  // MCP servers, grouped out of the same per_tool roster (t46). MCP is usually
+  // the largest single thing a user adds to their per-turn carriage, and it was
+  // the one big contributor this popover could not name: its tools rendered as
+  // individual rows with nothing tying them to the server they came from.
+  //
+  // NOTHING AT ALL when there are no MCP tools — not an empty section, not a
+  // zero row. "Surface them when they are there" is the requirement, and a user
+  // with no MCP servers must see no new UI whatsoever.
+  //
+  // Deliberately NOT a config inventory: this is what the session is CARRYING
+  // right now, per the live roster. A configured-but-not-loaded server does not
+  // appear here, which is why the heading says "loaded" rather than implying a
+  // complete list of what the user has configured.
+  //
+  // The remove hint POINTS AT THE USER'S OWN TOOL and never acts. Clodex does
+  // not write user config files — that rule is affirmed here, not worked
+  // around, so there is no button and nothing that could run this for them.
+  // `claude mcp remove <name>` resolves the scope itself when none is given
+  // ("removes from whichever scope it exists in", verified from --help), so the
+  // generic form is correct rather than a hedge.
+  function renderMcpServers(a) {
+    const groups = groupMcpTools(a.tools && a.tools.per_tool);
+    if (!groups.length) return '';
+    const total = mcpTotalTokens(groups);
+    const turns = (a.utilization && a.utilization.evaluable_turns) || 0;
+    const conclusive = turns >= UTIL_MIN_TURNS;
+
+    const head = `<div class="ctx-util-head"><span>MCP servers</span>` +
+      `<span class="ctx-util-stat" title="Char-based estimate (≈chars/4); a tokenizer reads ~25% higher.">` +
+      `${groups.length} loaded · <b>~${fmtTokens(total)}/turn</b></span></div>`;
+
+    const rows = groups.map((g) => {
+      // Usage is only a verdict once enough turns back it — same floor the tool
+      // and skill blocks use, and the same vocabulary.
+      const usage = turns === 0
+        ? ''
+        : (g.usedTotal > 0
+          ? ` · ${g.usedTotal}×`
+          : (conclusive ? ' · <b>unused</b>' : ' · idle'));
+      return `<div class="ctx-row${(conclusive && g.usedTotal === 0) ? ' ctx-dead' : ''}">` +
+        `<div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span>` +
+        `<span class="ctx-nums">~${fmtTokens(g.estTokens)} · ${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}${usage}</span>` +
+        `</div></div>`;
+    }).join('');
+
+    // Only offer the removal hint once a server is CONCLUSIVELY unused —
+    // telling someone to remove a server they simply have not called yet is
+    // worse than saying nothing.
+    const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0) : [];
+    const hint = deadServers.length
+      ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+        `<code>claude mcp remove ${esc(deadServers[0].server)}</code> yourself — Clodex never edits your MCP config. ` +
+        `It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see ` +
+        `<code>claude mcp reset-project-choices</code>.</div>`
+      : '';
+    return `<div class="ctx-util">${head}${rows}${hint}</div>`;
+  }
+
   // Tool + skill utilization for one agent line. Mirror shapes (a.tools.per_tool +
   // a.utilization; a.skills.per_skill + a.skills_utilization), same renderer.
   function renderUtilization(a) {
@@ -236,7 +295,11 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       // a single column when there's no utilization (composition-only proxy).
       const stripLevel = (proxyState.get(name)?.payload?.stripLevel || 0);
       const compCol = withComp.map((a) => renderCompositionLine(a, stripLevel)).join('');
-      const utilCol = withComp.map((a) => renderUtilization(a) + renderSkillUtilization(a)).join('');
+      // MCP leads the right-hand column when present: it is typically the
+      // largest single addition to a user's per-turn carriage, and it renders to
+      // '' when the line carries no MCP tools — so on a session without MCP the
+      // column is byte-identical to before this feature existed.
+      const utilCol = withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join('');
       html = utilCol.trim()
         ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>`
         : compCol;
