@@ -67,7 +67,7 @@ const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
 // required directly like ./claude-env (its siblings draftChunkSignal /
 // isDraftOpen cross as deps only because they predate the direct-require
 // precedent — move-only history, not a rule).
-const { pasteModeSignal } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -1047,19 +1047,29 @@ function createSessionManager(deps) {
           // the spawn on proxy-up — a hiccup must never stop a session starting. The one
           // case that feels it: an agent that has real MCPs AND spawns in the ms-window
           // the proxy is down AND isn't restarted for a while. A comment, not a code path.
+          //
+          // t45 made this LEGIBLE without changing WHEN it fires. The decision
+          // and its reason now come from one function (proxy-util.strictMcpReason)
+          // so the log can never disagree with the argv: null = the wire strips,
+          // no flag and no log line (a signal on the healthy path is one people
+          // learn to ignore); any other value = the flag, plus one IPC-log line
+          // naming which of the three reasons it was. The reasons are kept apart
+          // because their remedies differ.
           if (getUiSettings().get().disableClaudeDesignMcp
               && !args.includes('--strict-mcp-config')
               && !args.includes('--mcp-config')) {
-            let wireStripsDesign = false;
+            let probe = null;
             if (proxyBase) {
-              try {
-                const probe = await ProxyClient.probe(proxyBase);
-                const servers = probe && probe.capabilities && probe.capabilities.strip_mcp
-                  && probe.capabilities.strip_mcp.servers;
-                wireStripsDesign = Array.isArray(servers) && servers.includes('claude_design');
-              } catch {}
+              try { probe = await ProxyClient.probe(proxyBase); } catch {}
             }
-            if (!wireStripsDesign) args.push('--strict-mcp-config');
+            const reason = strictMcpReason(proxyBase, probe);
+            if (reason) {
+              args.push('--strict-mcp-config');
+              this._broadcast('ipc-message', {
+                type: 'system', from: name, to: name,
+                body: `MCP: --strict-mcp-config (${reason}) — ${STRICT_MCP_EXPLANATION[reason]}. All MCP servers are disabled for this session.`,
+              });
+            }
           }
           // clodex-managed custom subagents: a session-only, priority-2 overlay
           // (above project/user .claude/agents) read from the ~/.clodex/agents

@@ -52,6 +52,62 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
+// ---------------------------------------------------------------------------
+// Why a spawn falls back to `--strict-mcp-config` (t45).
+//
+// The `disableClaudeDesignMcp` setting sheds the auto-injected claude.ai
+// `claude_design` connector (~4k tok/turn). The PRIMARY mechanism is surgical
+// and lives on the wire: a strip-capable wirescope removes only that server's
+// tool family and keeps every real project/user MCP. `--strict-mcp-config` is
+// the FALLBACK, and it is all-or-nothing — the CLI's own help says it uses
+// "Only … MCP servers from --mcp-config, ignoring all other MCP
+// configurations", and Clodex passes it with no --mcp-config, i.e. the empty
+// set. So on the fallback path a user's real MCP servers go too.
+//
+// That trade is documented in the preferences hint for the UNROUTED case. What
+// was invisible until now: a ROUTED session also takes the fallback when the
+// wire is too old to advertise strip_mcp, or when the probe fails at the spawn
+// instant. The user reads "routed = handled by the proxy" and is, in those two
+// cases, wrong — with nothing anywhere saying so.
+//
+// This function is the single source of BOTH the decision and its reason, so
+// the log can never disagree with what actually happened. Returns null when the
+// wire will do the surgical strip (no fallback, and deliberately NO log line —
+// a signal that fires on the healthy path is one people learn to ignore), else
+// the reason the fallback is being taken. The three reasons are kept apart
+// because their remedies differ; collapsing them would repeat this ticket's own
+// bug one level up.
+//
+//   'unrouted'     no proxy at all — the documented, expected case
+//   'wire-no-strip' routed, but the wire advertises no strip_mcp for
+//                  claude_design (too old, or a strip-off/kill-switch port).
+//                  Remedy: deploy a newer wire / use a stripping port.
+//   'probe-failed' routed, but /_identity did not answer as a recognized
+//                  wirescope at the spawn instant. Transient by nature (this is
+//                  the fail-open path: a proxy hiccup must never block a spawn).
+//                  Remedy: restart the session. Note this also covers "something
+//                  else is listening on that port", which wants the same look.
+//
+// `probe` is ProxyClient.probe()'s resolved value — null when unreachable or
+// unrecognized; the caller owns the try/catch, so a throw arrives here as null.
+function strictMcpReason(proxyBase, probe) {
+  if (!proxyBase) return 'unrouted';
+  if (!probe) return 'probe-failed';
+  const servers = probe.capabilities && probe.capabilities.strip_mcp
+    && probe.capabilities.strip_mcp.servers;
+  if (Array.isArray(servers) && servers.includes('claude_design')) return null;
+  return 'wire-no-strip';
+}
+
+// One line of user-facing prose per reason, for the IPC-log broadcast. Kept
+// beside the reasons so a new reason cannot be added without one, and each
+// carries its own remedy — the whole point of not collapsing them.
+const STRICT_MCP_EXPLANATION = {
+  'unrouted': 'session is not routed through a wirescope',
+  'wire-no-strip': 'the wire does not strip claude_design — deploy a newer wirescope, or use a stripping port',
+  'probe-failed': 'the wire did not answer at spawn — restart the session to retry',
+};
+
 // A managed sandbox box publishes its wirescope on a host-reachable loopback port
 // and advertises it via CLODEX_WIRESCOPE_PUBLIC_URL. peerProxyView strips
 // base/sessionId for a generic peer — its proxyBase is on the OWNER's loopback,
@@ -547,7 +603,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  boxWirescopeView,
+  boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,
   versionSeverity, updateApplies, releaseAgeInfo,

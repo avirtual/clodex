@@ -5746,7 +5746,7 @@ body {
       </section>
       <section>
         <h4>Claude MCP</h4>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. When a session is routed through a strip-capable proxy, the proxy already removes just those tools and keeps your real MCPs — nothing to do here. This fallback is for <em>unrouted</em> sessions only and uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. Leave it off unless your unrouted agents use no MCP. Applied at spawn — restart a session to pick up changes.</p>
+        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is too old to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP. Applied at spawn — restart a session to pick up changes.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-disable-design-mcp" style="margin: 0;">
           <span>Disable all MCP on unrouted sessions (<code>--strict-mcp-config</code>)</span>
@@ -17429,6 +17429,18 @@ ${i3.join("\n")}
         const pool = live.length ? live : candidates;
         return pool.reduce((a, b) => (b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a);
       }
+      function strictMcpReason(proxyBase, probe) {
+        if (!proxyBase) return "unrouted";
+        if (!probe) return "probe-failed";
+        const servers = probe.capabilities && probe.capabilities.strip_mcp && probe.capabilities.strip_mcp.servers;
+        if (Array.isArray(servers) && servers.includes("claude_design")) return null;
+        return "wire-no-strip";
+      }
+      var STRICT_MCP_EXPLANATION = {
+        "unrouted": "session is not routed through a wirescope",
+        "wire-no-strip": "the wire does not strip claude_design \u2014 deploy a newer wirescope, or use a stripping port",
+        "probe-failed": "the wire did not answer at spawn \u2014 restart the session to retry"
+      };
       function boxWirescopeView(p, publicUrl) {
         const base = (publicUrl || "").trim().replace(/\/+$/, "");
         if (!base || !p || !p.base || !p.sessionId) return null;
@@ -17726,6 +17738,8 @@ ${i3.join("\n")}
         shapeProxyRecord,
         shapeSubagent,
         boxWirescopeView,
+        strictMcpReason,
+        STRICT_MCP_EXPLANATION,
         AUTO_COMPACT,
         headroomBand,
         shouldAutoCompact,
