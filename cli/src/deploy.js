@@ -380,7 +380,11 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
   // save it so `clodexctl web <ctx>` tunnels to the right remote port.
   const webPort = port + 1;
-  store.contexts[ctxName] = { ssh: dest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), webPort };
+  // `deploy` (t54): which flavor made this node. NOT inferable from the
+  // transport — a remote `deploy docker` saves the same `{ssh: user@host}`
+  // shape this line does, so without the field an `upgrade <ctx>` would have to
+  // guess between re-running an installer and pulling a new container image.
+  store.contexts[ctxName] = { ssh: dest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), webPort, deploy: { flavor: 'ssh', host: dest } };
   if (!store.current) store.current = ctxName;
   contexts.save(store, io.contextsFile);
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName, webPort });
@@ -595,9 +599,18 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
     return;
   }
+  // `deploy` (t54): flavor + the CONTAINER name, which is the identifying name
+  // an upgrade needs and is nowhere else in the entry — the ctx is named
+  // `<name>` but the container is `clodexctl-<name>`, and today that prefix is
+  // re-derived by string surgery at teardown. `dockerHost` is the daemon to
+  // address (absent for a local deploy), stored as the normalized DOCKER_HOST
+  // rather than the ssh dest because a tcp:// daemon has no ssh dest at all.
+  // The remote arm's TRANSPORT is byte-identical to the ssh flavor's entry
+  // above — which is exactly why the flavor is stored rather than sniffed.
+  const dep = { flavor: 'docker', container: CONTAINER_PREFIX + name, ...(dockerHost ? { dockerHost } : {}) };
   const entry = sshDest
-    ? { ssh: sshDest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}) }
-    : { url: `http://127.0.0.1:${port}` };
+    ? { ssh: sshDest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), deploy: dep }
+    : { url: `http://127.0.0.1:${port}`, deploy: dep };
   store.contexts[name] = entry;
   if (!store.current) store.current = name;
   contexts.save(store, io.contextsFile);
@@ -1210,7 +1223,13 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
   // save it so `clodexctl web <ctx>` tunnels to the right remote port.
   const webPort = port + 1;
-  store.contexts[name] = { ...entry, webPort, token };
+  // `deploy` (t54): flavor + the SSM identity. `target`/`region`/`profile`
+  // duplicate the ssm transport object on purpose — the transport is how you
+  // REACH the node, `deploy` is how it was BUILT, and the two are only equal
+  // for this flavor by coincidence (fargate's ssm transport points at an ECS
+  // task while its deploy identity is a CF stack). Reading the flavor's own
+  // record keeps a consumer off the "which kind is it this time" branch.
+  store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
   if (!store.current) store.current = name;
   contexts.save(store, io.contextsFile);
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
@@ -1256,7 +1275,15 @@ function helmChartPath() {
 // are fine; values never are). --wait rides the chart's readiness probe (curl
 // 200|401 in-pod), so a green exit already means the wire answered inside the
 // pod; the laptop-side verify then proves port-forward + token end-to-end.
-function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [] } = {}) {
+// `carriedValuesFile` is the operator's PRIOR user-supplied values, read back
+// off the live release and re-applied (see carryForward below). It must be the
+// FIRST --values: helm merges values files left-to-right, later wins, so a
+// carried value placed after the operator's own -f would beat a file passed on
+// THIS run — precedence inverted. --set beats every file regardless of argv
+// position (helm applies sets after all files), so this-run --set needs no
+// ordering care. Both merge rules verified against helm v4.1.0 with
+// `helm template`, not assumed from the docs.
+function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [], carriedValuesFile = null } = {}) {
   return [
     'helm', 'upgrade', '--install', name, chart,
     '--namespace', namespace,
@@ -1265,6 +1292,7 @@ function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_P
     ...(oauthTokenFile ? ['--set-file', `secrets.oauthToken=${oauthTokenFile}`] : []),
     ...(port !== DEFAULT_PORT ? ['--set', `wirePort=${port}`] : []),
     ...sets.flatMap((s) => ['--set', s]),
+    ...(carriedValuesFile ? ['--values', carriedValuesFile] : []),
     ...valuesFiles.flatMap((f) => ['--values', f]),
     '--wait', '--timeout', HELM_TIMEOUT,
   ];
@@ -1285,6 +1313,57 @@ function releaseSecretArgs({ name, namespace, kubeContext = null, key = 'wire-to
   return ['kubectl', ...(kubeContext ? ['--context', kubeContext] : []),
     '-n', namespace, 'get', 'secret', `${name}-secrets`,
     '-o', `jsonpath={.data.${key}}`];
+}
+
+// `helm get values <name> -o json` — the operator's PRIOR overrides. Pure.
+//
+// NO `-a`. `-a/--all` dumps the COMPUTED value set (chart defaults merged in),
+// and re-applying that as an override would freeze every chart default at the
+// values of the day this release was last touched — including image.tag, which
+// t53 just made the authoritative version pin. Plain `get values` returns
+// user-supplied overrides ONLY, which is exactly the set an operator expects to
+// keep across a re-run.
+function helmGetValuesArgs({ name, namespace, kubeContext = null } = {}) {
+  return ['helm', 'get', 'values', name, '--namespace', namespace,
+    ...(kubeContext ? ['--kube-context', kubeContext] : []), '-o', 'json'];
+}
+
+// Keys never carried forward, whatever the prior release holds.
+//
+// `secrets.*` is here because --set-file makes the wire/oauth token part of the
+// release's user-supplied values — so `helm get values` hands the token VALUE
+// straight back. Carrying it would put a token in a file we then LOG the keys
+// of, and this verb's binding rule is that the token value never enters argv,
+// markers, logs or errors. It would also create a second source for a value the
+// Secret read-back above already owns: that path is authoritative, and two
+// sources for one secret is how a rotation silently half-lands.
+const HELM_NEVER_CARRY = ['secrets'];
+
+// Parse `helm get values -o json` into the set we will re-apply, minus the
+// never-carry keys. Returns { values, carried, dropped } — `carried`/`dropped`
+// are top-level key NAMES, for the log line.
+//
+// An override-free release renders as the JSON literal `null`, and a release
+// helm has never been given values for can render as empty stdout; both mean
+// "nothing to carry", not "parse failure". Anything else that fails to parse is
+// a real error and is thrown — see the call site for why a silent fallback here
+// would rebuild the exact defect this replaces.
+function parseCarriedValues(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s === 'null') return { values: {}, carried: [], dropped: [] };
+  let obj;
+  try { obj = JSON.parse(s); }
+  catch (e) { throw new CliError(EXIT.SERVER, `could not parse the release's prior values as JSON (${e.message}) — refusing to re-run, because deploying without them would silently revert your overrides`); }
+  if (obj === null) return { values: {}, carried: [], dropped: [] };
+  if (typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new CliError(EXIT.SERVER, `the release's prior values are not a JSON object (got ${Array.isArray(obj) ? 'an array' : typeof obj}) — refusing to re-run rather than silently revert your overrides`);
+  }
+  const values = {}; const carried = []; const dropped = [];
+  for (const k of Object.keys(obj)) {
+    if (HELM_NEVER_CARRY.includes(k)) { dropped.push(k); continue; }
+    values[k] = obj[k]; carried.push(k);
+  }
+  return { values, carried, dropped };
 }
 
 // Run a vendor CLI (helm/kubectl) argv through the injectable execFn — the
@@ -1329,7 +1408,12 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   }
   const namespace = flags.namespace ? String(flags.namespace) : DEFAULT_HELM_NAMESPACE;
   if (!K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label (lowercase letters/digits/hyphens, max 63 chars)`);
-  const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
+  // `port` starts as "this run's flag, else the default" and may be REPLACED by
+  // a carried-forward wirePort further down — hence `let` plus the explicit
+  // "was it flagged" bit, which is the only thing that can distinguish "the
+  // operator asked for 7900" from "nobody said". See the precedence block.
+  const portFlagged = flags.port != null;
+  let port = portFlagged ? parsePortOr(flags.port) : DEFAULT_PORT;
   const chart = flags.chart ? String(flags.chart) : helmChartPath();
   // Only the PACKAGED default is existence-checked (it must ship with us); an
   // operator --chart passes through untouched — helm resolves repo/oci refs.
@@ -1350,11 +1434,13 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   // below — we record a webPort only when there's a web port to reach. (A
   // web.enabled override via --values file is not tracked here; --set is the
   // documented way and the only one the CLI can see without rendering.)
-  let webEnabled = true;
+  // `null` = this run said nothing, so a carried-forward value may speak.
+  let webEnabledFlag = null;
   for (const s of sets) {
     const m = /^web\.enabled=(.*)$/.exec(s);
-    if (m) webEnabled = !/^(false|0|no)$/i.test(m[1].trim());
+    if (m) webEnabledFlag = !/^(false|0|no)$/i.test(m[1].trim());
   }
+  let webEnabled = webEnabledFlag == null ? true : webEnabledFlag;
   const valuesFiles = Array.isArray(flags.values) ? flags.values.map(String) : (flags.values ? [String(flags.values)] : []);
   // Claude auth (optional): read + validate the token NOW (fail fast before any
   // cluster call). The EXTRACTED value is re-staged into its own 0600 tempfile
@@ -1382,7 +1468,11 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   // written, and the claude token is noted by PRESENCE only.
   if (flags['dry-run']) {
     const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles });
-    const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), token: '<minted-or-reused>' };
+    // kubeContext is only resolved for real in the preflight below (it may come
+    // from `kubectl config current-context`), so the dry-run preview carries the
+    // flag or null — the same honesty the kubectl.context field above already
+    // has, rather than a guess at what the cluster would have answered.
+    const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), token: '<minted-or-reused>', deploy: { flavor: 'helm', release: name, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null } };
     if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : name, ctxEntry }); return; }
     printer.line([
       `dry-run — would deploy release "${name}" from the helm chart:`,
@@ -1394,6 +1484,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       `  helm       ${argvPreview.join(' ')}`,
       flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (kubectl svc/${name} -n ${namespace}, token from the release Secret)`,
       '  (an existing release would be UPGRADED in place, reusing its wire token; its claude oauth token is carried forward unless --claude-token-file replaces it)',
+      '  (its prior --set/--values overrides are also carried forward and re-applied — a flag on this run beats a carried value; the cluster is not touched on --dry-run, so they cannot be listed here)',
     ].filter(Boolean).join('\n'));
     return;
   }
@@ -1479,12 +1570,91 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   }
   okm('token');
 
+  // 2b. CARRY FORWARD the operator's prior overrides (t54).
+  //
+  // Until this existed, `deploy helm <name>` on a live release built a fresh
+  // value set from this run's flags alone, so every non-token override the
+  // operator had ever set — a pinned image.tag, a storageClassName, a
+  // resources bump — silently fell back to the chart default. Tokens were the
+  // one exception, carried by hand above; everything else reverted.
+  //
+  // NOT `--reuse-values`. It reuses the prior release's values AND ignores new
+  // chart defaults — helm ships `--reset-then-reuse-values` precisely because
+  // of that, which is the proof rather than the workaround (it needs helm
+  // 3.14+, and we do not control the operator's helm). t53 made the chart's
+  // image.tag the authoritative version pin, so `--reuse-values` would freeze
+  // every upgrade at the tag of the day the release was last touched: the same
+  // revert we are fixing, arriving by the other door.
+  //
+  // So: read the USER-SUPPLIED set back (`helm get values`, no -a) and
+  // re-apply it explicitly. It works on any helm 3, it is INSPECTABLE — which
+  // is why we can name the carried keys in the log, and a silent carry-forward
+  // would be the same class of invisible behaviour as the silent revert — and
+  // it is the read-back-and-re-apply shape the token carry-forward twenty
+  // lines above already uses, so it is the local idiom rather than a new one.
+  //
+  // Precedence, and every layer below is enforced somewhere concrete:
+  //   chart defaults  <  carried-forward prior values  <  this run's flags
+  // An explicit operator pin therefore SURVIVES a re-run: --set image.tag=4.5.0
+  // stays 4.5.0 even after the chart default moves to 4.6.0. That is what
+  // pinning means; the `upgrade` verb's explicit --tag is what moves it later.
+  let carriedValues = null;
+  if (releaseExists) {
+    let rawValues;
+    try {
+      rawValues = await runVendor(execFn, helmGetValuesArgs({ name, namespace, kubeContext }), 'get values', EXIT.SERVER);
+    } catch (e) {
+      // HARD failure, deliberately. `helm get values` failing right after
+      // `helm status` succeeded is anomalous, and the only other branch is
+      // "proceed with no carried values" — i.e. perform the exact silent
+      // revert this block exists to prevent, at the moment we have the most
+      // evidence something is wrong. Same reasoning as the wire-token
+      // read-back above, which hard-errors rather than mint a fresh token.
+      throw new CliError(EXIT.SERVER, `release "${name}" exists but its prior values could not be read (${e.message}) — refusing to continue, because upgrading without them would silently revert every override you set`);
+    }
+    const parsed = parseCarriedValues(rawValues);
+    carriedValues = parsed.values;
+    if (parsed.carried.length) log(`carrying forward your prior values: ${parsed.carried.join(', ')} (re-applied under this run's flags)`);
+    else log('no prior values to carry forward (the release has no operator overrides)');
+    if (parsed.dropped.length) log(`not carried (owned by the release Secret, never re-applied from values): ${parsed.dropped.join(', ')}`);
+
+    // The two values this verb DERIVES from the run's flags must obey the same
+    // precedence, or the carry-forward creates a fresh inconsistency where the
+    // silent revert used to keep release and ctx accidentally in step:
+    //  - wirePort: carried, so the release keeps serving 8100; without this the
+    //    ctx would be saved with no remotePort and the transport would
+    //    port-forward to 7900, a port the release does not listen on.
+    //  - web.enabled: carried, so the Service still publishes no web port;
+    //    without this the ctx would claim webPort 8080 against nothing.
+    // A flag on THIS run wins in both cases — hence the "did the flag speak"
+    // bits rather than a truthiness test on the value itself.
+    if (!portFlagged && Number.isInteger(carriedValues.wirePort)) port = carriedValues.wirePort;
+    if (webEnabledFlag == null && carriedValues.web && typeof carriedValues.web === 'object'
+        && typeof carriedValues.web.enabled === 'boolean') {
+      webEnabled = carriedValues.web.enabled;
+    }
+  }
+
   // 3+4. stage token FILES (0600, cleaned in a finally) and run helm. Only
   //      paths enter argv; helm's --set-file reads the values client-side.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-'));
   try {
     const wireTokenFile = path.join(tmpDir, 'wire-token');
     fs.writeFileSync(wireTokenFile, token, { mode: 0o600 });
+    // The carried set rides a tempfile in the SAME 0600 dir as the tokens and
+    // is removed by the same finally. It holds no secret (secrets.* is dropped
+    // in parseCarriedValues), but a values file we wrote is still an artifact
+    // of the operator's cluster, and one cleanup path is easier to keep right
+    // than two.
+    let carriedValuesFile = null;
+    if (carriedValues && Object.keys(carriedValues).length) {
+      carriedValuesFile = path.join(tmpDir, 'carried-values.json');
+      // JSON, not YAML: helm parses values files as YAML, and YAML is a JSON
+      // superset — so writing JSON gets us a correct serializer out of the
+      // stdlib instead of a hand-rolled YAML emitter that would have to get
+      // quoting, multiline strings and nested maps right.
+      fs.writeFileSync(carriedValuesFile, JSON.stringify(carriedValues, null, 2), { mode: 0o600 });
+    }
     let oauthTokenFile = null;
     const oauthToStage = claudeToken || reusedOauth;   // fresh flag wins; else preserve
     if (oauthToStage) {
@@ -1492,7 +1662,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       fs.writeFileSync(oauthTokenFile, oauthToStage, { mode: 0o600 });
       if (claudeToken) log('claude token staged (0600 tempfile → --set-file, redacted)');
     }
-    const argv = helmArgv({ name, chart, namespace, kubeContext, port, wireTokenFile, oauthTokenFile, sets, valuesFiles });
+    const argv = helmArgv({ name, chart, namespace, kubeContext, port, wireTokenFile, oauthTokenFile, sets, valuesFiles, carriedValuesFile });
     step('helm');
     try {
       await runVendor(execFn, argv, 'upgrade --install', EXIT.SERVER);
@@ -1520,6 +1690,11 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     // chart's web is disabled (--set web.enabled=false): no port to reach.
     ...(webEnabled ? { webPort: CONTAINER_WEB_PORT } : {}),
     token,
+    // `deploy` (t54): flavor + the three names a helm upgrade must address the
+    // release by. `release` is the same string as the ctx name TODAY, and is
+    // stored anyway — the identity a re-run needs must not depend on the ctx
+    // key staying equal to it (a rename would silently retarget the upgrade).
+    deploy: { flavor: 'helm', release: name, namespace, kubeContext },
   };
   let ctxSaved = false;   // the verify-failure hint must not claim a save that was skipped
   if (flags['no-ctx']) {
@@ -2006,6 +2181,12 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     // `clodexctl web <ctx>` lands on 8080. Without this it fell back to 7901.
     webPort: CONTAINER_WEB_PORT,
     token,
+    // `deploy` (t54): flavor + the CloudFormation identity. The stack name is
+    // what an upgrade re-deploys, and it is NOT the ssm target above — that
+    // points at the ECS task family this stack happens to run. Recovering the
+    // stack from the transport means splitting `<cluster>/<stack>-node` on a
+    // suffix, which is precisely the archaeology this field retires.
+    deploy: { flavor: 'fargate', stack: stackName, ...(effectiveRegion ? { region: effectiveRegion } : {}), ...(profile ? { profile } : {}) },
   };
   let ctxSaved = false;
   if (flags['no-ctx']) {
@@ -2068,6 +2249,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
+  helmGetValuesArgs, parseCarriedValues, HELM_NEVER_CARRY,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
   fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs, fargateConfigureGetRegionArgs,
   fargatePutOauthArgs, fargateGetWireTokenArgs, fargateStackOutputsArgs, parseStackOutputs, fargatePollHello, deployFargateVerb,
