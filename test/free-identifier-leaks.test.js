@@ -107,6 +107,10 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',
   'renderer/lib/env-edit.js',
+  // The MCP roster fold (t46). A pure leaf like the rest of lib/, read by
+  // context-popover (DOM-bound, untested), so the cheap guard that it never
+  // reaches for a renderer.js name is worth having.
+  'renderer/lib/mcp-group.js',
   // The peer web-view affordance decision (t30b). A pure leaf rather than an
   // extraction, but it is read BY peers-ui (which is DOM-bound and untested), so
   // the cheap guard that it never reaches for a renderer.js name is worth having.
