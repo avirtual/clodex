@@ -170,11 +170,17 @@ Verified rather than assumed:
 - **`/clear` correction accepted.** Boundaries: fresh session,
   `[agent:context reload]`, `restartSession({fresh:true})`.
 - **Bounce finding closes the asymmetric-risk question**; no follow-up ticket.
-  Recorded for a later change to either side: **the delta is the fast path, the
-  bounce is the floor.** An agent emitting a verb documented only in its stale
-  frozen prompt is told by the running system that it is gone — the delta makes
-  that fast, it is not what makes it safe. Changing either should know the
-  other exists.
+  Recorded for a later change to either side.
+
+  > **CORRECTED IN t63 — this was an overclaim.** It was written as "the delta
+  > is the fast path, the bounce is the floor", which reads as full coverage and
+  > is what let three gaps through cold review. The bounce is a floor for
+  > **DELETIONS ONLY**, and only for verbs the agent actually TRIES. It covers
+  > nothing about a capability ADDED since the freeze (never learned → never
+  > attempted → never bounced), an unchanged verb name whose SEMANTICS changed
+  > (still accepted, wrongly), or changed prose in the team/role block. For
+  > everything except a deletion the agent happens to attempt, **the delta is
+  > the only path, not the fast one.**
 
 ### The ENTER question for the central pin (clodex, carried into phase 5)
 
@@ -294,12 +300,16 @@ No `npm run build:web` needed — nothing bundled into the renderer changed.
    into the spec. The three real ones are fresh create, `[agent:context reload]`,
    `restartSession({fresh:true})`, and all three are exactly `resumeId == null`,
    so `!!resumeId` is the whole predicate. No new state to keep in sync.
-3. **The delta is the fast path; the bounce is the floor.** An agent emitting a
-   verb documented only in its stale frozen prompt is already told by the
-   running system that it is gone (unknown → `unrecognized intent bounced`,
-   :2906; gated → `the <type> intent is disabled for this session`, :2926-2941).
-   No follow-up ticket. Recorded here so a later change to either side knows the
-   other exists.
+3. **The bounce is a floor for DELETIONS ONLY** (corrected in t63 — this flag
+   originally read "the delta is the fast path; the bounce is the floor", which
+   overclaims). An agent emitting a *removed* verb it still sees in its stale
+   frozen prompt is told by the running system that it is gone (unknown →
+   `unrecognized intent bounced`, :2906; gated → `the <type> intent is disabled
+   for this session`, :2926-2941) — but only for verbs it actually TRIES. Nothing
+   bounces for a capability ADDED since the freeze, for an unchanged verb name
+   whose semantics changed, or for changed team/role prose. For all of those the
+   delta is the ONLY mechanism. No follow-up ticket; recorded so a later change
+   to either side knows the real division of labour.
 4. **Delivery is at-least-once, not exactly-once, and deliberately so.** A crash
    between the emit and the rename re-delivers the same diff next turn. Stated
    plainly rather than papered over, per the ticket: a repeated diff is noise, a

@@ -48,7 +48,14 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   // the same pendingScriptPath the UserPromptSubmit block's middle hook uses.
   assert.ok(Array.isArray(settings.hooks.PostToolUse));
   const postCmds = settings.hooks.PostToolUse[0].hooks.map((h) => h.command);
-  const pendingCmd = settings.hooks.UserPromptSubmit[0].hooks[1].command; // acks, PENDING, ctxwarn
+  // Resolved BY NAME, not by index: this assertion is about which drain runs
+  // per-tool, and the UserPromptSubmit ordering is a separate decision pinned in
+  // ipc-prompt-cache-rework.test.js (the delta goes first). An index here silently
+  // couples the two, which is how a deliberate reorder broke a test that has no
+  // opinion about order.
+  const submitCmds = settings.hooks.UserPromptSubmit[0].hooks.map((h) => h.command);
+  const pendingCmd = submitCmds.find((c) => c.endsWith('pending.sh'));
+  assert.ok(pendingCmd, 'the pending drain must be registered under UserPromptSubmit');
   assert.deepStrictEqual(postCmds, [pendingCmd], 'PostToolUse must drain pending only');
   assert.match(pendingCmd, /pending/); // the pending drain script, not acks/ctxwarn
 

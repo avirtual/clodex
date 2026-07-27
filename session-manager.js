@@ -823,7 +823,16 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null) {
+    // `mint` is the mint-vs-restore axis (see nameConflict's header): true only on
+    // the front door (spawnFromParams and the other deliberate NEW-session
+    // callers), false on every restore path — restore-on-launch, unarchive→retry,
+    // restart/reload. It is NOT resumeId, which an "adopt" mint carries and a
+    // sessionId-less persisted entry lacks. Only the frozen-prompt cache reads it
+    // (a mint must never inherit a dead session's baseline), so it is defaulted
+    // false: a caller that forgets it gets the SAFE direction — a spurious freeze
+    // is a stale prompt the delta channel repairs, a spurious regenerate is the
+    // token bust itself.
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1025,9 +1034,15 @@ function createSessionManager(deps) {
             if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
             else intentSource = 'wire';
           }
+          // Whether OUR hooks are installed at all. A user-supplied --settings in
+          // extraArgs replaces the whole hooks block, so ipcdelta.sh (and every
+          // other drain) is absent for that session — which is load-bearing for
+          // the frozen prompt below, not just cosmetic.
+          let hookInstalled = false;
           if (!args.includes('--settings')) {
             const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase);
             args.push('--settings', settingsPath);
+            hookInstalled = true;
           }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
@@ -1139,10 +1154,36 @@ function createSessionManager(deps) {
           // is what changed the system prompt under continuing conversations and
           // cost 111k-139k tokens a time. A resume re-bakes the bytes this
           // conversation was BORN with and stages any change as a diff for the
-          // ipcdelta drain; a genuine boundary (fresh session, [agent:context
-          // reload], restartSession({fresh:true}) — all of which pass resumeId
-          // null) regenerates, which is free because nothing is cached yet.
-          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, !!resumeId);
+          // ipcdelta drain; a genuine boundary regenerates, which is free because
+          // the conversation is new anyway.
+          //
+          // Three conditions, and every one of them is a bug that shipped:
+          //   resumeId    — there is a conversation to protect at all.
+          //   !mint       — a MINT regenerates even when it carries a resumeId (an
+          //                 "adopt"), because reusing a same-named dead session's
+          //                 frozen bytes would bake a stranger's prompt. This is
+          //                 the mint-vs-restore axis (nameConflict's header), and
+          //                 it replaces the _cleanup rm that used to enforce the
+          //                 same thing destructively — and wrongly, since restart
+          //                 routes through kill() too.
+          //   hookInstalled — NO FREEZE WITHOUT A CHANNEL. A user --settings means
+          //                 ipcdelta.sh was never installed, so a staged delta can
+          //                 never be delivered; freezing there is permanent silent
+          //                 staleness, strictly worse than the rewrite this module
+          //                 exists to avoid. Regenerating is the honest fallback:
+          //                 the session pays the bust once and is CORRECT.
+          if (resumeId && !mint && !hookInstalled) {
+            warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
+          }
+          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, !!resumeId && !mint && hookInstalled);
+          // ensureDir here so the write never depends on hook-setup ordering
+          // having created the dir first — the same invariant, and the same
+          // idiom, as the socket bind's ensureDir below. It is load-bearing on
+          // exactly the path this block is about: run/<name>/ is created as a
+          // side effect of setupClaudeHook, which is SKIPPED when the caller
+          // supplies its own --settings, so without this a --settings session
+          // ENOENTs here and cannot spawn at all.
+          ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
           break;
@@ -2292,14 +2333,21 @@ function createSessionManager(deps) {
       // dir left by a never-recreated session is harmless residue. Best-effort.
       if (s._userKilled) {
         try { fs.rmSync(path.join(PENDING_DIR, name), { recursive: true, force: true }); } catch {}
-        // Same gate, same reason, for the frozen system prompt (ipc-prompt-cache.js).
-        // The whole point of promptcache/ is to outlive the run dir, which is
-        // rm -rf'd on every exit — so it must NOT be dropped on a restart or quit.
-        // A user-kill IS final, though, and a stale cache left behind for a name
-        // that gets recreated later would diff the new session against a dead
-        // baseline. Best-effort, like the pending rm above.
-        try { fs.rmSync(promptCacheDir(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
       }
+      // The frozen system prompt (ipc-prompt-cache.js) is deliberately NOT dropped
+      // here, under any gate. _userKilled is not the "going away for good" signal
+      // it reads as: restart routes through kill() too (see the onExit comment
+      // above — "kill() → _userKilled, which restart also routes through"), so
+      // gating the rm on it deleted the cache on an ordinary restart, and the
+      // create() that followed carried a non-null resumeId into an empty cache —
+      // a full prompt rewrite under a --resume'd conversation, i.e. exactly the
+      // 111k-139k bust this module exists to stop, on the button labelled
+      // "restart". The stale-cache hazard the rm was added for is handled at the
+      // read end instead: a MINT regenerates unconditionally (see the `mint`
+      // param on create()), so a name recreated at the front door never diffs
+      // against the dead session's baseline — including an "adopt" mint, which
+      // carries a resumeId but is still a mint. Residue for a never-recreated
+      // name is four small texts and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
       if (s.watcher) s.watcher.stop();
       if (s.fileHeat) { try { s.fileHeat.close(); } catch {} } // flush pending heat
@@ -4073,6 +4121,11 @@ function createSessionManager(deps) {
             // template) can't self-grant the capability — only an operator's local
             // GUI create/edit may. null passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
+            // sessionEnv, then mint=true: an agent-initiated spawn is a NEW seat, so
+            // the frozen-prompt cache regenerates rather than inheriting a same-named
+            // dead session's baseline. resumeId is null here too, so this changes
+            // nothing today — it keeps the axis honest if that ever stops being true.
+            null, true,
           );
           // stripLevel + autoCompact are NOT create() params — the poller asserts
           // strip on relink and reads autoCompact from persistence. Apply post-
@@ -4348,7 +4401,10 @@ function createSessionManager(deps) {
           await this.create(
             name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
             null, false, session.proxy ?? null, [], [], disabledTools, [], [],
-            reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv,
+            // mint=true: an ephemeral reviewer seat is always brand new, and its
+            // monotonic name (team-reviewer-1, -2, …) is exactly the recycled-name
+            // case the frozen cache must not inherit a baseline across.
+            reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
           );
           // wirescope spawner-hint suppression (T51): tell the proxy to drop its
           // spawner-hint block from THIS seat's system prompt. Keyed by the seat's
