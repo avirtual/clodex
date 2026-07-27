@@ -130,13 +130,26 @@ test('validateEntry: a deploy record is accepted, and is OPTIONAL (old ctxs need
   // person justifies exporting it in product code.
 });
 
-test('validateDeploy: the flavor enum is CHECKED on read, and a missing flavor is named', () => {
-  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { flavor: 'kubernetes' } }),
-    /unknown deploy flavor "kubernetes" — expected one of ssh, docker, ssm, helm, fargate/,
-    'an off-enum flavor must be REJECTED on read — a flavor nothing can route is one we must refuse to carry, not pass along for a consumer to trip over');
+test('validateDeploy: an UNKNOWN flavor is carried, not rejected (t55) — but a malformed one is', () => {
+  // t55 reversed t54's enum check, on blast radius. validateEntry gates EVERY
+  // verb, so rejecting a flavor string this build doesn't know would make a
+  // context written by a NEWER clodexctl unusable for `sessions`, `web`,
+  // `ctx test` — against a node that is up and whose TRANSPORT this build
+  // understands perfectly. A working context killed by an advisory field only
+  // one verb reads. The refusal belongs at `upgrade` (which does dispatch on
+  // it), and cli/test/upgrade.test.js pins that it happens there.
+  assert.doesNotThrow(() => C.validateEntry({ ssh: 'h', deploy: { flavor: 'kubernetes' } }),
+    'a flavor this build cannot route must still be STORED and carried — refusing it here would take down every verb that never reads the field, against a node that is perfectly reachable');
+  // SHAPE stays strict — that is the half that makes DATA-not-CODE mechanical.
   assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { release: 'n' } }),
-    /"deploy" needs a flavor/,
-    'a deploy record with no flavor at all must be rejected — the names are meaningless without the flavor that interprets them');
+    /"deploy" needs a non-empty string flavor/,
+    'a deploy record with no flavor at all must be rejected — the names are meaningless without the flavor that interprets them, so it is malformed rather than forward-compatible');
+  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { flavor: '' } }),
+    /"deploy" needs a non-empty string flavor/,
+    'an EMPTY flavor is the missing case wearing a different shape, and must be rejected the same way');
+  assert.throws(() => C.validateEntry({ ssh: 'h', deploy: { flavor: 7 } }),
+    /"deploy" needs a non-empty string flavor/,
+    'a non-string flavor must be rejected before the scalar loop accepts it as a legal number — a consumer would compare it against flavor names and silently match nothing');
   assert.throws(() => C.validateEntry({ ssh: 'h', deploy: 'helm' }),
     /"deploy" must be an object/,
     'a bare string must be rejected rather than treated as a flavor by convention');
