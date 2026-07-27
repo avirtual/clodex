@@ -236,7 +236,96 @@ code is written either way.
 
 ---
 
-# PHASE 2 (draft) — the call sites, re-derived from scratch
+# PHASE 3 — BLOCKED ON A MEASUREMENT THAT KILLS THE RULED STAMP
+
+**`createdAt` DOES NOT SURVIVE A RESTART. Measured, not read.** The rekey rests
+on it, my judgement asserted it, the ruling accepted it, and the comment at
+session-manager.js:1458 states it outright. All four are wrong.
+
+## The measurement
+
+`kill()` calls `getPersistence().remove(name)` (:1885) — the record is GONE
+before `create()` runs. `create()` then does:
+
+```js
+const existingEntry = getPersistence().get(name);          // → null after a kill
+const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
+```
+
+`_preserveAcrossRestart` is the mechanism that re-seeds fields across exactly
+this gap, and **`createdAt` is in neither call's field list**:
+
+- `engine.js:1302` → `['ephemeral', 'reviewFor']` + `rosterSentAt` unless fresh
+- `engine.js:1452` → `['rosterSentAt', 'ephemeral', 'reviewFor']`
+- `session-manager.js:5027` (context reload) → **calls it not at all**
+
+Probe (`scratchpad/probe-createdat.js`) replaying the real store's `upsert`
+(spread-merge) and `remove` (drop) semantics against create()'s own two lines:
+
+    CASE 1  first create                        createdAt = …438
+    CASE 2  restartSession (kill removes)       createdAt = …439   *** CHANGED ***
+    CASE 3  restore-on-launch (record kept)     createdAt = …439   preserved
+
+So `createdAt` is stable across the RESTORE paths and **re-minted on every
+`kill()`-based restart** — which is precisely case (a), the case the whole
+rekey exists to fix. A stamp that changes on restart fails (a) exactly as the
+`_userKilled` flag does: the mail stops matching and is dropped. **The rekey
+built on `createdAt` as it stands would reproduce the bug it is fixing, while
+looking correct.**
+
+Corroboration that this is real and not my stub: `test/session-manager.test.js:1950`
+passes `createdAt: 1` in the prior entry, requests only the other three fields,
+and never asserts createdAt survives. The existing test already encodes the
+truth.
+
+## This is a PRE-EXISTING defect, wider than t71
+
+session-manager.js:1458 says, in the codebase's own voice:
+
+> createdAt: stamped ONCE, at the session's first create. … preserve any
+> existing stamp rather than resetting it — **the sidebar's "created" sort/group
+> depends on it being stable across restarts.**
+
+The comment describes the intent correctly and the code does not implement it
+across `kill()`. Consumer confirmed: `renderer/renderer.js:524` feeds
+`createdAt` into `sidebarMeta` for the toolbar's created-sort/group. **So every
+restart silently jumps a session to "just created" in the sidebar ordering.**
+Nobody has reported it because the sort is by a value that only ever moves
+forward — it looks like activity, not corruption.
+
+Same shape as this whole ticket, for the third time: a comment states the
+invariant, and the mechanism chosen to implement it cannot deliver it.
+
+## Options (not mine to choose — the stamp is load-bearing and irreversible-ish)
+
+1. **Add `createdAt` to the preserve lists** (2 sites) and to the context-reload
+   path (which preserves nothing today). Makes the existing comment TRUE, fixes
+   the sidebar sort, and makes the ruled stamp work as designed. Small, but it
+   is a behaviour change in a file t71 did not scope, on a path used by every
+   restart.
+2. **Stamp explicitly for the mail, not reusing createdAt** — e.g. a `bornAt`
+   written by create() and preserved deliberately. Avoids coupling the mail
+   protocol to a field the sidebar also reads, at the cost of a second
+   near-identical timestamp whose lifetimes must be kept in sync by hand.
+3. **A different stable identity** — none exists today that survives restart and
+   changes on name reuse. `sessionId` fails both ways (mints on /clear, null
+   before the first turn). I looked; there is no third option lying around.
+
+**My recommendation: (1).** It is the smallest change, it makes a stated
+invariant true rather than adding a parallel one, it fixes a real user-visible
+bug for free, and option (2)'s "two timestamps that must agree" is the same
+class of construction we are removing. The risk is that a preserved `createdAt`
+is load-bearing for anything that currently benefits from it resetting — I
+checked the consumers (renderer sidebar meta, session-restore's echo,
+ipc-handlers' meta fold) and found nothing that wants a restart to look like a
+birth.
+
+**Not proceeding with the rekey until this is ruled** — the stamp is the
+foundation and picking wrong means rewriting the protocol twice.
+
+---
+
+# PHASE 2 — the call sites, re-derived from scratch
 
 Derived by grepping `\.create(` across all non-test, non-renderer JS, then
 reading the enclosing function of each hit rather than trusting any prior
