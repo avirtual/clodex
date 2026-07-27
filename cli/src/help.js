@@ -321,6 +321,33 @@ const VERB_REGISTRY = [
     ],
   },
 
+  {
+    name: 'upgrade', group: 'deploy',
+    summary: 'move an EXISTING node to a new version (routes on how it was deployed)',
+    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [--json]',
+    args: [['ctx', 'context to upgrade (else the current/--ctx context)']],
+    flags: [
+      ['--tag T', 'target version [helm/fargate] — beats the packaged pin AND a carried image.tag'],
+      ['--image URI', 'full image reference, incl. a repo@sha256:… digest [helm/fargate]'],
+      ['--force', 're-run even when already at the target; also repairs a node that is not answering [ssh/ssm]'],
+      ['--dry-run', 'print the plan and the flavor\'s own dry-run; touch nothing'],
+      ['--branch B', 'the version knob for the source-installed flavors [ssh/ssm]'],
+    ],
+    examples: [
+      'clodexctl upgrade mynode',
+      'clodexctl upgrade mynode --tag 4.6.0 --dry-run',
+      'clodexctl upgrade clodex-node --image ghcr.io/you/clodex@sha256:abc…',
+    ],
+    notes: [
+      'Routes on the context\'s STORED deploy flavor, never on its transport — an ssh deploy and a remote `deploy docker` save byte-identical entries, so sniffing would be a guess. A context written before clodexctl recorded that (or by a NEWER clodexctl, with a flavor this build cannot route) is refused by name, saying to re-run the flavor\'s own deploy; every other verb keeps working with it.',
+      'REFUSES TO CREATE: helm probes `helm status`, fargate `describe-stacks`, and the source-installed flavors treat a node that does not answer as unconfirmed (--force installs anyway). An upgrade against something that is not there is an error, not a silent install.',
+      'Reports what it is moving FROM (the node\'s live `hello.version` — never a stored guess) and TO (the version this clodexctl SHIPS, read from the packaged chart/template, unless --tag/--image overrides), and no-ops when they are equal (--force re-runs).',
+      'It delegates to the flavor\'s own deploy verb rather than reimplementing it — so a helm upgrade keeps the release\'s wire token, preserves its claude auth, and carries every prior --set/--values forward (an explicit --tag on this run still beats a carried image.tag). fargate always passes ImageUri explicitly: omitting it makes CloudFormation reuse the prior value and report SUCCESS — a silent no-op that looks like it worked.',
+      'The source-installed flavors (ssh/ssm) track a BRANCH and deploy no pinned artifact, so they have no target version and never no-op. Flags a context does not store REVERT on a re-run (--no-wirescope, --repo, --branch, --src, --ssh-opt, --claude-token-file) — they are named before anything runs, so pass them again if you set them. `deploy ssm` also MINTS A FRESH WIRE TOKEN each run: an ssm upgrade ROTATES the token, and any other holder of the old one stops being able to reach the node.',
+      'docker is deliberately NOT upgradable: a container is remove-and-recreate, and the recreate needs run arguments a context does not store (--env-file, --volume) and must not recover — reading them back from `docker inspect` would spell resolved secrets into argv. It refuses with the two-step undeploy --keep-data / deploy path instead.',
+    ],
+  },
+
   // ── plumbing ───────────────────────────────────────────────────────────
   {
     name: 'send', group: 'plumbing',

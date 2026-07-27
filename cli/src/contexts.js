@@ -64,22 +64,32 @@ const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az
 // must say what it cannot determine rather than guess.
 //
 // DATA, NOT CODE, and the shape check is what makes that mechanical rather
-// than a convention: the flavor comes from a fixed enum, and every other field
-// must be a scalar (string/number/boolean). An argv is an ARRAY and a flag blob
-// is an OBJECT, so both are rejected by the shape rule itself — there is no
-// spelling of "the command line we ran" that fits through here. That matters
-// because this file is user-editable and a persisted argv is a command line
-// the tool would later execute.
+// than a convention: every field must be a scalar (string/number/boolean). An
+// argv is an ARRAY and a flag blob is an OBJECT, so both are rejected by the
+// shape rule itself — there is no spelling of "the command line we ran" that
+// fits through here. That matters because this file is user-editable and a
+// persisted argv is a command line the tool would later execute.
+//
+// SHAPE is strict; ENUM MEMBERSHIP is not, and the split is deliberate (t55).
+// validateEntry gates EVERY verb, so rejecting a flavor string this build does
+// not recognize would make a context written by a NEWER clodexctl unusable for
+// `sessions`, `web`, `ctx test` — against a node that is up, reachable, and
+// whose TRANSPORT this build understands perfectly. That is a working context
+// killed by an advisory field only one verb reads. So an unrecognized flavor is
+// stored and carried without complaint, and `upgrade` — the verb that actually
+// needs to route on it — is what refuses, naming the flavor. The error then
+// lands where the operator can act on it.
+//
+// A flavor that is absent, empty or non-string is a different case: that record
+// is MALFORMED, not forward-compatible (the names it carries are meaningless
+// without the flavor that interprets them), so it is still rejected here.
 const DEPLOY_FLAVORS = ['ssh', 'docker', 'ssm', 'helm', 'fargate'];
 function validateDeploy(dep) {
   if (!dep || typeof dep !== 'object' || Array.isArray(dep)) {
     throw new CliError(EXIT.USAGE, 'context "deploy" must be an object (e.g. {"flavor":"helm","release":"n","namespace":"clodex"})');
   }
-  if (dep.flavor == null || String(dep.flavor) === '') {
-    throw new CliError(EXIT.USAGE, `context "deploy" needs a flavor — one of ${DEPLOY_FLAVORS.join(', ')}`);
-  }
-  if (!DEPLOY_FLAVORS.includes(dep.flavor)) {
-    throw new CliError(EXIT.USAGE, `unknown deploy flavor "${dep.flavor}" — expected one of ${DEPLOY_FLAVORS.join(', ')}; a newer clodexctl may have written it, so upgrade rather than hand-edit`);
+  if (typeof dep.flavor !== 'string' || dep.flavor === '') {
+    throw new CliError(EXIT.USAGE, `context "deploy" needs a non-empty string flavor (this build knows ${DEPLOY_FLAVORS.join(', ')}; an unknown one is stored fine, but a missing one leaves the record uninterpretable)`);
   }
   for (const k of Object.keys(dep)) {
     const v = dep[k];

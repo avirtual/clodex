@@ -15,6 +15,7 @@ const { CliError, EXIT } = require('./errors');
 const V = require('./verbs');
 const D = require('./deploy');
 const U = require('./undeploy');
+const UP = require('./upgrade');
 const { attach } = require('./attach');
 const { portForward } = require('./port-forward');
 const { web } = require('./web');
@@ -40,7 +41,7 @@ const WIRE_VERBS = {
 // WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
 // help.js's registry is pinned complete against it (help.test.js), so a new
 // verb can't ship without a help entry.
-const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'undeploy', 'port-forward', 'web'];
+const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'];
 const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
 
 async function run(argv, io = {}) {
@@ -77,6 +78,10 @@ async function run(argv, io = {}) {
     if (verb === 'args') return await dispatchArgs(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
     if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });
+    // upgrade routes on the context's STORED deploy flavor and delegates to
+    // that flavor's deploy verb, so like deploy it owns no WireClient (its own
+    // version probe opens and closes a transport itself).
+    if (verb === 'upgrade') return await UP.upgradeVerb({ printer, flags, args: rest, io });
     // port-forward holds a tunnel in the FOREGROUND and owns no WireClient, so it
     // resolves the ctx + opens the transport itself rather than routing through
     // withWire (which would open a wire-port tunnel and reap it immediately).
