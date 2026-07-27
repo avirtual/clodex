@@ -174,12 +174,31 @@ timer (which only exists when there is no child). No live path.
   the older exit then measures the WRONG lifetime.
 
 On the web side that decides two things, not one: the backoff reset *and*
-retiring the give-up deadline (`web-tunnel.js:280-283`). Mis-measuring it can
-retire the give-up clock on a box that never worked — the exact failure
-inversion 3 exists to prevent.
+retiring the give-up deadline (`web-tunnel.js:280-283`).
+
+> **CORRECTED in t51 — the stated harm was inverted.** This paragraph originally
+> read "mis-measuring it can retire the give-up clock on a box that never
+> worked". It cannot: `_bornAt` is assigned at SPAWN time, so the field only ever
+> moves forward, and a stale exit therefore reads a NEWER birth and
+> **under**-measures the lifetime. Under-measuring fails the `> stableMs` test,
+> so the reachable direction is the opposite one — the clock is NOT retired for a
+> box that did work, and the cap later fires on a tunnel that was genuinely
+> serving. Still worth fixing, and still the direction the give-up clock exists
+> to get right; the sentence naming which way it goes was simply backwards.
 
 **Which is right:** peer. **Live or latent:** LATENT, for the same reason as D1
 (it needs two overlapping children on one instance).
+
+> **CORRECTED in t51 — the closure is belt-and-braces, not load-bearing.**
+> Reverting `bornAt` to a field in the merged supervisor leaves all 71 tests
+> green, and correctly so: D3's `mine()` means only the CURRENT child's exit
+> handler runs at all, so the stale exit that would read the wrong birth never
+> reaches the measurement. D2 is subsumed by D3. Keeping the closure is right —
+> it removes the shared slot rather than guarding it, and it costs nothing — but
+> the claim that it fixes a live defect on top of `mine()` was untested and is
+> false. (t51 found the SAME reasoning does not save `_probeWake` / `_probeTimer`
+> / `_probing`, which are read from outside the callbacks `mine()` guards; see
+> `tasks/tunnel-supervisor-rework/`.)
 
 Both D1 and D2 are the same underlying hole — *a handler that assumes it still
 owns the tunnel* — and each side plugged a different half of it. Neither is
