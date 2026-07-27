@@ -1078,17 +1078,42 @@ async function fetchProxyContext(name, opts) {
   if (!snap || !snap.linked || !snap.sessionId) {
     return { ok: false, error: 'No live proxy session (unlinked)' };
   }
+  const wantUtil = !!(opts && opts.utilization);
   try {
     // utilization=1 opts into wirescope's capture-scan (tool used-counts +
     // deadweight rollup) — heavier I/O, so only requested when the popover
     // will render it (gated on the context_utilization capability).
     let q = `/_context?session=${encodeURIComponent(snap.sessionId)}`;
-    if (opts && opts.utilization) q += '&utilization=1';
-    const r = await ProxyClient._getJson(s.proxyBase, q);
+    if (wantUtil) q += '&utilization=1';
+    // The two queries behind this one endpoint are not the same weight, so they
+    // do not get the same budget. Plain /_context is a memory read: 2.5ms
+    // measured. With utilization=1 the proxy disk-scans every retained capture
+    // for the session — 10.5s measured at 18k captures / 1.5GB, for a 7.9KB
+    // response. That wall time tracks RETENTION, not context size, so the
+    // snappy default (PROXY_HTTP_TIMEOUT, 4000) reported "timeout" on a healthy
+    // proxy doing exactly what it was asked. The scan is the same class of work
+    // as /_bust, /_pot and /_prune, which all pass PROXY_REPORT_TIMEOUT.
+    //
+    // Deliberately CONDITIONAL rather than raising the endpoint's budget
+    // outright: a timeout is a liveness signal and only informs when it sits
+    // near the expected duration. At 20s a genuinely hung plain read would hold
+    // the popover five times longer before saying so, and the plain path never
+    // approaches either budget — so one constant costs failure-case clarity and
+    // buys nothing in the healthy case. Left as `undefined` on the plain path so
+    // _req stays the single owner of the default.
+    const r = await ProxyClient._getJson(s.proxyBase, q, wantUtil ? PROXY_REPORT_TIMEOUT : undefined);
     if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
     return { ok: true, data: r.json };
   } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) };
+    const msg = String((e && e.message) || e);
+    // The popover renders this string raw, and a bare "timeout" cannot be told
+    // from a dead proxy. Name the request and the budget it actually blew.
+    if (msg === 'timeout') {
+      return { ok: false, error: wantUtil
+        ? `proxy /_context utilization scan timed out after ${PROXY_REPORT_TIMEOUT}ms`
+        : 'proxy /_context timed out' };
+    }
+    return { ok: false, error: msg };
   }
 }
 
