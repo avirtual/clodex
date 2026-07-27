@@ -294,6 +294,14 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     // port is deliberately NOT passed as a flag — the carried wirePort restores
     // it, and passing a flag would make this run's silence look like a choice.
     reverts: [],
+    // --force-conflicts (t56) rides the `...flags` spread into the delegate,
+    // like every other operator flag this verb forwards — upgrade is the verb
+    // where it matters most, since the SSA conflict error names it as the
+    // remedy and an operator reaching for it has just been told to. It is
+    // pinned by test rather than restated here: a second explicit copy would be
+    // a no-op that reads as if it were load-bearing. `force` below is a
+    // different flag (overwrite the ctx entry) and IS restated, because the ctx
+    // exists by construction — it is how we found the node.
     run: () => D.deployHelmVerb({
       printer, flags: { ...flags, force: true, set: sets, namespace, 'kube-context': kubeContext },
       args: [release], io,

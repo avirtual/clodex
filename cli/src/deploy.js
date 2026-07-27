@@ -1283,7 +1283,14 @@ function helmChartPath() {
 // position (helm applies sets after all files), so this-run --set needs no
 // ordering care. Both merge rules verified against helm v4.1.0 with
 // `helm template`, not assumed from the docs.
-function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [], carriedValuesFile = null } = {}) {
+// `forceConflicts` is the opt-in remedy for the server-side-apply conflict
+// classified by ssaConflictHint below. It is OFF by default and must stay off:
+// forcing takes ownership of EVERY conflicting field, which would also stomp
+// fields a controller legitimately owns (an HPA on replicas, a sidecar
+// injector's container patch). "Silently take ownership of whatever disagrees"
+// is the wrong default for a tool touching someone's cluster — the operator
+// opts in having read WHICH manager they are overriding.
+function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [], carriedValuesFile = null, forceConflicts = false } = {}) {
   return [
     'helm', 'upgrade', '--install', name, chart,
     '--namespace', namespace,
@@ -1294,8 +1301,100 @@ function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_P
     ...sets.flatMap((s) => ['--set', s]),
     ...(carriedValuesFile ? ['--values', carriedValuesFile] : []),
     ...valuesFiles.flatMap((f) => ['--values', f]),
+    ...(forceConflicts ? ['--force-conflicts'] : []),
     '--wait', '--timeout', HELM_TIMEOUT,
   ];
+}
+
+// Classify a helm failure as a SERVER-SIDE-APPLY FIELD CONFLICT and rewrite the
+// hint. Returns null for anything else, so the caller keeps its generic hint.
+// Pure — the whole point, since the alternative is a test that needs a cluster.
+//
+// Why this needs its own hint: the generic "partial state — fix the cause and
+// re-run" is actively MISLEADING here. Re-running the identical command hits
+// the identical wall, forever. Nothing about the release is partial or
+// transient; another field manager owns a field helm needs, and server-side
+// apply refuses to change a field it does not own.
+//
+// The failure is RELEASE-scoped, not build-scoped — this is the part that was
+// wrong in my first reading. helm records the apply method per release
+// (`apply_method` in the release Secret, surfaced by `helm get metadata`), and
+// `--server-side auto` inherits it. Verified against helm v4.1.0: a release
+// installed by helm 4 records `ssa` and conflicts on a hand-edited field; the
+// SAME release record with the field removed (what a helm-3 install looks like)
+// resolves to client-side, and the same hand-edit does not conflict at all —
+// the upgrade silently overwrites it. So two operators on the same clodexctl
+// and the same chart get opposite outcomes, decided by which helm first
+// installed the release. The hint says "this release", never "helm".
+//
+// Parsed, not hardcoded: helm emits two grammars, one per conflict count —
+//   … Apply failed with 1 conflict: conflict with "kubectl-edit" using apps/v1: .spec…image
+//   … Apply failed with 2 conflicts: conflicts with "kubectl-edit" using v1:
+//   - .data.j
+//   - .data.k
+// (both captured live, see tasks/helm-ssa-conflict/journal.md). Every extracted
+// detail is optional: an unrecognized shape still gets the what/why/remedy,
+// just without the specifics. A hint that degrades is worth more than a regex
+// that must win.
+const SSA_CONFLICT_RE = /Apply failed with \d+ conflicts?:/;
+function ssaConflictHint(stderr, { name, namespace } = {}) {
+  const text = String(stderr || '');
+  if (!SSA_CONFLICT_RE.test(text)) return null;
+
+  // Who owns it, and under which apiVersion.
+  //
+  // The quotes here must be UNESCAPED, and that is load-bearing rather than
+  // incidental: helm prints this text TWICE, once JSON-escaped inside a
+  // `level=WARN msg="upgrade failed" error="…\"kubectl-edit\"…"` line and once
+  // plain after `Error:`. A pattern that tolerates `\"` matches the WARN copy
+  // first and drags escapes plus a stray trailing quote into the captured field
+  // name — which is what the first version of this did on the real sample.
+  // Requiring a bare `"` skips the escaped copy and lands on the plain one.
+  const who = /conflicts? with "([^"]+)" using (\S+?):/.exec(text);
+  const manager = who ? who[1] : null;
+
+  // The conflicting field(s): inline after the colon (singular), else the `- x`
+  // list on the lines that follow (plural).
+  const fields = [];
+  if (who) {
+    const rest = text.slice(who.index + who[0].length);
+    const firstLine = rest.split('\n')[0].trim();
+    if (firstLine) fields.push(firstLine);
+    else {
+      for (const line of rest.split('\n').slice(1)) {
+        const m = /^\s*-\s+(\S.*)$/.exec(line);
+        if (!m) break;
+        fields.push(m[1].trim());
+      }
+    }
+  }
+
+  // The object: `object <ns>/<name> <group>/<version>, Kind=<Kind>:` — the group
+  // is empty for core types (which is why that half may be blank), and the Kind
+  // is followed by the `: Apply failed …` that the detection regex matched, so
+  // it must stop at the colon rather than take \S+.
+  const obj = /while applying object (\S+) (\S*), Kind=([^\s:,]+)/.exec(text);
+  const objectDesc = obj ? `${obj[3]} ${obj[1]}` : 'an object in the release';
+
+  const ns = namespace || (obj && obj[1].includes('/') ? obj[1].split('/')[0] : null);
+  const kind = obj ? obj[3].toLowerCase() : 'sts';
+  const objName = obj && obj[1].includes('/') ? obj[1].split('/')[1] : (name || '<name>');
+  const inspect = ns
+    ? `kubectl -n ${ns} get ${kind} ${objName} -o jsonpath='{range .metadata.managedFields[*]}{.manager}{" "}{.operation}{"\\n"}{end}'`
+    : null;
+
+  const owner = manager ? `"${manager}"` : 'another field manager';
+  const what = fields.length
+    ? `${fields.length === 1 ? 'the field' : 'the fields'} ${fields.join(', ')} on ${objectDesc} ${fields.length === 1 ? 'is' : 'are'} owned by ${owner}`
+    : `a field on ${objectDesc} is owned by ${owner}`;
+
+  return [
+    `${what}, and this release applies SERVER-SIDE, where a manager may not change a field it does not own.`,
+    'Re-running the same command will fail the same way — this is not a partial or transient state. Something outside helm (typically `kubectl edit`/`patch`/`apply`) changed that field, which permanently claimed it.',
+    inspect ? `See every owner:\n  ${inspect}` : null,
+    `Then either hand the field back (revert the out-of-band change), or re-run with --force-conflicts to take ownership of it. --force-conflicts overrides ${owner} on ${fields.length === 1 ? 'that field' : 'those fields'} — check first that it is not a controller that legitimately owns ${fields.length === 1 ? 'it' : 'them'} (an HPA on replicas, a sidecar injector), because forcing takes the field away from it too.`,
+    name && namespace ? `(this release's apply method: helm get metadata ${name} -n ${namespace})` : null,
+  ].filter(Boolean).join('\n');
 }
 
 // `helm status` — the release-exists probe (exit 0 = installed). Pure.
@@ -1467,7 +1566,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   // --dry-run: describe, run nothing. Placeholder paths — no tempfile is ever
   // written, and the claude token is noted by PRESENCE only.
   if (flags['dry-run']) {
-    const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles });
+    const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles, forceConflicts: !!flags['force-conflicts'] });
     // kubeContext is only resolved for real in the preflight below (it may come
     // from `kubectl config current-context`), so the dry-run preview carries the
     // flag or null — the same honesty the kubectl.context field above already
@@ -1662,14 +1761,20 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       fs.writeFileSync(oauthTokenFile, oauthToStage, { mode: 0o600 });
       if (claudeToken) log('claude token staged (0600 tempfile → --set-file, redacted)');
     }
-    const argv = helmArgv({ name, chart, namespace, kubeContext, port, wireTokenFile, oauthTokenFile, sets, valuesFiles, carriedValuesFile });
+    const argv = helmArgv({ name, chart, namespace, kubeContext, port, wireTokenFile, oauthTokenFile, sets, valuesFiles, carriedValuesFile, forceConflicts: !!flags['force-conflicts'] });
     step('helm');
     try {
       await runVendor(execFn, argv, 'upgrade --install', EXIT.SERVER);
     } catch (e) {
       // Failure honesty: a mid---wait failure leaves the release INSTALLED
       // (helm does not roll back for us, and we don't auto-rollback).
-      if (json) emit({ type: 'error', reason: 'helm-failed', message: e.message });
+      //
+      // The SSA field conflict is asked about FIRST, because for it the generic
+      // hint below is worse than no hint: it tells the operator to re-run, and
+      // re-running is exactly what cannot work.
+      const ssa = ssaConflictHint(e.message, { name, namespace });
+      if (json) emit({ type: 'error', reason: ssa ? 'helm-conflict' : 'helm-failed', message: e.message });
+      if (ssa) throw new CliError(EXIT.SERVER, `${e.message}\n${ssa}`);
       throw new CliError(EXIT.SERVER, `${e.message}\nrelease "${name}" likely exists in a partial state — fix the cause and re-run: the same command upgrades in place (inspect with: helm status ${name} -n ${namespace}; kubectl -n ${namespace} get pods)`);
     }
     okm('helm');
@@ -2249,6 +2354,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
+  ssaConflictHint,
   helmGetValuesArgs, parseCarriedValues, HELM_NEVER_CARRY,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
   fargateTemplatePath, parseBoolFlag, fargateParamOverrides, fargateDeployArgs, callerIdentityArgs, fargateConfigureGetRegionArgs,
