@@ -574,6 +574,7 @@ function randBase36(len) {
   return s.slice(0, len);
 }
 const { ctxReminderFor } = require('./ctx-reminder');
+const { bakePrompt, promptCacheDir } = require('./ipc-prompt-cache');
 const { buildSkillPlugin, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
 const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
@@ -946,6 +947,8 @@ const SessionManager = createSessionManager({
     collectSystemDiagnostics,
     composeDigest,
     ctxReminderFor,
+    bakePrompt,
+    promptCacheDir,
     diagSummary,
     diagWarning,
     draftChunkSignal,

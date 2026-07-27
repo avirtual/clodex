@@ -244,6 +244,39 @@ if (body) {
 JSEOF
 `, { mode: 0o700 });
 
+    // IPC-prompt delta drain (see ipc-prompt-cache.js). A resumed session keeps
+    // the system prompt it was born with — rewriting it would re-bill the whole
+    // context — so protocol changes ride here as a diff instead.
+    //
+    // ORDER IS THE WHOLE MECHANISM, do not "simplify" it: emit delta.md FIRST,
+    // then atomically rename next.md over notified.md (= advance last_ipc), then
+    // drop delta.md. Because the advance is the LAST step, it cannot happen
+    // before delivery — a crash anywhere in between re-delivers the same diff
+    // next turn. At-least-once is deliberate: a repeated diff is noise, a
+    // dropped one leaves an agent emitting a verb that no longer exists.
+    //
+    // The DATA is at the shared ~/.clodex/promptcache/<name>/ root, not under
+    // run/<name>/, because cleanupClaudeHook rm -rf's this run dir on every exit
+    // — including the one right before the resume this cache exists to serve.
+    // Same split as pending/: shared data, per-run script.
+    const promptCacheDir = path.join(REGISTRY_DIR, 'promptcache', name);
+    const ipcdeltaScriptPath = pathFor(REGISTRY_DIR, name, 'ipcdeltaScript');
+    fs.writeFileSync(ipcdeltaScriptPath, `#!/bin/bash
+[ -s "${promptCacheDir}/delta.md" ] || exit 0
+${INTERP} - "${promptCacheDir}" <<'JSEOF'
+const fs = require('fs'), path = require('path');
+const d = process.argv[2];
+let body = '';
+try { body = fs.readFileSync(path.join(d, 'delta.md'), 'utf8').trim(); } catch (e) { process.exit(0); }
+if (!body) process.exit(0);
+console.log(JSON.stringify({ hookSpecificOutput: {
+  hookEventName: "UserPromptSubmit", additionalContext: body } }));
+// Only NOW advance last_ipc, and only by atomic rename.
+try { fs.renameSync(path.join(d, 'next.md'), path.join(d, 'notified.md')); } catch (e) {}
+try { fs.unlinkSync(path.join(d, 'delta.md')); } catch (e) {}
+JSEOF
+`, { mode: 0o700 });
+
     // Settings JSON
     const settings = {
       trustedDirectories: [msgDir],
@@ -265,6 +298,7 @@ JSEOF
             { type: 'command', command: ackScriptPath },
             { type: 'command', command: pendingScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
+            { type: 'command', command: ipcdeltaScriptPath },
           ]
         }],
         // Parked-DM drain ONLY (not acks/ctxwarn — those are turn-boundary

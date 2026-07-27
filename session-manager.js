@@ -264,6 +264,10 @@ function createSessionManager(deps) {
     collectSystemDiagnostics,
     composeDigest,
     ctxReminderFor,
+    // ipc-prompt-cache.js: freeze a resumed session's system prompt and stage
+    // protocol changes as a diff instead of rewriting it under the conversation.
+    bakePrompt,
+    promptCacheDir,
     diagSummary,
     diagWarning,
     draftChunkSignal,
@@ -1129,7 +1133,17 @@ function createSessionManager(deps) {
           }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
           // Team block rides the append channel (persistent across resume/clear).
-          fs.writeFileSync(promptPath, teamBlock ? `${append}\n\n${teamBlock}\n` : append, { mode: 0o600 });
+          const realIpc = teamBlock ? `${append}\n\n${teamBlock}\n` : append;
+          // FREEZE on resume (see ipc-prompt-cache.js). create() runs on
+          // restore-with---resume too, so writing `realIpc` unconditionally here
+          // is what changed the system prompt under continuing conversations and
+          // cost 111k-139k tokens a time. A resume re-bakes the bytes this
+          // conversation was BORN with and stages any change as a diff for the
+          // ipcdelta drain; a genuine boundary (fresh session, [agent:context
+          // reload], restartSession({fresh:true}) — all of which pass resumeId
+          // null) regenerates, which is free because nothing is cached yet.
+          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, !!resumeId);
+          fs.writeFileSync(promptPath, baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
           break;
         }
@@ -2278,6 +2292,13 @@ function createSessionManager(deps) {
       // dir left by a never-recreated session is harmless residue. Best-effort.
       if (s._userKilled) {
         try { fs.rmSync(path.join(PENDING_DIR, name), { recursive: true, force: true }); } catch {}
+        // Same gate, same reason, for the frozen system prompt (ipc-prompt-cache.js).
+        // The whole point of promptcache/ is to outlive the run dir, which is
+        // rm -rf'd on every exit — so it must NOT be dropped on a restart or quit.
+        // A user-kill IS final, though, and a stale cache left behind for a name
+        // that gets recreated later would diff the new session against a dead
+        // baseline. Best-effort, like the pending rm above.
+        try { fs.rmSync(promptCacheDir(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
       }
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
       if (s.watcher) s.watcher.stop();

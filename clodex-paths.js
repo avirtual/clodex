@@ -28,11 +28,17 @@
 //     file-heat.json     boiling-pot per-file heat counters (new in run/; the
 //                        legacy suffix below is defensive — no flat build ever
 //                        wrote it, but keeping every kind sweepable is the invariant)
+//     ipcdelta.sh        IPC-prompt-delta drain hook (same defensive posture:
+//                        never existed flat, but stays sweepable)
 //
-// 19 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 20 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
-// still targets ~/.clodex/pending/<name>/), agents/, skills/, library/,
+// still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
+// prompt + its delta staging — ipcdelta.sh RELOCATES here but its BODY targets
+// ~/.clodex/promptcache/<name>/; this dir MUST outlive the run dir, which is
+// rm -rf'd on every exit, or the resume it exists to serve would find it gone),
+// agents/, skills/, library/,
 // plugins/ (the BYO plugin root — docs/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
@@ -71,6 +77,7 @@ const KINDS = {
   acksScript: 'acks.sh',
   pendingScript: 'pending.sh',
   fileHeat: 'file-heat.json',
+  ipcdeltaScript: 'ipcdelta.sh',
 };
 
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
@@ -98,6 +105,7 @@ const LEGACY_SUFFIXES = {
   acksScript: '-acks.sh',
   pendingScript: '-pending.sh',
   fileHeat: '-file-heat.json',
+  ipcdeltaScript: '-ipcdelta.sh',
 };
 
 // The per-agent runtime dir: ~/.clodex/run/<name>/.
