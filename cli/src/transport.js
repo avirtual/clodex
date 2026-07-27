@@ -30,15 +30,34 @@ const DEFAULT_REMOTE_PORT = 7900;
 const WAIT_PORT_MS = 10000;     // bounded wait for the tunnel's local port
 const WAIT_POLL_MS = 150;
 
-// ssh argv template — mirrors peer-tunnel.js's key-auth, fail-loud posture.
-// {port} is the placeholder the tunnel machinery substitutes; BatchMode keeps
-// us from ever blocking on an interactive prompt (the CLI can't answer one).
+// ssh argv template — the same key-auth, fail-loud, keepalive posture every
+// other ssh invocation in this repo uses (dial.js's SSH_BASE_ARGS, ssh-run.js's
+// SSH_ARGS, deploy.js's SSH_DEPLOY_ARGS). {port} is the placeholder the tunnel
+// machinery substitutes; BatchMode keeps us from ever blocking on an interactive
+// prompt (the CLI can't answer one).
+//
+// ServerAlive* is the part this template LACKED until t43, while its comment
+// claimed to mirror peer-tunnel.js — it mirrored everything except the one
+// option that detects a dead far end, which is the option a reader checking for
+// exactly this would have come here to find. Without it, an ssh tunnel whose
+// remote end dies without closing TCP has nothing probing it: the child stays
+// alive, the forward reads as open, and it carries nothing. That is the same
+// half-open shape as the SSE bug in t41, one layer down, and it survived for the
+// same reason — each side got fixed separately.
+//
+// Interval 15s with CountMax 2 means a dead peer is noticed in ~30s and ssh
+// exits, which is what turns a silent dead forward into an honest failure the
+// caller can see. These probes are ssh's own protocol-level keepalive, not TCP
+// SO_KEEPALIVE: they require a real response from the remote sshd, so they
+// cannot be satisfied by a link that merely still routes packets.
 function sshArgv(host, remotePort) {
   return [
     'ssh', '-N',
     '-o', 'BatchMode=yes',
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=2',
     '-o', 'ConnectTimeout=10',
     '-L', `{port}:127.0.0.1:${remotePort}`,
     host,
