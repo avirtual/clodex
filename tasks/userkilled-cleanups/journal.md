@@ -362,6 +362,174 @@ merged.
 4. Then the rekey on the now-stable stamp, under the four conditions already
    recorded above.
 
+### Phase 3a progress — PRODUCT COMMITTED as 7d6b991
+
+All three preserve sites are edited, plus a fourth comment correction:
+
+- `engine.js` restartSession — `createdAt` appended to `preserveFields`
+  (the list that carries across a FRESH restart too, since birth time is true
+  of the SESSION, not of the conversation).
+- `engine.js` applySessionArgs — `createdAt` appended to the literal list.
+- `session-manager.js` reload respawn — a NEW
+  `this._preserveAcrossRestart(name, entry, ['createdAt'])` before `create()`.
+  This path preserved nothing at all before; `rosterSentAt` deliberately still
+  does not carry (it is a fresh conversation and the roster must re-deliver).
+- `session-manager.js:1458` — the comment that asserted the invariant now says
+  which HALF of it this line implements, and that the restart callers own the
+  other half. That comment reading as the whole invariant is what let the bug
+  live; leaving it intact would leave the next reader the same trap.
+
+**Test plan for the pin (item 2).** Three sites, and they are not equally
+testable:
+
+- Sites 1+2 (engine): drive `eng.restartSession` / `eng.applySessionArgs` for
+  real against a temp userData with `manager.create` spied out, exactly as
+  `test/engine-args-env.test.js` already does. That harness is proven and cheap.
+  But note a spied create does NOT re-mint — so the spy alone would pass even
+  with the fix reverted. **The pin must therefore drive the real create() read
+  as well, or assert the seeded record directly BEFORE create runs.** Decided:
+  assert the persistence record between kill and create is not reachable from
+  outside, so instead let create() be the REAL one where feasible and assert
+  the final stamp; where the spy is used, assert the pre-create seed the spy
+  observes. Whichever shape lands, the ENTER question must be answered
+  explicitly: the test must show the record was actually REMOVED by kill first,
+  or it is pinning a path where existingEntry was never null.
+- Site 3 (reload): no existing test drives it. It is reachable via
+  `_handleIntent` with `{type:'context', sub:'reload'}` on a real manager with a
+  fake pty, but the block is `setImmediate`-deferred and waits on a boot signal.
+  If that proves flaky, say so and pin site 3 by its observable seed rather than
+  faking a whole boot — and FLAG the weaker pin rather than let it look equal.
+
+Failure messages must name the sidebar's created sort, per the ruling.
+
+**RESOLVED — one technique covers all three sites.** The spy-vacuity problem
+above has a clean answer: don't assert what the spy RETURNS, assert what
+persistence HOLDS at the moment the spy is called. That snapshot is taken
+after the real `kill()` and after the real `_preserveAcrossRestart`, i.e. it is
+exactly the value `create()`'s `existingEntry` read would see. So the spy stops
+being a substitute for the product decision and becomes a probe placed at the
+seam — inputs in, output observed, predicate never recomputed.
+
+Site 3 (reload) turns out to be reachable the same way and is NOT the weaker
+pin I feared: `_handleContextIntent(session, 'reload', '<handoff>')` on a real
+manager runs the real kill + the new preserve, and its create is the manager's
+own method, so the same spy works. Two mechanics to respect: the block is
+`setImmediate`-deferred behind a `waitExit` poll, so the test must await the
+spy rather than the call; and the handoff body is MANDATORY (a blank body
+aborts before killing anything — which would silently pin nothing, so the test
+must pass a real body and assert the spy fired).
+
+Three ENTER questions, asserted separately from the behaviour, because every
+one of these tests is about a fallback that must NOT fire:
+
+1. `kill()` actually REMOVED the record — otherwise `existingEntry` was never
+   null and the test pins a path where the bug cannot appear. This is the
+   load-bearing one: without it, deleting the fix leaves the test green.
+2. The spy actually FIRED — a create that never happened asserts nothing, and
+   the reload path has two early returns that would produce exactly that.
+3. The prior stamp is DISTINGUISHABLE from `Date.now()` — use a fixed old
+   value (a real past ms), so "preserved" and "re-minted" cannot coincide.
+
+Plus one test for the OTHER half of the invariant (the restore-on-launch path,
+where the record survives and create()'s own read is what preserves the stamp),
+so the comment at :1458 is pinned in both directions rather than only the one
+that was broken.
+
+### `test/createdat-restart.test.js` — WRITTEN, 4 tests, all passing
+
+Design landed as planned. Two things worth recording because they were not
+obvious from reading:
+
+- **The restart paths skip the kill entirely unless a session is in the map.**
+  `if (manager.sessions.has(name))` guards it, so a test that only seeds
+  persistence never removes the record, never enters the window, and passes for
+  free — the exact vacuity ENTER (a) exists to catch, and it caught it here
+  during construction. Hence `liveSession()`: a fake session whose
+  `pty.kill()` deletes itself from the map, which is what `waitForSessionExit`
+  polls for.
+- **ENTER (a) is asserted from the PRODUCT'S OWN CALL**, not from my reading of
+  kill(): `persistence.remove` is wrapped, and the test asserts one removal
+  happened AND that `get(name)` was null immediately after it. If kill() ever
+  stops removing the record, these tests announce it rather than silently
+  becoming vacuous.
+
+The reload test needed two accommodations, both flagged in-file: the respawn is
+`setImmediate`-deferred behind a `waitExit` poll (so the probe is awaited, not
+assumed), and `_injectReloadHandoff` is stubbed — it polls for a transcript
+symlink that never appears in a test with no real CLI.
+
+**The restore direction landed too — 6 tests total, all green.** Built the
+slimmer bash-arm real-`create()` harness rather than extending
+`reuseArgFor`: the bash arm needs ~20 seams against the claude arm's ~35 (no
+hooks, no prompt bake, no team resolution) and reaches the same persistence
+write, which is the line under test. Probed before writing
+(`process.getActiveResourcesInfo()` after one bash create → `['PipeWrap',
+'PipeWrap']`, process exits clean), so the ctxWatcher hang that bit t63 does
+not arise on this arm. **The teardown is in the file anyway** and says why: it
+is the discipline for any real `create()` in a test, not a reaction to a
+measured leak, and making it conditional on today's measurement is how it goes
+missing when the arm grows a watcher.
+
+Two restore-direction tests, not one:
+
+- restore-on-launch adopts the surviving record's stamp (the half that always
+  worked, now pinned so it cannot break silently).
+- a genuinely NEW session still MINTS. Without this, "preserve createdAt" could
+  be satisfied by never minting at all, and every new session would sort as
+  epoch-0. A preserve test and a mint test constrain each other; either alone
+  has a trivial wrong implementation that passes it.
+
+### The reverts — 6 applied, 5 failed correctly, **1 EXPOSED A DECORATIVE ASSERTION**
+
+| revert | product site broken | result |
+|---|---|---|
+| A | `restartSession` preserveFields drops createdAt | both restartSession tests fail, by message |
+| B | `applySessionArgs` list drops createdAt | args-edit test only, by message |
+| C | reload's `_preserveAcrossRestart` line deleted | reload test only, by message |
+| D | `create()` always mints (ignores a surviving record) | restore-on-launch test only, by message |
+| E | same break as D, seen from session-manager.test.js | **PASSED — 314/314 green** |
+| F | `_preserveAcrossRestart` skips createdAt | the surviving :1959 assertion fails, by message |
+
+Every failure was an `AssertionError` with the intended message; none was a
+crash, hang, or timeout. A/B/C/D each broke ONLY the test naming their path,
+which is what makes the four sites independently pinned rather than jointly.
+
+**Revert E is the finding.** The second assertion I added to
+`test/session-manager.test.js` — "the birth stamp survives the rebuild" —
+passed with `create()`'s stamping line deleted. It was decorative, and I would
+not have known without running the revert.
+
+The reason is worth keeping. That test models create()'s rebuild with a
+HAND-WRITTEN `persistence.upsert({..., createdAt: 1})`. For `rosterSentAt` and
+`reviewFor` the model is honest: create() never writes those fields, so their
+survival across the spread-merge is a real property of the store. But create()
+DOES write createdAt — so the `1` in that upsert was a value *I* chose, not one
+the product computed, and asserting it afterwards asserted my own fixture. The
+vacuity rule as clodex stated it covers this exactly: the harness contained the
+answer, so the test was asserting against itself.
+
+Removed rather than repaired: the survives-create() half belongs against the
+REAL create(), where `test/createdat-restart.test.js` already pins it (revert D
+proves that one bites). The remaining :1959 assertion — that
+`_preserveAcrossRestart` seeds the field at all — is genuine, and revert F
+proves it.
+
+**This is the fourth harness-lying-quietly instance this week**, and the first
+found by the revert discipline rather than by an external cross-check. Same
+signature as the other three: a CLEAN result, not an error. Worth noting that
+the previous three were caught by luck or by clodex's independent count; this
+one was caught by process.
+
+### `test/session-manager.test.js:1950` — corrected
+
+It passed `createdAt: 1` in the prior entry, did NOT request the field, and
+never asserted it. So it exercised the exact drop under repair and read as
+though that were the intended behaviour — the bug, encoded as a fixture. Now
+requests `createdAt` and asserts it both after the seed and after create()'s
+rebuild upsert, the second message naming the sidebar sort. The `createdAt: 5`
+in the simulated rebuild upsert was also wrong (create() writes what its
+existingEntry read returns, which is the seed) and is now `1`.
+
 ---
 
 # THE HARNESS LYING QUIETLY — a failure class, written up at clodex's instruction

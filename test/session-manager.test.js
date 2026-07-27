@@ -1946,14 +1946,29 @@ test('_preserveAcrossRestart: re-seeds requested fields across the kill+create r
   };
   const { m } = mkPark({ ...teamDeps, getPersistence: () => persistence });
   // kill() has already dropped the record; the store is empty for this name.
-  // A reviewer seat carries the roster stamp AND its ephemeral/reviewFor identity.
+  // A reviewer seat carries the roster stamp AND its ephemeral/reviewFor identity,
+  // plus createdAt (t71) — birth time is true of the SESSION, so it carries too.
+  // This test previously passed createdAt:1 WITHOUT requesting it and without
+  // asserting it survived, which encoded the bug: the field was dropped on every
+  // kill-based restart and the test read as though that were intended.
   m._preserveAcrossRestart('cx', { name: 'cx', rosterSentAt: 999, ephemeral: true, reviewFor: 'lead', createdAt: 1 },
-    ['rosterSentAt', 'ephemeral', 'reviewFor']);
+    ['rosterSentAt', 'ephemeral', 'reviewFor', 'createdAt']);
   assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'the stamp is re-seeded so create() skips re-inject');
   assert.strictEqual(persistence.get('cx').ephemeral, true, 'ephemeral identity re-seeded');
   assert.strictEqual(persistence.get('cx').reviewFor, 'lead', 'reviewFor identity re-seeded');
-  // create()'s own upsert then spread-merges the full record over the stub, keeping the fields.
-  persistence.upsert({ name: 'cx', type: 'codex', cwd: '/proj/b', createdAt: 5 });
+  assert.strictEqual(persistence.get('cx').createdAt, 1, 'birth stamp re-seeded so create() does not re-mint it');
+  // create()'s own upsert then spread-merges the full record over the stub, keeping
+  // the fields. This upsert is a HAND-WRITTEN model of create()'s rebuild, which is
+  // why it can only carry fields create() does NOT itself write: rosterSentAt and
+  // reviewFor survive here because the rebuild never mentions them, and that is a
+  // real claim about the spread-merge. createdAt is deliberately NOT asserted past
+  // this line — create() DOES write it, so any value written here would be one I
+  // chose rather than one the product computed, and the assertion would pass with
+  // create()'s stamping line deleted. Proven, not assumed: reverting
+  // `(existingEntry && existingEntry.createdAt) ||` left this file entirely green.
+  // The survives-create() half is pinned against the REAL create() in
+  // test/createdat-restart.test.js instead.
+  persistence.upsert({ name: 'cx', type: 'codex', cwd: '/proj/b', createdAt: 1 });
   assert.strictEqual(persistence.get('cx').rosterSentAt, 999, 'survives create()\'s rebuild upsert');
   assert.strictEqual(persistence.get('cx').reviewFor, 'lead', 'reviewFor survives create()\'s rebuild upsert');
   // Only the REQUESTED fields carry: a prior entry lacking a requested field seeds nothing for it.
