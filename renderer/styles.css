@@ -1491,6 +1491,16 @@ html, body {
 .bust-mag { color: var(--text-dim); }
 .bust-stamp { color: var(--text-dim); margin-left: auto; }
 .bust-hint { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+/* The first-divergence snippet. 40 chars each side of the diverging character,
+   so it must not wrap into something that reads like real line structure —
+   pre-wrap keeps the bytes honest and .bust-nl makes the newlines visible. */
+.bust-diff {
+  margin-top: 5px; font-family: var(--mono, monospace); font-size: 10px;
+  line-height: 1.45; white-space: pre-wrap; word-break: break-all;
+  background: var(--active-bg); border-radius: 3px; padding: 4px 6px;
+}
+.bust-at { display: block; font-family: inherit; color: var(--text-dim); margin-bottom: 2px; }
+.bust-nl { color: var(--text-dim); opacity: 0.7; }
 .bust-badge {
   font-size: 9px; padding: 1px 6px; border-radius: 8px;
   text-transform: uppercase; letter-spacing: 0.03em;
