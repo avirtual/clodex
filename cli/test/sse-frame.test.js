@@ -10,7 +10,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseSseBlock, makeSseDecoder } = require('../src/sse-frame');
+const { parseSseBlock, makeSseDecoder, MAX_BUFFER_BYTES } = require('../src/sse-frame');
 
 // Collect (event, data) pairs from a decoder driven by a list of chunks.
 function drive(chunks, opts = {}) {
@@ -18,7 +18,7 @@ function drive(chunks, opts = {}) {
   const overflows = [];
   const dec = makeSseDecoder({
     onEvent: (name, data) => seen.push([name, data]),
-    onOverflow: () => overflows.push(true),
+    onOverflow: (bytes) => overflows.push(bytes),
     ...opts,
   });
   const results = chunks.map((c) => dec.push(c));
@@ -150,20 +150,29 @@ test('D4: dropping one bad frame does not stop the stream', () => {
 
 // ── D5: the buffer bound, the OTHER preserved divergence ───────────────────
 //
-// peer-client bounds the residual buffer at 8MB (peer-client.js's
-// SSE_MAX_BUFFER_BYTES); cli/src/client.js has NO equivalent and never did.
-// Preserved rather than reconciled: this is a behaviour-preserving ticket.
-test('D5: maxBufferBytes fires onOverflow and stops the decoder', () => {
-  const big = 'x'.repeat(200);
-  // One complete frame, then residue past the bound. The bound is checked
-  // inside the drain loop AFTER a frame is sliced off — peer-client's exact
-  // placement, preserved.
+// t48 REWROTE THE THREE TESTS THAT WERE HERE, and each one was pinning
+// behaviour the ticket exists to remove — recorded rather than quietly edited:
+//
+//   · "fires onOverflow and stops the decoder" asserted the triggering frame
+//     was NOT delivered. That was an artefact of the drain-loop placement: the
+//     check aborted mid-drain, so a COMPLETE, well-framed frame was thrown away
+//     because unrelated residue followed it. Now it is delivered and the
+//     overflow fires on the residue, which is the correct split.
+//   · "an overflowed decoder stays dead" carried the same assertion for the
+//     same reason; the liveness half of it is kept.
+//   · "maxBufferBytes=0 (the CLI default) is unbounded" pinned the ABSENCE of a
+//     CLI bound as intended. That absence is half 1 of the defect. 0 still
+//     disables — the escape hatch survives — but it is no longer the default,
+//     and the test now says so.
+test('D5: overflow fires on unframed residue, and complete frames still arrive', () => {
   const { seen, overflows, results } = drive(
-    [`data: {"a":1}\n\ndata: ${big}`],
+    [`data: {"a":1}\n\ndata: ${'x'.repeat(200)}`],
     { maxBufferBytes: 100 },
   );
-  assert.deepStrictEqual(overflows, [true], 'overflow fired once');
-  assert.deepStrictEqual(seen, [], 'and the frame that triggered the check was NOT delivered');
+  assert.deepStrictEqual(seen, [['message', { a: 1 }]],
+    'the complete frame was delivered — it is well-formed, and the residue behind it is not its fault');
+  // 206 = the residue's real length: 'data: ' (6) + 200 x's.
+  assert.deepStrictEqual(overflows, [206], 'overflow fired once, reporting the residue size');
   assert.deepStrictEqual(results, [false], 'push reports the decoder is dead');
 });
 
@@ -172,25 +181,98 @@ test('D5: an overflowed decoder stays dead (no re-entry mid-teardown)', () => {
   const overflows = [];
   const dec = makeSseDecoder({
     onEvent: (n, d) => seen.push([n, d]),
-    onOverflow: () => overflows.push(true),
+    onOverflow: (n) => overflows.push(n),
     maxBufferBytes: 50,
   });
   dec.push(`data: {"a":1}\n\n${'x'.repeat(100)}`);
   assert.strictEqual(dec.push('data: {"a":2}\n\n'), false, 'later pushes are no-ops');
-  assert.deepStrictEqual(seen, [], 'nothing delivered after overflow');
-  assert.deepStrictEqual(overflows, [true], 'and onOverflow fired exactly once');
+  assert.deepStrictEqual(seen, [['message', { a: 1 }]], 'only the pre-overflow frame, nothing after');
+  assert.deepStrictEqual(overflows, [100], 'and onOverflow fired exactly once');
 });
 
-test('D5: maxBufferBytes=0 (the CLI default) is unbounded', () => {
-  // The CLI has no bound. Pinning the ABSENCE so a future "tidy-up" that adds
-  // one has to do it deliberately, as a decision with its own evidence.
-  const seen = [];
+// WINDOW: the CLI's own default, which is half 1 of the t48 defect. Before this
+// ticket a decoder built with no options was UNBOUNDED and `logs -f` could grow
+// its buffer until the process died. Reverting the default to 0 fails this.
+test('D5: the default is BOUNDED — an unbounded decoder is not constructible by accident', () => {
   const overflows = [];
-  const dec = makeSseDecoder({ onEvent: (n, d) => seen.push([n, d]), onOverflow: () => overflows.push(true) });
-  dec.push(`data: {"a":1}\n\n${'x'.repeat(20 * 1024 * 1024)}`);
-  assert.deepStrictEqual(seen, [['message', { a: 1 }]], 'the frame delivered normally');
-  assert.deepStrictEqual(overflows, [], 'and 20MB of residue triggered nothing');
-  assert.ok(dec.buffered() > 8 * 1024 * 1024, 'the buffer really did exceed the GUI-side bound');
+  const dec = makeSseDecoder({ onEvent: () => {}, onOverflow: (n) => overflows.push(n) });
+  // One byte over, in realistic chunks. No frame terminator anywhere.
+  const chunk = 'x'.repeat(64 * 1024);
+  let pushes = 0;
+  for (let sent = 0; sent <= MAX_BUFFER_BYTES; sent += chunk.length) {
+    pushes += 1;
+    if (dec.push(chunk) === false) break;
+  }
+  assert.strictEqual(overflows.length, 1, 'the default bound fired');
+  assert.ok(overflows[0] > MAX_BUFFER_BYTES, 'and it fired on residue past the limit');
+  assert.ok(pushes > 1, 'it took many chunks to get there — i.e. the bound is checked ACROSS pushes, not within one');
+});
+
+test('D5: maxBufferBytes=0 still disables the bound (the escape hatch survives)', () => {
+  const overflows = [];
+  const dec = makeSseDecoder({ onEvent: () => {}, onOverflow: (n) => overflows.push(n), maxBufferBytes: 0 });
+  dec.push('x'.repeat(4 * MAX_BUFFER_BYTES));
+  assert.deepStrictEqual(overflows, [], 'explicitly opting out is still possible');
+  assert.ok(dec.buffered() > MAX_BUFFER_BYTES, 'and the buffer really did pass the limit');
+});
+
+// ── the two windows that decide whether the bound is real (t48) ─────────────
+//
+// The pre-t48 bound was checked inside the drain loop and was UNREACHABLE over
+// a real socket: firing needed one push carrying both a frame terminator and
+// >limit of residue, and Node delivers response bytes in 64KB chunks (measured:
+// 12MB arrived as 194 chunks, max 65536). So the two tests below are the ones
+// that say whether this ticket did anything at all. Both feed bytes in the
+// measured 64KB shape rather than one giant string, because the giant string is
+// exactly the unrealistic case the old test used and the old bound survived.
+
+const CHUNK = 64 * 1024;   // what Node actually hands a res 'data' handler
+
+// WINDOW: an unterminated line arriving in realistic chunks. THIS IS THE CASE
+// THE BOUND EXISTS FOR and the case the old placement could not catch. Against
+// pre-t48 code (check inside the drain loop) no chunk here ever enters the loop
+// — there is no frame terminator in the whole stream — so onOverflow never
+// fires and this fails by message.
+test('t48: an unterminated stream in 64KB chunks trips the bound (the old placement could not)', () => {
+  const overflows = [];
+  const dec = makeSseDecoder({
+    onEvent: () => {},
+    onOverflow: (n) => overflows.push(n),
+    maxBufferBytes: 256 * 1024,       // small so the test moves ~256KB, not 1MB
+  });
+  const chunk = 'x'.repeat(CHUNK);
+  let sent = 0;
+  for (let i = 0; i < 100 && overflows.length === 0; i++) { sent += chunk.length; dec.push(chunk); }
+  assert.strictEqual(overflows.length, 1, 'the bound fired on an unterminated stream');
+  assert.ok(sent > 256 * 1024, 'and it took more than one chunk to trip — the accumulation is what is bounded');
+  assert.ok(overflows[0] > 256 * 1024, `reported residue ${overflows[0]} exceeds the limit`);
+});
+
+// WINDOW: the FALSE POSITIVE that would make someone delete this bound. A busy
+// session legitimately moves far more than the limit — it just arrives as
+// frames. If total volume tripped the bound, every healthy long-lived attach
+// would be killed, which is worse than having no bound at all.
+//
+// 4x the limit, in 64KB chunks, with frames straddling every chunk boundary
+// (the frame size is deliberately not a divisor of the chunk size) so the
+// residue is continuously non-empty — the hardest shape for an accumulation
+// check to get right.
+test('t48: a large WELL-FRAMED stream never trips the bound, however much it carries', () => {
+  const overflows = [];
+  let events = 0;
+  const dec = makeSseDecoder({
+    onEvent: () => { events++; },
+    onOverflow: (n) => overflows.push(n),
+    maxBufferBytes: 256 * 1024,
+  });
+  // ~7KB frames: not a divisor of 64KB, so boundaries never align.
+  const frame = `data: {"pad":"${'y'.repeat(7000)}"}\n\n`;
+  let stream = '';
+  while (stream.length < 4 * 256 * 1024) stream += frame;
+  for (let i = 0; i < stream.length; i += CHUNK) dec.push(stream.slice(i, i + CHUNK));
+  assert.deepStrictEqual(overflows, [], 'a megabyte of well-framed traffic is not an overflow');
+  assert.ok(events > 100, `and every frame was delivered (${events})`);
+  assert.ok(dec.buffered() < frame.length, 'only a partial frame is ever held');
 });
 
 // ── grammar edges that both copies shared, pinned so the move cannot lose them ──

@@ -17,7 +17,7 @@ const { CliError, EXIT, exitForStatus } = require('./errors');
 // SSE framing lives in ONE place (t47) — this side and the GUI's peer-client
 // both feed it. parseSseBlock is re-exported below because it was part of this
 // module's surface before the move and its tests import it from here.
-const { parseSseBlock, makeSseDecoder } = require('./sse-frame');
+const { parseSseBlock, makeSseDecoder, MAX_BUFFER_BYTES } = require('./sse-frame');
 
 // Redact anything that looks like our bearer token from a string before it can
 // reach stderr. Belt-and-suspenders: we never intentionally build such a
@@ -95,7 +95,9 @@ class WireClient {
   //                           heartbeat/comment traffic too (which yields no
   //                           parsed frame), so a staleness watchdog can treat any
   //                           byte — data or `: ping` — as liveness.
-  //   onError(err)          — a coded CliError (non-2xx status, or transport death)
+  //   onError(err)          — a coded CliError (non-2xx status, transport death,
+  //                           or an unframed-residue overflow — that one is
+  //                           EXIT.SERVER, which openGuarded treats as terminal)
   //
   // Returns a handle { close() } that destroys the request. Idempotent close.
   openEventStream(pathAndQuery, verb, { onOpen, onEvent, onChunk, onError } = {}) {
@@ -120,10 +122,34 @@ class WireClient {
       }
       if (onOpen) onOpen();
       res.setEncoding('utf8');
-      // No buffer bound and unparseable data delivered raw — this side's two
-      // preserved divergences from the GUI's copy (sse-frame.js D4/D5).
+      // Unparseable `data:` arrives raw — this side's preserved divergence from
+      // the GUI's copy (sse-frame.js D4). The residue bound is the decoder's
+      // shared default; before t48 this side had NO bound and `logs -f` could
+      // grow its buffer until the process died.
       const decoder = makeSseDecoder({
         onEvent: (name, data) => { if (onEvent) onEvent(name, data); },
+        // TERMINAL HERE, unlike the GUI, and the difference is deliberate.
+        //
+        // EXIT.SERVER rather than EXIT.CONNECT is what makes it terminal:
+        // openGuarded retries anything CONNECT-coded and, on exhaustion,
+        // REPLACES the error with a generic "3 reconnect attempts failed"
+        // (sse-guard.js:105). So retrying would move three more megabytes and
+        // then throw away the only sentence that says what actually happened.
+        // A non-CONNECT code goes straight to onGiveUp carrying this message
+        // (sse-guard.js:102), which is the whole point on a side a human is
+        // sitting in front of: they get the diagnosis, not a symptom.
+        //
+        // It is also the honest code. A peer emitting a megabyte with no frame
+        // terminator is a server-side failure (EXIT.SERVER's own definition),
+        // not an unreachable wire — and unlike the GUI, giving up here strands
+        // nothing: the human sees the error and decides.
+        onOverflow: (bytes) => {
+          const mb = (bytes / (1024 * 1024)).toFixed(1);
+          fail(new CliError(EXIT.SERVER, scrub(
+            `${verb} failed: the engine sent ${mb}MB of event-stream data with no frame terminator`
+            + ` (limit ${MAX_BUFFER_BYTES / (1024 * 1024)}MB) — the stream is malformed`, this._token)));
+          try { req.destroy(); } catch {}
+        },
       });
       res.on('data', (chunk) => {
         if (onChunk) onChunk(chunk);

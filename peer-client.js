@@ -31,14 +31,10 @@ const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 // This file and cli/src/client.js each hand-rolled the same `\n\n` framing,
 // the same `: ping` skip and the same event:/data: read — and had SILENTLY
 // DRIFTED (CRLF tolerance, space-less fields, multi-line data: all handled on
-// the CLI side only). One decoder now; the two real divergences are its two
-// options, set below. Same leaf direction as sse-guard above.
-const { makeSseDecoder } = require('./cli/src/sse-frame');
-
-// Residual-buffer bound for an SSE stream: past this, the socket is destroyed.
-// Long-standing peer-side behaviour, preserved verbatim (the CLI has no
-// equivalent — see sse-frame.js D5).
-const SSE_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+// the CLI side only). One decoder now. The unframed-residue bound is the
+// decoder's own default since t48 — both heads take it, so it is not set here.
+// Same leaf direction as sse-guard above.
+const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -47,6 +43,10 @@ const REQUEST_TIMEOUT_MS = 5000;
 // Popover queries can hit disk-heavy owner-side scans (wirescope /_report
 // reads the whole session capture) — give them their own, longer budget.
 const QUERY_TIMEOUT_MS = 20000;
+// Floor between two SSE-overflow log lines on one connection (t48). See
+// _reportSseOverflow: the repeating case is the one worth logging once, not
+// once per reconnect cycle.
+const OVERFLOW_LOG_INTERVAL_MS = 60000;
 
 // Comparable identity for the hello's webHost field, so identityChanged can
 // treat "appeared", "vanished" and "moved to another port" alike. null and a
@@ -57,7 +57,7 @@ function webHostKey(w) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -81,6 +81,10 @@ class PeerConnection {
     // production takes STALE_MS and the global timers.
     this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
     this._timers = timers || { setTimeout, clearTimeout };
+    // Unframed-residue ceiling, same seam and same reason as staleMs above:
+    // overridable ONLY so a test can trip it with kilobytes instead of moving a
+    // megabyte per assertion. Production takes sse-frame's MAX_BUFFER_BYTES.
+    this._sseMaxBufferBytes = Number.isInteger(sseMaxBufferBytes) ? sseMaxBufferBytes : MAX_BUFFER_BYTES;
     // Our own label as the box will see it (the origin on outbound DMs and the
     // key we claim our inbox under). Computed once by the caller — never per
     // request — so it can't drift mid-session.
@@ -535,6 +539,30 @@ class PeerConnection {
     return this._token ? { Authorization: `Bearer ${this._token}` } : {};
   }
 
+  // Say, out loud, that a stream was killed for unframed residue (t48).
+  //
+  // A bound that fires silently is a bound nobody can diagnose — t45's lesson,
+  // and it applies harder here: the symptom of a silent overflow is a peer that
+  // flaps for no visible reason, which is indistinguishable from a flaky
+  // network and would be debugged as one. The IPC log is where this side's
+  // other unexplained-behaviour lines already go, and it names the peer, the
+  // stream path, and the number, so the line is enough to act on by itself.
+  //
+  // Rate-limited to once per minute per connection. An overflow that repeats is
+  // exactly the case where the cause has NOT passed, and a per-cycle line at the
+  // 1s reconnect floor would bury the log it is meant to inform.
+  _reportSseOverflow(path, bytes) {
+    const now = Date.now();
+    if (this._lastOverflowLog && now - this._lastOverflowLog < OVERFLOW_LOG_INTERVAL_MS) return;
+    this._lastOverflowLog = now;
+    const mb = (bytes / (1024 * 1024)).toFixed(2);
+    const limitMb = (this._sseMaxBufferBytes / (1024 * 1024)).toFixed(2);
+    this._emit('ipc-message', {
+      type: 'system', from: `peer:${this.label}`, to: `peer:${this.label}`,
+      body: `SSE: ${path} sent ${mb}MB with no frame terminator (limit ${limitMb}MB) — stream dropped, reconnecting. The peer is sending malformed event-stream data.`,
+    });
+  }
+
   _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS) {
     let u;
     try { u = new URL(this.url + path); } catch (e) { return cb(e); }
@@ -613,12 +641,12 @@ class PeerConnection {
       }, this._timers);
       watchdog.pet();
       res.setEncoding('utf8');
-      // Framing is sse-frame.js's. The two options ARE this side's preserved
-      // divergences from the CLI's copy: a `data:` line that will not JSON-parse
-      // drops the frame (rather than being delivered raw), and the residual
-      // buffer is bounded. A consumer throw is swallowed here, at the call site
-      // where it always was — which consumer throws you tolerate is the head's
-      // business, not the decoder's.
+      // Framing is sse-frame.js's. dropUnparsableData is this side's preserved
+      // divergence from the CLI's copy (a `data:` line that will not JSON-parse
+      // drops the frame rather than arriving raw); the residue bound is the
+      // decoder's default, shared. A consumer throw is swallowed here, at the
+      // call site where it always was — which consumer throws you tolerate is
+      // the head's business, not the decoder's.
       const decoder = makeSseDecoder({
         // `data: null` parses fine but this side's consumers all dereference
         // the payload (data.b64, data.name, data.exitCode), and the old guard
@@ -627,8 +655,29 @@ class PeerConnection {
         // consumers, and the CLI's (which render text) do not share it.
         onEvent: (event, data) => { if (data === null) return; try { onEvent(event, data); } catch {} },
         dropUnparsableData: true,
-        maxBufferBytes: SSE_MAX_BUFFER_BYTES,
-        onOverflow: () => { try { req.destroy(); } catch {} },
+        maxBufferBytes: this._sseMaxBufferBytes,
+        // The producer sent more unframed bytes than any legitimate frame could
+        // be. Destroy the socket and let the ONE close door handle it — the same
+        // door a socket error uses, so this reconnects on the normal calm
+        // backoff rather than in a second path of its own.
+        //
+        // WHY RECONNECT RATHER THAN GIVE UP. The likely causes are transient
+        // (a hop mangling a stretch of the stream, a truncated write), and
+        // giving up would strand this peer's session list stale forever while
+        // the peer still reads as online — a worse failure, and a silent one.
+        // Reconnecting is self-healing if the cause passes.
+        //
+        // WHAT THAT COSTS, named rather than hidden: if the cause does NOT
+        // pass, this cycles. onOpen resets _eventsBackoff on every successful
+        // connect (:266) and an overflowing stream does reach 200 first, so the
+        // cycle sits at the 1s floor instead of backing off — each pass moving
+        // a megabyte before it fires. Bandwidth-bound, not a CPU spin. Fixing
+        // it means teaching the backoff that some opens are not good ones,
+        // which is reconnect policy — L2's, deliberately not this ticket's.
+        onOverflow: (bytes) => {
+          this._reportSseOverflow(path, bytes);
+          try { req.destroy(); } catch {}
+        },
       });
       res.on('data', (chunk) => {
         // Re-arm FIRST, before any framing: a chunk carrying only heartbeat
