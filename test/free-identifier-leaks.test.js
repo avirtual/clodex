@@ -84,6 +84,13 @@ const SCANNED_MODULES = [
   // because the convention says every new extraction joins; the real guard for
   // this one is its leaf property — it has NO requires at all.
   'cli/src/sse-frame.js',
+  // The shared tunnel supervisor (t49/L2), collapsing peer-tunnel.js's `Tunnel`
+  // and web-tunnel.js's `WebTunnel`. Unlike the two cli/ leaves above, this one
+  // is a root main-process module and the forward scan says something real about
+  // it: it is required BY peer-wiring.js (which was itself carved out of
+  // main.js), so a main.js name reaching it through that path is exactly the
+  // escape this test exists to catch.
+  'tunnel-supervisor.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

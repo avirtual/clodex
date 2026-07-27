@@ -12,11 +12,30 @@
 //             (target/region/profile) lives in the peer record — an executable
 //             argv is never persisted by this side.
 //
-// Supervision model mirrors the peer connections themselves: a dead tunnel
-// is CALM (laptops sleep, wifi drops) — restart with capped backoff, no
-// error toasts. The last ssh stderr line is kept so a genuine misconfig
-// (key rejected, unknown host) is diagnosable in the UI, not silently
-// identical to "asleep".
+// Since t49 the SUPERVISION ITSELF is shared with web-tunnel.js: spawn,
+// respawn, backoff, the stable check, the status row and the kill all live in
+// tunnel-supervisor.js, and this file says only what makes a WIRE tunnel
+// different. The two copies were ~90 identical lines apiece and had drifted in
+// three places (journal: tasks/tunnel-supervisor/). What is configured here,
+// and the property of the CONSUMER that decides each:
+//
+//   • RETRY IS UNBOUNDED, because Clodex itself needs this forward
+//     continuously. A dead tunnel is CALM (laptops sleep, wifi drops) — restart
+//     with capped backoff, no error toasts. Giving up would need a human to
+//     notice and re-arm it, and nobody is watching a wire tunnel. The last ssh
+//     stderr line is kept so a genuine misconfig (key rejected, unknown host) is
+//     diagnosable in the UI, not silently identical to "asleep".
+//   • THE PORT IS RE-PICKED per respawn, because the consumer can be CORRECTED
+//     later: PeerConnection is re-pointed through onState → resolvePeerUrls →
+//     PeerManager.sync. Re-picking is strictly better than pinning when that
+//     holds — it cannot collide with whatever took the old port meanwhile.
+//   • NO READINESS PROBE, because the consumer verifies the forward ITSELF: the
+//     peer client's 15s hello loop finds a dead port on its own and stays calmly
+//     offline until a later onState repoints it. `state: 'up'` here means only
+//     "the child is alive", which is all `ssh -N` can offer and all this
+//     consumer needs. (web-tunnel's consumer is a browser tab, which gets one
+//     shot and no loop — hence the probe there. Not "peers vs web": whether the
+//     consumer re-derives the truth.)
 //
 // Auth is key-based only (BatchMode=yes): Clodex never proxies an
 // interactive password/hostkey dialog. StrictHostKeyChecking=accept-new
@@ -27,221 +46,40 @@
 
 'use strict';
 
-const net = require('net');
-// The CLI's argv builders, reused verbatim. cli/ ships in the DMG (build.files,
-// t32 step 0), so this require resolves in a packaged app as well as a checkout;
-// the leaf direction is unchanged — cli/ never requires an app file.
-const { ssmArgv, kubectlArgv, gcloudArgv, azArgv, substitutePort } = require('./cli/src/transport');
-// The shared dial (t42/L1): spawn, stderr accumulation, ENOENT classification and
-// the process-group kill, which this module, web-tunnel.js and openTransport each
-// used to carry their own copy of. Supervision — backoff, the stable check, what
-// `up` means — stays HERE; the dial knows nothing about any of it.
-const { spawnDial, killDial, sshTunnelArgv, STDERR_TAIL_BYTES } = require('./cli/src/dial');
-
-// Typed cloud transports, one row per kind:
-//   argv     — the builder that turns the block into a {port}-bearing argv
-//   fields   — every field that identifies the DESTINATION. A change to any of
-//              them dials a different box and must restart the tunnel.
-//   required — the subset without which there is nothing to dial. A block
-//              missing one gets NO tunnel, rather than a half-built argv the
-//              vendor CLI would reject at connect time with a worse message.
-//
-// A table rather than a switch, so adding a kind is one row instead of four
-// edits in three files — and so `sameCloud` cannot fall out of step with the
-// builders. stores.js admits at most one cloud block per peer, so in practice
-// exactly one of these keys is present on a record.
-const CLOUD_KINDS = {
-  ssm:     { argv: ssmArgv,     fields: ['target', 'region', 'profile'],     required: ['target'] },
-  kubectl: { argv: kubectlArgv, fields: ['target', 'namespace', 'context'],  required: ['target'] },
-  gcloud:  { argv: gcloudArgv,  fields: ['instance', 'zone', 'project'],     required: ['instance'] },
-  // az has no destination-field syntax in the Peers dialog (see stores.js's
-  // PEER_CLOUD_KINDS), so today it is reachable only by import or a hand-edited
-  // settings file — the supervisor accepts it so step 4's import needs no
-  // second pass here. All three fields are required: the bastion is the tunnel
-  // endpoint, the target the VM behind it, and neither is optional to azArgv.
-  az:      { argv: azArgv,      fields: ['bastion', 'resourceGroup', 'target'], required: ['bastion', 'resourceGroup', 'target'] },
-};
+// The shared supervisor (t49/L2) and the destination vocabulary it owns.
+const {
+  SupervisedTunnel, CLOUD_KINDS, sameCloud, destinationOf, hasCloudTransport,
+} = require('./tunnel-supervisor');
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 60000;
 // A tunnel that survived this long was genuinely up — reset backoff.
 const STABLE_MS = 30000;
+// The wire port every Clodex serves on, used when a record names none. Unlike
+// the web tunnel's remote port — which comes from the peer's hello and must
+// never be guessed — this one is a constant of the protocol.
+const DEFAULT_REMOTE_PORT = 7900;
 
-// Destination equality for a cloud transport — kind first, then field by field
-// off the table. Field-by-field because a changed region/namespace/zone dials a
-// DIFFERENT box: an identity comparison of two freshly-built objects would
-// restart on every settings write, and a first-field-only comparison would never
-// restart on a selector change. Both are wrong in opposite directions.
-function sameCloud(a, b) {
-  if (!a || !b) return !a && !b;
-  if (a.kind !== b.kind) return false;
-  return CLOUD_KINDS[a.kind].fields.every((f) => (a.block[f] || null) === (b.block[f] || null));
-}
-
-function pickFreePort(cb) {
-  const srv = net.createServer();
-  srv.on('error', () => cb(null));
-  srv.listen(0, '127.0.0.1', () => {
-    const port = srv.address().port;
-    srv.close(() => cb(port));
-  });
-}
-
-class Tunnel {
+// The wire tunnel: the shared supervisor with wire policy. Everything this class
+// does NOT say is deliberate — retry, backoff, spawn, kill, status and argv
+// construction are the supervisor's, identical to the web tunnel's, and the
+// three lines below are the whole of the difference.
+class Tunnel extends SupervisedTunnel {
   // Options carry a cloud transport under its OWN kind key (`ssm: {…}`,
   // `kubectl: {…}`, `gcloud: {…}`) — the same shape the peer record uses, so a
   // settings entry can be handed straight in with no translation step to get
-  // wrong. Normalized internally to `this.cloud = { kind, block }`.
-  constructor({ id, sshHost, remotePort, spawnFn, onState, ...opts }) {
-    this.id = id;
-    this.sshHost = sshHost || null;
-    this.cloud = null;
-    for (const kind of Object.keys(CLOUD_KINDS)) {
-      if (opts[kind]) { this.cloud = { kind, block: { ...opts[kind] } }; break; }
-    }
-    this.remotePort = remotePort || 7900;
-    // null when not injected — spawnDial falls back to child_process.spawn, so
-    // this module no longer requires child_process at all.
-    this._spawn = spawnFn || null;
-    this._onState = onState || (() => {});
-    this.localPort = null;
-    this.state = 'down';             // 'up' | 'down'
-    this.lastError = null;
-    this._child = null;
-    this._timer = null;
-    this._backoff = BACKOFF_MIN_MS;
-    this._stopped = false;
-  }
-
-  start() {
-    this._stopped = false;
-    this._spawnTunnel();
-  }
-
-  stop() {
-    this._stopped = true;
-    clearTimeout(this._timer);
-    this._timer = null;
-    this._killChild();
-    this.localPort = null;
-    this._setState('down');
-  }
-
-  status() {
-    return {
-      id: this.id, sshHost: this.sshHost,
-      // The dialled destination, under its kind key, for the UI — the DATA,
-      // never an argv. The renderer reads this row (it never sees the peer
-      // record), so the kind is how it can say WHICH transport a peer uses.
-      ...(this.cloud ? { [this.cloud.kind]: { ...this.cloud.block } } : {}),
-      remotePort: this.remotePort,
-      state: this.state, localPort: this.localPort, error: this.lastError,
-    };
-  }
-
-  url() { return this.state === 'up' && this.localPort ? `http://127.0.0.1:${this.localPort}` : null; }
-
-  // ssh's argv TAIL (no leading 'ssh'), kept as-is for the original call shape.
-  // The bytes come from the shared dial's sshTunnelArgv — one place decides what
-  // a supervised `ssh -N -L` looks like, for this module and web-tunnel.js both.
-  args(localPort) {
-    return sshTunnelArgv(this.sshHost, this.remotePort, localPort).slice(1);
-  }
-
-  // The full argv INCLUDING the command word, per transport. SYNCHRONOUS by
-  // construction: every arm is pure string assembly. `ssm.ecs` would break that
-  // (two awaited `aws` reads to learn its target), which is exactly why the
-  // store admits no `ecs` block — see PEER_CLOUD_KINDS in stores.js.
-  argv(localPort) {
-    if (this.cloud) {
-      const build = CLOUD_KINDS[this.cloud.kind].argv;
-      return substitutePort(build(this.cloud.block, this.remotePort), localPort);
-    }
-    return ['ssh', ...this.args(localPort)];
-  }
-
-  // Every vendor CLI forks helpers a plain child-kill would orphan (aws its
-  // session-manager-plugin, kubectl and gcloud their own), so a cloud child
-  // leads its own process group and is killed by group — the same reasoning,
-  // and the same > 0 pid guard, as cli/src/transport.js's close(). ssh needs
-  // none of that and keeps its original non-detached spawn exactly.
-  _detached() { return !!this.cloud; }
-
-  _killChild() {
-    const child = this._child;
-    if (!child) return;
-    this._child = null;
-    // `fallbackKill` stays on (the default): a non-detached ssh child, or a
-    // detached one with no usable pid, is still killed directly. openTransport
-    // has no such arm — see dial.js's killDial and drift D3.
-    killDial(child, { group: this._detached() });
-  }
-
-  _setState(state) {
-    if (this.state === state) return;
-    this.state = state;
-    try { this._onState(this.id, this.status()); } catch {}
-  }
-
-  _spawnTunnel() {
-    if (this._stopped || this._child) return;
-    pickFreePort((port) => {
-      if (this._stopped) return;
-      if (!port) { this.lastError = 'no free local port'; return this._scheduleRestart(); }
-      this.localPort = port;
-      let dial;
-      // Named in errors even if argv() itself throws.
-      let cmdName = this.cloud ? this.cloud.kind : 'ssh';
-      try {
-        const argv = this.argv(port);
-        cmdName = argv[0];
-        dial = spawnDial(argv, {
-          spawnFn: this._spawn,
-          detached: this._detached(),
-          stderrLimit: STDERR_TAIL_BYTES,
-        });
-      } catch (e) {
-        this.lastError = e.message;
-        return this._scheduleRestart();
-      }
-      const child = dial.child;
-      this._child = child;
-      const bornAt = Date.now();
-      child.on('error', (e) => {           // spawn failure (binary missing)
-        // The dial classifies; this layer decides what the UI sees. A missing
-        // vendor CLI is the common ssm misconfig and reads as a bare ENOENT
-        // otherwise, so the diagnosis replaces the raw message here — the CLI
-        // appends it to stderr instead (t40's "same information, rendered
-        // twice"). What the dial ALSO offers and this layer still does not show:
-        // the full stderr rather than its last line.
-        const f = dial.failure(e);
-        this.lastError = f.diagnosis || f.message;
-        this._child = null;
-        this._scheduleRestart();
-      });
-      child.on('exit', (code) => {
-        this._child = null;
-        this.localPort = null;
-        const line = dial.stderr().trim().split('\n').pop() || '';
-        this.lastError = line || (code === 0 ? null : `${cmdName} exited (${code})`);
-        if (Date.now() - bornAt > STABLE_MS) this._backoff = BACKOFF_MIN_MS;
-        this._scheduleRestart();
-      });
-      // ssh -N prints nothing on success and the aws session plugin's chatter
-      // is ignorable; the process being alive IS the tunnel. Whether the far end
-      // actually answers is the peer client's hello loop's job — this layer only
-      // supervises the transport.
-      this._setState('up');
+  // wrong.
+  constructor({ remotePort, ...opts }) {
+    super({
+      ...opts,
+      remotePort: remotePort || DEFAULT_REMOTE_PORT,
+      backoffMinMs: BACKOFF_MIN_MS,
+      backoffMaxMs: BACKOFF_MAX_MS,
+      stableMs: STABLE_MS,
+      giveUpMs: null,        // unbounded: nobody is watching this one
+      pinPort: false,        // the consumer is re-pointed through onState
+      readiness: null,       // the consumer's own hello loop is the probe
     });
-  }
-
-  _scheduleRestart() {
-    this._setState('down');
-    if (this._stopped) return;
-    const delay = this._backoff;
-    this._backoff = Math.min(this._backoff * 2, BACKOFF_MAX_MS);
-    clearTimeout(this._timer);
-    this._timer = setTimeout(() => { this._timer = null; this._spawnTunnel(); }, delay);
   }
 }
 
@@ -255,29 +93,18 @@ class TunnelManager {
   // peers: full settings entries; only those with a DIALABLE transport (sshHost
   // or a typed cloud kind) get tunnels. A change to the destination — host, any
   // field of a cloud block, or the remote port — restarts that tunnel.
+  //
+  // The destination is computed by the supervisor's `destinationOf`, the same
+  // rule the web manager uses: two rules for "what does this record dial" is how
+  // the two sides came to disagree about which records are forwardable at all.
   sync(peers) {
     const wanted = new Map();
     for (const p of Array.isArray(peers) ? peers : []) {
       if (!p || !p.id) continue;
-      const remotePort = Number.isInteger(p.remotePort) ? p.remotePort : 7900;
-      if (p.sshHost) {
-        wanted.set(String(p.id), { sshHost: String(p.sshHost), cloud: null, remotePort });
-        continue;
-      }
-      for (const [kind, spec] of Object.entries(CLOUD_KINDS)) {
-        const raw = p[kind];
-        // Every required field must be present; without them there is nothing to
-        // dial, so the peer gets no tunnel rather than a malformed argv that
-        // fails later with a vendor CLI's own confusing message.
-        if (!raw || !spec.required.every((f) => raw[f])) continue;
-        // Copy only the fields we dial with, stringified — so a later mutation
-        // of the settings object can't silently change a running tunnel's
-        // identity, and an unexpected key can't reach the argv builder.
-        const block = {};
-        for (const f of spec.fields) if (raw[f]) block[f] = String(raw[f]);
-        wanted.set(String(p.id), { sshHost: null, cloud: { kind, block }, remotePort });
-        break;
-      }
+      const dest = destinationOf(p);
+      if (!dest) continue;
+      const remotePort = Number.isInteger(p.remotePort) ? p.remotePort : DEFAULT_REMOTE_PORT;
+      wanted.set(String(p.id), { ...dest, remotePort });
     }
     for (const [id, tun] of this._tunnels) {
       const w = wanted.get(id);
@@ -314,21 +141,10 @@ class TunnelManager {
   }
 }
 
-// Does this peer record name a typed cloud transport this supervisor can dial?
-// Exported so callers ask the module that OWNS the kind list rather than each
-// keeping its own `p.ssm || p.kubectl || …` chain — three such chains would be
-// three places to forget a kind, and forgetting one reads as a peer that
-// silently never connects.
-function hasCloudTransport(peer) {
-  if (!peer) return false;
-  return Object.entries(CLOUD_KINDS).some(([kind, spec]) => {
-    const raw = peer[kind];
-    return !!(raw && spec.required.every((f) => raw[f]));
-  });
-}
-
-// CLOUD_KINDS and sameCloud are exported for the WEB tunnel supervisor
-// (web-tunnel.js), which dials the same destinations for a different reason.
-// Exported rather than copied: a second copy of the kind table is how the web
-// view came to refuse transports the wire already dialled (t36).
+// CLOUD_KINDS, sameCloud and hasCloudTransport moved to tunnel-supervisor.js
+// (t49) and are re-exported unchanged: they were part of this module's surface
+// before the move — peer-import.js, web-tunnel.js and peer-wiring.js all read
+// them from here, and test/peer-tunnel.test.js pins hasCloudTransport from here.
+// Re-exported rather than repointed so no caller and no existing test needs
+// editing for a move that changed nothing about them.
 module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS, sameCloud };
