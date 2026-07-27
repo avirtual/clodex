@@ -130,7 +130,10 @@ function registerIpcHandlers(deps) {
     // fires for non-dialog callers — keeping new sessions on the shared, lean
     // tools segment. An explicit array always wins (undefined === "untouched").
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null);
+    // mint=true: this IS the front door the comment above describes, so the frozen
+    // prompt cache must regenerate rather than inherit a same-named dead session's
+    // baseline — including for an "adopt" mint, which carries a resumeId.
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true);
     // Strip level isn't a spawn arg (it's a proxy-side override the poller
     // asserts once the session links), so persist it onto the entry after
     // create() rather than threading it through the spawn path.
@@ -1215,6 +1218,8 @@ function registerIpcHandlers(deps) {
       const out = await manager.create(
         name, 'claude', dir, [], null, wsId,
         null, false, null, [], [], [], [], [], null, [],
+        // A brand-new fix-session under a freshly deconflicted name: a mint.
+        [], null, null, true,
       );
       const briefing = buildDeployFixBriefing({
         sshHost: host, port: p, label, logText,

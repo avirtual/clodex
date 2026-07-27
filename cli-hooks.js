@@ -54,6 +54,10 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     const digestPath = pathFor(REGISTRY_DIR, name, 'hookDigest');
     const statusPath = pathFor(REGISTRY_DIR, name, 'statusline');
     const msgDir = path.join(REGISTRY_DIR, 'messages');
+    // Shared root, NOT run/<name>/ — it must outlive the run dir this function's
+    // cleanup rm -rf's. Read by the SessionStart script (context-reset baseline
+    // reset) and the UserPromptSubmit drain below.
+    const promptCacheDir = path.join(REGISTRY_DIR, 'promptcache', name);
 
     // Pre-render hook output: the agent NAME only. The protocol prompt itself
     // ships via --append-system-prompt-file (settled position) and is static, so
@@ -70,13 +74,50 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     fs.writeFileSync(outputPath, hookOutput + '\n');
     writeClaudeDigestFile(name);
 
-    // Hook script: repoint the transcript symlink, then emit additionalContext.
+    // Hook script: repoint the transcript symlink, reset the IPC-delta baseline
+    // on a context reset, then emit additionalContext.
+    //
     // The digest-bearing output goes ONLY to conversations being BORN (source
-    // startup/clear) — a resume already carries the digest in its history (and
-    // additionalContext survives /compact verbatim, settled position #2), so
-    // re-emitting it would duplicate KBs into context on every GUI restart.
-    // Unknown/missing source falls to name-only: fails toward a missed digest
-    // (the append-once ledger path rescues), never a duplicated one.
+    // startup/clear); a resume gets name-only, so a GUI restart doesn't duplicate
+    // KBs into context. Unknown/missing source falls to name-only: fails toward a
+    // missed digest (the append-once ledger path rescues), never a duplicated one.
+    //
+    // CORRECTED MECHANISM (t63; retires settled position #2, which claimed
+    // additionalContext "survives /compact verbatim" — measured false against
+    // captured wire traffic). What actually happens: the CLI RE-FIRES SessionStart
+    // with source=compact, so this hook's additionalContext is re-emitted, not
+    // preserved. It is SELF-HEALING. Compaction replaces the messages array with a
+    // generated summary, so channels that do NOT re-fire — UserPromptSubmit, and
+    // therefore the ipcdelta drain below — have their delivered content summarized
+    // away like any other message. That is why the reset exists.
+    // A consequence of the SRC gate under this corrected mechanism (a compact
+    // re-fire takes the else branch, so a long-lived session loses its digest at
+    // the first compact) is tracked as its own ticket; the gate is deliberately
+    // unchanged here — re-emitting KBs of digest after every compact is a
+    // context-cost decision of its own.
+    //
+    // THE RESET RULE. The system prompt survives compaction (it is the system
+    // block, not a member of the messages array), so after a clear or a compact
+    // the ONLY Clodex instruction text the agent still holds is session.md.
+    // notified.md means "what this agent has been told BEYOND its system prompt",
+    // and after a context reset that is nothing — so the correct action at either
+    // edge is `notified.md := session.md`, NOT re-delivering the last delta. The
+    // existing edge-triggered machinery then regenerates precisely the delta the
+    // agent is now missing, which may be larger than the one that was lost, and
+    // should be.
+    //
+    // WHY THE RACE WITH THE DRAIN'S RENAME IS UNREACHABLE, not merely unlikely.
+    // Both write notified.md, but they run on different CLI events that cannot
+    // overlap for one session: this is SessionStart, which fires while the
+    // conversation is being (re)established, and the drain is UserPromptSubmit,
+    // which fires on a submitted turn. The CLI runs one session's hooks serially,
+    // and there is no turn to submit until SessionStart has returned. The
+    // interleaving chosen inside this script matters for the same reason and is
+    // stated there: the reset unlinks delta.md/next.md BEFORE writing
+    // notified.md, so even a torn execution can only leave a staged pair absent
+    // and the baseline old — the re-stage-on-next-spawn case, which is correct —
+    // and never a drained pair advancing the baseline past a delta the reset just
+    // invalidated.
     const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
@@ -86,6 +127,29 @@ TMPLINK="${linkPath}.tmp.$$"
 ln -sf "$TPATH" "$TMPLINK"
 mv -f "$TMPLINK" "${linkPath}"
 SRC="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).source||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
+if [ "$SRC" = "clear" ] || [ "$SRC" = "compact" ]; then
+  ${INTERP} - "${promptCacheDir}" <<'RESETEOF' || true
+const fs = require('fs'), path = require('path');
+const d = process.argv[2];
+// Context reset: everything delivered through UserPromptSubmit is gone (cleared
+// outright, or summarized away by the compact). The system prompt survives, and
+// it holds session.md — so that, and only that, is what this agent has been
+// told. Reset the baseline to it and let the normal stage/drain regenerate.
+let session = null;
+try { session = fs.readFileSync(path.join(d, 'session.md'), 'utf8'); } catch (e) { process.exit(0); }
+// Invalidate the staged pair FIRST: it was computed against the OLD baseline, so
+// draining it after the reset would advance notified.md past a delta this reset
+// just made wrong. Unlink-then-write means a torn run leaves no pair and an old
+// baseline, which the next spawn simply re-stages.
+try { fs.unlinkSync(path.join(d, 'delta.md')); } catch (e) {}
+try { fs.unlinkSync(path.join(d, 'next.md')); } catch (e) {}
+const tmp = path.join(d, 'notified.md.tmp.reset.' + process.pid + '.' + Date.now());
+try {
+  fs.writeFileSync(tmp, session, { mode: 0o600 });
+  fs.renameSync(tmp, path.join(d, 'notified.md'));
+} catch (e) { try { fs.unlinkSync(tmp); } catch (e2) {} }
+RESETEOF
+fi
 if [ "$SRC" = "startup" ] || [ "$SRC" = "clear" ]; then
   cat "${digestPath}"
 else
@@ -259,8 +323,9 @@ JSEOF
     // run/<name>/, because cleanupClaudeHook rm -rf's this run dir on every exit
     // — including the one right before the resume this cache exists to serve.
     // Same split as pending/: shared data, per-run script.
-    const promptCacheDir = path.join(REGISTRY_DIR, 'promptcache', name);
     const ipcdeltaScriptPath = pathFor(REGISTRY_DIR, name, 'ipcdeltaScript');
+    // (promptCacheDir is defined above, next to the SessionStart script that
+    // performs the context-reset baseline reset into the same directory.)
     fs.writeFileSync(ipcdeltaScriptPath, `#!/bin/bash
 [ -s "${promptCacheDir}/delta.md" ] || exit 0
 ${INTERP} - "${promptCacheDir}" <<'JSEOF'
@@ -292,13 +357,19 @@ JSEOF
         }],
         UserPromptSubmit: [{
           matcher: '',
-          // Both drains run on submit; Claude concatenates their additionalContext.
-          // acks = bookkeeping (lossy-tolerant), pending = parked DMs (zero-loss).
+          // All drains run on submit; Claude concatenates their additionalContext
+          // in registration order. acks = bookkeeping (lossy-tolerant),
+          // pending = parked DMs (zero-loss).
+          // ipcdelta goes FIRST, deliberately: it is a protocol change — it can
+          // alter what the intents in the messages BELOW it even mean — and it
+          // fires rarely, so burying it under parked DMs and a context warning
+          // makes the one thing that reframes everything else the easiest to read
+          // past.
           hooks: [
+            { type: 'command', command: ipcdeltaScriptPath },
             { type: 'command', command: ackScriptPath },
             { type: 'command', command: pendingScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
-            { type: 'command', command: ipcdeltaScriptPath },
           ]
         }],
         // Parked-DM drain ONLY (not acks/ctxwarn — those are turn-boundary

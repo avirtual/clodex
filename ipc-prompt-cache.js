@@ -37,6 +37,36 @@
 // the same delta next turn. At-least-once, never at-most-once: a repeated diff
 // is noise, a dropped one is an agent emitting a verb that no longer exists.
 //
+// NO FREEZE WITHOUT A CHANNEL. Freezing is only safe while the delta can still
+// be delivered, so create() passes reuse=false whenever the drain hook was not
+// installed (a user-supplied --settings replaces the whole hooks block). The
+// fallback is to REGENERATE: a frozen prompt with no delivery channel is
+// permanent silent staleness, which is strictly worse than the rewrite this
+// module exists to avoid — that session pays the token bust once and is correct.
+//
+// WHAT THE RUNTIME BOUNCE DOES AND DOES NOT COVER. An agent that emits a verb
+// which no longer exists is told so by the running system (unknown → bounced;
+// gated → "the <type> intent is disabled for this session"). That is a real
+// backstop, but it is a floor for DELETIONS ONLY, and only for verbs the agent
+// actually TRIES. It says nothing about a capability ADDED since the freeze
+// (never learned, so never attempted, so never bounced), about an unchanged verb
+// name whose SEMANTICS changed (it is still accepted — wrongly), or about
+// changed prose in the team/role block. So the delta is not merely the fast path
+// for something the bounce would eventually cover: for everything except a
+// deletion the agent happens to attempt, the delta is the ONLY path.
+//
+// A CONTEXT RESET DESTROYS DELIVERED DELTAS, which is why last_ipc is reset at
+// that edge rather than left advanced. Deltas ride UserPromptSubmit
+// additionalContext, i.e. ordinary conversation content: a /clear drops it and a
+// /compact summarizes it away (measured — the CLI replaces the messages array
+// with a summary; only SessionStart additionalContext comes back, because that
+// hook RE-FIRES with source=compact). The system prompt survives both, and it
+// holds session_ipc. Since last_ipc means "what this agent has been told BEYOND
+// its system prompt", after a reset that is exactly session_ipc — so the
+// SessionStart hook sets notified.md := session.md and lets the normal
+// stage/drain regenerate whatever is now missing. Re-delivering the LAST delta
+// would be wrong: the agent may be missing more than that one.
+//
 // WHERE THE FILES LIVE, and why not under run/<name>/. cleanupClaudeHook rm -rf's
 // the whole run/<name>/ dir, and _cleanup calls it on EVERY exit path — natural
 // exit, restart's kill, quit's killAll — not only user-kill. A cache under run/
@@ -96,7 +126,9 @@ function readCache(root, name, kind) {
 function writeCache(root, name, kind, text) {
   const dest = cachePathFor(root, name, kind);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const tmp = `${dest}.tmp.${process.pid}`;
+  // pid alone collides when the same pid writes the same kind twice in a run (and
+  // pids recycle); the timestamp costs nothing and makes the temp name unique.
+  const tmp = `${dest}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, text, { mode: 0o600 });
   fs.renameSync(tmp, dest);
 }
