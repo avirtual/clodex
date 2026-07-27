@@ -26,11 +26,11 @@ test('pathFor: the three bare forms are unsuffixed', () => {
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'socket')), 'agent.sock');
 });
 
-test('pathFor: 19 per-agent kinds are defined', () => {
-  assert.strictEqual(Object.keys(KINDS).length, 19);
+test('pathFor: 20 per-agent kinds are defined', () => {
+  assert.strictEqual(Object.keys(KINDS).length, 20);
   // every kind has a matching legacy suffix (the sweep depends on the pairing) —
-  // file-heat.json has no flat ancestor but keeps a defensive suffix so the
-  // invariant (every kind sweepable) holds.
+  // file-heat.json and ipcdelta.sh have no flat ancestor but keep a defensive
+  // suffix so the invariant (every kind sweepable) holds.
   assert.deepStrictEqual(Object.keys(KINDS).sort(), Object.keys(LEGACY_SUFFIXES).sort());
 });
 

@@ -59,6 +59,11 @@ const SCANNED_MODULES = [
   'session-discovery.js',
   'git-worktree.js',
   'session-meta.js',
+  // The frozen-system-prompt cache (t61). A pure fs/string leaf like
+  // ctx-reminder.js, read by session-manager's claude arm through the deps
+  // object — so the forward scan says something real: a name it reached for in
+  // session-manager's scope instead of taking by injection would show up here.
+  'ipc-prompt-cache.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',
