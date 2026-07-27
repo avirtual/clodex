@@ -78,6 +78,12 @@ const SCANNED_MODULES = [
   // its leaf property (no upward require at all), which cli/test/load-smoke.js
   // and the packaging tests speak to.
   'cli/src/dial.js',
+  // The shared SSE frame decoder (t47/L3), collapsing two copies of the
+  // framing. Same honest caveat as dial.js above: a cli/ leaf never carved out
+  // of main.js, so the forward scan only catches it accidentally. Listed
+  // because the convention says every new extraction joins; the real guard for
+  // this one is its leaf property — it has NO requires at all.
+  'cli/src/sse-frame.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

@@ -27,6 +27,18 @@ const { withoutExecGrants } = require('./session-args');
 // web-tunnel.js:73 already take into cli/src/transport; cli/ never requires an
 // app file, and cli/ ships in the DMG (build.files).
 const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
+// The SSE frame decoder, likewise imported rather than reimplemented (t47).
+// This file and cli/src/client.js each hand-rolled the same `\n\n` framing,
+// the same `: ping` skip and the same event:/data: read — and had SILENTLY
+// DRIFTED (CRLF tolerance, space-less fields, multi-line data: all handled on
+// the CLI side only). One decoder now; the two real divergences are its two
+// options, set below. Same leaf direction as sse-guard above.
+const { makeSseDecoder } = require('./cli/src/sse-frame');
+
+// Residual-buffer bound for an SSE stream: past this, the socket is destroyed.
+// Long-standing peer-side behaviour, preserved verbatim (the CLI has no
+// equivalent — see sse-frame.js D5).
+const SSE_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -600,28 +612,29 @@ class PeerConnection {
         close();
       }, this._timers);
       watchdog.pet();
-      let buf = '';
       res.setEncoding('utf8');
+      // Framing is sse-frame.js's. The two options ARE this side's preserved
+      // divergences from the CLI's copy: a `data:` line that will not JSON-parse
+      // drops the frame (rather than being delivered raw), and the residual
+      // buffer is bounded. A consumer throw is swallowed here, at the call site
+      // where it always was — which consumer throws you tolerate is the head's
+      // business, not the decoder's.
+      const decoder = makeSseDecoder({
+        // `data: null` parses fine but this side's consumers all dereference
+        // the payload (data.b64, data.name, data.exitCode), and the old guard
+        // was `if (data !== null)` — a null was dropped, not delivered. Kept
+        // here rather than made a decoder option: it is a property of THESE
+        // consumers, and the CLI's (which render text) do not share it.
+        onEvent: (event, data) => { if (data === null) return; try { onEvent(event, data); } catch {} },
+        dropUnparsableData: true,
+        maxBufferBytes: SSE_MAX_BUFFER_BYTES,
+        onOverflow: () => { try { req.destroy(); } catch {} },
+      });
       res.on('data', (chunk) => {
         // Re-arm FIRST, before any framing: a chunk carrying only heartbeat
         // comments yields no event but is exactly the liveness signal we need.
         if (watchdog) watchdog.pet();
-        buf += chunk;
-        // SSE frames are \n\n-separated; heartbeats are comment lines.
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const frame = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          if (buf.length > 8 * 1024 * 1024) { req.destroy(); return; }
-          let event = 'message', data = null;
-          for (const line of frame.split('\n')) {
-            if (line.startsWith('event: ')) event = line.slice(7).trim();
-            else if (line.startsWith('data: ')) {
-              try { data = JSON.parse(line.slice(6)); } catch { data = null; }
-            }
-          }
-          if (data !== null) { try { onEvent(event, data); } catch {} }
-        }
+        decoder.push(chunk);
       });
       res.on('end', close);
       res.on('error', close);
