@@ -31,6 +31,13 @@ const http = require('node:http');
 const { PeerConnection } = require('../peer-client');
 const { STALE_MS } = require('../cli/src/sse-guard');
 
+// Timers a single live SSE stream arms on the injected clock: the staleness
+// watchdog, and (since t50) the stability timer whose fire resets the reconnect
+// backoff. These tests count pending timers to prove a stream is armed, so the
+// count is named rather than written as a literal 2 — it is a property of
+// peer-client's _sse, not a magic number belonging to any one assertion.
+const TIMERS_PER_STREAM = 2;
+
 // A virtual clock behind { setTimeout, clearTimeout }. advance(ms) runs every
 // timer due within the window, in due order. `arms` counts setTimeout calls —
 // the observable that says a pet() landed, which is how a test can synchronise
@@ -147,10 +154,12 @@ test('a silent SSE stream is torn down and reconnected once the staleness bound 
     // when the box receives the request, while the watchdog arms when the client
     // sees the 200. Synchronising on the server's counter would race the client.
     await waitFor('the first events stream to open and arm its staleness timer',
-      () => conn.online && state.connects === 1 && clock.pending() === 1);
-    // Nothing but the watchdog is on this clock — the hello loop and the
-    // reconnect backoff both use real timers, so `pending` is unambiguous.
-    assert.strictEqual(clock.pending(), 1, 'exactly one staleness timer is armed on the live stream');
+      () => conn.online && state.connects === 1 && clock.pending() === TIMERS_PER_STREAM);
+    // The hello loop and the reconnect backoff use real timers, so this clock
+    // holds only per-stream timers and `pending` stays unambiguous — but since
+    // t50 a live stream arms TWO of them (see TIMERS_PER_STREAM).
+    assert.strictEqual(clock.pending(), TIMERS_PER_STREAM,
+      'exactly one live stream is armed (its watchdog and its stability timer)');
 
     // No bytes for the full bound. Pre-fix this was survivable forever.
     clock.advance(STALE_MS);
@@ -179,7 +188,7 @@ test('a heartbeat comment re-arms the watchdog (an idle healthy session is not k
   conn.start();
   try {
     await waitFor('the events stream to open and arm its staleness timer',
-      () => conn.online && state.connects === 1 && clock.pending() === 1);
+      () => conn.online && state.connects === 1 && clock.pending() === TIMERS_PER_STREAM);
 
     // Just under the bound: still alive, nothing reconnected.
     clock.advance(STALE_MS - 1);
@@ -236,7 +245,7 @@ test('a watchdog fire on an attach stream opens the close door exactly once', as
     await waitFor('the events stream to open', () => conn.online && state.connects === 1);
     conn.attach('sess');
     await waitFor('the attach stream to open and both staleness timers to arm',
-      () => state.attaches === 1 && clock.pending() === 2);
+      () => state.attaches === 1 && clock.pending() === 2 * TIMERS_PER_STREAM);
 
     const before = emits.filter((e) => e[0] === 'peer-control').length;
     clock.advance(STALE_MS);
