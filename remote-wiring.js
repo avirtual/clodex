@@ -207,8 +207,8 @@ function createRemoteWiring(deps) {
           const sessionEnv = sanitizeFlat(b.env);
           const sessionEnvKeys = Object.keys(sessionEnv).sort();
           try {
-            // Map the wire body onto create()'s 19-param positional signature
-            // (session-manager.js:610). Each `|| default` reproduces the value the
+            // Map the wire body onto create()'s 20-param positional signature
+            // (session-manager.js's `async create(`). Each `|| default` reproduces the value the
             // M3 hardcoded call passed for an absent key. systemPromptBody stays
             // null (F2 — legacy inline body is never authored at create);
             // execCommands stays [] (grants never cross); workspaceId is 'default'.
@@ -237,6 +237,15 @@ function createRemoteWiring(deps) {
               // null (not {}) when empty so create()'s conditional-omit persist and
               // no-scopes byte-identity both hold exactly as for a local spawn.
               sessionEnvKeys.length ? sessionEnv : null,
+              // mint=true (20th positional): this is the peer spawn FRONT DOOR — it
+              // refuses a name that is live OR persisted (the `name taken` guard
+              // above), which is the same test nameConflict applies locally, so
+              // every session born here is a NEW one. The frozen prompt cache must
+              // therefore regenerate rather than inherit a same-named dead
+              // session's baseline. It matters specifically for a remote ADOPT,
+              // the only way this path carries a resumeId: an adopt is still a
+              // mint, and the axis is front-door-vs-restore-path, not resumeId.
+              true,
             );
             // stripLevel isn't a create() param (it's a proxy-side override the
             // poller asserts once the session links) — seed it onto the entry after

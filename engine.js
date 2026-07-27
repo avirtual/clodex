@@ -1298,7 +1298,13 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // they carry across ANY restart incl. fresh. The rosterSentAt stamp is
     // conversation-scoped: a FRESH restart starts a NEW conversation with the
     // roster NOT in it, so the stamp must NOT carry over (create() must re-deliver).
-    const preserveFields = ['ephemeral', 'reviewFor'];
+    // createdAt is BIRTH TIME — the one field that is true of the session and not
+    // of the conversation, so it carries across every restart incl. fresh. It has
+    // to be re-seeded here for the same reason as the rest: create() reads
+    // existingEntry (session-manager.js:1462) and falls back to Date.now(), so
+    // without this line every restart re-mints the birth stamp and the sidebar's
+    // "created" sort jumps a long-lived session to the top as if newly spawned.
+    const preserveFields = ['ephemeral', 'reviewFor', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
     const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null);
@@ -1448,8 +1454,10 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // create() reads existingEntry so an args-edit restart doesn't re-inject the
     // roster (rosterSentAt) or lose a reviewer seat's identity (ephemeral/reviewFor)
     // (task 22/24 rework / MUST-FIX 2). An args-edit restart keeps the same
-    // conversation (sessionId preserved), so it's never fresh — carry all three.
-    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor']);
+    // conversation (sessionId preserved), so it's never fresh — carry all three,
+    // plus createdAt (birth time, true of the SESSION not the conversation, so it
+    // carries across every restart — see restartSession for the full reasoning).
+    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor', 'createdAt']);
     // Exec grants aren't editable in the args-edit dialog (no checklist there —
     // grants stay template/create-time), so thread the persisted value through
     // unchanged. Intents ARE owned by this dialog now: nextIntents came from the

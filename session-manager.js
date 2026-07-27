@@ -1459,6 +1459,14 @@ function createSessionManager(deps) {
       // (restart/restore) rebuilds the record from spawn args, so preserve any
       // existing stamp rather than resetting it — the sidebar's "created" sort/
       // group depends on it being stable across restarts.
+      // This read is only HALF the invariant, and reading it as the whole thing is
+      // what let the bug live: the restore-on-launch path keeps the record, so
+      // existingEntry carries the stamp — but every kill()-based restart REMOVES
+      // the record first, so existingEntry is null here and the `|| Date.now()`
+      // re-mints. The restart callers must therefore re-seed createdAt via
+      // _preserveAcrossRestart (engine.restartSession / applySessionArgs, and the
+      // [agent:context reload] respawn) BEFORE reaching this line. Pinned in
+      // test/createdat-restart.test.js — do not "tidy" the field out of those lists.
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
       getPersistence().upsert({
@@ -5024,6 +5032,12 @@ function createSessionManager(deps) {
             }
             // kill() dropped the persistence entry; create() rebuilds it from the
             // snapshot. resumeId=null → cold boot adopts changed static config.
+            // Re-seed createdAt BEFORE create() reads existingEntry (:1462), or the
+            // birth stamp re-mints to Date.now() and a reload silently jumps the
+            // session to "just created" in the sidebar's created sort. This is a
+            // FRESH restart (new conversation), so rosterSentAt deliberately does
+            // NOT carry — create() must re-deliver the roster.
+            this._preserveAcrossRestart(name, entry, ['createdAt']);
             await this.create(
               name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
