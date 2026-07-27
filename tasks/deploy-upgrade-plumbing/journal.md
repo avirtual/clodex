@@ -143,7 +143,24 @@ to carry. Flagged to clodex rather than decided silently.
   (object) are refused by the SHAPE, not by a naming convention someone has to
   remember. There is no spelling of "the command line we ran" that fits.
 - **Phase 4 — tests, revert proofs, window question, full suite, commits.**
-  IN PROGRESS: tests written, 9 reverts proven, window question asked.
+  DONE. Suite 2848 pass / 0 fail / ESCAPES 0. Commits `7bd0fc0` (product+docs),
+  `f246ee0` (tests+journal).
+
+## One thing the suite caught that I had wrong
+
+I exported `DEPLOY_FLAVORS` + `validateDeploy` from contexts.js. The full run
+failed `test/stores.test.js:1312`, which PINS that module's export list:
+per-kind validators (`validateSsm`, `validateAz`, …) are private by rule and
+`validateEntry` is the only door, because stores.js validates GUI peers through
+the same door and widening the surface for a second consumer is how a leaf
+stops being a leaf. I had no argument against that, so both went private and
+the tests were rewritten to go through `validateEntry` — reaching past the one
+door in a test is how the next person justifies exporting it in product code.
+Revert G was re-proven after the change; it still fails by message.
+
+Worth noting the shape of the catch: the cli-only runs I had been doing were
+green throughout. Only the full suite sees a rule that lives in another
+subsystem's test file.
 
 ## Revert proofs (9, all restored from a pristine scratchpad copy between runs)
 
