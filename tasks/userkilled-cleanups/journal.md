@@ -508,11 +508,27 @@ the product computed, and asserting it afterwards asserted my own fixture. The
 vacuity rule as clodex stated it covers this exactly: the harness contained the
 answer, so the test was asserting against itself.
 
+**THE GENERAL RULE, which is the portable part** (clodex's formulation, and it
+is sharper than mine): the defect is NOT "hand-written fixtures are bad." The
+same modelling idiom is *honest* for `rosterSentAt` and `reviewFor` and
+*dishonest* for `createdAt`, in the same upsert, on the same line. What
+separates them is whether the product computes the field:
+
+> **A fixture may only model fields the product does not compute.** Model a
+> field the product writes, and the value asserted afterwards is the one the
+> fixture chose — the test passes with the product's line deleted.
+
+That is the vacuity rule's second face. The first face ("never recompute the
+predicate") catches a harness that copies a product *expression*; this one
+catches a harness that supplies a product *value*. Both leave a test asserting
+against itself, and neither announces it.
+
 Removed rather than repaired: the survives-create() half belongs against the
 REAL create(), where `test/createdat-restart.test.js` already pins it (revert D
 proves that one bites). The remaining :1959 assertion — that
 `_preserveAcrossRestart` seeds the field at all — is genuine, and revert F
-proves it.
+proves it. **A hollow assertion deleted is strictly better than a hollow
+assertion patched, because the patched one still has to be trusted.**
 
 **This is the fourth harness-lying-quietly instance this week**, and the first
 found by the revert discipline rather than by an external cross-check. Same
@@ -534,10 +550,16 @@ existingEntry read returns, which is the seed) and is now `1`.
 
 # THE HARNESS LYING QUIETLY — a failure class, written up at clodex's instruction
 
-Three times this week my own tooling produced a **CLEAN result, not an error**,
-while being wrong. Not one of them announced itself. Collected here because the
-ruling is right that this is the most dangerous failure mode we have found, and
-it has now appeared in three different disguises:
+**THE SHARED SIGNATURE, stated first because it is the whole point: every one
+of these produced a CLEAN RESULT, not an error.** Detection therefore cannot
+rely on noticing a failure — there isn't one to notice. Anything that begins
+"when the tests go red, check whether…" is useless against this class. That is
+what makes it worth a section of its own.
+
+FOUR times this week my own tooling produced a clean result while being wrong.
+Not one of them announced itself. Collected here because the ruling is right
+that this is the most dangerous failure mode we have found, and it has now
+appeared in four different disguises:
 
 1. **SIGPIPE truncation (t63).** I piped `node --test` through `head`. The
    SIGPIPE killed the run mid-flight and printed EMPTY totals sections, which
@@ -552,19 +574,30 @@ it has now appeared in three different disguises:
    apostrophe opened a string that never closed and swallowed an entire call
    site. **The scan reported 10 sites and looked perfectly healthy.** Caught
    only by checking against clodex's count of 11 instead of trusting my output.
+4. **The decorative assertion (t71 phase 3a, revert E).** A test I had just
+   written passed with the product line it named deleted, because the fixture
+   hand-wrote the value it then asserted. **314/314 green.** Caught by the
+   revert discipline — the first of the four found by PROCESS rather than by
+   luck or an external cross-check, which is the only one of these four that
+   would have been caught reliably rather than fortunately.
 
 **What they share**: each replaced a real signal with a plausible one. A crash
-is self-announcing; a truncated run, a silently-unrestored tree and a
-short-by-one census all look exactly like success. The defence is never "read
-the harness more carefully" — I read all three and they looked right. It is:
+is self-announcing; a truncated run, a silently-unrestored tree, a
+short-by-one census and a green test that pins nothing all look exactly like
+success. The defence is never "read the harness more carefully" — I read all
+four and they looked right. It is:
 
 - **check the harness's output against a number derived somewhere else** (the
   scanner died on clodex's 11, not on my own review);
 - **verify the tree state independently after any mutation** (`git diff` after
   every revert, not the trap's promise);
 - **make no-op detection explicit** — my revert script now fails loudly if the
-  perl expression changed nothing, because "the revert applied and the test
-  still passed" and "the revert never applied" are the same output otherwise.
+  replacement matched zero or multiple times, because "the revert applied and
+  the test still passed" and "the revert never applied" are the same output
+  otherwise;
+- **revert every assertion you write, not just the product** (instance 4 was a
+  TEST that lied, not a tool) — this is the only defence on the list that
+  works by construction instead of by suspicion.
 
 Note the recursion, which is the actual lesson: **this ticket is about a flag
 that cannot answer the question its name implies, and my scanner was a harness
