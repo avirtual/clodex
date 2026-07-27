@@ -1252,49 +1252,69 @@ function createSessionManager(deps) {
           }
         } catch {}
 
-        transport = new Transport(socketPath, (msg) => {
-          this._onIncoming(name, msg);
-        });
-        await transport.start();
-
+        // Decide who owns the name BEFORE binding anything. The bind used to
+        // come first, and because socketPath is name-derived it is the very
+        // path a blocking agent is listening on: Transport.start() unlinks it
+        // as its first statement, so by the time we discovered the name was
+        // taken we had already pulled the victim's socket out from under it,
+        // and stop() unlinked it a second time on the way out. A net.Server
+        // whose inode is unlinked keeps listening with no error and no event —
+        // permanently unreachable, with nothing to notice by. The shape was
+        // perverse: the more correct the refusal, the more damage it did.
+        // Force-cleaning a stale record had the same problem in reverse — the
+        // unlink of `existing.socket` below landed on OUR just-bound socket.
+        //
+        // So: register (and settle EEXIST) first, bind second. Every unlink
+        // then happens while nothing of ours is listening, and a refusal
+        // returns having touched nothing at all.
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
           // If a stale registration with a dead PID is blocking us, force-clean it
-          if (e.code === 'EEXIST') {
-            try {
-              const existing = JSON.parse(
-                fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
-              );
-              // The pre-bind probe above is the authority here, and it
-              // deliberately OVERRIDES isStaleRegistration: proven-not-live wins
-              // even when the pid check says "live, and not ours", because that
-              // check answers from the pid alone — the thing that just lied.
-              // `blockerLive === null` means we never got an answer (no record to
-              // read at probe time, or an unreadable one), so the pid-only
-              // verdict stands, exactly as before this existed.
-              //
-              // Stale (dead pid, or our own pid for a session we don't run — the
-              // deterministic-pid Docker case) → force-clean and re-register. See
-              // isStaleRegistration above for the full rationale.
-              if (blockerLive === false || isStaleRegistration(existing.pid, process.pid, isAlive)) {
-                registry.unregister(name);
-                try { fs.unlinkSync(existing.socket); } catch {}
-                registry.register(name, socketPath, cwd);
-              } else {
-                await transport.stop();
-                throw new Error(
-                  `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
-                );
-              }
-            } catch (retryErr) {
-              await transport.stop();
-              throw retryErr;
-            }
+          // (This used to wrap the recovery in a second try whose only job was to
+          // `await transport.stop()` before rethrowing. With the bind moved
+          // below, there is no transport yet and the wrapper only rethrew what
+          // it caught, so it is gone rather than kept as a no-op.)
+          if (e.code !== 'EEXIST') throw e;
+          const existing = JSON.parse(
+            fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8'),
+          );
+          // The pre-bind probe above is the authority here, and it
+          // deliberately OVERRIDES isStaleRegistration: proven-not-live wins
+          // even when the pid check says "live, and not ours", because that
+          // check answers from the pid alone — the thing that just lied.
+          // `blockerLive === null` means we never got an answer (no record to
+          // read at probe time, or an unreadable one), so the pid-only
+          // verdict stands, exactly as before this existed.
+          //
+          // Stale (dead pid, or our own pid for a session we don't run — the
+          // deterministic-pid Docker case) → force-clean and re-register. See
+          // isStaleRegistration above for the full rationale.
+          if (blockerLive === false || isStaleRegistration(existing.pid, process.pid, isAlive)) {
+            registry.unregister(name);
+            try { fs.unlinkSync(existing.socket); } catch {}
+            registry.register(name, socketPath, cwd);
           } else {
-            await transport.stop();
-            throw e;
+            throw new Error(
+              `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
+            );
           }
+        }
+        // Nothing is bound yet on any path that reaches here — the throws above
+        // leave no transport to stop, which is why they no longer try to.
+
+        transport = new Transport(socketPath, (msg) => {
+          this._onIncoming(name, msg);
+        });
+        try {
+          await transport.start();
+        } catch (e) {
+          // The registration above is now the thing that outlives this failure:
+          // an entry pointing at a socket nobody listens on would advertise a
+          // session that does not exist. Take it back before rethrowing.
+          registry.unregister(name);
+          transport = null;
+          throw e;
         }
       }
 
