@@ -39,6 +39,33 @@ const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
 const RECONNECT_MAX_MS = 20000;
+// How long an SSE stream must LIVE before its open counts as a good one and the
+// reconnect backoff resets (t50). Not a tuning knob — a derived quantity, and
+// the derivation is the whole argument:
+//
+//   A 200 costs the producer nothing to emit, so "we connected" is not evidence
+//   the stream works. An overflowing producer reaches 200 first and dies inside
+//   one pass; a producer that closes at byte zero reaches 200 too. Resetting on
+//   open put both of those in a 1s-floor loop forever, moving up to a megabyte
+//   per pass in the overflow case — bandwidth-bound, so it never announced
+//   itself. What distinguishes those from a working stream is not WHAT arrived
+//   but that the open LASTED.
+//
+//   The bar is the watchdog's deadline, not a number picked for feel. The
+//   watchdog destroys any stream that goes _staleMs without a chunk, and
+//   res.on('data') pets it on EVERY chunk — including remote.js's `: ping`
+//   comments, which carry no event. So a stream that outlives _staleMs has
+//   necessarily carried bytes: the watchdog would have killed it otherwise.
+//   "Lasted" therefore entails "carried traffic" without a second check, and
+//   any bar BELOW _staleMs would certify a half-open socket carrying nothing.
+//
+//   Deliberately NOT "decoded a well-formed event": an idle-but-healthy peer
+//   emits only heartbeat comments for as long as nothing happens, and that test
+//   would put a perfectly good quiet connection into permanent backoff.
+//
+// The margin exists only to break the tie with the watchdog on the same tick, so
+// a watchdog kill always resolves as not-stable rather than racing the reset.
+const STABLE_MARGIN_MS = 1000;
 const REQUEST_TIMEOUT_MS = 5000;
 // Popover queries can hit disk-heavy owner-side scans (wirescope /_report
 // reads the whole session capture) — give them their own, longer budget.
@@ -267,7 +294,8 @@ class PeerConnection {
       },
       onOpen: (req) => {
         this._eventsReq = req;
-        this._eventsBackoff = RECONNECT_MIN_MS;
+        // The backoff reset is NOT here — see onStable below and
+        // STABLE_MARGIN_MS. Reaching this line means only that a 200 arrived.
         // An SSE (re)open is by definition recovery from a feed gap, and SSE has
         // no replay — any 'sessions' events the box emitted while we were
         // disconnected are lost. A compose recreate (Rebuild / in-place Update)
@@ -278,6 +306,7 @@ class PeerConnection {
         // duplicate GET on the wasOffline path (it refreshed just before this).
         this._refreshSessions();
       },
+      onStable: () => { this._eventsBackoff = RECONNECT_MIN_MS; },
       onClose: () => {
         this._eventsReq = null;
         if (this._stopped || !this.online) return;
@@ -357,7 +386,11 @@ class PeerConnection {
           this._emit('peer-exit', this.id, name, data.exitCode);
         }
       },
-      onOpen: (req) => { att.opening = false; att.req = req; att.backoff = RECONNECT_MIN_MS; },
+      // Same split as the events stream, and this side is the worse of the two:
+      // there is one attach stream per attached session, so a malformed box put N
+      // simultaneous cycles on the 1s floor, not one.
+      onOpen: (req) => { att.opening = false; att.req = req; },
+      onStable: () => { att.backoff = RECONNECT_MIN_MS; },
       onClose: () => {
         att.opening = false;
         att.req = null;
@@ -607,7 +640,10 @@ class PeerConnection {
   // for the case where it does not (a request already past its own teardown
   // emits nothing), and the redundancy is exactly why the one-shot guard below
   // is mandatory rather than tidiness.
-  _sse(path, { onEvent, onOpen, onClose }) {
+  // onStable (t50) fires once, STABLE_MARGIN_MS past the staleness deadline, if
+  // the stream is still alive — the signal a consumer resets its backoff on.
+  // Optional: a consumer that passes none simply never resets.
+  _sse(path, { onEvent, onOpen, onClose, onStable }) {
     let u;
     try { u = new URL(this.url + path); } catch { return onClose(); }
     // Fires onClose at most once. Needed the moment a second death path exists:
@@ -617,10 +653,16 @@ class PeerConnection {
     // (a stray timer would keep the event loop alive after teardown).
     let closed = false;
     let watchdog = null;
+    let stableTimer = null;
     const close = () => {
       if (closed) return;
       closed = true;
       if (watchdog) { watchdog.stop(); watchdog = null; }
+      // Cleared on the SAME door as the watchdog, and for the same reason: a
+      // stability timer outliving its stream would either reset the backoff for a
+      // connection that is already dead, or keep the event loop alive after
+      // teardown.
+      if (stableTimer != null) { this._timers.clearTimeout(stableTimer); stableTimer = null; }
       onClose();
     };
     const req = http.request({
@@ -640,6 +682,16 @@ class PeerConnection {
         close();
       }, this._timers);
       watchdog.pet();
+      // Armed at the same moment as the watchdog and on the same injected timer
+      // seam, so the two deadlines can never be measured against different
+      // clocks — the ordering between them is what makes "lasted" mean "carried
+      // bytes" (see STABLE_MARGIN_MS).
+      if (onStable) {
+        stableTimer = this._timers.setTimeout(() => {
+          stableTimer = null;
+          if (!closed) onStable();
+        }, this._staleMs + STABLE_MARGIN_MS);
+      }
       res.setEncoding('utf8');
       // Framing is sse-frame.js's. dropUnparsableData is this side's preserved
       // divergence from the CLI's copy (a `data:` line that will not JSON-parse
@@ -667,13 +719,15 @@ class PeerConnection {
         // the peer still reads as online — a worse failure, and a silent one.
         // Reconnecting is self-healing if the cause passes.
         //
-        // WHAT THAT COSTS, named rather than hidden: if the cause does NOT
-        // pass, this cycles. onOpen resets _eventsBackoff on every successful
-        // connect (:266) and an overflowing stream does reach 200 first, so the
-        // cycle sits at the 1s floor instead of backing off — each pass moving
-        // a megabyte before it fires. Bandwidth-bound, not a CPU spin. Fixing
-        // it means teaching the backoff that some opens are not good ones,
-        // which is reconnect policy — L2's, deliberately not this ticket's.
+        // WHAT THAT COSTS, and why it is now bounded. If the cause does NOT
+        // pass, this cycles — but it cycles on a GROWING backoff since t50.
+        // It used to sit at the 1s floor forever, because onOpen reset the
+        // backoff on every successful connect and an overflowing stream does
+        // reach 200 first; each pass moved a megabyte, and being bandwidth-bound
+        // rather than a CPU spin it never announced itself. The reset now needs
+        // the stream to have LASTED (STABLE_MARGIN_MS), which an overflowing one
+        // never does, so this walks up to RECONNECT_MAX_MS like any other
+        // failure and self-heals at the same cadence if the cause passes.
         onOverflow: (bytes) => {
           this._reportSseOverflow(path, bytes);
           try { req.destroy(); } catch {}
