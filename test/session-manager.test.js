@@ -5174,12 +5174,17 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
 // without ever reaching the code it claims to cover. Hence a codex-typed create,
 // the lighter of the two agent arms (claude's arm pulls the wire/hook/library
 // stack for machinery this has nothing to do with).
-function mkAgentCreateProbe() {
+// opts.wrapTransport (t58) lets one test hand create() a Transport whose bind
+// fails, to reach the failure path that now exists BELOW the registry check. The
+// wrapped class goes only to create(); the returned `Transport` stays the real
+// one, so tests keep building genuine victim servers with it.
+function mkAgentCreateProbe(opts = {}) {
   const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t57-'));
   const { isAlive, registry, Transport } = require('../agent-transport')
     .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 });
   const m = mk({
-    REGISTRY_DIR, registry, Transport, isAlive,   // the real registry + transport, on a temp dir
+    REGISTRY_DIR, registry, isAlive,   // the real registry + transport, on a temp dir
+    Transport: opts.wrapTransport ? opts.wrapTransport(Transport) : Transport,
     fs: fsReal, os: osReal, path: pathReal,
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: require('../fs-util').ensureDir,
@@ -5244,7 +5249,7 @@ function seedGhost(REGISTRY_DIR, name, socketPath) {
 }
 
 test('create: a pid-recycle GHOST (live foreign pid, nothing listening) self-heals and the session starts (t57)', async () => {
-  const { m, REGISTRY_DIR, agentCreate, closeAll } = mkAgentCreateProbe();
+  const { m, REGISTRY_DIR, Transport, agentCreate, closeAll } = mkAgentCreateProbe();
   const sock = pathForReal(REGISTRY_DIR, 'ghost', 'socket');
   fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, 'ghost'), { recursive: true });
   fsReal.writeFileSync(sock, '');            // the socket file an unclean shutdown leaves
@@ -5256,6 +5261,14 @@ test('create: a pid-recycle GHOST (live foreign pid, nothing listening) self-hea
     assert.ok(m.sessions.has('ghost'), 'the session must start — a dead agent whose pid got recycled must not wedge its own name forever');
     const rec = JSON.parse(fsReal.readFileSync(pathForReal(REGISTRY_DIR, 'ghost', 'registry'), 'utf-8'));
     assert.strictEqual(rec.pid, process.pid, 'the ghost record must have been replaced by ours, not merely tolerated');
+    // t58 (d): and the healed session must be REACHABLE, not merely recorded.
+    // Before the reorder this failed: the force-clean unlinked `existing.socket`,
+    // which is the same name-derived path the transport had just bound one step
+    // earlier — so create() deleted its own socket and the session came up
+    // listening on a detached inode. `rec.pid` alone could never see that;
+    // dialing is the only assertion that can.
+    assert.strictEqual(await Transport.isSocketLive(rec.socket), true,
+      'the self-healed session must actually answer on its socket — a registry entry pointing at a detached inode is the silent-unreachability bug wearing a healthy record');
   } finally {
     await closeAll();
   }
@@ -5277,17 +5290,76 @@ test('create: a name whose socket is genuinely LISTENING still refuses, by messa
     // agent it just refused to displace would hand the name over on the next try.
     const rec = JSON.parse(fsReal.readFileSync(pathForReal(REGISTRY_DIR, 'busy', 'registry'), 'utf-8'));
     assert.strictEqual(rec.pid, 1, 'the refused-against registration must be left intact, not consumed by the attempt');
-    // NOT asserted: that `sock` still exists. It does not, and that is a
-    // PRE-EXISTING defect this test found rather than one it should paper over —
-    // create() binds its transport (which unlinks the path) BEFORE it consults
-    // the registry, so by the time it refuses it has already taken the victim's
-    // socket out from under it and stop() unlinks it again. The victim's
-    // net.Server keeps listening on an unlinked inode: silently unreachable,
-    // the same failure shape as the cleanup TOCTOU (audit.md §5.2), on a third
-    // path. Fixing it means binding after the registry check, which restructures
-    // session start — out of scope for t57 and reported to clodex separately.
+    // t58 (a) — the whole ticket. `existsSync(sock)` is NOT the assertion: the
+    // file can sit there while the server behind it listens on an inode that has
+    // been unlinked and replaced, which is exactly the state the old ordering
+    // left. Only a dial can tell those apart, so dial.
+    assert.strictEqual(await Transport.isSocketLive(sock), true,
+      'the refused-against agent must still ANSWER — a refusal that destroys the socket it refused to displace is the bug this ticket exists for');
   } finally {
     await closeAll();
     await other.stop();
+  }
+});
+
+// --- t58: the registry decides BEFORE anything binds -------------------------
+
+test('create: a refused create delivers to the victim it refused to displace (t58)', async () => {
+  const { m, REGISTRY_DIR, Transport, agentCreate, closeAll } = mkAgentCreateProbe();
+  const sock = pathForReal(REGISTRY_DIR, 'busy', 'socket');
+  fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, 'busy'), { recursive: true });
+
+  // isSocketLive proves a server ACCEPTS; it does not prove a message still
+  // arrives. End-to-end delivery is what the victim actually loses when its
+  // inode is detached, so pin that too, through the real send path.
+  const got = [];
+  const other = new Transport(sock, (msg) => { got.push(msg); });
+  await other.start();
+  try {
+    seedGhost(REGISTRY_DIR, 'busy', sock);
+    await assert.rejects(() => agentCreate('busy'), /already running elsewhere/);
+
+    assert.strictEqual(await Transport.send(sock, { hello: 'still there' }), true,
+      'a dm to the refused-against agent must still be accepted after the refusal');
+    await new Promise(r => setTimeout(r, 50));   // let the server drain the frame
+    assert.deepStrictEqual(got, [{ hello: 'still there' }],
+      'and it must actually REACH the agent — an unlinked-inode server accepts nothing, so this is the end-to-end form of (a)');
+  } finally {
+    await closeAll();
+    await other.stop();
+  }
+});
+
+test('create: a bind that fails AFTER the registry check takes its registration back (t58)', async () => {
+  // With the bind moved below the registry check, a failed bind leaves an entry
+  // that outlives the failure — pointing at a socket nobody listens on, which
+  // advertises a session that does not exist. create() must unregister on the
+  // way out.
+  let registeredAtBindTime = null;
+  let REGISTRY_DIR;
+  const probe = mkAgentCreateProbe({
+    wrapTransport: (Real) => class extends Real {
+      start() {
+        // Records whether the registration already existed when the bind ran.
+        // Without this the test passes VACUOUSLY under the old ordering — a bind
+        // that fails before anything registers also leaves no entry, so the
+        // "no entry" assertion below would hold for the bug as well as the fix.
+        registeredAtBindTime = fsReal.existsSync(pathForReal(REGISTRY_DIR, 'halfway', 'registry'));
+        return Promise.reject(new Error('bind refused (t58 stub)'));
+      }
+    },
+  });
+  const { m, agentCreate, closeAll } = probe;
+  REGISTRY_DIR = probe.REGISTRY_DIR;
+  try {
+    await assert.rejects(() => agentCreate('halfway'), /bind refused/,
+      'the bind failure must surface, not be swallowed');
+    assert.strictEqual(registeredAtBindTime, true,
+      'the bind must run AFTER the registration — if it ran first there is nothing to take back and this test proves nothing');
+    assert.strictEqual(fsReal.existsSync(pathForReal(REGISTRY_DIR, 'halfway', 'registry')), false,
+      'a create that registered and then failed to bind must leave NO registry entry — a record whose socket has no server is a session the whole app believes in and cannot reach');
+    assert.ok(!m.sessions.has('halfway'), 'and no session record may survive the failure');
+  } finally {
+    await closeAll();
   }
 });
