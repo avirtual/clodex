@@ -5363,3 +5363,171 @@ test('create: a bind that fails AFTER the registry check takes its registration 
     await closeAll();
   }
 });
+
+// --- t59: a PROVEN-live socket outranks the pid check ------------------------
+//
+// isStaleRegistration fires on any record naming our own pid — the Docker
+// deterministic-pid case it exists for. But two create() calls for the same name
+// in ONE process also produce such a record: sessions.has(name) at the top of
+// create() cannot catch the second, because the map is not written until well
+// past the bind. The second create would then force-clean the first, unlinking a
+// socket the probe had just proven alive.
+
+test('create: a second concurrent create for the same name refuses instead of stomping the first (t59)', async () => {
+  // The first create is parked INSIDE start(), genuinely bound and registered but
+  // not yet in the sessions map — the window that sessions.has() cannot see. Only
+  // the first start() is gated: under a revert the second create reaches its own
+  // bind, and it must proceed and fail this test BY MESSAGE rather than hang.
+  let release;
+  const parked = new Promise((r) => { release = r; });
+  let binds = 0;
+  const verdicts = [];
+  // Every transport this test's creates bind, whether or not it survives into
+  // the sessions map. Under a revert BOTH creates succeed and the second
+  // overwrites the first in the map, so closeAll() — which iterates the map —
+  // would leave a real server listening and the file would fail by HANGING
+  // instead of by message. Closing these explicitly keeps the revert diagnosable.
+  const bound = [];
+  const probe = mkAgentCreateProbe({
+    wrapTransport: (Real) => class extends Real {
+      async start() {
+        const first = ++binds === 1;
+        await super.start();              // a REAL bind either way
+        bound.push(this);
+        if (first) await parked;
+      }
+      // The ENTER instrumentation: what the probe actually told the decision.
+      static async isSocketLive(p) {
+        const v = await Real.isSocketLive(p);
+        verdicts.push(v);
+        return v;
+      }
+    },
+  });
+  const { m, REGISTRY_DIR, Transport, agentCreate, closeAll } = probe;
+
+  const got = [];
+  m._onIncoming = (n, msg) => { got.push([n, msg]); };
+
+  const firstCreate = agentCreate('dup');           // parks inside start(), bound
+  await new Promise(r => setTimeout(r, 60));
+  try {
+    await assert.rejects(() => agentCreate('dup'), /already running elsewhere/,
+      'a name this process is already bound to must be refused, not force-cleaned — the own-pid clause is for a DEAD engine, and this engine is alive and listening');
+    assert.strictEqual(verdicts[verdicts.length - 1], true,
+      'the second create must have reached the decision with a PROVEN-live verdict — if the probe said anything else this test is not exercising the veto');
+
+    // The first agent must still DELIVER, not merely accept (t58's lesson).
+    const sock = pathForReal(REGISTRY_DIR, 'dup', 'socket');
+    assert.strictEqual(await Transport.send(sock, { still: 'here' }), true,
+      'the first create must still accept a dm after the second was refused');
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepStrictEqual(got, [['dup', { still: 'here' }]],
+      'and the message must REACH it — a stomped create leaves the first listening on a detached inode, which accepts nothing');
+  } finally {
+    release();
+    await firstCreate.catch(() => {});
+    await closeAll();
+    for (const t of bound) await t.stop();
+  }
+});
+
+test('create: the Docker own-pid force-clean still works when nothing is listening (t59)', async () => {
+  // The veto must not re-wedge the case isStaleRegistration exists for. After a
+  // Docker restart the surviving agent.json names the new engine's own pid, but
+  // the previous engine is gone and its children never inherited the listen fd —
+  // so nothing accepts and the probe cannot return true.
+  //
+  // Three shapes, and the third is the one that matters. isSocketLive answers
+  // FALSE for a missing file, not null (ENOENT is "cannot deliver", same as
+  // ECONNREFUSED), so both socket-file variants are decided by the
+  // `blockerLive === false` clause and never consult the pid at all. Only a
+  // record the probe could not form a verdict about — here one carrying no
+  // `socket` field — reaches isStaleRegistration, which is the clause the veto
+  // wraps. Without that third case this test passes with the pid check deleted
+  // outright, and proves nothing about the veto.
+  const cases = [
+    { name: 'docker-leftover', socketFile: true, field: true, expect: false },
+    { name: 'docker-clean', socketFile: false, field: true, expect: false },
+    { name: 'docker-nosocketfield', socketFile: false, field: false, expect: null },
+  ];
+  for (const c of cases) {
+    const verdicts = [];
+    const probe = mkAgentCreateProbe({
+      wrapTransport: (Real) => class extends Real {
+        static async isSocketLive(p) {
+          const v = await Real.isSocketLive(p);
+          verdicts.push(v);
+          return v;
+        }
+      },
+    });
+    const { m, REGISTRY_DIR, agentCreate, closeAll } = probe;
+    const sock = pathForReal(REGISTRY_DIR, c.name, 'socket');
+    fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, c.name), { recursive: true });
+    if (c.socketFile) fsReal.writeFileSync(sock, '');
+    fsReal.writeFileSync(pathForReal(REGISTRY_DIR, c.name, 'registry'),
+      JSON.stringify({ name: c.name, pid: process.pid, ...(c.field ? { socket: sock } : {}) }));
+    try {
+      await assert.doesNotReject(() => agentCreate(c.name),
+        `a restarted engine must reclaim its own name (${c.name}) — nothing is listening, so the live-socket veto must not apply and the own-pid force-clean must still fire`);
+      assert.ok(m.sessions.has(c.name),
+        `and the session must actually start (${c.name})`);
+      // The ENTER question, asked per case rather than argued.
+      const verdict = verdicts.length ? verdicts[verdicts.length - 1] : null;
+      assert.strictEqual(verdict, c.expect,
+        `${c.name} must reach the decision with blockerLive === ${c.expect} — otherwise it is not exercising the branch it is named for`);
+    } finally {
+      await closeAll();
+    }
+  }
+});
+
+test('create: a record replaced between probe and re-read falls back to the pid check (t59)', async () => {
+  // The probe awaits, so the record it described can be gone by the time the
+  // EEXIST branch re-reads. Applying the old verdict to the new record is how
+  // `blockerLive === false` force-cleans a LIVE agent. The verdict must be
+  // discarded when the bytes change.
+  const realTransport = require('../agent-transport')
+    .createAgentTransport({ REGISTRY_DIR: '/nonexistent', MAX_MSG: 65536 }).Transport;
+  let REGISTRY_DIR;
+  let swap = null;
+  const probe = mkAgentCreateProbe({
+    wrapTransport: (Real) => class extends Real {
+      static async isSocketLive(p) {
+        const v = await Real.isSocketLive(p);   // dials the DEAD socket → false
+        if (swap) { swap(); swap = null; }      // …and the record changes underneath
+        return v;
+      }
+    },
+  });
+  const { m, agentCreate, closeAll } = probe;
+  REGISTRY_DIR = probe.REGISTRY_DIR;
+
+  fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, 'swapped'), { recursive: true });
+  const deadSock = pathForReal(REGISTRY_DIR, 'swapped', 'socket');
+  fsReal.writeFileSync(deadSock, '');                       // nothing bound: probe says false
+  const regPath = pathForReal(REGISTRY_DIR, 'swapped', 'registry');
+  fsReal.writeFileSync(regPath, JSON.stringify({ name: 'swapped', socket: deadSock, pid: 1 }));
+
+  // The replacement: a genuinely listening agent, on a different socket path.
+  const liveSock = pathReal.join(runDirForReal(REGISTRY_DIR, 'swapped'), 'other.sock');
+  const got = [];
+  const victim = new realTransport(liveSock, (msg) => { got.push(msg); });
+  await victim.start();
+  swap = () => fsReal.writeFileSync(regPath,
+    JSON.stringify({ name: 'swapped', socket: liveSock, pid: 1 }));
+
+  try {
+    await assert.rejects(() => agentCreate('swapped'), /already running elsewhere/,
+      'a verdict about bytes that are no longer there must not decide the fate of the record that replaced them — degrade to the pid check, which says this one is live and not ours');
+    assert.strictEqual(await realTransport.send(liveSock, { alive: true }), true,
+      'the agent that arrived during the probe must still accept a dm');
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepStrictEqual(got, [{ alive: true }],
+      'and still receive it — a stale verdict applied to a fresh record force-cleans a live agent into silence');
+  } finally {
+    await closeAll();
+    await victim.stop();
+  }
+});
