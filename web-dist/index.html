@@ -2051,6 +2051,27 @@ body {
   color: var(--text-dim);
   line-height: 1.4;
 }
+.bust-diff {
+  margin-top: 5px;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--active-bg);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+.bust-at {
+  display: block;
+  font-family: inherit;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.bust-nl {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
 .bust-badge {
   font-size: 9px;
   padding: 1px 6px;
@@ -18108,20 +18129,41 @@ ${i3.join("\n")}
           return "";
         }
       }
+      var BUST_COMPACT_MSG_RATIO = 0.5;
+      function isInherentCompact(t, loc) {
+        if (t.class !== "preamble") return false;
+        const label = typeof loc.label === "string" ? loc.label : "";
+        if (!/\btext$/.test(label)) return false;
+        const prev = t.prev_messages, cur = t.cur_messages;
+        const collapsed = prev > 0 && cur != null && cur <= prev * BUST_COMPACT_MSG_RATIO;
+        const o = typeof loc.old === "string" ? loc.old : "";
+        const n = typeof loc.new === "string" ? loc.new : "";
+        const appendedTail = !!o && n.length > o.length && n.startsWith(o);
+        return collapsed || appendedTail;
+      }
+      function bustSnip(s) {
+        return esc(s).replace(/\n/g, '<span class="bust-nl">\u23CE</span>');
+      }
       function bustRow(t, base, sid) {
         const sev = t.severity || (t.bust ? "bust" : "append");
         const loc = t.locus || {};
         const what = loc.label || (loc.segment ? `${loc.segment}${loc.index != null ? `[${loc.index}]` : ""} changed` : "divergence");
-        const deployTax = !!(t.restart_between && t.fault === "content");
-        const fault = t.fault && BUST_FAULT[deployTax ? "environment" : t.fault];
+        const inherentCompact = isInherentCompact(t, loc);
+        const deployTax = !inherentCompact && !!(t.restart_between && t.fault === "content");
+        const calm = inherentCompact || deployTax;
+        const fault = t.fault && BUST_FAULT[calm ? "environment" : t.fault];
         const faultBadge = fault ? `<span class="bust-badge ${fault.cls}">${esc(fault.label)}</span>` : "";
-        const healBadge = deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax \xB7 self-heals</span>' : "";
-        const hint = t.fix_hint && !deployTax ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : "";
+        const healBadge = inherentCompact ? '<span class="bust-badge bust-badge-heal">/compact rewrote messages[0] \xB7 inherent</span>' : deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax \xB7 self-heals</span>' : "";
+        const hint = t.fix_hint && !calm ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : "";
         const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` \xB7 ${Math.round(t.write_frac * 100)}%` : ""}</span>`;
         const turnLink = base && sid && t.i != null ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (\u2318-click for browser)">turn ${t.i} \u2192</span>` : `<span class="bust-turn-static">turn ${t.i != null ? t.i : "?"}</span>`;
         const stampStr = t.ts ? fmtBustStamp(t.ts) : "";
         const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : "";
-        return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + `</div>`;
+        const oldSnip = typeof loc.old === "string" ? loc.old : "";
+        const newSnip = typeof loc.new === "string" ? loc.new : "";
+        const at = loc.char_offset != null ? `<span class="bust-at">@ char ${esc(String(loc.char_offset))}</span>` : "";
+        const diff = oldSnip || newSnip ? `<div class="bust-diff">${at}<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div><div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div></div>` : "";
+        return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + diff + `</div>`;
       }
       module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow };
     }

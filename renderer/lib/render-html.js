@@ -3,10 +3,12 @@
 // only on format.js (esc/fmtUsd/fmtBustTokens) and the BUST_FAULT table.
 //
 // esc is HTML-escaping via a detached DOM node, so EVERY builder here routes
-// through the global `document` and cannot be called under node --test. Per the
-// R1 rule ("anything needing a real DOM stays untested, no jsdom"), this module
-// has no unit tests — move-only fidelity against the extracted bodies is the
-// guarantee.
+// through the global `document`. Per the R1 rule ("anything needing a real DOM
+// stays untested, no jsdom") this module was originally move-only and untested.
+// `bustRow` since acquired real logic — a classification and an escaped diff
+// block — so test/renderer-render-html.test.js covers it against the same
+// minimal `global.document` stub other renderer tests already install; no jsdom.
+// The rest of the file is still move-only fidelity.
 
 const { esc, fmtUsd, fmtBustTokens } = require('./format');
 const { BUST_FAULT } = require('./constants');
@@ -74,6 +76,59 @@ function fmtBustStamp(iso) {
   } catch { return ''; }
 }
 
+// The contraction wirescope itself classifies a /compact on
+// (warmth.BUST_COMPACT_MSG_RATIO, default 0.5) — the client-side twin, so the
+// panel splits the population the same way the proxy's own counter does.
+const BUST_COMPACT_MSG_RATIO = 0.5;
+
+// Is this preamble bust the INHERENT rewrite a /compact causes, rather than a
+// real change to the static bundle? The `preamble` class covers both, they cost
+// the same and mean opposite things: a /compact writes its summary INTO
+// messages[0], so it necessarily rewrites the preamble and there is nothing to
+// fix; a preamble bust without one is an actionable edit to the injected bundle.
+//
+// Two signals, both required.
+//
+// WHAT moved: report.py's `_block_label` (:1020-1038) tags the diverging block
+// inside messages[0] and the tag rides at the tail of `loc.label`. The
+// vocabulary is closed, and every INJECTED static-context block gets a named tag
+// (`claudeMd bundle`, `currentDate`, `system-reminder`, `thinking`,
+// `tool_use:*`); only the operator's own prose falls through to the generic
+// `text`. messages[0] IS that prose — the session's first user turn — and it
+// cannot change mid-session by any mechanism except the thread being rewritten
+// under it.
+//
+// HOW the thread moved: either the contraction above, or a pure tail append.
+// `_text_first_diff` (report.py:980-990) returns i = len(old) when old is a
+// prefix of new, so the 40-char windows satisfy `new.startsWith(old)` ONLY when
+// text was appended at the END of the block — an insert anywhere earlier makes
+// the two windows diverge at the offset. That is the second /compact shape: the
+// local-command markers appended to messages[0], which moves the message count
+// N -> N+1 and is therefore invisible to a count delta alone.
+//
+// Requiring both means mislabelling a real bust as inherent takes two
+// independent signals to be wrong at once, and either clause failing on its own
+// degrades to today's actionable row — the safe direction.
+function isInherentCompact(t, loc) {
+  if (t.class !== 'preamble') return false;
+  const label = typeof loc.label === 'string' ? loc.label : '';
+  if (!/\btext$/.test(label)) return false;
+  const prev = t.prev_messages, cur = t.cur_messages;
+  const collapsed = prev > 0 && cur != null && cur <= prev * BUST_COMPACT_MSG_RATIO;
+  const o = typeof loc.old === 'string' ? loc.old : '';
+  const n = typeof loc.new === 'string' ? loc.new : '';
+  const appendedTail = !!o && n.length > o.length && n.startsWith(o);
+  return collapsed || appendedTail;
+}
+
+// A divergence snippet: raw request bytes, so esc() first, and only then swap
+// the literal newlines the snippets routinely carry for a visible glyph — the
+// window is cut by character offset, not by line, so a real break here would
+// misrepresent a 40-char window as two rows of text.
+function bustSnip(s) {
+  return esc(s).replace(/\n/g, '<span class="bust-nl">⏎</span>');
+}
+
 // One transition row. Everything except fault/fix_hint is v0.6.19-present.
 function bustRow(t, base, sid) {
   const sev = t.severity || (t.bust ? 'bust' : 'append');
@@ -86,13 +141,23 @@ function bustRow(t, base, sid) {
   // benign deploy/upgrade tax — it self-heals next turn. Render it calm (env
   // treatment) + a heal badge, so a GUI-restart-to-upgrade doesn't read as a
   // real leak. A content bust WITHOUT restart_between is the actionable one.
-  const deployTax = !!(t.restart_between && t.fault === 'content');
-  const fault = t.fault && BUST_FAULT[deployTax ? 'environment' : t.fault];
+  // A /compact's own rewrite of messages[0] gets the same treatment for the same
+  // reason, and takes precedence: a compact that happens to straddle a restart is
+  // still a compact, and only one badge should claim the row.
+  const inherentCompact = isInherentCompact(t, loc);
+  const deployTax = !inherentCompact && !!(t.restart_between && t.fault === 'content');
+  const calm = inherentCompact || deployTax;
+  const fault = t.fault && BUST_FAULT[calm ? 'environment' : t.fault];
   const faultBadge = fault ? `<span class="bust-badge ${fault.cls}">${esc(fault.label)}</span>` : '';
-  const healBadge = deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax · self-heals</span>' : '';
-  // fix_hint is wirescope's prose (v0.6.20+); suppress it for the deploy tax
-  // (nothing to fix) — the heal badge already says all there is to say.
-  const hint = (t.fix_hint && !deployTax) ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : '';
+  const healBadge = inherentCompact
+    ? '<span class="bust-badge bust-badge-heal">/compact rewrote messages[0] · inherent</span>'
+    : deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax · self-heals</span>' : '';
+  // fix_hint is wirescope's prose (v0.6.20+), and it is a STATIC per-class string
+  // from the _BUST_FAULT table — not derived from this turn — so it says the same
+  // generic "claudeMd / userEmail / … changed" for every preamble row. Suppress it
+  // wherever there is nothing to fix (the deploy tax, an inherent compact); the
+  // badge already says all there is to say, and the diff below says what moved.
+  const hint = (t.fix_hint && !calm) ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : '';
   const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` · ${Math.round(t.write_frac * 100)}%` : ''}</span>`;
   // Deep-link into wirescope's per-turn navigator (v0.6.20 adds bust-jump nav).
   const turnLink = (base && sid && t.i != null)
@@ -100,10 +165,31 @@ function bustRow(t, base, sid) {
     : `<span class="bust-turn-static">turn ${t.i != null ? t.i : '?'}</span>`;
   const stampStr = t.ts ? fmtBustStamp(t.ts) : '';
   const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : '';
+  // The bytes that actually diverged: 40 chars each side of the first differing
+  // character (report.py _BUST_SNIP), same -/+ shape the wirescope navigator
+  // renders at views.py:733-735. The label alone says the prefix moved; only this
+  // says WHAT moved it.
+  //
+  // Three shapes carry no text to show and must render exactly today's row: no
+  // locus at all (the `lapse` class), a locus without the keys (`tools`, whose
+  // roster change has no text offset), and a locus whose old/new are both empty
+  // (`conversation`). Testing the strings covers all three.
+  const oldSnip = typeof loc.old === 'string' ? loc.old : '';
+  const newSnip = typeof loc.new === 'string' ? loc.new : '';
+  // char_offset says how deep into the segment the change landed, which is what
+  // determines how much of the window has to be re-written.
+  const at = loc.char_offset != null ? `<span class="bust-at">@ char ${esc(String(loc.char_offset))}</span>` : '';
+  const diff = (oldSnip || newSnip)
+    ? `<div class="bust-diff">${at}`
+      + `<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div>`
+      + `<div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div>`
+      + `</div>`
+    : '';
   return `<div class="bust-row bust-sev-${esc(sev)}">`
     + `<div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div>`
     + `<div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>`
     + hint
+    + diff
     + `</div>`;
 }
 
