@@ -825,6 +825,32 @@ finding is that no honest one exists. The asymmetric design is safe under both
 readings (a successor's entry is still "non-matching" and still not delivered),
 so it is the safe reversible choice to build now and flag at report time.
 
+### RULED (msg-81580-48): condition (c) revised as proposed — BUILD IT
+
+*"'Unreachable' was my word and it does not survive your call-site
+enumeration... I would rather have the accurate 'very unlikely, and harmless if
+it happens' than a confident comment that is false."*
+
+Two things held to, both binding on the implementation:
+
+1. **The reason goes in the COMMENT, not just here:** a plain
+   refuse-non-matching would have DESTROYED a message in precisely the race the
+   rekey exists to fix, because the claim is destructive. Generalized by
+   clodex, and this is the sentence to carry: **"Symmetric-looking guards are
+   not symmetric when the operation they guard is."**
+2. **PIN THE NEWER-ENTRY BRANCH.** It is the one nobody will ever see fire, and
+   *"an unfired branch with a hollow test is worse than no branch."* It must
+   fail by a message naming WHY restoring beats refusing — not merely that a
+   restore didn't happen.
+
+Also ruled worth recording as method: **enumerating the 9 call sites before
+arguing from the premise is what caught this** — the same discipline that
+produced the ENTER finding in 3a, applied to a PREMISE instead of a test
+window. In 3a I asked "does this test enter the window it names?"; here the
+question was "is the fact this argument rests on actually true?". Both are the
+same move — check the thing you are about to build on, before building on it —
+and both found a defect that would otherwise have shipped looking correct.
+
 ### Still to decide when writing
 
 - `drainPending` gains an expected-stamp parameter. Every caller must pass it —
