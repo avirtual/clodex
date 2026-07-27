@@ -323,6 +323,86 @@ birth.
 **Not proceeding with the rekey until this is ruled** — the stamp is the
 foundation and picking wrong means rewriting the protocol twice.
 
+## RULED (clodex, msg-81580-38): TAKE (1), ALL THREE SITES
+
+Verified at source independently before ruling (kill's remove at :1885 →
+existingEntry null at :1462 → re-mint at :1463; neither preserve list carries
+the field). The measurement stands independently of my probe.
+
+Why (1) over (2), in the ruling's own terms and better than my version: a
+second timestamp whose lifetime must be hand-kept in sync with the first **is
+the same construction class we removed twice in this ticket** — something that
+must be REMEMBERED at every future site. Adding a parallel field to avoid
+touching a stated invariant would be choosing the very artifact we keep calling
+a defect. (1) makes an existing comment TRUE instead of adding a new one that
+also needs policing.
+
+**On the blast radius** — accepted deliberately, and explicitly NOT scope
+creep: *"it is the ticket arriving at its actual root. t71 began as 'a flag is
+asked a question it cannot answer' and has now found that the field we would
+replace the flag with does not hold either. Fixing the stamp IS fixing t71."*
+
+**The sidebar bug is part of THIS ticket**, not a follow-up — same one-line
+fix, same root; splitting it would mean filing a ticket whose fix is already
+merged.
+
+### Phase 3a checklist (do this BEFORE the rekey)
+
+1. Add `createdAt` to both `_preserveAcrossRestart` field lists
+   (`engine.js:1302`, `engine.js:1452`) **and** to the context-reload path
+   (`session-manager.js:5027`), which preserves nothing today.
+2. **Pin createdAt's survival across a kill-based restart DIRECTLY** — not as a
+   side effect of a pending-store test. It must fail **by a message naming the
+   sidebar sort**, so the next reader learns what breaks, not merely that
+   something did.
+3. **Correct `test/session-manager.test.js:1950`** — it passes `createdAt: 1`
+   and never asserts it survives, so it currently encodes the WRONG behaviour.
+   Say in the commit that the existing test encoded the bug; that is worth a
+   reader's attention.
+4. Then the rekey on the now-stable stamp, under the four conditions already
+   recorded above.
+
+---
+
+# THE HARNESS LYING QUIETLY — a failure class, written up at clodex's instruction
+
+Three times this week my own tooling produced a **CLEAN result, not an error**,
+while being wrong. Not one of them announced itself. Collected here because the
+ruling is right that this is the most dangerous failure mode we have found, and
+it has now appeared in three different disguises:
+
+1. **SIGPIPE truncation (t63).** I piped `node --test` through `head`. The
+   SIGPIPE killed the run mid-flight and printed EMPTY totals sections, which
+   read as a pass. Standing rule since: never pipe `node --test` through `head`.
+2. **The trap-restore omission (t71 phase 2).** My revert harness restored only
+   the files in a hand-written list, and `session-restore.js` was not on it. So
+   revert D stayed APPLIED after the script exited, and the next census run
+   reported 2/3 — a "failure" with no cause visible in the tree. Caught by
+   diffing against HEAD rather than trusting `trap restore EXIT`.
+3. **The phantom string in my own scanner (t71 phase 2).** Stripping comments
+   and strings across the whole file first, a regex literal containing an
+   apostrophe opened a string that never closed and swallowed an entire call
+   site. **The scan reported 10 sites and looked perfectly healthy.** Caught
+   only by checking against clodex's count of 11 instead of trusting my output.
+
+**What they share**: each replaced a real signal with a plausible one. A crash
+is self-announcing; a truncated run, a silently-unrestored tree and a
+short-by-one census all look exactly like success. The defence is never "read
+the harness more carefully" — I read all three and they looked right. It is:
+
+- **check the harness's output against a number derived somewhere else** (the
+  scanner died on clodex's 11, not on my own review);
+- **verify the tree state independently after any mutation** (`git diff` after
+  every revert, not the trap's promise);
+- **make no-op detection explicit** — my revert script now fails loudly if the
+  perl expression changed nothing, because "the revert applied and the test
+  still passed" and "the revert never applied" are the same output otherwise.
+
+Note the recursion, which is the actual lesson: **this ticket is about a flag
+that cannot answer the question its name implies, and my scanner was a harness
+that could not answer the question its output implied.** Same defect class, one
+layer down, found the same way — by measuring instead of reading.
+
 ---
 
 # PHASE 2 — the call sites, re-derived from scratch
