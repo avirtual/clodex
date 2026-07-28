@@ -356,6 +356,55 @@ meaning: if the agent is mid-turn, hold the text and deliver it with its next
 turn rather than interrupting. Pass `{ parkable: false }` only for something
 that genuinely cannot wait.
 
+#### `inject` is typing, not messaging — four rules
+
+`inject` is the narrowest part of this API and the easiest to misuse, because it
+looks like "send a message" and is actually "type this at a prompt". Everything
+below is a host behaviour you cannot observe from inside a plugin, so none of it
+will show up in your testing as an error.
+
+**1. A newline in your text may submit it early, splitting one message into
+several.** Interior `\n` is converted to `\r` — an ENTER key event — before the
+write. There is a mitigation and you must not rely on it: while the CLI has
+bracketed-paste mode (2004) on, multi-line text is wrapped in paste markers, and
+interior newlines are then literal content. But *you cannot observe which mode is
+live*. It is sniffed from the CLI's own output, differs by session type (a
+`bash` pane generally never enables it) and by CLI version, and it toggles at
+runtime around dialogs and teardown. **So treat the constraint as unconditional
+even though the mechanism is not: if you would not be happy with your text
+arriving as N separate prompts, do not put newlines in it.** Join with `' '`, or
+make N deliberate `inject` calls. *Consequence when violated:* the first line
+submits as its own turn and the remainder lands as a second prompt — observed
+live, a message body and its trailer arriving as two user turns.
+
+**2. Your text can be merged with other injects, acquiring newlines it never
+had.** When the session cannot usefully receive a turn — mid-turn, blocked on a
+permission dialog, or inside a `/compact` window — injects are queued and later
+flushed as **one concatenated turn, joined with `\n`**. Two `inject` calls that
+were fine individually can therefore arrive as one multi-line payload subject to
+rule 1. *Consequence:* your carefully single-line text is no longer single-line,
+and the batch may fragment at the join. If two pieces of text must not merge,
+they must not be adjacent injects — space them behind something that waits for
+the agent to act.
+
+**3. Anything not a string is coerced, never rejected.** The host calls
+`String(text)`. `inject(null)` types the four characters `null`; `inject({a:1})`
+types `[object Object]`; `inject(undefined)` types `undefined`. There is no
+validation, no throw and no log. *Consequence:* a bug in the value you pass
+becomes visible text in the user's agent prompt, and the first person to notice
+is the user.
+
+**4. It is fire-and-forget, and tells you nothing.** `inject` returns
+`undefined` — always, in every case. It is not async, so there is nothing to
+await. You cannot learn whether your text was written, queued behind a hold,
+parked for the operator's next turn, or dropped because the session had died.
+*Consequence:* there is no delivery confirmation to build on. If your plugin
+needs to know its text arrived, it has to observe the effect (the agent doing
+something), not the call.
+
+There is **no length cap** — text is never truncated at any point on this path,
+at any size. Size is the one thing you do not have to worry about here.
+
 **`fsScope(name)`** is the one you must use before touching the filesystem on a
 session's behalf. It returns `{ cwd }` for a local session with a working
 directory, and otherwise `{ error }` where error is:
@@ -982,6 +1031,20 @@ const off = host.intents.register({
   other return value) captures nothing. It is a function because the right answer
   often depends on a sub-command — one form of your verb may take a body while
   another must not.
+- **The captured body arrives on `.body`, and you do not get to choose the
+  name.** This is the one field the host writes onto *your* object. Nothing in
+  the API announces it, so it is stated here rather than left to be discovered:
+  the host takes the object your `parse` returned, sets `type` to your verb, and
+  — once the body capture completes — assigns the captured text to `.body`. The
+  captured text is **appended to whatever `.body` already held**, joined with a
+  newline, so the same-line remainder your `parse` returned is preserved and the
+  following lines are added to it. Two consequences worth stating plainly:
+  **(a)** with `bodyMode` returning `'none'`, nothing is ever assigned and
+  `.body` is exactly what your `parse` put there; **(b)** if you return a
+  `.body` that is *not* the same-line remainder — a parsed structure, say — the
+  host will concatenate raw text onto it and hand your handler the wreckage.
+  Put same-line text in `.body` and everything else under your own property
+  names.
 - **`label`** is what the user sees in the per-seat intent checklist. Defaults to
   `"<verb> (plugin: <yourId>)"`.
 - **`promptLines`** is documentation injected into an agent's system prompt, and
@@ -1418,6 +1481,13 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   JavaScript regardless, so a CSS scoper would buy appearance rather than safety.
   Keep your selectors under your own class names (`cls`/`accentClass` reach the
   DOM verbatim, §6) and prefix them so two plugins do not collide.
+- **`inject` has no delivery feedback** (§4). It returns `undefined` in every
+  case — written, queued, parked and dropped are indistinguishable from the
+  caller. There is no acknowledgement channel and no plan for one at `"1"`; a
+  plugin that must know its text arrived has to observe the effect instead. The
+  four rules that follow from this, including the newline hazard, are with
+  `inject` itself in §4 rather than here, because they bite while you are
+  writing the call rather than while you are designing around a gap.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
 - **No renderer-side event subscription** (§9). Design against pull-on-open.
 - **`rhost.sessions` has no `listAll()`** and never will; if you need the global
