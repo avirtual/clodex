@@ -131,6 +131,7 @@ const REVIEWER_FALLBACK = {
 // like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
 // tickets.json (team-scoped, shared with the clodex-team exec).
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
+const { computeModuleDigest, readHostStamp, staleNotice } = require('./host-stamp');
 
 // Ticket stall watchdog default: a lead is nudged once when an open ASSIGNED
 // ticket's assignee has been quiet longer than this. Per-team override:
@@ -4708,8 +4709,33 @@ function createSessionManager(deps) {
     // carries the full `spec` text (beyond the spec's listed fields) — reassign must
     // redeliver the spec to the new assignee, which is impossible without storing it.
 
+    // The stale-host suffix (t93), appended to every task reply — but ONLY when
+    // the running process is genuinely older than the code on disk, which is
+    // rare and binary. A task reply is where the wrong conclusion actually
+    // forms: a lead reads `ticket t91 → hand`, believes the merged behaviour is
+    // what just ran, and reasons from there. Quiet on a fresh host, deliberately:
+    // t82 settled that a NOTE on every dispatch trains the lead to ignore the
+    // ones that matter, so this says nothing at all until the assumption the
+    // reader is about to make is actually false.
+    _staleHostSuffix(now = Date.now()) {
+      try {
+        const notice = staleNotice(
+          readHostStamp(path.join(REGISTRY_DIR, 'run')),
+          computeModuleDigest(__dirname),
+          now,
+        );
+        return notice ? ` — NOTE: ${notice}` : '';
+      } catch { return ''; } // instrumentation must never break the reply it rides on
+    }
+
     _handleTask(session, intent) {
-      const reply = (msg) => this._injectText(session, `[agent:task] ${msg}`, { parkable: true });
+      // Guarded at the CALL SITE as well as inside: _staleHostSuffix catches its
+      // own fs errors, but a diagnostic must not be able to take down the ticket
+      // protocol by any route at all. Ticket work is the thing that matters here;
+      // the notice is a convenience riding along.
+      let stale = '';
+      try { stale = this._staleHostSuffix(); } catch { stale = ''; }
+      const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
       if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }

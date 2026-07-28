@@ -2928,6 +2928,78 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
   assert.strictEqual(f.urgents[1], true, 'the reassigned spec is a work assignment and must wake');
 });
 
+// ── t93: the stale-host suffix on task replies ──────────────────────────────
+// A task reply is where the wrong conclusion actually forms: the lead reads
+// `ticket t91 → hand`, believes the merged behaviour is what just ran, and
+// reasons from there. That is how a ticket got filed against correct source.
+// Both outcomes are pinned because the design is QUIET-WHEN-FRESH — a suffix
+// that appeared on every reply would be the t82 failure (a NOTE on every
+// dispatch trains the lead to ignore the ones that matter), and one that never
+// appeared would be the t79 failure (correct information nobody sees).
+
+test('t93 a FRESH host adds nothing to a task reply — the happy path stays silent', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._staleHostSuffix = () => '';           // fresh: the real one returns '' here
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const note = f.injected.join('\n');
+  assert.match(note, /ticket t1 → hand/, 'ENTER: the reply was produced');
+  assert.doesNotMatch(note, /STALE|older code|restart/i,
+    'a fresh host must say nothing: a restart notice on every reply is noise the lead learns to skip');
+});
+
+test('t93 a STALE host warns on the task reply, where the wrong conclusion gets made', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._staleHostSuffix = () => ' — NOTE: running host (pid 55910) booted 8h ago from OLDER code than is on disk'
+    + ' — merged fixes are NOT live until the app is restarted';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const note = f.injected.join('\n');
+  assert.match(note, /ticket t1 → hand/, 'ENTER: the ordinary reply is still there — the warning rides ALONG, it does not replace');
+  assert.match(note, /OLDER code than is on disk/,
+    'the lead must learn the running host predates the code before reasoning about behaviour they just observed');
+  assert.match(note, /restarted/, 'and what to do about it');
+});
+
+test('t93 the suffix rides EVERY task verb, not just add — a stale host is stale for all of them', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._staleHostSuffix = () => ' — NOTE: STALE-HOST-MARKER';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+  assert.match(f.injected.join('\n'), /STALE-HOST-MARKER/,
+    'done replies carry it too — the assignee reading a close confirmation is reasoning about the same host');
+});
+
+test('t93 _staleHostSuffix is computed ONCE per intent, not per reply line', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  let calls = 0;
+  f.m._staleHostSuffix = () => { calls += 1; return ''; };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.strictEqual(calls, 1,
+    'the check stats the whole module dir, so a per-reply call would put real IO on every task intent');
+});
+
+test('t93 a throwing stale check never breaks the reply it rides on', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // Exercises the REAL method (not a stub), so the try/catch inside it is what
+  // is under test. Pins the contract that instrumentation cannot take down the
+  // ticket protocol: the worst a broken stamp may do is say nothing.
+  const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
+  assert.strictEqual(typeof realSuffix, 'function', 'ENTER: the real method exists to be exercised');
+  assert.strictEqual(realSuffix.call(f.m), '', 'no stamp on disk in a test env ⇒ silent, per fail-closed');
+
+  // And the whole ticket path still works while the check is throwing.
+  f.m._staleHostSuffix = () => { throw new Error('stamp read exploded'); };
+  assert.throws(() => f.m._staleHostSuffix(), /exploded/, 'ENTER: the stub really does throw');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.ok(f.one('t1'), 'the ticket was still minted — instrumentation failure must not block work');
+});
+
 // ── t92: the ASSIGN path's honest reporting ─────────────────────────────────
 // t82 fixed the false green (parked/held reported as delivered) and pinned it
 // — but every one of those pins drives the ADD path (`sub: 'add'`). Assign

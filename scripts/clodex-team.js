@@ -139,7 +139,7 @@ function doRoster(payload) {
       if (info.cwd && cwdInProject(info.cwd, team.root)) live.push(info.name);
     } catch { /* not a registration */ }
   }
-  say(`team ${team.name} (root ${team.root}) — roles: ${roles} (*=lead) — live: ${live.length ? live.sort().join(',') : '(none)'}`);
+  say(`team ${team.name} (root ${team.root}) — roles: ${roles} (*=lead) — live: ${live.length ? live.sort().join(',') : '(none)'}${staleHostLine()}`);
 }
 
 function humanizeAge(ms) {
@@ -157,6 +157,51 @@ function humanizeAge(ms) {
 // (pot-bin.js materializeExecScripts) and may require node builtins ONLY, so a
 // shared module would not resolve at run time.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
+
+// ── Stale-host check (t93) ─────────────────────────────────────────────────
+// Duplicated from host-stamp.js for the SAME strict-leaf reason as
+// TICKET_FILTERS above: this file is flat-copied into run/bin/, so `require`ing
+// a repo module would not resolve at run time. Keep the digest grammar in sync
+// with host-stamp.js computeModuleDigest or the two will always disagree and
+// report a permanent false stale.
+//
+// This surface exists SEPARATELY from the task-reply suffix on purpose, and it
+// is not redundancy: this script is a fresh process that reads disk on every
+// invocation, so it reports correctly even when the running host is itself too
+// old to know this check exists. The in-host suffix cannot help on a host that
+// predates it; this can.
+// Flat top-level *.js only — subdirectories are never descended, so test/,
+// renderer/ and the rest are out by construction. (An ignore list here was dead
+// code: a directory never passes `\.js$`, and `test.js` never equals `test`.)
+function hostModuleDigest(dir) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return null; }
+  const parts = [];
+  for (const name of names.sort()) {
+    if (!/\.js$/.test(name)) continue;
+    try {
+      const st = fs.statSync(path.join(dir, name));
+      if (st.isFile()) parts.push(`${name}:${Math.round(st.mtimeMs)}:${st.size}`);
+    } catch { /* vanished mid-scan */ }
+  }
+  return parts.length ? parts.join('|') : null;
+}
+
+// One line, or '' when there is nothing to say. Fails closed to SILENT: if the
+// stamp is missing (a host from before t93) or unreadable, we cannot
+// substantiate staleness, and a notice we cannot back up would train the reader
+// to ignore the ones that are real.
+function staleHostLine() {
+  try {
+    const stamp = JSON.parse(fs.readFileSync(path.join(CLODEX_HOME, 'run', '.host.json'), 'utf8'));
+    if (!stamp || typeof stamp.digest !== 'string' || typeof stamp.dir !== 'string') return '';
+    const current = hostModuleDigest(stamp.dir);
+    if (!current || current === stamp.digest) return '';
+    const age = typeof stamp.bootedAt === 'number' ? ` ${humanizeAge(Date.now() - stamp.bootedAt)} ago` : '';
+    return `\n(STALE HOST: pid ${stamp.pid} booted${age} from OLDER code than is on disk`
+      + ' — merged fixes are NOT live until the app is restarted)';
+  } catch { return ''; }
+}
 
 // Mirror of session-manager.js _taskList — same default (open only + a count of
 // what was hidden, naming the query for the rest), same filter set, same bounce.
@@ -192,7 +237,7 @@ function doTickets(payload) {
   if (!shown.length) {
     say(hidden > 0 ? `team ${team.name}: no open tickets${tail}` : `team ${team.name}: no ${filter} tickets`);
   }
-  say(`${head}:\n${lines.join('\n')}${tail}`);
+  say(`${head}:\n${lines.join('\n')}${tail}${staleHostLine()}`);
 }
 
 async function doRetire(payload) {
