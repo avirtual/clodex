@@ -3721,6 +3721,17 @@ test('t80 task list: a board with everything closed says so and still points on'
 // test the window at all.
 const HOUR = 60 * 60 * 1000;
 
+// The window constant, read from the module source rather than restated here.
+// A literal 24h in this file would keep passing if the product's constant moved,
+// which is the one change the boundary test exists to catch.
+const RECENT_DONE_MS = (() => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  const m = src.match(/const RECENT_DONE_MS = ([^;]+);/);
+  assert.ok(m, 'ENTER: found RECENT_DONE_MS in session-manager.js');
+  return Function(`return (${m[1]})`)();
+})();
+
+// `agoH` places a close in hours; `agoMs` places one exactly, for the boundary.
 function mkAged(rows) {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
@@ -3731,7 +3742,7 @@ function mkAged(rows) {
     assignee: 'hand',
     state: r.state,
     openedAt: now - 30 * HOUR,
-    closedAt: r.state === 'open' ? null : now - r.agoH * HOUR,
+    closedAt: r.state === 'open' ? null : now - (r.agoMs != null ? r.agoMs : r.agoH * HOUR),
   })));
   f.injected.length = 0;
   return f;
@@ -3776,6 +3787,27 @@ test('t100 task list: the 24h window EXCLUDES an older close but still COUNTS it
   assert.match(out, /\(2 done, 0 cancelled —/, 'but the tail counts BOTH — the older one is hidden, not forgotten');
 });
 
+test('t100 task list: the window is pinned AT its own boundary, not somewhere inside it', () => {
+  // The other window test uses 2h and 25h — so far either side that any cutoff
+  // between them passes it. If RECENT_DONE_MS became 6h or 20h the suite would
+  // stay green, and the parity tests cannot help: both implementations carry
+  // their own copy of the constant and would move together.
+  //
+  // Expressed against the constant itself, so this pins the BOUNDARY rather
+  // than a number that happens to equal it today.
+  const f = mkAged([
+    { state: 'open' },
+    { state: 'done', agoMs: RECENT_DONE_MS - 60_000, title: 'just inside' },
+    { state: 'done', agoMs: RECENT_DONE_MS + 60_000, title: 'just outside' },
+  ]);
+  const out = board(f);
+  // One minute apart and on opposite sides — the tightest pair that still
+  // clears clock jitter between fixture construction and the render.
+  assert.match(out, /just inside/, 'a close one minute inside the window is shown');
+  assert.ok(!/just outside/.test(out), 'a close one minute outside it is not');
+  assert.match(out, /\(2 done, 0 cancelled —/, 'both are still counted');
+});
+
 test('t100 task list: the recent section is CAPPED and the overflow folds into the count', () => {
   // 13 recent closes: 3 over the cap of 10. Uncapped, this is the bloat the
   // open-only default was introduced to remove.
@@ -3807,6 +3839,23 @@ test('t100 task list: cancelled is COUNTED separately and never enters the recen
   // ticket here is the same age as the done one so age cannot explain it.
   assert.match(out, /shipped/, 'the recent done ticket is shown');
   assert.ok(!/dropped/.test(out), 'the equally-recent cancelled one is not');
+});
+
+test('t100 task list: "cancelled" counts the cancelled state, not everything that is not done', () => {
+  // The tail counted `closed.length - doneAll.length`, which labels EVERY
+  // non-open non-done ticket a cancellation. There is no fourth state today, so
+  // nothing else in the suite can catch this — the fixture has to invent one.
+  // Written directly rather than through _taskCancel for exactly that reason.
+  const f = mkAged([
+    { state: 'open' },
+    { state: 'done', agoH: 1 },
+    { state: 'cancelled', agoH: 1 },
+    { state: 'superseded', agoH: 1 },
+  ]);
+  const out = board(f);
+  assert.match(out, /\(1 done, 1 cancelled —/,
+    'one cancellation, not two — a state the counter has never heard of is not a drop');
+  assert.ok(!/2 cancelled/.test(out), 'the unknown state is not silently folded into the cancelled count');
 });
 
 test('t100 task list: EXPLICIT filters get neither the recent section nor the split tail', () => {

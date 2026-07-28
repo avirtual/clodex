@@ -214,6 +214,15 @@ test('bad payloads are loud (unknown action, missing agent)', async () => {
 // Byte equality would therefore fail today, on correct code, which would make
 // the pin worthless. What must never differ is WHICH tickets appear, in WHICH
 // section, in what order, and the counts.
+//
+// WHAT THIS DOES NOT CLAIM. Parity is over the two RENDERINGS. It is not a
+// claim that an agent sees either of them: the exec dispatcher delivers only
+// the last stderr line, sliced to 200 chars (session-manager.js:3838, pinned at
+// test/session-manager.test.js:4231-4243), so `{"action":"tickets"}` returns
+// the tail and nothing more. True since t80, measured under t100's rework. The
+// tests below therefore pin that the two functions agree — a real property,
+// since the intent path renders in full — and deliberately not that the exec
+// surface delivers a board.
 
 // Reduce a rendering to the facts both implementations must agree on: the
 // ticket rows, the section header that separates them, and the tail's numbers.
@@ -269,7 +278,7 @@ function parityBoard() {
   return rows;
 }
 
-test('listing parity: the exec pull and the intent path render the same board (t100)', async () => {
+test('listing parity: the two implementations RENDER the same board (t100 — not what an exec caller receives)', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
@@ -313,6 +322,39 @@ test('listing parity: holds on each explicit filter too', async () => {
     assert.ok(!mine.some((f) => f.startsWith('TAIL')), `${filter}: no count tail on the intent path`);
     assert.deepStrictEqual(listingFacts(r.err), mine, `${filter}: the two implementations disagree`);
   }
+});
+
+// The exec dispatcher delivers only the LAST stderr line, so whatever ends this
+// string is the whole reply. Appending the stale notice after the tail meant a
+// stale host cost the caller the counts — the one thing the listing still
+// delivers over exec. Ordering is therefore a delivery property, not cosmetics.
+test('tickets: the stale-host notice does not displace the tail as the delivered line', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  const now = Date.now();
+  mkTicketRegistry(home, 'proj', [
+    { id: 't1', title: 'open one', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
+    { id: 't2', title: 'shipped', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+  ]);
+  // A stamp whose digest cannot match the tree it names — the proven-stale path.
+  fs.mkdirSync(path.join(home, 'run'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'run', '.host.json'), JSON.stringify({
+    pid: 999, bootedAt: now - 7_200_000,
+    dir: path.join(__dirname, '..'), digest: 'stale-digest-from-boot',
+  }));
+
+  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.err, /STALE HOST/, 'ENTER: the fixture really is on the stale path');
+
+  // Reproduce the dispatcher's discipline exactly (session-manager.js:3838).
+  const delivered = (r.err.trim().split('\n').pop() || '').slice(0, 200);
+  assert.match(delivered, /1 done, 0 cancelled/,
+    'the counts survive as the delivered line — they are all an exec caller gets');
+  assert.ok(!/STALE HOST/.test(delivered),
+    'and the notice is the line that yields, since one line cannot carry both');
 });
 
 test('listing parity: holds on a board with nothing open', async () => {

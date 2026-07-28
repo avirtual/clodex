@@ -155,18 +155,119 @@ either would pass for a reducer that only compared sets. The order case is the
 one that discriminates, and it is the case a reducer built for convenience would
 have dropped.
 
-## Sizing note (not in the spec, no action taken)
+## Sizing note — SUPERSEDED, IT WAS WRONG
 
-The real board renders at 2723 bytes / 26 lines under the exec def's
-`maxBytes: 4096`. Comfortable today, but the recent section is what grows it:
-this team's own registry currently overflows the cap (`+8 more done in the last
-24h`). At a wider team the cap is the only thing between this listing and the
-byte limit — another reason it is load-bearing rather than polish.
+This section originally reported the board at "2723 bytes / 26 lines under the
+exec def's maxBytes: 4096" and called the cap comfortable. **Both halves are
+wrong.** `maxBytes` (`exec-schema.js:175-182`) caps the INBOUND payload and never
+touches the reply. The real limit is the last stderr line sliced to 200 chars
+(`session-manager.js:3838`). I cited a margin that does not exist on a limit that
+does not apply. Corrected in the rework section below; left visible rather than
+deleted, because the shape of the error is the useful part — I measured a real
+number against the wrong constant and the number made the claim look grounded.
 
-Also noted: `test/fixtures/clodex-team.exec.json` still has
-`"enum": ["roster", "retire"]` and no `filter` property, while the INSTALLED
-`~/.clodex/library/exec/clodex-team.json` has both `tickets` and the filter
-enum. Pre-existing, from t80, and out of scope here — the fixture underpins the
-schema tests, not the listing. Flagging it rather than fixing it: the fixture
-being behind means those schema tests are not currently pinning what the exec
-surface actually accepts.
+## REWORK (cold review, clodex-reviewer-1)
+
+Three claims defective, code sound. Verified each at source, and the load-bearing
+one by measurement.
+
+### 1. The exec caller receives ONE LINE — measured, not inferred
+
+`session-manager.js:3838` is `stderr.trim().split('\n').pop()` then
+`.slice(0, 200)`. Pinned at `test/session-manager.test.js:4231-4243`.
+
+Ran the real script over a real board through that exact discipline:
+
+```
+--- full stderr the script writes ---
+team proj tickets:
+t1 [open] hand 2d — still open
+recently closed:
+t2 [done] hand closed 1h ago — recent 0
+t3 [done] hand closed 2h ago — recent 1
+t4 [done] hand closed 3h ago — recent 2
+(3 done, 0 cancelled — ask for filter "done", "cancelled" or "all")
+
+--- what the caller actually gets ---
+clodex-team: (3 done, 0 cancelled — ask for filter "done", "cancelled" or "all")
+```
+
+**No head, no rows, no recent section.** The reviewer is right, and the scope is
+wider than t100: the ENTIRE tickets listing has been one line over exec since t80
+shipped. t100 did not break this — t100 added a feature exec callers cannot see,
+and then named a test as though they could.
+
+`sizing note` above is WRONG and is corrected below. `maxBytes: 4096`
+(`exec-schema.js:175-182`) caps the INBOUND payload; it never touches the reply.
+The real cap is the last line, 200 chars. My note claimed a margin that does not
+exist on a limit that does not apply.
+
+### 2. Fixes applied
+
+**Claim scope corrected.** `scripts/clodex-team.js` header and
+`test/clodex-team.test.js:204` now say the parity is over what the two functions
+RENDER, and state explicitly that an exec caller receives the tail line only.
+The parity test's name says the same. The tests still pin a real property — the
+intent path renders in full, and the two functions must not diverge — but they
+no longer stand in for a feature nobody gets.
+
+**Stale-notice ordering.** `staleHostLine()` now precedes the tail in
+`doTickets`. Flagged as a TRADE, not a fix, in the code: one line cannot carry
+two messages, so the notice is now what gets dropped instead of the counts. I
+chose the counts because they are the listing's whole payload over exec and the
+notice has a second surface (`doRoster`, deliberately untouched). If the reply
+ever goes multi-line, both come back and the choice evaporates.
+
+**Cancelled counted directly** (`t.state === 'cancelled'`) instead of
+`closed.length - doneAll.length`, in both implementations.
+
+### 3. The nits produced two findings
+
+**The boundary pin's first revert was a NO-OP.** Moving `RECENT_DONE_MS` from 24h
+to 20h left the whole t100 block green — including the boundary test I had just
+written to catch exactly that. Cause: the test scrapes the constant from source,
+so moving the constant moves the fixture with it. The test pins that the FILTER
+agrees with the DECLARED constant, not that the constant holds any particular
+value. That is the more useful property (a hardcoded 24h in the test would drift
+against a renamed or recomputed constant), but it is not what my comment claimed,
+and I would have shipped the wrong claim if I had not reverted. Re-proved with
+A2 (filter hardcoded to 20h while the constant stays 24h) and A4 (cutoff shifted
+2 minutes): both fail by message.
+
+A3 is worth recording as a deliberate non-catch: flipping `<` to `<=` passes.
+The pin brackets the boundary at ±60s and says nothing about which side owns the
+exact millisecond. Correct — a test asserting the inclusive/exclusive edge of a
+24h window would be pinning a coincidence, and a ticket closed at exactly
+86400000ms ago is not a case anyone has an opinion about.
+
+**The cancelled fix had no test until I wrote one.** The subtraction only
+misbehaves when a state exists that is neither open nor done, and there is no
+such state today, so nothing in the suite could see the difference — I verified
+by hand that the reverted code prints "2 cancelled" for a board carrying a
+`superseded` ticket. Added a test whose fixture invents that fourth state
+(written directly, since no verb can produce it). Revert B2 restores the
+subtraction and it fails by message.
+
+### Rework revert table
+
+Restored from md5-verified `cp` copies (`session-manager.js` `896de7fa…`,
+`scripts/clodex-team.js` `8f919fdc…`). All non-no-op reverts fail by message.
+
+| # | Revert | Result |
+|---|---|---|
+| A | `RECENT_DONE_MS` 24h → 20h | **NO-OP — 8 pass. A finding; see above.** |
+| A2 | filter cutoff hardcoded 20h, constant left 24h | 1 fail — "a close one minute inside the window is shown" |
+| A3 | `<` → `<=` at the boundary | no-op, DELIBERATE (the pin does not claim the exact edge) |
+| A4 | cutoff shifted `- 120000` | 1 fail — same message |
+| B | subtraction restored, probed by hand | prints "2 cancelled" for a 4-state board (no test existed) |
+| B2 | subtraction restored, with the new pin | 1 fail — "one cancellation, not two" |
+| C | stale notice back after the tail | 1 fail — "the counts survive as the delivered line" |
+
+### What I take from this round
+
+The reviewer's three findings were all about CLAIMS, not code — a test name, a
+comment, a journal note. All three would have read as true to someone who did
+not go to the delivery layer. That is the same failure as t101's report defect
+and t96's header, and it is now four instances: the code was right every time
+and the sentence describing it was wrong. Prose about behaviour needs a
+measurement behind it exactly as much as a test does.
