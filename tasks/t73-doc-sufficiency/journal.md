@@ -74,10 +74,85 @@ before Enter. No truncation at this seam. The trial's 7000-char payload is not
 cut here — but I have NOT yet checked for a cap further up (the plugin-facing
 `inject` wrapper) or further down (pty write). Not yet answered.
 
-### NEXT (phase A continued)
+### A3. `_pasteModeOn` width — the unprotected branch is WIDE. Verified.
 
-1. `_pasteModeOn` for bash/codex — how wide is the unprotected branch.
-2. The plugin-facing `inject` wrapper: find where the SessionHandle's inject is
-   built, check for length caps / validation / sync-vs-async.
-3. A2's open question: any size cap anywhere on the path.
-4. Then the intent BODY FIELD NAME (defect 2), still untraced.
+`session-manager.js:1667-1668` is the ONLY writer:
+`if (data.includes('\x1b[?2004')) session._pasteModeOn = pasteModeSignal(...)`.
+It is inside the PTY data handler and fires for ANY session type, but it is
+driven entirely by whether the CLI on the other end EMITS mode 2004.
+
+- Claude announces 2004 (the boot-readiness latch at `:1674` depends on it).
+- A plain **bash** session runs a shell, which does not announce 2004 unless
+  something inside it does → `_pasteModeOn` stays falsy → **no paste wrap**.
+- **Codex** is not verified either way by me. I did not find a source fact
+  establishing whether its TUI emits 2004. NOT filling this in.
+
+`:5940` `bracketedPaste: () => !!session._pasteModeOn` — undefined coerces to
+false, so the DEFAULT for any session that never emitted 2004 is unwrapped.
+
+**clodex's framing is the right one and I am adopting it verbatim: a plugin
+author cannot observe which mode is live, so from their side the constraint is
+UNCONDITIONAL even though the mechanism is not.** The doc must state both
+branches and the condition that selects them, and must not present the
+mitigation as protection the author can rely on.
+
+### A4. Plugin-facing `inject` — NO cap, NO validation, fire-and-forget
+
+`plugin-host-engine.js:202-206`:
+```js
+inject(text, opts = {}) {
+  const cur = manager.sessions.get(name);
+  if (!cur) return;
+  manager._injectText(cur, String(text), { parkable: opts.parkable !== false });
+}
+```
+- `String(text)` — a non-string is COERCED, not rejected. `inject(null)` writes
+  the four characters `null` into the agent's prompt. No throw, no log.
+- No length check at this seam.
+- Returns `undefined`, always. **It is fire-and-forget: a plugin cannot learn
+  whether the text was written, queued, parked, or dropped.** Not async, so
+  there is nothing to await either.
+- A dead session is a silent no-op (`if (!cur) return`, plus `_injectText`'s own
+  `if (session._dead) return` at `:5857`).
+
+`_injectText` (`session-manager.js:5856-5885`) adds a HOLD layer the doc never
+mentions: `_injectHoldReason` (`:2650-2655`) queues the text instead of writing
+when the session is compacting, dialog-blocked, or mid-turn, and the batch
+flushes later as ONE concatenated turn joined with `\n` (`:2750`). So a
+plugin's inject may arrive merged with other injects — and that concatenation
+reintroduces newlines into text that had none.
+
+### A5. Size caps on the path — ANSWERED: none that truncates
+
+Traced end to end. No truncation of inject text at any seam:
+- plugin wrapper: none (A4).
+- `_injectText` / InjectQueue: none; `settleMsFor` uses length only to pick a
+  delay (`:5932`).
+- The 2MB `pendingOutput` cap is DETACHED-WINDOW OUTPUT buffering, not input.
+- The >500-byte spill in `_deliverMessage` is the DM path, not `inject`.
+So the trial's 7000-char payload is not cut. The hazard there was never size —
+it was the newlines inside it.
+
+### A6. Intent BODY FIELD NAME — it is `body`. Verified, and the real rule is
+### stronger than "the name is body".
+
+`session-manager.js:2905-2955` `_extractIntents` assigns `intent.body` in both
+capture modes (`:2921` json, `:2953` greedy). `intent-registry.js:271-292` shows
+every core row using `body`, and the plugin wrapper at `:365-372` does
+`return { ...out, type }` — it spreads THE PLUGIN'S OWN parse output.
+
+**So the host does not hand the plugin a body under a name the plugin must
+guess. The host WRITES `body` onto the object the plugin's own `parse` returned.**
+The trial probing four plausible names was solving the wrong problem: the field
+is `body` because the host sets `.body`, and a plugin's parse must simply not
+occupy that property with something else.
+
+Two more registration facts a doc-only author cannot guess, both enforced by
+throw at `intent-registry.js:340-362`:
+- `bodyMode` MUST be a function of the parsed intent, never a string (`:358`)
+  — a string throws with an explicit message.
+- Returns other than `'greedy'`/`'json'` are coerced to `'none'` (`:377`), and a
+  parse that THROWS is swallowed to `null` (`:369`) — a buggy parse silently
+  never fires rather than erroring.
+
+### PHASE A COMPLETE. Next: phase B sweep, then phase C doc patch.
