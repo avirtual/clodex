@@ -410,6 +410,49 @@ it.
 
 ### Status: measured, ruled, BLOCKED on the bootstrap question. Not implemented.
 
+---
+
+## t78 — census scanner comments
+
+### Premise audit
+
+| Spec | At source | Verdict |
+|---|---|---|
+| top-level scan is `/(\w+)\.create\s*\(/g`, not comment-aware | `test/create-mint-census.test.js:91` | **exact** |
+| its own `callArgs` path IS comment-aware | `:47-57` header + implementation | **exact** |
+| the header records a prior whole-file strip producing a phantom string and a healthy-looking 10-site count | `:52-57` verbatim | **exact** |
+| t71 reworded the `cli-hooks.js` comment rather than touching the regex | `cli-hooks.js:50-55`, and the comment says so explicitly | **exact** |
+| **"reported a 12th create() call site at cli-hooks.js:50"** | census finds **11**, all 3 tests PASS | **stale (present tense)** |
+
+The last row is not a t77-style falsehood — the spec itself records the t71
+rewording, so it is describing the historical symptom rather than current state.
+Worth stating precisely anyway: **there is no miscount today.** The 12th site was
+removed by editing PROSE, not by fixing the scanner.
+
+### So what the defect actually is
+
+The scanner's correctness currently depends on a comment in an unrelated file
+continuing to avoid a phrase. `cli-hooks.js:54` still contains the near-miss form
+`` `<word>.create(` `` and survives only because `>` is not a `\w` character.
+
+That is a live fragility with the exact signature of everything else this week:
+the guard is prose, it is one edit away from silently failing, and the failure
+mode is a census that miscounts while looking healthy. clodex's line — a census
+tool that miscounts is worse than no census — is the reason it is worth fixing
+rather than leaving to the rewording.
+
+### The hazard to design around
+
+The obvious fix (strip comments file-wide, then scan) is the one the header
+records as already having shipped a wrong answer that looked right: a regex
+literal containing an apostrophe opened a phantom string and swallowed a real
+call site, reporting 10. Any comment-awareness I add must therefore handle
+**regex literals**, or it reintroduces exactly that. This is why the ticket
+requires a revert that re-introduces the phantom-string shape and fails BY
+MESSAGE.
+
+### Status: premises audited, nothing built yet. Next: design the fix.
+
 clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
 this overturns their stated preference on a change that propagates async through
 `listPeers`/`getPeer`/`cleanup` and their callers — expensive to unwind if the
