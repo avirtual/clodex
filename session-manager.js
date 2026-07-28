@@ -131,7 +131,7 @@ const REVIEWER_FALLBACK = {
 // like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
 // tickets.json (team-scoped, shared with the clodex-team exec).
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
-const { computeModuleDigest, readHostStamp, staleNotice } = require('./host-stamp');
+const { hostNotice } = require('./host-stamp');
 
 // Ticket stall watchdog default: a lead is nudged once when an open ASSIGNED
 // ticket's assignee has been quiet longer than this. Per-team override:
@@ -4717,12 +4717,30 @@ function createSessionManager(deps) {
     // t82 settled that a NOTE on every dispatch trains the lead to ignore the
     // ones that matter, so this says nothing at all until the assumption the
     // reader is about to make is actually false.
-    _staleHostSuffix(now = Date.now()) {
+    // runRoot/dir are seams, defaulted to the real ones: without them the only
+    // way to exercise this method is against the developer's own ~/.clodex and
+    // checkout, where every state is an accident of the machine and the
+    // speaking path cannot be driven at all. (A revert proved that: deleting
+    // the whole t94 call here failed no test.)
+    _staleHostSuffix(now = Date.now(), seams = {}) {
+      // Defaults resolved INSIDE the try, never as default parameters: a
+      // default parameter is evaluated before the body, so a throw from
+      // REGISTRY_DIR being unset would escape this method entirely and take the
+      // ticket reply down with it. An existing t93 test caught exactly that.
       try {
-        const notice = staleNotice(
-          readHostStamp(path.join(REGISTRY_DIR, 'run')),
-          computeModuleDigest(__dirname),
-          now,
+        const dir = seams.dir || __dirname;
+        const runRoot = seams.runRoot || path.join(REGISTRY_DIR, 'run');
+        // No `ps` on this path: THIS process is the host, so its own start time
+        // is process.uptime() and its own tree is __dirname. The fallback only
+        // fires when there is no stamp, which for the in-host surface means a
+        // host whose stamp write failed — a stamp-less host that predates t93
+        // has no code to run this at all. That bootstrap gap is exactly why the
+        // clodex-team surface exists as a separate process.
+        const notice = hostNotice(
+          runRoot,
+          dir,
+          { pid: process.pid, startedAt: now - Math.round(process.uptime() * 1000), root: dir },
+          { now },
         );
         return notice ? ` — NOTE: ${notice}` : '';
       } catch { return ''; } // instrumentation must never break the reply it rides on

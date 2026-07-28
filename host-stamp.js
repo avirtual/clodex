@@ -136,6 +136,88 @@ function staleNotice(stamp, currentDigest, now = Date.now()) {
     + ' — merged fixes are NOT live until the app is restarted';
 }
 
+// ── The stamp-less fallback (t94) ───────────────────────────────────────────
+//
+// WHY. Everything above needs a stamp, and the stamp is written by the host AT
+// BOOT. So a host that started before this feature existed leaves none, and the
+// check goes silent — on precisely the host it was built for. Observed live:
+// pid 55910, up 14h45m, nine top-level modules changed underneath it including
+// session-manager.js, and `clodex-team` said nothing. The stamp-less window is
+// not a brief bootstrap either: it lasts until the next restart, and rare
+// restarts are the entire premise of the feature.
+//
+// WHAT IS AND IS NOT PROVABLE HERE. The tempting claim is "a module whose mtime
+// is newer than the process start time cannot be loaded by that process". It is
+// FALSE in this codebase: require() is lazy, and modules are pulled inside
+// function bodies all over the main process (main.js:579 ipc-handlers,
+// session-manager.js:428/445-448/454/466/645 the whole wire/ stack,
+// peer-wiring.js:64, remote-wiring.js:100, sandbox.js:486). A file edited after
+// boot but before its first lazy require IS live in the host.
+//
+// So this fallback claims strictly less: the bytes on disk CHANGED after the
+// process started. That is a fact about two timestamps with no theory of the
+// module system attached, and it is still enough to stop the mistake this
+// exists to prevent — a reader told "9 modules changed under a 14h-old host"
+// does not conclude the source is broken.
+//
+// The wording below is load-bearing for that reason: it reports evidence and
+// explicitly says staleness is UNCONFIRMED. Do not tighten it into a claim
+// about what the host loaded.
+
+// Watched modules whose bytes changed after `sinceMs`. null = cannot tell.
+function changedSince(dir, sinceMs, fsImpl = fs) {
+  let names;
+  try { names = fsImpl.readdirSync(dir); } catch { return null; }
+  const changed = [];
+  for (const name of names.sort()) {
+    if (!WATCHED_RE.test(name)) continue;
+    try {
+      const st = fsImpl.statSync(path.join(dir, name));
+      if (st.isFile() && st.mtimeMs > sinceMs) changed.push(name);
+    } catch { /* vanished mid-scan */ }
+  }
+  return changed;
+}
+
+// The line for a host with NO stamp, or null when there is nothing to say.
+// PURE: the caller supplies the host's identity, because the two surfaces learn
+// it in completely different ways — the host itself knows its own start time
+// from process.uptime(), while a separate process has to ask the OS. Keeping
+// that out of here means the wording and the comparison are decided in ONE
+// place, and neither surface needs a live app or a real clock to be tested.
+//
+// THREE STATES, AND THE THIRD MUST NOT LOOK LIKE THE FIRST. That is the defect
+// being fixed: "checked, and fresh" and "could not check at all" both rendered
+// as silence, so silence read as fresh. Silence now means fresh and nothing
+// else; when the check cannot run, it says so out loud.
+function bootstrapNotice({ pid, startedAt, root }, { now = Date.now(), fsImpl = fs } = {}) {
+  if (!root || !Number.isFinite(startedAt)) {
+    return `cannot determine whether the running host${Number.isInteger(pid) ? ` (pid ${pid})` : ''}`
+      + ' is current — no boot stamp, and its start time could not be read';
+  }
+  const changed = changedSince(root, startedAt, fsImpl);
+  if (changed === null) {
+    return `cannot determine whether the running host${Number.isInteger(pid) ? ` (pid ${pid})` : ''}`
+      + ` is current — no boot stamp, and ${root} could not be read`;
+  }
+  if (!changed.length) return null;      // checked, and nothing changed underneath it
+  const shown = changed.slice(0, 3).join(', ');
+  return `${changed.length} module${changed.length === 1 ? '' : 's'} changed since the running host`
+    + `${Number.isInteger(pid) ? ` (pid ${pid})` : ''} started ${fmtAge(now - startedAt)} ago`
+    + ` — ${shown}${changed.length > 3 ? ', ...' : ''}.`
+    + ' This host has no boot stamp (it predates the check), so staleness is UNCONFIRMED;'
+    + ' restart the app if a fix you expect to be live is not';
+}
+
+// What a reader should see about the host, in whichever state it is: the
+// stamped answer when there is a stamp, the evidence-only fallback when there
+// is not, and null only when the host is genuinely fine.
+function hostNotice(runRoot, dir, host, { now = Date.now(), fsImpl = fs } = {}) {
+  const stamp = readHostStamp(runRoot, fsImpl);
+  if (stamp) return staleNotice(stamp, computeModuleDigest(stamp.dir || dir, fsImpl), now);
+  return bootstrapNotice(host || {}, { now, fsImpl });
+}
+
 module.exports = {
   HOST_STAMP_BASENAME,
   computeModuleDigest,
@@ -143,4 +225,7 @@ module.exports = {
   writeHostStamp,
   readHostStamp,
   staleNotice,
+  changedSince,
+  bootstrapNotice,
+  hostNotice,
 };
