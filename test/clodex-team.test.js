@@ -9,10 +9,17 @@
 //
 // Ported from the pre-layout-flip scratchpad suite. The scratchpad's old #7
 // check validated the operator-INSTALLED ~/.clodex/library/exec/
-// clodex-team.json — not committed, so a hermetic suite can't read it. Instead
-// this pins the script↔schema contract against a committed FIXTURE exec-def
-// (test/fixtures/clodex-team.exec.json), validated through the real
-// exec-schema.parseAndValidate — see the "exec-def schema" block at the end.
+// clodex-team.json, which is not committed and so cannot be read hermetically.
+// This suite pins the script↔schema contract against the REPO SEED that copy is
+// installed FROM — resources/library/exec/clodex-team.json, which is committed,
+// in-repo and therefore fully hermetic — validated through the real
+// exec-schema.parseAndValidate. See the "exec-def schema" block at the end.
+//
+// It read a hand-copied fixture until t101. That copy did not follow t80's
+// update to the seed, so for one release these tests pinned a schema that would
+// have REJECTED action:"tickets" — the verb the 300 lines above exercise — and
+// stayed green throughout. A test that validates a copy of the shipped artifact
+// is testing the copy. Read the artifact.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -26,7 +33,9 @@ const { parseAndValidate } = require('../exec-schema');
 const { createSessionManager } = require('../session-manager');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-team.js');
-const EXEC_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'clodex-team.exec.json'), 'utf-8'));
+// The SHIPPED def, not a copy of it (t101).
+const EXEC_DEF_PATH = path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-team.json');
+const EXEC_DEF = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
 
 function mkHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cteam-'));
@@ -327,18 +336,63 @@ test('listing parity: holds on a board with nothing open', async () => {
 });
 
 // The exec-def gates payloads BEFORE they reach the script; pin that the
-// committed schema accepts exactly what clodex-team.js handles and rejects the
-// rest, via the real exec-schema validator (hermetic replacement for the
-// scratchpad's operator-home #7 check).
+// SHIPPED schema accepts exactly what clodex-team.js handles and rejects the
+// rest, via the real exec-schema validator.
+//
+// This block reads resources/library/exec/clodex-team.json — the artifact
+// pot-bin.js seeds into the operator's library, so the schema under test is the
+// one that will actually gate a live payload. Do not reintroduce a fixture copy
+// here: the copy is what silently went stale (t101).
+
+// ENTER CHECK. Every assertion below is only worth its salt if EXEC_DEF is the
+// shipped def rather than something that merely parsed. This is deliberately a
+// property of the FILE (its argv placeholder), not of the schema — a schema
+// self-check would be satisfied by any copy, including the stale one.
+test('exec-def source: the schema tests read the SHIPPED def, not a copy', () => {
+  assert.ok(fs.existsSync(EXEC_DEF_PATH), `the seed exists at ${EXEC_DEF_PATH}`);
+  assert.ok(EXEC_DEF.argv.some((a) => a.includes('${CLODEX_BIN}')),
+    'reading the seeded def (it carries the ${CLODEX_BIN} placeholder a hand-copy would not)');
+  assert.ok(!fs.existsSync(path.join(__dirname, 'fixtures', 'clodex-team.exec.json')),
+    'the stale hand-copy is gone — if it comes back, so does the drift it caused');
+});
+
 test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
   for (const payload of [
     { action: 'roster', agent: 'clodex' },
     { action: 'retire', agent: 'clodex', target: 'clodex-hand' },
     { action: 'roster', agent: 'ghost', cwd: '/some/project' }, // payload-cwd fallback
+    // t101: `tickets` and `filter` are what the stale copy could not accept.
+    // The rest of this file spends 300 lines exercising the verb the schema
+    // under test would have rejected.
+    { action: 'tickets', agent: 'clodex' },
   ]) {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify(payload));
     assert.strictEqual(r.ok, true, `should accept ${JSON.stringify(payload)}: ${r.error}`);
     assert.strictEqual(r.value.action, payload.action);
+  }
+});
+
+// The filter enum is the schema's half of the contract TICKET_FILTERS is the
+// script's half. Driven from the script's own constant rather than a literal
+// list, so adding a filter in one place and not the other fails here instead of
+// at an agent's payload.
+test('exec-def schema accepts every filter the script implements, and no other', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const decl = src.match(/const TICKET_FILTERS = \[([^\]]*)\]/);
+  assert.ok(decl, 'ENTER: found TICKET_FILTERS in the script');
+  const filters = decl[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.deepStrictEqual(filters, ['open', 'done', 'cancelled', 'all'], 'ENTER: the four real filters');
+
+  for (const filter of filters) {
+    const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
+    assert.strictEqual(r.ok, true, `should accept filter "${filter}": ${r.error}`);
+    assert.strictEqual(r.value.filter, filter);
+  }
+  // `rejected` is the likeliest typo (reject is a verb) and is deliberately not
+  // a state — the script bounces it, and so must the gate in front of it.
+  for (const filter of ['rejected', 'OPEN', '']) {
+    const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
+    assert.strictEqual(r.ok, false, `should reject filter "${filter}"`);
   }
 });
 
