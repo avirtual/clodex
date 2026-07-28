@@ -6210,3 +6210,82 @@ test('create: a record replaced between probe and re-read falls back to the pid 
     await victim.stop();
   }
 });
+
+// ── t77: the _cleanup teardown-ordering invariant ──────────────────────────
+//
+// Not a bug — a correctness property held by call-site discipline alone, which a
+// plausible tidy would silently break, and which nothing else tests.
+//
+// THE PROPERTY. `waitForSessionExit` (engine.js:1308-1314) polls
+// `manager.sessions.has(name)`, so the map slot is the RESPAWN'S GO-SIGNAL: the
+// instant _cleanup drops it, a queued create() for that name may start. Every
+// statement that releases a resource the respawn would COLLIDE with must
+// therefore run BEFORE the map drop. Grouping the map mutations upward — moving
+// `sessions.delete` next to the prune calls, which reads as tidying — hands the
+// go-signal out while those resources are still held. No other test fails.
+//
+// WHY "AFTER THE RESOURCE RELEASES" AND NOT "LAST". `sessions.delete` is NOT the
+// last statement (:2404-2406 follow it) and must not be pinned as such. Those
+// three trailing statements — rebuilding the live-name set, pruning the intent
+// deduper and activity tracker, notifying the remote server — are IN-PROCESS
+// BOOKKEEPING that no respawn touches: a new session with the same name
+// re-registers itself in each of them on the way up, so racing them is harmless.
+// They are excluded DELIBERATELY, not overlooked. Stated because the tempting
+// tightening is to re-pin "delete is last", which was never the real property —
+// it was a proxy that happened to hold while _cleanup still did an rmSync, and
+// stopped holding when that rm was correctly removed (session-manager.js:1198:
+// it enforced its guarantee "destructively — and wrongly, since restart routes
+// through kill() too"). A pin asserting "last" would fail on correct code.
+//
+// Pinned STRUCTURALLY by reading source and comparing indexOf positions — the
+// technique already used at plugin-host-engine.test.js:138-151 for the onExit
+// landmine — because a unit test cannot execute _cleanup's PTY-driven path.
+test('t77: every respawn-colliding release runs BEFORE _cleanup drops the map slot', () => {
+  const fsReal2 = require('node:fs');
+  const pathReal2 = require('node:path');
+  const src = fsReal2.readFileSync(pathReal2.join(__dirname, '..', 'session-manager.js'), 'utf8');
+
+  const body = src.indexOf('_cleanup(name) {');
+  assert.ok(body > 0, '_cleanup(name) not found — this pin reads source and has gone stale');
+  const at = (needle) => {
+    const i = src.indexOf(needle, body);
+    assert.ok(i > 0, `landmark not found inside _cleanup: ${needle}`);
+    return i;
+  };
+
+  const mapDrop = at('this.sessions.delete(name);');
+  // Each of these is a DIFFERENT collision, so each carries its own consequence.
+  assert.ok(at('registry.unregister(name)') < mapDrop,
+    'registry.unregister must precede the map drop: the respawn is released by the map slot, so a create() starting here finds the dead entry still present, hits EEXIST, and takes the force-clean path against what is by then a LIVE registration — t76\'s bug arriving by a second route');
+  assert.ok(at('s.transport.stop()') < mapDrop,
+    'transport.stop() must precede the map drop: otherwise the respawn binds its socket while the old server is still listening on that same name-derived path, and Transport.start unlinks the path before binding — the old listener survives on an unlinked inode, reachable by nobody, with no error to notice by');
+  assert.ok(at('cleanupClaudeHook(name)') < mapDrop,
+    'the Claude hook cleanup must precede the map drop: otherwise the successor writes its generated hook files and this teardown then deletes them, leaving a live session whose transcript symlink and hook script are gone');
+  assert.ok(at('cleanupCodexHook(name, s.cwd)') < mapDrop,
+    'the Codex hook cleanup must precede the map drop: same collision as the Claude path — the successor\'s generated files are removed after it wrote them');
+});
+
+// The companion to the ordering pin. The invariant above only buys anything if
+// every kill-then-recreate path actually WAITS for the map slot; a fourth caller
+// added without the wait re-opens the race the ordering exists to make safe.
+// Grep-based because the point is to catch a call site that does not exist yet.
+test('t77: every kill-then-respawn path awaits waitForSessionExit', () => {
+  const fsReal2 = require('node:fs');
+  const pathReal2 = require('node:path');
+  const root = pathReal2.join(__dirname, '..');
+  // Files that legitimately kill and then recreate. A NEW file doing so is not
+  // caught here by construction — the pin's reach is these two, which is why the
+  // per-file count check below matters more than the presence check.
+  const files = ['engine.js', 'ipc-handlers.js'];
+  let waits = 0;
+  for (const f of files) {
+    const src = fsReal2.readFileSync(pathReal2.join(root, f), 'utf8');
+    const kills = (src.match(/await manager\.kill\(/g) || []).length;
+    const w = (src.match(/await waitForSessionExit\(/g) || []).length;
+    waits += w;
+    assert.ok(w >= kills,
+      `${f} has ${kills} \`await manager.kill(\` call(s) but only ${w} \`await waitForSessionExit(\` — a kill-then-recreate path that does not wait for the map slot will respawn while _cleanup is still releasing the registry entry, the socket and the generated hook files, and the collision surfaces as "session already exists" or a silently unreachable agent, not as a test failure`);
+  }
+  assert.strictEqual(waits, 3,
+    `expected exactly 3 waitForSessionExit call sites (engine.js restart x2, ipc-handlers.js session:kill) and found ${waits} — if a fourth kill+create caller was added, extend the ordering pin above to cover it rather than bumping this number`);
+});
