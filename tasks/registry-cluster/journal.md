@@ -303,7 +303,79 @@ rather than an accident. To measure rather than assume — and note t76's guard
 comment already flags that an async probe in `cleanup()` would open the
 in-process gap that guard currently sits inert against.
 
-Premises to verify at source first: `agent-transport.js:86` (listPeers liveness),
-`:103` (cleanup liveness), `:34-37` (isAlive), `:64` (record with nothing
-identifying), `:211` (send resolves false), and that the probe has exactly one
-production call site.
+### Premise audit — all CONFIRMED (first ticket of the four with no false premise)
+
+| Spec | At source | Verdict |
+|---|---|---|
+| `listPeers` decides liveness with bare `existsSync(socket) && isAlive(pid)` | `:86` | **exact** |
+| `cleanup` the same | now `:103`→ moved by my own t76 edit; logic unchanged | TRUE (my drift) |
+| `isAlive` is `kill(pid,0)` | `:34-37` | **exact** |
+| record stores pid with nothing identifying | `:64` — `{name, socket, pid, cwd?}` | **exact** |
+| every dm fails silently, send resolves false | `:254` (spec said `:211`) | drifted, TRUE |
+| the async probe has ONE production call site | `session-manager.js:1343` | **CONFIRMED** |
+
+Discovery callers: exactly two, `getPeer` at `session-manager.js:3108` and
+`listPeers` at `:3222`.
+
+### Measurement (scratchpad `t75_measure.js`, 20 iterations each)
+
+```
+ps -o lstart= (sync, per call): 2.349 ms
+dial LIVE socket             : 0.136 ms
+dial DEAD socket file (ghost): 0.046 ms
+ratio ps/dial-dead           : 50.6x
+```
+
+### Finding 1 — the two "identity field" variants are not variants
+
+The ticket offers "start-time or random token" as one option in two flavours.
+**They are not the same idea, and the random token cannot work at all.**
+
+Walk the ghost: agent registers `{pid:123, token:XYZ}`, dies uncleanly, the OS
+recycles pid 123. `agent.json` survives with `token:XYZ` intact — *the real agent
+wrote it*. A reader comparing the token finds it matches, because the token
+identifies **the record's writer, not the process's liveness**. There is no
+independent holder of that token to compare against; the only thing that could
+hold one with process-bound lifetime is the process, reachable only by dialing
+the socket — which is the probe.
+
+A random token would therefore ship as a fix, pass review, and detect nothing.
+
+**Start-time works** (pid+starttime is the classic pid-reuse-safe identity) but
+darwin has no `/proc`, so reading another process's start time from Node means
+`ps` fork/exec: **2.3 ms, 50x a dial, and synchronously blocking the main
+process** — per entry, per `[agent:who]`.
+
+### Finding 2 — the constraint that made the identity field attractive does not exist
+
+clodex's stated reason for preferring identity was that `listPeers` being
+synchronous is a real constraint. Measured at source: **both production callers
+are inside `async _handleIntent`** (`session-manager.js:3108` and `:3222`) and
+can already await. `getPeer` at :3108 is followed immediately by
+`await Transport.send(...)`.
+
+So there is no caller that cannot await. The constraint is an accident of how
+`listPeers` was written, not a requirement imposed on it.
+
+### Recommendation: the async probe (overturning clodex's read)
+
+The ghost's disk state is **byte-identical to a live agent's** — same record,
+same socket file, same live-looking pid. Nothing readable from the filesystem
+can separate them. Only two things can: dial the socket, or interrogate the
+pid's start time. The first is 50x cheaper, non-blocking, already in-tree, and
+already test-covered; the second is a blocking fork/exec per entry.
+
+Cost at realistic scale is negligible either way for the probe: sub-millisecond
+for a whole roster, and the ghost case (0.046 ms) is the *cheapest* branch
+because a dead socket refuses instantly.
+
+**t76 pre-paid part of this.** Making `cleanup()` async opens the in-process
+read-to-unlink gap — which the guard I landed this morning already covers, and
+whose comment names t75 by name as the thing that would open it.
+
+### Status: measured, NOT implemented. Awaiting ruling.
+
+clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
+this overturns their stated preference on a change that propagates async through
+`listPeers`/`getPeer`/`cleanup` and their callers — expensive to unwind if the
+ruling goes the other way. Reporting first, and taking up t78 rather than idling.
