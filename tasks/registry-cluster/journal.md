@@ -99,6 +99,149 @@ the ASYMMETRY not be left looking intentional. Either port the guard or comment
 why cleanup() does not need it. Reachability determines which, and it is a
 reading question, not a judgment call, so it gets read.
 
-### Status
+### The reachability answer — stronger than the ordering question I asked
 
-Reading done, nothing changed yet. Next: `engine.js:1810` ordering, then decide.
+I set out to check whether `cleanup()` runs before any `create()` at bootstrap.
+The ordering turned out to be the wrong question. **`cleanup()` and `regEntries()`
+contain no `await`, no promise, no callback** (grepped: zero hits). The loop is
+therefore atomic against the JS event loop, so no `create()` can interleave
+in-process *at all* — irrespective of where the call sits in bootstrap.
+
+That also explains the asymmetry cleanly: `session-manager.js:1379-1385` needs
+its guard because `await Transport.isSocketLive()` suspends between read and
+act. `cleanup()` has no suspension point. The difference was never considered;
+it just never mattered.
+
+Cross-process the gap is real today (two engines sharing `~/.clodex`; the
+single-instance lock at `main.js:492` is per-app, not per-volume).
+
+### Decision: port the guard
+
+Ported, not commented-away. Three reasons, in order of weight:
+
+1. **t75 — the next ticket in this batch — proposes putting the async probe
+   into `cleanup()`'s liveness test.** The precondition that makes the guard
+   inert is scheduled for removal by work already assigned to me.
+2. clodex's requirement: the asymmetry must not read as intentional.
+3. Cross-process reachability is not hypothetical.
+
+Per clodex's instruction, the comment states **why it is unreachable and what
+would make it reachable again** — synchronous today; an `await` in this function
+(t75) or a second caller off the bootstrap path flips it. "Currently
+unreachable" without its preconditions is the rationale that decays silently.
+
+The comment also states the limit honestly: re-read and unlink are two syscalls,
+so this NARROWS the window rather than closing it. Closing it needs an atomic
+compare-and-unlink the filesystem does not offer. Same bargain :1385 strikes.
+
+### Tests (2, in `test/agent-transport.test.js`)
+
+The property is only observable ACROSS the gap — at every individual instant the
+file is perfectly consistent — so the replacement is injected AT cleanup's own
+`readFileSync`. This is the t96 lesson applied: a single-snapshot check cannot
+see this defect, exactly as a single-request check could not see the flap.
+
+The two are each other's discriminator:
+- replaced-entry-survives alone passes for a guard that skips EVERYTHING;
+- unchanged-entry-still-pruned alone passes for NO guard at all.
+
+Both assert they **entered** their window (`reads >= 1`), because test 2's
+outcome is identical whether or not the harness fired — a dead harness
+simulates precisely the no-race case it tests.
+
+### Revert proofs (pristine `t76-at.pristine`, md5 `2ea113d1…`)
+
+| Revert | Parses? | Result |
+|---|---|---|
+| A: guard removed entirely | clean | **1 fails BY MESSAGE** — "cleanup deleted a registration that was re-registered LIVE… the agent is now undiscoverable" |
+| B: guard on the wrong signal (`mtimeMs >= 0`, i.e. not the bytes) | clean | **2 fail BY MESSAGE**, incl. the pre-existing t57 prune test — "a guard that skips it turns cleanup into a no-op" |
+| C: harness disabled (`if (false && …)`) | clean | **2 fail BY MESSAGE** — both entry assertions fire, naming "proved nothing about the read-to-unlink gap" |
+
+No crashes, no timeouts, no no-ops. md5 restored to `2ea113d1…` after each;
+`git diff` checked. Revert B is the one that matters: it is the failure mode the
+first test cannot see alone, and it takes down a t57 test too.
+
+### Status: DONE
+
+`deda936` (product) · `c7f97b4` (tests + journal + taskDir stubs). Suite file
+9/9. Full suite deferred to the end of the batch.
+
+Also created the four `taskDir` stubs per clodex's ruling — one README each
+pointing here, so a reader landing on an empty dir learns where the work is
+rather than inferring it never happened.
+
+---
+
+## Next: t77
+
+Line references to verify at source first (clodex has NOT verified t75-t78 at
+source — filed 16h ago, dispatched on their own text, and two references in t76
+had already drifted): `engine.js:1293`, `engine.js:1451`, `ipc-handlers.js:351`,
+`session-manager.js:2366` + `:2368`, `engine.js:1253-1257`,
+`test/plugin-host-engine.test.js:138-151`.
+
+---
+
+## t77 — BLOCKED. Property (2) is false at source.
+
+Verified every reference before building. Property (1) holds; **property (2)
+does not**, and it is the one the ticket turns on — the spec itself says (2) is
+what makes (1) sufficient.
+
+### Reference audit
+
+| Spec | At source | Verdict |
+|---|---|---|
+| kill+create awaits `waitForSessionExit` — `engine.js:1293` | `engine.js:1343` | drifted, claim TRUE |
+| … `engine.js:1451` | `engine.js:1501` | drifted, claim TRUE |
+| … `ipc-handlers.js:351` | `ipc-handlers.js:351` | **exact**, claim TRUE |
+| 300ms sleep "lost the session entirely" — `engine.js:1253-1257` | `engine.js:1303-1307` | drifted, claim TRUE verbatim |
+| indexOf-ordering technique — `test/plugin-host-engine.test.js:138-151` | :138-151 | **exact**, technique reusable as described |
+| **`rmSync` at `session-manager.js:2366`** | **no `rmSync` anywhere in `_cleanup`** | **FALSE** |
+| **`sessions.delete` is the LAST statement, `:2368`** | `:2403`, with **three statements after it** (`:2404-2406`) | **FALSE** |
+
+### Why (2) is false, and it is not a drift
+
+The `rmSync` was **deliberately removed**, and the removal is documented at
+`session-manager.js:1198`: the `_cleanup` rm "used to enforce the same thing
+destructively — and wrongly, since restart routes through kill() too." It was
+replaced by the mint-vs-restore axis. The same reasoning appears at :2362-2393
+for both the parked-DM store and the frozen prompt: **nothing is deleted on
+exit**, and the staleness it guarded is handled at read time via the `born`
+stamp / unconditional mint.
+
+So the consequence the pin is required to name — "teardown returns while the run
+dir is still being deleted" — describes a deletion that no longer happens. A pin
+asserting it would encode a hazard the code has already designed away.
+
+And `sessions.delete` is not last. After it:
+```
+:2404  const live = new Set(this.sessions.keys());
+:2405  this._intentDeduper.prune(live); this._activity.prune(live);
+:2406  getRemoteServer().notifySessions();
+```
+Writing the spec's "three lines pin sessions.delete as last" would fail on
+current, correct code.
+
+### The property that IS real (my proposal, not a ruling)
+
+`waitForSessionExit` polls `manager.sessions.has(name)` (`engine.js:1310`), so
+the map slot is the respawn's go-signal. What must precede the map drop is every
+statement releasing a resource a respawn COLLIDES with:
+
+- `:2400 registry.unregister(name)` — else `create()` hits `EEXIST` and takes
+  the force-clean path against a live entry;
+- `:2399 transport.stop()` — else the new bind races the old listener;
+- `:2401-2402` hook cleanup — else generated hook files are removed *after* the
+  successor wrote its own.
+
+The three trailing statements are in-process bookkeeping that no respawn touches,
+which is why "last" is the wrong formulation and "after the resource releases" is
+the right one. That version is load-bearing, fails on the tidy the ticket
+worries about (grouping the map mutations upward), and is true of the code.
+
+**Not building it without a ruling.** Choosing which property to pin is a design
+decision, and the spec's stated one is wrong rather than ambiguous — the
+difference between flag-and-proceed and stop-and-report.
+
+### Status: STOPPED, awaiting clodex. No t77 code written.
