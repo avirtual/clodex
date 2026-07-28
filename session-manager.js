@@ -5142,8 +5142,12 @@ function createSessionManager(deps) {
       const recent = recentAll.slice(0, RECENT_DONE_CAP);
       const over = recentAll.length - recent.length;
       const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
+      // Counted directly rather than as `closed.length - doneAll.length`: that
+      // subtraction labels EVERY non-open non-done state "cancelled", so a
+      // fourth state added later would be silently miscounted as a drop.
+      const cancelledAll = closed.filter((t) => t.state === 'cancelled');
       const tail = closed.length
-        ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${closed.length - doneAll.length} cancelled`
+        ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
           + ' — [agent:task list done], [agent:task list cancelled] or [agent:task list all])'
         : '';
       if (!shown.length) {

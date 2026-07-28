@@ -322,6 +322,15 @@ function staleHostLineFor(host) {
 // Identical CONTENT, not identical bytes: each names the query for the rest in
 // its own caller's vocabulary (intent syntax there, payload syntax here). Which
 // tickets appear, in which section, and the counts — that is the parity.
+//
+// SCOPE OF THAT PARITY: it is over what this FUNCTION RENDERS, not over what an
+// exec caller receives. The dispatcher delivers only the last stderr line,
+// sliced to 200 chars (session-manager.js:3838, pinned at
+// test/session-manager.test.js:4231-4243), so an agent running
+// [agent:exec clodex-team] {"action":"tickets"} gets the tail line and nothing
+// else — no head, no rows, no recent section. That has been true of this
+// listing since t80; the rows below are written for a reader who can see the
+// whole string, which today means the terminal and the test suite.
 function doTickets(payload) {
   const cwd = requesterCwd(payload);
   if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
@@ -358,17 +367,28 @@ function doTickets(payload) {
   const recent = recentAll.slice(0, RECENT_DONE_CAP);
   const over = recentAll.length - recent.length;
   const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
+  const cancelledAll = closed.filter((t) => t.state === 'cancelled');
   const tail = closed.length
-    ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${closed.length - doneAll.length} cancelled`
+    ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
       + ' — ask for filter "done", "cancelled" or "all")'
     : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
+  // The stale notice goes BEFORE the tail, not after it. The exec dispatcher
+  // delivers only the LAST stderr line (session-manager.js:3838), so whatever
+  // ends this string is the entire reply the caller sees — and appending the
+  // notice meant a stale host cost them the counts as well.
+  //
+  // KNOWN CONSEQUENCE, and it is a trade rather than a fix: the notice is now
+  // the line that gets dropped instead. Both orderings lose something because
+  // one line cannot carry two messages; only a multi-line reply removes the
+  // choice. doRoster has the identical shape and is deliberately left alone.
+  const stale = staleHostLine();
   if (!shown.length) {
     say(closed.length
-      ? `team ${team.name}: no open tickets${recentBlock}${tail}`
-      : `team ${team.name}: no ${filter} tickets`);
+      ? `team ${team.name}: no open tickets${recentBlock}${stale}${tail}`
+      : `team ${team.name}: no ${filter} tickets${stale}`);
   }
-  say(`${head}:\n${lines.join('\n')}${recentBlock}${tail}${staleHostLine()}`);
+  say(`${head}:\n${lines.join('\n')}${recentBlock}${stale}${tail}`);
 }
 
 async function doRetire(payload) {
