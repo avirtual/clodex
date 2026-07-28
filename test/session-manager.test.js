@@ -2798,7 +2798,14 @@ function mkTasks(extra = {}) {
   const { m, injected } = mkPark(overrides);
   const gated = [];
   const broadcasts = [];
-  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); return { delivered: true }; };
+  // `urgent` rides a SEPARATE array on purpose: several tests below pin `gated`
+  // with deepStrictEqual, and widening the recorded shape would force those
+  // pins to be rewritten to accommodate a field they are not about.
+  const urgents = [];
+  m._gatedDeliver = (target, sender, body, urgent) => {
+    gated.push({ target, sender, body }); urgents.push(urgent);
+    return { delivered: true };
+  };
   m._broadcast = (channel, msg) => broadcasts.push({ channel, msg });
   m._sendToSession = () => {};
   const seat = (name, cwd = '/proj', props = {}) => {
@@ -2807,7 +2814,7 @@ function mkTasks(extra = {}) {
   };
   const load = () => tstore.load(teamDir);
   const one = (id) => load().find((t) => t.id === id);
-  return { m, injected, gated, broadcasts, team, teamDir, seat, load, one };
+  return { m, injected, gated, urgents, broadcasts, team, teamDir, seat, load, one };
 }
 
 test('task add (assigned): mints t1, delivers spec to the assignee seat, confirms to lead', () => {
@@ -2889,6 +2896,139 @@ test('task reassign: a parked/dead OLD seat does not block the NEW delivery (ind
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
   assert.strictEqual(f.gated.length, 2, 'both deliveries attempted despite the first erroring');
   assert.strictEqual(f.gated[1].target, 'team-reviewer-1', 'new assignee still got the spec');
+});
+
+// ---------------------------------------------------------------------------
+// t82: a ticket is a WORK ASSIGNMENT, so dispatch/reassign wake the seat; the
+// status notices stay passive. And the three non-error outcomes of
+// _gatedDeliver must reach the lead DISTINCTLY — the old code flattened parked
+// and held into "delivered", telling the lead the spec landed when it had not.
+// ---------------------------------------------------------------------------
+
+test('t82 dispatch WAKES the assignee: the spec delivery is urgent, because an assignment that never starts is worth nothing', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery, so urgents[0] is the spec');
+  assert.strictEqual(f.urgents[0], true,
+    'the ticket spec must be dispatched urgent — parking a work assignment leaves the board saying "assigned" while nothing runs');
+});
+
+test('t82 reassign WAKES the new assignee, but the old-assignee notice stays passive', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.gated.length = 0; f.urgents.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  assert.strictEqual(f.gated.length, 2, 'ENTER: the reassign fired both deliveries');
+  assert.strictEqual(f.gated[0].target, 'team-hand', 'ENTER: [0] is the OLD-assignee notice');
+  assert.strictEqual(f.urgents[0], false,
+    'the "your ticket moved" notice is status traffic — waking a seat to tell it a ticket left carries nothing actionable');
+  assert.strictEqual(f.gated[1].target, 'team-reviewer-1', 'ENTER: [1] is the NEW-assignee spec');
+  assert.strictEqual(f.urgents[1], true, 'the reassigned spec is a work assignment and must wake');
+});
+
+test('t82 the status NOTICES stay passive: done, reject and cancel must not wake a seat', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // done: assignee → lead.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
+  f.gated.length = 0; f.urgents.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: done delivered its report to the lead');
+  assert.strictEqual(f.urgents[0], false, 'a done-report rides passively — it reaches the lead with their next turn');
+  // reject: lead → assignee.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't2', body: 'second report' });
+  f.gated.length = 0; f.urgents.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't2', body: 'not good enough' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: reject delivered to the assignee');
+  assert.strictEqual(f.urgents[0], false, 'a rejection rides passively');
+  // cancel: lead → assignee.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec three' });
+  f.gated.length = 0; f.urgents.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't3', body: 'never mind' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: cancel delivered to the assignee');
+  assert.strictEqual(f.urgents[0], false,
+    'a cancellation rides passively — waking a seat to tell it to stop re-bills a whole context to deliver nothing actionable');
+});
+
+test('t82 a HELD spec is NOT reported as delivered: un-parkable means the seat never saw it', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // held = the gate refused AND the target could not be parked for (a Codex
+  // seat or a dead target). This is a real drop, not a deferral.
+  f.m._gatedDeliver = (target, sender, body, urgent) => {
+    f.gated.push({ target, sender, body }); f.urgents.push(urgent);
+    return { held: 'blocked on a permission dialog — injecting now would answer the dialog' };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the delivery was attempted and the gate held it');
+  const note = f.injected.join('\n');
+  assert.match(note, /NOT delivered/,
+    'a held spec must tell the lead it did NOT land — the whole defect was reporting held as delivered, so the lead moves on believing work started');
+  assert.match(note, /permission dialog/, 'the lead is told WHY it was held, so they know whether to re-send');
+});
+
+test('t82 a PARKED spec reads as parked, not delivered — it will arrive, but it has not yet', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._gatedDeliver = (target, sender, body, urgent) => {
+    f.gated.push({ target, sender, body }); f.urgents.push(urgent);
+    return { parked: 'pk-1', reason: 'idle 5h with a cold cache — waking it re-bills its full context' };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const note = f.injected.join('\n');
+  assert.match(note, /parked/,
+    'parked must be distinguishable from delivered: the spec is queued, so the lead should wait rather than re-send');
+  assert.doesNotMatch(note, /NOT delivered/,
+    'but parked is NOT the held wording — it drains on the seat`s next turn, and telling the lead it failed would provoke a duplicate dispatch');
+});
+
+test('t82 a DELIVERED spec still confirms cleanly, with no scary NOTE appended', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const note = f.injected.join('\n');
+  assert.match(note, /ticket t1 → hand/, 'the ordinary confirmation still reads as before');
+  assert.doesNotMatch(note, /NOTE:/,
+    'the happy path must stay quiet — a NOTE on every dispatch would train the lead to ignore the ones that matter');
+});
+
+test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const stallMs = 60 * 60 * 1000;
+  const past = Date.now() - (stallMs * 4);
+  const ts = f.load();
+  ts[0].lastActivityAt = past;
+  tstore.save(f.teamDir, ts);
+  // Held: the lead is un-parkable, so it never sees the nudge.
+  f.m._gatedDeliver = () => ({ held: 'blocked on a permission dialog' });
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(f.one('t1').nudgedAt, null,
+    'a held nudge reaches nobody, so it must not burn the single nudge this stall episode gets — otherwise the alarm is silently spent');
+  // Parked, by contrast, DOES arrive on the lead's next turn and counts.
+  f.m._gatedDeliver = () => ({ parked: 'pk-9', reason: 'idle' });
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.ok(typeof f.one('t1').nudgedAt === 'number',
+    'a parked nudge DOES count — it drains on the lead`s next turn, so re-nudging would duplicate it');
+});
+
+test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, but not a work assignment)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const stallMs = 60 * 60 * 1000;
+  const ts = f.load();
+  ts[0].lastActivityAt = Date.now() - (stallMs * 4);
+  tstore.save(f.teamDir, ts);
+  f.gated.length = 0; f.urgents.length = 0;
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the sweep found the stalled ticket and nudged');
+  assert.strictEqual(f.urgents[0], false,
+    'the watchdog fires on a SCHEDULE against a possibly-idle lead; waking it every sweep re-bills a full context to report a ticket that has been quiet for hours');
 });
 
 test('task self-assign (assignee == lead): confirm only, NO spec echo', () => {
