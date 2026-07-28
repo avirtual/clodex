@@ -273,30 +273,37 @@ function staleHostLine() {
         + ' — merged fixes are NOT live until the app is restarted)';
     }
 
-    const host = liveHost();
-    if (!host) return '';           // no running host at all: nothing can be stale
-    if (host.packaged) return '';   // asar bytes cannot change post-boot
-    let names;
-    try { names = fs.readdirSync(host.root); } catch {
-      return `\n(HOST UNKNOWN: pid ${host.pid} has no boot stamp and ${host.root} could not be read`
-        + ' — cannot tell whether it is running current code)';
-    }
-    const changed = [];
-    for (const name of names.sort()) {
-      if (!/\.js$/.test(name)) continue;
-      try {
-        const st = fs.statSync(path.join(host.root, name));
-        if (st.isFile() && st.mtimeMs > host.startedAt) changed.push(name);
-      } catch { /* vanished mid-scan */ }
-    }
-    if (!changed.length) return '';
-    const shown = changed.slice(0, 3).join(', ');
-    return `\n(HOST MAY BE STALE: ${changed.length} module${changed.length === 1 ? '' : 's'} changed since`
-      + ` pid ${host.pid} started ${humanizeAge(Date.now() - host.startedAt)} ago`
-      + ` — ${shown}${changed.length > 3 ? ', ...' : ''}.`
-      + ' No boot stamp (this host predates the check), so staleness is UNCONFIRMED;'
-      + ' restart the app if a fix you expect to be live is not)';
+    return staleHostLineFor(liveHost());
   } catch { return ''; }
+}
+
+// The evidence line for an already-identified host. Split from the discovery
+// above so it can be driven directly against a fixture: with discovery baked
+// in, the only reachable state is whatever the developer's own machine happens
+// to be in, and the speaking path cannot be exercised at all.
+function staleHostLineFor(host) {
+  if (!host) return '';           // no running host at all: nothing can be stale
+  if (host.packaged) return '';   // asar bytes cannot change post-boot
+  let names;
+  try { names = fs.readdirSync(host.root); } catch {
+    return `\n(HOST UNKNOWN: pid ${host.pid} has no boot stamp and ${host.root} could not be read`
+      + ' — cannot tell whether it is running current code)';
+  }
+  const changed = [];
+  for (const name of names.sort()) {
+    if (!/\.js$/.test(name)) continue;
+    try {
+      const st = fs.statSync(path.join(host.root, name));
+      if (st.isFile() && st.mtimeMs > host.startedAt) changed.push(name);
+    } catch { /* vanished mid-scan */ }
+  }
+  if (!changed.length) return '';
+  const shown = changed.slice(0, 3).join(', ');
+  return `\n(HOST MAY BE STALE: ${changed.length} module${changed.length === 1 ? '' : 's'} changed since`
+    + ` pid ${host.pid} started ${humanizeAge(Date.now() - host.startedAt)} ago`
+    + ` — ${shown}${changed.length > 3 ? ', ...' : ''}.`
+    + ' No boot stamp (this host predates the check), so staleness is UNCONFIRMED;'
+    + ' restart the app if a fix you expect to be live is not)';
 }
 
 // Mirror of session-manager.js _taskList — same default (open only + a count of
