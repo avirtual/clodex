@@ -3105,7 +3105,7 @@ function createSessionManager(deps) {
               this._routeFederatedDm(session, senderName, intent);
               break;
             }
-            const peer = registry.getPeer(intent.target);
+            const peer = await registry.getPeer(intent.target);
             if (peer) {
               await Transport.send(peer.socket, {
                 type: 'dm', from: senderName, body: intent.body,
@@ -3219,7 +3219,7 @@ function createSessionManager(deps) {
               attention: s.needsAttention ? s.needsAttention.kind : null,
               agentType: s.agentType,
             }) }));
-          const externalNames = registry.listPeers()
+          const externalNames = (await registry.listPeers())
             .map(p => p.name)
             .filter(n => !this.sessions.has(n))
             .map(n => ({ name: n, label: null }));
