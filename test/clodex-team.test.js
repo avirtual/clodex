@@ -9,10 +9,17 @@
 //
 // Ported from the pre-layout-flip scratchpad suite. The scratchpad's old #7
 // check validated the operator-INSTALLED ~/.clodex/library/exec/
-// clodex-team.json — not committed, so a hermetic suite can't read it. Instead
-// this pins the script↔schema contract against a committed FIXTURE exec-def
-// (test/fixtures/clodex-team.exec.json), validated through the real
-// exec-schema.parseAndValidate — see the "exec-def schema" block at the end.
+// clodex-team.json, which is not committed and so cannot be read hermetically.
+// This suite pins the script↔schema contract against the REPO SEED that copy is
+// installed FROM — resources/library/exec/clodex-team.json, which is committed,
+// in-repo and therefore fully hermetic — validated through the real
+// exec-schema.parseAndValidate. See the "exec-def schema" block at the end.
+//
+// It read a hand-copied fixture until t101. That copy did not follow t80's
+// update to the seed, so for one release these tests pinned a schema that would
+// have REJECTED action:"tickets" — the verb the 300 lines above exercise — and
+// stayed green throughout. A test that validates a copy of the shipped artifact
+// is testing the copy. Read the artifact.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -26,7 +33,9 @@ const { parseAndValidate } = require('../exec-schema');
 const { createSessionManager } = require('../session-manager');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-team.js');
-const EXEC_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'clodex-team.exec.json'), 'utf-8'));
+// The SHIPPED def, not a copy of it (t101).
+const EXEC_DEF_PATH = path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-team.json');
+const EXEC_DEF = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
 
 function mkHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cteam-'));
@@ -205,6 +214,24 @@ test('bad payloads are loud (unknown action, missing agent)', async () => {
 // Byte equality would therefore fail today, on correct code, which would make
 // the pin worthless. What must never differ is WHICH tickets appear, in WHICH
 // section, in what order, and the counts.
+//
+// WHAT THIS DOES NOT CLAIM. Parity is over the two RENDERINGS. It is not a
+// claim that an agent sees either of them: the exec dispatcher delivers only
+// the LAST stderr line, then slices it to 200 chars, so `{"action":"tickets"}`
+// returns the tail and nothing more. True since t80, measured under t100's
+// rework. The tests below therefore pin that the two functions agree — a real
+// property, since the intent path renders in full — and deliberately not that
+// the exec surface delivers a board.
+//
+// The last-line rule is pinned by the test named
+//   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
+// in test/session-manager.test.js. THE 200-CHAR SLICE IS PINNED BY NOTHING: that
+// test's stderr is far under the limit and nothing in the suite feeds the
+// dispatcher a line long enough to cut. Half this sentence is guarded and half
+// is not, so it says which half.
+//
+// Cited by NAME, not by line — a line range here survived exactly one commit
+// before it pointed at unrelated code (t105).
 
 // Reduce a rendering to the facts both implementations must agree on: the
 // ticket rows, the section header that separates them, and the tail's numbers.
@@ -215,10 +242,44 @@ function listingFacts(text) {
     if (/^recently closed:$/.test(line)) { facts.push('SECTION'); continue; }
     const row = line.match(/^(t\d+) \[(\w+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
     if (row) { facts.push(`${row[1]}|${row[2]}|${row[3]}|${row[4] ? 'closed' : 'open-age'}|${row[7]}`); continue; }
-    const tail = line.match(/\((?:\+(\d+) more done in the last 24h; )?(\d+) done, (\d+) cancelled/);
-    if (tail) facts.push(`TAIL|over=${tail[1] || 0}|done=${tail[2]}|cancelled=${tail[3]}`);
-    const none = line.match(/no open tickets/);
-    if (none) facts.push('NO-OPEN');
+    // The window is CAPTURED, not just matched past. Matching `\d+h` and
+    // discarding it made a leaf at 20h and an intent at 24h reduce to identical
+    // facts, so parity stayed green over two boards that were not the same.
+    const tail = line.match(/\((?:\+(\d+) more done in the last (\d+h); )?(\d+) done, (\d+) cancelled/);
+    if (tail) {
+      facts.push(`TAIL|over=${tail[1] || 0}|window=${tail[2] || '-'}|done=${tail[3]}|cancelled=${tail[4]}`);
+      continue;
+    }
+    if (/no open tickets/.test(line)) { facts.push('NO-OPEN'); continue; }
+    // Lines dropped ON PURPOSE, because the two implementations are REQUIRED to
+    // differ here: the head names the team in each caller's own phrasing, and
+    // the stale notice has no counterpart on the intent path at all.
+    // Heads: `team <name> tickets[ [filter]]:` (leaf) and
+    // `tickets on <name>[ [filter]]:` (intent). Both named explicitly rather
+    // than by a loose /tickets/ match, so a head that changes SHAPE surfaces as
+    // OTHER instead of being swallowed by a pattern that was too generous.
+    if (/^team \S+ tickets( \[\w+\])?:$/.test(line)) continue;
+    if (/^tickets on \S+( \[\w+\])?:$/.test(line)) continue;
+    // The no-open sentences and the zero-ticket ones are DIFFERENT branches:
+    // `no open tickets` above is the board-has-closed-work case, while these
+    // are "this team has no tickets at all". Named separately so an
+    // implementation taking the wrong branch surfaces instead of matching a
+    // pattern broad enough to cover both.
+    if (/^team \S+: no \w+ tickets$/.test(line)) continue;   // leaf, no-open / none
+    if (/^no \w+ tickets on \S+$/.test(line)) continue;      // intent, same
+    if (/^team \S+: no tickets$/.test(line)) continue;       // leaf, empty registry
+    if (/^no tickets on \S+$/.test(line)) continue;          // intent, same
+    if (/^\(STALE HOST|^\(HOST /.test(line)) continue;
+    // A blank line is NOT dropped silently: both implementations build one
+    // string with no blank separators, so a blank means someone introduced a
+    // separator on one side only. The sole exception is the trailing newline
+    // every reply ends with, which split() yields as a final empty element.
+    if (line === '') { facts.push('BLANK'); continue; }
+    // Anything else is surfaced rather than swallowed. A reducer that silently
+    // ignores what it does not recognize cannot see an EXTRA line in one
+    // implementation — it would compare equal while the two rendered
+    // differently, which is the exact drift these tests exist to catch.
+    facts.push(`OTHER|${line}`);
   }
   return facts;
 }
@@ -260,7 +321,7 @@ function parityBoard() {
   return rows;
 }
 
-test('listing parity: the exec pull and the intent path render the same board (t100)', async () => {
+test('listing parity: the two implementations RENDER the same board (t100 — not what an exec caller receives)', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
@@ -277,12 +338,34 @@ test('listing parity: the exec pull and the intent path render the same board (t
   // ENTER: the fixture must actually reach the interesting branches, or this
   // test would pass on two implementations that both render nothing.
   assert.ok(mine.includes('SECTION'), 'ENTER: the default view has a recent section');
-  assert.ok(mine.some((f) => /^TAIL\|over=2\|done=13\|cancelled=1$/.test(f)),
+  assert.ok(mine.some((f) => /^TAIL\|over=2\|window=\d+h\|done=13\|cancelled=1$/.test(f)),
     `ENTER: cap overflow and both counts are live in the fixture: ${mine.join(' / ')}`);
   assert.strictEqual(mine.filter((f) => /\|closed\|/.test(f)).length, 10, 'ENTER: the cap is in play');
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');
+});
+
+// The duplicated constants, compared at source. The behavioural parity tests
+// cannot see a window divergence: parityBoard's closes sit at 1-12h and 30h, so
+// ANY leaf window in roughly [13h, 29h] renders byte-identically. The cap is
+// different — F1 caught a cap divergence, because the fixture straddles it.
+// This is the scrape-and-compare idiom already used for the digest grammar and
+// for TICKET_FILTERS.
+test('listing parity: the duplicated window and cap constants agree at source', () => {
+  const scrape = (file, name) => {
+    const src = fs.readFileSync(file, 'utf-8');
+    const m = src.match(new RegExp(`const ${name} = ([^;]+);`));
+    assert.ok(m, `ENTER: found ${name} in ${path.basename(file)}`);
+    return Function(`return (${m[1]})`)();
+  };
+  const CORE = path.join(__dirname, '..', 'session-manager.js');
+  for (const name of ['RECENT_DONE_MS', 'RECENT_DONE_CAP']) {
+    const core = scrape(CORE, name);
+    assert.ok(core > 0, `ENTER: ${name} scraped to a real value (${core})`);
+    assert.strictEqual(scrape(SCRIPT, name), core,
+      `${name} drifted between the two implementations — they would render different boards from the same registry`);
+  }
 });
 
 test('listing parity: holds on each explicit filter too', async () => {
@@ -306,6 +389,39 @@ test('listing parity: holds on each explicit filter too', async () => {
   }
 });
 
+// The exec dispatcher delivers only the LAST stderr line, so whatever ends this
+// string is the whole reply. Appending the stale notice after the tail meant a
+// stale host cost the caller the counts — the one thing the listing still
+// delivers over exec. Ordering is therefore a delivery property, not cosmetics.
+test('tickets: the stale-host notice does not displace the tail as the delivered line', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  const now = Date.now();
+  mkTicketRegistry(home, 'proj', [
+    { id: 't1', title: 'open one', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
+    { id: 't2', title: 'shipped', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+  ]);
+  // A stamp whose digest cannot match the tree it names — the proven-stale path.
+  fs.mkdirSync(path.join(home, 'run'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'run', '.host.json'), JSON.stringify({
+    pid: 999, bootedAt: now - 7_200_000,
+    dir: path.join(__dirname, '..'), digest: 'stale-digest-from-boot',
+  }));
+
+  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.err, /STALE HOST/, 'ENTER: the fixture really is on the stale path');
+
+  // Reproduce the dispatcher's discipline exactly.
+  const delivered = (r.err.trim().split('\n').pop() || '').slice(0, 200);
+  assert.match(delivered, /1 done, 0 cancelled/,
+    'the counts survive as the delivered line — they are all an exec caller gets');
+  assert.ok(!/STALE HOST/.test(delivered),
+    'and the notice is the line that yields, since one line cannot carry both');
+});
+
 test('listing parity: holds on a board with nothing open', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
@@ -327,19 +443,106 @@ test('listing parity: holds on a board with nothing open', async () => {
 });
 
 // The exec-def gates payloads BEFORE they reach the script; pin that the
-// committed schema accepts exactly what clodex-team.js handles and rejects the
-// rest, via the real exec-schema validator (hermetic replacement for the
-// scratchpad's operator-home #7 check).
+// SHIPPED schema accepts exactly what clodex-team.js handles and rejects the
+// rest, via the real exec-schema validator.
+//
+// This block reads resources/library/exec/clodex-team.json, so the schema under
+// test is the one that will actually gate a live payload. Do not reintroduce a
+// fixture copy here: the copy is what silently went stale (t101).
+
+// ENTER CHECK. Every assertion below is only worth its salt if EXEC_DEF is the
+// shipped def rather than a copy of it, so this pins PATH IDENTITY: the file
+// read at module scope must be the seed root stores.js seedLibraryDefaults
+// copies into the operator's library, addressed the same way — by relative path
+// from the repo.
+//
+// Identity is the only property no copy can satisfy. Every content property
+// can: a fresh `cp` carries the ${CLODEX_BIN} placeholder verbatim, and any
+// value-level assertion is satisfied by a copy that is correct today and stale
+// tomorrow — which is precisely the failure t101 exists to close. An earlier
+// version of this test asserted the placeholder and the absence of ONE exact
+// filename; a copy at clodex-team.exec.v2.json satisfies both.
+test('exec-def source: the schema tests read the SHIPPED def itself, not a copy of it', () => {
+  const rel = path.relative(path.join(__dirname, '..'), EXEC_DEF_PATH);
+  assert.strictEqual(rel, path.join('resources', 'library', 'exec', 'clodex-team.json'),
+    'the def under test IS the seeded artifact — no copy, anywhere, under any name, can satisfy this');
+});
+
 test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
   for (const payload of [
     { action: 'roster', agent: 'clodex' },
     { action: 'retire', agent: 'clodex', target: 'clodex-hand' },
     { action: 'roster', agent: 'ghost', cwd: '/some/project' }, // payload-cwd fallback
+    // t101: `tickets` and `filter` are what the stale copy could not accept.
+    // The rest of this file spends 300 lines exercising the verb the schema
+    // under test would have rejected.
+    { action: 'tickets', agent: 'clodex' },
   ]) {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify(payload));
     assert.strictEqual(r.ok, true, `should accept ${JSON.stringify(payload)}: ${r.error}`);
     assert.strictEqual(r.value.action, payload.action);
   }
+});
+
+// The seed's enums are the schema's half of a contract whose other half lives
+// in the script. Both halves are SCRAPED from the script rather than written as
+// literals here, so adding a verb or a filter in one place and forgetting the
+// other fails at this test instead of at an agent's payload.
+//
+// Each is pinned by set equality, not by sampling. "Accepts every X and no
+// other" is a claim in BOTH directions, and a loop of hand-picked negatives
+// only ever tests the values someone thought of: widen the seed with `blocked`
+// and a negative list of `rejected`/`OPEN`/`''` stays green while the gate
+// admits a payload the script dies on. deepStrictEqual over sorted sets makes
+// the title true; the negative loops below it survive as intent documentation
+// of WHICH wrong values were expected and why.
+const scrapeList = (src, name) => {
+  const decl = src.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`));
+  assert.ok(decl, `ENTER: found ${name} in the script`);
+  return decl[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+};
+const enumOf = (prop) => {
+  const spec = EXEC_DEF.schema.properties[prop];
+  assert.ok(spec && Array.isArray(spec.enum), `ENTER: the seed constrains "${prop}" by enum`);
+  return spec.enum;
+};
+
+test('exec-def schema accepts every filter the script implements, and no other', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const filters = scrapeList(src, 'TICKET_FILTERS');
+  assert.deepStrictEqual(filters, ['open', 'done', 'cancelled', 'all'], 'ENTER: the four real filters');
+
+  // The both-directions pin. Sorted, because agreement is about the SET; the
+  // order a literal happens to be written in is not part of the contract.
+  assert.deepStrictEqual(enumOf('filter').slice().sort(), filters.slice().sort(),
+    'the seed\'s filter enum and the script\'s TICKET_FILTERS disagree — one side would accept or refuse a filter the other does not');
+
+  for (const filter of filters) {
+    const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
+    assert.strictEqual(r.ok, true, `should accept filter "${filter}": ${r.error}`);
+    assert.strictEqual(r.value.filter, filter);
+  }
+  // `rejected` is the likeliest typo (reject is a verb) and is deliberately not
+  // a state — the script bounces it, and so must the gate in front of it.
+  for (const filter of ['rejected', 'OPEN', '']) {
+    const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
+    assert.strictEqual(r.ok, false, `should reject filter "${filter}"`);
+  }
+});
+
+// The ACTION half, which the first pass left as a hardcoded list while deriving
+// the filter half — the same asymmetry one level up: add a verb to the script's
+// dispatch, forget the seed, and nothing failed. The script has no ACTIONS
+// constant, so the verbs are scraped from the dispatch chain itself, which is
+// the thing that actually decides what is handled.
+test('exec-def schema accepts every action the script dispatches, and no other', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const actions = [...src.matchAll(/if \(action === '(\w+)'\) return do\w+\(payload\);/g)].map((m) => m[1]);
+  assert.deepStrictEqual(actions.slice().sort(), ['retire', 'roster', 'tickets'],
+    'ENTER: scraped the three dispatched verbs from the main() chain');
+
+  assert.deepStrictEqual(enumOf('action').slice().sort(), actions.slice().sort(),
+    'the seed\'s action enum and the script\'s dispatch disagree — a verb is gated out, or gated in with nothing behind it');
 });
 
 test('exec-def schema rejects payloads the script would refuse', () => {

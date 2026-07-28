@@ -193,6 +193,12 @@ const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 // Mirrored in scripts/clodex-team.js — see _taskList.
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
+// Derived, never written as a literal in the sentence: the count line is
+// user-facing, so a hardcoded "24h" beside a constant someone later moves is a
+// statement that becomes FALSE rather than merely stale. A revert moving
+// RECENT_DONE_MS to 20h left the whole suite green with the text still saying
+// 24h — the tests scrape the constant, so nothing was left to notice.
+const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -5142,8 +5148,12 @@ function createSessionManager(deps) {
       const recent = recentAll.slice(0, RECENT_DONE_CAP);
       const over = recentAll.length - recent.length;
       const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
+      // Counted directly rather than as `closed.length - doneAll.length`: that
+      // subtraction labels EVERY non-open non-done state "cancelled", so a
+      // fourth state added later would be silently miscounted as a drop.
+      const cancelledAll = closed.filter((t) => t.state === 'cancelled');
       const tail = closed.length
-        ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${closed.length - doneAll.length} cancelled`
+        ? `\n(${over > 0 ? `+${over} more done in the last ${RECENT_DONE_LABEL}; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
           + ' — [agent:task list done], [agent:task list cancelled] or [agent:task list all])'
         : '';
       if (!shown.length) {
