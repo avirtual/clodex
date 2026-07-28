@@ -280,3 +280,125 @@ test('id-tagged parks are active; the passive marker never matches a minted rese
   assert.strictEqual(parkIdInUse(root, 'ab12c'), true);
   assert.strictEqual(claimParkedById(root, 'ab12c').text, 'held dm');
 });
+
+// --- generation stamps (`born`): whose mail is this? ---
+//
+// The store is keyed by NAME and a name outlives the session holding it, so a
+// claim can turn up mail addressed to a different generation. Each entry carries
+// its addressee's createdAt; each drain passes its own.
+//
+// WHY EVERY TEST BELOW ASSERTS THE STORE, NOT JUST THE RETURN VALUE. "Not
+// delivered" has two very different implementations — dropped and put back — and
+// the return value cannot tell them apart. A product that destroyed every
+// non-matching entry would satisfy every "the successor's mail was not returned"
+// assertion while committing exactly the data loss the stamp exists to prevent.
+// So discard and put-back are pinned as a PAIR, each checking both the returned
+// texts and what survives on disk: discard is trivially satisfied by destroying
+// everything, put-back is trivially satisfied by destroying nothing, and only
+// asserting both makes either one mean anything. Same move as the mint/preserve
+// pair in test/createdat-restart.test.js.
+
+const T1 = 1700000000000;      // a predecessor's birth
+const T2 = 1700000009999;      // the current generation's
+const T3 = 1700000099999;      // a successor's
+
+test('generation: a PREDECESSOR\'s mail is discarded, not handed to the successor', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'mail for the dead seat', '0001', null, false, T1);
+  const out = drainPending(root, 'a', 't', T2);
+  assert.deepStrictEqual(out, [], 'a new seat must not inherit its predecessor\'s mail');
+  // The other half: discarded means GONE, not quietly restored. Without this the
+  // assertion above is also satisfied by a product that puts everything back,
+  // which would loop the same stale mail forever.
+  assert.strictEqual(hasPending(root, 'a'), false,
+    'the predecessor\'s entry should be consumed and dropped — a restore here would re-offer it on every subsequent drain, forever');
+});
+
+test('generation: a SUCCESSOR\'s mail is PUT BACK — refusing without restoring would destroy it', () => {
+  const root = tmpRoot();
+  // I am the stale drainer: a hook subprocess descheduled across its parent's
+  // death and the next create(). The entry is addressed to the seat that now
+  // holds this name; it is not mine to consume.
+  parkDelivery(root, 'a', 'mail for the seat that replaced me', '0001', null, false, T3);
+  const out = drainPending(root, 'a', 't', T2);
+  assert.deepStrictEqual(out, [], 'a stale drainer must not deliver its successor\'s mail into a dead session');
+  // THE POINT OF THE BRANCH. drainPending's claim RENAMES THE WHOLE DIRECTORY
+  // before reading a single byte, so by the time the generation check runs the
+  // message exists nowhere else. An entry the drain declines to return and
+  // declines to restore is not "left for the right reader" — it is DESTROYED,
+  // and destroyed in exactly the race the stamp was added to survive. That is
+  // why "refuse non-matching", which reads like the symmetric conservative
+  // choice, is not: symmetric-looking guards are not symmetric when the
+  // operation they guard is destructive.
+  assert.strictEqual(hasPending(root, 'a'), true,
+    'the successor\'s message must be back in the store: the claim already destroyed the original, so declining to return it WITHOUT restoring it loses the message outright — the exact loss this stamp exists to prevent');
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T3), ['mail for the seat that replaced me'],
+    'and the seat it was addressed to must still be able to read it');
+});
+
+test('generation: an entry stamped for THIS drainer is delivered', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'mine', '0001', null, false, T2);
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T2), ['mine'],
+    'a matching stamp must DELIVER — the discard/put-back branches must not be reachable for a seat\'s own mail, or the store never delivers anything again');
+});
+
+test('generation: one claim partitions a mixed batch three ways, in order', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'predecessor', '0001', null, false, T1);
+  parkDelivery(root, 'a', 'mine 1', '0002', null, false, T2);
+  parkDelivery(root, 'a', 'successor', '0003', null, false, T3);
+  parkDelivery(root, 'a', 'mine 2', '0004', null, false, T2);
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T2), ['mine 1', 'mine 2'],
+    'only this generation\'s mail, still in arrival order');
+  // Exactly one file survives — the successor's. Counting pins BOTH directions
+  // at once: 0 would mean the successor's was destroyed, 2 would mean the
+  // predecessor's was restored alongside it.
+  assert.strictEqual(countPending(root, 'a'), 1,
+    'exactly one file survives the claim — 0 means the successor\'s message was destroyed, 2 means the dead predecessor\'s was restored alongside it');
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T3), ['successor'],
+    'and the survivor is readable by the generation it was addressed to (a restore that corrupted the payload would still leave a file here)');
+});
+
+test('generation: an UNSTAMPED entry is delivered even to a drainer that has an expectation', () => {
+  const root = tmpRoot();
+  // Parked by a build that predates the stamp: its generation is unknowable, so
+  // there is nothing to compare and dropping it would destroy real mail to
+  // enforce a rule its sender never played by. The expectation below is a REAL
+  // number — without that this test would just be the no-expectation case again.
+  parkDelivery(root, 'a', 'parked before the stamp existed', '0001');
+  assert.strictEqual(fs.readdirSync(agentDir(root, 'a'))
+    .some((f) => JSON.parse(fs.readFileSync(path.join(agentDir(root, 'a'), f), 'utf8')).born !== undefined),
+    false, 'precondition: the park really is unstamped');
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T2), ['parked before the stamp existed']);
+});
+
+test('generation: NO expectation delivers everything — the safe default, mirroring mint=false', () => {
+  const root = tmpRoot();
+  // Both entries are STAMPED, and neither matches the other, so the only thing
+  // standing between them and a drop is the omitted-expectation default. An
+  // unstamped fixture here would pass no matter what that default did.
+  parkDelivery(root, 'a', 'from one generation', '0001', null, false, T1);
+  parkDelivery(root, 'a', 'from another', '0002', null, false, T3);
+  assert.deepStrictEqual(drainPending(root, 'a', 't'), ['from one generation', 'from another'],
+    'a caller that passes no stamp must never silently drop mail');
+});
+
+test('generation: a restored entry keeps its original filename, so seq order and the resend id survive', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'first, held', '1736900000000.000000001', 'ab12c', false, T3);
+  parkDelivery(root, 'a', 'second', '1736900000000.000000002', null, false, T3);
+  drainPending(root, 'a', 'stale', T2);          // stale drainer: puts both back
+  // Named by their ORIGINAL basenames, not re-minted ones: the seq prefix is what
+  // the next drain sorts on, and the id segment is what [agent:resend] resolves.
+  // A restore that re-parked under a fresh seq would silently reorder the queue
+  // and strand the advertised handle.
+  assert.deepStrictEqual(fs.readdirSync(agentDir(root, 'a')).sort(),
+    ['1736900000000.000000001.ab12c.json', '1736900000000.000000002.json']);
+  // Asserted through the PRODUCT'S OWN readers rather than my reading of the
+  // filenames: order from drainPending, the handle from claimParkedById.
+  assert.strictEqual(claimParkedById(root, 'ab12c').text, 'first, held',
+    'the resend handle still resolves after the round trip — a restore under a re-minted filename would strand the id the sender was told to use');
+  assert.deepStrictEqual(drainPending(root, 'a', 't', T3), ['second'],
+    'and the remaining entry drains in its original seq position');
+});

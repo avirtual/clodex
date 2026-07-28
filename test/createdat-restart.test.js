@@ -223,7 +223,7 @@ test('[agent:context reload] preserves createdAt across its cold respawn', async
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 
-function mkManagerWithStore() {
+function mkManagerWithStore(extraDeps = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-createdat-mgr-'));
   const store = new Map();
   const persistence = {
@@ -253,6 +253,7 @@ function mkManagerWithStore() {
     os,
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
+    ...extraDeps,
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -306,6 +307,96 @@ test('a genuinely NEW session mints createdAt (the fallback is not dead code)', 
     'a session with no prior record must get a FRESH birth stamp — the preserve work above must not be '
     + 'implemented by never minting at all, which would leave every new session sorting as epoch-0 in the '
     + 'sidebar\'s "created" sort');
+});
+
+test('create() puts the SAME birth stamp on the live session object, not a second Date.now()', async () => {
+  const { m, persistence, stop } = mkManagerWithStore();
+  persistence.upsert({ name: 'l', type: 'bash', cwd: os.tmpdir(), workspaceId: 'ws', createdAt: BORN });
+  try {
+    await m.create('l', 'bash', os.tmpdir(), [], null, 'ws');
+
+    // The pending-store generation stamp (t71 phase 3b) reads createdAt off the
+    // LIVE session — _bornFor prefers it over persistence — so a session object
+    // built without the field, or built with a fresh Date.now(), silently
+    // mis-stamps every DM parked for that seat.
+    //
+    // This has to be asserted from a REAL create(): the session object is the
+    // product's own output, so nothing here can hand-write it. Every _bornFor
+    // test in session-manager.test.js constructs its own session literal — an
+    // honest way to test the READ, and structurally incapable of noticing if
+    // create() stopped WRITING the field. Same shape as revert E in phase 3a: a
+    // fixture may only model fields the product does not compute.
+    const live = m.sessions.get('l');
+    assert.ok(live, 'ENTER: create() must have put a session in the map, or there is nothing to inspect');
+    assert.strictEqual(live.createdAt, BORN,
+      'the live session must carry the SAME birth stamp the record does: _bornFor reads it from here first, so '
+      + 'a missing or re-minted value makes every park stamp a generation that never existed — and the drain '
+      + 'that follows discards the seat\'s own mail as a predecessor\'s');
+    assert.strictEqual(live.createdAt, persistence.get('l').createdAt,
+      'and it must be the same value as the persisted one — two independent Date.now() calls would drift, so '
+      + 'an offline park (stamped from persistence) would never match a live drain (stamped from the session)');
+  } finally { stop('l'); }
+});
+
+test('create() hands the birth stamp to setupClaudeHook, so the generated drain knows its generation', async () => {
+  // The hook is the SECOND pending drainer and it cannot read persistence — the
+  // stamp has to be baked into its bytes at setup time, which means create() must
+  // PASS it. Dropping that one argument is silent: the hook still generates, the
+  // session still spawns, and the drain simply reverts to "no expectation =
+  // deliver everything". Nothing else in the suite fails, because every other
+  // test of the comparison calls setupClaudeHook directly with its own stamp.
+  // That is the gap this closes — cli-hooks.test.js pins what the hook DOES with
+  // the value; only a real create() can pin that the value arrives at all.
+  const seen = [];
+  const { m, persistence, stop } = mkManagerWithStore({
+    setupClaudeHook: (...args) => { seen.push(args); return path.join(os.tmpdir(), 'settings.json'); },
+    setupCodexHook: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
+    // The claude arm reaches further than the bash arm the other tests use.
+    // These stub only what stands between create()'s entry and the
+    // setupClaudeHook call — machinery this test says nothing about.
+    resolveProxyAgentId: () => null,
+    normalizeProxyBase: (v) => v,
+    teeBlindBackend: () => null,
+    readEffectiveClaudeEnv: () => ({}),
+    mergeSessionEnv: () => ({ ...process.env }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getUserDataPath: () => os.tmpdir(),
+    resolveTeam: () => null,
+    strictMcpReason: () => null,
+    scrubInheritedClaudeMarkers: (e) => e,
+    resolveSystemPromptFile: () => null,
+    mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
+    readAppendBodies: () => [],
+    pluginGrammarLines: () => [],
+  });
+  persistence.upsert({ name: 'h', type: 'claude', cwd: os.tmpdir(), workspaceId: 'ws', createdAt: BORN });
+  // The full claude arm reaches a long way past the hook (wire registration,
+  // agent library, MCP resolution, the PTY itself), and stubbing all of it would
+  // make this test a model of create() rather than a test of it. setupClaudeHook
+  // is called EARLY in that arm, so we let the spawn fail afterwards and inspect
+  // what the hook received. This is only safe because of the ENTER assertion
+  // below: a create() that threw BEFORE the hook leaves `seen` empty and fails
+  // there, so "it crashed" can never be mistaken for "it passed the right value".
+  try {
+    await m.create('h', 'claude', os.tmpdir(), [], null, 'ws');
+  } catch { /* past the point under test — ENTER below proves we got there */ }
+  finally { stop('h'); }
+
+  assert.strictEqual(seen.length, 1,
+    'ENTER: setupClaudeHook must actually be reached — zero calls means the assertion below inspects nothing '
+    + '(a claude spawn that took the user-supplied --settings branch, or threw before the hook, would skip it)');
+  // Positional, because that is how the product calls it: name, proxyBase,
+  // proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt.
+  assert.strictEqual(seen[0][7], BORN,
+    'create() must pass the session\'s birth stamp to setupClaudeHook: the generated hook bakes it in as its '
+    + 'own generation, and without it every hook drain falls back to "no expectation" — which delivers a dead '
+    + 'predecessor\'s mail into a fresh seat, the exact defect the stamp exists to fix. It must also be the '
+    + 'SAME expression create() persists, never a recomputed second copy');
+  assert.strictEqual(seen[0][7], persistence.get('h').createdAt,
+    'and it must equal the persisted value — a recomputed copy would drift the first time either was touched, '
+    + 'which is the construction class this whole ticket exists to remove');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

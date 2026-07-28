@@ -864,6 +864,191 @@ and both found a defect that would otherwise have shipped looking correct.
   the residue it used to clear must be commented as deliberate, citing the
   prompt-cache precedent ("four small texts and is harmless").
 
+### PRODUCT WRITTEN (uncommitted at this checkpoint). What landed:
+
+- **`pending-store.js`** — `parkDelivery` takes a 7th param `born` and writes it
+  into the payload (only when it's a number, so unstamped stays byte-identical);
+  `drainPending` takes a 4th param `expectedBorn` and applies the directional
+  table; new module-local `restoreParked(dir, base, raw)` re-publishes a
+  successor's entry under its ORIGINAL basename (seq order + resend id survive
+  the round trip), write-then-rename, best-effort so a failed restore can't abort
+  the batch. The full directional table + the destructive-claim reasoning +
+  clodex's sentence are in `drainPending`'s header comment.
+- **`session-manager.js`** — createdAt/existingEntry MOVED up to just after the
+  proxy-identity block (~:922), with a comment saying why it is computed 400
+  lines from its consumer and that nothing between writes persistence (verified:
+  the only `getPersistence()` calls in that span are the proxy-id read and the
+  upsert itself). The old site now points at it. The live `session` object gains
+  `createdAt` (same value, not a second `Date.now()`).
+- **`session-manager.js`** — new `_bornFor(name)`: live session first, persisted
+  entry second, null if neither. The fallback is what makes an OFFLINE park
+  (reboot notice, reminder fire) stamp the value the restored seat will carry —
+  and it only works because phase 3a stopped restarts from re-minting. Threaded
+  into all 10 park sites and all 3 drain sites.
+- **`cli-hooks.js`** — `setupClaudeHook` takes `createdAt` (passed, never
+  recomputed — comment says so explicitly) and bakes it into the pending-drain
+  script as `$5`; the generated JS gains `born_self` + `restore_parked` and the
+  same directional check, mirroring `drainPending`. **The pinned bytes moved
+  deliberately** (condition b).
+- **`session-manager.js`** — the `_userKilled` rm is GONE (condition d). The
+  replacement comment names both directions of the old gate's wrongness: too WIDE
+  (restart routes through `_userKilled`, so it destroyed mail on restart) and too
+  NARROW as hygiene (stale mail survived every other exit anyway), and points at
+  the drain-time stamp as where the second concern now lives.
+
+Existing suites green with product in: `test/cli-hooks.test.js` 11/11,
+`test/pending-store.test.js` 27/27.
+
+### TESTS WRITTEN — 14 new, across three files
+
+**`test/pending-store.test.js` +7** (the comparison itself). Header states why
+each test asserts the STORE and not just the return value: *"not delivered" has
+two very different implementations — dropped and put back — and the return value
+cannot tell them apart.* A product that destroyed every non-matching entry would
+satisfy every "the successor's mail was not returned" assertion while committing
+exactly the loss the stamp prevents. So discard and put-back are pinned as a
+PAIR — discard is trivially satisfied by destroying everything, put-back by
+destroying nothing, and only both together mean anything. Same constrain-each-
+other move as 3a's test 6. Tests: predecessor discarded (+ *gone*, not restored),
+successor PUT BACK (+ readable by the seat it was addressed to), equal delivers,
+a mixed batch partitioned three ways in one claim (`countPending === 1` pins both
+directions in a single number), unstamped delivers *to a drainer with a real
+expectation*, omitted expectation delivers everything, and restore-keeps-the-
+original-basename (asserted through `claimParkedById` + `drainPending`, i.e. the
+product's own readers, not my reading of the filenames).
+
+**`test/cli-hooks.test.js` +3** (the SECOND drainer). The hook and `drainPending`
+are single-source-of-truth by convention only, which means nothing but a test
+holds them together. These exec the generated bash+node end to end with the stamp
+baked in at setup: predecessor discarded / this generation delivered, successor
+put back under its ORIGINAL name, and one test carrying both halves of the
+compatibility promise (an old PARK through a new hook, and a new park through a
+hook set up with NO stamp — the bash arm / any caller that omits it).
+
+**`test/session-manager.test.js` +4** (the PLUMBING). pending-store's tests pin
+the comparison; these pin that the manager reads the right stamp and actually
+hands it over — *a stamp computed correctly and never passed is worth nothing*.
+`_bornFor` live-first, `_bornFor` persistence-fallback (with the note that the
+fallback is load-bearing and only works because 3a stopped restarts re-minting),
+park→drain end to end through `_maybeParkDelivery` + `_drainPendingAtIdle`, and
+the condition-(d) pin: `_cleanup` with `_userKilled: true` must NOT delete the
+store, failing by a message naming the restart path.
+
+### REVERTS — 8 product reverts, and THREE of them found a hollow pin
+
+Restored from a pristine COPY each time, `git diff` after every one, no-op
+checked explicitly. Two more tests exist than when this section was first
+written, both added BECAUSE a revert was a no-op.
+
+| # | reverted | result |
+|---|---|---|
+| A | the whole generation check in `drainPending` | 4 fail |
+| B | ONLY the put-back branch (`restoreParked` call) | 3 fail, incl. the binding message |
+| C | the `typeof` guards (unstamped/no-expectation compared raw) | 17 fail |
+| D | the hook's `born_self` check | 2 fail |
+| E | the hook's `restore_parked` call | 1 fail — **by CRASH first, fixed** |
+| F | `createdAt` off the live session object | **NO-OP — new test written** |
+| G | the `createdAt` arg to `setupClaudeHook` | **NO-OP — new test written** |
+| H | re-add the `_userKilled` rm | **NO-OP — harness was blind, fixed** |
+
+**REVERT E failed by ENOENT, not by message.** With the restore gone the whole
+directory is gone, so a bare `readdirSync` threw a stack trace instead of the
+sentence explaining the branch — on clodex's binding item, the one that must
+teach the reason. Fixed by reading defensively (`existsSync ? readdirSync : []`).
+The rule "fail by message, never by crash" earns its keep on exactly the
+assertion that was written to carry a message.
+
+**REVERTS F AND G WERE BOTH NO-OPS, and they are the same defect.** Every
+`_bornFor` test constructs its own session literal — honest for testing the READ,
+and structurally incapable of noticing that create() stopped WRITING the field.
+Same for the hook: `cli-hooks.test.js` calls `setupClaudeHook` directly with its
+own stamp, so it pins what the hook DOES with the value and can never notice the
+value failing to arrive. **This is the revert-E finding from 3a, one layer up:**
+a fixture may only model fields the product does not compute — and the corollary
+is that testing a consumer with a hand-made input never tests the producer.
+Fixed with two new tests in `test/createdat-restart.test.js` (the file that
+already has a real-`create()` harness): the live session carries the same stamp
+as the record, and create() passes it as `setupClaudeHook`'s 8th argument. Both
+assert from a REAL create(), so no fixture can fake them.
+
+The hook test lets the spawn throw AFTER the hook call and inspects what was
+captured — safe only because the ENTER assertion (`seen.length === 1`) fires
+first, so "it crashed early" can never read as "it passed the right value".
+Stubbing the entire claude arm was the alternative and would have made the test a
+model of create() rather than a test of it.
+
+**REVERT H IS THE WORST ONE AND IT WAS THE MOST IMPORTANT PIN.** Condition (d)'s
+test passed with the deleted `rm` fully restored. The reason is not a modelling
+slip — it is that the deleted code was `fs.rmSync(path.join(PENDING_DIR, name))`
+inside a bare `try {} catch {}`, and the default harness injects no `path`. The
+restored rm threw on `path.join` and **its own catch swallowed the throw**. The
+test observed a deletion that could not happen for a reason having nothing to do
+with the product. Fixed by injecting real `path` + `fs` into that one harness,
+with the reason written where the injection is so nobody "tidies" it away.
+
+Generalize it: **a guard that cannot see the thing it guards against is worse
+than no guard**, because it is also a claim that someone checked. And the
+mechanism is worth naming — swallowing `catch {}` in the code under test can make
+a revert un-observable, so a no-op revert against error-swallowing code should be
+suspected of harness blindness before it is believed.
+
+### The per-assertion sweep, and why my FIRST version of it measured nothing
+
+The instruction was "delete each new assertion, confirm the test then passes
+vacuously". I scripted exactly that — 21 runs, each with one assertion commented
+out — and every run came back green. **The script was measuring nothing.** With
+the product intact the suite is green, so removing an assertion trivially leaves
+it green; "still passes" was a property of the starting state, not of the
+assertion. The 3a version of this move worked because the assertion was deleted
+while the PRODUCT was reverted.
+
+Redone correctly: for each product revert, collect which assertion messages
+actually fire. That answers the real question — *which assertions carry weight,
+and do they say something when they do*. It found two of mine failing BARE
+(`Expected values to be strictly equal`), both in the mixed-batch and
+restore-filename tests. Given messages; re-verified.
+
+Worth recording as the method error it was: **a sweep that cannot distinguish
+its two outcomes is not a check.** Same shape as the hollow tests it was meant to
+find, one level up — I automated the letter of the instruction and lost its
+point. The instruction's point is always "make the product wrong and see what
+notices".
+
+### The census caught a COMMENT — a real gap, flagged not papered over
+
+First full-suite run: 2956 pass / 2 fail, both in `test/create-mint-census.test.js`,
+reporting a 12th `.create(` site at `cli-hooks.js:50`. There is no call there. My
+comment said *"session-manager.create() owns the one expression"* and the census's
+top-level scan is `/(\w+)\.create\s*\(/g` — **not comment-aware**, unlike
+`callArgs`, which is scrupulously so.
+
+So the census can be tripped by prose. Reworded my comment (and said in it why),
+because the alternative — adding a table row for a comment — would corrupt the
+census's meaning. **The scanner gap is real and I am not fixing it in this
+ticket**: making that regex comment-aware means the same whole-file
+strip-then-scan that the file's own header records as having produced a phantom
+string and a healthy-looking 10-site count. That is a change with its own failure
+history and it belongs to whoever owns the census, with its own reverts.
+
+Note what the census did right, though: it is designed to fail loudly when the
+site set changes, and it did — on a false positive, but a loud one. A forced
+pause on a wrong signal costs a minute; the silent version costs a release.
+
+### FULL SUITE: 2958/2958, ESCAPES 0
+
+Baseline 2942 + 16 new (pending-store +7, cli-hooks +3, session-manager +4,
+createdat-restart +2 — the last two written because reverts F and G were no-ops).
+
+**A DEFECT IN MY OWN TEST, caught by running it.** The park→drain test first
+tried to reuse ONE parked message: park as gen A, drain as gen B (refused), then
+drain as gen A again expecting it back. It failed — correctly. The gen-B drain
+DISCARDS a predecessor's mail, so there was nothing left for the third phase.
+The product was right and the test's model of it was wrong. Fixed by parking
+once per generation. Worth recording because the failure was legible and
+immediate: the test asserted a thing the design explicitly rules out, and it said
+so. Contrast the four harness-lying-quietly instances — this one failed LOUDLY,
+which is what a test disagreeing with a correct product is supposed to do.
+
 ## The pin question — RESOLVED (phase 2, shipped)
 
 The ticket asks for a pin "if a cheap pin exists," because a future call site

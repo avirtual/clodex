@@ -266,3 +266,89 @@ test('pending drain: a subagent PostToolUse (agent_id present) defers — pendin
   assert.match(JSON.parse(out2).hookSpecificOutput.additionalContext, /parked while subagent ran/);
   assert.ok(!fs.existsSync(path.join(pendDir, 'm0.json')), 'main-agent drain must consume the pending dir');
 });
+
+// --- generation stamps in the GENERATED drain ---
+//
+// The hook is the SECOND drainer, out of process, and it must apply the same
+// rule as pending-store.drainPending — the two are single-source-of-truth by
+// convention, which means only a test can hold them together. The stamp is baked
+// into the script's bytes at setup time (the hook cannot read sessions.json), so
+// these exercise the generated bash+node end to end rather than the JS twin.
+function parkFor(REGISTRY_DIR, name, files) {
+  const pendDir = path.join(REGISTRY_DIR, 'pending', name);
+  fs.rmSync(pendDir, { recursive: true, force: true });
+  fs.mkdirSync(pendDir, { recursive: true });
+  for (const [base, payload] of Object.entries(files)) {
+    fs.writeFileSync(path.join(pendDir, base), JSON.stringify(payload));
+  }
+  return pendDir;
+}
+const MAIN = JSON.stringify({ hook_event_name: 'UserPromptSubmit' });
+
+test('pending drain (hook): a predecessor\'s mail is discarded, this generation\'s is delivered', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('gen1', null, null, [], [], [], null, 2000);
+  const pendDir = parkFor(REGISTRY_DIR, 'gen1', {
+    '0001.json': { text: 'for the dead seat', born: 1000 },
+    '0002.json': { text: 'for me', born: 2000 },
+  });
+  const ctx = JSON.parse(runPending(REGISTRY_DIR, 'gen1', MAIN)).hookSpecificOutput.additionalContext;
+  assert.strictEqual(ctx, 'for me', 'a new seat must not inherit its predecessor\'s mail');
+  // Discarded means GONE — a restore here would re-offer the stale mail on every
+  // subsequent turn, forever. Nothing survives: the successor case below is what
+  // proves this assertion isn't just "the drain destroys everything".
+  assert.deepStrictEqual(fs.existsSync(pendDir) ? fs.readdirSync(pendDir) : [], []);
+});
+
+test('pending drain (hook): a successor\'s mail is PUT BACK — the claim already destroyed the original', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  // This hook was generated for the seat born at 2000; the parked entry is
+  // addressed to the seat born at 3000 that has since taken the name. A hook
+  // subprocess descheduled across its parent's death and the next create() is
+  // the only way to get here — vanishingly rare, and the cost of getting it
+  // wrong is a destroyed message, so it is handled rather than argued away.
+  h.setupClaudeHook('gen2', null, null, [], [], [], null, 2000);
+  const pendDir = parkFor(REGISTRY_DIR, 'gen2', {
+    '1736900000000.000000001.ab12c.json': { text: 'for the seat that replaced me', id: 'ab12c', born: 3000 },
+  });
+  const out = runPending(REGISTRY_DIR, 'gen2', MAIN);
+  assert.strictEqual(out.trim(), '', 'a stale hook must not deliver its successor\'s mail into a dead session');
+  // The script's claim RENAMES THE WHOLE DIRECTORY before reading a byte, so an
+  // entry it declines to return and declines to restore exists nowhere at all.
+  // "Refuse non-matching" looks like the symmetric conservative choice and is
+  // not: symmetric-looking guards are not symmetric when the operation they
+  // guard is destructive.
+  // readdir DEFENSIVELY: when the restore is missing the whole directory is gone
+  // (the claim renamed it away and nothing put it back), and a bare readdirSync
+  // would throw ENOENT — failing by a stack trace instead of by the sentence that
+  // explains the branch. A revert must fail by MESSAGE.
+  const survived = fs.existsSync(pendDir) ? fs.readdirSync(pendDir) : [];
+  assert.deepStrictEqual(survived, ['1736900000000.000000001.ab12c.json'],
+    'the successor\'s message must be back in the store UNDER ITS ORIGINAL NAME: the claim already destroyed the original, so declining to return it without restoring it loses the message outright — and a re-minted filename would strand the [agent:resend ab12c] handle the sender was given');
+});
+
+test('pending drain (hook): unstamped entries deliver, and an unstamped SETUP delivers everything', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  // Two windows in one test because they are the two halves of the same
+  // compatibility promise: an old PARK draining through a new hook, and a new
+  // park draining through a hook set up without a stamp (the bash arm, a
+  // caller that omits it). Neither may drop mail.
+  h.setupClaudeHook('gen3', null, null, [], [], [], null, 2000);
+  parkFor(REGISTRY_DIR, 'gen3', { '0001.json': { text: 'parked before the stamp existed' } });
+  assert.strictEqual(
+    JSON.parse(runPending(REGISTRY_DIR, 'gen3', MAIN)).hookSpecificOutput.additionalContext,
+    'parked before the stamp existed');
+
+  h.setupClaudeHook('gen4');                       // no createdAt → no expectation
+  parkFor(REGISTRY_DIR, 'gen4', {
+    '0001.json': { text: 'one generation', born: 1000 },
+    '0002.json': { text: 'another', born: 3000 },
+  });
+  assert.strictEqual(
+    JSON.parse(runPending(REGISTRY_DIR, 'gen4', MAIN)).hookSpecificOutput.additionalContext,
+    'one generation\n\nanother',
+    'a hook with no baked stamp must never silently drop mail — the safe default, mirroring drainPending');
+});
