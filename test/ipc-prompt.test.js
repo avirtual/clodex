@@ -132,6 +132,65 @@ test('exec section renders the granted command ids, and only when granted', () =
   assert.ok(p.includes('[agent:exec clodex-team]'), 'second granted id listed');
 });
 
+// t81: the section renders each command's payload GRAMMAR, derived from its
+// schema, and states the three things the old prose got wrong.
+
+test('t81: a resolved def renders its derived payload form and description', () => {
+  const p = buildIpcPrompt(null, [{
+    name: 'clodex-team',
+    description: 'Your team: roster, tickets, retire.',
+    schema: {
+      type: 'object',
+      required: ['action', 'agent'],
+      properties: {
+        action: { type: 'string', enum: ['roster', 'retire', 'tickets'] },
+        agent: { type: 'string' },
+        target: { type: 'string' },
+      },
+    },
+  }]);
+  assert.ok(p.includes('  [agent:exec clodex-team] {"action":"roster|retire|tickets","agent":"<string>"} optional: target'),
+    'payload form derived from the schema, enum values quoted so it is copyable');
+  assert.ok(p.includes('\n      Your team: roster, tickets, retire.'), 'description on its own line');
+});
+
+test('t81: a fieldless command renders {} — the prompt never says "no payload"', () => {
+  // The false statement that cost this seat a bounce: an empty body is rejected
+  // before the schema is read, so {} is mandatory even with no fields.
+  const p = buildIpcPrompt(null, [{ name: 'clodex-run-tests', schema: { type: 'object', additionalProperties: false } }]);
+  assert.ok(p.includes('  [agent:exec clodex-run-tests] {}'), 'fieldless command still shows a {} payload');
+  assert.ok(/even a command with no fields needs a literal/.test(p), 'and the rule is stated in the prose');
+});
+
+test('t81: the three false statements are GONE from the section', () => {
+  const p = buildIpcPrompt(null, ['clodex-run-tests']);
+  // 1. "you supply only the name, never the command line" — read as "no arguments".
+  assert.ok(!p.includes('you supply only the name, never the command line'),
+    'the sentence that told agents to stop looking for a payload is gone');
+  // 2. stdout does NOT come back, so the section must not promise output.
+  assert.ok(!p.includes('Output returns in your input'),
+    'the section no longer claims command output returns');
+  // 3. and it states the truth instead: success is silent, stdout is dropped.
+  assert.ok(/Success is SILENT/.test(p), 'silent-success stated');
+  assert.ok(/stdout is never returned to you/.test(p), 'stdout-dropped stated');
+  // The argv guarantee is the security shape and must SURVIVE the rewrite.
+  assert.ok(/never write the command line itself/.test(p), 'argv guarantee kept');
+});
+
+test('t81: bare id strings still render (a def that cannot be read never blocks a spawn)', () => {
+  const p = buildIpcPrompt(null, ['clodex-run-tests', { name: 'clodex-team', schema: { type: 'object' } }]);
+  assert.ok(p.includes('  [agent:exec clodex-run-tests]\n'), 'string entry degrades to the id-only line');
+  assert.ok(p.includes('  [agent:exec clodex-team] {}'), 'resolved entry alongside it still renders its form');
+});
+
+test('t81: argv and cwd never reach the prompt', () => {
+  const p = buildIpcPrompt(null, [{
+    name: 'c', schema: { type: 'object' },
+    argv: ['/usr/bin/env', 'node', '/Users/someone/private/tool.js'], cwd: '/Users/someone/private',
+  }]);
+  assert.ok(!p.includes('/Users/someone'), 'no def filesystem path in any seat prompt');
+});
+
 test('exec section adds ZERO bytes for an empty/absent grant (both byte-pins keep this true)', () => {
   // Empty array and absent arg both reproduce IPC_PROMPT — the exec block is
   // additive-only, so the two byte-pins above already ride on this.
