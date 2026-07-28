@@ -16,33 +16,82 @@ function mk(REGISTRY_DIR) { return createAgentTransport({ REGISTRY_DIR, MAX_MSG:
 // Registry entries now live per-agent at run/<name>/agent.json (clodex-paths).
 function regFile(root, name) { return pathFor(root, name, 'registry'); }
 
-test('register: writes an atomic json under run/<name>/ and round-trips via listPeers/getPeer', () => {
+test('register: writes an atomic json under run/<name>/ and round-trips via listPeers/getPeer', async () => {
   const REGISTRY_DIR = tmp();
   const { registry } = mk(REGISTRY_DIR);
+  const { Transport } = mk(REGISTRY_DIR);
   const sock = path.join(REGISTRY_DIR, 'foo.sock');
-  fs.writeFileSync(sock, '');            // socket must exist for listPeers
+  // A REAL listening server, not an empty file. Before t75 a touched file was
+  // enough to read as live — that was the defect: an empty socket file with a
+  // live-looking pid IS the pid-recycle ghost, so a test that round-trips one
+  // is asserting the bug. listPeers now dials.
+  const srv = new Transport(sock, () => {});
+  await srv.start();
   registry.register('foo', sock);
 
-  const j = JSON.parse(fs.readFileSync(regFile(REGISTRY_DIR, 'foo'), 'utf-8'));
-  assert.strictEqual(j.name, 'foo');
-  assert.strictEqual(j.socket, sock);
-  assert.strictEqual(j.pid, process.pid);
+  try {
+    const j = JSON.parse(fs.readFileSync(regFile(REGISTRY_DIR, 'foo'), 'utf-8'));
+    assert.strictEqual(j.name, 'foo');
+    assert.strictEqual(j.socket, sock);
+    assert.strictEqual(j.pid, process.pid);
 
-  const peers = registry.listPeers();
-  assert.strictEqual(peers.length, 1);
-  assert.strictEqual(peers[0].name, 'foo');
-  assert.strictEqual(registry.getPeer('foo').socket, sock);
-  assert.strictEqual(registry.getPeer('missing'), null);
+    const peers = await registry.listPeers();
+    assert.strictEqual(peers.length, 1);
+    assert.strictEqual(peers[0].name, 'foo');
+    assert.strictEqual((await registry.getPeer('foo')).socket, sock);
+    assert.strictEqual(await registry.getPeer('missing'), null);
+  } finally {
+    await srv.stop();
+  }
 });
 
-test('listPeers: drops an entry whose socket has vanished', () => {
+// t75: THE GHOST. This is the case the whole ticket exists for, and before the
+// probe it was indistinguishable from the test above — same record, same socket
+// file on disk, same live pid. Nothing readable from the filesystem tells them
+// apart, which is why listPeers dials.
+test('listPeers: a ghost — socket FILE with nothing listening, live pid — is NOT advertised (t75)', async () => {
+  const REGISTRY_DIR = tmp();
+  const { registry } = mk(REGISTRY_DIR);
+  const sock = path.join(REGISTRY_DIR, 'ghost.sock');
+  fs.writeFileSync(sock, '');            // the shape an unclean shutdown leaves
+  registry.register('ghost', sock);      // our own pid → isAlive() says LIVE
+
+  // Everything the OLD liveness test looked at says this agent is running.
+  assert.ok(fs.existsSync(sock), 'the socket file exists');
+  const rec = JSON.parse(fs.readFileSync(regFile(REGISTRY_DIR, 'ghost'), 'utf-8'));
+  assert.ok(rec.pid === process.pid, 'and its pid is genuinely alive — existsSync+isAlive both pass, which is exactly why they cannot see a ghost');
+
+  assert.deepStrictEqual(await registry.listPeers(), [],
+    'a socket file with no server behind it must not be advertised as a peer — this is the pid-recycle ghost, and advertising it makes [agent:who] name an agent that does not exist while every dm to it fails silently');
+  assert.strictEqual(await registry.getPeer('ghost'), null,
+    'and getPeer must agree — it resolves through listPeers, so a ghost leaking through here would be handed straight to Transport.send');
+});
+
+// t75: the async conversion's own hazard, and the reason this pin exists at all.
+// listPeers/getPeer returning Promises makes a forgotten `await` SILENT: a
+// Promise is always truthy, so `if (peer)` succeeds for a peer that does not
+// exist, and `.find(...)` on a Promise throws TypeError at a call site far from
+// the mistake. Pinned structurally at the two production consumers.
+test('t75: both production consumers await the async registry lookups', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  for (const call of ['registry.getPeer(', 'registry.listPeers(']) {
+    let i = -1;
+    while ((i = src.indexOf(call, i + 1)) !== -1) {
+      const before = src.slice(Math.max(0, i - 60), i);
+      assert.match(before, /await\s*\(?\s*$/,
+        `${call.slice(0, -1)} must be awaited — it is async since t75, and an unawaited call yields a Promise, which is ALWAYS truthy: \`if (peer)\` then passes for an agent that does not exist and the dm is sent to undefined.socket. Found an unawaited call near: ${JSON.stringify(src.slice(i - 40, i + 40))}`);
+    }
+  }
+});
+
+test('listPeers: drops an entry whose socket has vanished', async () => {
   const REGISTRY_DIR = tmp();
   const { registry } = mk(REGISTRY_DIR);
   const sock = path.join(REGISTRY_DIR, 'bar.sock');
   fs.writeFileSync(sock, '');
   registry.register('bar', sock);
   fs.unlinkSync(sock);                   // socket gone → peer no longer live
-  assert.deepStrictEqual(registry.listPeers(), []);
+  assert.deepStrictEqual(await registry.listPeers(), []);
 });
 
 test('cleanup: prunes dead-pid records, keeps live ones, and LEAVES the socket file (t57)', () => {
