@@ -121,6 +121,90 @@ test('isSocketLive: a missing path reads NOT live (t57)', async () => {
     'ENOENT must resolve false, not reject — the probe answers a question and never makes its caller handle errors');
 });
 
+// --- cleanup re-validation (t76) ---
+//
+// cleanup() is read-then-delete: the "dead" verdict describes the BYTES it read.
+// If the entry is replaced in the gap, that verdict is about a record that no
+// longer exists, and applying it unlinks a LIVE agent's registration.
+//
+// These two are only meaningful ACROSS the gap — a single-snapshot check cannot
+// see this property at all, because at every individual instant the file is
+// perfectly consistent. So the replacement is injected AT the read, by patching
+// the fs.readFileSync that cleanup itself calls. That is the whole test: without
+// an interleaving there is nothing to observe.
+function withReplaceAfterFirstRead(regPath, replacement, fn) {
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function (p, ...rest) {
+    const out = realRead.call(this, p, ...rest);
+    // Replace the record immediately after cleanup's FIRST read of it — i.e.
+    // exactly inside the read-to-unlink gap, standing in for a concurrent
+    // re-registration by create() or by a second engine.
+    if (p === regPath && ++reads === 1) fs.writeFileSync(p, replacement);
+    return out;
+  };
+  try { return { out: fn(), reads }; } finally { fs.readFileSync = realRead; }
+}
+
+test('cleanup: an entry REPLACED between the read and the unlink survives (t76)', () => {
+  const REGISTRY_DIR = tmp();
+  const { registry } = mk(REGISTRY_DIR);
+
+  const sock = path.join(REGISTRY_DIR, 'raced.sock');
+  fs.writeFileSync(sock, '');
+  fs.mkdirSync(runDirFor(REGISTRY_DIR, 'raced'), { recursive: true });
+  const regPath = regFile(REGISTRY_DIR, 'raced');
+  // The record cleanup reads: dead pid, so its verdict is "remove".
+  fs.writeFileSync(regPath, JSON.stringify({ name: 'raced', socket: sock, pid: 2147483647 }));
+  // The record that lands in the gap: a LIVE re-registration of the same name.
+  const live = JSON.stringify({ name: 'raced', socket: sock, pid: process.pid });
+
+  const { out: removed, reads } = withReplaceAfterFirstRead(regPath, live, () => registry.cleanup());
+
+  // Prove the test ENTERED the window it names. Test 1 would catch a dead
+  // harness on its own (no injection means the dead record is simply pruned and
+  // the assertion below fires), but stating it costs one line and makes the
+  // failure say "harness" instead of "guard".
+  assert.ok(reads >= 1,
+    'the replacement was never injected — cleanup did not read this record, so this test proved nothing about the read-to-unlink gap');
+  assert.ok(fs.existsSync(regPath),
+    'cleanup deleted a registration that was re-registered LIVE after it read the dead one — the agent is now undiscoverable (listPeers cannot see it) until it registers again, and nothing reports the loss');
+  assert.strictEqual(fs.readFileSync(regPath, 'utf-8'), live,
+    'the surviving record must be the LIVE replacement, byte for byte — anything else means cleanup wrote or restored something instead of leaving the newer entry alone');
+  assert.strictEqual(removed, 0,
+    'cleanup must not COUNT a record it did not remove — a count that includes skipped entries makes the return value useless for deciding whether a sweep did anything');
+});
+
+test('cleanup: an UNCHANGED dead entry is still pruned — the guard must not block real work (t76)', () => {
+  const REGISTRY_DIR = tmp();
+  const { registry } = mk(REGISTRY_DIR);
+
+  const sock = path.join(REGISTRY_DIR, 'stale.sock');
+  fs.writeFileSync(sock, '');
+  fs.mkdirSync(runDirFor(REGISTRY_DIR, 'stale'), { recursive: true });
+  const regPath = regFile(REGISTRY_DIR, 'stale');
+  const dead = JSON.stringify({ name: 'stale', socket: sock, pid: 2147483647 });
+  fs.writeFileSync(regPath, dead);
+
+  // Same interleaving machinery, but the "replacement" is byte-identical — the
+  // no-race case. This is the discriminator for the test above: if the guard
+  // were comparing something other than the bytes (an mtime, an inode, "did any
+  // write happen"), the test above would still pass while cleanup quietly
+  // stopped pruning anything at all.
+  const { out: removed, reads } = withReplaceAfterFirstRead(regPath, dead, () => registry.cleanup());
+
+  // This one CANNOT prove entry from its outcome — a harness that never fired
+  // would produce an identical pass, since the no-race case is exactly what a
+  // dead harness simulates. So entry is asserted directly; without this the
+  // test is a green that means nothing.
+  assert.ok(reads >= 1,
+    'the byte-identical rewrite was never injected — this test degenerates into the plain prune case and stops discriminating a bytes-guard from any other guard');
+  assert.strictEqual(removed, 1,
+    'a dead entry whose bytes did NOT change must still be pruned — a guard that skips it turns cleanup into a no-op and dead registrations accumulate forever');
+  assert.ok(!fs.existsSync(regPath),
+    'the dead record must be gone — it is the whole job of cleanup()');
+});
+
 test('unregister: removes the record', () => {
   const REGISTRY_DIR = tmp();
   const { registry } = mk(REGISTRY_DIR);
