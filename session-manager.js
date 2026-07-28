@@ -4783,6 +4783,55 @@ function createSessionManager(deps) {
       return '';
     }
 
+    // A seat just closed a ticket. Does it still hold an open one? If so, deliver
+    // that spec NOW — otherwise the seat stops at the turn boundary holding work
+    // nobody re-triggers, and only a human poke restarts it (observed three times
+    // in one session: a seat completed a ticket, reported, and went idle holding
+    // three more).
+    //
+    // WHY t82 DID NOT ALREADY COVER THIS. t82 made ticket DISPATCH wake the
+    // assignee (urgent at _taskAdd/_taskAssign). That is the ARRIVAL edge: a seat
+    // already holding a queue received those specs turns ago, and the delivery
+    // that would have woken it is long past. The COMPLETION edge had no trigger
+    // at all.
+    //
+    // ORDER IS FIFO — openedAt, ties broken by numeric id (total and
+    // deterministic; two tickets minted in the same ms must not advance in array
+    // order). There is deliberately no priority field: a lead who wants a
+    // different ticket next re-assigns it to the seat that already holds it,
+    // which _taskAssign delivers urgently (its `reassigning` flag only changes
+    // the reply wording, so a same-assignee assign is a working promote). Adding
+    // a second way to express that ordering is a feature, not this fix.
+    //
+    // Reuses _deliverTicketSpec so the advance is the SAME wake the dispatch edge
+    // uses — parked/held stay distinguishable, and urgent bypasses the idle/cold
+    // hold that a just-finished seat is about to fall into. Returns the advanced
+    // ticket (for the closer's reply) or null. Silent when the seat closed its
+    // LAST ticket: a wake carrying nothing actionable is exactly the cost t82 was
+    // careful not to pay.
+    //
+    // `closedId` is REDUNDANT ON BOTH CURRENT CALLERS and kept deliberately. Each
+    // stamps its terminal state and SAVES before calling, so the `state === 'open'`
+    // filter already excludes the just-closed ticket — proved by reverting the id
+    // filter, which changes no test. It stays because that redundancy is an
+    // ORDERING ACCIDENT, not a property of the helper: move the advance above the
+    // save (or call it from a path that closes later) and without this the seat is
+    // handed back the ticket it just finished. Tested directly below rather than
+    // through a caller, since no caller can distinguish it.
+    _advanceSeat(team, teamDir, seatName, closedId) {
+      const role = matchSeatRole(team, seatName);
+      const open = ticketsStore.load(teamDir)
+        .filter((t) => t.state === 'open' && t.id !== closedId && t.assignee != null
+          && (t.assignee === seatName || (role && t.assignee === role)))
+        .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
+          || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
+      const next = open[0];
+      if (!next) return null;
+      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true);
+      log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closedId}`);
+      return next;
+    }
+
     _taskAdd(session, team, teamDir, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket`); return; }
       const spec = String(intent.body == null ? '' : intent.body).trim();
@@ -4904,9 +4953,17 @@ function createSessionManager(deps) {
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(teamDir, tickets);
       this._reconcileTickets(team, teamDir);
+      // Completion edge: hand the seat its next held ticket (see _advanceSeat).
+      // Keyed on the TICKET'S assignee seat, not the closer — the lead may be
+      // closing over a silent seat, and that seat is precisely the one that needs
+      // restarting. A lead closing its own self-assigned ticket resolves to
+      // itself and _deliverTicketSpec's { self } skip handles it.
+      const doneSeat = this._ticketAssigneeSeat(team, ticket);
+      const next = doneSeat ? this._advanceSeat(team, teamDir, doneSeat, ticket.id) : null;
+      const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
-      reply(isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`);
+      reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
     }
 
     _taskReject(session, team, teamDir, intent, reply) {
@@ -4927,8 +4984,15 @@ function createSessionManager(deps) {
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       ticketsStore.save(teamDir, tickets);
+      // urgent: a reject REOPENS the ticket, so the reason is a work assignment,
+      // not a status notice — same reasoning as dispatch and reassign. The seat it
+      // targets is by construction one that already reported done and has gone
+      // idle, which is exactly the state a non-urgent dm is held for
+      // (proxy-util shouldHoldDm) — so at urgent=false the rework silently sat
+      // parked on an idle seat while the board said open. Same defect as the
+      // completion edge, one edge over.
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, false);
+      if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, true);
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
@@ -4951,9 +5015,13 @@ function createSessionManager(deps) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
       this._reconcileTickets(team, teamDir);
+      // Cancel frees the seat exactly as done does — same completion edge, same
+      // advance. (The cancellation NOTICE above stays non-urgent: cancelling
+      // creates no work. What follows it might.)
+      const next = seat ? this._advanceSeat(team, teamDir, seat, ticket.id) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
-      reply(`ticket ${ticket.id} cancelled`);
+      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }
 
     // [agent:task list [filter]] — the board only ever grows, so listing all of
