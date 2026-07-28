@@ -451,7 +451,67 @@ call site, reporting 10. Any comment-awareness I add must therefore handle
 requires a revert that re-introduces the phantom-string shape and fails BY
 MESSAGE.
 
-### Status: premises audited, nothing built yet. Next: design the fix.
+### The fix
+
+`commentRanges(src)` returns comment spans; the scan skips matches inside them.
+**Not** the whole-file strip. Regex-literal awareness is the whole difference:
+operand-position heuristic for regex-vs-division, quotes inside a regex consumed
+rather than opening a string, character classes tracked. Nothing is deleted and
+no offsets are rewritten — a drifting range can hide a site but never invent one,
+and the count assertion catches that.
+
+### Revert proofs (pristine `t78-census.pristine` md5 `fe08d429…`, `t78-clihooks.pristine` md5 `d45f51e9…`)
+
+| Revert | Result |
+|---|---|
+| A: restore the pre-t71 cli-hooks wording | **fix holds, 3/3 green** |
+| A': same wording against the OLD scanner | **found 12, table has 11** — proves A is not a no-op and reproduces the original defect exactly |
+| B: whole-file strip-then-scan (the phantom-string shape) | **found 6, table has 11**, BY MESSAGE |
+| C: disable the regex-literal branch | **NO-OP — a finding, see below** |
+| C2: same revert vs. the strengthened pin | **fails BY MESSAGE** |
+
+### Revert C was a no-op, and the cause changed the test
+
+Disabling regex-literal awareness entirely left all 4 checks green, including my
+own case (b) — a regex-with-apostrophe followed by a real call site.
+
+Cause: `commentRanges` returns only COMMENT ranges, so a phantom string cannot
+fabricate a hit; it can only fail to report one. Case (b) therefore passed for
+the wrong reason — it asserted `!inComment`, which is what a totally broken
+scanner also returns. The damage runs the other way: **an unterminated phantom
+string swallows the following `//`, the comment is never recognised, and the
+prose inside it is counted as a call site.**
+
+Added case (b2) — regex-with-apostrophe followed by *prose containing a call
+form* — which is the real discriminator. Measured both ways: `inComment=true`
+with the branch, `false` without. Revert C then fails by message.
+
+This is the same shape as the t96 lesson arriving in a test rather than a
+comment: an assertion that is true for a reason other than the one it names.
+
+### An error of mine, recorded
+
+Mid-revert I ran `git checkout test/create-mint-census.test.js` to "restore
+pristine" when the file was already at the pristine md5 — the checkout was both
+unnecessary and destructive, and it discarded the uncommitted fix. Re-applied
+from the edits. Nothing was lost because the change was small and fully
+specified, but the correct move was `cp` from the pristine copy, as everywhere
+else in this batch. A `git checkout` on an uncommitted file is not a restore.
+
+### Also worth noting
+
+Revert B initially failed with `TypeError: Assignment to constant variable` —
+my probe assigned to a `const`. **A crash proves nothing**, so I fixed the probe
+rather than accepting the red, and it then failed by message with the count.
+
+### Status: DONE — `d189d1a`. Census 4/4.
+
+---
+
+## Batch verification
+
+Full Clodex suite via the test-runner subagent: **3049/3049 pass, 0 fail,
+ESCAPES: 0.**
 
 clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
 this overturns their stated preference on a change that propagates async through
