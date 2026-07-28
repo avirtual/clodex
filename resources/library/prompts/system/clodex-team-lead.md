@@ -57,8 +57,10 @@ visible rather than silently lost.
   retired seat. Nothing else can, so an unclosable ticket nudges forever.
 - `[agent:task reject <id>]` / `[agent:task cancel <id>]` — you send work back
   or drop it; the reason rides in the body.
-- `[agent:task list]` — the OPEN board, plus a count of the closed tickets it
-  hid. The board only grows, so add a filter to see the rest:
+- `[agent:task list]` — the OPEN board, then the tickets closed most recently
+  (a capped handful, so it stays short), then a count of everything else it
+  hid, done and cancelled separately. The board only grows, so add a filter to
+  see the rest:
   `[agent:task list done]`, `list cancelled`, or `list all`. Reject is not a
   state (it reopens a ticket), so there is no `rejected` filter; an unknown one
   bounces with the valid set rather than quietly showing you the default.

@@ -335,9 +335,10 @@ function staleHostLineFor(host) {
 //
 // The last-line rule is pinned by the test named
 //   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
-// THE 200-CHAR SLICE IS PINNED BY NOTHING — that test's stderr is 14 chars, and
-// no test in the suite feeds the dispatcher a line long enough to be cut. Stated
-// separately because a reader would otherwise take both halves as guarded.
+// THE 200-CHAR SLICE IS PINNED BY NOTHING — that test's stderr is far under the
+// limit, and no test in the suite feeds the dispatcher a line long enough to be
+// cut. Stated separately because a reader would otherwise take both halves as
+// guarded.
 //
 // Cited by NAME, not by line: this comment carried a line range for exactly one
 // commit before the range pointed at unrelated code (t105).
@@ -384,7 +385,7 @@ function doTickets(payload) {
     : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
   // The stale notice goes BEFORE the tail, not after it. The exec dispatcher
-  // delivers only the LAST stderr line (session-manager.js:3838), so whatever
+  // delivers only the LAST stderr line, so whatever
   // ends this string is the entire reply the caller sees — and appending the
   // notice meant a stale host cost them the counts as well.
   //
