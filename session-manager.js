@@ -4711,17 +4711,39 @@ function createSessionManager(deps) {
       return this._teamLiveSeats(team.root).includes(a) ? a : null;
     }
 
-    // Deliver a ticket's spec text to its current assignee seat. Returns
-    // { self } (assignee is the lead — skip the echo), { delivered }/{ parked }
-    // via the gated pipeline, or { undelivered } when no live seat resolves (a
-    // role with no seat, or a seat that died) — the caller warns the lead but the
-    // ticket (durable) stands.
-    _deliverTicketSpec(team, ticket, specText, fromName) {
+    // Deliver a ticket's spec text to its current assignee seat. Passes the
+    // gated pipeline's outcome through UNFLATTENED:
+    //   { self }        — assignee is the lead, skip the echo
+    //   { delivered }   — injected now
+    //   { parked, reason } — held, but queued to drain on the seat's next turn
+    //   { held, reason }   — held and UN-PARKABLE: a real drop (Codex seat or
+    //                        dead target; see canPark in _gatedDeliver)
+    //   { undelivered } — no live seat resolves, or the target isn't an agent
+    // The three non-error outcomes used to be collapsed into { delivered:true },
+    // which told the lead the spec landed in the two cases where it had not.
+    // `urgent` is the caller's call, NOT this function's: a work ASSIGNMENT
+    // wakes, a status notice rides passively. Note urgent is best-effort — it
+    // bypasses the idle/cold-cache hold but NOT a permission-dialog hold
+    // (proxy-util.js:507, which returns noUrgent:true to say so), which is
+    // exactly why the parked/held distinction above has to reach the lead.
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
-      const r = this._gatedDeliver(seat, fromName, `[ticket ${ticket.id}] ${specText}`, false);
-      return (r && r.error) ? { undelivered: true } : { delivered: true };
+      const r = this._gatedDeliver(seat, fromName, `[ticket ${ticket.id}] ${specText}`, urgent);
+      if (!r || r.error) return { undelivered: true };
+      if (r.parked) return { parked: r.parked, reason: r.reason || null };
+      if (r.held) return { held: true, reason: r.held };
+      return { delivered: true };
+    }
+
+    // The lead-facing suffix for a spec delivery outcome. Parked and held read
+    // differently on purpose: parked WILL arrive (next turn), held will NOT.
+    _ticketDeliverySuffix(d, assignee) {
+      if (d.undelivered) return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
+      if (d.held) return ` — NOTE: spec NOT delivered (${d.reason || 'held'}); the seat cannot be parked for, so it has not seen the spec — re-send when it clears`;
+      if (d.parked) return ` — NOTE: spec parked, not injected (${d.reason || 'held'}); it drains on the seat's next turn`;
+      return '';
     }
 
     _taskAdd(session, team, teamDir, intent, reply) {
@@ -4746,8 +4768,12 @@ function createSessionManager(deps) {
       ticketsStore.save(teamDir, tickets);
       let suffix = '';
       if (assignee) {
-        const d = this._deliverTicketSpec(team, ticket, spec, session.name);
-        if (d.undelivered) suffix = ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
+        // urgent: a ticket is a WORK ASSIGNMENT, not conversation. Parking it
+        // leaves the board saying "assigned" while nothing runs. The wake cost
+        // (re-billing the seat's carried context) gets paid the moment the work
+        // starts anyway; an assignment that never starts is worth nothing.
+        const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
+        suffix = this._ticketDeliverySuffix(d, assignee);
       }
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened` });
@@ -4781,8 +4807,9 @@ function createSessionManager(deps) {
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null; // fresh assignment starts a new stall episode
       ticketsStore.save(teamDir, tickets);
-      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name);
-      const suffix = d.undelivered ? ` — NOTE: no live seat for "${assignee}" yet; spec not delivered` : '';
+      // urgent: same reasoning as dispatch — a reassign is a work assignment.
+      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
       log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'} → ${assignee}`);
@@ -4978,11 +5005,19 @@ function createSessionManager(deps) {
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode
+        // NOT urgent, deliberately: this is an alarm, but it is addressed to the
+        // LEAD and it is not a work assignment. It fires on a schedule against a
+        // possibly-idle lead, and a stalled ticket is by definition not urgent to
+        // the minute — parking it costs one turn of latency, waking costs a full
+        // context re-bill on every sweep. Ticket-waking is for assignment only.
         const r = this._gatedDeliver(team.lead, 'ticket-watchdog',
           `[ticket ${t.id}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false);
         // Mark nudged only when the nudge actually went somewhere — a dead lead
-        // must not consume the one nudge (retry when the lead is back).
-        if (!(r && r.error)) { t.nudgedAt = now; changed = true; }
+        // must not consume the one nudge (retry when the lead is back). `held` is
+        // the same kind of nowhere as `error`: un-parkable means the lead never
+        // sees it, so it must not burn the one-per-episode nudge either. `parked`
+        // DOES count — it drains on the lead's next turn.
+        if (r && !r.error && !r.held) { t.nudgedAt = now; changed = true; }
       }
       if (changed) ticketsStore.save(teamDir, tickets);
     }
