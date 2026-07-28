@@ -3817,7 +3817,11 @@ test('t100 task list: the recent section is CAPPED and the overflow folds into t
   const out = board(f);
   const shown = (out.match(/\[done\]/g) || []).length;
   assert.strictEqual(shown, 10, 'exactly the cap is rendered, not all 13');
-  assert.match(out, /\+3 more done in the last 24h/, 'the overflow is stated, not silently dropped');
+  // Built from the scraped constant, not written as `24h`: a literal here would
+  // keep passing if RECENT_DONE_MS moved, which is the same false green this
+  // file's own policy comment warns about two tests up.
+  assert.match(out, new RegExp(`\\+3 more done in the last ${RECENT_DONE_MS / (60 * 60 * 1000)}h`),
+    'the overflow is stated, with the window it actually used');
   assert.match(out, /13 done, 0 cancelled/, 'and the full done count is still there');
   // Which 10: the NEWEST. Dropping the newest and keeping the oldest would
   // satisfy a bare count check while inverting the section's purpose.

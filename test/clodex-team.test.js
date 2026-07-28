@@ -226,9 +226,9 @@ test('bad payloads are loud (unknown action, missing agent)', async () => {
 // The last-line rule is pinned by the test named
 //   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
 // in test/session-manager.test.js. THE 200-CHAR SLICE IS PINNED BY NOTHING: that
-// test's stderr is 14 chars and nothing in the suite feeds the dispatcher a line
-// long enough to cut. Half this sentence is guarded and half is not, so it says
-// which half.
+// test's stderr is far under the limit and nothing in the suite feeds the
+// dispatcher a line long enough to cut. Half this sentence is guarded and half
+// is not, so it says which half.
 //
 // Cited by NAME, not by line — a line range here survived exactly one commit
 // before it pointed at unrelated code (t105).
@@ -242,8 +242,14 @@ function listingFacts(text) {
     if (/^recently closed:$/.test(line)) { facts.push('SECTION'); continue; }
     const row = line.match(/^(t\d+) \[(\w+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
     if (row) { facts.push(`${row[1]}|${row[2]}|${row[3]}|${row[4] ? 'closed' : 'open-age'}|${row[7]}`); continue; }
-    const tail = line.match(/\((?:\+(\d+) more done in the last \d+h; )?(\d+) done, (\d+) cancelled/);
-    if (tail) { facts.push(`TAIL|over=${tail[1] || 0}|done=${tail[2]}|cancelled=${tail[3]}`); continue; }
+    // The window is CAPTURED, not just matched past. Matching `\d+h` and
+    // discarding it made a leaf at 20h and an intent at 24h reduce to identical
+    // facts, so parity stayed green over two boards that were not the same.
+    const tail = line.match(/\((?:\+(\d+) more done in the last (\d+h); )?(\d+) done, (\d+) cancelled/);
+    if (tail) {
+      facts.push(`TAIL|over=${tail[1] || 0}|window=${tail[2] || '-'}|done=${tail[3]}|cancelled=${tail[4]}`);
+      continue;
+    }
     if (/no open tickets/.test(line)) { facts.push('NO-OPEN'); continue; }
     // Lines dropped ON PURPOSE, because the two implementations are REQUIRED to
     // differ here: the head names the team in each caller's own phrasing, and
@@ -254,9 +260,21 @@ function listingFacts(text) {
     // OTHER instead of being swallowed by a pattern that was too generous.
     if (/^team \S+ tickets( \[\w+\])?:$/.test(line)) continue;
     if (/^tickets on \S+( \[\w+\])?:$/.test(line)) continue;
-    if (/^team \S+: no \w+ tickets/.test(line)) continue;   // leaf's no-open sentence
-    if (/^no \w+ tickets on \S+/.test(line)) continue;      // intent's
-    if (/^\(STALE HOST|^\(HOST /.test(line) || line === '') continue;
+    // The no-open sentences and the zero-ticket ones are DIFFERENT branches:
+    // `no open tickets` above is the board-has-closed-work case, while these
+    // are "this team has no tickets at all". Named separately so an
+    // implementation taking the wrong branch surfaces instead of matching a
+    // pattern broad enough to cover both.
+    if (/^team \S+: no \w+ tickets$/.test(line)) continue;   // leaf, no-open / none
+    if (/^no \w+ tickets on \S+$/.test(line)) continue;      // intent, same
+    if (/^team \S+: no tickets$/.test(line)) continue;       // leaf, empty registry
+    if (/^no tickets on \S+$/.test(line)) continue;          // intent, same
+    if (/^\(STALE HOST|^\(HOST /.test(line)) continue;
+    // A blank line is NOT dropped silently: both implementations build one
+    // string with no blank separators, so a blank means someone introduced a
+    // separator on one side only. The sole exception is the trailing newline
+    // every reply ends with, which split() yields as a final empty element.
+    if (line === '') { facts.push('BLANK'); continue; }
     // Anything else is surfaced rather than swallowed. A reducer that silently
     // ignores what it does not recognize cannot see an EXTRA line in one
     // implementation — it would compare equal while the two rendered
@@ -320,7 +338,7 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   // ENTER: the fixture must actually reach the interesting branches, or this
   // test would pass on two implementations that both render nothing.
   assert.ok(mine.includes('SECTION'), 'ENTER: the default view has a recent section');
-  assert.ok(mine.some((f) => /^TAIL\|over=2\|done=13\|cancelled=1$/.test(f)),
+  assert.ok(mine.some((f) => /^TAIL\|over=2\|window=\d+h\|done=13\|cancelled=1$/.test(f)),
     `ENTER: cap overflow and both counts are live in the fixture: ${mine.join(' / ')}`);
   assert.strictEqual(mine.filter((f) => /\|closed\|/.test(f)).length, 10, 'ENTER: the cap is in play');
 
@@ -396,7 +414,7 @@ test('tickets: the stale-host notice does not displace the tail as the delivered
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.err, /STALE HOST/, 'ENTER: the fixture really is on the stale path');
 
-  // Reproduce the dispatcher's discipline exactly (session-manager.js:3838).
+  // Reproduce the dispatcher's discipline exactly.
   const delivered = (r.err.trim().split('\n').pop() || '').slice(0, 200);
   assert.match(delivered, /1 done, 0 cancelled/,
     'the counts survive as the delivered line — they are all an exec caller gets');
@@ -428,15 +446,15 @@ test('listing parity: holds on a board with nothing open', async () => {
 // SHIPPED schema accepts exactly what clodex-team.js handles and rejects the
 // rest, via the real exec-schema validator.
 //
-// This block reads resources/library/exec/clodex-team.json — the artifact
-// pot-bin.js seeds into the operator's library, so the schema under test is the
-// one that will actually gate a live payload. Do not reintroduce a fixture copy
-// here: the copy is what silently went stale (t101).
+// This block reads resources/library/exec/clodex-team.json, so the schema under
+// test is the one that will actually gate a live payload. Do not reintroduce a
+// fixture copy here: the copy is what silently went stale (t101).
 
 // ENTER CHECK. Every assertion below is only worth its salt if EXEC_DEF is the
 // shipped def rather than a copy of it, so this pins PATH IDENTITY: the file
-// read at module scope must be the seed root stores.js:1683 copies into the
-// operator's library, addressed the same way — by relative path from the repo.
+// read at module scope must be the seed root stores.js seedLibraryDefaults
+// copies into the operator's library, addressed the same way — by relative path
+// from the repo.
 //
 // Identity is the only property no copy can satisfy. Every content property
 // can: a fresh `cp` carries the ${CLODEX_BIN} placeholder verbatim, and any

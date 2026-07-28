@@ -352,3 +352,92 @@ Restored from md5-verified `cp` copies (`session-manager.js` `b7b3eed0…`,
 A′ and B′ are the ones worth keeping: each shows the pre-fix code green under
 the exact condition the reviewer described. Agreeing with a review is not the
 same as verifying it.
+
+## FOURTH PASS — and the rule that ends the cycle
+
+### FIX 1: the doc, the only product-visible defect in four passes
+
+`resources/library/prompts/system/clodex-team-lead.md:60-61` still described the
+old board: "the OPEN board, plus a count of the closed tickets it hid." The board
+renders up to 10 closed rows now. t80's journal established that line as the doc
+site for this verb; t100 had no doc phase, which is the actual miss.
+
+Reworded WITHOUT a window literal or a cap literal — "the tickets closed most
+recently (a capped handful, so it stays short)". A prompt file derives nothing,
+so any number written there is a claim that cannot track its source. The reviewer
+flagged this in advance and was right to: my instinct was to write "the last 24h,
+up to 10", which would have planted the next finding.
+
+### FIX 2: two demonstrated false greens
+
+`test/session-manager.test.js:3820` hardcoded `24h` — in the same file whose
+policy comment two tests up says a literal would keep passing if the constant
+moved. Built from the scraped constant now.
+
+`test/clodex-team.test.js:245` matched `\d+h` and threw it away, so a leaf at 20h
+and an intent at 24h reduced to identical facts. Measured: with the constant test
+skipped, that divergence was **17 pass, 0 fail** on behavioural parity. The
+window is captured into the `TAIL|` fact now, and the same divergence fails.
+
+That is the second time in two passes that a pattern I wrote to avoid pinning a
+literal instead stopped checking the thing entirely. Matching past a value and
+discarding it is not the same as not depending on it.
+
+### THE DELETION RULE
+
+`session-manager.js:3838` was cited in two live places and had gone stale by
+exactly the six lines THIS BRANCH's third pass added — the third same-commit
+citation rot, and this time in live code rather than a comment about tests. Not
+re-pointed. **Deleted.** The surrounding sentences lose nothing: "the dispatcher
+delivers only the LAST stderr line" is the whole claim, and the file name alone
+is enough for anyone who wants to look.
+
+Also deleted rather than corrected:
+- "14 chars" — it is 13, and wrong under every reading. The substantive claim
+  (far under 200, therefore unpinned) survives without a count.
+- the `pot-bin.js` seeding attribution — the adjacent ENTER comment already
+  states the mechanism correctly, so the sentence was redundant as well as
+  wrong. Corrected the one remaining reference to name `seedLibraryDefaults`
+  rather than a line number.
+
+**A claim that has rotted once gets deleted, not corrected. Correcting it
+re-arms it.** Every one of these had already been fixed at least once in this
+branch, and each fix is what put the next wrong version in place. The only
+version that cannot rot is the one that is not there.
+
+### The two reducer nits
+
+Blank lines were being dropped with the deliberate ones. Both implementations
+build one string with no blank separators, so a blank means a separator appeared
+on one side only. Now emitted as `BLANK` — verified it fires by injecting one
+into the leaf, which fails two tests.
+
+Zero-ticket sentences ("no tickets" — empty registry) were being swallowed by
+the no-open patterns, which are a DIFFERENT branch. Named separately and
+anchored with `$`, so an implementation taking the wrong branch surfaces as
+`OTHER` instead of matching a pattern broad enough to cover both.
+
+### Fourth-pass reverts
+
+| # | Revert | Result |
+|---|---|---|
+| A | blank separator injected into the leaf | 2 fail — the BLANK fact fires, so the branch is reachable |
+| B | leaf window 20h, **constant test skipped** | 1 fail — behavioural parity now catches it (was 17 pass 0 fail before the capture) |
+| C | `RECENT_DONE_MS` → 20h | cap test still passes — it tracks the constant, as intended |
+| C2 | filter cutoff diverged from the constant | 1 fail — "a close one minute inside the window is shown" |
+
+## The four-pass tally
+
+Ten defects across four passes. **Every one in prose — a comment, a test name, a
+journal note, a doc line, a citation. Zero in the product.** The suite went 3060
+to 3067 and the code under test never went red.
+
+What I take from it: I treat code as needing proof and prose as needing care, and
+that gap is the entire defect surface here. Three specific habits earned:
+
+1. **Cite by name, never by line.** Adding a test to a file invalidates every
+   line citation below it, so a range is most likely to rot exactly when someone
+   is working nearby.
+2. **A summary must never be stronger than the measurement.** If I cannot point
+   at the revert-table row, it does not go in the report.
+3. **A claim that has rotted once gets deleted, not corrected.**
