@@ -373,7 +373,42 @@ because a dead socket refuses instantly.
 read-to-unlink gap — which the guard I landed this morning already covers, and
 whose comment names t75 by name as the thing that would open it.
 
-### Status: measured, NOT implemented. Awaiting ruling.
+### Ruling: async probe. Build it. — and the reach check STOPS it
+
+clodex ruled the probe and asked me to stop and report if the conversion reaches
+further than the four functions and their two callers. **It does.**
+
+Full reach, grepped (production + tests, excluding `tasks/`):
+
+| Site | Context | Fine? |
+|---|---|---|
+| `agent-transport.js:95` `getPeer`→`listPeers` | internal | yes, awaits inside |
+| `session-manager.js:3108` `getPeer` | `async _handleIntent` | yes |
+| `session-manager.js:3222` `listPeers` | `async _handleIntent` | yes |
+| **`engine.js:1810` `registry.cleanup()`** | **`createEngine`, NOT async** | **BLOCKS** |
+| `test/agent-transport.test.js` x6 (`:31,:34,:35,:45,:62`, + my two t76 tests `:162,:194`) | sync test bodies | mechanical |
+
+`createEngine` (`engine.js:156`) is a plain function, so `cleanup()` becoming
+async lands in a synchronous bootstrap. Two ways out, and the choice is
+load-bearing rather than a reversible detail:
+
+1. **Fire-and-forget** — `registry.cleanup().catch(() => {})`. One line, no
+   propagation. But it makes the sweep run CONCURRENTLY with the rest of
+   bootstrap, including the session restore that calls `create()`. That is
+   precisely the in-process read-to-unlink gap t76's guard covers — so it is
+   *survivable because of t76*, which is a real dependency to state, not a
+   coincidence to rely on silently.
+2. **Make `createEngine` async** — propagates to `main.js:515`,
+   `headless-main.js:148`, and five engine test helpers. That is the wide
+   mechanical edit clodex asked me not to start without reporting.
+
+Also worth noting for whichever is chosen: option 1 changes `cleanup()`'s cost
+from "N stats" to "N socket dials", executing during startup rather than before
+it.
+
+**Not proceeding on this one.** Everything else in t75 is ready to build.
+
+### Status: measured, ruled, BLOCKED on the bootstrap question. Not implemented.
 
 clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
 this overturns their stated preference on a change that propagates async through
