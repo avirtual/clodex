@@ -1,5 +1,6 @@
 {
   "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-team.js"],
+  "description": "Your team: roster (who is live, replies), tickets, or retire a teammate. `agent` is your OWN name.",
   "timeoutMs": 10000,
   "maxBytes": 4096,
   "replyStderr": true,

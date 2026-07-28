@@ -153,6 +153,16 @@ function validateExecDef(entry, name) {
   if ('replyStderr' in entry && typeof entry.replyStderr !== 'boolean') {
     return { ok: false, error: 'replyStderr: must be a boolean' };
   }
+  // Optional one-line prose rendered into the granted seat's EXEC prompt section
+  // (t81): what the command is for, so an agent can pick one without firing it to
+  // find out. Type-checked because it reaches a PROMPT — a number would render as
+  // its digits, and a runaway string would be paid on every cache miss forever.
+  // A def-level sibling of `schema`, never inside it, so it cannot collide with a
+  // command that happens to declare its own `description` payload field.
+  if ('description' in entry
+      && !(typeof entry.description === 'string' && entry.description.length <= 200)) {
+    return { ok: false, error: 'description: must be a string of at most 200 chars' };
+  }
   // A command with no schema bounces every payload ("command has no schema") at
   // run time, so require one here. The top node must be an object schema because
   // the payload is always a JSON object handed to validateAgainstSchema.
@@ -186,6 +196,79 @@ function parseAndValidate(entry, raw) {
   return { ok: true, value };
 }
 
+// ---------------------------------------------------------------------------
+// Prompt rendering — the payload GRAMMAR an agent needs to call a command.
+//
+// Lives here, not in ipc-prompt.js, on purpose: the whole point is that the form
+// is DERIVED from the schema rather than hand-written per command, so it must sit
+// next to validateAgainstSchema — the two share a type vocabulary, and a new leaf
+// type added above without a token here shows up as a visible omission in one
+// file instead of silently rotting a prompt in another. ipc-prompt.js is a pure
+// leaf and requiring this one keeps it that way (this file has zero requires).
+//
+// Cost discipline: this text lands in the system prompt of every seat with a
+// grant, so it is paid on every cache miss forever. One line per command. Raw
+// JSON Schema is never emitted; a nested object renders as `{...}` and optional
+// properties as bare NAMES, which is the cheapest thing that still makes a field
+// discoverable. argv is never rendered — it can carry absolute paths.
+
+// One leaf type -> its placeholder token. Mirrors the leaf cases of
+// validateAgainstSchema; `object` is handled structurally by the caller.
+//
+// STRING-VALUED tokens carry their own double quotes. The rendered form is meant
+// to be copied and filled in, so an unquoted `"action":roster|retire|tickets`
+// would teach an agent to emit invalid JSON and earn it a "payload: invalid
+// JSON" bounce — which is precisely the class of failure this ticket exists to
+// stop. Quoting here rather than at the join keeps the decision with the type.
+function typeToken(node) {
+  if (!node || typeof node !== 'object') return '<value>';
+  if (Array.isArray(node.enum) && node.enum.length) return `"${node.enum.join('|')}"`;
+  switch (node.type) {
+    case 'string': return '"<string>"';
+    case 'filename': return '"<filename>"';
+    case 'number': return '<number>';
+    case 'integer': return '<int>';
+    case 'boolean': return '<bool>';
+    case 'object': return '{...}';
+    default: return '<value>';
+  }
+}
+
+// Render the one-line payload form for a command's schema.
+//   no required props  -> '{}'   (NOT "takes no payload" — see below)
+//   required props     -> {"a":x,"b":y}  + ` optional: c, d` when there are any
+//
+// The `{}` case is load-bearing and is the whole reason this function does not
+// have a "takes no payload" branch: parseAndValidate rejects an EMPTY BODY at
+// the raw-string stage, before any schema is consulted, so a command with no
+// required properties is still NOT callable bare — it bounces with
+// "payload: empty (expected JSON)" and needs a literal {}. Rendering it as
+// payload-free would put a fourth false statement into the prompt.
+function payloadForm(schema) {
+  if (!schema || typeof schema !== 'object') return '{}';
+  const props = (schema.properties && typeof schema.properties === 'object') ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required.filter((k) => typeof k === 'string') : [];
+  const optional = Object.keys(props).filter((k) => !required.includes(k));
+  const body = required.map((k) => `"${k}":${typeToken(props[k])}`).join(',');
+  const form = `{${body}}`;
+  return optional.length ? `${form} optional: ${optional.join(', ')}` : form;
+}
+
+// One prompt line for one granted command. `def` may be:
+//   - a string id            -> id only (no def could be read; degrade, never throw)
+//   - { name, description?, schema? } -> id + derived payload form, and the
+//     description on a continuation line when the def carries one.
+// A def with no description renders WITHOUT a description line rather than with
+// an invented one: descriptions are operator-authored, and guessing what an
+// unknown command does is worse than saying nothing.
+function commandLines(def) {
+  if (typeof def === 'string') return `  [agent:exec ${def}]`;
+  if (!def || typeof def !== 'object' || !def.name) return '';
+  const head = `  [agent:exec ${def.name}] ${payloadForm(def.schema)}`;
+  const desc = typeof def.description === 'string' ? def.description.trim() : '';
+  return desc ? `${head}\n      ${desc}` : head;
+}
+
 module.exports = {
   DEFAULT_MAX_BYTES,
   FILENAME_RE,
@@ -193,4 +276,7 @@ module.exports = {
   validateAgainstSchema,
   validateExecDef,
   parseAndValidate,
+  typeToken,
+  payloadForm,
+  commandLines,
 };

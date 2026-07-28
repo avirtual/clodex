@@ -1011,7 +1011,7 @@ function createSessionManager(deps) {
           // Third arg (plugin plan P3): the grammar lines of the PLUGIN verbs this
           // seat was granted. Empty for every seat on a plugin-less run, so the
           // prompt bytes are unchanged.
-          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, execCommands, pluginGrammarLines(intents));
+          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents));
           const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
             appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
           });
@@ -1218,7 +1218,7 @@ function createSessionManager(deps) {
           // appends + legacy inline body into it alongside the IPC protocol.
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, execCommands, pluginGrammarLines(intents)), {
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           // Build top-level flags first, then the optional `resume <uuid>`
@@ -3689,6 +3689,36 @@ function createSessionManager(deps) {
     // line back to the invoking agent (a lost exec = a lost datum, so failure must
     // never be silent). Every attempt logs to both the structured log and the IPC
     // drawer, ok or err.
+    // Resolve a seat's granted command IDS into the { name, description, schema }
+    // summaries the EXEC prompt section renders (t81). Read at create() only —
+    // the prompt is assembled once per spawn, so there's nothing to keep fresh,
+    // and this mirrors _handleExecIntent's own read-off-disk path (same join,
+    // deliberately not the store, so the spawn path stays store-free too).
+    //
+    // Degrades to the bare id STRING on any failure — missing def, unreadable
+    // file, garbled JSON. A command whose def can't be read still LISTS (the
+    // grant is real and the seat should know it holds it); it just loses its
+    // payload form. A spawn must never fail because a def is malformed.
+    // argv/cwd are dropped on the floor here: they can carry absolute paths and
+    // must never reach a prompt.
+    _resolveExecDefs(execCommands) {
+      if (!Array.isArray(execCommands)) return [];
+      return execCommands.map((c) => {
+        const name = String(c);
+        if (!isFilenameToken(name)) return name;
+        try {
+          const entry = JSON.parse(fs.readFileSync(
+            path.join(REGISTRY_DIR, 'library', 'exec', `${name}.json`), 'utf-8'));
+          if (!entry || typeof entry !== 'object') return name;
+          return {
+            name,
+            description: typeof entry.description === 'string' ? entry.description : '',
+            schema: (entry.schema && typeof entry.schema === 'object') ? entry.schema : null,
+          };
+        } catch { return name; }
+      });
+    }
+
     _handleExecIntent(session, cmd, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
       const who = session.name;

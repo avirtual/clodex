@@ -1,5 +1,6 @@
 {
   "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-monitor.js"],
+  "description": "Watch a command's output or a websocket; each event DMs you back. start needs command or ws; `agent` is your OWN name.",
   "timeoutMs": 15000,
   "maxBytes": 8192,
   "replyStderr": true,
