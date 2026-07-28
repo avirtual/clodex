@@ -72,6 +72,10 @@ Your Bash tool starts in the session's working directory (the project root) and 
 // failing test, not a silent wrong prompt.
 
 const { intentEnabled } = require('./intent-catalog');
+// Pure leaf (zero requires of its own) — keeps ipc-prompt free of any store or
+// electron edge. Payload forms are derived from each command's schema there, so
+// the vocabulary can't drift from the validator that enforces it.
+const { commandLines } = require('./exec-schema');
 
 const PREAMBLE = `This session runs inside clodex, a desktop app where your operator works with several CLI agents side by side, often across different projects. You are one of those agents; your own name arrives as a separate note in your input at session start, and [agent:name] below returns it any time. Other agents may be running alongside you, and you can exchange messages with them.
 
@@ -132,19 +136,41 @@ const GRAMMAR_LINES = [
 
 const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.`;
 
-// EXEC section — synthesized per-seat from the granted command-id allowlist, NOT
-// a static piece of IPC_PROMPT. exec has no grammar line and no `intentEnabled`
+// EXEC section — synthesized per-seat from the granted command allowlist, NOT a
+// static piece of IPC_PROMPT. exec has no grammar line and no `intentEnabled`
 // gate type (its authorization IS the per-seat execCommands allowlist), so this
 // block is gated purely on that array being non-empty: a seat with no grants adds
 // zero bytes (both byte-pins pass no exec arg), a seat WITH grants documents the
-// invocation form and lists its own ids (a forked prefix, accepted like any
-// non-default seat). IDs only — the registry defs carry no description.
+// invocation form and lists its own commands (a forked prefix, accepted like any
+// non-default seat).
+//
+// Entries may be bare id STRINGS or resolved { name, description?, schema? }
+// summaries (session-manager reads the defs at create()). Strings degrade to the
+// id-only line, so a def that can't be read costs discoverability, never a spawn.
+//
+// The prose here was rewritten under t81 because three of its statements were
+// FALSE, each one having actively misled a real seat:
+//   1. "you supply only the name, never the command line" is true of ARGV but
+//      reads as "there are no arguments" — a schema-bearing command was
+//      undiscoverable, and the lead burned four calls on it.
+//   2. A command with no required properties is still NOT callable bare:
+//      parseAndValidate rejects an empty body BEFORE consulting the schema, so
+//      every command needs at least `{}`. The old text implied otherwise, and
+//      because most commands take no fields it read as confirmed until it wasn't.
+//   3. "Output returns in your input" — stdout is DROPPED; a clean exit is
+//      silent unless the def sets replyStderr, and then it is one 200-char line
+//      of stderr (session-manager _handleExecIntent).
+// Payload forms are DERIVED from each def's schema by exec-schema.commandLines —
+// never hand-written per command, or they rot the moment a schema changes.
 function execSection(execCommands) {
   if (!Array.isArray(execCommands) || execCommands.length === 0) return '';
-  const ids = execCommands.map((c) => `  [agent:exec ${String(c)}]`).join('\n');
+  const lines = execCommands.map((c) => commandLines(typeof c === 'string' ? String(c) : c))
+    .filter(Boolean).join('\n');
+  if (!lines) return '';
   return `EXEC COMMANDS:
-Your operator granted this seat a set of named shell commands to run on demand via [agent:exec <name>] — each is a pre-registered command (you supply only the name, never the command line). Output returns in your input as an [agent:exec] line. Yours:
-${ids}`;
+Your operator granted this seat a set of named shell commands, listed below with the JSON payload each takes: \`[agent:exec <name>] {"key":value}\` on one line. The name selects a pre-registered command — you never write the command line itself, and your payload never becomes part of it, but most commands DO take arguments through that JSON. A payload is always required: even a command with no fields needs a literal \`{}\`, or it bounces with "payload: empty (expected JSON)". Values shown as \`a|b|c\` are the only ones accepted.
+Success is SILENT — nothing returns and no news is good news. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you. Yours:
+${lines}`;
 }
 
 // Gated by the `memory` intent (its grammar lines are too, so both vanish
