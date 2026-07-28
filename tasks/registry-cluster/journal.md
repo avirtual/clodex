@@ -513,6 +513,46 @@ rather than accepting the red, and it then failed by message with the count.
 Full Clodex suite via the test-runner subagent: **3049/3049 pass, 0 fail,
 ESCAPES: 0.**
 
+---
+
+## t75 — BUILT (`c62ce7e` product, `4e12253` tests)
+
+Ruling: probe in `listPeers`/`getPeer`, `cleanup()` stays synchronous.
+
+**Scope reduction named at the code**, per clodex: a ghost's registry entry
+survives the sweep and that bullet is knowingly unfixed. Acceptable because every
+consumer dials before trusting the record (listPeers/getPeer here, and create()'s
+collision path at `session-manager.js:1343`), so a ghost entry is a stale file
+nothing consults. The comment also states what would change it — a consumer that
+trusts the record without dialing, or residue accumulating enough to matter.
+
+t76's comment updated to say t75 **considered and declined** the await, not that
+it happened. The gap remains hypothetical, and the next reader now knows the door
+was tried rather than never opened.
+
+Cost figures are in the comment (2.349 ms `ps` vs 0.046 ms dead-socket dial) so
+nobody later "optimizes" the dial away assuming it is expensive.
+
+### A test that was asserting the bug
+
+The pre-existing round-trip test touched an **empty socket file** and expected
+`listPeers` to return it. That is precisely the ghost shape — file present, pid
+alive, nothing listening. It failed under the fix, correctly. Changed it to bind
+a real server; the empty-file case now has its own test asserting the opposite.
+Worth recording: a test can encode the defect as the expected result, and then
+the fix looks like a regression.
+
+### Revert proofs (`t75-at.pristine` md5 `e6bc9400…`, `t75-sm.pristine` md5 `882453b8…`)
+
+| Revert | Parses? | Result |
+|---|---|---|
+| A: drop the probe, back to `existsSync && isAlive` | clean | **fails BY MESSAGE** — ghost advertised |
+| B: forget the `await` at `getPeer` | clean | **fails BY MESSAGE** — names the silent-truthy Promise |
+
+Both restored to pristine md5.
+
+### Final: full suite 3051/3051, 0 fail, ESCAPES 0.
+
 clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
 this overturns their stated preference on a change that propagates async through
 `listPeers`/`getPeer`/`cleanup` and their callers — expensive to unwind if the
