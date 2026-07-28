@@ -256,8 +256,16 @@ test('parseIntent: task assign / done / reject / cancel / list', () => {
     { type: 'task', sub: 'cancel', id: 't7', who: null, body: 'nvm' });
   assert.deepStrictEqual(parseIntent('[agent:task cancel t7]'),
     { type: 'task', sub: 'cancel', id: 't7', who: null, body: '' });
+  // t80: bare list carries filter:null (the handler defaults it to open); an
+  // explicit bracket arg is carried through for the handler to validate.
   assert.deepStrictEqual(parseIntent('[agent:task list]'),
-    { type: 'task', sub: 'list', id: null, who: null, body: '' });
+    { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:task list done]'),
+    { type: 'task', sub: 'list', id: null, who: null, filter: 'done', body: '' });
+  // An unknown filter PARSES — it is the handler that bounces it with the valid
+  // set, so the caller learns the vocabulary instead of getting a near-miss.
+  assert.deepStrictEqual(parseIntent('[agent:task list bogus]'),
+    { type: 'task', sub: 'list', id: null, who: null, filter: 'bogus', body: '' });
 });
 
 test('parseIntent: task bodies span multiple lines (s flag)', () => {

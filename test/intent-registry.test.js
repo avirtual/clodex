@@ -74,7 +74,11 @@ function parseIntentLegacy(rawLine) {
     const body = taskMatch[3];
     if (sub === 'add') return { type: 'task', sub, who: argToks[0] || null, id: null, body };
     if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
-    if (sub === 'list') return { type: 'task', sub, id: null, who: null, body: '' };
+    // t80: list carries an optional state filter from the bracket. Updated here
+    // in lockstep with parseTask — this copy exists to catch UNINTENDED drift
+    // between the walk and the legacy chain, so a deliberate, reviewed shape
+    // change belongs in both or the pin stops meaning anything.
+    if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
