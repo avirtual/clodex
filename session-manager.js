@@ -4729,7 +4729,12 @@ function createSessionManager(deps) {
     }
 
     _handleTask(session, intent) {
-      const stale = this._staleHostSuffix();
+      // Guarded at the CALL SITE as well as inside: _staleHostSuffix catches its
+      // own fs errors, but a diagnostic must not be able to take down the ticket
+      // protocol by any route at all. Ticket work is the thing that matters here;
+      // the notice is a convenience riding along.
+      let stale = '';
+      try { stale = this._staleHostSuffix(); } catch { stale = ''; }
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }

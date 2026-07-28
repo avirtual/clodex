@@ -170,14 +170,15 @@ const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 // invocation, so it reports correctly even when the running host is itself too
 // old to know this check exists. The in-host suffix cannot help on a host that
 // predates it; this can.
-const HOST_DIGEST_IGNORE_RE = /^(node_modules|\.git|build|dist|vendor|docker|test|docs|scripts|renderer|web-dist|cli|tasks)$/;
-
+// Flat top-level *.js only — subdirectories are never descended, so test/,
+// renderer/ and the rest are out by construction. (An ignore list here was dead
+// code: a directory never passes `\.js$`, and `test.js` never equals `test`.)
 function hostModuleDigest(dir) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return null; }
   const parts = [];
   for (const name of names.sort()) {
-    if (HOST_DIGEST_IGNORE_RE.test(name) || !/\.js$/.test(name)) continue;
+    if (!/\.js$/.test(name)) continue;
     try {
       const st = fs.statSync(path.join(dir, name));
       if (st.isFile()) parts.push(`${name}:${Math.round(st.mtimeMs)}:${st.size}`);

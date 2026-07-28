@@ -46,10 +46,20 @@ const path = require('path');
 const HOST_STAMP_BASENAME = '.host.json';
 
 // Files whose bytes are frozen into the running process at require() time.
-// Flat main-process modules only: the renderer reloads per window, and a
-// changed renderer file does not produce the class of confusion this addresses.
+// FLAT `*.js` at the top level only, and that single rule is the whole filter:
+// subdirectories are never descended, so test/, renderer/, node_modules/, cli/
+// and the rest are excluded by construction rather than by an ignore list.
+//
+// An explicit ignore list was written here first and removed as DEAD CODE: a
+// directory never passes `\.js$`, and a file named `test.js` never equals
+// `test`, so no name could ever satisfy both conditions. It was unreachable in
+// every case. Worth saying because the same grammar is duplicated in
+// clodex-team.js, and dead code in a duplicated grammar is doubly expensive —
+// it invites two copies of a rule that does nothing to drift apart.
+//
+// The renderer is deliberately out of scope: it reloads per window, so a
+// changed renderer file does not produce the stale-host confusion this addresses.
 const WATCHED_RE = /\.js$/;
-const IGNORE_RE = /^(node_modules|\.git|build|dist|vendor|docker|test|docs|scripts|renderer|web-dist|cli|tasks)$/;
 
 // A digest of the main-process sources in `dir`. Pure apart from the stat calls;
 // returns null only if the directory cannot be read at all, which is the
@@ -59,7 +69,7 @@ function computeModuleDigest(dir, fsImpl = fs) {
   try { names = fsImpl.readdirSync(dir); } catch { return null; }
   const parts = [];
   for (const name of names.sort()) {
-    if (IGNORE_RE.test(name) || !WATCHED_RE.test(name)) continue;
+    if (!WATCHED_RE.test(name)) continue;
     try {
       const st = fsImpl.statSync(path.join(dir, name));
       if (st.isFile()) parts.push(`${name}:${Math.round(st.mtimeMs)}:${st.size}`);
