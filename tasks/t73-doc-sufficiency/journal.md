@@ -155,4 +155,78 @@ throw at `intent-registry.js:340-362`:
   parse that THROWS is swallowed to `null` (`:369`) — a buggy parse silently
   never fires rather than erroring.
 
-### PHASE A COMPLETE. Next: phase B sweep, then phase C doc patch.
+### PHASE A COMPLETE.
+
+## Phase B — the sweep
+
+Read the whole engine surface (plugin-host-engine.js), the registry
+(intent-registry.js), the scanner shell (_extractIntents), and all 15 sections
+of docs/plugin-api.md to separate "absent" from "already covered".
+
+**The doc is much better than the two defects suggest.** It already documents,
+correctly and with consequences: sync-only hooks and handlers, the thenable
+contract violation, throw-becomes-a-bounce, exactly-once dispatch, the global
+verb namespace, bodyMode-is-a-function-not-a-flag, parse-that-throws-is-no-match,
+storage vs settings, the unscoped style.css, fsScope's limits, and a candid §14
+gap inventory. So the sweep's job was to find what is MISSING, not to rewrite.
+
+### CONTRACT INVENTORY — what a doc-only author can violate silently
+
+| # | Contract | Status | Source |
+|---|---|---|---|
+| 1 | `inject` turns every `\n` into ENTER; conditionally mitigated by the bracketed-paste wrap | **ABSENT** | inject-queue.js:255-260 |
+| 2 | The captured body lands on `.body`, CONCATENATED onto whatever your parse put there | **ABSENT** | session-manager.js:2949-2953 |
+| 3 | `inject` COERCES with `String(text)` — never validates, never rejects | **ABSENT** | plugin-host-engine.js:205 |
+| 4 | `inject` is fire-and-forget: returns `undefined`, no delivery feedback ever | **ABSENT** | plugin-host-engine.js:202-206 |
+| 5 | The hold/batch layer: injects queue while compacting/dialog/mid-turn and flush as ONE turn joined with `\n` | **ABSENT** | session-manager.js:2650-2655, :2750 |
+| 6 | No size cap truncates inject text anywhere | absent, but harmless | traced, A5 |
+| 7 | `bodyMode` must be a function; a string throws | documented | doc:981 |
+| 8 | parse that throws = no match | documented | doc:977 |
+| 9 | handler sync-only, thenable ignored | documented | doc:1015 |
+
+Contracts 1-5 are the population. 2 is the general form of the trial's second
+defect; 1 is its first; 3-5 are the rest of the same family, found by sweeping.
+
+**Contract 5 is the one nobody would guess and it MULTIPLIES contract 1**: the
+hold-queue flush joins batched injects with `\n`, so text that contained no
+newline when you passed it can acquire one before it reaches the terminal.
+
+## Phase C — doc patch DONE
+
++70 lines to docs/plugin-api.md, no product code touched.
+
+1. **§4, new subsection "`inject` is typing, not messaging — four rules"** —
+   contracts 1, 2(hold-batch), 3, 4 + the no-cap fact. Each rule states the
+   CONSEQUENCE, per the ticket. Rule 1 documents BOTH branches and the
+   condition, and says explicitly that the author cannot observe which is live,
+   so the constraint is unconditional from their side (clodex's framing).
+2. **§7, new bullet on `.body`** — the host writes the captured text onto the
+   object YOUR parse returned, APPENDED to whatever `.body` already held. Both
+   consequences spelled out, including the wreckage case where a parse returns a
+   structured `.body`.
+3. **§14 gap inventory** — a cross-referencing entry for the no-feedback gap,
+   pointing at §4 for the rules that bite at call-writing time.
+
+### Verification
+
+- All five documented contracts re-read at source verbatim after writing
+  (inject-queue.js:255-260, plugin-host-engine.js:202-206,
+  session-manager.js:2750, :2951-2954). No claim written from memory.
+- Doc is TEST-PINNED: test/plugin-surface-contract.test.js (frozen-version +
+  section-coverage pins) and test/docs-packaging.test.js. Both green.
+- **Suite 2966/2966, ESCAPES 0** — unchanged from master, as expected for a
+  docs-only change.
+
+### NOT VERIFIED — stated rather than filled in
+
+Whether the **Codex** TUI emits mode 2004. I found no source fact either way.
+This is why the doc says paste mode "differs by session type and by CLI version"
+rather than enumerating which types have it: enumerating would have required
+asserting the Codex case I could not establish.
+
+### Doc-WRONG check (the ticket asked for this separately)
+
+**Nothing found.** Every existing statement I checked in §4/§7/§14 was accurate;
+the failures were omissions, not errors. This is a genuinely different result
+from t82, where the `_deliverTicketSpec` header made a false claim. Worth saying
+plainly: the plugin doc's problem was silence, not lies.
