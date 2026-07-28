@@ -377,6 +377,56 @@ make N deliberate `inject` calls. *Consequence when violated:* the first line
 submits as its own turn and the remainder lands as a second prompt — observed
 live, a message body and its trailer arriving as two user turns.
 
+**Collapse it yourself, before you call.** That rule has an implementation, and
+it is worth transcribing rather than improvising — in clean-room trials, plugin
+authors who understood the rule perfectly still botched the regex that
+discharges it:
+
+```js
+// Build these from STRINGS, not regex literals — see the warning below.
+const ANSI = new RegExp('\\u001B\\[[0-9;?]*[a-zA-Z]|\\u001B\\][^\\u0007]*\\u0007', 'g');
+const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
+const RUNS = new RegExp('\\s+', 'g');
+
+function oneLine(text, max = 0) {
+  let s = String(text).replace(ANSI, '').replace(CTRL, ' ').replace(RUNS, ' ').trim();
+  if (max > 0 && s.length > max) s = s.slice(0, Math.max(0, max - 3)).trimEnd() + '...';
+  return s;
+}
+```
+
+`CTRL` is the load-bearing pass: it removes `\n`, `\r`, `\t` and every other C0
+byte plus DEL, replacing each *run* with a single space so words either side do
+not fuse. `ANSI` runs first so that a colour sequence leaves no `[0m` residue
+behind once its ESC is gone; if some exotic sequence escapes that pattern,
+`CTRL` still strips the ESC itself, so the output is control-free either way.
+`max` is optional and off by default — `inject` has no length cap (below), so
+truncate only if *your own* protocol needs it.
+
+**Warning — a raw control character in source is a hazard of its own class, not
+a detail of this snippet.** Writing a control byte *literally* into a regex
+literal — `/[<0x00>-<0x1F>]+/` with the actual bytes in the file — is the
+failure the string form above is chosen to make unrepresentable. Sometimes it
+is loud: a raw newline inside a literal is a syntax error. The dangerous case
+is quiet, and it is **not** that the pattern is wrong to begin with. Written
+correctly, the literal matches exactly the same set as the string form and
+behaves identically; test it on the day you write it and it passes.
+
+The hazard is that those bytes are **invisible, and they do not reliably
+survive**. Reformatting, transcription, a copy through a terminal, an editor
+that sanitizes on save, a paste through anything that strips unprintables — any
+of these can silently remove them, at which point the character class quietly
+narrows to whatever is left and `oneLine('a\nb')` returns `'a\nb'` unchanged,
+with no error anywhere. **`node --check` will not catch it**, because there is
+nothing syntactically wrong to catch, and neither will a review that reads the
+line as printed. A regex built from a string has no such failure mode: `'\\u001F'`
+is six ordinary printable characters, and a raw byte cannot survive being
+written that way in the first place.
+
+This class of bug has bitten separator constants and ANSI-stripping code
+before; prefer `new RegExp('…')` with escapes whenever a pattern mentions a
+control character at all.
+
 **2. Your text can be merged with other injects, acquiring newlines it never
 had.** When the session cannot usefully receive a turn — mid-turn, blocked on a
 permission dialog, or inside a `/compact` window — injects are queued and later

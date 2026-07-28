@@ -1,0 +1,225 @@
+# t91 — plugin-api.md: ship a `oneLine()` helper, and warn about the class
+
+Branch `t91-doc-oneline-helper` off master `86f0209` (t89 merged).
+Scope per spec: **docs + test only, no product code.**
+
+## The defect, as filed
+
+`docs/plugin-api.md:366-378` states the no-newline contract for `inject` and
+ends with "Join with `' '`" — a rule with no implementation. clodex ran three
+clean-room trials (model builds a plugin from the docs alone). Comprehension
+was 3/3; codegen was 1/3:
+
+- trial 1 — `new RegExp('[\\u0000-\\u001F\\u007F]+', 'g')`. Correct.
+- trial 2 — regex **literal** with raw control bytes. Fails `node --check`. Loud.
+- trial 3 — same defect, syntactically valid. **Parses clean, wrong semantics,
+  silent.**
+
+The split is the whole finding: the one that worked went through a *string*,
+where a raw byte cannot survive the source. So this is a codegen failure, not a
+comprehension failure, and more prose alone would not have fixed it.
+
+## Phase A — source check before writing
+
+Re-verified the doc region rather than trusting the ticket's line numbers.
+`:366-378` is rule 1 of the four `inject` rules; `:375` is the "Join with `' '`"
+sentence. Confirmed as filed.
+
+Repo precedent for the string form already exists and is load-bearing:
+`proxy-util.js:246-253` composes its whole terminal-noise matcher from string
+fragments (`'\\x1b\\[[IO]'` etc.) rather than a literal. `intent-scanner.js:16`
+uses a literal, but its control bytes are written as `\x1b` escapes, so it is
+not an instance of the hazard. Nothing in the repo already exports a `oneLine`;
+grep for the name across `*.js` and `*.md` returned nothing, so the snippet
+introduces a name, it does not shadow one.
+
+## Phase B — what shipped in the doc
+
+Inserted after the rule-1 paragraph (docs/plugin-api.md, after `:378`):
+
+1. **The helper**, as a copyable fenced `js` block: `ANSI`, `CTRL`, `RUNS` built
+   with `new RegExp('…')` from strings, and `oneLine(text, max = 0)` doing
+   ANSI-strip, control-strip-to-space, whitespace-collapse, trim, optional
+   truncate-with-ellipsis.
+2. **Prose on why each pass exists** — notably that `CTRL` replaces each *run*
+   with a single space so words either side do not fuse, and that ANSI runs
+   first so a colour sequence leaves no `[0m` residue once its ESC is gone.
+   `max` is documented as off by default, because `inject` has no length cap.
+3. **The warning, scoped to the class** — a raw control byte written literally
+   into a regex literal is sometimes loud (raw newline = syntax error) and
+   sometimes silent (parses clean, matches the wrong set), and **`node --check`
+   will not catch the silent case**. Names the repo history (separator
+   constants, ANSI stripping) and gives the rule: prefer `new RegExp('…')`
+   whenever a pattern mentions a control character at all.
+
+Design note: `max` defaults to `0` meaning *off*. The spec called truncation
+"optional"; a default of off is the choice that leaves an author who sets
+nothing with the behaviour the surrounding docs promise (no truncation, ever,
+at any size). A non-zero default would have quietly contradicted `:405-406`.
+
+Smoke-checked the snippet by extracting and evaluating it before writing any
+test — newlines/CRLF, tabs, ANSI, NUL+SOH+DEL, runs, trim, plain text,
+non-string coercion, `max=8`, `max=0`. All as intended; `oneLine('abcdefghij', 8)`
+is `'abcde...'`, length exactly 8.
+
+An incidental confirmation of the hazard: the first attempt to smoke-test it
+via a shell heredoc was rejected outright for containing control characters in
+the command, which is the same failure the doc now warns about, one layer up.
+
+## Phase C — test
+
+`test/plugin-api-doc-snippets.test.js`, 8 tests. Per the spec, this is
+explicitly **not** a "the doc contains a snippet" check — that check cannot
+distinguish its outcomes, because the snippet can be present and wrong. The
+file extracts the fenced block, evaluates it with `new Function` (not
+`require`: the snippet has no module wrapper and must run exactly as pasted),
+and asserts behaviour.
+
+Extraction is anchored on `/function\s+oneLine\s*\(/`, not on a line number or
+a block ordinal, so the block can move within the doc without breaking the
+test. It asserts exactly one such block exists, so a duplicated snippet is
+also a failure.
+
+Coverage: newlines (LF/CRLF/CR), the **entire** C0 range 0x00-0x1f plus DEL
+byte-by-byte, ANSI CSI and OSC, run collapse, trim, word-fusion, ordinary text
+round-trip, non-ASCII survival, `max` on and off, non-string coercion, and one
+source-shape assertion (no raw control bytes in the snippet).
+
+## Phase D — revert proofs
+
+Pristine copy taken before any revert; every revert restored from it and the
+restore verified byte-identical. Each revert also verified to have actually
+LANDED by string presence, not by numstat — all seven are inside one fenced
+block so numstat reports the same `38 0` regardless of which line changed, and
+would not have distinguished a real edit from a no-op.
+
+| # | Corruption | Result | Failing message |
+|---|---|---|---|
+| A | drop `.replace(CTRL, ' ')` | 7/8, 1 fail | `control byte 0x0 survived as "a\0b"` |
+| B | `CTRL` → `''` instead of `' '` | 5/8, 3 fail | `LF must not survive` · `control byte 0x0 survived as "ab"` · `a run of newlines is one space, not three` |
+| C | drop `.replace(ANSI, '')` | 7/8, 1 fail | strict-equal on the CSI case |
+| D | drop `.trim()` | 7/8, 1 fail | `leading/trailing whitespace goes` |
+| E | `max = 0` → `max = 40` | 6/8, 2 fail | `default must not truncate — the doc promises inject has no length cap` |
+| F | `CTRL` → regex **literal with raw bytes** (trial 3's defect) | 7/8, 1 fail | `raw control bytes in the documented snippet` |
+| G | rename `oneLine` → `notOneLine` | 0/8, 8 fail | `must define oneLine() in exactly one fenced js block` |
+
+All seven fail **by message**. No crashes, no timeouts, no hangs.
+
+### ENTER checks
+
+Each test was asked separately whether it enters the window it names, not
+merely whether it goes red:
+
+- The C0-range test is the one that catches A. **Revert A did not fail the
+  newline test** — and that is a real finding about the snippet, not a gap in
+  the test: `RUNS` (`\s+`) already matches `\n`, `\r` and `\t`, so newlines
+  alone would survive the loss of `CTRL`. What `CTRL` uniquely buys is the
+  rest of C0 and DEL — NUL, SOH, BEL, ESC-without-a-full-sequence. The C0 test
+  is therefore the only thing standing between the snippet and a plausible
+  "simplification" that looks green.
+- B is the word-fusion case, and it is the reason control chars map to a
+  *space* rather than to nothing. Its third message (`a run of newlines is one
+  space, not three`) confirms the run-collapse assertion is live and not
+  incidentally satisfied.
+- E enters via two different tests, one of which (`a clean string must
+  round-trip identically`) is not about `max` at all — it caught the change
+  because a 40-char default truncates the ordinary-text fixture. Good sign:
+  the default is observable from more than one direction.
+
+### Revert F needs stating precisely
+
+F reproduces trial 3 exactly: `CTRL` as a regex literal holding raw bytes. I
+checked whether that is *behaviourally* wrong by building both forms and
+comparing across 0x00-0x7f: **divergence is NONE.** While the raw bytes survive
+in the source, the literal does the same thing as the string form.
+
+So the defect is not wrong semantics on day one — it is **source fragility**.
+The bytes are invisible, and anything that reformats, transcribes, copies
+through a terminal, or lints the file can eat them; the regex then silently
+narrows and stops matching what it claimed to. Simulated that: after the raw
+bytes are stripped from the literal, `oneLine('a\nb')` returns `'a\nb'`
+unchanged — the newline survives, which is precisely the bug the whole section
+exists to prevent, now with no error anywhere.
+
+Two consequences, both deliberate:
+
+1. The source-shape test is **not redundant with** the behavioural ones — it is
+   the *only* test that can see this defect, because on the day it is written
+   the behaviour is correct. Removing it as "just a containment check" would
+   drop the one guard for the failure mode the ticket was filed about.
+2. The doc's warning is therefore worded around *survivability of the source*,
+   not around "the regex is wrong". Saying it matches the wrong set would be
+   false on day one and would teach an author to check the wrong thing.
+
+An incidental confirmation, again: the shell rejected an earlier attempt to
+run a heredoc containing these bytes, and the scratch script had to build them
+with `String.fromCharCode`.
+
+## Phase E — post-review corrections (clodex, after first report)
+
+Two items, both real, both mine.
+
+### 1. The warning contradicted my own finding
+
+I proved in finding 2 that divergence between the raw-byte literal and the
+string form is NONE — and then shipped a warning saying the literal "parses
+cleanly, **matches the wrong set**, and `node --check` will not catch it."
+That middle clause is the one my own experiment falsified.
+
+The damage is specific and worse than vagueness: an author who reads it goes
+and checks whether their literal matches the right set, finds that it *does*,
+concludes they are fine, and stops looking. A doc that sends a reader to the
+wrong place and satisfies them there is the `_deliverTicketSpec` failure mode
+(a false green), not the t79 failure mode (silence). Silence would have been
+better than that clause.
+
+Rewritten to say what was actually proved: written correctly the literal
+matches exactly the same set and behaves identically, and it passes a test on
+the day it is written. The hazard is that the bytes are invisible and do not
+reliably survive — reformatting, transcription, a copy through a terminal, an
+editor that sanitizes on save — after which the class narrows and
+`oneLine('a\nb')` returns its input unchanged with no error anywhere. Kept
+"`node --check` will not catch it" (true and load-bearing) and added that a
+review reading the line as printed will not catch it either, which is the same
+point at human scale. Also made the literal form concrete (`/[<0x00>-<0x1F>]+/`
+"with the actual bytes in the file") so there is no doubt which construct is
+being warned about.
+
+Lesson worth keeping: I derived the correct wording in the journal and the
+report, then left the earlier draft standing in the artifact that actually
+ships. The finding has to be pushed back into the deliverable, not just
+recorded next to it.
+
+### 2. The journal was a binary file to git
+
+`git show 825a1d4 --stat` reported this journal as `Bin 0 -> 9284 bytes`.
+Cause: ONE raw NUL at line 98, in the revert-A row of the table, from pasting
+the failure message `control byte 0x0 survived as "a<NUL>b"` verbatim out of
+the test output.
+
+**Incidental, not intentional** — checked before changing anything (`file`
+plus a byte scan for the C0 range and DEL found exactly that one byte, nothing
+else). So I escaped it to `\0` rather than annotating it as deliberate. The
+file is now `UTF-8 text` and greppable.
+
+This one is on the nose: a journal documenting an invisible-control-byte
+hazard was itself silently corrupted by an invisible control byte, and the
+consequence was precisely the one that matters — `grep` refuses to search a
+binary file, so the record of the defect became unsearchable. That is how
+trial 3 stayed hidden for an hour in the first place. Same class, one level up,
+found by the lead reading a `--stat` I had not looked at.
+
+Standing rule taken from it: when pasting tool output into an artifact,
+escape the control bytes, and check `file` on anything documenting them.
+
+## Deviations / assumptions
+
+- **`max` defaults to `0` = off.** Spec said "optional max length" without a
+  default. Off is the reversible, sane-if-unset choice and is the only one
+  consistent with the no-length-cap paragraph at `:405-406`. Flagged.
+- One assertion I first wrote (`!out.includes('[')` plus a convoluted `m`
+  probe) was replaced with a strict-equal on the whole output before the
+  reverts ran: a "does not contain `[`" probe misses residue that happens not
+  to include a bracket, and the second clause was near-vacuous.
+- Scope held: docs + test only, **no product code**. No `.claude/CLAUDE.md`
+  edit.
