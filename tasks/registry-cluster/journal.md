@@ -244,4 +244,66 @@ worries about (grouping the map mutations upward), and is true of the code.
 decision, and the spec's stated one is wrong rather than ambiguous — the
 difference between flag-and-proceed and stop-and-report.
 
-### Status: STOPPED, awaiting clodex. No t77 code written.
+### Ruling and delivery
+
+clodex verified all three at source and ruled: **build my formulation, "after the
+resource releases", not "last".** Property (1) kept as specced. Its framing of
+the correction is worth keeping: "last" was never the real property — it was a
+proxy that happened to be true while `_cleanup` still did an `rmSync`, and it
+stopped being true when the rm correctly went away.
+
+**The ticket's own framing was the defect.** It said "not a bug, a correctness
+property held by call-site discipline alone" — and the property it named had
+already been deleted as incorrect. A ticket asserting an invariant makes a claim
+about current code exactly like a comment does, and decays the same way. That is
+now four instances today of prose asserting something the code had moved past
+(the t96 header, two drifted line refs, this).
+
+### Pins (2, in `test/session-manager.test.js`, no product change)
+
+Structural, via `indexOf` over source — the technique at
+`plugin-host-engine.test.js:138-151`, since a unit test cannot execute
+`_cleanup`'s PTY-driven path.
+
+1. **Ordering.** Four landmarks must precede `sessions.delete`, each with its own
+   consequence in the message: `registry.unregister` (EEXIST force-clean against
+   a live entry — t76's bug by a second route), `transport.stop()` (respawn binds
+   while the old listener holds the name-derived path; `Transport.start` unlinks
+   before binding, so the old server survives on an unlinked inode), and both
+   hook cleanups (successor's generated files deleted after it wrote them).
+2. **Companion grep pin.** Per-file `await manager.kill(` count must not exceed
+   `await waitForSessionExit(` count, plus an exact total of 3.
+
+The comment states the exclusion of `:2404-2406` as **deliberate, not
+overlooked** — in-process bookkeeping a respawn re-registers on the way up. Per
+clodex: otherwise the next reader tightens it back to "last" and we are in the
+t96 situation, a correct guard whose rationale invites its own reversal.
+
+### Revert proofs (pristine `t77-sm.pristine` md5 `ed433aee…`, `t77-engine.pristine` md5 `6ecbdc38…`)
+
+| Revert | Parses? | Result |
+|---|---|---|
+| A: **the tidy itself** — group map mutations, move `sessions.delete` above the releases | clean | **fails BY MESSAGE** on the registry collision |
+| B: move ONLY `transport.stop()` below the drop (subtler tidy) | clean | **fails BY MESSAGE** on the unlinked-inode listener |
+| C: add a 4th kill+create caller with no wait | clean | **fails BY MESSAGE** — "3 kill call(s) but only 2 waitForSessionExit" |
+
+No crashes, no no-ops. Both product files restored to pristine md5; `git diff`
+after restore shows the test file only, confirming t77 stayed test-only.
+
+### Status: DONE — `5f746a9`. Suite file 352/352.
+
+---
+
+## Next: t75
+
+The only ticket needing design judgment. clodex's read, explicitly overturnable:
+the **identity field** beats the async probe, because it closes the hole for
+callers that cannot await and `listPeers` being synchronous is a real constraint
+rather than an accident. To measure rather than assume — and note t76's guard
+comment already flags that an async probe in `cleanup()` would open the
+in-process gap that guard currently sits inert against.
+
+Premises to verify at source first: `agent-transport.js:86` (listPeers liveness),
+`:103` (cleanup liveness), `:34-37` (isAlive), `:64` (record with nothing
+identifying), `:211` (send resolves false), and that the probe has exactly one
+production call site.
