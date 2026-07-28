@@ -405,15 +405,27 @@ truncate only if *your own* protocol needs it.
 
 **Warning — a raw control character in source is a hazard of its own class, not
 a detail of this snippet.** Writing a control byte *literally* into a regex
-literal is the failure the string form above is chosen to make
-unrepresentable. Sometimes it is loud: a raw newline inside a literal is a
-syntax error. Sometimes it is silent — the literal parses cleanly, matches the
-wrong set, and **`node --check` will not catch it**, because there is nothing
-syntactically wrong to catch. A regex built from a string has no such failure
-mode, since `'\\u001F'` is six ordinary characters and a raw byte cannot
-survive being written that way. This class of bug has bitten separator
-constants and ANSI-stripping code before; prefer `new RegExp('…')` with
-escapes whenever a pattern mentions a control character at all.
+literal — `/[<0x00>-<0x1F>]+/` with the actual bytes in the file — is the
+failure the string form above is chosen to make unrepresentable. Sometimes it
+is loud: a raw newline inside a literal is a syntax error. The dangerous case
+is quiet, and it is **not** that the pattern is wrong to begin with. Written
+correctly, the literal matches exactly the same set as the string form and
+behaves identically; test it on the day you write it and it passes.
+
+The hazard is that those bytes are **invisible, and they do not reliably
+survive**. Reformatting, transcription, a copy through a terminal, an editor
+that sanitizes on save, a paste through anything that strips unprintables — any
+of these can silently remove them, at which point the character class quietly
+narrows to whatever is left and `oneLine('a\nb')` returns `'a\nb'` unchanged,
+with no error anywhere. **`node --check` will not catch it**, because there is
+nothing syntactically wrong to catch, and neither will a review that reads the
+line as printed. A regex built from a string has no such failure mode: `'\\u001F'`
+is six ordinary printable characters, and a raw byte cannot survive being
+written that way in the first place.
+
+This class of bug has bitten separator constants and ANSI-stripping code
+before; prefer `new RegExp('…')` with escapes whenever a pattern mentions a
+control character at all.
 
 **2. Your text can be merged with other injects, acquiring newlines it never
 had.** When the session cannot usefully receive a turn — mid-turn, blocked on a
