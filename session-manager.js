@@ -182,6 +182,18 @@ function humanizeAge(ms) {
 // Mirrored in scripts/clodex-team.js (the exec listing) — see _taskList.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
+// The recently-closed window on the DEFAULT board (t100). t80 made the default
+// view open-only, which cost the board its memory: a day's closes became
+// invisible without filtering over the whole done pile.
+//
+// THE CAP IS LOAD-BEARING, NOT POLISH. One real day on this team closed 19
+// tickets, so an uncapped 24h window puts back exactly the bloat t80 removed,
+// just on a different axis — and it would grow with the team. Overflow folds
+// into a count line instead. Do not "simplify" either constant away.
+// Mirrored in scripts/clodex-team.js — see _taskList.
+const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
+const RECENT_DONE_CAP = 10;
+
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
 // pid for a session this process isn't running. The latter is the deterministic-
@@ -5073,6 +5085,17 @@ function createSessionManager(deps) {
     // to OPEN plus a count line that NAMES THE QUERY for the rest (a reader who
     // has to guess the syntax is being told to go away).
     //
+    // t100 gives the default view its MEMORY back. Open-only left it unable to
+    // answer "what just happened" — a day's closes were invisible without
+    // filtering over the whole done pile — so the default now carries a capped
+    // RECENTLY CLOSED section (done only, RECENT_DONE_MS window, newest first)
+    // and a tail that counts done and cancelled SEPARATELY. One number for both
+    // answers neither "how much did this team ship" nor "how much did I drop".
+    //
+    // Recently-CANCELLED is deliberately absent: a cancellation is a non-event,
+    // and putting it in the view every reader sees gives it standing it has not
+    // earned. It stays one explicit filter away.
+    //
     // The filter vocabulary is the real state set and nothing else: a ticket is
     // written 'open' (_taskAdd), 'done' (_taskDone) or 'cancelled' (_taskCancel).
     // REJECT IS NOT A STATE — _taskReject sets state back to 'open' — so there is
@@ -5098,22 +5121,38 @@ function createSessionManager(deps) {
       if (!tickets.length) { reply(`no tickets on ${team.name}`); return; }
       const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
       const now = Date.now();
-      const lines = shown.map((t) =>
-        `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
+      const row = (t) =>
+        `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+      // The recent section sorts by closedAt, so it shows closedAt: a list
+      // ordered by a number it does not display reads as arbitrary (a ticket
+      // opened 5d ago and closed an hour ago would sit above one opened an hour
+      // ago, with nothing on screen explaining why).
+      const closedRow = (t) =>
+        `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+      const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
-      // The hidden-count line rides the DEFAULT view only: on an explicit filter
-      // the caller already chose the slice and knows the board is bigger.
-      const hidden = filter === 'open' ? tickets.length - shown.length : 0;
-      const tail = hidden > 0
-        ? `\n(${hidden} closed — [agent:task list done], [agent:task list cancelled] or [agent:task list all])`
+      // The recent section and the count line ride the DEFAULT view only: on an
+      // explicit filter the caller already chose the slice and knows the board
+      // is bigger.
+      const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
+      const doneAll = closed.filter((t) => t.state === 'done');
+      const recentAll = doneAll
+        .filter((t) => t.closedAt && now - t.closedAt < RECENT_DONE_MS)
+        .sort((a, b) => b.closedAt - a.closedAt);
+      const recent = recentAll.slice(0, RECENT_DONE_CAP);
+      const over = recentAll.length - recent.length;
+      const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
+      const tail = closed.length
+        ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${closed.length - doneAll.length} cancelled`
+          + ' — [agent:task list done], [agent:task list cancelled] or [agent:task list all])'
         : '';
       if (!shown.length) {
-        reply(hidden > 0
-          ? `no open tickets on ${team.name}${tail}`
+        reply(closed.length
+          ? `no open tickets on ${team.name}${recentBlock}${tail}`
           : `no ${filter} tickets on ${team.name}`);
         return;
       }
-      reply(`${head}:\n${lines.join('\n')}${tail}`);
+      reply(`${head}:\n${lines.join('\n')}${recentBlock}${tail}`);
     }
 
     // Recompute each live team seat's open-ticket id: refresh the activity-watch map

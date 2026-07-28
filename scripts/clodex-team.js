@@ -158,6 +158,14 @@ function humanizeAge(ms) {
 // shared module would not resolve at run time.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
+// Recently-closed window on the default board — MUST match session-manager.js
+// RECENT_DONE_MS / RECENT_DONE_CAP, duplicated for the same flat-copy reason.
+// The cap is load-bearing: one real day on this team closed 19 tickets, so an
+// uncapped 24h window puts back exactly the bloat the open-only default
+// removed. Overflow folds into the count line.
+const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
+const RECENT_DONE_CAP = 10;
+
 // ── Stale-host check (t93) ─────────────────────────────────────────────────
 // Duplicated from host-stamp.js for the SAME strict-leaf reason as
 // TICKET_FILTERS above: this file is flat-copied into run/bin/, so `require`ing
@@ -306,10 +314,14 @@ function staleHostLineFor(host) {
     + ' restart the app if a fix you expect to be live is not)';
 }
 
-// Mirror of session-manager.js _taskList — same default (open only + a count of
-// what was hidden, naming the query for the rest), same filter set, same bounce.
-// The two must change together or the intent path and the exec pull disagree
-// about what the board looks like.
+// Mirror of session-manager.js _taskList — same default (open, plus a capped
+// recently-closed-done section and a tail counting done and cancelled
+// separately), same filter set, same bounce. The two must change together or
+// the intent path and the exec pull disagree about what the board looks like.
+//
+// Identical CONTENT, not identical bytes: each names the query for the rest in
+// its own caller's vocabulary (intent syntax there, payload syntax here). Which
+// tickets appear, in which section, and the counts — that is the parity.
 function doTickets(payload) {
   const cwd = requesterCwd(payload);
   if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
@@ -332,15 +344,31 @@ function doTickets(payload) {
   });
   const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
   const now = Date.now();
-  const lines = shown.map((t) =>
-    `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
-  const hidden = filter === 'open' ? tickets.length - shown.length : 0;
-  const tail = hidden > 0 ? `\n(${hidden} closed — ask for filter "done", "cancelled" or "all")` : '';
+  const row = (t) =>
+    `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+  // Sorted by closedAt, so it shows closedAt — see _taskList.
+  const closedRow = (t) =>
+    `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+  const lines = shown.map(row);
+  const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
+  const doneAll = closed.filter((t) => t.state === 'done');
+  const recentAll = doneAll
+    .filter((t) => t.closedAt && now - t.closedAt < RECENT_DONE_MS)
+    .sort((a, b) => b.closedAt - a.closedAt);
+  const recent = recentAll.slice(0, RECENT_DONE_CAP);
+  const over = recentAll.length - recent.length;
+  const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
+  const tail = closed.length
+    ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${closed.length - doneAll.length} cancelled`
+      + ' — ask for filter "done", "cancelled" or "all")'
+    : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
   if (!shown.length) {
-    say(hidden > 0 ? `team ${team.name}: no open tickets${tail}` : `team ${team.name}: no ${filter} tickets`);
+    say(closed.length
+      ? `team ${team.name}: no open tickets${recentBlock}${tail}`
+      : `team ${team.name}: no ${filter} tickets`);
   }
-  say(`${head}:\n${lines.join('\n')}${tail}${staleHostLine()}`);
+  say(`${head}:\n${lines.join('\n')}${recentBlock}${tail}${staleHostLine()}`);
 }
 
 async function doRetire(payload) {
