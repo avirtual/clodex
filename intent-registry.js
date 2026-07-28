@@ -184,7 +184,8 @@ function parseReboot(cleaned) {
 //                    case), plus the spec text as a free-text BODY (greedy like dm).
 //   assign <id> <role|name> → no body (the spec lives on the ticket).
 //   done   <id>    → report text BODY. reject <id> → reason BODY.
-//   cancel <id>    → optional reason BODY. list → no args, no body.
+//   cancel <id>    → optional reason BODY.
+//   list [filter]  → optional state filter in the bracket, no body.
 // Body capture for add/done/reject/cancel is this row's bodyMode (like dm);
 // assign/list deliberately carry no body. All guards + lifecycle live in the
 // handler, not here.
@@ -196,7 +197,13 @@ function parseTask(cleaned) {
   const body = m[3];
   if (sub === 'add') return { type: 'task', sub, who: argToks[0] || null, id: null, body };
   if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
-  if (sub === 'list') return { type: 'task', sub, id: null, who: null, body: '' };
+  // list [filter] — the board grows monotonically, so the default view is OPEN
+  // only plus a count of what it hid; the optional bracket arg (open/done/
+  // cancelled/all) asks for the rest. bodyMode is 'none' for list, so the filter
+  // has to ride the bracket. An unknown token is carried through as-is and
+  // BOUNCED by the handler with the valid set — silently defaulting would tell a
+  // caller who typoed a filter that nothing is there.
+  if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
   // done / reject / cancel — a single <id> arg + a free-text body.
   return { type: 'task', sub, id: argToks[0] || null, who: null, body };
 }

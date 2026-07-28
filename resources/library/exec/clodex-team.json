@@ -12,6 +12,7 @@
       "action": { "type": "string", "enum": ["roster", "retire", "tickets"] },
       "agent": { "type": "string", "maxLength": 64 },
       "target": { "type": "string", "maxLength": 64 },
+      "filter": { "type": "string", "enum": ["open", "done", "cancelled", "all"] },
       "cwd": { "type": "string", "maxLength": 1000 }
     }
   }

@@ -152,11 +152,25 @@ function humanizeAge(ms) {
   return `${Math.round(h / 24)}d`;
 }
 
+// Filter vocabulary — MUST match session-manager.js TICKET_FILTERS. Duplicated,
+// not shared: this script is materialized into run/bin/ as a flat basename copy
+// (pot-bin.js materializeExecScripts) and may require node builtins ONLY, so a
+// shared module would not resolve at run time.
+const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
+
+// Mirror of session-manager.js _taskList — same default (open only + a count of
+// what was hidden, naming the query for the rest), same filter set, same bounce.
+// The two must change together or the intent path and the exec pull disagree
+// about what the board looks like.
 function doTickets(payload) {
   const cwd = requesterCwd(payload);
   if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
   const team = resolveTeam(cwd);
   if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  const filter = payload.filter || 'open';
+  if (!TICKET_FILTERS.includes(filter)) {
+    die(`unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
+  }
   let tickets = [];
   try {
     const arr = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, team.name, 'tickets.json'), 'utf-8'));
@@ -168,10 +182,17 @@ function doTickets(payload) {
     const nb = Number(String(b.id).replace(/^t/, '')) || 0;
     return na - nb;
   });
+  const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
   const now = Date.now();
-  const lines = tickets.map((t) =>
+  const lines = shown.map((t) =>
     `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
-  say(`team ${team.name} tickets:\n${lines.join('\n')}`);
+  const hidden = filter === 'open' ? tickets.length - shown.length : 0;
+  const tail = hidden > 0 ? `\n(${hidden} closed — ask for filter "done", "cancelled" or "all")` : '';
+  const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
+  if (!shown.length) {
+    say(hidden > 0 ? `team ${team.name}: no open tickets${tail}` : `team ${team.name}: no ${filter} tickets`);
+  }
+  say(`${head}:\n${lines.join('\n')}${tail}`);
 }
 
 async function doRetire(payload) {
