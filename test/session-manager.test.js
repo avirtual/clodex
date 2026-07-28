@@ -2928,7 +2928,14 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
   assert.strictEqual(f.urgents[1], true, 'the reassigned spec is a work assignment and must wake');
 });
 
-test('t82 the status NOTICES stay passive: done, reject and cancel must not wake a seat', () => {
+// REJECT MOVED OUT OF THIS TEST BY t89, and that is a REVERSAL of a t82
+// decision, not a drive-by edit — see the t89 test below for the replacement
+// pin and the reasoning. t82 classed reject as a status notice; t89 establishes
+// it is a work assignment (it REOPENS the ticket, on a seat that by
+// construction just reported done and has gone idle — the exact state a
+// non-urgent dm is held for). done and cancel are untouched and still pinned
+// passive here.
+test('t82 the status NOTICES stay passive: done and cancel must not wake a seat', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   // done: assignee → lead.
@@ -2937,17 +2944,10 @@ test('t82 the status NOTICES stay passive: done, reject and cancel must not wake
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: done delivered its report to the lead');
   assert.strictEqual(f.urgents[0], false, 'a done-report rides passively — it reaches the lead with their next turn');
-  // reject: lead → assignee.
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
-  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't2', body: 'second report' });
-  f.gated.length = 0; f.urgents.length = 0;
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't2', body: 'not good enough' });
-  assert.strictEqual(f.gated.length, 1, 'ENTER: reject delivered to the assignee');
-  assert.strictEqual(f.urgents[0], false, 'a rejection rides passively');
   // cancel: lead → assignee.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec three' });
   f.gated.length = 0; f.urgents.length = 0;
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't3', body: 'never mind' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: cancel delivered to the assignee');
   assert.strictEqual(f.urgents[0], false,
     'a cancellation rides passively — waking a seat to tell it to stop re-bills a whole context to deliver nothing actionable');
@@ -3210,6 +3210,158 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
   assert.strictEqual(f.one('t2').state, 'cancelled', 'backlog ticket cancels too');
   assert.deepStrictEqual(f.gated, [], 'no reason + no live assignee → no delivery');
+});
+
+// ---------------------------------------------------------------------------
+// t89: the COMPLETION edge. t82 made ticket DISPATCH wake the assignee — the
+// ARRIVAL edge — but a seat already holding a queue received those specs turns
+// ago, so closing one left it idle holding work nobody re-triggered (observed
+// three times in one session). Closing a ticket now hands the seat its next.
+// ---------------------------------------------------------------------------
+
+test('t89 done ADVANCES the seat: the next held ticket is delivered, urgently', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.gated.length = 0; f.urgents.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
+
+  // ENTER: two deliveries — [0] the report to the lead, [1] the advance.
+  assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
+  assert.strictEqual(f.gated[0].target, 'lead', 'ENTER: [0] is the done-report');
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' },
+    'the seat is handed the next ticket it holds, id-prefixed like any dispatch');
+  assert.strictEqual(f.urgents[1], true,
+    'the advance must WAKE — a seat that just closed a ticket is at a turn boundary and about to go idle, the exact state a passive dm is held for');
+  assert.ok(f.injected.some((x) => /next: t2 delivered to team-hand/.test(x)), 'the closer is told what it was handed');
+});
+
+test('t89 closing the LAST held ticket delivers NOTHING — a wake with no work is the cost t82 avoided', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the only spec' });
+  f.gated.length = 0; f.urgents.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
+
+  assert.strictEqual(f.gated.length, 1, 'ONLY the report — no advance, because there is nothing to advance to');
+  assert.strictEqual(f.gated[0].target, 'lead');
+  assert.ok(!f.injected.some((x) => /next:/.test(x)), 'and the reply promises no next ticket');
+});
+
+test('t89 _advanceSeat never hands back the ticket just closed, even before the state stamp lands', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the one being closed' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the genuine next' });
+  f.gated.length = 0;
+
+  // Called DIRECTLY with t1 still open — the shape the helper would see if the
+  // advance ever ran before the terminal state was saved. Both current callers
+  // save first, so no caller can reach this; the guard is what keeps that an
+  // ordering detail rather than a correctness dependency.
+  assert.strictEqual(f.one('t1').state, 'open', 'ENTER: t1 is still open, so only closedId can exclude it');
+  const next = f.m._advanceSeat(f.team, f.teamDir, 'team-hand', 't1');
+
+  assert.strictEqual(next.id, 't2', 'the closed ticket must not be handed back as the seat`s next work');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] the genuine next' }]);
+});
+
+test('t89 the advance is FIFO, not id order — oldest first when the two disagree', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'closing this one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'minted second, but OLDER' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'minted third, but NEWER' });
+  // Force openedAt to CONTRADICT id order: t3 is older than t2. Without this the
+  // two orderings agree and the test cannot tell which one the product used.
+  const tickets = tstore.load(f.teamDir);
+  tickets.find((t) => t.id === 't2').openedAt = 5000;
+  tickets.find((t) => t.id === 't3').openedAt = 1000;
+  tstore.save(f.teamDir, tickets);
+  // ENTER: the disagreement is real — lowest id (t2) is NOT the oldest (t3).
+  assert.ok(f.one('t3').openedAt < f.one('t2').openedAt, 'ENTER: openedAt disagrees with id order');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+
+  assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
+  assert.strictEqual(f.gated[1].body, '[ticket t3] minted third, but NEWER',
+    'FIFO means OLDEST first: t3 was opened before t2, so id order must not decide the advance');
+});
+
+test('t89 the advance skips closed tickets and other seats` work', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'closing this' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'already cancelled' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'reviewer', id: null, body: 'not mine' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog, unassigned' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the real next one' });
+  // ENTER: the decoys are really in the states this test claims.
+  assert.strictEqual(f.one('t2').state, 'cancelled', 'ENTER: t2 is closed');
+  assert.strictEqual(f.one('t3').assignee, 'reviewer', 'ENTER: t3 belongs to another seat');
+  assert.strictEqual(f.one('t4').assignee, null, 'ENTER: t4 is backlog');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+
+  assert.strictEqual(f.gated.length, 2, 'the report and exactly one advance');
+  assert.strictEqual(f.gated[1].body, '[ticket t5] the real next one',
+    'a cancelled ticket, another seat`s ticket and a backlog ticket are all skipped');
+});
+
+test('t89 the advance follows the TICKET`s seat, so a lead closing over a silent seat restarts it', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.gated.length = 0; f.urgents.length = 0;
+
+  // The LEAD closes the hand's ticket (the permitted-actor path). The seat that
+  // needs restarting is the hand, not the closer.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', body: 'closing for it' });
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: a lead close sends no report to itself, so [0] is the advance');
+  assert.deepStrictEqual(f.gated[0], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' },
+    'the advance is keyed on the ticket`s assignee seat — keying it on the closer would leave the silent seat idle, which is the whole defect');
+  assert.strictEqual(f.urgents[0], true);
+});
+
+test('t89 cancel advances too — it frees the seat exactly as done does', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.gated.length = 0; f.urgents.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', body: 'never mind' });
+
+  assert.strictEqual(f.gated.length, 2, 'ENTER: the cancellation notice AND an advance');
+  assert.strictEqual(f.urgents[0], false, 'the cancellation notice itself still rides passively — stopping is not work');
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' });
+  assert.strictEqual(f.urgents[1], true, 'but what follows it is');
+  assert.ok(f.injected.some((x) => /cancelled — next: t2 delivered to team-hand/.test(x)));
+});
+
+test('t89 reject WAKES the assignee: reopening a ticket is a work assignment, not a status notice', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
+  f.gated.length = 0; f.urgents.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', body: 'fix the edge case' });
+
+  // ENTER: the reject really did reopen — otherwise this pins the urgency of a
+  // delivery about a ticket nobody has to act on.
+  assert.strictEqual(f.one('t1').state, 'open', 'ENTER: reject reopened the ticket');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery, so urgents[0] is the rejection');
+  assert.strictEqual(f.urgents[0], true,
+    'a rejected ticket returns to open on a seat that already reported done and gone idle — at passive it sits parked while the board says open');
 });
 
 test('task: role-addressed ticket survives seat respawn (assignee stays the role)', () => {
