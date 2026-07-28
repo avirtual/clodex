@@ -2928,6 +2928,75 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
   assert.strictEqual(f.urgents[1], true, 'the reassigned spec is a work assignment and must wake');
 });
 
+// ── t92: the ASSIGN path's honest reporting ─────────────────────────────────
+// t82 fixed the false green (parked/held reported as delivered) and pinned it
+// — but every one of those pins drives the ADD path (`sub: 'add'`). Assign
+// builds its reply on a SEPARATE line with two wordings of its own (the
+// backlog→assignee case and the reassign `prev → next` case), so nothing held
+// the suffix there. The three tests below cover that gap on the branch the
+// live incident actually took.
+//
+// Why it is worth pinning twice over: the failure mode is a lead reading
+// `ticket t91 → clodex-hand` and believing work started. That belief is the
+// damage — it is acted on, the board agrees with it, and nothing contradicts
+// it until a watchdog fires. A test that cannot tell delivered from parked
+// proves nothing here, so each of these asserts the DISTINCTION, not merely
+// that some notice appeared.
+
+test('t92 assign: a PARKED spec reads as parked on the assign reply too, not just on add', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  f.injected.length = 0;
+  // Park only from here on, so the reply under test is the assign one.
+  f.m._gatedDeliver = (target, sender, body, urgent) => {
+    f.gated.push({ target, sender, body }); f.urgents.push(urgent);
+    return { parked: 'pk-1', reason: 'idle 5h with a cold cache — waking it re-bills its full context' };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the assign attempted a delivery and the gate parked it');
+  const note = f.injected.join('\n');
+  assert.match(note, /ticket t1 → hand/, 'the assign confirmation still reads normally');
+  assert.match(note, /parked/,
+    'the lead must be able to tell parked from delivered — reading "t1 → hand" and believing work started is the whole defect');
+  assert.doesNotMatch(note, /NOT delivered/, 'parked is not held: it drains on the seat next turn, so re-dispatching would duplicate');
+});
+
+test('t92 assign: a HELD spec tells the lead it did NOT land', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  f.injected.length = 0;
+  f.m._gatedDeliver = (target, sender, body, urgent) => {
+    f.gated.push({ target, sender, body }); f.urgents.push(urgent);
+    return { held: 'blocked on a permission dialog — injecting now would answer the dialog' };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the delivery was attempted and the gate held it');
+  const note = f.injected.join('\n');
+  assert.match(note, /NOT delivered/, 'held means the seat never saw the spec — the lead must re-send, so it cannot read as success');
+  assert.match(note, /permission dialog/, 'and is told why, since urgent cannot override a dialog hold');
+});
+
+test('t92 reassign: the prev → next reply carries the suffix too (its own wording, its own branch)', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.injected.length = 0;
+  f.m._gatedDeliver = (target, sender, body, urgent) => {
+    f.gated.push({ target, sender, body }); f.urgents.push(urgent);
+    // Park the NEW-assignee spec only; the old-assignee notice is fire-and-forget.
+    return target === 'team-reviewer-1'
+      ? { parked: 'pk-2', reason: 'idle 5h with a cold cache — waking it re-bills its full context' }
+      : { delivered: true };
+  };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  const note = f.injected.join('\n');
+  assert.match(note, /ticket t1: hand → reviewer/, 'ENTER: this is the REASSIGN wording, a different reply line from the assign one above');
+  assert.match(note, /parked/,
+    'the reassign branch builds its own reply string, so the suffix has to be pinned on it separately');
+});
+
 // REJECT MOVED OUT OF THIS TEST BY t89, and that is a REVERSAL of a t82
 // decision, not a drive-by edit — see the t89 test below for the replacement
 // pin and the reasoning. t82 classed reject as a status notice; t89 establishes
