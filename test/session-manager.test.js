@@ -2983,6 +2983,47 @@ test('t93 _staleHostSuffix is computed ONCE per intent, not per reply line', () 
     'the check stats the whole module dir, so a per-reply call would put real IO on every task intent');
 });
 
+// ── t94: the in-host suffix on a host with no stamp ─────────────────────────
+// t93's tests all stubbed _staleHostSuffix, so they pinned what _handleTask
+// does with a suffix, never what the method itself computes. A revert that
+// deleted the entire t94 wiring from it failed nothing. These drive the real
+// method through its seams.
+
+test('t94 the real suffix speaks when there is no stamp and modules changed under the host', () => {
+  const f = mkTasks();
+  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t94-sm-'));
+  const dir = pathReal.join(root, 'src');
+  const runRoot = pathReal.join(root, 'run');
+  fsReal.mkdirSync(dir); fsReal.mkdirSync(runRoot);
+  fsReal.writeFileSync(pathReal.join(dir, 'session-manager.js'), 'module.exports = {};');
+  // Modified well after this process started — explicit mtime, so the write
+  // cannot land in the same filesystem-timestamp tick and read as unchanged.
+  fsReal.utimesSync(pathReal.join(dir, 'session-manager.js'), new Date(Date.now() + 60_000), new Date(Date.now() + 60_000));
+
+  const suffix = Object.getPrototypeOf(f.m)._staleHostSuffix.call(f.m, Date.now(), { runRoot, dir });
+  assert.match(suffix, /NOTE:/, 'a stamp-less host with changed modules must NOT be silent — that silence was the t94 bug');
+  assert.match(suffix, /UNCONFIRMED/, 'and it reports evidence rather than asserting staleness');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('t94 the real suffix stays SILENT when nothing changed under the host', () => {
+  const f = mkTasks();
+  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t94-sm2-'));
+  const dir = pathReal.join(root, 'src');
+  const runRoot = pathReal.join(root, 'run');
+  fsReal.mkdirSync(dir); fsReal.mkdirSync(runRoot);
+  fsReal.writeFileSync(pathReal.join(dir, 'session-manager.js'), 'module.exports = {};');
+  // Predates this process by a day: nothing has changed underneath it, so this
+  // host is genuinely fresh. Without this half the test above would pass on a
+  // suffix that fired unconditionally.
+  const old = Date.now() - 86_400_000;
+  fsReal.utimesSync(pathReal.join(dir, 'session-manager.js'), new Date(old), new Date(old));
+
+  const suffix = Object.getPrototypeOf(f.m)._staleHostSuffix.call(f.m, Date.now(), { runRoot, dir });
+  assert.strictEqual(suffix, '', 'a fresh host says nothing at all');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('t93 a throwing stale check never breaks the reply it rides on', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
