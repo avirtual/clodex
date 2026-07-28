@@ -23,6 +23,7 @@ const path = require('path');
 const cp = require('child_process');
 
 const { parseAndValidate } = require('../exec-schema');
+const { createSessionManager } = require('../session-manager');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-team.js');
 const EXEC_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'clodex-team.exec.json'), 'utf-8'));
@@ -189,6 +190,140 @@ test('bad payloads are loud (unknown action, missing agent)', async () => {
   const r9 = await launch(home, { action: 'roster' });
   assert.strictEqual(r9.code, 1);
   assert.match(r9.err, /needs "agent"/, r9.err);
+});
+
+// ── The listing parity pin (t100) ───────────────────────────────────────────
+// scripts/clodex-team.js doTickets DUPLICATES session-manager.js _taskList,
+// for the same flat-copy reason TICKET_FILTERS and the digest grammar are
+// duplicated. The comment in both files says "change both together", and the
+// next person to touch one will not read the other — so this runs BOTH over the
+// SAME ticket registry and demands the same answer.
+//
+// It compares CONTENT, not bytes, and that is deliberate rather than a
+// weakening: the two tails name the query in their own caller's vocabulary
+// (intent syntax there, payload syntax here) and the head differs likewise.
+// Byte equality would therefore fail today, on correct code, which would make
+// the pin worthless. What must never differ is WHICH tickets appear, in WHICH
+// section, in what order, and the counts.
+
+// Reduce a rendering to the facts both implementations must agree on: the
+// ticket rows, the section header that separates them, and the tail's numbers.
+// Everything vocabulary-specific is dropped ON PURPOSE — see above.
+function listingFacts(text) {
+  const facts = [];
+  for (const line of text.split('\n')) {
+    if (/^recently closed:$/.test(line)) { facts.push('SECTION'); continue; }
+    const row = line.match(/^(t\d+) \[(\w+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
+    if (row) { facts.push(`${row[1]}|${row[2]}|${row[3]}|${row[4] ? 'closed' : 'open-age'}|${row[7]}`); continue; }
+    const tail = line.match(/\((?:\+(\d+) more done in the last 24h; )?(\d+) done, (\d+) cancelled/);
+    if (tail) facts.push(`TAIL|over=${tail[1] || 0}|done=${tail[2]}|cancelled=${tail[3]}`);
+    const none = line.match(/no open tickets/);
+    if (none) facts.push('NO-OPEN');
+  }
+  return facts;
+}
+
+function mkTicketRegistry(home, teamName, tickets) {
+  fs.writeFileSync(path.join(home, 'teams', teamName, 'tickets.json'), JSON.stringify(tickets));
+}
+
+// The intent-path rendering of the same registry, driven directly: _taskList
+// reads nothing off `session` and takes teamDir as an argument, so it needs no
+// PTY and no team resolution.
+function intentListing(teamDir, teamName, filter) {
+  const SM = createSessionManager({ fs, path });
+  let out = '';
+  new SM()._taskList({ name: 'lead' }, { name: teamName, lead: 'lead' }, teamDir,
+    { filter }, (s) => { out = s; });
+  return out;
+}
+
+const HOUR = 60 * 60 * 1000;
+
+// A board built to exercise every branch the two must agree on at once: an
+// open ticket, closes inside and outside the 24h window, a cancellation of the
+// same age as a recent done (so age cannot explain its exclusion), and more
+// recent closes than the cap.
+function parityBoard() {
+  const now = Date.now();
+  const rows = [
+    { id: 't1', title: 'still going', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
+    { id: 't2', title: 'old close', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
+    { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR },
+  ];
+  for (let i = 0; i < 12; i++) {
+    rows.push({
+      id: `t${i + 4}`, title: `recent ${i}`, assignee: 'hand', state: 'done',
+      openedAt: now - 40 * HOUR, closedAt: now - (i + 1) * HOUR,
+    });
+  }
+  return rows;
+}
+
+test('listing parity: the exec pull and the intent path render the same board (t100)', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  reg(home, 'alead', proj);
+  const rows = parityBoard();
+  mkTicketRegistry(home, 'proj', rows);
+  const teamDir = path.join(home, 'teams', 'proj');
+
+  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  assert.strictEqual(r.code, 0, `tickets exits 0: ${r.err}`);
+  const theirs = listingFacts(r.err);
+  const mine = listingFacts(intentListing(teamDir, 'proj', null));
+
+  // ENTER: the fixture must actually reach the interesting branches, or this
+  // test would pass on two implementations that both render nothing.
+  assert.ok(mine.includes('SECTION'), 'ENTER: the default view has a recent section');
+  assert.ok(mine.some((f) => /^TAIL\|over=2\|done=13\|cancelled=1$/.test(f)),
+    `ENTER: cap overflow and both counts are live in the fixture: ${mine.join(' / ')}`);
+  assert.strictEqual(mine.filter((f) => /\|closed\|/.test(f)).length, 10, 'ENTER: the cap is in play');
+
+  assert.deepStrictEqual(theirs, mine,
+    'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');
+});
+
+test('listing parity: holds on each explicit filter too', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  mkTicketRegistry(home, 'proj', parityBoard());
+  const teamDir = path.join(home, 'teams', 'proj');
+
+  for (const filter of ['done', 'cancelled', 'all']) {
+    const r = await launch(home, { action: 'tickets', agent: 'alead', filter });
+    assert.strictEqual(r.code, 0, `${filter}: exits 0: ${r.err}`);
+    const mine = listingFacts(intentListing(teamDir, 'proj', filter));
+    assert.ok(mine.length, `ENTER: ${filter} renders something`);
+    // The chosen-slice rule is half of what parity means here: neither side may
+    // grow a recent section or a count tail on an explicit filter.
+    assert.ok(!mine.includes('SECTION'), `${filter}: no section on the intent path`);
+    assert.ok(!mine.some((f) => f.startsWith('TAIL')), `${filter}: no count tail on the intent path`);
+    assert.deepStrictEqual(listingFacts(r.err), mine, `${filter}: the two implementations disagree`);
+  }
+});
+
+test('listing parity: holds on a board with nothing open', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  // The no-open branch is a SEPARATE reply path in both files — the one place
+  // the two could most easily drift, since each writes its own sentence there.
+  const now = Date.now();
+  mkTicketRegistry(home, 'proj', [
+    { id: 't1', title: 'shipped', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+    { id: 't2', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+  ]);
+  const mine = listingFacts(intentListing(path.join(home, 'teams', 'proj'), 'proj', null));
+  assert.ok(mine.includes('NO-OPEN'), 'ENTER: the no-open branch is the one under test');
+  assert.ok(mine.includes('SECTION'), 'ENTER: and it still carries the recent section');
+  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(listingFacts(r.err), mine, 'the no-open reply paths drifted');
 });
 
 // The exec-def gates payloads BEFORE they reach the script; pin that the

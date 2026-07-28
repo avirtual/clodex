@@ -3595,8 +3595,12 @@ test('task list: one line per ticket (id, state, assignee, age, title), sorted b
   assert.match(out, /t2 \[open\] — \d+\w+ — second task/, 'unassigned shows — for the assignee');
   assert.ok(out.indexOf('t1') < out.indexOf('t2'), 'sorted by id');
   // t80: both tickets are OPEN here, so the default view hides nothing and the
-  // count line must not appear at all (a "(0 closed …)" line would be noise).
-  assert.ok(!/closed —/.test(out), 'no hidden-count line when nothing is hidden');
+  // count line must not appear at all (a "(0 done, 0 cancelled …)" line would
+  // be noise). t100 UPDATED THE PATTERN: the old `closed —` no longer occurs in
+  // any tail, so leaving it here would have been a check that passes whatever
+  // the code does. Match the shape the code actually emits.
+  assert.ok(!/\d+ done, \d+ cancelled/.test(out), 'no hidden-count line when nothing is hidden');
+  assert.ok(!/recently closed:/.test(out), 'and no recent section when nothing is closed');
 });
 
 test('task list: an empty registry says so', () => {
@@ -3626,21 +3630,32 @@ function mkBoard() {
   return f;
 }
 
-test('t80 task list: the DEFAULT view hides closed tickets', () => {
+test('t80 task list: the DEFAULT view hides closed tickets (t100: except a capped recent window)', () => {
   const f = mkBoard();
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
   const out = f.injected.find((x) => /tickets on team/.test(x));
   assert.ok(out, 'a list summary was returned');
   assert.match(out, /t1 \[open\]/, 'the open ticket is shown');
-  assert.ok(!/t2 \[done\]/.test(out), 'the done ticket is hidden');
-  assert.ok(!/t3 \[cancelled\]/.test(out), 'the cancelled ticket is hidden');
+  // t80 asserted the done ticket was hidden OUTRIGHT. t100 narrows that: the
+  // done PILE is still hidden, but the last 24h of it (capped) is shown on
+  // purpose. mkBoard closes t2 a millisecond ago, so it is inside the window
+  // and this assertion was inverted deliberately, not repaired to pass — the
+  // property t80 owns (the board is not a wall of closed tickets) is pinned by
+  // the cap and window tests below, and by the cancelled line here.
+  assert.match(out, /t2 \[done\]/, 'a just-closed done ticket rides the recent section');
+  assert.ok(!/t2 \[done\] hand \d+\w+ —/.test(out),
+    'but NOT as an ordinary open-list row — it is in the recent block, closed-age formatted');
+  assert.ok(!/t3 \[cancelled\]/.test(out), 'the cancelled ticket is hidden, recent or not');
 });
 
 test('t80 task list: the count line states how many are hidden AND how to see them', () => {
   const f = mkBoard();
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
   const out = f.injected.find((x) => /tickets on team/.test(x));
-  assert.match(out, /\(2 closed —/, 'the count of hidden tickets');
+  // t100 split the single "2 closed" into its two real numbers. The PROPERTY
+  // t80 pinned is unchanged — the count of what is hidden is stated — only its
+  // shape moved, so this still asserts a count and not merely a word.
+  assert.match(out, /\(1 done, 1 cancelled —/, 'the counts of hidden tickets, split by state');
   // The query must be spelled out: a reader who has to guess the syntax has
   // been told the tickets exist and nothing more.
   assert.match(out, /\[agent:task list done\]/, 'names the done query');
@@ -3658,8 +3673,9 @@ test('t80 task list: each filter shows exactly its own state', () => {
     assert.ok(out, `${filter}: a summary was returned`);
     assert.match(out, want, `${filter}: shows its own state`);
     assert.ok(!notWant.test(out), `${filter}: does not show other states`);
-    // An explicit filter is a chosen slice — no hidden-count line.
-    assert.ok(!/closed —/.test(out), `${filter}: no count line on an explicit filter`);
+    // An explicit filter is a chosen slice — no hidden-count line. Pattern
+    // updated with the tail's shape (t100), same reason as above.
+    assert.ok(!/\d+ done, \d+ cancelled/.test(out), `${filter}: no count line on an explicit filter`);
   }
 });
 
@@ -3692,7 +3708,131 @@ test('t80 task list: a board with everything closed says so and still points on'
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
   const out = f.injected.find((x) => /no open tickets/.test(x));
   assert.ok(out, 'an all-closed board reports no OPEN tickets, not "no tickets"');
-  assert.match(out, /\(3 closed —/, 'and still names the count + query');
+  assert.match(out, /\(2 done, 1 cancelled —/, 'and still names the counts + query');
+  // t100: the empty-board branch is the one place a reader has NOTHING else to
+  // look at, so it is where the recent section earns its keep most.
+  assert.match(out, /recently closed:/, 'the recent section rides the no-open branch too');
+});
+
+// ── t100: the default board keeps a capped day of closes ─────────────────────
+// The board is written DIRECTLY here rather than driven through _handleTask,
+// because every property below is about closedAt and the close verbs stamp it
+// with Date.now(). A test that cannot place a ticket 25h in the past cannot
+// test the window at all.
+const HOUR = 60 * 60 * 1000;
+
+function mkAged(rows) {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const now = Date.now();
+  tstore.save(f.teamDir, rows.map((r, i) => ({
+    id: `t${i + 1}`,
+    title: r.title || `ticket ${i + 1}`,
+    assignee: 'hand',
+    state: r.state,
+    openedAt: now - 30 * HOUR,
+    closedAt: r.state === 'open' ? null : now - r.agoH * HOUR,
+  })));
+  f.injected.length = 0;
+  return f;
+}
+
+const board = (f, filter = null) => {
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter, body: '' });
+  return f.injected.find((x) => /tickets on team|no open tickets|no \w+ tickets/.test(x)) || '';
+};
+
+test('t100 task list: recently-closed done tickets ride the DEFAULT view, newest first', () => {
+  const f = mkAged([
+    { state: 'open', title: 'still going' },
+    { state: 'done', agoH: 5, title: 'closed five hours ago' },
+    { state: 'done', agoH: 1, title: 'closed one hour ago' },
+  ]);
+  const out = board(f);
+  assert.match(out, /recently closed:/, 'the section is present');
+  assert.match(out, /t2 \[done\] hand closed \d+h ago — closed five hours ago/);
+  assert.match(out, /t3 \[done\] hand closed \d+h ago — closed one hour ago/);
+  // Newest first: the point of the section is "what just happened", and id
+  // order would answer a different question.
+  assert.ok(out.indexOf('t3 [done]') < out.indexOf('t2 [done]'), 'sorted by closedAt descending');
+  // The open ticket keeps its own row above the section, unchanged.
+  assert.match(out, /t1 \[open\] hand \d+\w+ — still going/);
+  assert.ok(out.indexOf('t1 [open]') < out.indexOf('recently closed:'), 'open tickets come first');
+});
+
+test('t100 task list: the 24h window EXCLUDES an older close but still COUNTS it', () => {
+  const f = mkAged([
+    { state: 'open' },
+    { state: 'done', agoH: 25, title: 'yesterday-plus' },
+    { state: 'done', agoH: 2, title: 'today' },
+  ]);
+  const out = board(f);
+  // The discriminating pair: both are done, they differ ONLY in age, and they
+  // must land in different places. Either assertion alone would pass for a
+  // scanner that drops every done ticket or keeps every one.
+  assert.ok(!/yesterday-plus/.test(out), 'a close 25h old is NOT in the recent section');
+  assert.match(out, /today/, 'a close 2h old IS');
+  assert.match(out, /\(2 done, 0 cancelled —/, 'but the tail counts BOTH — the older one is hidden, not forgotten');
+});
+
+test('t100 task list: the recent section is CAPPED and the overflow folds into the count', () => {
+  // 13 recent closes: 3 over the cap of 10. Uncapped, this is the bloat the
+  // open-only default was introduced to remove.
+  const rows = [{ state: 'open' }];
+  for (let i = 0; i < 13; i++) rows.push({ state: 'done', agoH: i + 1, title: `recent ${i}` });
+  const f = mkAged(rows);
+  const out = board(f);
+  const shown = (out.match(/\[done\]/g) || []).length;
+  assert.strictEqual(shown, 10, 'exactly the cap is rendered, not all 13');
+  assert.match(out, /\+3 more done in the last 24h/, 'the overflow is stated, not silently dropped');
+  assert.match(out, /13 done, 0 cancelled/, 'and the full done count is still there');
+  // Which 10: the NEWEST. Dropping the newest and keeping the oldest would
+  // satisfy a bare count check while inverting the section's purpose.
+  assert.match(out, /recent 0/, 'the newest close survives the cap');
+  assert.ok(!/recent 12/.test(out), 'the oldest of the 13 is the one cut');
+});
+
+test('t100 task list: cancelled is COUNTED separately and never enters the recent section', () => {
+  const f = mkAged([
+    { state: 'open' },
+    { state: 'done', agoH: 1, title: 'shipped' },
+    { state: 'cancelled', agoH: 1, title: 'dropped' },
+  ]);
+  const out = board(f);
+  assert.match(out, /\(1 done, 1 cancelled —/, 'the two numbers are separate');
+  assert.ok(!/2 closed/.test(out), 'and not lumped into one');
+  // A cancellation is a non-event: recent-done only. This is the assertion
+  // that distinguishes "recent closes" from "recent done", and the cancelled
+  // ticket here is the same age as the done one so age cannot explain it.
+  assert.match(out, /shipped/, 'the recent done ticket is shown');
+  assert.ok(!/dropped/.test(out), 'the equally-recent cancelled one is not');
+});
+
+test('t100 task list: EXPLICIT filters get neither the recent section nor the split tail', () => {
+  const f = mkAged([
+    { state: 'open' },
+    { state: 'done', agoH: 1 },
+    { state: 'cancelled', agoH: 1 },
+  ]);
+  for (const filter of ['done', 'cancelled', 'all']) {
+    const out = board(f, filter);
+    assert.ok(out, `${filter}: a summary was returned`);
+    assert.ok(!/recently closed:/.test(out), `${filter}: no recent section — the caller chose the slice`);
+    assert.ok(!/\d+ done, \d+ cancelled/.test(out), `${filter}: no count tail either`);
+  }
+  // ENTER check: the default view over this same board DOES have both, so the
+  // four assertions above are about the filter and not about an empty fixture.
+  const dflt = board(f);
+  assert.match(dflt, /recently closed:/, 'ENTER: the default view has the section');
+  assert.match(dflt, /1 done, 1 cancelled/, 'ENTER: and the split tail');
+});
+
+test('t100 task list: an open-only board gets no section and no tail', () => {
+  const f = mkAged([{ state: 'open' }, { state: 'open' }]);
+  const out = board(f);
+  assert.ok(!/recently closed:/.test(out), 'nothing closed — no empty section header');
+  assert.ok(!/0 done, 0 cancelled/.test(out), 'and no zero-count tail');
 });
 
 test('list(): the assignee seat carries its open ticket id (sidebar badge seed)', () => {
