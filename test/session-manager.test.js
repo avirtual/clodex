@@ -3254,19 +3254,111 @@ test('task list: one line per ticket (id, state, assignee, age, title), sorted b
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first task' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'second task' });
   f.injected.length = 0;
-  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
   const out = f.injected.find((x) => /tickets on team/.test(x));
   assert.ok(out, 'a list summary was returned to the sender');
   assert.match(out, /t1 \[open\] hand \d+\w+ — first task/);
   assert.match(out, /t2 \[open\] — \d+\w+ — second task/, 'unassigned shows — for the assignee');
   assert.ok(out.indexOf('t1') < out.indexOf('t2'), 'sorted by id');
+  // t80: both tickets are OPEN here, so the default view hides nothing and the
+  // count line must not appear at all (a "(0 closed …)" line would be noise).
+  assert.ok(!/closed —/.test(out), 'no hidden-count line when nothing is hidden');
 });
 
 test('task list: an empty registry says so', () => {
   const f = mkTasks();
   f.seat('lead');
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
   assert.ok(f.injected.some((x) => /no tickets on team/.test(x)));
+});
+
+// ── t80: the board defaults to OPEN, closed tickets on request ───────────────
+// Fixture helper: open three tickets and close two, leaving t1 open, t2 done,
+// t3 cancelled — one of each real state.
+function mkBoard() {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'still going' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'finished work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'dropped work' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't2', who: null, body: 'report' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't3', who: null, body: 'nvm' });
+  // ENTER check: the window this suite names only exists if the states really
+  // differ — assert the board shape before testing how it is rendered.
+  assert.strictEqual(f.one('t1').state, 'open');
+  assert.strictEqual(f.one('t2').state, 'done');
+  assert.strictEqual(f.one('t3').state, 'cancelled');
+  f.injected.length = 0;
+  return f;
+}
+
+test('t80 task list: the DEFAULT view hides closed tickets', () => {
+  const f = mkBoard();
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
+  const out = f.injected.find((x) => /tickets on team/.test(x));
+  assert.ok(out, 'a list summary was returned');
+  assert.match(out, /t1 \[open\]/, 'the open ticket is shown');
+  assert.ok(!/t2 \[done\]/.test(out), 'the done ticket is hidden');
+  assert.ok(!/t3 \[cancelled\]/.test(out), 'the cancelled ticket is hidden');
+});
+
+test('t80 task list: the count line states how many are hidden AND how to see them', () => {
+  const f = mkBoard();
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
+  const out = f.injected.find((x) => /tickets on team/.test(x));
+  assert.match(out, /\(2 closed —/, 'the count of hidden tickets');
+  // The query must be spelled out: a reader who has to guess the syntax has
+  // been told the tickets exist and nothing more.
+  assert.match(out, /\[agent:task list done\]/, 'names the done query');
+  assert.match(out, /\[agent:task list all\]/, 'names the all query');
+});
+
+test('t80 task list: each filter shows exactly its own state', () => {
+  for (const [filter, want, notWant] of [
+    ['done', /t2 \[done\]/, /t1 \[open\]/],
+    ['cancelled', /t3 \[cancelled\]/, /t1 \[open\]/],
+  ]) {
+    const f = mkBoard();
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter, body: '' });
+    const out = f.injected.find((x) => /tickets on team/.test(x));
+    assert.ok(out, `${filter}: a summary was returned`);
+    assert.match(out, want, `${filter}: shows its own state`);
+    assert.ok(!notWant.test(out), `${filter}: does not show other states`);
+    // An explicit filter is a chosen slice — no hidden-count line.
+    assert.ok(!/closed —/.test(out), `${filter}: no count line on an explicit filter`);
+  }
+});
+
+test('t80 task list: `all` shows every state', () => {
+  const f = mkBoard();
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: 'all', body: '' });
+  const out = f.injected.find((x) => /tickets on team/.test(x));
+  assert.match(out, /t1 \[open\]/);
+  assert.match(out, /t2 \[done\]/);
+  assert.match(out, /t3 \[cancelled\]/);
+});
+
+test('t80 task list: an unknown filter BOUNCES with the valid set', () => {
+  const f = mkBoard();
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: 'rejected', body: '' });
+  const out = f.injected.find((x) => /unknown filter/.test(x));
+  assert.ok(out, 'a typoed filter bounces loudly');
+  assert.match(out, /open, done, cancelled, all/, 'and names the whole valid set');
+  // Load-bearing: silently falling back to the default would tell a caller who
+  // typoed that nothing is there. `rejected` is the likeliest typo precisely
+  // because reject is a verb — but it reopens a ticket, so it is not a state.
+  assert.ok(!f.injected.some((x) => /tickets on team/.test(x)),
+    'a bad filter must NOT also render the default board');
+});
+
+test('t80 task list: a board with everything closed says so and still points on', () => {
+  const f = mkBoard();
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done too' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
+  const out = f.injected.find((x) => /no open tickets/.test(x));
+  assert.ok(out, 'an all-closed board reports no OPEN tickets, not "no tickets"');
+  assert.match(out, /\(3 closed —/, 'and still names the count + query');
 });
 
 test('list(): the assignee seat carries its open ticket id (sidebar badge seed)', () => {

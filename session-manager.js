@@ -174,6 +174,13 @@ function humanizeAge(ms) {
   return `${Math.round(h / 24)}d`;
 }
 
+// The filter vocabulary for [agent:task list [filter]]. The three real states a
+// ticket is ever written with, plus `all`. Deliberately NOT `rejected`: reject
+// reopens a ticket (_taskReject sets state 'open'), so a rejected filter would
+// always answer none and be misread as "nothing was rejected".
+// Mirrored in scripts/clodex-team.js (the exec listing) — see _taskList.
+const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
+
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
 // pid for a session this process isn't running. The latter is the deterministic-
@@ -4949,17 +4956,52 @@ function createSessionManager(deps) {
       reply(`ticket ${ticket.id} cancelled`);
     }
 
+    // [agent:task list [filter]] — the board only ever grows, so listing all of
+    // it puts ~80 lines of mostly-closed noise in front of every reader. Default
+    // to OPEN plus a count line that NAMES THE QUERY for the rest (a reader who
+    // has to guess the syntax is being told to go away).
+    //
+    // The filter vocabulary is the real state set and nothing else: a ticket is
+    // written 'open' (_taskAdd), 'done' (_taskDone) or 'cancelled' (_taskCancel).
+    // REJECT IS NOT A STATE — _taskReject sets state back to 'open' — so there is
+    // deliberately no `rejected` filter: it would answer "none" and be read as
+    // "none were rejected" rather than "that is not a category".
+    //
+    // NOTE: scripts/clodex-team.js doTickets is a SECOND implementation of this
+    // listing (the exec pull) and must stay behaviourally identical. It is not
+    // shared code on purpose — that script is materialized out of the repo as a
+    // flat basename copy into run/bin/ and may require node builtins ONLY, so a
+    // shared module would fail to resolve at run time. Change both together.
     _taskList(session, team, teamDir, intent, reply) {
+      const filter = intent.filter || 'open';
+      if (!TICKET_FILTERS.includes(filter)) {
+        reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
+        return;
+      }
       const tickets = ticketsStore.load(teamDir).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
       });
       if (!tickets.length) { reply(`no tickets on ${team.name}`); return; }
+      const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
       const now = Date.now();
-      const lines = tickets.map((t) =>
+      const lines = shown.map((t) =>
         `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`);
-      reply(`tickets on ${team.name}:\n${lines.join('\n')}`);
+      const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
+      // The hidden-count line rides the DEFAULT view only: on an explicit filter
+      // the caller already chose the slice and knows the board is bigger.
+      const hidden = filter === 'open' ? tickets.length - shown.length : 0;
+      const tail = hidden > 0
+        ? `\n(${hidden} closed — [agent:task list done], [agent:task list cancelled] or [agent:task list all])`
+        : '';
+      if (!shown.length) {
+        reply(hidden > 0
+          ? `no open tickets on ${team.name}${tail}`
+          : `no ${filter} tickets on ${team.name}`);
+        return;
+      }
+      reply(`${head}:\n${lines.join('\n')}${tail}`);
     }
 
     // Recompute each live team seat's open-ticket id: refresh the activity-watch map
