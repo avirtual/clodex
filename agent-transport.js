@@ -95,12 +95,55 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
       return this.listPeers().find(p => p.name === name) || null;
     },
 
+    // Prune registry entries whose agent is gone. Read-then-delete, so the
+    // verdict is about BYTES and must not outlive them — see the re-validation
+    // below, which is the same shape as the stale-recovery guard at
+    // session-manager.js:1379-1385 and exists so the two read-then-act paths
+    // over this store do not differ for reasons nobody wrote down.
     cleanup() {
       let removed = 0;
       for (const regPath of regEntries()) {
         try {
-          const info = JSON.parse(fs.readFileSync(regPath, 'utf-8'));
+          const raw = fs.readFileSync(regPath, 'utf-8');
+          const info = JSON.parse(raw);
           if (!fs.existsSync(info.socket) || !isAlive(info.pid)) {
+            // RE-VALIDATE BEFORE DELETING. The verdict above describes the bytes
+            // in `raw`; if the entry has been replaced since, those bytes are
+            // gone and the verdict is about a record that no longer exists.
+            // Applying it anyway unlinks a LIVE agent's registration — the
+            // re-register path in create() force-cleans a blocking entry and
+            // writes a fresh one (session-manager.js:1379-1401), so the
+            // replacement carries a live pid and would be deleted by a stale
+            // "dead" verdict. Recoverable rather than permanent (the socket
+            // survives, see below), but that agent is undiscoverable until it
+            // registers again, and nothing notices.
+            //
+            // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT. Re-read and unlink
+            // are two syscalls; another host can still replace the entry between
+            // them. What it buys is shrinking the exposure from "the whole
+            // verdict" to "two adjacent statements", which is the same bargain
+            // session-manager.js:1385 strikes. Closing it outright needs an
+            // atomic compare-and-unlink the filesystem does not offer.
+            //
+            // WHY IT IS UNREACHABLE IN-PROCESS TODAY, AND WHAT WOULD CHANGE THAT
+            // — stated because "currently unreachable" is exactly the rationale
+            // that decays without a signal. cleanup() and regEntries() are fully
+            // SYNCHRONOUS: no await, no promise, no callback between the read and
+            // the unlink, so within one engine the loop is atomic against the
+            // event loop and no create() can interleave at all. The ordering
+            // (engine.js:1810, bootstrap) is not what makes this safe; the
+            // absence of a suspension point is. So the guard is inert today and
+            // becomes load-bearing the moment either of these happens:
+            //   - cleanup() gains an await — t75 proposes deciding liveness here
+            //     with the async Transport.isSocketLive probe, which would do
+            //     exactly that and open an in-process gap spanning a socket dial;
+            //   - a second cleanup() caller appears off the bootstrap path, or
+            //     bootstrap stops being the only one.
+            // Cross-process the gap is real now: two engines sharing ~/.clodex
+            // (the single-instance lock at main.js:492 is per-app, not per-volume).
+            let current = null;
+            try { current = fs.readFileSync(regPath, 'utf-8'); } catch {}
+            if (current !== raw) continue;   // replaced or already gone — not ours to delete
             fs.unlinkSync(regPath);
             // The socket file is deliberately NOT unlinked here, and re-adding
             // that as tidying would reintroduce a silent-unreachability bug.
