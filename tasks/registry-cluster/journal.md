@@ -303,7 +303,217 @@ rather than an accident. To measure rather than assume — and note t76's guard
 comment already flags that an async probe in `cleanup()` would open the
 in-process gap that guard currently sits inert against.
 
-Premises to verify at source first: `agent-transport.js:86` (listPeers liveness),
-`:103` (cleanup liveness), `:34-37` (isAlive), `:64` (record with nothing
-identifying), `:211` (send resolves false), and that the probe has exactly one
-production call site.
+### Premise audit — all CONFIRMED (first ticket of the four with no false premise)
+
+| Spec | At source | Verdict |
+|---|---|---|
+| `listPeers` decides liveness with bare `existsSync(socket) && isAlive(pid)` | `:86` | **exact** |
+| `cleanup` the same | now `:103`→ moved by my own t76 edit; logic unchanged | TRUE (my drift) |
+| `isAlive` is `kill(pid,0)` | `:34-37` | **exact** |
+| record stores pid with nothing identifying | `:64` — `{name, socket, pid, cwd?}` | **exact** |
+| every dm fails silently, send resolves false | `:254` (spec said `:211`) | drifted, TRUE |
+| the async probe has ONE production call site | `session-manager.js:1343` | **CONFIRMED** |
+
+Discovery callers: exactly two, `getPeer` at `session-manager.js:3108` and
+`listPeers` at `:3222`.
+
+### Measurement (scratchpad `t75_measure.js`, 20 iterations each)
+
+```
+ps -o lstart= (sync, per call): 2.349 ms
+dial LIVE socket             : 0.136 ms
+dial DEAD socket file (ghost): 0.046 ms
+ratio ps/dial-dead           : 50.6x
+```
+
+### Finding 1 — the two "identity field" variants are not variants
+
+The ticket offers "start-time or random token" as one option in two flavours.
+**They are not the same idea, and the random token cannot work at all.**
+
+Walk the ghost: agent registers `{pid:123, token:XYZ}`, dies uncleanly, the OS
+recycles pid 123. `agent.json` survives with `token:XYZ` intact — *the real agent
+wrote it*. A reader comparing the token finds it matches, because the token
+identifies **the record's writer, not the process's liveness**. There is no
+independent holder of that token to compare against; the only thing that could
+hold one with process-bound lifetime is the process, reachable only by dialing
+the socket — which is the probe.
+
+A random token would therefore ship as a fix, pass review, and detect nothing.
+
+**Start-time works** (pid+starttime is the classic pid-reuse-safe identity) but
+darwin has no `/proc`, so reading another process's start time from Node means
+`ps` fork/exec: **2.3 ms, 50x a dial, and synchronously blocking the main
+process** — per entry, per `[agent:who]`.
+
+### Finding 2 — the constraint that made the identity field attractive does not exist
+
+clodex's stated reason for preferring identity was that `listPeers` being
+synchronous is a real constraint. Measured at source: **both production callers
+are inside `async _handleIntent`** (`session-manager.js:3108` and `:3222`) and
+can already await. `getPeer` at :3108 is followed immediately by
+`await Transport.send(...)`.
+
+So there is no caller that cannot await. The constraint is an accident of how
+`listPeers` was written, not a requirement imposed on it.
+
+### Recommendation: the async probe (overturning clodex's read)
+
+The ghost's disk state is **byte-identical to a live agent's** — same record,
+same socket file, same live-looking pid. Nothing readable from the filesystem
+can separate them. Only two things can: dial the socket, or interrogate the
+pid's start time. The first is 50x cheaper, non-blocking, already in-tree, and
+already test-covered; the second is a blocking fork/exec per entry.
+
+Cost at realistic scale is negligible either way for the probe: sub-millisecond
+for a whole roster, and the ghost case (0.046 ms) is the *cheapest* branch
+because a dead socket refuses instantly.
+
+**t76 pre-paid part of this.** Making `cleanup()` async opens the in-process
+read-to-unlink gap — which the guard I landed this morning already covers, and
+whose comment names t75 by name as the thing that would open it.
+
+### Ruling: async probe. Build it. — and the reach check STOPS it
+
+clodex ruled the probe and asked me to stop and report if the conversion reaches
+further than the four functions and their two callers. **It does.**
+
+Full reach, grepped (production + tests, excluding `tasks/`):
+
+| Site | Context | Fine? |
+|---|---|---|
+| `agent-transport.js:95` `getPeer`→`listPeers` | internal | yes, awaits inside |
+| `session-manager.js:3108` `getPeer` | `async _handleIntent` | yes |
+| `session-manager.js:3222` `listPeers` | `async _handleIntent` | yes |
+| **`engine.js:1810` `registry.cleanup()`** | **`createEngine`, NOT async** | **BLOCKS** |
+| `test/agent-transport.test.js` x6 (`:31,:34,:35,:45,:62`, + my two t76 tests `:162,:194`) | sync test bodies | mechanical |
+
+`createEngine` (`engine.js:156`) is a plain function, so `cleanup()` becoming
+async lands in a synchronous bootstrap. Two ways out, and the choice is
+load-bearing rather than a reversible detail:
+
+1. **Fire-and-forget** — `registry.cleanup().catch(() => {})`. One line, no
+   propagation. But it makes the sweep run CONCURRENTLY with the rest of
+   bootstrap, including the session restore that calls `create()`. That is
+   precisely the in-process read-to-unlink gap t76's guard covers — so it is
+   *survivable because of t76*, which is a real dependency to state, not a
+   coincidence to rely on silently.
+2. **Make `createEngine` async** — propagates to `main.js:515`,
+   `headless-main.js:148`, and five engine test helpers. That is the wide
+   mechanical edit clodex asked me not to start without reporting.
+
+Also worth noting for whichever is chosen: option 1 changes `cleanup()`'s cost
+from "N stats" to "N socket dials", executing during startup rather than before
+it.
+
+**Not proceeding on this one.** Everything else in t75 is ready to build.
+
+### Status: measured, ruled, BLOCKED on the bootstrap question. Not implemented.
+
+---
+
+## t78 — census scanner comments
+
+### Premise audit
+
+| Spec | At source | Verdict |
+|---|---|---|
+| top-level scan is `/(\w+)\.create\s*\(/g`, not comment-aware | `test/create-mint-census.test.js:91` | **exact** |
+| its own `callArgs` path IS comment-aware | `:47-57` header + implementation | **exact** |
+| the header records a prior whole-file strip producing a phantom string and a healthy-looking 10-site count | `:52-57` verbatim | **exact** |
+| t71 reworded the `cli-hooks.js` comment rather than touching the regex | `cli-hooks.js:50-55`, and the comment says so explicitly | **exact** |
+| **"reported a 12th create() call site at cli-hooks.js:50"** | census finds **11**, all 3 tests PASS | **stale (present tense)** |
+
+The last row is not a t77-style falsehood — the spec itself records the t71
+rewording, so it is describing the historical symptom rather than current state.
+Worth stating precisely anyway: **there is no miscount today.** The 12th site was
+removed by editing PROSE, not by fixing the scanner.
+
+### So what the defect actually is
+
+The scanner's correctness currently depends on a comment in an unrelated file
+continuing to avoid a phrase. `cli-hooks.js:54` still contains the near-miss form
+`` `<word>.create(` `` and survives only because `>` is not a `\w` character.
+
+That is a live fragility with the exact signature of everything else this week:
+the guard is prose, it is one edit away from silently failing, and the failure
+mode is a census that miscounts while looking healthy. clodex's line — a census
+tool that miscounts is worse than no census — is the reason it is worth fixing
+rather than leaving to the rewording.
+
+### The hazard to design around
+
+The obvious fix (strip comments file-wide, then scan) is the one the header
+records as already having shipped a wrong answer that looked right: a regex
+literal containing an apostrophe opened a phantom string and swallowed a real
+call site, reporting 10. Any comment-awareness I add must therefore handle
+**regex literals**, or it reintroduces exactly that. This is why the ticket
+requires a revert that re-introduces the phantom-string shape and fails BY
+MESSAGE.
+
+### The fix
+
+`commentRanges(src)` returns comment spans; the scan skips matches inside them.
+**Not** the whole-file strip. Regex-literal awareness is the whole difference:
+operand-position heuristic for regex-vs-division, quotes inside a regex consumed
+rather than opening a string, character classes tracked. Nothing is deleted and
+no offsets are rewritten — a drifting range can hide a site but never invent one,
+and the count assertion catches that.
+
+### Revert proofs (pristine `t78-census.pristine` md5 `fe08d429…`, `t78-clihooks.pristine` md5 `d45f51e9…`)
+
+| Revert | Result |
+|---|---|
+| A: restore the pre-t71 cli-hooks wording | **fix holds, 3/3 green** |
+| A': same wording against the OLD scanner | **found 12, table has 11** — proves A is not a no-op and reproduces the original defect exactly |
+| B: whole-file strip-then-scan (the phantom-string shape) | **found 6, table has 11**, BY MESSAGE |
+| C: disable the regex-literal branch | **NO-OP — a finding, see below** |
+| C2: same revert vs. the strengthened pin | **fails BY MESSAGE** |
+
+### Revert C was a no-op, and the cause changed the test
+
+Disabling regex-literal awareness entirely left all 4 checks green, including my
+own case (b) — a regex-with-apostrophe followed by a real call site.
+
+Cause: `commentRanges` returns only COMMENT ranges, so a phantom string cannot
+fabricate a hit; it can only fail to report one. Case (b) therefore passed for
+the wrong reason — it asserted `!inComment`, which is what a totally broken
+scanner also returns. The damage runs the other way: **an unterminated phantom
+string swallows the following `//`, the comment is never recognised, and the
+prose inside it is counted as a call site.**
+
+Added case (b2) — regex-with-apostrophe followed by *prose containing a call
+form* — which is the real discriminator. Measured both ways: `inComment=true`
+with the branch, `false` without. Revert C then fails by message.
+
+This is the same shape as the t96 lesson arriving in a test rather than a
+comment: an assertion that is true for a reason other than the one it names.
+
+### An error of mine, recorded
+
+Mid-revert I ran `git checkout test/create-mint-census.test.js` to "restore
+pristine" when the file was already at the pristine md5 — the checkout was both
+unnecessary and destructive, and it discarded the uncommitted fix. Re-applied
+from the edits. Nothing was lost because the change was small and fully
+specified, but the correct move was `cp` from the pristine copy, as everywhere
+else in this batch. A `git checkout` on an uncommitted file is not a restore.
+
+### Also worth noting
+
+Revert B initially failed with `TypeError: Assignment to constant variable` —
+my probe assigned to a `const`. **A crash proves nothing**, so I fixed the probe
+rather than accepting the red, and it then failed by message with the count.
+
+### Status: DONE — `d189d1a`. Census 4/4.
+
+---
+
+## Batch verification
+
+Full Clodex suite via the test-runner subagent: **3049/3049 pass, 0 fail,
+ESCAPES: 0.**
+
+clodex asked to "measure it and tell me if the probe is genuinely cheaper", and
+this overturns their stated preference on a change that propagates async through
+`listPeers`/`getPeer`/`cleanup` and their callers — expensive to unwind if the
+ruling goes the other way. Reporting first, and taking up t78 rather than idling.
