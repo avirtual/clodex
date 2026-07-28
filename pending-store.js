@@ -254,6 +254,41 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   return out;
 }
 
+// Every parked delivery's TEXT, across every agent store, as a flat array.
+// Read-only — no rename, no claim, no delivery side effect.
+//
+// The caller is the spill GC (engine.cleanupOldMessages): a delivery whose body
+// exceeded the spill threshold was parked as a POINTER to a file in
+// ~/.clodex/messages/, and age-based collection would delete that file out from
+// under the pointer while the parked entry waits (parking is unbounded in time;
+// the spill file is not). Handing out the texts lets the GC see which files are
+// still referenced. We return raw text and take no view on what a pointer looks
+// like — the path grammar belongs to whoever mints it, not to the store.
+//
+// Mid-flight claims are skipped (isClaimEntry) exactly as parkIdInUse skips
+// them, and that is the SAFE direction here: a claimed entry is committed for
+// delivery, so its spill file is about to be read within the turn, long before
+// the next 5-minute sweep.
+function allParkedTexts(root) {
+  const out = [];
+  let names;
+  try { names = fs.readdirSync(root); } catch { return out; }
+  for (const name of names) {
+    if (isClaimEntry(name)) continue;
+    const dir = path.join(root, name);
+    let files;
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.json') || f.startsWith('.')) continue;
+      try {
+        const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (obj && typeof obj.text === 'string') out.push(obj.text);
+      } catch { /* corrupt/vanished entry — skip, same as every other reader */ }
+    }
+  }
+  return out;
+}
+
 // Is `id` already used by any parked delivery, in any agent's store? Resend
 // carries only the id (not the target), so ids must be unique ACROSS dirs, not
 // just within one — mint checks this to guarantee a resend resolves to exactly
@@ -307,4 +342,4 @@ function claimParkedById(root, id) {
   return null;
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, agentDir };

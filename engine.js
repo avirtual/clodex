@@ -40,6 +40,11 @@ const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { materializePotCli, materializeExecScripts } = require('./pot-bin');
+// Module-level, unlike the rest of pending-store's surface (required inside
+// createEngine): sweepSpilledMessages below is module-level so its exemption is
+// testable without building an engine, and a closure require would not be in
+// scope there.
+const { allParkedTexts } = require('./pending-store');
 
 // The single source of truth for "is this install broken in a way that will fail
 // (or degrade) sessions?". Returns a short, user-facing string (or null when
@@ -83,6 +88,69 @@ function diagWarning(d = {}) {
       + 'Install one, e.g. curl -fsSL https://claude.ai/install.sh | bash';
   }
   return null;
+}
+
+// Spill filenames minted by spillToFile (inside createEngine): the pointer
+// grammar the reference scan below recognizes. The two must move together — a
+// change to one shape without the other silently reopens the GC hole.
+const SPILL_NAME_RE = /msg-\d+-\d+\.txt/g;
+
+// Which spill files are still REFERENCED by an undelivered parked delivery?
+//
+// A dm body over MSG_SPILL_THRESHOLD is delivered as a POINTER to a file in the
+// spill dir (session-manager._buildDeliveryText), and a held delivery parks that
+// pointer — the spill file is the only copy of the body, the parked record
+// carries no other. Parking has no expiry; the spill file did (30 min), so a
+// delivery parked longer used to arrive pointing at a file the sweep had already
+// unlinked. Nothing re-reads the file at delivery, so that failed SILENTLY, with
+// the byte count in the pointer the only trace of what was lost.
+//
+// Matching on the FILENAME GRAMMAR rather than the pointer prose is deliberate:
+// there are already two pointer wordings (claude `@<path>`, codex
+// `saved to <path>`) and a third would silently defeat a prose match. Basenames
+// also keep the check agnostic about path shape. Over-matching is harmless — the
+// worst case is one file kept an extra sweep.
+function referencedSpillNames(pendingDir) {
+  const refs = new Set();
+  for (const text of allParkedTexts(pendingDir)) {
+    for (const m of text.match(SPILL_NAME_RE) || []) refs.add(m);
+  }
+  return refs;
+}
+
+// Age-based GC of the spill dir, EXEMPTING files a parked delivery still points
+// at. Module-level and fully parameterized (no closure state) so the exemption is
+// unit-testable without instantiating the engine.
+//
+// COST, chosen deliberately: a seat that never comes back keeps its parked
+// pointers forever, and now their bodies too — disk grows with undelivered mail
+// instead of being capped by destroying it. The alternative caps disk by
+// silently losing dms, which is the wrong trade for a channel whose stated
+// discipline is that dropping a DM is not acceptable (pending-store.js header).
+// If the leak ever bites, the fix is a `pending/` expiry — ONE policy governing
+// both lifetimes — not a second policy here that disagrees with parking.
+function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
+  if (!fs.existsSync(msgDir)) return;
+  const referenced = referencedSpillNames(pendingDir);
+  // Spilled messages live one level deep, in a per-recipient subfolder.
+  // Walk both the subfolders and (for back-compat) any stray files at the root.
+  for (const entry of fs.readdirSync(msgDir, { withFileTypes: true })) {
+    try {
+      const epath = path.join(msgDir, entry.name);
+      if (entry.isDirectory()) {
+        for (const fname of fs.readdirSync(epath)) {
+          try {
+            if (referenced.has(fname)) continue;
+            const fpath = path.join(epath, fname);
+            if ((now - fs.statSync(fpath).mtimeMs) / 1000 > maxAgeSec) fs.unlinkSync(fpath);
+          } catch {}
+        }
+      } else if (!referenced.has(entry.name)
+          && (now - fs.statSync(epath).mtimeMs) / 1000 > maxAgeSec) {
+        fs.unlinkSync(epath);
+      }
+    } catch {}
+  }
 }
 
 function createEngine({ userDataPath, seams = {}, log }) {
@@ -832,25 +900,7 @@ const sessionMeta = createSessionMeta({ REGISTRY_DIR });
 let msgCounter = 0;
 
 function cleanupOldMessages() {
-  if (!fs.existsSync(MSG_DIR)) return;
-  const now = Date.now();
-  // Spilled messages live one level deep, in a per-recipient subfolder.
-  // Walk both the subfolders and (for back-compat) any stray files at the root.
-  for (const entry of fs.readdirSync(MSG_DIR, { withFileTypes: true })) {
-    try {
-      const epath = path.join(MSG_DIR, entry.name);
-      if (entry.isDirectory()) {
-        for (const fname of fs.readdirSync(epath)) {
-          try {
-            const fpath = path.join(epath, fname);
-            if ((now - fs.statSync(fpath).mtimeMs) / 1000 > MSG_MAX_AGE) fs.unlinkSync(fpath);
-          } catch {}
-        }
-      } else if ((now - fs.statSync(epath).mtimeMs) / 1000 > MSG_MAX_AGE) {
-        fs.unlinkSync(epath);
-      }
-    } catch {}
-  }
+  sweepSpilledMessages(MSG_DIR, PENDING_DIR, MSG_MAX_AGE);
 }
 
 function spillToFile(sender, body, recipient) {
@@ -1939,4 +1989,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, diagWarning };
+module.exports = { createEngine, diagWarning, sweepSpilledMessages };
