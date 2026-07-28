@@ -131,7 +131,7 @@ const REVIEWER_FALLBACK = {
 // like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
 // tickets.json (team-scoped, shared with the clodex-team exec).
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
-const { computeModuleDigest, readHostStamp, staleNotice } = require('./host-stamp');
+const { hostNotice } = require('./host-stamp');
 
 // Ticket stall watchdog default: a lead is nudged once when an open ASSIGNED
 // ticket's assignee has been quiet longer than this. Per-team override:
@@ -4719,10 +4719,17 @@ function createSessionManager(deps) {
     // reader is about to make is actually false.
     _staleHostSuffix(now = Date.now()) {
       try {
-        const notice = staleNotice(
-          readHostStamp(path.join(REGISTRY_DIR, 'run')),
-          computeModuleDigest(__dirname),
-          now,
+        // No `ps` on this path: THIS process is the host, so its own start time
+        // is process.uptime() and its own tree is __dirname. The fallback only
+        // fires when there is no stamp, which for the in-host surface means a
+        // host whose stamp write failed — a stamp-less host that predates t93
+        // has no code to run this at all. That bootstrap gap is exactly why the
+        // clodex-team surface exists as a separate process.
+        const notice = hostNotice(
+          path.join(REGISTRY_DIR, 'run'),
+          __dirname,
+          { pid: process.pid, startedAt: now - Math.round(process.uptime() * 1000), root: __dirname },
+          { now },
         );
         return notice ? ` — NOTE: ${notice}` : '';
       } catch { return ''; } // instrumentation must never break the reply it rides on

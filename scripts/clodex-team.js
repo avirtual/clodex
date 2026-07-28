@@ -165,11 +165,21 @@ const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 // with host-stamp.js computeModuleDigest or the two will always disagree and
 // report a permanent false stale.
 //
-// This surface exists SEPARATELY from the task-reply suffix on purpose, and it
-// is not redundancy: this script is a fresh process that reads disk on every
-// invocation, so it reports correctly even when the running host is itself too
-// old to know this check exists. The in-host suffix cannot help on a host that
-// predates it; this can.
+// This surface exists SEPARATELY from the task-reply suffix on purpose: this
+// script is a fresh process that reads disk on every invocation, so a host too
+// old to emit the in-host suffix cannot suppress this line.
+//
+// But that is a claim about WHO PRINTS the line, not about what it can know.
+// An earlier version of this comment said this surface "reports correctly even
+// when the running host is itself too old to know this check exists". That was
+// FALSE (t94, observed live): the stamp is written by the host at boot, so a
+// host that predates t93 leaves no stamp, and with no stamp there is nothing to
+// compare — this surface went silent on the exact host whose staleness
+// motivated t93. Silence read as "fresh", which is how the wrong conclusion got
+// drawn in the first place.
+//
+// Hence the stamp-less fallback below: it substantiates what it can from the
+// live process and says plainly when it cannot.
 // Flat top-level *.js only — subdirectories are never descended, so test/,
 // renderer/ and the rest are out by construction. (An ignore list here was dead
 // code: a directory never passes `\.js$`, and `test.js` never equals `test`.)
@@ -187,19 +197,105 @@ function hostModuleDigest(dir) {
   return parts.length ? parts.join('|') : null;
 }
 
-// One line, or '' when there is nothing to say. Fails closed to SILENT: if the
-// stamp is missing (a host from before t93) or unreadable, we cannot
-// substantiate staleness, and a notice we cannot back up would train the reader
-// to ignore the ones that are real.
+// ── Stamp-less fallback (t94) ──────────────────────────────────────────────
+// Mirrors host-stamp.js bootstrapNotice/changedSince. Duplicated for the same
+// strict-leaf reason as the digest above; keep the two in sync.
+//
+// WHAT THIS MAY AND MAY NOT CLAIM. It is tempting to say a module newer than
+// the process start time cannot be loaded by it. That is FALSE here — require()
+// is lazy and the main process pulls modules inside function bodies all over
+// (session-manager.js's wire/ stack, main.js's ipc-handlers, peer-wiring), so a
+// file edited after boot but before its first require IS live. This reports the
+// weaker fact it can actually stand behind: the bytes changed after the process
+// started, therefore staleness is UNCONFIRMED rather than proven. Do not
+// "tighten" the wording into a claim about what the host loaded.
+//
+// macOS `ps` has no `etimes` and there is no /proc, so `lstart` it is; LC_ALL=C
+// because that format carries month and day NAMES.
+function hostProcess(pid) {
+  let out;
+  try {
+    out = require('child_process').execFileSync('ps', ['-o', 'lstart=,args=', '-p', String(pid)], {
+      encoding: 'utf8', timeout: 2000, env: { ...process.env, LC_ALL: 'C' },
+    });
+  } catch { return null; } // dead pid or no ps — no evidence either way
+  const m = /^\s*(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(String(out).trim());
+  if (!m) return null;
+  const startedAt = new Date(m[1]).getTime();
+  if (!Number.isFinite(startedAt)) return null;
+  // The tree the host RUNS FROM, taken from its own argv rather than guessed: a
+  // dev host execs electron out of its own checkout. No match means a PACKAGED
+  // host, whose sources sit in an immutable asar — genuinely never stale, so
+  // the caller stays silent rather than reporting "unknown".
+  const root = /^(.*?)\/node_modules\/electron\/dist\//.exec(m[2]);
+  return { pid, startedAt, root: root ? root[1] : null, packaged: !root };
+}
+
+// The one live host, found WITHOUT its cooperation: every agent registration
+// records the main process's pid (agent-transport.js), and a pre-t93 host
+// cooperated in nothing else.
+function liveHost() {
+  let names = [];
+  try { names = fs.readdirSync(path.join(CLODEX_HOME, 'run')); } catch { return null; }
+  const seen = new Set();
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    let pid;
+    try {
+      pid = JSON.parse(fs.readFileSync(path.join(CLODEX_HOME, 'run', name, 'agent.json'), 'utf8')).pid;
+    } catch { continue; }
+    if (!Number.isInteger(pid) || seen.has(pid)) continue;
+    seen.add(pid);
+    const proc = hostProcess(pid);
+    if (proc) return proc;
+  }
+  return null;
+}
+
+// One line, or '' when there is nothing to say.
+//
+// SILENCE MEANS FRESH, and only fresh. Before t94 it also meant "no stamp, so
+// no idea", which is how this surface went quiet on the 14h-old host that
+// motivated t93 — the reader took silence as reassurance. The three states are
+// now distinct: stamped-and-stale, unstamped-with-evidence, and cannot-tell.
 function staleHostLine() {
   try {
-    const stamp = JSON.parse(fs.readFileSync(path.join(CLODEX_HOME, 'run', '.host.json'), 'utf8'));
-    if (!stamp || typeof stamp.digest !== 'string' || typeof stamp.dir !== 'string') return '';
-    const current = hostModuleDigest(stamp.dir);
-    if (!current || current === stamp.digest) return '';
-    const age = typeof stamp.bootedAt === 'number' ? ` ${humanizeAge(Date.now() - stamp.bootedAt)} ago` : '';
-    return `\n(STALE HOST: pid ${stamp.pid} booted${age} from OLDER code than is on disk`
-      + ' — merged fixes are NOT live until the app is restarted)';
+    let stamp = null;
+    try {
+      stamp = JSON.parse(fs.readFileSync(path.join(CLODEX_HOME, 'run', '.host.json'), 'utf8'));
+    } catch { /* no stamp — fall through to the evidence path */ }
+
+    if (stamp && typeof stamp.digest === 'string' && typeof stamp.dir === 'string') {
+      const current = hostModuleDigest(stamp.dir);
+      if (!current || current === stamp.digest) return '';
+      const age = typeof stamp.bootedAt === 'number' ? ` ${humanizeAge(Date.now() - stamp.bootedAt)} ago` : '';
+      return `\n(STALE HOST: pid ${stamp.pid} booted${age} from OLDER code than is on disk`
+        + ' — merged fixes are NOT live until the app is restarted)';
+    }
+
+    const host = liveHost();
+    if (!host) return '';           // no running host at all: nothing can be stale
+    if (host.packaged) return '';   // asar bytes cannot change post-boot
+    let names;
+    try { names = fs.readdirSync(host.root); } catch {
+      return `\n(HOST UNKNOWN: pid ${host.pid} has no boot stamp and ${host.root} could not be read`
+        + ' — cannot tell whether it is running current code)';
+    }
+    const changed = [];
+    for (const name of names.sort()) {
+      if (!/\.js$/.test(name)) continue;
+      try {
+        const st = fs.statSync(path.join(host.root, name));
+        if (st.isFile() && st.mtimeMs > host.startedAt) changed.push(name);
+      } catch { /* vanished mid-scan */ }
+    }
+    if (!changed.length) return '';
+    const shown = changed.slice(0, 3).join(', ');
+    return `\n(HOST MAY BE STALE: ${changed.length} module${changed.length === 1 ? '' : 's'} changed since`
+      + ` pid ${host.pid} started ${humanizeAge(Date.now() - host.startedAt)} ago`
+      + ` — ${shown}${changed.length > 3 ? ', ...' : ''}.`
+      + ' No boot stamp (this host predates the check), so staleness is UNCONFIRMED;'
+      + ' restart the app if a fix you expect to be live is not)';
   } catch { return ''; }
 }
 
