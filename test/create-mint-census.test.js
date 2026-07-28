@@ -80,6 +80,87 @@ function callArgs(src, open) {
   return args;
 }
 
+// Every [start, end) range in `src` that is a comment (t78). Used ONLY to reject
+// matches that sit inside prose — a `<word>.create(` written in a comment is not
+// a call site, and before this the census counted one (cli-hooks.js's paragraph
+// about this very test). That comment was reworded to dodge the regex rather than
+// the scanner being fixed, which left the census's correctness resting on a
+// comment in an unrelated file continuing to avoid a phrase: cli-hooks.js:54 still
+// carries `<word>.create(` and is only missed because `>` is not a `\w` character.
+// One word changed there and the count is silently wrong again.
+//
+// THIS IS DELIBERATELY NOT THE WHOLE-FILE STRIP THAT FAILED BEFORE. The header on
+// callArgs above records what happened when a previous version stripped comments
+// and strings across the whole file: a regex literal containing an apostrophe was
+// read as an opening quote, the phantom string swallowed ipc-handlers.js's
+// deploy-fix call site, and the census reported 10 and looked perfectly healthy.
+// So the difference that matters here is REGEX-LITERAL AWARENESS, not the scan
+// being localized:
+//   * a `/` is only a regex start when the previous significant character says an
+//     operand is expected (the standard heuristic — after `(,=:[!&|?{};` or an
+//     operator, never after an identifier or `)`), which keeps division from
+//     opening a phantom regex;
+//   * quotes INSIDE a regex literal are consumed by the regex scan and never open
+//     a string, which is exactly the failure above;
+//   * character classes are tracked, so a `/` inside `[...]` does not end it.
+// Nothing is deleted from the source and no offsets are rewritten: this returns
+// ranges and the scan below skips matches inside them. A drifting range can only
+// ever hide a site, never invent one — and the count assertion in the test is what
+// catches that, which is why the phantom-string shape must fail there BY MESSAGE.
+function commentRanges(src) {
+  const ranges = [];
+  // The previous significant (non-whitespace, non-comment) character. Regex-vs-
+  // division turns entirely on this.
+  let prev = '';
+  const OPERAND_EXPECTED = /[(,=:[!&|?{};+\-*%~^<>]/;
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') {
+      const s = i;
+      while (i < src.length && src[i] !== '\n') i++;
+      ranges.push([s, i]);
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      const s = i;
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i = Math.min(i + 2, src.length);
+      ranges.push([s, i]);
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      i++;
+      while (i < src.length && src[i] !== q) { if (src[i] === '\\') i++; i++; }
+      i++;
+      prev = q;
+      continue;
+    }
+    if (c === '/' && (prev === '' || OPERAND_EXPECTED.test(prev))) {
+      i++;
+      let inClass = false;
+      while (i < src.length) {
+        const ch = src[i];
+        if (ch === '\\') { i += 2; continue; }
+        if (ch === '\n') break;          // unterminated → it was not a regex
+        if (ch === '[') inClass = true;
+        else if (ch === ']') inClass = false;
+        else if (ch === '/' && !inClass) break;
+        i++;
+      }
+      i++;
+      prev = '/';
+      continue;
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return ranges;
+}
+
 // Collect every `<recv>.create(` in the root modules, in file then source order.
 // `Object.create` is excluded by name (it is not this method). Root *.js only:
 // renderer/ has no session manager, and web-dist/ is a build artifact full of
@@ -89,9 +170,14 @@ function census() {
   for (const file of fs.readdirSync(ROOT).filter(f => f.endsWith('.js')).sort()) {
     const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
     const re = /(\w+)\.create\s*\(/g;
+    const comments = commentRanges(src);
+    const inComment = (idx) => comments.some(([s, e]) => idx >= s && idx < e);
     let m;
     while ((m = re.exec(src))) {
       if (m[1] === 'Object') continue;
+      // Prose is not a call site. See commentRanges above for why this is a
+      // range check rather than a strip.
+      if (inComment(m.index)) continue;
       const args = callArgs(src, m.index + m[0].length - 1);
       out.push({
         file,
@@ -187,4 +273,57 @@ test('mint census: create()\'s mint parameter still DEFAULTS FALSE', () => {
     'create()\'s `mint` parameter must default to FALSE. Every restore call site omits the '
     + 'argument and depends on that default; flipping it would turn each of them into a '
     + 'spurious regenerate — the token bust — with no other test failing.');
+});
+
+// t78: the scanner's own comment/regex handling, pinned directly.
+//
+// Before this, the census's correctness rested on a comment in an unrelated file
+// continuing to avoid a phrase — cli-hooks.js was REWORDED to dodge the regex
+// rather than the scanner being fixed. Prose is not a guard: one word changed
+// there and the count goes silently wrong. These two synthetic sources pin the
+// two behaviours the census depends on, so the guarantee is tested here instead
+// of maintained by hand over there.
+//
+// The second case is the dangerous one and it is why this is not a whole-file
+// strip: a regex literal containing an apostrophe must NOT open a phantom string.
+// When it did, the swallowed region hid a real call site and the census reported
+// a healthy-looking wrong number.
+test('t78: the scanner ignores prose and is not fooled by a regex literal', () => {
+  const inComment = (src, idx) => commentRanges(src).some(([s, e]) => idx >= s && idx < e);
+  const findAt = (src) => {
+    const m = /(\w+)\.create\s*\(/.exec(src);
+    assert.ok(m, 'the probe source must contain a `<word>.create(` for this pin to mean anything');
+    return m.index;
+  };
+
+  // (a) The pre-t71 wording: prose naming the call form. Counting it inflates the
+  // census by one and sends a reader hunting for a call site that does not exist.
+  const prose = "// the one expression lives in session-manager.create(name)\nfunction noop() {}\n";
+  assert.ok(inComment(prose, findAt(prose)),
+    'a `<word>.create(` inside a line comment must be seen as prose — counting it adds a phantom call site to the census and the table then has to be padded with a row for something that is not a call');
+
+  // (b) A real call site preceded by a regex literal containing an apostrophe.
+  // This is the exact shape that previously opened a phantom string and swallowed
+  // ipc-handlers.js's deploy-fix site, dropping the census to a healthy-looking 10.
+  const withRegex = "const RE = /it's here/;\nmgr.create(1, 2, 3);\n";
+  assert.ok(!inComment(withRegex, findAt(withRegex)),
+    "a regex literal containing an apostrophe must not swallow the code after it — that is the phantom-string failure this scanner was written to avoid, and it HIDES call sites rather than adding them, so the census looks healthy while under-counting");
+
+  // (b2) THE ACTUAL DISCRIMINATOR for regex-awareness, and the reason (b) alone is
+  // not enough. Measured: disabling the regex branch entirely leaves (b) passing.
+  // commentRanges only ever returns COMMENT ranges, so a phantom string cannot
+  // invent a hit — it can only fail to report one. The damage therefore runs the
+  // other way: an unterminated phantom string swallows the `//` that follows, the
+  // comment is never recognised, and the prose inside it gets counted as a call
+  // site. That is the failure a test built only on (b) would sleep through.
+  const regexThenProse = "const RE = /it's/;\n// prose naming mgr.create(name) here\n";
+  assert.ok(inComment(regexThenProse, findAt(regexThenProse)),
+    'a regex literal containing an apostrophe must not hide the COMMENT that follows it — when it does, the prose in that comment is scanned as code and the census counts a call site that does not exist, which is the phantom-string bug arriving as an over-count instead of an under-count');
+
+  // (c) Division must not be mistaken for a regex opener — the mirror of (b). If
+  // it were, everything after a `/` would be read as a regex and real sites would
+  // vanish the same way.
+  const division = "const n = total / 2;\nmgr.create(1);\n";
+  assert.ok(!inComment(division, findAt(division)),
+    'a division operator must not open a regex scan — misreading it swallows the rest of the file and drops real call sites');
 });
