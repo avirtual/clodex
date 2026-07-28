@@ -345,15 +345,20 @@ test('listing parity: holds on a board with nothing open', async () => {
 // here: the copy is what silently went stale (t101).
 
 // ENTER CHECK. Every assertion below is only worth its salt if EXEC_DEF is the
-// shipped def rather than something that merely parsed. This is deliberately a
-// property of the FILE (its argv placeholder), not of the schema — a schema
-// self-check would be satisfied by any copy, including the stale one.
-test('exec-def source: the schema tests read the SHIPPED def, not a copy', () => {
-  assert.ok(fs.existsSync(EXEC_DEF_PATH), `the seed exists at ${EXEC_DEF_PATH}`);
-  assert.ok(EXEC_DEF.argv.some((a) => a.includes('${CLODEX_BIN}')),
-    'reading the seeded def (it carries the ${CLODEX_BIN} placeholder a hand-copy would not)');
-  assert.ok(!fs.existsSync(path.join(__dirname, 'fixtures', 'clodex-team.exec.json')),
-    'the stale hand-copy is gone — if it comes back, so does the drift it caused');
+// shipped def rather than a copy of it, so this pins PATH IDENTITY: the file
+// read at module scope must be the seed root stores.js:1683 copies into the
+// operator's library, addressed the same way — by relative path from the repo.
+//
+// Identity is the only property no copy can satisfy. Every content property
+// can: a fresh `cp` carries the ${CLODEX_BIN} placeholder verbatim, and any
+// value-level assertion is satisfied by a copy that is correct today and stale
+// tomorrow — which is precisely the failure t101 exists to close. An earlier
+// version of this test asserted the placeholder and the absence of ONE exact
+// filename; a copy at clodex-team.exec.v2.json satisfies both.
+test('exec-def source: the schema tests read the SHIPPED def itself, not a copy of it', () => {
+  const rel = path.relative(path.join(__dirname, '..'), EXEC_DEF_PATH);
+  assert.strictEqual(rel, path.join('resources', 'library', 'exec', 'clodex-team.json'),
+    'the def under test IS the seeded artifact — no copy, anywhere, under any name, can satisfy this');
 });
 
 test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
@@ -372,16 +377,38 @@ test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
   }
 });
 
-// The filter enum is the schema's half of the contract TICKET_FILTERS is the
-// script's half. Driven from the script's own constant rather than a literal
-// list, so adding a filter in one place and not the other fails here instead of
-// at an agent's payload.
+// The seed's enums are the schema's half of a contract whose other half lives
+// in the script. Both halves are SCRAPED from the script rather than written as
+// literals here, so adding a verb or a filter in one place and forgetting the
+// other fails at this test instead of at an agent's payload.
+//
+// Each is pinned by set equality, not by sampling. "Accepts every X and no
+// other" is a claim in BOTH directions, and a loop of hand-picked negatives
+// only ever tests the values someone thought of: widen the seed with `blocked`
+// and a negative list of `rejected`/`OPEN`/`''` stays green while the gate
+// admits a payload the script dies on. deepStrictEqual over sorted sets makes
+// the title true; the negative loops below it survive as intent documentation
+// of WHICH wrong values were expected and why.
+const scrapeList = (src, name) => {
+  const decl = src.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`));
+  assert.ok(decl, `ENTER: found ${name} in the script`);
+  return decl[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+};
+const enumOf = (prop) => {
+  const spec = EXEC_DEF.schema.properties[prop];
+  assert.ok(spec && Array.isArray(spec.enum), `ENTER: the seed constrains "${prop}" by enum`);
+  return spec.enum;
+};
+
 test('exec-def schema accepts every filter the script implements, and no other', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const decl = src.match(/const TICKET_FILTERS = \[([^\]]*)\]/);
-  assert.ok(decl, 'ENTER: found TICKET_FILTERS in the script');
-  const filters = decl[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  const filters = scrapeList(src, 'TICKET_FILTERS');
   assert.deepStrictEqual(filters, ['open', 'done', 'cancelled', 'all'], 'ENTER: the four real filters');
+
+  // The both-directions pin. Sorted, because agreement is about the SET; the
+  // order a literal happens to be written in is not part of the contract.
+  assert.deepStrictEqual(enumOf('filter').slice().sort(), filters.slice().sort(),
+    'the seed\'s filter enum and the script\'s TICKET_FILTERS disagree — one side would accept or refuse a filter the other does not');
 
   for (const filter of filters) {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
@@ -394,6 +421,21 @@ test('exec-def schema accepts every filter the script implements, and no other',
     const r = parseAndValidate(EXEC_DEF, JSON.stringify({ action: 'tickets', agent: 'clodex', filter }));
     assert.strictEqual(r.ok, false, `should reject filter "${filter}"`);
   }
+});
+
+// The ACTION half, which the first pass left as a hardcoded list while deriving
+// the filter half — the same asymmetry one level up: add a verb to the script's
+// dispatch, forget the seed, and nothing failed. The script has no ACTIONS
+// constant, so the verbs are scraped from the dispatch chain itself, which is
+// the thing that actually decides what is handled.
+test('exec-def schema accepts every action the script dispatches, and no other', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const actions = [...src.matchAll(/if \(action === '(\w+)'\) return do\w+\(payload\);/g)].map((m) => m[1]);
+  assert.deepStrictEqual(actions.slice().sort(), ['retire', 'roster', 'tickets'],
+    'ENTER: scraped the three dispatched verbs from the main() chain');
+
+  assert.deepStrictEqual(enumOf('action').slice().sort(), actions.slice().sort(),
+    'the seed\'s action enum and the script\'s dispatch disagree — a verb is gated out, or gated in with nothing behind it');
 });
 
 test('exec-def schema rejects payloads the script would refuse', () => {

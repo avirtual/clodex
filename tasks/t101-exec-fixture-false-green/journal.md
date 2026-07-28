@@ -102,3 +102,81 @@ the agent rather than at the schema and so is the harder one to notice.
 synthetic corpora with no shipped counterpart. Nothing to drift.
 
 So: **one instance, fixed; one gap flagged; no other copies.**
+
+## REWORK (cold review, clodex-reviewer-2)
+
+Two of the assertions I added were defective. Both findings verified at source
+and BY MEASUREMENT before fixing — I ran the shipped test against the exact
+states the reviewer described rather than accepting the report.
+
+### 1. "and no other" was a title, not an assertion
+
+The test derived four positives from the script and hand-picked three
+negatives. Confirmed the reviewer's case: widened the seed's filter enum with
+`blocked` and ran the SHIPPED test at `b9d368d` — **16 pass, 0 fail**. Green,
+while the gate admits a payload `scripts/clodex-team.js:331-332` calls `die()`
+on. Revert C in the first pass passed only because `rejected` happened to be in
+my negative list; it tested my imagination, not the contract.
+
+Fix: `deepStrictEqual` the seed's enum against the scraped `TICKET_FILTERS`,
+both sorted. The negative loop stays as documentation of which wrong values
+were expected and why.
+
+Generalized to the nit as well: the ACTION half was still a hardcoded list
+while the filter half was derived — the same asymmetry one level up. The script
+has no `ACTIONS` constant, so the verbs are scraped from the dispatch chain
+(`if (action === 'x') return doX(payload);`), which is what actually decides
+what is handled.
+
+### 2. The `${CLODEX_BIN}` check did not discriminate a fresh copy
+
+**My own revert D recorded this and my report to clodex said the opposite.**
+Revert D fired only the absence assertion; `cp` carries the placeholder
+verbatim. I then wrote "I measured that both discriminate independently."
+The journal was right and the summary was stronger than the measurement.
+
+Confirmed the reviewer's stronger case too: pointed the SHIPPED test at a copy
+named `clodex-team.exec.v2.json` — **16 pass, 0 fail**. The absence check names
+one exact filename, so any other name walks past both assertions.
+
+Fix: assert PATH IDENTITY — the def under test is the seed root `stores.js:1683`
+copies from, addressed by relative path. That is the only property no copy can
+have. Every content property is satisfiable by a copy that is correct today and
+stale tomorrow, which is the exact failure this ticket exists to close. The argv
+assertion is dropped rather than demoted: `test/pot-cli-closure.test.js:120-128`
+already asserts that identical property on that identical file.
+
+Also took the nit on `existsSync`: it can never fail, because line 38
+`readFileSync`s the same path at module scope — a missing seed is ENOENT at load,
+before any test runs. Dropped.
+
+### Rework reverts
+
+Restored from md5-verified `cp` copies (`test/clodex-team.test.js` `f0394c64…`,
+seed `7ba823b0…`). All fail by message.
+
+| # | Revert | Result |
+|---|---|---|
+| A | seed filter enum + `blocked` | 1 fail — "the seed's filter enum and the script's TICKET_FILTERS disagree" |
+| A′ | same seed, **shipped test at b9d368d** | **16 pass 0 fail — the defect, reproduced** |
+| B | seed filter enum − `all` | 1 fail — same message, opposite direction |
+| C | seed action enum + `purge` | 1 fail — "a verb is gated out, or gated in with nothing behind it" |
+| C2 | seed action enum − `tickets` | 3 fail — the action pin plus both payload tests |
+| D | `EXEC_DEF_PATH` → a `.v2` copy | 1 fail — "the def under test IS the seeded artifact" |
+| D′ | same copy, **shipped test at b9d368d** | **16 pass 0 fail — the second defect, reproduced** |
+
+A′ and D′ are the ones that matter: each reconstitutes the reviewer's claim
+against the code as shipped and shows it green. That is the difference between
+agreeing with a review and verifying it.
+
+### The reporting rule this earns
+
+A summary must never be stronger than the measurement it summarizes. My journal
+recorded revert D correctly; my report to clodex overstated it, and clodex
+endorsed the overstatement because clodex was reading the report rather than the
+tree. The cost landed on the reviewer. Same defect as t96 — code right, prose
+wrong — at a smaller scale.
+
+The concrete practice: when a report says "I measured X", the sentence has to be
+traceable to a specific recorded run. If I cannot point at the row in the table,
+the claim does not go in the report.
