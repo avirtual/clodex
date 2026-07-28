@@ -9,6 +9,7 @@ const { ensureDir } = require('./fs-util');
 const { isExternallyOpenable } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
+const { writeHostStamp } = require('./host-stamp');
 
 
 
@@ -548,6 +549,14 @@ app.whenReady().then(() => {
   ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes } = engine.stores);
 
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
+
+  // Record what code THIS process actually loaded (t93). The main process serves
+  // its modules from boot indefinitely, so a fix merged under a running host is
+  // inert until restart — and nothing said so, which cost a wrongly-premised
+  // ticket filed against already-correct source. Written here, read by the task
+  // reply suffix and by clodex-team, both of which stay silent unless it differs
+  // from disk. Signal only: nothing in this path ever restarts or reloads.
+  writeHostStamp(path.join(REGISTRY_DIR, 'run'), __dirname);
 
   // Update checker — Electron-only surface (renderer banner, tray badge, native
   // notification), so it stays in the adapter, not the engine.
