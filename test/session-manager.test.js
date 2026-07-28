@@ -1310,6 +1310,104 @@ test('_deliverPassive: a codex target falls back to the normal wake path (never 
   assert.strictEqual(hasPending(PENDING_DIR, 'c'), false, 'nothing parked for codex');
 });
 
+// --- generation stamps: _bornFor + the parks/drains that carry them ---
+//
+// pending-store's own tests pin the COMPARISON; these pin the plumbing — that
+// the manager reads the right stamp for a name and actually hands it to the
+// store. A stamp that is computed correctly and never passed is worth nothing,
+// and a park that stamps a live seat but not an offline one silently drops the
+// offline seat's mail on arrival.
+
+test('_bornFor: prefers the LIVE session, falls back to persistence, null when neither knows', () => {
+  const { m } = mkPark({ getPersistence: () => ({ list: () => [], get: (n) => (n === 'offline' ? { createdAt: 2222 } : null) }) });
+  m.sessions.set('live', { name: 'live', agentType: 'claude', createdAt: 1111 });
+  assert.strictEqual(m._bornFor('live'), 1111);
+  // The offline fallback is the load-bearing one: a reboot notice or a reminder
+  // fires at a name with NO process, and the value it stamps has to be the one
+  // create() will hand that seat when its workspace restores it. That equality
+  // is what phase 3a bought — before it, every kill()-based restart re-minted
+  // createdAt and this comparison would have discarded live mail.
+  assert.strictEqual(m._bornFor('offline'), 2222);
+  assert.strictEqual(m._bornFor('never-heard-of'), null, 'unknown name = no expectation, never a bogus stamp');
+});
+
+test('_bornFor: a live session with no stamp falls through to persistence rather than returning undefined', () => {
+  // Pre-stamp sessions restored into a newer build, and every non-create() test
+  // harness, put session objects in the map without createdAt. Returning
+  // undefined from here would flow into parkDelivery as a non-number (dropped
+  // from the payload, fine) but ALSO into drainPending as a non-number — which
+  // is the deliver-everything default, so the failure is silent either way.
+  const { m } = mkPark({ getPersistence: () => ({ list: () => [], get: () => ({ createdAt: 3333 }) }) });
+  m.sessions.set('a', { name: 'a', agentType: 'claude' });
+  assert.strictEqual(m._bornFor('a'), 3333);
+});
+
+test('park→drain carries the stamp end to end: a successor is refused, the addressee is not', () => {
+  const { m, PENDING_DIR, injected } = mkPark();
+  const dir = pathReal.join(PENDING_DIR, 'a');
+  const park = (born) => {
+    const t = { name: 'a', agentType: 'claude', activityState: 'thinking', createdAt: born };
+    m.sessions.set('a', t);
+    m._maybeParkDelivery(t, `[agent:from x] for the seat born at ${born}`);
+    // _maybeParkDelivery arms the starvation cap (a 1h timer in this harness).
+    // Two parks = two live handles = the runner never exits. Same teardown every
+    // other park test here does; it just bites twice as hard when you park twice.
+    clearTimeout(t._parkCapTimer);
+    return t;
+  };
+  const drainAs = (born) => {
+    const t = { name: 'a', agentType: 'claude', activityState: 'idle', createdAt: born };
+    m.sessions.set('a', t);
+    m._drainPendingAtIdle(t);
+  };
+
+  const first = park(5555);
+  // The stamp really reached the PAYLOAD — read the file, not a return value.
+  const entry = JSON.parse(fsReal.readFileSync(pathReal.join(dir, fsReal.readdirSync(dir)[0]), 'utf8'));
+  assert.strictEqual(entry.born, 5555, 'the park must stamp the addressee\'s birth time');
+
+  // Same name, next generation. This is the ticket: a fresh seat must not start
+  // life reading a stranger's mail. Asserted through the MANAGER's drain, so the
+  // stamp has to survive _bornFor → drainPending, not just exist on disk.
+  drainAs(9999);
+  assert.deepStrictEqual(injected, [], 'the successor must not be handed its predecessor\'s mail');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false, 'and the stale mail is consumed, not left to be re-offered forever');
+
+  // The other half, and it is what stops "refuse everything" from passing: mail
+  // parked FOR this generation must still arrive. Both halves go through the
+  // same two methods, so a manager that dropped the stamp anywhere in the chain
+  // fails one or the other.
+  park(9999);
+  drainAs(9999);
+  assert.deepStrictEqual(injected, ['[agent:from x] for the seat born at 9999']);
+  assert.ok(first.createdAt !== 9999, 'sanity: the two generations really are different');
+});
+
+test('_cleanup does NOT delete the pending store — a restart must not destroy parked DMs', () => {
+  const { m, PENDING_DIR } = mkPark({
+    registry: { unregister: () => {} },
+    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {},
+    // `path` and a real `fs` are REQUIRED here, not decoration. The rm this test
+    // pins the absence of was `fs.rmSync(path.join(PENDING_DIR, name), …)` inside
+    // a bare `try {} catch {}`. The default harness injects no `path`, so a
+    // restored rm would throw on path.join and its own catch would swallow it —
+    // the test would pass whether the deletion was there or not. Verified by
+    // reverting: with these two absent, re-adding the rm did NOT fail this test.
+    // A guard that cannot see the thing it guards against is worse than none.
+    path: pathReal, fs: fsReal,
+  });
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] sent while it was restarting', '1');
+  assert.ok(hasPending(PENDING_DIR, 'a'), 'ENTER: the DM must be parked BEFORE _cleanup runs');
+  // _userKilled is exactly the RESTART state (engine.restartSession and
+  // applySessionArgs both route through kill(), which sets it). The rm this
+  // replaces was gated on that flag and so destroyed a seat's undelivered mail
+  // on the button labelled "restart".
+  m.sessions.set('a', { name: 'a', agentType: 'claude', _userKilled: true });
+  m._cleanup('a');
+  assert.ok(hasPending(PENDING_DIR, 'a'),
+    'parked DMs must survive _cleanup even with _userKilled set: restart routes through kill() too, so gating the rm on that flag deleted undelivered mail on an ordinary restart — the zero-loss violation this store exists to prevent. Stale mail for a RECREATED name is refused at drain time by the born stamp instead, which also covers the exits this rm never fired on.');
+});
+
 test('_onIncoming: an unknown delivery value falls through to the normal path (old-core compat shape)', () => {
   const { m } = mkPark();
   const delivered = [];

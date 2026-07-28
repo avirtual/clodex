@@ -45,7 +45,15 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null) {
+  // `createdAt` is the spawning session's birth stamp, baked into the pending-drain
+  // script below so the hook can tell its own generation's mail from a
+  // predecessor's. It is PASSED IN, never recomputed here: SessionManager's create
+  // method owns the one `(existing && existing.createdAt) || Date.now()`
+  // expression, and a second copy would drift the first time either was touched.
+  // (That phrasing avoids writing the call form literally: test/create-mint-census
+  // matches `<word>.create(` with a regex that is not comment-aware, so the prose
+  // would register as a 12th call site. Flagged there, not worked around silently.)
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const scriptPath = pathFor(REGISTRY_DIR, name, 'hook');
@@ -218,7 +226,7 @@ JSEOF
     fs.writeFileSync(pendingScriptPath, `#!/bin/bash
 [ -d "${pendingDir}" ] || exit 0
 IN="$(cat)"
-${INTERP} - "${pendingDir}" "$IN" "${msgDir}" <<'JSEOF'
+${INTERP} - "${pendingDir}" "$IN" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}" <<'JSEOF'
 const fs = require('fs'), path = require('path');
 const d = process.argv[2];
 let ev = 'UserPromptSubmit';
@@ -266,6 +274,25 @@ function inline_spill(t) {
     return t;                     // fail-open: recipient can still Read the file
   }
 }
+// This session's birth stamp, baked in at hook-setup time — the hook cannot read
+// sessions.json (it lives in userData, which this script has no path to, and
+// giving it one is a worse coupling than the problem). Mirrors drainPending's
+// expectedBorn exactly; the two drainers stay single-source-of-truth. Empty =>
+// no expectation => deliver everything, the safe direction.
+const born_self = process.argv[5] ? Number(process.argv[5]) : null;
+// Put a claimed entry back under its original basename (seq order + resend id
+// survive), write-then-rename like parkDelivery. Best-effort: a failed restore
+// must not abort the drain and lose the rest of the batch.
+function restore_parked(base, raw) {
+  const tmp = path.join(d, '.' + base + '.tmp');
+  try {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(tmp, raw);
+    fs.renameSync(tmp, path.join(d, base));
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch (e2) {}
+  }
+}
 const claim = d + '.draining.hook.' + process.pid;
 try {
   fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
@@ -275,8 +302,22 @@ try {
 const texts = [];
 for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.json'); }).sort()) {
   try {
-    const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
-    if (typeof obj.text === 'string') texts.push(inline_spill(obj.text));
+    const raw = fs.readFileSync(path.join(claim, f), 'utf8');
+    const obj = JSON.parse(raw);
+    if (typeof obj.text !== 'string') continue;
+    // Generation check, DIRECTIONAL — see drainPending's comment in
+    // pending-store.js for the full table. Older = a dead predecessor's mail,
+    // discard. Newer = a successor's, and *I* am the stale drainer, so put it
+    // back: the claim above already renamed the dir away, so an entry we neither
+    // return nor restore is DESTROYED, and destroyed in exactly the race this
+    // stamp exists to fix. Symmetric-looking guards are not symmetric when the
+    // operation they guard is. Unstamped entries (parked before the stamp
+    // existed) deliver.
+    if (born_self !== null && typeof obj.born === 'number' && obj.born !== born_self) {
+      if (obj.born > born_self) restore_parked(f, raw);
+      continue;
+    }
+    texts.push(inline_spill(obj.text));
   } catch (e) {}                  // skip a corrupt entry, never abort the drain
 }
 fs.rmSync(claim, { recursive: true, force: true });

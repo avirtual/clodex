@@ -58,7 +58,17 @@ function parkFileHasId(f, id) {
 // drainPending) is oblivious to it, while claimParkedById can find the file by
 // id for an [agent:resend]. Returns the published basename. Retries once into a
 // fresh dir if the store was claimed away mid-publish (drains next turn, not lost).
-function parkDelivery(root, name, text, seq, id = null, passive = false) {
+//
+// `born` (optional) is the createdAt of the session this mail is FOR — the
+// addressee's birth stamp, not the sender's and not now(). The store is keyed by
+// NAME, and a name outlives the session that held it: kill a seat and spawn a new
+// one with the same name and the successor inherits its predecessor's parked mail.
+// Stamping the payload is what lets a drain tell "mine" from "my predecessor's"
+// (see drainPending). It lives in the PAYLOAD rather than the path so the whole
+// `<seq>[.<id>].json` grammar, parkFileHasId's 4-vs-3 segment split and
+// claimParkedById's `{ name, text }` routing (which reads the DIRECTORY as the
+// session name) all stay exactly as they are.
+function parkDelivery(root, name, text, seq, id = null, passive = false, born = null) {
   const dir = agentDir(root, name);
   // Passive parks are ride-along notifications (monitor ticks etc.): drained by
   // the organic carriers (hook drains, or any claim that was happening anyway)
@@ -72,7 +82,8 @@ function parkDelivery(root, name, text, seq, id = null, passive = false) {
   const base = passive ? `${seq}.passive.json` : (id ? `${seq}.${id}.json` : `${seq}.json`);
   const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
-  const payload = JSON.stringify(id ? { text, id } : { text });
+  const payload = JSON.stringify(Object.assign({ text }, id ? { id } : null,
+    typeof born === 'number' ? { born } : null));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, payload);
   try {
@@ -94,7 +105,37 @@ function parkDelivery(root, name, text, seq, id = null, passive = false) {
 // Returns [] when nothing is parked or another drainer won the claim. The claim
 // directory is removed before returning, so returned texts are gone from the
 // store (single delivery).
-function drainPending(root, name, claimTag) {
+//
+// `expectedBorn` (optional) is the DRAINER'S OWN session createdAt. The store is
+// keyed by name and a name outlives its session, so a claim can turn up mail
+// addressed to a different generation of this name. The comparison against each
+// entry's `born` is DIRECTIONAL, and the two directions want opposite handling:
+//
+//   born <  expected — mail for a DEAD PREDECESSOR of this name. Discard: the
+//                      addressee is gone, and handing it to the successor is how
+//                      a fresh seat starts its life reading a stranger's mail.
+//   born >  expected — mail for a SUCCESSOR; *I* am the stale drainer (a hook
+//                      subprocess descheduled across its parent's death and the
+//                      next create()). PUT IT BACK — it is not mine to consume.
+//   born === expected — mine. Deliver.
+//   born undefined   — parked before this stamp existed, so the generation is
+//                      unknowable. DELIVER: unstamped is the pre-upgrade shape,
+//                      and dropping real mail to enforce a rule the sender never
+//                      played by is the wrong error. Self-expiring — the store is
+//                      drained continuously, so unstamped entries vanish within a
+//                      turn or two of the upgrade and never come back.
+//   expectedBorn omitted — no expectation, deliver everything. The default is the
+//                      SAFE direction (never silently drop), the same reasoning
+//                      create()'s `mint = false` default uses.
+//
+// WHY PUT BACK RATHER THAN JUST REFUSE. Refusing a non-matching entry reads like
+// the symmetric, conservative choice, and it is not: THE CLAIM IS DESTRUCTIVE.
+// The dir was renamed away before the first byte was read, so an entry we decline
+// to return and decline to restore is DESTROYED — and it would be destroyed in
+// exactly the race this stamp exists to fix. Symmetric-looking guards are not
+// symmetric when the operation they guard is. Restoring costs a write on a path
+// that should essentially never run; refusing costs a lost message.
+function drainPending(root, name, claimTag, expectedBorn = null) {
   const dir = agentDir(root, name);
   const claim = `${dir}.draining.${claimTag}`;
   try {
@@ -108,12 +149,36 @@ function drainPending(root, name, claimTag) {
   const texts = [];
   for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
     try {
-      const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
-      if (obj && typeof obj.text === 'string') texts.push(obj.text);
+      const raw = fs.readFileSync(path.join(claim, f), 'utf8');
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj.text !== 'string') continue;
+      if (typeof expectedBorn === 'number' && typeof obj.born === 'number' && obj.born !== expectedBorn) {
+        // Not this generation's mail. Restore the successor's, drop the
+        // predecessor's; see the directional table above.
+        if (obj.born > expectedBorn) restoreParked(dir, f, raw);
+        continue;
+      }
+      texts.push(obj.text);
     } catch { /* skip a corrupt entry rather than abort the whole drain */ }
   }
   try { fs.rmSync(claim, { recursive: true, force: true }); } catch {}
   return texts;
+}
+
+// Put one claimed entry back in the store under its ORIGINAL basename, so seq
+// order and the `<seq>.<id>.json` resend handle both survive the round trip.
+// Same write-then-rename publish discipline parkDelivery uses (a concurrent
+// reader never sees a partial file); best-effort, because the alternative to a
+// failed restore is a thrown drain that loses every other message in the batch.
+function restoreParked(dir, base, raw) {
+  const tmp = path.join(dir, `.${base}.tmp`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(tmp, raw);
+    fs.renameSync(tmp, path.join(dir, base));
+  } catch {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
 }
 
 // Cheap peek (not a claim): does `name` have any NON-passive parked delivery?

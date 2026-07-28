@@ -919,6 +919,30 @@ function createSessionManager(deps) {
         proxyAgent = resolveProxyAgentId({ name, fork, existing: getPersistence().get(name), taken });
       }
 
+      // createdAt: stamped ONCE, at the session's first create. kill()+recreate
+      // (restart/restore) rebuilds the record from spawn args, so preserve any
+      // existing stamp rather than resetting it — the sidebar's "created" sort/
+      // group depends on it being stable across restarts.
+      // This read is only HALF the invariant, and reading it as the whole thing is
+      // what let the bug live: the restore-on-launch path keeps the record, so
+      // existingEntry carries the stamp — but every kill()-based restart REMOVES
+      // the record first, so existingEntry is null here and the `|| Date.now()`
+      // re-mints. The restart callers must therefore re-seed createdAt via
+      // _preserveAcrossRestart (engine.restartSession / applySessionArgs, and the
+      // [agent:context reload] respawn) BEFORE reaching this line. Pinned in
+      // test/createdat-restart.test.js — do not "tidy" the field out of those lists.
+      //
+      // Computed HERE, ~400 lines above the upsert that consumes it, because the
+      // claude arm bakes it into the generated pending-drain hook (setupClaudeHook)
+      // and the hook is written before the spawn. The one expression must stay
+      // single: recomputing `(existing && existing.createdAt) || Date.now()` down
+      // in hook setup would be a second copy that drifts the first time either is
+      // touched — the exact construction this ticket exists to remove. Nothing
+      // between here and the upsert writes persistence, so the read is unchanged
+      // by the move.
+      const existingEntry = getPersistence().get(name);
+      const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
+
       // Spawn-time team context: if this agent's cwd sits inside a team's root,
       // append a small team block to its system-prompt material so the seat knows
       // its team, role, lead, and roster tool. Agent sessions only (bash is
@@ -1040,7 +1064,7 @@ function createSessionManager(deps) {
           // the frozen prompt below, not just cosmetic.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
@@ -1410,6 +1434,12 @@ function createSessionManager(deps) {
         // Spawn timestamp — the enriched session-exit heuristic (Task 12) uses it
         // to tell a fast "CLI not found on PATH" death from a later crash.
         spawnedAt: Date.now(),
+        // Birth time, the SAME value the persistence upsert below writes (not a
+        // second Date.now() — spawnedAt is already the per-spawn one). Carried on
+        // the live session so the pending drains and parks can stamp/compare
+        // generations without a persistence read on every message. Stable across
+        // restarts; see the createdAt comment above.
+        createdAt,
         agentType, lineBuffer: '', watcher: null,
         sessionId: resumeId || null,
         workspaceId,
@@ -1455,20 +1485,9 @@ function createSessionManager(deps) {
       // Persist this session so we can resume it on next launch.
       // Bash/other sessions persist too (restored as fresh shells in the
       // saved cwd); their entry is dropped on natural exit instead.
-      // createdAt: stamped ONCE, at the session's first create. kill()+recreate
-      // (restart/restore) rebuilds the record from spawn args, so preserve any
-      // existing stamp rather than resetting it — the sidebar's "created" sort/
-      // group depends on it being stable across restarts.
-      // This read is only HALF the invariant, and reading it as the whole thing is
-      // what let the bug live: the restore-on-launch path keeps the record, so
-      // existingEntry carries the stamp — but every kill()-based restart REMOVES
-      // the record first, so existingEntry is null here and the `|| Date.now()`
-      // re-mints. The restart callers must therefore re-seed createdAt via
-      // _preserveAcrossRestart (engine.restartSession / applySessionArgs, and the
-      // [agent:context reload] respawn) BEFORE reaching this line. Pinned in
-      // test/createdat-restart.test.js — do not "tidy" the field out of those lists.
-      const existingEntry = getPersistence().get(name);
-      const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
+      // createdAt / existingEntry are computed up at the proxy-identity block —
+      // the claude arm needs the stamp for the pending-drain hook, which is
+      // written before the spawn. See the comment there.
       getPersistence().upsert({
         name, type, cwd,
         extraArgs,
@@ -2332,16 +2351,24 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       s._compactPending = null; // no timer, but null for symmetry with the valve state
-      // Drop any parked deliveries ONLY for a session going away for good — i.e. a
-      // user-kill. _cleanup runs from ptyProc.onExit on EVERY exit (natural exit,
-      // restart's kill, quit's killAll), so an unconditional rm would eat parked
-      // DMs on a restart or app-quit inside the cap window (zero-loss violation).
-      // Every other exit path respawns or restores the same name, whose pending
-      // store — keyed by name, stable hook path — drains on the next submit. A
-      // dir left by a never-recreated session is harmless residue. Best-effort.
-      if (s._userKilled) {
-        try { fs.rmSync(path.join(PENDING_DIR, name), { recursive: true, force: true }); } catch {}
-      }
+      // Parked deliveries are deliberately NOT dropped here, under any gate. This
+      // used to rm the store when `s._userKilled` was set, and that gate was wrong
+      // in BOTH directions — the same misreading the prompt-cache paragraph below
+      // documents, one channel over:
+      //   * too WIDE: _userKilled is set by restart too (see the onExit comment —
+      //     "kill() → _userKilled, which restart also routes through"), so an
+      //     ordinary restart deleted the seat's parked DMs. Undelivered mail,
+      //     destroyed, on the button labelled "restart". That is the zero-loss
+      //     violation this store exists to prevent.
+      //   * too NARROW as a hygiene measure: it fired only on a user-kill, so the
+      //     stale-mail case it was reaching for (a name recreated later, inheriting
+      //     a dead predecessor's parked mail) survived every other exit anyway.
+      // Both ends are now handled where they belong: nothing is deleted on exit,
+      // and the successor generation refuses its predecessor's mail at DRAIN time
+      // via the `born` stamp (parkDelivery/drainPending in pending-store.js, and
+      // the same comparison baked into the generated hook). Residue for a
+      // never-recreated name is a few small JSON files and is harmless — the same
+      // judgement, for the same reason, as the frozen prompt below.
       // The frozen system prompt (ipc-prompt-cache.js) is deliberately NOT dropped
       // here, under any gate. _userKilled is not the "going away for good" signal
       // it reads as: restart routes through kill() too (see the onExit comment
@@ -2754,7 +2781,7 @@ function createSessionManager(deps) {
       // benign: the next idle edge or hook drain picks it up.
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       let texts = [];
-      try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`); } catch {}
+      try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch {}
       if (!texts.length) return;                        // hook already drained, or nothing parked
       // Parkable: if a draft opens before the queue writes, the fire-time divert
       // re-parks the body instead of splicing (best-effort — falls through to a
@@ -2791,7 +2818,7 @@ function createSessionManager(deps) {
         if (session._dead) return null;
         try { if (isDraftOpen(session)) return null; } catch { return null; }
         let texts = [];
-        try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`); } catch { return null; }
+        try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
         if (!texts.length) return null;                 // hook/idle already claimed it
         return texts.join('\n\n');
       };
@@ -3140,7 +3167,7 @@ function createSessionManager(deps) {
           });
           if (verdict.hold) {
             let reparked = false;
-            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id); reparked = true; } catch {}
+            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name)); reparked = true; } catch {}
             reply(reparked
               ? `${target.name} is ${verdict.reason}; re-parked as ${intent.id} — it'll deliver after the dialog is answered.`
               : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
@@ -3546,7 +3573,7 @@ function createSessionManager(deps) {
         try {
           if (target.agentType === 'claude') {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
-            parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq());
+            parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
             // A park alone can strand: every drain trigger (hooks, idle EDGE)
             // needs the seat to earn a turn, and a restored-then-idle requester
             // never does — the notice sat in the ✉ inbox forever (field bug,
@@ -3580,7 +3607,10 @@ function createSessionManager(deps) {
       // catch-up runs before windows/sessions restore, so a park placed here is caught).
       try {
         const finalText = this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm');
-        parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq());
+        // Offline park: _bornFor falls back to the PERSISTED createdAt, which is
+        // the stamp the restored seat will carry — that is what makes an
+        // offline-parked notice match when it finally drains.
+        parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
         log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume`);
         clear();
       } catch (e) {
@@ -5608,7 +5638,7 @@ function createSessionManager(deps) {
       // reminder has no sender to escalate, and drainPending reads id-less parks.
       const finalText = this._buildDeliveryText({ name: agent, agentType: entry.type }, 'reminder', body, 'dm');
       try {
-        parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq());
+        parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq(), null, false, this._bornFor(agent));
         log.info('intent', `remind fire for ${agent} parked (offline) — drains on resume`);
         return 'parked';
       } catch (e) {
@@ -5621,6 +5651,29 @@ function createSessionManager(deps) {
     // stable across restarts (timestamp dominates; a counter breaks within-ms ties).
     _nextParkSeq() {
       return `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
+    }
+
+    // The GENERATION stamp for `name` — the createdAt of the session that holds
+    // the name right now. Every park stamps its addressee's, every drain compares
+    // its own; see drainPending in pending-store.js for what the comparison does.
+    //
+    // Live session first, persistence second, because both callers exist: a park
+    // for an OFFLINE-but-resumable seat (the reboot notice, a reminder firing at a
+    // name with no process) has no session object to read, and the persisted
+    // createdAt is the same value create() will hand that seat when its workspace
+    // restores it — which is exactly what makes the stamps match on arrival.
+    // That equality is what phase 3a bought: before it, every kill()-based restart
+    // re-minted the stamp and this comparison would have discarded live mail.
+    // Returns null when neither knows (a session the manager has never seen), and
+    // null means "no expectation" at both ends — deliver, never drop.
+    _bornFor(name) {
+      const s = this.sessions.get(name);
+      if (s && typeof s.createdAt === 'number') return s.createdAt;
+      try {
+        const e = getPersistence().get(name);
+        if (e && typeof e.createdAt === 'number') return e.createdAt;
+      } catch {}
+      return null;
     }
 
     // Mint a short, collision-free resend handle. Ids must be unique across ALL
@@ -5644,7 +5697,7 @@ function createSessionManager(deps) {
     _parkHeldDelivery(target, finalText) {
       const id = this._mintParkId();
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id);
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id, false, this._bornFor(target.name));
       } catch (e) {
         log.error('inject', `park-on-hold failed for ${target.name}: ${e.message}`);
         return null;
@@ -5682,7 +5735,7 @@ function createSessionManager(deps) {
       const busy = target.activityState === 'thinking';
       if (!typing && !busy) return false;
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq());
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
       } catch (e) {
         // Parking is best-effort; never drop a DM. Fall back to a normal inject.
         log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
@@ -5719,7 +5772,7 @@ function createSessionManager(deps) {
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead) return { ok: true, count: 0 };
       let texts = [];
-      try { texts = drainPending(PENDING_DIR, target.name, tag); } catch {}
+      try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch {}
       if (!texts.length) return { ok: true, count: 0 };  // another drainer won the claim
       const plural = texts.length === 1 ? 'y' : 'ies';
       const body = kind === 'park-cap'
@@ -5813,7 +5866,7 @@ function createSessionManager(deps) {
       return (text) => {
         if (session._dead || !isDraftOpen(session)) return false;
         try {
-          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id);
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name));
         } catch (e) {
           log.error('inject', `fire-time park failed for ${session.name}: ${e.message} — injecting instead`);
           return false;
@@ -5985,7 +6038,7 @@ function createSessionManager(deps) {
       }
       const finalText = this._buildDeliveryText(target, senderName, body, mtype);
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, true);
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, true, this._bornFor(target.name));
       } catch (e) {
         log.error('inject', `passive park failed for ${target.name}: ${e.message} — delivering normally`);
         this._deliverMessage(targetName, senderName, body, mtype);
@@ -6016,7 +6069,7 @@ function createSessionManager(deps) {
       }
       const finalText = this._buildDeliveryText(target, senderName, body, mtype);
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq());
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
       } catch (e) {
         log.error('inject', `active park failed for ${target.name}: ${e.message} — delivering normally`);
         this._deliverMessage(targetName, senderName, body, mtype);

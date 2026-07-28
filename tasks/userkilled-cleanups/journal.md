@@ -508,11 +508,27 @@ the product computed, and asserting it afterwards asserted my own fixture. The
 vacuity rule as clodex stated it covers this exactly: the harness contained the
 answer, so the test was asserting against itself.
 
+**THE GENERAL RULE, which is the portable part** (clodex's formulation, and it
+is sharper than mine): the defect is NOT "hand-written fixtures are bad." The
+same modelling idiom is *honest* for `rosterSentAt` and `reviewFor` and
+*dishonest* for `createdAt`, in the same upsert, on the same line. What
+separates them is whether the product computes the field:
+
+> **A fixture may only model fields the product does not compute.** Model a
+> field the product writes, and the value asserted afterwards is the one the
+> fixture chose — the test passes with the product's line deleted.
+
+That is the vacuity rule's second face. The first face ("never recompute the
+predicate") catches a harness that copies a product *expression*; this one
+catches a harness that supplies a product *value*. Both leave a test asserting
+against itself, and neither announces it.
+
 Removed rather than repaired: the survives-create() half belongs against the
 REAL create(), where `test/createdat-restart.test.js` already pins it (revert D
 proves that one bites). The remaining :1959 assertion — that
 `_preserveAcrossRestart` seeds the field at all — is genuine, and revert F
-proves it.
+proves it. **A hollow assertion deleted is strictly better than a hollow
+assertion patched, because the patched one still has to be trusted.**
 
 **This is the fourth harness-lying-quietly instance this week**, and the first
 found by the revert discipline rather than by an external cross-check. Same
@@ -534,10 +550,16 @@ existingEntry read returns, which is the seed) and is now `1`.
 
 # THE HARNESS LYING QUIETLY — a failure class, written up at clodex's instruction
 
-Three times this week my own tooling produced a **CLEAN result, not an error**,
-while being wrong. Not one of them announced itself. Collected here because the
-ruling is right that this is the most dangerous failure mode we have found, and
-it has now appeared in three different disguises:
+**THE SHARED SIGNATURE, stated first because it is the whole point: every one
+of these produced a CLEAN RESULT, not an error.** Detection therefore cannot
+rely on noticing a failure — there isn't one to notice. Anything that begins
+"when the tests go red, check whether…" is useless against this class. That is
+what makes it worth a section of its own.
+
+FOUR times this week my own tooling produced a clean result while being wrong.
+Not one of them announced itself. Collected here because the ruling is right
+that this is the most dangerous failure mode we have found, and it has now
+appeared in four different disguises:
 
 1. **SIGPIPE truncation (t63).** I piped `node --test` through `head`. The
    SIGPIPE killed the run mid-flight and printed EMPTY totals sections, which
@@ -552,19 +574,30 @@ it has now appeared in three different disguises:
    apostrophe opened a string that never closed and swallowed an entire call
    site. **The scan reported 10 sites and looked perfectly healthy.** Caught
    only by checking against clodex's count of 11 instead of trusting my output.
+4. **The decorative assertion (t71 phase 3a, revert E).** A test I had just
+   written passed with the product line it named deleted, because the fixture
+   hand-wrote the value it then asserted. **314/314 green.** Caught by the
+   revert discipline — the first of the four found by PROCESS rather than by
+   luck or an external cross-check, which is the only one of these four that
+   would have been caught reliably rather than fortunately.
 
 **What they share**: each replaced a real signal with a plausible one. A crash
-is self-announcing; a truncated run, a silently-unrestored tree and a
-short-by-one census all look exactly like success. The defence is never "read
-the harness more carefully" — I read all three and they looked right. It is:
+is self-announcing; a truncated run, a silently-unrestored tree, a
+short-by-one census and a green test that pins nothing all look exactly like
+success. The defence is never "read the harness more carefully" — I read all
+four and they looked right. It is:
 
 - **check the harness's output against a number derived somewhere else** (the
   scanner died on clodex's 11, not on my own review);
 - **verify the tree state independently after any mutation** (`git diff` after
   every revert, not the trap's promise);
 - **make no-op detection explicit** — my revert script now fails loudly if the
-  perl expression changed nothing, because "the revert applied and the test
-  still passed" and "the revert never applied" are the same output otherwise.
+  replacement matched zero or multiple times, because "the revert applied and
+  the test still passed" and "the revert never applied" are the same output
+  otherwise;
+- **revert every assertion you write, not just the product** (instance 4 was a
+  TEST that lied, not a tool) — this is the only defence on the list that
+  works by construction instead of by suspicion.
 
 Note the recursion, which is the actual lesson: **this ticket is about a flag
 that cannot answer the question its name implies, and my scanner was a harness
@@ -653,6 +686,368 @@ question its name implies.** That is why the fix stops asking flags.
 4. **Comment (b)'s inert residue as DELIBERATE**, citing the prompt-cache
    precedent ("four small texts and is harmless"). A future reader will want to
    add an rm back; the comment is what stops them.
+
+## PHASE 3B — the rekey. Design, decided before any code.
+
+Branch rebased onto `dfd5fe4` (phase 3a merged), so this builds on master.
+
+### Where the stamp lives: IN THE PAYLOAD, not in the path
+
+Two shapes were available.
+
+**(B) Rekey the DIRECTORY** — `pending/<name>.<createdAt>/`. Attractive because
+it needs no comparison at all: a new session simply looks at a different
+directory and the old one is inert residue. **Rejected.** It invents a new path
+grammar, and every consumer that currently treats a child of `pending/` as a
+session NAME breaks: `claimParkedById` returns `{ name, text }` taken straight
+from the directory name and routes an `[agent:resend]` by it, so it would
+suddenly route to `alice.1700000000000`. CLAUDE.md single-sources the runtime
+path grammar in `clodex-paths.js` precisely to stop this kind of growth, and
+condition (a) makes it worse: old-format entries must still DELIVER, so the
+new drainers would need a second claim against the legacy `pending/<name>` dir
+alongside the new one. Two claims, two grammars, in both drainers.
+
+**(A) Stamp inside the message payload — CHOSEN.** `parkDelivery` writes
+`{ text, born }` (alongside the existing optional `id`); the drain compares
+`born` against the session's own createdAt and refuses a mismatch. Nothing
+about the filesystem changes: same dirs, same `<seq>[.<id>].json` filename
+grammar, same 3-vs-4 segment logic in `parkFileHasId`, same whole-dir
+rename-claim, same sidebar badge. The payload already carries an optional
+field, so the shape tolerates one more. Condition (a) falls out for free —
+`born === undefined` means "parked by a version that had no stamp", which is
+exactly the deliver case, and needs no second code path.
+
+### The hard part: the HOOK must apply the same rule
+
+The Claude UserPromptSubmit/PostToolUse drain is a GENERATED script
+(`cli-hooks.js`, `pendingScriptPath`) that mirrors `drainPending`'s claim
+discipline. Both drainers must stay single-source-of-truth, so the hook needs
+the expected stamp too. It cannot read sessions.json (that lives in userData,
+which the hook has no path to, and giving it one is a worse coupling than the
+problem). So the stamp is BAKED INTO THE GENERATED BYTES at hook-setup time.
+
+**MEASURED ORDERING PROBLEM, and it is load-bearing.** In `create()`,
+`setupClaudeHook` is called at rel. line 209 while `createdAt` is computed at
+rel. 636-637 — the hook is generated ~427 lines BEFORE the stamp exists. Three
+ways out:
+
+1. **Move the createdAt computation up**, above the claude arm, and pass it to
+   `setupClaudeHook`. Two lines move; the upsert stays where it is and just
+   uses the already-computed value.
+2. Recompute `(existing && existing.createdAt) || Date.now()` inside the hook
+   setup. **Rejected on sight** — that is a second copy of the product's own
+   expression, i.e. the exact construction class this ticket exists to remove,
+   and the two copies would drift the first time anyone touches either.
+3. Write the hook script LATER, after the stamp. Rejected: the hook must exist
+   before the CLI spawns, and the spawn is between the two points.
+
+Taking (1). It is the only one that keeps a single expression.
+
+### The drain/create interleaving — the UNREACHABLE argument (condition c)
+
+The hazard to exclude is: an out-of-process hook drain, carrying the OLD baked
+stamp, running while a new same-named session is being created — eating the new
+session's mail. It is unreachable rather than unlikely, and the reason is
+ordering, not probability:
+
+- A hook fires only as a child of a LIVE CLI process, i.e. the old session's.
+- For the new session to have any parked mail at all, `parkDelivery` must have
+  run for it — and parking happens against a registered session, which cannot
+  exist until `create()` has completed, which cannot start while the old name
+  is live (`sessions.has(name)` throws) and, on every restart path, not until
+  `waitForSessionExit` has confirmed the old process is gone.
+- So at every instant an old-stamped drain can still be running, the store
+  contains only old-stamped entries. It may consume them (delivering into a
+  dying process — the pre-existing loss story, unchanged by this ticket). It
+  cannot consume a new-stamped entry, because none can exist yet.
+
+The residual case is a hook SUBPROCESS outliving its parent PTY by a few ms.
+Same argument covers it: outliving the parent does not let it observe an entry
+that had not been written when the new session was still unborn. **To verify,
+not assume:** confirm parkDelivery has no path that runs for an unregistered
+name. That check is the first thing to do when the code starts.
+
+### THE CHECK FAILED — the argument above is WRONG. Measured, not read.
+
+Enumerated all 9 product `parkDelivery` call sites. **Two of them park for a
+name with NO live session**, reading the persisted entry instead:
+
+- **session-manager.js:3583** — a reboot notice for an OFFLINE but resumable
+  seat. Explicitly gated on `getPersistence().get(notice.name)` existing, and
+  the comment says it parks "by name so it drains on the seat's next
+  UserPromptSubmit after its workspace restores it".
+- **session-manager.js:5611** — a reminder firing for an agent that is not
+  live: same shape, same persisted-entry gate, "parked (offline) — drains on
+  resume".
+
+So "parking happens against a registered session, which cannot exist until
+create() completed" is false. Parked mail can exist for a name with no process
+at all. **Everything I derived from that premise has to go.** Good that this
+was a verify-first item and not a "clearly true" one.
+
+### Re-derived. The interleaving is NOT unreachable — it is unlikely, and
+### that is not good enough, so the design changes to make it HARMLESS.
+
+The strongest remaining structural fact is the atomic claim: a drain renames
+the whole dir and therefore owns EXACTLY the snapshot present at rename time.
+An entry parked afterwards lands in a fresh dir (parkDelivery's documented
+recreate-on-ENOENT) and is invisible to that claim. So for a stale drain to
+touch a successor's mail, the successor's entry must have been parked BEFORE
+the stale drain's rename — i.e. the stale hook process must have been spawned
+by the dead CLI, then stalled across the whole of: old CLI death, the new
+create(), its persistence upsert, and a park — and only then reached its
+rename, which is the first thing it does after node startup.
+
+That is very unlikely. **It is not unreachable, and I am not going to write a
+comment claiming it is.** A hook is an ordinary subprocess; nothing in the
+system bounds how long it can be descheduled.
+
+**So make the bad case harmless instead of arguing it away.** The comparison
+has a direction, and the two directions want opposite handling:
+
+| entry vs the drainer's own stamp | meaning | action |
+|---|---|---|
+| `born < expected` | mail for a DEAD predecessor of this name | **DISCARD** — this is case (c), the entire point of the rekey |
+| `born > expected` | mail for a SUCCESSOR; *I* am the stale drainer | **PUT IT BACK** — not mine to consume |
+| `born === expected` | mine | deliver |
+| `born === undefined` | pre-rekey park | deliver (condition (a)) |
+
+The `>` branch is what removes the need for a timing argument: a stale drain
+that wins a race now returns the mail to the store instead of eating it. Note
+this is why a plain "refuse non-matching" would have been WRONG — with a
+destructive whole-dir claim, refusing without writing back is just a slower way
+of losing the message, and it would lose it in exactly the race the rekey was
+supposed to fix.
+
+**This revises condition (c) and clodex must see it.** Flagging rather than
+silently substituting: the ruling asked for an unreachability argument, and my
+finding is that no honest one exists. The asymmetric design is safe under both
+readings (a successor's entry is still "non-matching" and still not delivered),
+so it is the safe reversible choice to build now and flag at report time.
+
+### RULED (msg-81580-48): condition (c) revised as proposed — BUILD IT
+
+*"'Unreachable' was my word and it does not survive your call-site
+enumeration... I would rather have the accurate 'very unlikely, and harmless if
+it happens' than a confident comment that is false."*
+
+Two things held to, both binding on the implementation:
+
+1. **The reason goes in the COMMENT, not just here:** a plain
+   refuse-non-matching would have DESTROYED a message in precisely the race the
+   rekey exists to fix, because the claim is destructive. Generalized by
+   clodex, and this is the sentence to carry: **"Symmetric-looking guards are
+   not symmetric when the operation they guard is."**
+2. **PIN THE NEWER-ENTRY BRANCH.** It is the one nobody will ever see fire, and
+   *"an unfired branch with a hollow test is worse than no branch."* It must
+   fail by a message naming WHY restoring beats refusing — not merely that a
+   restore didn't happen.
+
+Also ruled worth recording as method: **enumerating the 9 call sites before
+arguing from the premise is what caught this** — the same discipline that
+produced the ENTER finding in 3a, applied to a PREMISE instead of a test
+window. In 3a I asked "does this test enter the window it names?"; here the
+question was "is the fact this argument rests on actually true?". Both are the
+same move — check the thing you are about to build on, before building on it —
+and both found a defect that would otherwise have shipped looking correct.
+
+### Still to decide when writing
+
+- `drainPending` gains an expected-stamp parameter. Every caller must pass it —
+  and a caller that forgets gets the SAFE direction, which here means
+  DELIVERING (never silently dropping), the same defaulting logic `mint = false`
+  uses. Default to "no expectation = deliver everything".
+- Condition (b): the generated hook bytes are test-pinned. They WILL change;
+  changing them by accident is the hazard. Update the pin deliberately and say
+  in the commit that the bytes moved and why.
+- Condition (d): the `_userKilled` rm at session-manager.js:2342 comes out, and
+  the residue it used to clear must be commented as deliberate, citing the
+  prompt-cache precedent ("four small texts and is harmless").
+
+### PRODUCT WRITTEN (uncommitted at this checkpoint). What landed:
+
+- **`pending-store.js`** — `parkDelivery` takes a 7th param `born` and writes it
+  into the payload (only when it's a number, so unstamped stays byte-identical);
+  `drainPending` takes a 4th param `expectedBorn` and applies the directional
+  table; new module-local `restoreParked(dir, base, raw)` re-publishes a
+  successor's entry under its ORIGINAL basename (seq order + resend id survive
+  the round trip), write-then-rename, best-effort so a failed restore can't abort
+  the batch. The full directional table + the destructive-claim reasoning +
+  clodex's sentence are in `drainPending`'s header comment.
+- **`session-manager.js`** — createdAt/existingEntry MOVED up to just after the
+  proxy-identity block (~:922), with a comment saying why it is computed 400
+  lines from its consumer and that nothing between writes persistence (verified:
+  the only `getPersistence()` calls in that span are the proxy-id read and the
+  upsert itself). The old site now points at it. The live `session` object gains
+  `createdAt` (same value, not a second `Date.now()`).
+- **`session-manager.js`** — new `_bornFor(name)`: live session first, persisted
+  entry second, null if neither. The fallback is what makes an OFFLINE park
+  (reboot notice, reminder fire) stamp the value the restored seat will carry —
+  and it only works because phase 3a stopped restarts from re-minting. Threaded
+  into all 10 park sites and all 3 drain sites.
+- **`cli-hooks.js`** — `setupClaudeHook` takes `createdAt` (passed, never
+  recomputed — comment says so explicitly) and bakes it into the pending-drain
+  script as `$5`; the generated JS gains `born_self` + `restore_parked` and the
+  same directional check, mirroring `drainPending`. **The pinned bytes moved
+  deliberately** (condition b).
+- **`session-manager.js`** — the `_userKilled` rm is GONE (condition d). The
+  replacement comment names both directions of the old gate's wrongness: too WIDE
+  (restart routes through `_userKilled`, so it destroyed mail on restart) and too
+  NARROW as hygiene (stale mail survived every other exit anyway), and points at
+  the drain-time stamp as where the second concern now lives.
+
+Existing suites green with product in: `test/cli-hooks.test.js` 11/11,
+`test/pending-store.test.js` 27/27.
+
+### TESTS WRITTEN — 14 new, across three files
+
+**`test/pending-store.test.js` +7** (the comparison itself). Header states why
+each test asserts the STORE and not just the return value: *"not delivered" has
+two very different implementations — dropped and put back — and the return value
+cannot tell them apart.* A product that destroyed every non-matching entry would
+satisfy every "the successor's mail was not returned" assertion while committing
+exactly the loss the stamp prevents. So discard and put-back are pinned as a
+PAIR — discard is trivially satisfied by destroying everything, put-back by
+destroying nothing, and only both together mean anything. Same constrain-each-
+other move as 3a's test 6. Tests: predecessor discarded (+ *gone*, not restored),
+successor PUT BACK (+ readable by the seat it was addressed to), equal delivers,
+a mixed batch partitioned three ways in one claim (`countPending === 1` pins both
+directions in a single number), unstamped delivers *to a drainer with a real
+expectation*, omitted expectation delivers everything, and restore-keeps-the-
+original-basename (asserted through `claimParkedById` + `drainPending`, i.e. the
+product's own readers, not my reading of the filenames).
+
+**`test/cli-hooks.test.js` +3** (the SECOND drainer). The hook and `drainPending`
+are single-source-of-truth by convention only, which means nothing but a test
+holds them together. These exec the generated bash+node end to end with the stamp
+baked in at setup: predecessor discarded / this generation delivered, successor
+put back under its ORIGINAL name, and one test carrying both halves of the
+compatibility promise (an old PARK through a new hook, and a new park through a
+hook set up with NO stamp — the bash arm / any caller that omits it).
+
+**`test/session-manager.test.js` +4** (the PLUMBING). pending-store's tests pin
+the comparison; these pin that the manager reads the right stamp and actually
+hands it over — *a stamp computed correctly and never passed is worth nothing*.
+`_bornFor` live-first, `_bornFor` persistence-fallback (with the note that the
+fallback is load-bearing and only works because 3a stopped restarts re-minting),
+park→drain end to end through `_maybeParkDelivery` + `_drainPendingAtIdle`, and
+the condition-(d) pin: `_cleanup` with `_userKilled: true` must NOT delete the
+store, failing by a message naming the restart path.
+
+### REVERTS — 8 product reverts, and THREE of them found a hollow pin
+
+Restored from a pristine COPY each time, `git diff` after every one, no-op
+checked explicitly. Two more tests exist than when this section was first
+written, both added BECAUSE a revert was a no-op.
+
+| # | reverted | result |
+|---|---|---|
+| A | the whole generation check in `drainPending` | 4 fail |
+| B | ONLY the put-back branch (`restoreParked` call) | 3 fail, incl. the binding message |
+| C | the `typeof` guards (unstamped/no-expectation compared raw) | 17 fail |
+| D | the hook's `born_self` check | 2 fail |
+| E | the hook's `restore_parked` call | 1 fail — **by CRASH first, fixed** |
+| F | `createdAt` off the live session object | **NO-OP — new test written** |
+| G | the `createdAt` arg to `setupClaudeHook` | **NO-OP — new test written** |
+| H | re-add the `_userKilled` rm | **NO-OP — harness was blind, fixed** |
+
+**REVERT E failed by ENOENT, not by message.** With the restore gone the whole
+directory is gone, so a bare `readdirSync` threw a stack trace instead of the
+sentence explaining the branch — on clodex's binding item, the one that must
+teach the reason. Fixed by reading defensively (`existsSync ? readdirSync : []`).
+The rule "fail by message, never by crash" earns its keep on exactly the
+assertion that was written to carry a message.
+
+**REVERTS F AND G WERE BOTH NO-OPS, and they are the same defect.** Every
+`_bornFor` test constructs its own session literal — honest for testing the READ,
+and structurally incapable of noticing that create() stopped WRITING the field.
+Same for the hook: `cli-hooks.test.js` calls `setupClaudeHook` directly with its
+own stamp, so it pins what the hook DOES with the value and can never notice the
+value failing to arrive. **This is the revert-E finding from 3a, one layer up:**
+a fixture may only model fields the product does not compute — and the corollary
+is that testing a consumer with a hand-made input never tests the producer.
+Fixed with two new tests in `test/createdat-restart.test.js` (the file that
+already has a real-`create()` harness): the live session carries the same stamp
+as the record, and create() passes it as `setupClaudeHook`'s 8th argument. Both
+assert from a REAL create(), so no fixture can fake them.
+
+The hook test lets the spawn throw AFTER the hook call and inspects what was
+captured — safe only because the ENTER assertion (`seen.length === 1`) fires
+first, so "it crashed early" can never read as "it passed the right value".
+Stubbing the entire claude arm was the alternative and would have made the test a
+model of create() rather than a test of it.
+
+**REVERT H IS THE WORST ONE AND IT WAS THE MOST IMPORTANT PIN.** Condition (d)'s
+test passed with the deleted `rm` fully restored. The reason is not a modelling
+slip — it is that the deleted code was `fs.rmSync(path.join(PENDING_DIR, name))`
+inside a bare `try {} catch {}`, and the default harness injects no `path`. The
+restored rm threw on `path.join` and **its own catch swallowed the throw**. The
+test observed a deletion that could not happen for a reason having nothing to do
+with the product. Fixed by injecting real `path` + `fs` into that one harness,
+with the reason written where the injection is so nobody "tidies" it away.
+
+Generalize it: **a guard that cannot see the thing it guards against is worse
+than no guard**, because it is also a claim that someone checked. And the
+mechanism is worth naming — swallowing `catch {}` in the code under test can make
+a revert un-observable, so a no-op revert against error-swallowing code should be
+suspected of harness blindness before it is believed.
+
+### The per-assertion sweep, and why my FIRST version of it measured nothing
+
+The instruction was "delete each new assertion, confirm the test then passes
+vacuously". I scripted exactly that — 21 runs, each with one assertion commented
+out — and every run came back green. **The script was measuring nothing.** With
+the product intact the suite is green, so removing an assertion trivially leaves
+it green; "still passes" was a property of the starting state, not of the
+assertion. The 3a version of this move worked because the assertion was deleted
+while the PRODUCT was reverted.
+
+Redone correctly: for each product revert, collect which assertion messages
+actually fire. That answers the real question — *which assertions carry weight,
+and do they say something when they do*. It found two of mine failing BARE
+(`Expected values to be strictly equal`), both in the mixed-batch and
+restore-filename tests. Given messages; re-verified.
+
+Worth recording as the method error it was: **a sweep that cannot distinguish
+its two outcomes is not a check.** Same shape as the hollow tests it was meant to
+find, one level up — I automated the letter of the instruction and lost its
+point. The instruction's point is always "make the product wrong and see what
+notices".
+
+### The census caught a COMMENT — a real gap, flagged not papered over
+
+First full-suite run: 2956 pass / 2 fail, both in `test/create-mint-census.test.js`,
+reporting a 12th `.create(` site at `cli-hooks.js:50`. There is no call there. My
+comment said *"session-manager.create() owns the one expression"* and the census's
+top-level scan is `/(\w+)\.create\s*\(/g` — **not comment-aware**, unlike
+`callArgs`, which is scrupulously so.
+
+So the census can be tripped by prose. Reworded my comment (and said in it why),
+because the alternative — adding a table row for a comment — would corrupt the
+census's meaning. **The scanner gap is real and I am not fixing it in this
+ticket**: making that regex comment-aware means the same whole-file
+strip-then-scan that the file's own header records as having produced a phantom
+string and a healthy-looking 10-site count. That is a change with its own failure
+history and it belongs to whoever owns the census, with its own reverts.
+
+Note what the census did right, though: it is designed to fail loudly when the
+site set changes, and it did — on a false positive, but a loud one. A forced
+pause on a wrong signal costs a minute; the silent version costs a release.
+
+### FULL SUITE: 2958/2958, ESCAPES 0
+
+Baseline 2942 + 16 new (pending-store +7, cli-hooks +3, session-manager +4,
+createdat-restart +2 — the last two written because reverts F and G were no-ops).
+
+**A DEFECT IN MY OWN TEST, caught by running it.** The park→drain test first
+tried to reuse ONE parked message: park as gen A, drain as gen B (refused), then
+drain as gen A again expecting it back. It failed — correctly. The gen-B drain
+DISCARDS a predecessor's mail, so there was nothing left for the third phase.
+The product was right and the test's model of it was wrong. Fixed by parking
+once per generation. Worth recording because the failure was legible and
+immediate: the test asserted a thing the design explicitly rules out, and it said
+so. Contrast the four harness-lying-quietly instances — this one failed LOUDLY,
+which is what a test disagreeing with a correct product is supposed to do.
 
 ## The pin question — RESOLVED (phase 2, shipped)
 
