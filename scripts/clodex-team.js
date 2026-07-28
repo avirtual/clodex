@@ -165,6 +165,8 @@ const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 // removed. Overflow folds into the count line.
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
+// Derived, not a literal in the sentence — see session-manager.js.
+const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
 // ── Stale-host check (t93) ─────────────────────────────────────────────────
 // Duplicated from host-stamp.js for the SAME strict-leaf reason as
@@ -324,13 +326,21 @@ function staleHostLineFor(host) {
 // tickets appear, in which section, and the counts — that is the parity.
 //
 // SCOPE OF THAT PARITY: it is over what this FUNCTION RENDERS, not over what an
-// exec caller receives. The dispatcher delivers only the last stderr line,
-// sliced to 200 chars (session-manager.js:3838, pinned at
-// test/session-manager.test.js:4231-4243), so an agent running
+// exec caller receives. The dispatcher delivers only the LAST stderr line, and
+// then slices it to 200 chars. So an agent running
 // [agent:exec clodex-team] {"action":"tickets"} gets the tail line and nothing
 // else — no head, no rows, no recent section. That has been true of this
 // listing since t80; the rows below are written for a reader who can see the
 // whole string, which today means the terminal and the test suite.
+//
+// The last-line rule is pinned by the test named
+//   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
+// THE 200-CHAR SLICE IS PINNED BY NOTHING — that test's stderr is 14 chars, and
+// no test in the suite feeds the dispatcher a line long enough to be cut. Stated
+// separately because a reader would otherwise take both halves as guarded.
+//
+// Cited by NAME, not by line: this comment carried a line range for exactly one
+// commit before the range pointed at unrelated code (t105).
 function doTickets(payload) {
   const cwd = requesterCwd(payload);
   if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
@@ -369,7 +379,7 @@ function doTickets(payload) {
   const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
   const cancelledAll = closed.filter((t) => t.state === 'cancelled');
   const tail = closed.length
-    ? `\n(${over > 0 ? `+${over} more done in the last 24h; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
+    ? `\n(${over > 0 ? `+${over} more done in the last ${RECENT_DONE_LABEL}; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
       + ' — ask for filter "done", "cancelled" or "all")'
     : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
