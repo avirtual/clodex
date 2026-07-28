@@ -271,3 +271,84 @@ not go to the delivery layer. That is the same failure as t101's report defect
 and t96's header, and it is now four instances: the code was right every time
 and the sentence describing it was wrong. Prose about behaviour needs a
 measurement behind it exactly as much as a test does.
+
+## THIRD PASS (cold review, must-fix + nits 1-3)
+
+### The must-fix is the branch's own defect class, committed fresh
+
+`scripts/clodex-team.js:328-329` and `test/clodex-team.test.js:220-221` cited
+`test/session-manager.test.js:4231-4243`. Verified at source: that range holds
+the filename-token/traversal-guard block. The intended test —
+`_handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back`
+— **was at 4231 on master and sits at 4280 here**, because `e821661`'s own
+additions to that file pushed it 49 lines down. The citation was invalidated by
+the same commit that wrote it.
+
+Both now cite the test by NAME with no range. This is the sixth instance of the
+pattern and the first where the rot was same-commit rather than same-week.
+
+Second defect in that sentence: **"sliced to 200 chars" is pinned by nothing.**
+The named test's stderr is `811/811 green` — 14 chars — and nothing in the suite
+feeds the dispatcher a line long enough to cut. Grepped the suite to confirm.
+The comment now splits the claim: the last-line rule is pinned by the named
+test, the slice is unpinned, said in those words. Half a guarded sentence reads
+as fully guarded.
+
+### Nit 1 — the literal that revert A proved could go false
+
+Both files rendered `in the last 24h` while the window is `RECENT_DONE_MS`, and
+first-pass revert A had already proved that moving the constant leaves the whole
+suite green with the sentence unchanged. That is worse than a stale comment: it
+is a USER-FACING statement that becomes false silently.
+
+Added `RECENT_DONE_LABEL`, derived from the constant, in both files.
+Verified by moving the window to 20h: the tail now reads
+`+3 more done in the last 20h`. The parity reducer's tail pattern was widened to
+`\d+h` so it does not re-pin the literal it just removed.
+
+### Nit 2 — the leaf's window was unpinned, and I confirmed the gap
+
+The behavioural parity tests cannot see a window divergence: `parityBoard` puts
+closes at 1-12h and 30h, so any leaf window in ~[13h,29h] renders identically.
+Measured it — set the leaf's `RECENT_DONE_MS` to 20h and skipped only the new
+constant test: **18 pass, 0 fail.** The cap is different (F1 caught a cap
+divergence) because the fixture straddles it.
+
+Added a scrape-and-compare over both `RECENT_DONE_MS` and `RECENT_DONE_CAP`,
+same idiom as the digest grammar and `TICKET_FILTERS`. With it, the 20h leaf
+fails by message.
+
+### Nit 3 — the reducer swallowed unrecognized lines
+
+`listingFacts` fell through silently on any line matching none of its three
+shapes, so an EXTRA line in one implementation was invisible. My first-pass
+instrument check covered ORDER and not this.
+
+Measured: injected a bare extra line into the leaf's output and ran the OLD
+reducer — **19 pass, 0 fail**, full parity reported while the two renderings
+differed by a whole line. With `OTHER|<line>`, the same injection fails two
+tests.
+
+The deliberate drops are now named individually (each head shape, each no-open
+sentence, the stale notice) rather than caught by a loose `/tickets/` match. My
+first attempt used exactly such a loose pattern and it silently ate the intent
+path's head; the reducer went red and I read the failure before assuming it was
+a real drift, which it was not. A drop-list that is too generous is the same
+defect as no drop-list at all, one layer down.
+
+### Third-pass revert table
+
+Restored from md5-verified `cp` copies (`session-manager.js` `b7b3eed0…`,
+`scripts/clodex-team.js` `2410f71b…`, `test/clodex-team.test.js` `682a7f27…`).
+
+| # | Revert | Result |
+|---|---|---|
+| A | leaf `RECENT_DONE_MS` → 20h | 1 fail — "RECENT_DONE_MS drifted between the two implementations" |
+| A′ | same, **new constant test skipped** | **18 pass 0 fail — the gap nit 2 named, reproduced** |
+| B | extra line injected into the leaf's render | 2 fail — both parity tests |
+| B′ | same injection, **old reducer restored** | **19 pass 0 fail — the gap nit 3 named, reproduced** |
+| C | window → 20h, both files | tail renders "in the last 20h" — the sentence follows the constant |
+
+A′ and B′ are the ones worth keeping: each shows the pre-fix code green under
+the exact condition the reviewer described. Agreeing with a review is not the
+same as verifying it.

@@ -217,12 +217,21 @@ test('bad payloads are loud (unknown action, missing agent)', async () => {
 //
 // WHAT THIS DOES NOT CLAIM. Parity is over the two RENDERINGS. It is not a
 // claim that an agent sees either of them: the exec dispatcher delivers only
-// the last stderr line, sliced to 200 chars (session-manager.js:3838, pinned at
-// test/session-manager.test.js:4231-4243), so `{"action":"tickets"}` returns
-// the tail and nothing more. True since t80, measured under t100's rework. The
-// tests below therefore pin that the two functions agree — a real property,
-// since the intent path renders in full — and deliberately not that the exec
-// surface delivers a board.
+// the LAST stderr line, then slices it to 200 chars, so `{"action":"tickets"}`
+// returns the tail and nothing more. True since t80, measured under t100's
+// rework. The tests below therefore pin that the two functions agree — a real
+// property, since the intent path renders in full — and deliberately not that
+// the exec surface delivers a board.
+//
+// The last-line rule is pinned by the test named
+//   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
+// in test/session-manager.test.js. THE 200-CHAR SLICE IS PINNED BY NOTHING: that
+// test's stderr is 14 chars and nothing in the suite feeds the dispatcher a line
+// long enough to cut. Half this sentence is guarded and half is not, so it says
+// which half.
+//
+// Cited by NAME, not by line — a line range here survived exactly one commit
+// before it pointed at unrelated code (t105).
 
 // Reduce a rendering to the facts both implementations must agree on: the
 // ticket rows, the section header that separates them, and the tail's numbers.
@@ -233,10 +242,26 @@ function listingFacts(text) {
     if (/^recently closed:$/.test(line)) { facts.push('SECTION'); continue; }
     const row = line.match(/^(t\d+) \[(\w+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
     if (row) { facts.push(`${row[1]}|${row[2]}|${row[3]}|${row[4] ? 'closed' : 'open-age'}|${row[7]}`); continue; }
-    const tail = line.match(/\((?:\+(\d+) more done in the last 24h; )?(\d+) done, (\d+) cancelled/);
-    if (tail) facts.push(`TAIL|over=${tail[1] || 0}|done=${tail[2]}|cancelled=${tail[3]}`);
-    const none = line.match(/no open tickets/);
-    if (none) facts.push('NO-OPEN');
+    const tail = line.match(/\((?:\+(\d+) more done in the last \d+h; )?(\d+) done, (\d+) cancelled/);
+    if (tail) { facts.push(`TAIL|over=${tail[1] || 0}|done=${tail[2]}|cancelled=${tail[3]}`); continue; }
+    if (/no open tickets/.test(line)) { facts.push('NO-OPEN'); continue; }
+    // Lines dropped ON PURPOSE, because the two implementations are REQUIRED to
+    // differ here: the head names the team in each caller's own phrasing, and
+    // the stale notice has no counterpart on the intent path at all.
+    // Heads: `team <name> tickets[ [filter]]:` (leaf) and
+    // `tickets on <name>[ [filter]]:` (intent). Both named explicitly rather
+    // than by a loose /tickets/ match, so a head that changes SHAPE surfaces as
+    // OTHER instead of being swallowed by a pattern that was too generous.
+    if (/^team \S+ tickets( \[\w+\])?:$/.test(line)) continue;
+    if (/^tickets on \S+( \[\w+\])?:$/.test(line)) continue;
+    if (/^team \S+: no \w+ tickets/.test(line)) continue;   // leaf's no-open sentence
+    if (/^no \w+ tickets on \S+/.test(line)) continue;      // intent's
+    if (/^\(STALE HOST|^\(HOST /.test(line) || line === '') continue;
+    // Anything else is surfaced rather than swallowed. A reducer that silently
+    // ignores what it does not recognize cannot see an EXTRA line in one
+    // implementation — it would compare equal while the two rendered
+    // differently, which is the exact drift these tests exist to catch.
+    facts.push(`OTHER|${line}`);
   }
   return facts;
 }
@@ -301,6 +326,28 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');
+});
+
+// The duplicated constants, compared at source. The behavioural parity tests
+// cannot see a window divergence: parityBoard's closes sit at 1-12h and 30h, so
+// ANY leaf window in roughly [13h, 29h] renders byte-identically. The cap is
+// different — F1 caught a cap divergence, because the fixture straddles it.
+// This is the scrape-and-compare idiom already used for the digest grammar and
+// for TICKET_FILTERS.
+test('listing parity: the duplicated window and cap constants agree at source', () => {
+  const scrape = (file, name) => {
+    const src = fs.readFileSync(file, 'utf-8');
+    const m = src.match(new RegExp(`const ${name} = ([^;]+);`));
+    assert.ok(m, `ENTER: found ${name} in ${path.basename(file)}`);
+    return Function(`return (${m[1]})`)();
+  };
+  const CORE = path.join(__dirname, '..', 'session-manager.js');
+  for (const name of ['RECENT_DONE_MS', 'RECENT_DONE_CAP']) {
+    const core = scrape(CORE, name);
+    assert.ok(core > 0, `ENTER: ${name} scraped to a real value (${core})`);
+    assert.strictEqual(scrape(SCRIPT, name), core,
+      `${name} drifted between the two implementations — they would render different boards from the same registry`);
+  }
 });
 
 test('listing parity: holds on each explicit filter too', async () => {
