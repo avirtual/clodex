@@ -66,6 +66,7 @@ const RHOST_CONTRACT = [
   { name: 'workspaceId', kind: 'getter' },
   { name: 'invoke', kind: 'fn' },
   { name: 'sessions', kind: 'ns', members: ['active', 'listWorkspace'] },
+  { name: 'events', kind: 'ns', members: ['on'] },
   {
     name: 'ui',
     kind: 'ns',
@@ -289,9 +290,13 @@ test('rhost exposes the seven UI slots and nothing that reaches window.api', () 
   }
   assert.strictEqual(rhost.sessions.listAll, undefined,
     'the renderer side has no global session read at all (docs §5)');
-  assert.strictEqual(rhost.events, undefined,
-    'no renderer-side event subscription in "1" — a documented gap (docs §9), pinned so it '
-    + 'cannot appear undocumented');
+  // Subscription only. A renderer-side emit would route around the engine and
+  // around the scoping it applies, making plugin events a renderer-to-renderer bus.
+  assert.strictEqual(typeof rhost.events.on, 'function',
+    'renderer halves subscribe to their own engine half (docs §9)');
+  assert.strictEqual(rhost.events.emit, undefined,
+    'the renderer never emits — scope is the engine\'s to apply, and a renderer emit '
+    + 'would bypass it');
 });
 
 // ── The `_host` pseudo-plugin ───────────────────────────────────────────────

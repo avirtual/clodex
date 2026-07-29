@@ -2369,10 +2369,13 @@ loadPluginRenderers();
 
 if (window.api.onPluginEvent) {
   window.api.onPluginEvent((pluginId, topic, payload) => {
-    if (pluginId !== '_host' || topic !== 'plugin-state' || !payload || !payload.id) return;
-    if (payload.enabled) activatePluginRenderer(payload.id);
-    else pluginBar.dispose(payload.id);
-    if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
+    if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
+      if (payload.enabled) activatePluginRenderer(payload.id);
+      else pluginBar.dispose(payload.id);
+      if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
+      return;
+    }
+    if (pluginId !== '_host') pluginBar.deliverEvent(pluginId, topic, payload);
   });
 }
 

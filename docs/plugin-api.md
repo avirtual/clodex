@@ -656,6 +656,10 @@ rhost = {
     listWorkspace(workspaceId),        // -> Promise<[session, …]>
   },
 
+  events: {
+    on(topic, fn),                     // -> dispose; hears YOUR engine half (§9)
+  },
+
   ui: {
     openPath(path),                    // reveal in the OS file manager
     showToast(msg, opts),              // core's toast host
@@ -1277,27 +1281,39 @@ default, because every plausible default is wrong in one direction or the other.
 
 `'all'` carries **invalidation hints only**. A broadcast reaches every workspace,
 so a data payload on `'all'` is a cross-workspace leak. Say "the thing changed";
-let each window pull what it needs.
+let each window pull what it needs. This one bites for real now that `events.on`
+exists: an `'all'` payload used to be discarded renderer-side, and today it is
+delivered into every workspace's renderer half.
 
 Renderer side, subscribe during activation:
 
 ```js
 module.exports.activate = (rhost) => {
-  // events arrive through core's plugin-event channel; the host does not
-  // subscribe for you — see the note below.
+  const off = rhost.events.on('changed', (payload) => { /* re-render */ });
+  return off;   // or let dispose() collect it — see §11
 };
 ```
+
+`events.on(topic, fn)` returns a disposer, and the host releases every listener
+on teardown whether you call it or not. You hear **your own** engine half only:
+`emit` is your plugin's channel, not a bus, so another plugin's topics never
+reach you.
+
+Listeners are **synchronous**, like the session hooks in §4. A throwing listener
+is caught and logged per-plugin and the others on that topic still run — but an
+`async` listener's rejection escapes that catch and surfaces as an unhandled
+rejection, so do the work in a plain function and hand off if you need `await`.
 
 Events are unbuffered (Law 2). A window that opens after your emit hears
 nothing, which is precisely why pull-on-open is the contract rather than a
 suggestion.
 
-> **`"1"` gap:** `rhost` has no `events.on(topic, fn)` member. A renderer half
-> cannot subscribe to its engine half's events through the documented surface —
-> the only sanctioned renderer→engine direction is `invoke`, and the only
-> sanctioned pattern is pull-on-open plus polling if you need liveness. The
-> `plugin-event` channel exists and carries your emits; a subscription slot for
-> it is a v1.1 candidate. Design against pull, not push.
+> **`events.on` does not replace pull-on-open.** It removes the polling you would
+> otherwise need *between* opens. Your surface must still pull its own state when
+> it opens, because an emit that happened while this window was closed is gone —
+> nothing buffers it. Design the pull first, then add `events.on` to avoid the
+> timer. Scope is applied main-side, so if a listener fires, this window was an
+> intended recipient of that scope.
 
 ---
 
@@ -1548,7 +1564,8 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   `inject` itself in §4 rather than here, because they bite while you are
   writing the call rather than while you are designing around a gap.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
-- **No renderer-side event subscription** (§9). Design against pull-on-open.
+- **Events are unbuffered, so `events.on` is not a state feed** (§9). A window
+  closed at emit time never learns. Pull on open; subscribe to skip the timer.
 - **`rhost.sessions` has no `listAll()`** and never will; if you need the global
   picture, ask your engine half.
 - **`sidebar.rowBadge.resolve` is sync-only** (§6.4). The cache-plus-relayout
@@ -1556,8 +1573,9 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
 - **No change notification for session data** (§4). `onCreate` and `onExit` are
   the complete lifecycle set, and nothing else tells you a session's world moved:
   a `git checkout`, a branch rename, a file appearing, a cwd's contents changing
-  all happen in silence. There is no renderer-side event subscription either
-  (§9), so your engine half cannot push an invalidation even when it knows.
+  all happen in silence. `events.on` (§9) lets your engine half push an
+  invalidation once it knows — but nothing tells *it* either, so the gap is the
+  detection, not the delivery.
   **The practical consequence: the freshness of anything you cache is bounded by
   how often you re-ask, not by when the data changed.** A plugin whose data can
   change out from under it must own that — a TTL, a re-resolve on the user

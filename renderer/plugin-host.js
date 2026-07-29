@@ -30,6 +30,7 @@ function initPluginHost({
   const menuProviders = [];   // { pluginId, id, entriesFor, onPick }
   const settingsSections = []; // { pluginId, id, title, render, collect }
   const overlays = [];        // { pluginId, id, mount, onOpen, onClose, el, mounted }
+  const eventListeners = [];  // { pluginId, topic, fn }
 
   const resources = new Map();
   const activated = new Map(); // pluginId -> the plugin's renderer module
@@ -59,6 +60,20 @@ function initPluginHost({
 
   function warn(pluginId, e) {
     try { console.warn(`[plugin:${pluginId}]`, (e && e.message) || e); } catch {}
+  }
+
+  // Deliver one core `plugin-event` to the plugin that emitted it. Scope was
+  // already applied main-side (plugin-host-engine emitScoped): if this window
+  // received the IPC it is an intended recipient, so re-filtering here would
+  // second-guess a decision this side cannot see.
+  //
+  function deliverEvent(pluginId, topic, payload) {
+    const t = String(topic);
+    // Copy first: a listener that disposes its plugin mutates this array.
+    for (const l of [...eventListeners]) {
+      if (l.pluginId !== pluginId || l.topic !== t) continue;
+      try { l.fn(payload); } catch (e) { warn(pluginId, e); }
+    }
   }
 
   function purge(list, pluginId) {
@@ -395,6 +410,19 @@ function initPluginHost({
           return list.filter((s) => s && s.workspaceId === wsId);
         },
       }),
+      events: Object.freeze({
+// Sync-only by construction: deliverEvent's try/catch cannot see an async
+// listener's rejection, so awaiting one here would swallow it silently.
+        on: (topic, fn) => {
+          if (typeof fn !== 'function') return () => {};
+          const entry = { pluginId, topic: String(topic), fn };
+          eventListeners.push(entry);
+          return disposable(pluginId, () => {
+            const i = eventListeners.indexOf(entry);
+            if (i >= 0) eventListeners.splice(i, 1);
+          });
+        },
+      }),
       ui: Object.freeze({
         openPath: (p) => { if (openPath) openPath(String(p)); },
         showToast: (msg, opts) => {
@@ -516,7 +544,7 @@ function initPluginHost({
       }
     }
     if (r.styleEl) { r.styleEl.remove(); r.styleEl = null; }
-    for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays]) {
+    for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays, eventListeners]) {
       purge(list, pluginId);
     }
     for (const el of [...document.querySelectorAll(`[data-plugin="${CSS.escape(pluginId)}"]`)]) el.remove();
@@ -536,10 +564,12 @@ function initPluginHost({
     menuEntriesFor, handleMenuPick,
     renderSettingsSections, collectSettingsSections, settingsSectionOwners,
     activate, dispose, disposeAll,
+    deliverEvent,
     statusBar, sidebar, sessionMenu, settings, surfaces,
     _counts: () => ({
       actions: statusActions.length, segments: statusSegments.length,
       footer: footerButtons.length, badges: rowBadges.length,
+      events: eventListeners.length,
       menus: menuProviders.length, sections: settingsSections.length,
       overlays: overlays.length,
     }),

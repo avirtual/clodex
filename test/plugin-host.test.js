@@ -191,7 +191,7 @@ test('with no plugin registered every seam returns the empty answer', () => {
   assert.deepEqual(host.settingsSectionOwners(), [], 'openPrefs issues ZERO plugin invokes');
   assert.deepEqual(host.collectSettingsSections(), [], 'Save issues zero');
   assert.deepEqual(host._counts(), {
-    actions: 0, segments: 0, footer: 0, badges: 0, menus: 0, sections: 0, overlays: 0,
+    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
   });
 });
 
@@ -603,7 +603,7 @@ test('the host removes containers wholesale — teardown never trusts the plugin
   assert.equal(footer.querySelector('[data-plugin-footer="demo:f"]'), null);
   assert.equal(host.statusBarHtml(), '', 'and every registry row with it');
   assert.deepEqual(host._counts(), {
-    actions: 0, segments: 0, footer: 0, badges: 0, menus: 0, sections: 0, overlays: 0,
+    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
   });
 });
 
@@ -907,9 +907,103 @@ test('W9 gate 1: disable removes button, overlay, styles and rows from BOTH wind
         timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false,
       }, `${w.id}: zero live resources`);
       assert.deepEqual(w.host._counts(), {
-        actions: 0, segments: 0, footer: 0, badges: 0, menus: 0, sections: 0, overlays: 0,
+        actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
       }, `${w.id}: every registry empty`);
       assert.equal(targets[w.id].listenerCount('click'), 0, `${w.id}: listener unregistered from the real target`);
     });
   }
+});
+
+// ── t108: rhost.events.on ───────────────────────────────────────────────────
+// The wire (emitScoped -> plugin-event -> onPluginEvent) predates this seam;
+// what is new is a renderer half being able to HEAR it. These pin the three
+// properties that make that safe: own-plugin-only, isolated throws, and
+// released on dispose like every other slot.
+
+test('t108: a renderer half hears its own engine half\'s emit', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', { activate: (rhost) => { rhost.events.on('changed', (p) => seen.push(p)); } });
+  assert.equal(host._counts().events, 1);
+  host.deliverEvent('demo', 'changed', { n: 1 });
+  assert.deepEqual(seen, [{ n: 1 }]);
+});
+
+test('t108: a plugin hears only its OWN id and its OWN topic', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', { activate: (rhost) => { rhost.events.on('changed', (p) => seen.push(p)); } });
+  host.deliverEvent('other', 'changed', { from: 'another plugin' });
+  host.deliverEvent('demo', 'unrelated', { from: 'another topic' });
+  assert.deepEqual(seen, [], 'events.emit is a plugin\'s own channel, not a bus');
+});
+
+test('t108: one throwing listener does not stop delivery to the rest', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.events.on('changed', () => { throw new Error('boom'); });
+      rhost.events.on('changed', () => seen.push('second ran'));
+    },
+  });
+  host.deliverEvent('demo', 'changed', null);
+  assert.deepEqual(seen, ['second ran']);
+});
+
+test('t108: dispose() releases event listeners like every other slot', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', { activate: (rhost) => { rhost.events.on('changed', () => seen.push(1)); } });
+  host.dispose('demo');
+  assert.equal(host._counts().events, 0, 'a verb outliving its plugin delivers into a dead handler');
+  host.deliverEvent('demo', 'changed', null);
+  assert.deepEqual(seen, [], 'and nothing is delivered after teardown');
+});
+
+test('t108: the disposer returned by events.on is idempotent and self-removing', () => {
+  const { host } = makeHost();
+  let off = null;
+  host.activate('demo', { activate: (rhost) => { off = rhost.events.on('changed', () => {}); } });
+  off(); off();
+  assert.equal(host._counts().events, 0);
+});
+
+test('t108: a listener that disposes its own plugin mid-delivery does not corrupt the walk', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.events.on('changed', () => { seen.push('first'); host.dispose('demo'); });
+      rhost.events.on('changed', () => seen.push('second'));
+    },
+  });
+  host.deliverEvent('demo', 'changed', null);
+  assert.deepEqual(seen, ['first', 'second'], 'the array is copied before the walk');
+});
+
+test('t108: events.on ignores a non-function and hands back a safe no-op', () => {
+  const { host } = makeHost();
+  let off = null;
+  host.activate('demo', { activate: (rhost) => { off = rhost.events.on('changed', 'not a function'); } });
+  assert.equal(host._counts().events, 0);
+  assert.equal(typeof off, 'function', 'the caller can still store it unconditionally');
+  off();
+});
+
+test('t108: a listener registered DURING delivery does not fire in the same round', () => {
+  const { host } = makeHost();
+  const seen = [];
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.events.on('changed', () => {
+        seen.push('first');
+        rhost.events.on('changed', () => seen.push('late'));
+      });
+    },
+  });
+  host.deliverEvent('demo', 'changed', null);
+  assert.deepEqual(seen, ['first'], 'the copy bounds the round; a late listener waits for the next emit');
+  host.deliverEvent('demo', 'changed', null);
+  assert.deepEqual(seen, ['first', 'first', 'late']);
 });

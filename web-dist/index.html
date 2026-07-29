@@ -24351,6 +24351,7 @@ ${detail}` });
         const menuProviders = [];
         const settingsSections = [];
         const overlays = [];
+        const eventListeners = [];
         const resources = /* @__PURE__ */ new Map();
         const activated = /* @__PURE__ */ new Map();
         function res(pluginId) {
@@ -24387,6 +24388,17 @@ ${detail}` });
           try {
             console.warn(`[plugin:${pluginId}]`, e && e.message || e);
           } catch {
+          }
+        }
+        function deliverEvent(pluginId, topic, payload) {
+          const t = String(topic);
+          for (const l of [...eventListeners]) {
+            if (l.pluginId !== pluginId || l.topic !== t) continue;
+            try {
+              l.fn(payload);
+            } catch (e) {
+              warn(pluginId, e);
+            }
           }
         }
         function purge(list, pluginId) {
@@ -24797,6 +24809,20 @@ ${detail}` });
                 return list.filter((s) => s && s.workspaceId === wsId);
               }
             }),
+            events: Object.freeze({
+              // Sync-only by construction: deliverEvent's try/catch cannot see an async
+              // listener's rejection, so awaiting one here would swallow it silently.
+              on: (topic, fn) => {
+                if (typeof fn !== "function") return () => {
+                };
+                const entry = { pluginId, topic: String(topic), fn };
+                eventListeners.push(entry);
+                return disposable(pluginId, () => {
+                  const i = eventListeners.indexOf(entry);
+                  if (i >= 0) eventListeners.splice(i, 1);
+                });
+              }
+            }),
             ui: Object.freeze({
               openPath: (p) => {
                 if (openPath) openPath(String(p));
@@ -24942,7 +24968,7 @@ ${detail}` });
             r.styleEl.remove();
             r.styleEl = null;
           }
-          for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays]) {
+          for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays, eventListeners]) {
             purge(list, pluginId);
           }
           for (const el of [...document.querySelectorAll(`[data-plugin="${CSS.escape(pluginId)}"]`)]) el.remove();
@@ -24968,6 +24994,7 @@ ${detail}` });
           activate,
           dispose,
           disposeAll,
+          deliverEvent,
           statusBar,
           sidebar,
           sessionMenu,
@@ -24978,6 +25005,7 @@ ${detail}` });
             segments: statusSegments.length,
             footer: footerButtons.length,
             badges: rowBadges.length,
+            events: eventListeners.length,
             menus: menuProviders.length,
             sections: settingsSections.length,
             overlays: overlays.length
@@ -27290,10 +27318,13 @@ ${detail}` });
       loadPluginRenderers();
       if (window.api.onPluginEvent) {
         window.api.onPluginEvent((pluginId, topic, payload) => {
-          if (pluginId !== "_host" || topic !== "plugin-state" || !payload || !payload.id) return;
-          if (payload.enabled) activatePluginRenderer(payload.id);
-          else pluginBar.dispose(payload.id);
-          if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
+          if (pluginId === "_host" && topic === "plugin-state" && payload && payload.id) {
+            if (payload.enabled) activatePluginRenderer(payload.id);
+            else pluginBar.dispose(payload.id);
+            if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
+            return;
+          }
+          if (pluginId !== "_host") pluginBar.deliverEvent(pluginId, topic, payload);
         });
       }
       function renderSessionActions(holdHtml = "") {

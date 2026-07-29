@@ -703,7 +703,7 @@ test('fake plugin (renderer): all six registries fill, namespaced and escaped', 
 
     assert.strictEqual(record.activated, 1);
     assert.deepStrictEqual(host._counts(), {
-      actions: 1, segments: 1, footer: 1, badges: 1, menus: 1, sections: 1, overlays: 1,
+      actions: 1, segments: 1, footer: 1, badges: 1, events: 0, menus: 1, sections: 1, overlays: 1,
     });
 
     // §2.1 — ids namespaced by the HOST, labels escaped (a plugin ships data).
@@ -843,7 +843,7 @@ test('fake plugin (renderer): dispose() leaves ZERO live resources and an untouc
 
     // 4. Every registry is empty and every node the host created is gone.
     assert.deepStrictEqual(host._counts(), {
-      actions: 0, segments: 0, footer: 0, badges: 0, menus: 0, sections: 0, overlays: 0,
+      actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
     });
     assert.strictEqual(host.statusBarHtml(), '');
     assert.strictEqual(host.hasVisibleContribution(), false);
