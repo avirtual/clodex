@@ -6,6 +6,8 @@ import time
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
+from proxylab import hints as hints_mod
+from proxylab import hints_native as hints_native_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
@@ -135,6 +137,22 @@ def _identity():
                           # `[wirescope:keep-mcp <server>]` per-agent re-admit of
                           # a STRIP_MCP_SERVERS-filtered family; always parsed.
                           "keep_mcp": True},
+            # tail hints (hints_contract.md): the uncached trailing-block channel.
+            # `available` = the code is present; `enabled` = the live kill switch.
+            # A consumer MUST gate on this rather than sniffing `version` — same
+            # rule as strip_thinking above. Note the registry is empty at rest, so
+            # this says the SLOT exists, never that anything is registered (read
+            # /_hints?agent= for that). `system_tail_fallback` matters because it
+            # is the ONLY path for a consumer whose SessionStart hook emits the
+            # trailing role:"system" roster message: with it off, those requests
+            # decline as `marker_downstream` and no hint is ever delivered.
+            "hints": {"available": True,
+                      "enabled": hints_mod.HINTS,
+                      "system_tail_fallback": hints_mod.SYSTEM_TAIL_FALLBACK,
+                      "native": sorted(hints_native_mod.PROVIDERS),
+                      "caps": {"total_chars": hints_mod.HINTS_MAX_CHARS,
+                               "per_hint_chars": hints_mod.HINTS_MAX_ONE,
+                               "per_scope": hints_mod.HINTS_MAX_PER_SCOPE}},
             # MCP-server tool strip (STRIP_MCP_SERVERS): the LIVE configured set
             # of server prefixes this port surgically drops from tools[]. A
             # consumer gating its own --strict-mcp-config should check the actual
@@ -160,7 +178,10 @@ def _identity():
             "timeline": "/_timeline",
             "bust": "/_bust",
             "strip": "/_strip",
-            "hint": "/_hint",
+            "hint": "/_hint",             # per-agent spawner-hint override (NOT
+            #                               tail hints — different feature, and the
+            #                               one-letter gap is a trap; see below)
+            "hints": "/_hints",           # tail-hint registry (hints_contract.md)
             "prune": "/_prune",
             "pot": "/_pot",
         },

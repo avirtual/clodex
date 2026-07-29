@@ -1,9 +1,9 @@
 {
   "name": "wirescope",
   "repo": "https://github.com/avirtual/wirescope",
-  "ref": "v0.6.41",
-  "commit": "5891cd31fb94341c530520536c6aeb3c790bf6c7",
-  "vendored_at": "2026-07-29T23:19:03Z",
-  "payload_sha256": "5d62be077569fdeb5bf37d51a69307b6abd08f46fc19e5ece36ce73bd382a9e7",
+  "ref": "v0.6.42",
+  "commit": "22aee26e792d2daeafc5809eff3142fcb2ddc377",
+  "vendored_at": "2026-07-29T23:38:51Z",
+  "payload_sha256": "91dc1d81fc46fbccc3babf0b20cdc5215a244043269c4f1de5ff824c4e9dfa5c",
   "payload": ["logproxy.py","proxylab","requirements.txt","LICENSE"]
 }
