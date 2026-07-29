@@ -1,21 +1,3 @@
-// cli-hooks.js — per-session CLI hook wiring for Claude and Codex sessions.
-// Claude: writeClaudeDigestFile renders the SessionStart digest file;
-// setupClaudeHook writes the transcript-symlink script, the statusline script,
-// the attn/acks/pending/ctxwarn drain scripts, and the --settings JSON (proxy
-// env routing, deny rules, skill overrides). Codex: setupCodexHook installs the
-// project .codex/hooks.json (backing up any existing one) pointing at a shared
-// WB_WRAP_NAME-routed script. cleanupClaudeHook / cleanupCodexHook remove it all
-// on session exit.
-//
-// FACTORY (M3 DI): the bodies read three main.js singletons/globals —
-// REGISTRY_DIR (runtime dir) and memoryStore (digest source), injected by value,
-// and uiSettings, which is only assigned in app.whenReady() (after this module
-// is required), so it is injected as a getUiSettings() getter. That getter is
-// the single non-identical seam line (the renderClaudeStatusScript call);
-// everything else is byte-identical modulo the +2 factory indent.
-//
-// The hook bodies are all filesystem writes, so they are left to integration;
-// the generated script strings have a shape unit test alongside.
 
 const fs = require('fs');
 const path = require('path');
@@ -37,22 +19,12 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const digest = composeDigest(memoryStore.list(name));
     const ctx = `You are the clodex agent named '${name}'.` + (digest ? `\n\n${digest}` : '');
-    // Atomic: a mid-session store mutation rewrites this file while a /clear
-    // could be cat-ing it from the hook at the same instant.
     atomicWriteFileSync(pathFor(REGISTRY_DIR, name, 'hookDigest'), JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }
     }) + '\n');
     return !!digest;
   }
 
-  // `createdAt` is the spawning session's birth stamp, baked into the pending-drain
-  // script below so the hook can tell its own generation's mail from a
-  // predecessor's. It is PASSED IN, never recomputed here: SessionManager's create
-  // method owns the one `(existing && existing.createdAt) || Date.now()`
-  // expression, and a second copy would drift the first time either was touched.
-  // (That phrasing avoids writing the call form literally: test/create-mint-census
-  // matches `<word>.create(` with a regex that is not comment-aware, so the prose
-  // would register as a 12th call site. Flagged there, not worked around silently.)
   function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -67,12 +39,6 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     // reset) and the UserPromptSubmit drain below.
     const promptCacheDir = path.join(REGISTRY_DIR, 'promptcache', name);
 
-    // Pre-render hook output: the agent NAME only. The protocol prompt itself
-    // ships via --append-system-prompt-file (settled position) and is static, so
-    // the system-prompt bytes are identical across agents and share the provider
-    // prefix cache; the per-agent name rides this channel into the first user
-    // turn instead, where bytes diverge per session anyway. Re-fires on
-    // resume/clear, so identity survives both.
     const hookOutput = JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
@@ -82,50 +48,10 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }
     fs.writeFileSync(outputPath, hookOutput + '\n');
     writeClaudeDigestFile(name);
 
-    // Hook script: repoint the transcript symlink, reset the IPC-delta baseline
-    // on a context reset, then emit additionalContext.
-    //
-    // The digest-bearing output goes ONLY to conversations being BORN (source
-    // startup/clear); a resume gets name-only, so a GUI restart doesn't duplicate
-    // KBs into context. Unknown/missing source falls to name-only: fails toward a
-    // missed digest (the append-once ledger path rescues), never a duplicated one.
-    //
-    // CORRECTED MECHANISM (t63; retires settled position #2, which claimed
-    // additionalContext "survives /compact verbatim" — measured false against
-    // captured wire traffic). What actually happens: the CLI RE-FIRES SessionStart
-    // with source=compact, so this hook's additionalContext is re-emitted, not
-    // preserved. It is SELF-HEALING. Compaction replaces the messages array with a
-    // generated summary, so channels that do NOT re-fire — UserPromptSubmit, and
-    // therefore the ipcdelta drain below — have their delivered content summarized
-    // away like any other message. That is why the reset exists.
-    // A consequence of the SRC gate under this corrected mechanism (a compact
-    // re-fire takes the else branch, so a long-lived session loses its digest at
-    // the first compact) is tracked as its own ticket; the gate is deliberately
-    // unchanged here — re-emitting KBs of digest after every compact is a
-    // context-cost decision of its own.
-    //
-    // THE RESET RULE. The system prompt survives compaction (it is the system
-    // block, not a member of the messages array), so after a clear or a compact
-    // the ONLY Clodex instruction text the agent still holds is session.md.
-    // notified.md means "what this agent has been told BEYOND its system prompt",
-    // and after a context reset that is nothing — so the correct action at either
-    // edge is `notified.md := session.md`, NOT re-delivering the last delta. The
-    // existing edge-triggered machinery then regenerates precisely the delta the
-    // agent is now missing, which may be larger than the one that was lost, and
-    // should be.
-    //
-    // WHY THE RACE WITH THE DRAIN'S RENAME IS UNREACHABLE, not merely unlikely.
-    // Both write notified.md, but they run on different CLI events that cannot
-    // overlap for one session: this is SessionStart, which fires while the
-    // conversation is being (re)established, and the drain is UserPromptSubmit,
-    // which fires on a submitted turn. The CLI runs one session's hooks serially,
-    // and there is no turn to submit until SessionStart has returned. The
-    // interleaving chosen inside this script matters for the same reason and is
-    // stated there: the reset unlinks delta.md/next.md BEFORE writing
-    // notified.md, so even a torn execution can only leave a staged pair absent
-    // and the baseline old — the re-stage-on-next-spawn case, which is correct —
-    // and never a drained pair advancing the baseline past a delta the reset just
-    // invalidated.
+    // The CLI RE-FIRES SessionStart with source=compact, so this hook's
+    // additionalContext is re-emitted, not preserved across compaction — which is
+    // why the baseline reset below hangs off this event. Digest ships only to
+    // conversations being born (startup/clear); anything else gets name-only.
     const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
@@ -168,11 +94,6 @@ fi
 
     fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase, getUiSettings(), REGISTRY_DIR), { mode: 0o700 });
 
-    // Needs-attention channel: the CLI's Notification hook fires when a
-    // permission dialog opens (or the CLI otherwise wants the human). The script
-    // just appends the raw hook JSON to a per-session file; classification and
-    // policy live in JS (attention.js / SessionManager). Truncated at setup so
-    // a resume never replays last run's stale dialogs.
     const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
     const attnScriptPath = pathFor(REGISTRY_DIR, name, 'attnScript');
     fs.writeFileSync(attnPath, '');
@@ -181,12 +102,6 @@ IN="$(cat)"
 printf '%s\\n' "$IN" >> "${attnPath}"
 `, { mode: 0o700 });
 
-    // Deferred memory-mutation acks (_memoryAck): drain {name}-acks into the
-    // next turn's context via UserPromptSubmit additionalContext. Read+truncate
-    // isn't atomic against a concurrent append — an ack landing in that window
-    // is lost, which the channel tolerates (success acks are bookkeeping).
-    // The file is left alone at setup: acks queued just before a quit are still
-    // valid on resume (the mutations they confirm persisted).
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
     const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
@@ -203,16 +118,10 @@ if (body) {
 JSEOF
 `, { mode: 0o700 });
 
-    // Layer-3 delivery parking drain (see pending-store.js). Deliveries parked
-    // while the operator was composing land here as UserPromptSubmit
-    // additionalContext, so they arrive WITH the prompt instead of splicing the
-    // draft. Unlike the ack channel this must NOT lose messages, so the drain is
-    // an atomic whole-dir rename-claim (mirrors pending-store.drainPending
-    // exactly, keeping the hook and the Node cap-fire drain single-source-of-
-    // truth): whoever renames the dir first owns every message then present; a
-    // delivery parked after the claim lands in a fresh dir and drains next turn.
-    // pendingDir stays at the SHARED ~/.clodex/pending/<name> root (parked DMs
-    // are not per-run state); only the drain SCRIPT relocates into run/<name>/.
+    // Zero-loss channel (unlike acks): the drain is an atomic whole-dir
+    // rename-claim, mirroring pending-store.drainPending. pendingDir stays at the
+    // shared ~/.clodex/pending/<name> root so it survives the run-dir rm -rf on
+    // session exit; only the drain SCRIPT lives under run/<name>/.
     const pendingDir = path.join(REGISTRY_DIR, 'pending', name);
     const pendingScriptPath = pathFor(REGISTRY_DIR, name, 'pendingScript');
     // This script is registered under BOTH UserPromptSubmit and PostToolUse, so it
@@ -329,12 +238,8 @@ if (texts.length) {
 JSEOF
 `, { mode: 0o700 });
 
-    // High-context reminder drain (see ctx-reminder.js). main.js writes a
-    // {name}-ctxwarn file (the reminder text) while the session's absolute token
-    // count is over threshold, removes it once it drops back. Unlike acks/pending
-    // this hook only READS — it never consumes the file, so the reminder recurs on
-    // every submit while over (deliberate; the escalation wording counters
-    // habituation). Silent when the file is absent.
+    // This hook only READS the file — it never consumes it, so the reminder
+    // recurs on every submit while over threshold. Deliberate.
     const ctxwarnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
     const ctxwarnScriptPath = pathFor(REGISTRY_DIR, name, 'ctxwarnScript');
     fs.writeFileSync(ctxwarnScriptPath, `#!/bin/bash
@@ -349,24 +254,13 @@ if (body) {
 JSEOF
 `, { mode: 0o700 });
 
-    // IPC-prompt delta drain (see ipc-prompt-cache.js). A resumed session keeps
-    // the system prompt it was born with — rewriting it would re-bill the whole
-    // context — so protocol changes ride here as a diff instead.
-    //
-    // ORDER IS THE WHOLE MECHANISM, do not "simplify" it: emit delta.md FIRST,
-    // then atomically rename next.md over notified.md (= advance last_ipc), then
-    // drop delta.md. Because the advance is the LAST step, it cannot happen
-    // before delivery — a crash anywhere in between re-delivers the same diff
-    // next turn. At-least-once is deliberate: a repeated diff is noise, a
-    // dropped one leaves an agent emitting a verb that no longer exists.
-    //
-    // The DATA is at the shared ~/.clodex/promptcache/<name>/ root, not under
-    // run/<name>/, because cleanupClaudeHook rm -rf's this run dir on every exit
-    // — including the one right before the resume this cache exists to serve.
-    // Same split as pending/: shared data, per-run script.
+    // ORDER IS THE MECHANISM: emit delta.md, THEN rename next.md over
+    // notified.md, then drop delta.md. The baseline advance is last, so a crash
+    // re-delivers the same diff next turn; at-least-once is deliberate.
+    // The DATA sits at the shared ~/.clodex/promptcache/<name>/ root, not under
+    // run/<name>/, because cleanup rm -rf's the run dir on every exit —
+    // including the one before the resume this cache exists to serve.
     const ipcdeltaScriptPath = pathFor(REGISTRY_DIR, name, 'ipcdeltaScript');
-    // (promptCacheDir is defined above, next to the SessionStart script that
-    // performs the context-reset baseline reset into the same directory.)
     fs.writeFileSync(ipcdeltaScriptPath, `#!/bin/bash
 [ -s "${promptCacheDir}/delta.md" ] || exit 0
 ${INTERP} - "${promptCacheDir}" <<'JSEOF'
@@ -383,7 +277,6 @@ try { fs.unlinkSync(path.join(d, 'delta.md')); } catch (e) {}
 JSEOF
 `, { mode: 0o700 });
 
-    // Settings JSON
     const settings = {
       trustedDirectories: [msgDir],
       statusLine: { type: 'command', command: statusPath },
@@ -398,14 +291,6 @@ JSEOF
         }],
         UserPromptSubmit: [{
           matcher: '',
-          // All drains run on submit; Claude concatenates their additionalContext
-          // in registration order. acks = bookkeeping (lossy-tolerant),
-          // pending = parked DMs (zero-loss).
-          // ipcdelta goes FIRST, deliberately: it is a protocol change — it can
-          // alter what the intents in the messages BELOW it even mean — and it
-          // fires rarely, so burying it under parked DMs and a context warning
-          // makes the one thing that reframes everything else the easiest to read
-          // past.
           hooks: [
             { type: 'command', command: ipcdeltaScriptPath },
             { type: 'command', command: ackScriptPath },
@@ -413,16 +298,6 @@ JSEOF
             { type: 'command', command: ctxwarnScriptPath },
           ]
         }],
-        // Parked-DM drain ONLY (not acks/ctxwarn — those are turn-boundary
-        // bookkeeping that shouldn't fire per-tool). PostToolUse fires between an
-        // agent's tool calls, so a DM parked while the agent is mid-turn/busy is
-        // delivered MID-LOOP as additionalContext next to the tool result — and
-        // Claude Code saves it to the transcript, so it survives into later
-        // requests (the ghost-history defect the wire approach couldn't avoid).
-        // Same pendingScriptPath, same atomic rename-claim as the UserPromptSubmit
-        // drain: whichever event fires first delivers, the other emits nothing.
-        // Cheap on the empty case — the script stats the pending dir and exits
-        // before spawning python when nothing is parked.
         PostToolUse: [{
           matcher: '',
           hooks: [
@@ -431,40 +306,25 @@ JSEOF
         }]
       }
     };
-    // Optional API proxy routing. The --settings env block outranks the
-    // project's .claude/settings.json, so this wins even in repos that set
-    // their own ANTHROPIC_BASE_URL. /agent/<name>/ is the proxy's per-agent
-    // addressing scheme (session name = agent name).
-    // wireBase (shadow mode) wins: the in-process tee sits in front, and when
-    // the session also has an external proxy the tee chains to it upstream —
-    // the external proxy still sees its own /agent/<proxyAgent>/ route.
+    // The --settings env block outranks the project's .claude/settings.json, so
+    // this wins even in repos that set their own ANTHROPIC_BASE_URL. wireBase
+    // (shadow tee) sits in front and chains to any external proxy upstream.
     if (wireBase) {
       settings.env = { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` };
     } else if (proxyBase) {
       settings.env = { ANTHROPIC_BASE_URL: `${proxyBase}/agent/${proxyAgent || name}/anthropic` };
     }
-    // permissions.deny serves two features:
-    //  - subagent suppression: deny built-in general-purpose so the model can't
-    //    fall back to the heavy default instead of an enabled lean custom agent
-    //    (--agents is additive — built-ins stay registered unless denied here);
-    //  - per-session tool gating: each disabled tool name is a bare deny entry.
-    // Both are plain deny rules, so they concatenate. Deduped to keep the array
-    // tidy if a tool is named twice.
-    // Filter disabled tools to the known catalog: a stale name (e.g. a tool
-    // removed from CLAUDE_TOOLS, or a typo persisted before our time) would make
-    // the CLI emit "matches no known tool" warnings on every startup. The catalog
-    // is authoritative, so anything not in it is silently dropped from the deny.
+    // --agents is additive: built-in subagents stay registered unless denied
+    // here. Tool names are filtered against the catalog because a stale name
+    // makes the CLI warn "matches no known tool" on every startup.
     const toolSet = new Set(CLAUDE_TOOLS);
     const denyRules = [...new Set([
       ...denyAgentRules(denyBuiltins),
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };
-    // Per-session skill gating. skillOverrides:{name:"off"} REMOVES the skill from
-    // the injected roster, reclaiming its per-turn tokens — distinct from a deny
-    // rule (Skill(name)), which only blocks invocation while still paying for the
-    // listing. Unlike tools there's no static catalog (skills are project/plugin-
-    // defined and discovered at runtime), so the persisted names are trusted as-is.
+    // skillOverrides:{name:"off"} REMOVES the skill from the injected roster,
+    // reclaiming its per-turn tokens; a Skill(name) deny still pays the listing.
     const skillsOff = [...new Set((Array.isArray(disabledSkills) ? disabledSkills : []).filter(Boolean))];
     if (skillsOff.length) {
       settings.skillOverrides = Object.fromEntries(skillsOff.map((s) => [s, 'off']));
@@ -475,8 +335,6 @@ JSEOF
 
   function setupCodexHook(name, cwd) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
-    // codex-session-hook.sh is SHARED (one script for all Codex agents, routed
-    // by $WB_WRAP_NAME), so it stays at the ~/.clodex root, not under run/.
     const scriptPath = path.join(REGISTRY_DIR, 'codex-session-hook.sh');
     const outputPath = pathFor(REGISTRY_DIR, name, 'hookOutput');
 
@@ -493,12 +351,9 @@ JSEOF
     });
     fs.writeFileSync(outputPath, hookOutput + '\n');
 
-    // Generic hook script: repoint the transcript symlink, then emit the
-    // name-only additionalContext (per-name output file, routed by WB_WRAP_NAME).
-    // GRAMMAR MIRROR: $NAME is resolved at RUNTIME, so the run/<name>/ paths are
-    // rebuilt here in bash — keep in lockstep with clodex-paths.js (transcript =
-    // run/$NAME/transcript.jsonl, hookOutput = run/$NAME/hook-output.json). The
-    // byte-pinned cli-hooks test enforces this mirror.
+    // $NAME resolves at RUNTIME, so the run/<name>/ paths are rebuilt here in
+    // bash — keep in lockstep with clodex-paths.js (transcript.jsonl,
+    // hook-output.json).
     const script = `#!/bin/bash
 set -euo pipefail
 NAME="\${WB_WRAP_NAME:-}"
@@ -517,7 +372,6 @@ OUTPUT="\${RUNDIR}/hook-output.json"
 `;
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
 
-    // Write .codex/hooks.json in project dir
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
@@ -538,12 +392,9 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     fs.writeFileSync(hooksPath, JSON.stringify(hooksConfig));
   }
 
-  // Both cleanups drop the whole per-agent run/<name>/ dir — every hook/status/
-  // side-channel artifact lives there now. The socket + registry entry share the
-  // dir but are torn down separately by agent-transport (registry.unregister +
-  // socket unlink in SessionManager._cleanup); rmSync here is idempotent against
-  // that. The SHARED pending/<name>/ parked-DM dir is untouched (gated on
-  // _userKilled elsewhere), as is the shared codex-session-hook.sh.
+  // Both cleanups drop the whole per-agent run/<name>/ dir. The SHARED
+  // pending/<name>/ parked-DM dir is deliberately untouched, as is the shared
+  // codex-session-hook.sh.
   function cleanupClaudeHook(name) {
     try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
   }

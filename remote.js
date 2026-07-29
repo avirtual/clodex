@@ -1,14 +1,3 @@
-// Remote access server — a phone-friendly web front door to running agent
-// sessions. Plain Node http + SSE, zero dependencies, bound to 127.0.0.1
-// ONLY: reaching it from another device is deliberately outsourced to a
-// tailnet (`tailscale serve`) or an SSH tunnel, so v1 ships no auth surface.
-//
-// Deliberately decoupled from main.js internals: everything Clodex-specific
-// arrives as injected callbacks (getSessions / getTranscript / send), and the
-// only inbound coupling is notifyActivity/notifySessions called from the
-// session manager. The transcript on disk is the single source of truth —
-// SSE only signals "something changed", clients refetch. That keeps this
-// module indifferent to the wire-intents vs JsonlWatcher observation split.
 
 'use strict';
 
@@ -32,11 +21,7 @@ function isLoopbackHost(h) {
 const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const SSE_HEARTBEAT_MS = 25000;
-// An attach stream whose socket can't drain this much is a dead/half-open
-// tunnel; kill it and let the client reconnect + replay.
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
-// Trailing-debounce window for mirroring owner resizes to viewers: long enough
-// to coalesce a window-drag burst into one frame, short enough to feel live.
 const RESIZE_DEBOUNCE_MS = 80;
 
 class RemoteServer {
@@ -48,23 +33,14 @@ class RemoteServer {
                 deliverDm, claimDms, listDmOrigins, receiveRoster,
                 token, insecure }) {
     this._port = port;
-    // Bind host: loopback by default. The web-frontend container passes '0.0.0.0'
-    // (via CLODEX_REMOTE_HOST, threaded in remote-wiring) so the peer wire can be
-    // published on a loopback-mapped host port for desktop→container peering.
-    // Desktop passes nothing, so the bind stays 127.0.0.1 — unchanged.
     this._host = host || '127.0.0.1';
     this._pagePath = pagePath;
     this._getSessions = getSessions;
     this._getTranscript = getTranscript;
     this._send = send;
     this._restartApp = restartApp || null;
-    // Peer-attach surface (all optional: absent callbacks 501 their endpoints)
     this._hostLabel = hostLabel || 'clodex';
     this._version = version || '';
-    // Self-reported install dir (home-relative, e.g. ~/projects/clodex) so a
-    // consumer's Update targets the box's ACTUAL checkout instead of guessing.
-    // null for a packaged .app (not a git-pullable source dir) and for old
-    // owners — the hello simply omits it and viewers fall back to today's guess.
     this._srcDir = srcDir || null;
     // The browser frontend's host, read per hello (t30). A getter, not a value:
     // web-host.js starts after this server is constructed, and is absent
@@ -74,51 +50,18 @@ class RemoteServer {
     this._sendInput = sendInput || null;
     this._resizePty = resizePty || null;
     this._onControlChange = onControlChange || null;
-    // Generic pull-on-demand data source for the viewer's popovers (ctx/cost/
-    // bust/files/file peek). One endpoint, kind-dispatched — popups are
-    // open-time snapshots, so they need a query RPC, not a stream.
     this._query = query || null;
-    // Remote session lifecycle (create/kill/restart on the peer). Optional like
-    // the rest; absent → the endpoints 501 and the 'create' capability isn't
-    // advertised, so viewers hide the "New Session on <peer>" affordance. The
-    // three ship together under the one 'create' cap (see /api/peer/hello).
     this._createSession = createSession || null;
     this._killSession = killSession || null;
     this._restartSession = restartSession || null;
-    // Session-less catalog read backing the New Session dialog's box-truth
-    // checklists (M5). Rides the 'create' cap; its presence + a full-param
-    // createSession is what the create2 hello cap advertises.
     this._getCatalogs = getCatalogs || null;
-    // Remote session config editing (the Edit Session dialog over the wire).
-    // getSessionArgs reads the box's editable args + the catalogs the dialog's
-    // checklists need; setSessionArgs applies them (kill+respawn on restart).
-    // Both gate the 'args' cap. Phase 2 (per-session skills editing) will add its
-    // own endpoint pair under this SAME cap — 'args' means "remote session config
-    // editing", and both pairs ship together in one release, so no second cap.
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
-    // Phase 2 of remote session config editing: per-session skills. getSkillCatalog
-    // reads the box's skill catalog (roster parsed box-side, box's skill library);
-    // setSessionSkills persists the disabled/inject sets (restart is a separate
-    // /api/session-restart call the popover already makes). Both ride the SAME
-    // 'args' cap as the session-args pair — see /api/peer/hello — and each endpoint
-    // 501s independently on its own absent callback.
     this._getSkillCatalog = getSkillCatalog || null;
     this._setSessionSkills = setSessionSkills || null;
-    // DM federation (Clodex-to-Clodex agent messaging). deliverDm gates the 'dm'
-    // cap and the inbound POST; claimDms drains a consumer's outbox; listDmOrigins
-    // advertises which origins have mail waiting (so a consumer only claims when
-    // there's something to fetch). All optional — absent → 501 / no 'dm' cap /
-    // empty dmOrigins, and old owners simply omit the field.
     this._deliverDm = deliverDm || null;
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
-    // Hub-relay federation (spoke side). receiveRoster caches the relayable
-    // who-list the hub pushes to THIS box via POST /api/peer/roster (the hub is a
-    // consumer of us; it computes the split-horizon'd, access-gated roster and
-    // pushes it right after each hello poll). Presence gates the 'relay' cap so a
-    // hub only ever pushes to a spoke that can act on it — an old spoke without the
-    // callback 501s and the hub skips it. Absent → no 'relay' cap, no endpoint.
     this._receiveRoster = receiveRoster || null;
     this._server = null;
     this._clients = new Set();       // live SSE responses (events feed)
@@ -126,17 +69,8 @@ class RemoteServer {
     this._control = new Map();       // name -> { token, client } single holder
     this._activity = new Map();      // name -> 'thinking' | 'idle'
     this._heartbeat = null;
-    // Owner-geometry propagation to read-only viewers. Owner fit() can fire in
-    // bursts (window drags), so resizes are coalesced per session: the latest
-    // dims win, flushed on a short trailing debounce, and identical dims are
-    // dropped (last-sent dedup). _resizePending holds { cols, rows, timer }.
     this._resizePending = new Map(); // name -> { cols, rows, timer }
     this._resizeLast = new Map();    // name -> 'colsxrows' last flushed
-    // ── Operator auth (remote-auth-plan.md [internal design doc, not in this repo] §2–3). The shared auth-token.js
-    // gate; CLODEX_REMOTE_TOKEN threaded from remote-wiring. No token + loopback
-    // bind = today's localhost-trust (SSH-tunnel peers untouched). No token +
-    // non-loopback bind = the breach condition → fail-closed 503 unless the
-    // explicit CLODEX_REMOTE_INSECURE=1 escape hatch (this._insecure) is set.
     this._gate = makeTokenGate(token);
     this._insecure = !!insecure;
     this._loopback = isLoopbackHost(this._host);
@@ -157,8 +91,6 @@ class RemoteServer {
       });
       server.listen(this._port, this._host, () => {
         this._server = server;
-        // Reflect the actual bound port (meaningful when constructed with 0,
-        // as tests do; a fixed port reads back unchanged).
         this._port = server.address().port;
         this._heartbeat = setInterval(() => {
           for (const res of this._clients) {
@@ -193,15 +125,11 @@ class RemoteServer {
     this._server = null;
   }
 
-  // Called from the session manager's activity fan-out (both observation
-  // paths funnel through it). turnEnd marks a real end-of-turn idle — the
-  // client uses it to refetch the transcript exactly once per turn.
   notifyActivity(name, state, turnEnd) {
     this._activity.set(name, state);
     this._broadcast('activity', { name, state, turnEnd: !!turnEnd });
   }
 
-  // Session created or removed — clients refetch the list.
   notifySessions() {
     const live = new Set((this._getSessions() || []).map(s => s.name));
     for (const name of this._activity.keys()) {
@@ -213,16 +141,10 @@ class RemoteServer {
     this._broadcast('sessions', {});
   }
 
-  // DM doorbell: a reply was just queued in the outbox for `origin`. Tells that
-  // consumer to claim now instead of waiting out the hello interval. The outbox
-  // stays the durable channel; this is only the low-latency nudge.
   notifyDmMail(origin) {
     this._broadcast('dm-mail', { origin });
   }
 
-  // Live PTY bytes for a session — fan out to its attach streams. Called
-  // from the session manager's onData, so it must stay cheap when nobody
-  // is attached (the common case).
   pushOutput(name, chunk) {
     const set = this._attach.get(name);
     if (!set || set.size === 0) return;
@@ -231,17 +153,11 @@ class RemoteServer {
     for (const res of set) {
       try {
         res.write(frame);
-        // A stream that can't drain is a half-open tunnel rendering
-        // stale-as-live; kill it, the client reconnects and replays.
         if (res.writableLength > ATTACH_MAX_BUFFERED) res.destroy();
       } catch {}
     }
   }
 
-  // Status-bar telemetry for a session — the viewer renders the owner's
-  // strip (model/ctx/warmth/cost/busts) as-is. Same fan-out discipline as
-  // pushOutput: cheap no-op when nobody is attached. `tele` is a partial
-  // ({proxy} and/or {ctx}); the client merges.
   pushTelemetry(name, tele) {
     const set = this._attach.get(name);
     if (!set || set.size === 0) return;
@@ -251,16 +167,8 @@ class RemoteServer {
     }
   }
 
-  // Owner-initiated UI event — mirror a session-scoped component the owner just
-  // surfaced (in response to an agent intent) to that session's attached
-  // viewers, so a remote agent's `[agent:file view]` popup appears on the
-  // viewer's screen too. Carries a SMALL trigger {kind, args}, never rendered
-  // content: the viewer maps kind→its own local render and pulls content back
-  // through the query RPC (filePeek/fileDiff), keeping content on the owner's
-  // vetted code path and the no-reach-back principle intact. Session-scoped by
-  // construction (only THIS name's attach set hears it). Same cheap-no-op
-  // discipline as pushOutput. `[agent:file open]` (external launch) is never
-  // routed here — view-only surfaces mirror.
+  // Carries a small trigger {kind, args}, never rendered content: the viewer maps
+  // kind to its own render and pulls content back through the query RPC.
   pushUiEvent(name, kind, args) {
     if (!kind || typeof kind !== 'string') return;
     const set = this._attach.get(name);
@@ -269,15 +177,8 @@ class RemoteServer {
     for (const res of set) { try { res.write(frame); } catch {} }
   }
 
-  // Owner PTY resized — mirror the new letterbox to read-only viewers so their
-  // terminal follows the owner's geometry instead of rendering new output into
-  // a stale box (staircase-wrapped garble). Owner geometry is canonical; a
-  // controlling viewer's own resize round-trips through here too and echoes
-  // back the same dims, which is an idempotent term.resize on that viewer (no
-  // feedback loop — viewers only push geometry on explicit fit, not on an
-  // applied resize). Coalesced per session (trailing debounce + dedup) so a
-  // drag-burst of fit()s doesn't flood the stream. Cheap no-op with no
-  // attachers, like pushOutput.
+  // Owner geometry is canonical. No feedback loop only because viewers push
+  // geometry on an explicit fit, never on an applied resize.
   notifyResize(name, cols, rows) {
     if (!(cols > 0 && rows > 0)) return;
     const set = this._attach.get(name);
@@ -305,7 +206,6 @@ class RemoteServer {
     for (const res of set) { try { res.write(frame); } catch {} }
   }
 
-  // PTY exited — tell attachers, then tear the streams down.
   notifyExit(name, exitCode) {
     const set = this._attach.get(name);
     if (set) {
@@ -325,9 +225,6 @@ class RemoteServer {
     this._setControl(name, null);
   }
 
-  // Single-holder control state. holder = { token, client } or null.
-  // Last-wins on acquire (both laptops are the same operator); everyone
-  // attached hears about the change.
   _setControl(name, holder) {
     const prev = this._control.get(name) || null;
     if (!prev && !holder) return;
@@ -358,10 +255,6 @@ class RemoteServer {
     }
   }
 
-  // Normalize whatever the host seam reports into the hello's `webHost` field:
-  // `{port, tokenGated}` or null. A throwing or malformed seam degrades to null
-  // rather than breaking hello — identity is load-bearing for every peer
-  // feature, and a web view is not worth taking it down for.
   _webHost() {
     if (!this._getWebInfo) return null;
     let info;
@@ -382,8 +275,6 @@ class RemoteServer {
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_REMOTE_TOKEN set. Set CLODEX_REMOTE_TOKEN, or CLODEX_REMOTE_INSECURE=1 to override.');
       return false;
     }
-    // Token check. No token configured (loopback, or the insecure override) →
-    // gate.check passes everything, exactly as before this change.
     if (!this._gate.check(this._gate.fromReq(req))) {
       res.writeHead(401, {
         'Content-Type': 'text/plain; charset=utf-8',
@@ -400,10 +291,6 @@ class RemoteServer {
     return true;
   }
 
-  // Set the token cookie ONLY when the (already-validated) token arrived via the
-  // ?token= query param — the first bookmark hit. Bearer callers (peer-client)
-  // and cookie-carrying requests don't need it re-issued. Secure flag when the
-  // edge terminated TLS (x-forwarded-proto: https).
   _maybeSetTokenCookie(req, res) {
     let q = null;
     try { q = new URL(req.url, 'http://localhost').searchParams.get('token'); } catch { /* keep null */ }
@@ -467,25 +354,11 @@ class RemoteServer {
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
-        // Deploy/identity surfacing: which OS the box runs (the deploy wizard
-        // and header tooltip show it; harmless to older viewers that ignore it).
         platform: process.platform,
-        // Install dir on the box (home-relative or null) — lets a consumer's
-        // Update pull the RIGHT checkout. null/absent → viewer keeps its guess.
         srcDir: this._srcDir,
-        // Origins (consumer labels) with DM mail waiting — a consumer whose label
-        // appears here claims its outbox this tick. Empty/absent → nothing to
-        // fetch, so old consumers (which ignore the field) simply never claim.
         dmOrigins: this._listDmOrigins ? this._listDmOrigins() : [],
-        // The browser frontend's port on THIS box, so a consumer can tunnel to
-        // it rather than reconstructing wire-port+1 (t30). null/absent = no web
-        // host here (every Electron desktop, and any headless box started
-        // without CLODEX_WEB_PORT) — old viewers ignore the field, exactly as
-        // they do srcDir. `tokenGated` says a token is REQUIRED, never what it
-        // is: that a door is locked is not a secret, the key is. The token
-        // itself is deliberately NOT advertised — hello is open on the common
-        // loopback-no-token deployment, and shipping a second service's secret
-        // through it would be indefensible.
+        // `tokenGated` says a token is REQUIRED, never what it is. The token itself is
+        // deliberately NOT advertised: hello is open on the loopback-no-token deployment.
         webHost: this._webHost(),
       });
     }
@@ -507,8 +380,6 @@ class RemoteServer {
         holder: cur ? cur.client : null,
       };
       try { res.write(`event: replay\ndata: ${JSON.stringify(hello)}\n\n`); } catch {}
-      // Seed the status bar right behind the replay — the live telemetry
-      // stream only ticks every poll, and an empty bar for 5s reads broken.
       if (info.telemetry && (info.telemetry.proxy || info.telemetry.ctx)) {
         try { res.write(`event: telemetry\ndata: ${JSON.stringify(info.telemetry)}\n\n`); } catch {}
       }
@@ -518,15 +389,10 @@ class RemoteServer {
       this._clients.delete(res);   // attach feeds are per-session, not the global events feed
       req.on('close', () => {
         set.delete(res);
-        // Control is only meaningful while its holder can see the session:
-        // last attacher gone -> auto-release.
         if (set.size === 0) { this._attach.delete(name); this._setControl(name, null); }
       });
       return;
     }
-    // Control side: shell-equivalent endpoints. Input/resize are gated on a
-    // per-acquire capability token so a read-only viewer (or a confused
-    // client on the tunnel host) can't type by accident.
     if (req.method === 'POST' && p.startsWith('/api/control/')) {
       if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'control not available' });
       const name = decodeURIComponent(p.slice('/api/control/'.length));
@@ -573,8 +439,6 @@ class RemoteServer {
       return this._readBody(req, res, (body) => {
         let msg;
         try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        // Owner geometry is canonical: resize is a control-mode privilege,
-        // never a side effect of viewing.
         if (String(msg.token || '') !== this._controlToken(name)) {
           return this._json(res, 403, { ok: false, error: 'not the control holder' });
         }
@@ -586,11 +450,6 @@ class RemoteServer {
         return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
       });
     }
-    // Popover data pull: read-only snapshots (context breakdown, cost report,
-    // bust forensics, touched files, file peek/diff). Un-gated like the
-    // transcript read — the tunnel is the auth boundary, and control-holders
-    // can read anything through the session anyway. The kind whitelist lives
-    // in the injected callback.
     if (req.method === 'POST' && p.startsWith('/api/query/')) {
       if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
       const name = decodeURIComponent(p.slice('/api/query/'.length));
@@ -626,14 +485,8 @@ class RemoteServer {
       this._restartApp();
       return;
     }
-    // Remote session create — the full-param body (M5): {name, type, cwd} plus the
-    // optional setArgs patch keys + create-only resumeId/fork/stripLevel/intents.
     // Bare {name,type,cwd} stays valid (compat); the whole parsed body is forwarded
-    // so the owner (remote-wiring) maps it onto create() and drops what never
-    // crosses (exec grants). The ack carries the whole outcome (viewer sees no
-    // dialogs on this box), with distinguishable errors: bad name/type, name taken,
-    // bad cwd, spawn failure, plus non-fatal warnings[]. Trust is the tunnel, same
-    // as every peer RPC — no token.
+    // unvalidated so the owner maps it and drops what never crosses.
     if (req.method === 'POST' && p === '/api/sessions') {
       if (!this._createSession) return this._json(res, 501, { ok: false, error: 'create not available' });
       return this._readBody(req, res, (body) => {
@@ -645,11 +498,6 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Session-less catalogs for the New Session dialog when it targets THIS box
-    // (M5): the checklists must render the box's skills/agents/prompts/tools, not
-    // the viewer's own libraries. A SUPERSET of /api/session-args' catalogs block
-    // (adds skills; agents unscoped — no session to scope by pre-create). Rides the
-    // 'create' capability; the create2 hello cap tells the viewer it's available.
     if (req.method === 'GET' && p === '/api/catalogs') {
       if (!this._getCatalogs) return this._json(res, 501, { ok: false, error: 'catalogs not available' });
       return Promise.resolve()
@@ -657,8 +505,6 @@ class RemoteServer {
         .then((cat) => this._json(res, 200, { ok: true, catalogs: cat || {} }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
-    // Remote session kill — user-initiated semantics on the owner (removes from
-    // persistence, no resume). Path-scoped like input/control/resize.
     if (req.method === 'POST' && p.startsWith('/api/kill/')) {
       if (!this._killSession) return this._json(res, 501, { ok: false, error: 'kill not available' });
       const name = decodeURIComponent(p.slice('/api/kill/'.length));
@@ -668,12 +514,6 @@ class RemoteServer {
         .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'kill failed' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
-    // Remote session restart — kill + respawn from the persisted entry. Body
-    // {fresh} picks plain restart (--resume, keeps history) vs fresh reload
-    // (new conversation, re-reads skills). Path-scoped like kill; gated on the
-    // same 'create' capability (create/kill/restart ship together). The ack is
-    // distinguishable: not-found in persistence (404) vs a respawn failure whose
-    // message says the entry was kept (still 404, distinct text).
     if (req.method === 'POST' && p.startsWith('/api/restart-session/')) {
       if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
       const name = decodeURIComponent(p.slice('/api/restart-session/'.length));
@@ -687,11 +527,6 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Remote session args read — the Edit Session dialog's source of truth for a
-    // peer session. Returns the box's editable args PLUS the catalogs the dialog's
-    // checklists render from (agents/prompts/claudeTools + proxyUrl), so the viewer
-    // never leaks its OWN libraries into a remote edit. Gated on 'args'; path-scoped
-    // like the other per-session RPCs. ok:false (unknown name) → 404.
     if (req.method === 'GET' && p.startsWith('/api/session-args/')) {
       if (!this._getSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
       const name = decodeURIComponent(p.slice('/api/session-args/'.length));
@@ -701,11 +536,6 @@ class RemoteServer {
         .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
-    // Remote session args apply — {extraArgs, restart, proxy, systemPrompt, agents,
-    // denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile,
-    // appendPromptFiles}. Owner shares session:setArgs's core (undefined-untouched,
-    // stripLevel/label re-assert, catch-upsert); restart:true kills+respawns and the
-    // attached viewer reattaches off the SSE exit. Same 'args' cap as the GET.
     if (req.method === 'POST' && p.startsWith('/api/session-args/')) {
       if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
       const name = decodeURIComponent(p.slice('/api/session-args/'.length));
@@ -719,12 +549,8 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Remote skill catalog — the Skills popover's data over the wire. Owner returns
-    // EXACTLY what session:skillCatalog returns (names union, disabledSkills,
-    // effective lower-layer state, skillsLocked, canReenable, skillLib, injectSkills),
-    // all resolved BOX-side: the transcript roster and the skill library are the
-    // box's, which is correct because inject-skills materialize at spawn on the box.
-    // Rides the 'args' cap; path-scoped; ok:false (unknown name) → 404.
+    // Resolved box-side: inject-skills materialize at spawn on the box, so the roster
+    // and skill library must be the box's, not the viewer's.
     if (req.method === 'GET' && p.startsWith('/api/skill-catalog/')) {
       if (!this._getSkillCatalog) return this._json(res, 501, { ok: false, error: 'skills not available' });
       const name = decodeURIComponent(p.slice('/api/skill-catalog/'.length));
@@ -734,10 +560,6 @@ class RemoteServer {
         .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
-    // Remote skill gating apply — {disabledSkills, injectSkills}. Owner shares
-    // session:setSkills's core (persist-only; injectSkills optional; restart is a
-    // separate /api/session-restart the popover makes when the user asks). Same
-    // 'args' cap as the GET.
     if (req.method === 'POST' && p.startsWith('/api/session-skills/')) {
       if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
       const name = decodeURIComponent(p.slice('/api/session-skills/'.length));
@@ -751,11 +573,6 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Inbound DM — {to, from, origin, body, urgent}. The consumer POSTs here to
-    // reach an agent on THIS box. The owner's deliverDm runs the same cost-gate/
-    // park path a local dm takes and returns the verdict, which rides the
-    // synchronous response back to the sender (delivered / parked / bounced) —
-    // no async ack channel needed. Trust is the tunnel, same as every peer RPC.
     if (req.method === 'POST' && p === '/api/dm') {
       if (!this._deliverDm) return this._json(res, 501, { ok: false, error: 'dm not available' });
       return this._readBody(req, res, (body) => {
@@ -779,10 +596,6 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Outbox claim — {origin}. A consumer drains the mail this box has queued for
-    // it (box→consumer DMs, since the box can't dial back over the one-way
-    // tunnel). Atomic whole-dir claim on the owner side; response carries the
-    // whole snapshot.
     if (req.method === 'POST' && p === '/api/dm/claim') {
       if (!this._claimDms) return this._json(res, 501, { ok: false, error: 'dm not available' });
       return this._readBody(req, res, (body) => {
@@ -796,15 +609,8 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
-    // Relay roster push — {rv, via, roster:[{name,origin,type}]}. The HUB (a
-    // consumer of this box) computes the set of agents on its OTHER peers that
-    // THIS spoke is permitted to reach (split-horizon + symmetric relayAllowed
-    // gate, both applied hub-side) and pushes it here every hello tick. `via` is
-    // the hub's own label — what this spoke keys its via-table and outbox under
-    // (HTTP doesn't self-identify the caller; it's the same label the hub uses as
-    // `origin` on /api/dm to us). Full-replacement, not a delta. receiveRoster
-    // caches it as the spoke's via-table; a subsequent [agent:dm name@origin]
-    // whose origin is unconfigured-but-in-roster routes out through `via`.
+    // `via` is the calling hub's own label — HTTP does not self-identify the caller.
+    // Full replacement of the spoke's via-table, not a delta.
     if (req.method === 'POST' && p === '/api/peer/roster') {
       if (!this._receiveRoster) return this._json(res, 501, { ok: false, error: 'relay not available' });
       return this._readBody(req, res, (body) => {

@@ -1,31 +1,6 @@
-// upgrade.js — `clodexctl upgrade <ctx>`: move an EXISTING deployment to a new
-// version. Not a deploy, not a create.
-//
-// The verb is deliberately THIN. Everything an upgrade needs to do to a node —
-// reuse the release's wire token, preserve its claude auth, carry its prior
-// helm values forward (t54), stage secrets into 0600 tempfiles, verify
-// laptop-side, upsert the ctx — already exists in deploy.js and is already
-// correct for an upgrade. Re-implementing it here would fork the most
-// security-sensitive code in the CLI into a second copy that drifts from the
-// day it lands. So `upgrade` does the four things `deploy` cannot do, then
-// DELEGATES to the flavor's deploy verb:
-//
-//   1. ROUTE on entry.deploy.flavor (t54's field) — never on the transport.
-//      The ssh flavor and a remote `deploy docker` save byte-identical
-//      `{ssh: user@host}` entries, so sniffing the transport is a guess.
-//   2. REFUSE TO CREATE. An upgrade against something that isn't there is an
-//      error, not a silent install — so existence is probed BEFORE the
-//      delegate runs, and the delegate can therefore never reach its install
-//      path.
-//   3. REPORT the version it is moving FROM and TO, and no-op when equal.
-//   4. FORCE the image pin EXPLICIT, which is the entire point of the verb.
-//      (For fargate that is load-bearing: see FARGATE below.)
-//
-// STANDALONE, like the rest of cli/: node:* + sibling CLI modules only, never
-// an app require(). No secret VALUE ever enters argv, logs or errors — the
-// delegates uphold that and this module never reads a secret at all (the ctx
-// token it uses for the version probe is already in memory, and only rides an
-// Authorization header).
+// Standalone, like the rest of cli/: node:* + sibling CLI modules only, never an
+// app require(). Routing is on entry.deploy.flavor and never on the transport —
+// an ssh deploy and a remote docker deploy store byte-identical ssh entries.
 'use strict';
 
 const fs = require('fs');
@@ -40,24 +15,13 @@ const D = require('./deploy');
 
 const execFileP = promisify(execFile);
 
-// The flavors this build can ROUTE. Deliberately not contexts.js's validator:
-// t55 made enum membership advisory there (an unknown flavor is stored and
-// carried without complaint, so a newer clodexctl's context stays usable for
-// every verb that doesn't care), and put the refusal HERE — at the one verb
-// that must actually dispatch on the value.
+// Deliberately not contexts.js's validator: unknown flavors are stored there
+// without complaint, so the refusal lives at the one verb that dispatches.
 const UPGRADABLE = ['ssh', 'ssm', 'helm', 'fargate'];
-// Known, but refused with a reason rather than a "newer clodexctl" message.
 const KNOWN_UNSUPPORTED = ['docker'];
 
-// ── the packaged version pins ────────────────────────────────────────────────
-//
-// The TARGET version comes from the PACKAGED ASSET, not from package.json. The
-// asset is what actually deploys; if the two ever drifted, the asset is the
-// truth and package.json would be a comforting lie. Both readers use the SAME
-// anchors scripts/release.sh:sync_pin edits, and both insist on EXACTLY ONE
-// match for the same reason sync_pin does: a restructured file that no longer
-// matches means the pin is no longer being maintained, and a silent fallback
-// would upgrade nodes to a stale version forever.
+// The target version comes from the PACKAGED ASSET, not package.json, and both
+// regexes match the anchors scripts/release.sh:sync_pin edits.
 const HELM_TAG_RE = /^ {2}tag: "([^"]+)"$/m;
 const FARGATE_IMAGE_RE = /^ {4}Default: '(ghcr\.io\/avirtual\/clodex:[^']+)'$/m;
 
@@ -75,9 +39,6 @@ function readPinned(file, re, what) {
 function helmPinnedTag() { return readPinned(path.join(D.helmChartPath(), 'values.yaml'), HELM_TAG_RE, 'helm chart'); }
 function fargatePinnedImage() { return readPinned(D.fargateTemplatePath(), FARGATE_IMAGE_RE, 'fargate template'); }
 
-// The VERSION half of a full image reference — what a `hello.version` can be
-// compared against. `repo:tag` → tag; `repo@sha256:…` → null (a digest names no
-// version, so the no-op comparison is skipped rather than faked).
 function refVersion(ref) {
   const s = String(ref || '');
   if (s.includes('@')) return null;
@@ -86,9 +47,6 @@ function refVersion(ref) {
   return colon > slash ? s.slice(colon + 1) : null;
 }
 
-// Replace the tag of a full image reference, keeping its repository. Used to
-// turn `--tag T` into a fargate ImageUri without hardcoding the registry — the
-// repository comes from the packaged pin, which is the one we ship.
 function withTag(ref, tag) {
   const s = String(ref || '');
   const at = s.indexOf('@');
@@ -99,18 +57,11 @@ function withTag(ref, tag) {
   return `${repo}:${tag}`;
 }
 
-// ── argv builders (pure) ─────────────────────────────────────────────────────
-// Local rather than reused from undeploy.js: upgrade must not depend on the
-// TEARDOWN module for a read-only lookup — the dependency would read as though
-// an upgrade were part of a delete flow, and the two calls answer different
-// questions (undeploy's is a preview of what dies).
 function stackDescribeArgs({ stackName, region, profile } = {}) {
   return ['aws', ...D.awsBase({ region, profile }), 'cloudformation', 'describe-stacks',
     '--stack-name', stackName, '--output', 'json'];
 }
 
-// describe-stacks JSON → the first stack's { ParameterKey: ParameterValue }.
-// Best-effort on shape; a stack with no Parameters yields {}.
 function stackParams(json) {
   let stack;
   try { const o = JSON.parse(json || '{}'); stack = (Array.isArray(o.Stacks) ? o.Stacks : [])[0]; }
@@ -122,10 +73,6 @@ function stackParams(json) {
   return out;
 }
 
-// ── the running version ──────────────────────────────────────────────────────
-// `hello.version` over the ctx's REAL transport — the honest "what is actually
-// running". Never persisted, so never stale; better than any stored guess.
-// Returns null on any failure: see the call site for why that is not fatal.
 async function probeRunningVersion(entry, { spawnFn, execFn } = {}) {
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
@@ -137,7 +84,6 @@ async function probeRunningVersion(entry, { spawnFn, execFn } = {}) {
   }
 }
 
-// ── the verb ─────────────────────────────────────────────────────────────────
 async function upgradeVerb({ printer, flags, args, io = {} }) {
   const json = !!flags.json;
   const emit = (o) => printer.json(o);
@@ -175,10 +121,8 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
   const ctxLine = `context "${ctxName}" — deploy flavor ${flavor}`;
   if (!json) log(ctxLine);
 
-  // 2. EXISTENCE + 3. FROM/TO, per flavor. Each arm returns the plan.
   const plan = await buildPlan({ flavor, ctxName, entry, dep, flags, io, printer, execFn, log });
 
-  // 3b. Report FROM → TO, and no-op when they are equal.
   const from = plan.from;
   const to = plan.toVersion;
   if (json) emit({ type: 'version', from: from || null, to: to || null, target: plan.toRef || null, comparable: !!(from && to) });
@@ -198,16 +142,12 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'reverts', text: r }); else printer.line(`  note: ${r}`);
   }
 
-  // 4. DELEGATE. The delegate's own --dry-run prints its plan and touches
-  //    nothing, so --dry-run rides straight through on the same footing as
-  //    `deploy`'s — this module's own probes above are read-only.
   if (!json) log(dryRun ? `dry-run — the ${flavor} deploy path would run:` : `upgrading via the ${flavor} deploy path…`);
   await plan.run();
   if (json) emit({ type: 'upgrade', ok: true, ctx: ctxName, flavor, from: from || null, to: to || null, dryRun });
   return EXIT.OK;
 }
 
-// The docker refusal, stated as a reason rather than a shrug.
 function refusalFor(flavor, ctxName, dep) {
   const container = dep.container || `clodexctl-${ctxName}`;
   const host = dep.dockerHost ? ` --host ${dep.dockerHost}` : '';
@@ -222,24 +162,19 @@ function refusalFor(flavor, ctxName, dep) {
   ].join('\n');
 }
 
-// ── per-flavor planning ──────────────────────────────────────────────────────
 async function buildPlan({ flavor, ctxName, entry, dep, flags, io, printer, execFn, log }) {
   if (flavor === 'helm') return planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log });
   if (flavor === 'fargate') return planFargate({ ctxName, entry, dep, flags, io, printer, execFn, log });
   return planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, log });
 }
 
-// ── helm ─────────────────────────────────────────────────────────────────────
-// The main event. `helm upgrade` with t54's carried values plus an EXPLICIT
-// image pin. The pin rides --set, which helm applies after every values file
-// regardless of argv position — so it beats a carried `image.tag` by helm's own
-// merge rule, which is precisely the precedence t54 established and tested.
+// helm applies every --set after every -f values file regardless of argv order,
+// and among --set the last wins — hence the pin is appended last.
 async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }) {
   const release = String(dep.release || ctxName);
   const namespace = String(dep.namespace || flags.namespace || D.DEFAULT_HELM_NAMESPACE);
   const kubeContext = dep.kubeContext ? String(dep.kubeContext) : (flags['kube-context'] ? String(flags['kube-context']) : null);
 
-  // REFUSE TO CREATE: the same `helm status` probe deployHelmVerb uses.
   try {
     await D.runVendor(execFn, D.helmStatusArgs({ name: release, namespace, kubeContext }), 'status', EXIT.USAGE);
   } catch (e) {
@@ -249,8 +184,6 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     throw new CliError(EXIT.CONNECT, `could not determine whether release "${release}" exists (helm status failed for a reason other than not-found) — check cluster access and re-run: ${e.message}`);
   }
 
-  // TO: an explicit --tag/--image, else an image pin the operator already set
-  // by hand, else the packaged chart's own tag.
   const userSets = Array.isArray(flags.set) ? flags.set.map(String) : (flags.set ? [String(flags.set)] : []);
   const setTag = lastSetValue(userSets, 'image.tag');
   const setDigest = lastSetValue(userSets, 'image.digest');
@@ -280,10 +213,6 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
   }
 
   const from = await probeFrom({ entry, io, log, warnings: [] });
-  // The pin goes LAST among --set: helm applies sets in argv order, last wins,
-  // so an operator --set on THIS run that we did not detect still loses to the
-  // pin only when the pin is the thing they asked for. When they DID say
-  // image.tag themselves, `pin` is null and their value simply stands.
   const sets = pin ? [...userSets, ...pin] : userSets;
 
   return {
@@ -294,14 +223,6 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     // port is deliberately NOT passed as a flag — the carried wirePort restores
     // it, and passing a flag would make this run's silence look like a choice.
     reverts: [],
-    // --force-conflicts (t56) rides the `...flags` spread into the delegate,
-    // like every other operator flag this verb forwards — upgrade is the verb
-    // where it matters most, since the SSA conflict error names it as the
-    // remedy and an operator reaching for it has just been told to. It is
-    // pinned by test rather than restated here: a second explicit copy would be
-    // a no-op that reads as if it were load-bearing. `force` below is a
-    // different flag (overwrite the ctx entry) and IS restated, because the ctx
-    // exists by construction — it is how we found the node.
     run: () => D.deployHelmVerb({
       printer, flags: { ...flags, force: true, set: sets, namespace, 'kube-context': kubeContext },
       args: [release], io,
@@ -309,7 +230,6 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
   };
 }
 
-// The last `k=v` for key k in a --set list (helm's own last-wins), or null.
 function lastSetValue(sets, key) {
   let out = null;
   for (const s of sets) {
@@ -329,9 +249,6 @@ async function planFargate({ ctxName, entry, dep, flags, io, printer, execFn, lo
   const region = flags.region ? String(flags.region) : (dep.region ? String(dep.region) : null);
   const profile = flags.profile ? String(flags.profile) : (dep.profile ? String(dep.profile) : null);
 
-  // REFUSE TO CREATE: describe-stacks. Its Parameters are also what keeps the
-  // re-deploy from silently moving the node (below), so this one call does
-  // double duty.
   let raw;
   try {
     raw = await D.runAws(execFn, stackDescribeArgs({ stackName, region, profile }), 'cloudformation describe-stacks', EXIT.SERVER);
@@ -343,8 +260,6 @@ async function planFargate({ ctxName, entry, dep, flags, io, printer, execFn, lo
   }
   const prior = stackParams(raw);
 
-  // TO: --image is the full URI; --tag re-tags the packaged pin's repository
-  // (so the registry comes from the asset we ship, never a hardcoded literal).
   const pinned = fargatePinnedImage();
   let toRef; let targetLine;
   if (flags.image) { toRef = String(flags.image); targetLine = `${toRef} (--image)`; }
@@ -355,16 +270,10 @@ async function planFargate({ ctxName, entry, dep, flags, io, printer, execFn, lo
   const warnings = [];
   const from = await probeFrom({ entry, io, log, warnings });
 
-  // Carry the ALWAYS-EMITTED parameters forward from the live stack.
-  //
-  // `aws cloudformation deploy` reuses a prior parameter value for anything not
-  // overridden — which is exactly why the missing ImageUri no-ops silently. But
-  // fargateParamOverrides ALWAYS emits ClusterName and Persistent (computed
-  // from this run's flags), and auto-detects SubnetIds/SecurityGroupId when
-  // those flags are absent. So a flagless re-deploy would overwrite four
-  // settings that CFN would otherwise have kept — worst case moving the task
-  // onto default-VPC subnets. Feeding the prior values back as flags both
-  // preserves them and skips the auto-detect's AWS calls entirely.
+  // CloudFormation reuses a prior parameter value for anything not overridden, but
+  // the fargate param builder ALWAYS emits ClusterName and Persistent and
+  // auto-detects SubnetIds/SecurityGroupId, so a flagless re-deploy would overwrite
+  // all four — worst case moving the task onto default-VPC subnets.
   const cluster = flags.cluster ? String(flags.cluster)
     : (prior.ClusterName || clusterFromEcs(entry) || stackName);
   const persistent = flags.persistent != null ? flags.persistent
@@ -393,39 +302,17 @@ async function planFargate({ ctxName, entry, dep, flags, io, printer, execFn, lo
   };
 }
 
-// The ECS cluster a fargate ctx reaches through (`{ssm:{ecs:'CLUSTER/FAMILY'}}`).
-// The stack's own ClusterName is preferred; this is the fallback for a stack
-// whose parameter list we could not read.
 function clusterFromEcs(entry) {
   const ecs = entry && entry.ssm && entry.ssm.ecs;
   return (typeof ecs === 'string' && ecs.includes('/')) ? ecs.split('/')[0] : null;
 }
 
-// ── ssh / ssm: the re-runnable installer flavors ─────────────────────────────
-// Both drive the same idempotent installer, so an upgrade is close to a thin
-// alias — but "close to" is where the honesty lives:
-//
-//   * Neither flavor deploys a PINNED artifact. The installer clones
-//     <repo>@<branch> and builds the tip, so there is no target version to
-//     read and no equality to no-op on. Saying that is honest; inventing a
-//     target from package.json would not be.
-//   * Flags that are not stored REVERT on a re-run (--no-wirescope, --repo,
-//     --branch, --src, --ssh-opt, --claude-token-file). They are named, every
-//     time, before anything runs.
-//   * `deploy ssm` MINTS A FRESH WIRE TOKEN on every run, so an ssm upgrade
-//     ROTATES the token. Ours is rewritten with it; any other holder breaks.
 async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, log }) {
   const port = entry.remotePort ? Number(entry.remotePort) : null;
   if (flags.tag || flags.image) {
     throw new CliError(EXIT.USAGE, `--${flags.tag ? 'tag' : 'image'} does not apply to the ${flavor} flavor — it installs from source, not from a container image. The version knob is --branch (default ${D.DEFAULT_BRANCH}).`);
   }
 
-  // REFUSE TO CREATE, as far as this flavor can be asked. There is no cheap
-  // probe that separates "installed but down" from "never installed" — the
-  // installer IS the create path — so a node that answers proves existence, and
-  // a node that does not is refused rather than silently installed. --force is
-  // the way through, because "it is down and I want the installer to repair it"
-  // is a real and common case.
   const warnings = [];
   const from = await probeFrom({ entry, io, log, warnings });
   if (!from.version && !flags.force) {
@@ -472,12 +359,8 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
   };
 }
 
-// The FROM probe, shared. A failure is NEVER fatal here: refusing to upgrade a
-// node that cannot be reached would block the very upgrade that repairs it, and
-// re-running a deploy at the version already installed is idempotent. So the
-// probe warns and the caller decides (the installer flavors treat a silent node
-// as "cannot confirm it exists" and gate on --force; helm and fargate already
-// proved existence against the cluster/stack itself).
+// A probe failure must never be fatal here: refusing to upgrade an unreachable
+// node would block the very upgrade that repairs it. The caller decides.
 async function probeFrom({ entry, io, log, warnings }) {
   try {
     const probe = io.probeVersion || probeRunningVersion;

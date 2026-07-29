@@ -1,44 +1,7 @@
 'use strict';
-// web-host.js — the browser frontend's engine-side host (web-frontend Phase 3a).
-// Plain Node (HTTP + `ws`), NOT electron: it must never appear in the
-// electron-boundary ALLOWED set. Started ONLY by headless-main.js when
-// CLODEX_WEB_PORT is set; the Electron desktop app never loads it and is
-// byte-for-byte unchanged. This is a NEW frontend for engine.js, not a rewrite —
-// it drives the SAME registerIpcHandlers handler map (the Phase-1 transport +
-// capability seams) and the SAME event-push surface (docs/renderer-events.md, the
-// Phase-2 audit) over a WebSocket, so zero engine change is required.
-//
-// Leak-scanner lists (test/free-identifier-leaks.test.js): NOT applicable — this
-// is new code, not a move-only extraction of a coordinator, so there is no
-// forward/reverse identifier split to guard.
-//
-// How the seams map onto WS:
-//   • registration — `handle`/`on` populate a plain Map<channel, fn>; an `invoke`
-//     frame dispatches `map.get(channel)(e, ...args)`, a `send` frame fires the
-//     5 ipcMain.on channels with no reply.
-//   • sender token — `e = {sender:{send, conn}}`: the same opaque token Phase 1
-//     established (§C channels push straight back to the calling connection), plus
-//     `conn` so `workspaceOfSender(e)` reads the connection's workspace.
-//   • token-less capabilities (showMessageBox/showSaveDialog take only opts) — the
-//     invoke dispatcher runs each handler inside `als.run(conn, …)` so the
-//     capability impls recover the requesting connection from AsyncLocalStorage.
-//   • window bridge — ONE multiplexing handle per workspace implements the
-//     five-method opaque-handle contract (webContents.send / isDestroyed /
-//     isFocused / show / focus); first tab registers it, last disconnect
-//     unregisters it, so the engine's detached-session pendingOutput buffering
-//     resumes exactly as for a closed Electron window.
-//
-// Two audit resolutions folded in (see the clodex P3a handoff):
-//   1. peer-data / peer-replay carry Buffers (peer PTY bytes), which JSON can't
-//      round-trip losslessly — the event serializer re-encodes any Buffer to
-//      {$type:'Buffer', b64}. Local pty-data is a string and rides as-is (no
-//      base64 layer, per the spec ruling). Invoke REPLIES are passed through raw
-//      (the audit found no Buffer/Date among the 118 handler returns).
-//   2. session:context-menu uses radio/checkbox/checked and a nested submenu, so
-//      the flat template[i].click() model can't dispatch it. popupMenu instead
-//      assigns a string id to every clickable item (recursing into submenus),
-//      keeps the click closures server-side in an id→closure map, and resolves the
-//      pick by id — a strict superset that leaves the two flat peer menus unchanged.
+// Plain Node (HTTP + `ws`), never electron: this file must stay out of the
+// electron-boundary ALLOWED set. Loaded only by headless-main.js when
+// CLODEX_WEB_PORT is set.
 
 const http = require('http');
 const path = require('path');
@@ -77,12 +40,6 @@ function sanitizeBasename(name) {
   return path.basename(String(name || '')).replace(/[/\\]/g, '').trim() || 'export';
 }
 
-// createWebHost({ engine, log, port, token, userDataPath }) → { close }.
-// `userDataPath` is threaded from headless-main (the sole caller) because the
-// specified signature omits it and the engine return doesn't expose it — exports
-// (the showSaveDialog degradation) land under <userDataPath>/exports/.
-// `registerHandlers` is an optional test seam defaulting to the real
-// registerIpcHandlers; tests inject fake handlers without standing up an engine.
 function createWebHost({ engine, log, port, host, token, userDataPath, registerHandlers } = {}) {
   const manager = engine.manager;
   const exportsDir = path.join(userDataPath || os.homedir(), 'exports');
@@ -96,19 +53,11 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   const scrollback = new Map();               // sessionName → attached-period pty-data ring
   let menuSeq = 0, dialogSeq = 0;
 
-  // ── token predicate — the single replaceable auth check (HTTP + upgrade +
-  // hello). Absent token = localhost-trust (Phase 4 documents the stance). Now
-  // the shared auth-token.js leaf so web-host and remote.js can't drift; the
-  // move also upgrades the old `===` compare to a constant-time one. checkToken
-  // stays a thin alias so the three call sites below read unchanged.
+// Absent token = localhost-trust. The compare is constant-time; do not revert to `===`.
   const gate = makeTokenGate(token);
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
 
-  // ── event fan-out — the interception point the Phase-2 audit identified.
-  // handle.webContents.send(channel, ...args) lands here; we grow the scrollback
-  // ring for pty-data and push an event frame (Buffer-encoded) to every tab on
-  // the workspace.
   function fanEvent(workspaceId, channel, args) {
     if (channel === 'pty-data') {
       const [name, data] = args;
@@ -121,7 +70,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     for (const c of set) c.send(frame);
   }
 
-  // ── the multiplexing window handle (the P2 five-method opaque-handle contract).
   function handleFor(workspaceId) {
     return {
       webContents: { send: (channel, ...args) => fanEvent(workspaceId, channel, args) },
@@ -138,8 +86,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     const first = set.size === 0;
     set.add(conn);
     if (first) {
-      // First tab on this workspace — register the handle so the engine stops
-      // buffering into pendingOutput and routes events to us instead.
       const h = handleFor(conn.workspaceId);
       workspaceHandles.set(conn.workspaceId, h);
       manager.registerWindow(conn.workspaceId, h);
@@ -178,9 +124,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     }
   }
 
-  // ── degraded native-GUI capabilities (v1). Dialogs/menus belong to the
-  // requesting connection (the P1 handoff ruling); connection recovered from the
-  // sender token where present (popupMenu) or AsyncLocalStorage (dialogs).
   function popupMenu(template, e) {
     const conn = e && e.sender && e.sender.conn;
     if (!conn) return;
@@ -239,18 +182,11 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     return { canceled: true, filePaths: [] };
   }
 
-  // Fire-and-forget shell degradations — a synthetic event to the connection
-  // driving the current invoke (or a menu click); the P3b shim maps them to
-  // window.open / an in-page file view / a path toast.
   const toConn = (channel, ...args) => { const c = als.getStore(); if (c) c.pushEvent(channel, args); };
   const openExternal = (url) => toConn('open-external', url);
 
-  // Wirescope full-dashboard reachability for the browser. The dashboard links the
-  // renderer builds point at the engine's loopback proxyBase (127.0.0.1:<port>),
-  // which the browser can't reach; the container publishes wirescope on a separate
-  // loopback-mapped host port and advertises it via CLODEX_WIRESCOPE_PUBLIC_URL.
-  // The shim rewrites any url whose origin is proxyBase to wirescopePublicBase.
-  // Both empty when unset → the shim keeps current behavior (no rewrite).
+// The browser cannot reach the engine's loopback proxyBase; the shim rewrites
+// that origin to wirescopePublicBase. Both empty when unset → no rewrite.
   const wirescopeReach = () => {
     const s = (engine.stores && engine.stores.uiSettings) ? engine.stores.uiSettings.get() : {};
     const proxyBase = s.proxyEnabled ? (s.proxyUrl || '').trim().replace(/\/+$/, '') : '';
@@ -261,9 +197,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   const getAppVersion = () => APP_VERSION;
   const getDesktopPath = () => exportsDir;
 
-  // ── the handler map: registerIpcHandlers ONCE with the main.js:473-mirrored
-  // deps assembly — the engine + stores, our Map-backed transport, the degraded
-  // capabilities, and inert/no-op stubs for the desktop-only tail.
   const deps = {
     ...engine,
     ...engine.stores,
@@ -276,29 +209,16 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     checkForUpdate: () => {},                 // update-available is designated desktop-only
     getUpdateInfo: () => null, getReleasesCache: () => null,
     createWindow: () => {},                   // browser tabs self-navigate; workspace:new persists the record before calling this
-    // No in-app browser window here, so the plain-click "Open full dashboard"
-    // degrades to the SAME open-external fan the ⌘-click path uses. The url still
-    // points at the engine's loopback proxyBase (e.g. 127.0.0.1:7800), unreachable
-    // from the browser; the shim rewrites it to wirescopePublicBase (welcome) at
-    // its single window.open chokepoint, so both click paths land on the published
-    // dashboard address. Background color is meaningless without a window.
     openWirescopeWindow: (url) => openExternal(url),
     refreshAppMenu: () => {}, refreshTrayMenu: () => {}, setUiTheme: () => {},
     workspaceOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.workspaceId) || DEFAULT_WORKSPACE_ID,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
 
-  // Browser-only restart endpoint. The desktop app restarts from its native menu
-  // (confirmRestartClodex → app.relaunch); the web menu bar has no such path, so
-  // expose the engine's restart seam as an invoke the bar's File > Restart Clodex
-  // calls. engine.restartClodex is headless-main's restartHost: clean shutdown +
-  // exit 64 so the container supervisor (restart:always) relaunches. Not in
-  // api-contract — reached via the shim's raw invoke, keeping the desktop surface
-  // untouched.
+// Deliberately absent from api-contract: reached by a raw invoke, so the
+// desktop surface stays untouched.
   handlers.set('app:restart', () => { if (typeof engine.restartClodex === 'function') engine.restartClodex(); return { ok: true }; });
 
-  // ── frame dispatch (client → server). Nothing but a valid hello is accepted
-  // before the connection is authed; a bad token or a pre-hello frame closes it.
   function onFrame(conn, frame) {
     if (!conn.authed) {
       if (!frame || frame.t !== 'hello' || !checkToken(frame.token)) { conn.ws.close(); return; }
@@ -342,11 +262,9 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
         conn.visible = frame.visible !== false; // isFocused hint (default true)
         break;
       default:
-        /* unknown frame — ignore */
     }
   }
 
-  // ── HTTP: token-gated static bundle + /exports/<file> download.
   function serveExports(req, res, rel) {
     const file = path.join(exportsDir, sanitizeBasename(decodeURIComponent(rel)));
     fs.readFile(file, (err, buf) => {
@@ -361,7 +279,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     if (!file.startsWith(webDist + path.sep)) { res.writeHead(403).end('forbidden'); return; }
     fs.readFile(file, (err, buf) => {
       if (err) {
-        // No bundle yet (P3b builds it) or unknown path — SPA fallback to index.
         fs.readFile(path.join(webDist, 'index.html'), (e2, idx) => {
           if (e2) { res.writeHead(404).end('web bundle not built (npm run build:web)'); return; }
           res.writeHead(200, { 'Content-Type': MIME['.html'] });
@@ -415,12 +332,9 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     ws.on('error', (err) => log.error('web', `socket: ${err.message}`));
   });
 
-  // `host` pins the bind interface. Unset (the desktop/docker default) → Node's
-  // default all-interfaces bind, which the docker web path relies on (compose
-  // maps 127.0.0.1:HOST_PORT→container:8080 — a loopback container bind would
-  // break the port map). A deploy sets CLODEX_WEB_HOST=127.0.0.1 so the node's
-  // web GUI is loopback-only = reachable ONLY over an authenticated tunnel
-  // (`clodexctl web`/port-forward), covering the absent-token case.
+// Unset host → Node's all-interfaces bind, which the docker port map
+// (127.0.0.1:HOST_PORT→container:8080) depends on; a loopback container bind
+// breaks it. Deploys pass CLODEX_WEB_HOST=127.0.0.1 explicitly instead.
   const listenArgs = host ? [port, host] : [port];
   server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : ' (localhost-trust)'}`));
 
@@ -430,21 +344,14 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       try { wss.close(); } catch {}
       try { server.close(); } catch {}
     },
-    // What this host is, for a consumer that wants to REACH it (t30). The port
-    // is the one we actually LISTENED on, read from the socket rather than
-    // echoed from the request: a caller may pass 0 ("pick one"), and reporting
-    // the request back would advertise a port nothing serves. A getter, because
-    // the address isn't assigned until the listen callback fires — and null
-    // before/after that, so a consumer learns "no web host" instead of a lie.
-    // `tokenGated` says a token is REQUIRED — never what it is: that a door is
-    // locked is not a secret, the key is. A consumer uses it to explain why a
-    // plain URL will 401 instead of claiming a working link.
+// Port is read from the socket, not echoed from the request: a caller may pass 0.
+// null until the listen callback fires. tokenGated says a token is required,
+// never what it is.
     get info() {
       const addr = server.address();
       if (!addr || typeof addr.port !== 'number' || addr.port <= 0) return null;
       return { port: addr.port, tokenGated: gate.configured };
     },
-    // Test/introspection handles (not part of the wire contract).
     _server: server, _handlers: handlers, _scrollback: scrollback, _workspaceConns: workspaceConns,
   };
 }

@@ -1,40 +1,18 @@
-// Peer-deploy helpers: the pure classification + parsing layer the deploy
-// wizard drives. Two jobs, both testable without a live ssh:
-//   probePeer   — is there a Clodex on this box, and what version/caps?
-//   parseDeployLine — turn one line of clodex-deploy.sh's ::marker stream into
-//                     a structured event the wizard renders as a step list.
-//
-// The probe deliberately needs NO tunnel: it ssh's in and curls hello ON the
-// box (127.0.0.1:<port>), so it cleanly separates "ssh broken" from "ssh fine
-// but no Clodex" from "Clodex vX with these caps" — and the curl doubles as the
-// deploy's own preflight. See ssh-run.js for the transport.
 
 'use strict';
 
 const { sshRun, SSH_EXIT } = require('./ssh-run');
 
-// Sentinels the on-box probe script echoes so the classifier never has to guess
-// from curl's own noisy output. NOLISTEN = curl couldn't connect (no server);
-// BODY = curl got a response, whose text follows for JSON classification;
-// CODE = the HTTP status curl saw (via -w), so a 401/403 auth gate is told apart
-// from a genuine "nothing there".
 const PROBE_NOLISTEN = 'CLODEX_PROBE_NOLISTEN';
 const PROBE_BODY = 'CLODEX_PROBE_BODY ';
 const PROBE_CODE = 'CLODEX_PROBE_CODE ';
 
-// The tiny script run on the box. Deliberately DROPS curl's -f: with -f, ANY
-// HTTP error (a 401 from a token-protected Clodex included) makes curl exit
-// non-zero and look identical to connect-refused. Without -f, curl exits
-// non-zero ONLY on a real connect failure / timeout — so NOLISTEN stays
-// truthful — while an HTTP response (200 hello OR a 401/403 auth gate) comes
-// back exit 0 with the status recovered via -w. -sS silences progress but keeps
-// errors; -m bounds it.
-//
-// When a token is supplied it's sent as `Authorization: Bearer` — but the token
-// bytes must NEVER reach curl's argv (ps-visible on the box). printf is a bash
-// builtin (no argv), so it writes the header to a umask-077 temp file that curl
-// reads with `-H @file` and we rm immediately. The token is single-quote-escaped
-// so a quote in it can't break out of the printf argument.
+// curl deliberately omits -f: with -f a 401 from a token-protected Clodex
+// exits non-zero and looks identical to connect-refused, so NOLISTEN would
+// lie. Without it, non-zero means only a real connect failure / timeout.
+// The token must never reach curl's argv (ps-visible on the box): printf is a
+// shell builtin, so it writes the Bearer header to a umask-077 temp file that
+// curl reads via -H @file.
 function buildProbeScript(port, token) {
   const p = String(parseInt(port, 10) || 7900);
   const url = `http://127.0.0.1:${p}/api/peer/hello`;
@@ -57,23 +35,12 @@ function buildProbeScript(port, token) {
   return lines.join('\n');
 }
 
-// Classify a peer box. Returns one of:
-//   { kind: 'ssh-fail', stderr }              ssh couldn't connect/auth/timed out
-//   { kind: 'no-listener' }                    ssh ok, nothing answering on <port>
-//   { kind: 'auth-required', tokenSent, status } something answered but the wire
-//                                              is token-gated (HTTP 401/403);
-//                                              tokenSent = we sent a token and it
-//                                              was rejected (else none was tried)
-//   { kind: 'not-clodex' }                     something answered, but not a Clodex hello
-//   { kind: 'hello-ok', version, caps, host, platform }
-// sshRun is injectable for tests; token (optional) is sent as Bearer auth.
 async function probePeer(sshHost, port, { sshRun: run = sshRun, timeoutMs = 15000, token = null } = {}) {
   const tokenSent = !!token;
   let res;
   try {
     res = await run(sshHost, buildProbeScript(port, token), { timeoutMs });
   } catch (e) {
-    // Spawn failure (no ssh binary) — surface as an ssh failure the wizard shows.
     return { kind: 'ssh-fail', stderr: e && e.message ? e.message : 'ssh could not start' };
   }
   if (res.timedOut) return { kind: 'ssh-fail', stderr: 'ssh timed out' };
@@ -87,13 +54,8 @@ async function probePeer(sshHost, port, { sshRun: run = sshRun, timeoutMs = 1500
   if (lines.some((l) => l === PROBE_NOLISTEN)) return { kind: 'no-listener' };
   const bodyLine = lines.find((l) => l.startsWith(PROBE_BODY.trim()));
   if (bodyLine === undefined) {
-    // ssh ran but produced neither sentinel — treat as an ssh-layer problem
-    // (wrong shell, script didn't execute) rather than silently claim no Clodex.
     return { kind: 'ssh-fail', stderr: lastLine(res.stderr) || `unexpected probe output: ${(res.stdout || '').trim().slice(0, 200)}` };
   }
-  // An auth gate (401/403) answered before routing — a live, token-protected
-  // Clodex, NOT an empty box. Report it so the wizard points at the token field
-  // instead of offering a fresh install over a running peer.
   const codeLine = lines.find((l) => l.startsWith(PROBE_CODE.trim()));
   const status = codeLine ? parseInt(codeLine.slice(PROBE_CODE.trim().length).trim(), 10) : NaN;
   if (status === 401 || status === 403) {
@@ -118,15 +80,6 @@ function lastLine(s) {
   return String(s || '').trim().split('\n').filter(Boolean).pop() || '';
 }
 
-// Parse one line of the deploy script's stdout into a structured event. The
-// grammar (see clodex-deploy.sh):
-//   ::step <name>            a step is starting
-//   ::ok <name>              a step succeeded (or was already satisfied)
-//   ::fail <name> <reason>   a step failed (script then exits non-zero)
-//   ::need-sudo <what>       a sudo step can't run non-interactively
-//   ::sudo-cmd <command>     one exact command the user must run (follows need-sudo)
-//   ::done                   the whole deploy finished
-// Anything else is a { type:'log' } line (surfaced as the stderr/detail tail).
 function parseDeployLine(rawLine) {
   const line = String(rawLine == null ? '' : rawLine);
   const m = line.match(/^::(\S+)\s?(.*)$/);
@@ -148,17 +101,9 @@ function parseDeployLine(rawLine) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Agent-fallback helpers: when a deploy ends in a real failure the wizard can
-// spin up an ad-hoc Claude session to untangle it. Both are pure so they unit-
-// test without Electron; main.js owns the manager.create + spill injection.
-// ---------------------------------------------------------------------------
 
 const FIX_NAME_MAX = 64; // mirrors the session-name regex ceiling [a-zA-Z0-9._-]{1,64}
 
-// Name the ad-hoc fix session: sanitize the peer label to a NAME_RE-safe stem,
-// prefix `fix-`, and suffix `-2`, `-3`… on collision with an existing session.
-// `taken` is a Set (or array) of names already in use.
 function fixSessionName(label, taken = new Set()) {
   const has = (n) => (taken instanceof Set ? taken.has(n) : Array.isArray(taken) && taken.includes(n));
   let stem = String(label || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
@@ -173,15 +118,10 @@ function fixSessionName(label, taken = new Set()) {
   return `fix-${Date.now().toString(36)}`.slice(0, FIX_NAME_MAX);
 }
 
-// Build the briefing the fix session reads (delivered via the spill channel, so
-// its size is fine — it @-attaches). Names the box, the exact success check, the
-// captured deploy log, and points at the playbook + idempotent installer.
-//
 // The fix session's cwd is the operator's HOMEDIR, not the repo, so relative
-// `peering/…` pointers would be dead. When `docsDir` is given (main passes the
-// on-disk peering/ dir) we render absolute paths; we ALWAYS also name the GitHub
-// repo as the honest backstop — in a packaged app those files live inside
-// app.asar, which an external claude CLI can't read.
+// `peering/…` pointers would be dead — hence absolute paths when docsDir is
+// given. The repo URL is always named too: in a packaged app those files live
+// inside app.asar, which an external claude CLI cannot read.
 function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {}) {
   const host = String(sshHost || 'the box');
   const p = Number.isInteger(port) ? port : 7900;
@@ -207,25 +147,14 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
   ].join('\n');
 }
 
-// Single-quote a value for POSIX sh: wrap in '…', and end/escape/reopen any
-// embedded quote. Renders any string as one safe literal word.
 function shSingleQuote(v) {
   return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
 }
 
-// Classify an operator-entered deploy folder and render its CLODEX_SRC export
-// token for the deploy preamble. The clone/checkout dir on the box; the deploy
-// script defaults CLODEX_SRC to $HOME/wb-wrap-ui, so a blank field ⇒ NO export
-// (the script's own default stands — one source of truth). Two accepted forms:
-//   `~/sub/dir` → REMOTE-home-relative. We render CLODEX_SRC="$HOME/"'sub/dir':
-//     $HOME stays UNQUOTED so the remote shell expands it, the remainder is a
-//     single-quoted literal. (A quoted "~" would be a literal tilde dir — the
-//     classic footgun this avoids.)
-//   `/abs/path` → absolute, single-quoted whole.
-// Anything else (a relative path without ~/, or a bare ~) is rejected with an
-// inline error — the wizard surfaces it and never deploys. Pure + testable.
-// Returns { ok:true, srcExport } (srcExport '' means no override) or
-// { ok:false, error }.
+// Blank ⇒ NO export, so the deploy script's own default stands (one source of
+// truth). For `~/sub`, $HOME is left UNQUOTED so the remote shell expands it
+// and only the remainder is single-quoted — a quoted "~" would be a literal
+// tilde directory on the box.
 function classifyDeployFolder(folder) {
   const f = (folder == null ? '' : String(folder)).trim();
   if (!f) return { ok: true, srcExport: '' };            // blank → script default
@@ -240,28 +169,11 @@ function classifyDeployFolder(folder) {
   return { ok: false, error: 'Use an absolute path (/…) or a home path (~/…).' };
 }
 
-// Classify one operator-entered peer DESTINATION into ssh vs URL — the wizard
-// collapses the old two fields into a single smart input, and a scheme prefix
-// makes the two unambiguous (a dropdown would tax the common ssh path). Returns
-// one of:
-//   { kind: 'ssh',   sshHost }  — user@host / bare host / IP / ssh-config alias
-//   { kind: 'url',   url }      — a validated http(s):// direct endpoint
-//   { kind: 'ssm',   ssm }      — `ssm:TARGET`, an AWS SSM port-forward (t32)
-//   { kind: 'kubectl', kubectl }— `k8s:POD_OR_SVC`, a kubectl port-forward
-//   { kind: 'gcloud', gcloud }  — `gcp:INSTANCE`, a GCP IAP tunnel
-//   { kind: 'empty' }           — blank (skip the row)
-//   { kind: 'error', error }    — a targeted message for the common mistakes
-// Pure + testable; the settings schema grows by ADDITION only (ssh → peer.sshHost,
-// url → peer.url, ssm → peer.ssm), so this reshapes the input surface with no
-// migration and no change to what an existing peer record means.
 function classifyPeerDest(raw) {
   const s = (raw == null ? '' : String(raw)).trim();
   if (!s) return { kind: 'empty' };
-  // `ssm:TARGET` — the first typed cloud kind (t32 step 1). A prefix, like
-  // http://, because a bare instance id (`i-0abc…`) is indistinguishable from an
-  // ssh alias and guessing wrong would dial the wrong mechanism silently.
-  // Only the DATA is captured; the argv is built at dial time by
-  // cli/src/transport.js's ssmArgv and never stored.
+  // A bare instance id (`i-0abc…`) is indistinguishable from an ssh alias, so
+  // the ssm: prefix is required rather than sniffed.
   if (/^ssm:/i.test(s)) {
     const target = s.slice(4).trim();
     if (!target) return { kind: 'error', error: 'ssm: needs a target — e.g. ssm:i-0abc123def456789 (an instance id or an SSM managed-instance id).' };
@@ -288,9 +200,6 @@ function classifyPeerDest(raw) {
     }
     return { kind: 'kubectl', kubectl: { target } };
   }
-  // `gcp:INSTANCE` — a GCP IAP tunnel to a Compute instance by NAME (not a
-  // full resource path; gcloud takes the bare name plus --zone/--project, which
-  // are settings-file-only here). The charset is GCE's own instance-name rule.
   if (/^gcp:/i.test(s)) {
     const instance = s.slice(4).trim();
     if (!instance) return { kind: 'error', error: 'gcp: needs an instance name — e.g. gcp:clodex-box (add zone/project in settings if needed).' };
@@ -299,20 +208,14 @@ function classifyPeerDest(raw) {
     }
     return { kind: 'gcloud', gcloud: { instance } };
   }
-  // An http(s):// prefix is an explicit "direct URL" — validate the shape.
   if (/^https?:\/\//i.test(s)) {
     try { new URL(s); return { kind: 'url', url: s }; }
     catch { return { kind: 'error', error: "That doesn't look like a valid URL. Example: http://host:7900" }; }
   }
-  // Any other scheme (ftp://, ws://, …) is a real mistake — reject it clearly
-  // rather than letting it masquerade as an ssh host.
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) {
     return { kind: 'error', error: 'Only http:// and https:// URLs are supported for a direct peer.' };
   }
-  // ssh destination charset: user@host, bare host, IPv4, or an ~/.ssh/config
-  // alias. No colon (a host:port belongs in ssh config), no spaces.
   if (/^[a-zA-Z0-9._@-]{1,128}$/.test(s)) return { kind: 'ssh', sshHost: s };
-  // Targeted errors for the misfires the single field invites.
   if (/\s/.test(s) || /^ssh\s/i.test(s)) {
     return { kind: 'error', error: 'Enter just the destination, e.g. user@host — not an ssh command.' };
   }
@@ -322,11 +225,6 @@ function classifyPeerDest(raw) {
   return { kind: 'error', error: "That doesn't look like an ssh host or a URL. Example: user@laptop2" };
 }
 
-// Render an absolute path as home-relative for display / self-report: inside
-// `home` → `~/rest`, exactly `home` → `~`, outside → unchanged. Trailing
-// separators on either side are tolerated (a home of `/Users/x/` still matches
-// `/Users/x/proj`). Pure; the owner side calls it on __dirname so a peer reports
-// its install dir the way the wizard's folder field expects (~/…).
 function homeRelativize(p, home) {
   const path_ = String(p == null ? '' : p).replace(/\/+$/, '');
   const h = String(home == null ? '' : home).replace(/\/+$/, '');
@@ -337,10 +235,6 @@ function homeRelativize(p, home) {
   return path_;
 }
 
-// The ONE deploy-folder precedence rule, shared by every consumer: a live
-// self-reported install dir wins over a persisted deployFolder guess, which wins
-// over '' (the caller's default pre-fill). A stale persisted value must never
-// shadow live truth — that's the wrong-guess bug this closes. Pure.
 function resolveDeployFolder(reported, persisted) {
   const r = typeof reported === 'string' ? reported.trim() : '';
   if (r) return r;

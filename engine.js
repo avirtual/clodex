@@ -1,30 +1,6 @@
-// engine.js — the electron-free application engine (Phase 3 of the engine
-// extraction, engine-extraction-plan.md [internal design doc, not in this repo]). createEngine() owns the whole
-// bootstrap that used to live inline in main.js's app.whenReady body: stores,
-// SessionManager, the wirescope supervisor + watchdog, remote/peer wiring, the
-// reminder scheduler, message/registry cleanup, and the legacy sweep — in the
-// EXACT original order. main.js (Electron) and headless-main.js (plain Node) are
-// the two hosts; each resolves userDataPath + the electron seams and calls
-// createEngine, then layers its own frontend (windows/tray/ipc, or a pidfile +
-// signal handlers) on top.
-//
-// Seams are the ONLY route from the engine to a host runtime. openPath /
-// notifyOS / setAppQuitting / getUserDataPath are session-manager's originals;
-// appVersion / isPackaged were the Phase-1 stragglers; refreshAppMenu /
-// scheduleAppMenuRefresh / refreshTrayMenu / scheduleTrayRefresh are the
-// app-menu refresh hooks SessionManager + peer-wiring fire on change (no-op in
-// headless); restartHost is the phone-restart endpoint's relaunch (app.relaunch
-// under Electron; exit-with-code under headless). Every seam defaults to a
-// no-op so a host can omit the ones it lacks.
-//
-// The whole bootstrap sits at file-level indentation inside createEngine
-// (NOT re-indented) — a deliberate move-only choice, the same rationale as the
-// M-phase extractions: re-indenting would rewrite every byte-sensitive
-// template-literal interior (generated hook scripts broke that way once).
-//
-// Return: one flat object. The six PRIMARY handles come first, then shared
-// infra + read-only singleton accessors, then the helper surface grouped by
-// consumer (ipc-handlers, app-menus) — every one electron-free.
+// The bootstrap body sits at file-level indentation inside createEngine and must
+// NOT be re-indented: it contains byte-sensitive template literals (generated
+// hook scripts) that a reflow would rewrite.
 'use strict';
 
 const https = require('https');
@@ -46,12 +22,6 @@ const { materializePotCli, materializeExecScripts } = require('./pot-bin');
 // scope there.
 const { allParkedTexts } = require('./pending-store');
 
-// The single source of truth for "is this install broken in a way that will fail
-// (or degrade) sessions?". Returns a short, user-facing string (or null when
-// fine) shared by the startup log, the thrown spawn error, and the UI banner.
-// Pure over `d` (a collectSystemDiagnostics() shape) and defined at MODULE level
-// — moved out of createEngine so its branches are unit-testable without
-// instantiating the engine (Task 12). No bare callers: every site passes `d`.
 function diagWarning(d = {}) {
   // process.arch uses 'x64'; Mach-O reports 'x86_64'. Normalize to compare.
   const expectedArch = process.arch === 'x64' ? 'x86_64' : process.arch;
@@ -73,8 +43,6 @@ function diagWarning(d = {}) {
       return 'Running under Rosetta — rebuild native modules for the running arch: npx electron-rebuild';
     }
   }
-  // A failed login-shell PATH merge is the usual ROOT CAUSE of the missing-CLI
-  // case for a Finder-launched packaged app — name it before the symptom.
   if (d.pathMergeFailed) {
     return 'PATH merge from your login shell failed — CLIs installed there (claude/codex) '
       + 'may be invisible to Clodex. Relaunch Clodex, or start it from a terminal.';
@@ -95,21 +63,11 @@ function diagWarning(d = {}) {
 // change to one shape without the other silently reopens the GC hole.
 const SPILL_NAME_RE = /msg-\d+-\d+\.txt/g;
 
-// Which spill files are still REFERENCED by an undelivered parked delivery?
-//
-// A dm body over MSG_SPILL_THRESHOLD is delivered as a POINTER to a file in the
-// spill dir (session-manager._buildDeliveryText), and a held delivery parks that
-// pointer — the spill file is the only copy of the body, the parked record
-// carries no other. Parking has no expiry; the spill file did (30 min), so a
-// delivery parked longer used to arrive pointing at a file the sweep had already
-// unlinked. Nothing re-reads the file at delivery, so that failed SILENTLY, with
-// the byte count in the pointer the only trace of what was lost.
-//
-// Matching on the FILENAME GRAMMAR rather than the pointer prose is deliberate:
-// there are already two pointer wordings (claude `@<path>`, codex
-// `saved to <path>`) and a third would silently defeat a prose match. Basenames
-// also keep the check agnostic about path shape. Over-matching is harmless — the
-// worst case is one file kept an extra sweep.
+// Parking has no expiry; spill files do — and the spill file is the only copy of
+// an over-threshold dm body, so an unexempted sweep loses it silently.
+// Match on the FILENAME grammar, not the pointer prose: there are already two
+// pointer wordings (claude `@<path>`, codex `saved to <path>`). Over-matching
+// only keeps a file one extra sweep.
 function referencedSpillNames(pendingDir) {
   const refs = new Set();
   for (const text of allParkedTexts(pendingDir)) {
@@ -118,17 +76,10 @@ function referencedSpillNames(pendingDir) {
   return refs;
 }
 
-// Age-based GC of the spill dir, EXEMPTING files a parked delivery still points
-// at. Module-level and fully parameterized (no closure state) so the exemption is
-// unit-testable without instantiating the engine.
-//
-// COST, chosen deliberately: a seat that never comes back keeps its parked
-// pointers forever, and now their bodies too — disk grows with undelivered mail
-// instead of being capped by destroying it. The alternative caps disk by
-// silently losing dms, which is the wrong trade for a channel whose stated
-// discipline is that dropping a DM is not acceptable (pending-store.js header).
-// If the leak ever bites, the fix is a `pending/` expiry — ONE policy governing
-// both lifetimes — not a second policy here that disagrees with parking.
+// Exempting parked pointers means a seat that never returns grows disk forever.
+// Deliberate: the alternative caps disk by destroying undelivered dms. If it
+// ever bites, add a `pending/` expiry — ONE policy for both lifetimes — rather
+// than a second policy here that disagrees with parking.
 function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   if (!fs.existsSync(msgDir)) return;
   const referenced = referencedSpillNames(pendingDir);
@@ -158,10 +109,6 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
   // seam optional so a host (headless) can omit the ones it lacks.
   const openPath = seams.openPath || (() => {});
-  // Open a URL in the operator's browser. Electron: shell.openExternal. Headless:
-  // there is no browser on that box, so the default is a logged no-op rather than
-  // a throw — a peer web view opened from a headless host has nowhere to go, and
-  // saying so beats pretending it worked.
   const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${url}`); });
   const notifyOS = seams.notifyOS || (() => {});
   const setAppQuitting = seams.setAppQuitting || (() => {});
@@ -172,16 +119,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const refreshTrayMenu = seams.refreshTrayMenu || (() => {});
   const scheduleTrayRefresh = seams.scheduleTrayRefresh || (() => {});
   const restartHost = seams.restartHost || (() => {});
-  // The login-shell PATH merge (main.js/headless-main.js fixPathFromLoginShell)
-  // runs BEFORE the engine exists and used to fail SILENTLY to console.error. The
-  // host passes its outcome in as a seam so diagnostics can surface a failed merge
-  // as a first-class warning — a failed merge is the usual root cause of
-  // "claude/codex not on PATH" for a Finder-launched packaged app.
   const pathMergeFailed = !!seams.pathMergeFailed;
-  // Sandbox boxes are a desktop-only feature (docker-compose containers the GUI
-  // spawns). A headless host (docker image, ssh/ssm node) opts out so the New
-  // Session "Run in" selector shows no docker-in-docker placement — enableSandbox
-  // defaults ON so Electron (which omits the seam) is unchanged.
   const enableSandbox = seams.enableSandbox !== false;
 
   // The browser frontend's host, for peers that want to REACH it (t30). A
@@ -191,24 +129,14 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // web host, and a consumer must learn that rather than guess wire-port+1.
   const getWebInfo = seams.webInfo || (() => null);
 
-  // Clodex-owned runtime dir (~/.clodex): registry, sockets, hooks, spilled
-  // messages, memory. A home-derived constant, identical across hosts, so the
-  // engine computes it itself rather than taking it as a seam.
   const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
 
 
 
-// ── Spawn diagnostics ───────────────────────────────────────────────────────
-// node-pty's "posix_spawnp failed." (pty.cc:373) is the spawn of its prebuilt
-// `spawn-helper`, NOT of claude/codex — the user command is exec'd later by the
-// helper. So `which claude` succeeding tells you nothing: the real culprit is
-// almost always a spawn-helper arch mismatch (e.g. x86_64 helper under an arm64
-// Electron, or running under Rosetta), which posix_spawn rejects with EBADARCH.
-// `npx electron-rebuild` is the fix. These helpers turn the opaque error into
-// something actionable and log the system state at startup.
+// node-pty's "posix_spawnp failed." is the spawn of its prebuilt spawn-helper,
+// not of claude/codex — so `which claude` succeeding proves nothing. The usual
+// cause is a spawn-helper arch mismatch (posix_spawn rejects with EBADARCH).
 
-// `which`-style PATH lookup: node-pty exec's bare names ('claude'/'codex'), so
-// a null here distinguishes "binary missing" from a deeper helper failure.
 function whichBin(cmd) {
   if (!cmd) return null;
   if (cmd.includes('/')) { try { fs.accessSync(cmd, fs.constants.X_OK); return cmd; } catch { return null; } }
@@ -219,8 +147,6 @@ function whichBin(cmd) {
   return null;
 }
 
-// CPU arch from a Mach-O header (first 8 bytes). Naming matches `process.arch`
-// expectations via expectedArch() below.
 function machoArch(file) {
   try {
     const fd = fs.openSync(file, 'r');
@@ -240,13 +166,9 @@ function machoArch(file) {
   } catch (e) { return `unreadable (${e.code || e.message})`; }
 }
 
-// Mirror node-pty's helperPath resolution (incl. the asar.unpacked rewrites).
-// node-pty (lib/utils.js loadNativeModule) loads pty.node from the first of
-// build/Release, build/Debug, prebuilds/<platform>-<arch> that exists, and
-// resolves spawn-helper as a sibling of that. When no electron-rebuild has run,
-// build/Release is empty and it falls back to the shipped prebuild — so we must
-// check the same set, else the diagnostic points at a build/Release helper that
-// isn't the one actually being spawned (false "missing", wrong fix suggested).
+// Must check node-pty's OWN candidate set in its order (build/Release,
+// build/Debug, prebuilds/<platform>-<arch>, each asar.unpacked-rewritten): with
+// no electron-rebuild it loads the prebuild, so a narrower check names the wrong helper.
 function unpackAsar(p) {
   return p.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked');
 }
@@ -275,23 +197,17 @@ function collectSystemDiagnostics() {
     platform: process.platform, procArch: process.arch, rosetta: detectRosetta(),
     electron: process.versions.electron, node: process.versions.node,
     claude: whichBin('claude'), codex: whichBin('codex'),
-    // pathMergeFailed is the host's fixPathFromLoginShell outcome (seam, read at
-    // the top of createEngine) — diagWarning promotes a failed merge to a banner.
     pathMergeFailed,
     helperPath: helper, helperExists: fs.existsSync(helper),
     helperExecutable, helperArch: machoArch(helper),
   };
 }
 
-// Compact, single-line summary suitable for embedding in a thrown spawn error.
 function diagSummary(d = collectSystemDiagnostics()) {
   return `proc=${d.platform}/${d.procArch}${d.rosetta ? '(rosetta)' : ''} helper=${d.helperArch} `
     + `electron=${d.electron} node=${d.node}`;
 }
 
-// diagWarning is defined at MODULE level (top of file) — it's a pure function of
-// `d`, moved out of the createEngine closure so its branches are unit-testable
-// without instantiating the engine (Task 12). See it above the requires block.
 
 function logStartupDiagnostics() {
   const d = collectSystemDiagnostics();
@@ -311,137 +227,46 @@ function logStartupDiagnostics() {
 
 
 const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
-// Layer-3 delivery parking store (Claude): pending/<name>/ per agent. Deliveries
-// that arrive while the operator is composing are parked here and drained as
-// UserPromptSubmit additionalContext on the next submit (see pending-store.js).
 const PENDING_DIR = path.join(REGISTRY_DIR, 'pending');
-// DM federation: per-origin outbox for box→consumer replies over the one-way
-// tunnel (a consumer claims its mail on the hello cadence — see peer-outbox.js).
 const OUTBOX_DIR = path.join(REGISTRY_DIR, 'peer-outbox');
-// Our own label on the peer wire (the box's hostLabel AND the origin our
-// outbound DMs carry). Computed once — never per request — so it can't drift.
 const SELF_LABEL = os.hostname().replace(/\.local$/, '');
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
 const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
-// Grace period after creating an ad-hoc deploy-fix session before injecting its
-// briefing — lets the fresh Claude CLI reach its input prompt so the keystrokes
-// aren't typed into a still-booting TUI.
 const DEPLOY_FIX_INJECT_DELAY_MS = 4000;
 
 
-// Phase W1 shadow mode (CLODEUX-PLAN.md): route claude sessions through the
-// in-process wire tee (wire/proxy.js): the live intent + telemetry path for
-// wire-routed claude sessions. Operational + wire-side events land in
-// ~/.clodex/wire-shadow.jsonl (the name is historical — in the default
-// full-cutover state the two-sided wire-vs-JSONL diff only runs when intents
-// are forced back to JSONL via CLODEX_WIRE_INTENTS=0). An external wirescope
-// keeps its role via per-agent upstream chaining. Default ON since v2.0 — the
-// tee is the intended steady state (W2/W3 gates green, shipped and stable);
-// CLODEX_WIRE_SHADOW=0 is the explicit revert to the pre-wire JsonlWatcher
-// path (also the automatic fallback when the tee fails to come up or a session
-// isn't wire-routed — see intentSource resolution in create()).
 const WIRE_SHADOW = process.env.CLODEX_WIRE_SHADOW !== '0';
-// W2 telemetry cutover: overlay the wire-carried fields (cost/turns/
-// refusals/inputTokens/warmth + hold ownership) onto each poll payload before
-// it reaches the renderer (WireTelemetry.overlay). Requires WIRE_SHADOW (the
-// wire must be up). The shadow diff keeps comparing the RAW poll record, so
-// validation evidence stays honest while the overlay is live. Defaults ON
-// wherever the wire is up — the live-shadow readout passed the reviewer gate
-// (0% worst cost delta, 47/47 warmth, CLODEUX-PLAN.md 2026-07-02 evening);
-// CLODEX_WIRE_TELEMETRY=0 is the explicit revert to poll-only display.
 const WIRE_TELEMETRY_LIVE = process.env.CLODEX_WIRE_TELEMETRY != null
   ? process.env.CLODEX_WIRE_TELEMETRY === '1'
   : WIRE_SHADOW;
-// W3 intent cutover: wire turn.completed becomes the LIVE intent path for
-// wire-routed claude sessions; the always-on 250ms transcript parse is
-// replaced by a TranscriptSentinel (symlink identity + compact rendezvous +
-// tee-failure recovery — wire-intents.js). Evidence: W1 shadow gates green
-// plus the healthy-epoch differ (7/7 intents both-seen, 0 unmatched; every
-// historical unmatched maps to the dead-tee window or JSONL flush latency).
-// Codex and wire-failed spawns keep the JsonlWatcher path untouched.
-// CLODEX_WIRE_INTENTS=0 reverts to JSONL dispatch (with wire shadow-compare).
 const WIRE_INTENTS_LIVE = process.env.CLODEX_WIRE_INTENTS != null
   ? process.env.CLODEX_WIRE_INTENTS === '1'
   : WIRE_SHADOW;
 const LONG_TEXT_THRESHOLD = 200;
 const LONG_TEXT_DELAY = 1000;
 const SHORT_TEXT_DELAY = 50;
-// After the compact-summary entry lands, wait this long before injecting the
-// self-compact continuation turn — lets the CLI finish settling its post-compact
-// prompt so the injected turn isn't swallowed by the in-progress redraw.
 const COMPACT_CONTINUATION_DELAY = 1500;
-// After a reloaded session first reports a sessionId (CLI booted), wait this long
-// before injecting the handoff — a cold boot's input loop settles slower than a
-// post-compact redraw, so give it more room than COMPACT_CONTINUATION_DELAY.
 const RELOAD_CONTINUATION_DELAY = 2500;
-// Safety valve for the inject-hold queue: if the release event never comes
-// (compact summary never lands, activity tracker wedged at thinking), force
-// the flush rather than holding messages hostage forever. Native /compact on
-// a heavy context runs a couple of minutes; this sits well past it. A
-// legitimately longer turn just degrades to today's behavior — the flush
-// lands mid-turn and becomes the next turn, exactly as an unheld inject would.
 const INJECT_HOLD_TIMEOUT = 5 * 60 * 1000;
-// Release valve for a self-fired /compact whose summary never lands (the CLI
-// errored, the app restarted mid-compaction, the transcript rendezvous missed).
-// Without it, _compactGuard + _compactContinuation stay set forever and the
-// in-flight guard silently suppresses every future self-compact. 5 min sits
-// comfortably past worst-case legitimate big-context compaction time, so it
-// only ever fires on a genuinely stuck compact — half the 10-min sentinel arm
-// timeout. On fire it clears the stuck state and does NOT auto-retry (a silent
-// re-compact minutes later is a worse surprise than the agent re-issuing the
-// intent).
 const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
-// Flushing starts with Ctrl-U, which would eat a half-typed operator draft.
-// If a human touched the pane this recently, defer the flush and retry — the
-// hold gave US the timing decision, so the draft hazard is ours to avoid
-// (immediate injects keep today's behavior; their timing is the sender's).
-// Every injection now drains through a per-session InjectQueue (atomicity: one
-// Ctrl-U→Enter at a time, no interleave) whose quiet-gate defers the start of an
-// item while a human touched the pane within INJECT_QUIET_MS — the leading
-// Ctrl-U would eat an un-submitted operator/controller draft. Capped by
-// INJECT_QUIET_MAXWAIT so a walked-away draft can't starve deliveries (the cap
-// falls back to inject-anyway, never worse than pre-queue behavior). The window
-// is short (2s) because it applies to EVERY inject including plain idle
-// deliveries; the old 10s value only ever gated post-hold batch flushes.
-// MAXWAIT is for the WALKED-AWAY-DRAFT case only. The original 30s misfired
-// through LIVE composition — an operator writing a long draft while agents
-// report in got spliced mid-word twice (confirmed actively typing). 5min matches
-// what layer-3 prompt-parking will set; once parking lands (deliveries park to a
-// file instead of injecting while typing), cap-fires should drop to ~zero.
+// The quiet gate defers an inject while a human touched the pane, because the
+// leading Ctrl-U eats an un-submitted draft. The window is short because it
+// applies to EVERY inject, not just post-hold batch flushes. MAXWAIT is the
+// walked-away-draft fallback only: at 30s it spliced live composition mid-word
+// (observed twice, operator confirmed actively typing).
 const INJECT_QUIET_MS = 2 * 1000;
 const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
-// Boot-readiness cap (T35): the first inject into a freshly spawned claude seat
-// waits for the seat to signal it's accepting input (Claude's mode-2004 edge)
-// before writing — text+Enter written before the CLI's raw-mode input loop is up
-// get read as one paste-like chunk and the Enter lands as content, so the message
-// never submits. This caps that wait: after 20s with no readiness signal the item
-// injects anyway (mirror of INJECT_QUIET_MAXWAIT's starvation fallback — never
-// strand a delivery on a CLI build that doesn't emit 2004).
+// First inject into a fresh claude seat waits for the mode-2004 readiness edge:
+// text+Enter written before the CLI's raw-mode input loop is up arrives as one
+// paste-like chunk and the Enter lands as content, so nothing submits.
 const INJECT_BOOT_MAXWAIT = 20 * 1000;
 
 
-// ---------------------------------------------------------------------------
-// Stores — persistence, templates, workspaces, the prompt/agent/skill
-// libraries, and UI settings. Their objects are built by initStores() in
-// stores.js and assigned in app.whenReady() (see below). Declared `let` so
-// every module-scope reference resolves at call time, after the factory has
-// run — the path derivations now live inside the factory, which retires the
-// old PERSIST_FILE-before-whenReady landmine. (memoryStore stays local — it
-// is a separate memory-store.js factory, not one of the eight.)
-// ---------------------------------------------------------------------------
 
-// The stores (persistence … uiSettings) + renameWorkspaceScope are const-
-// destructured from initStores() at bootstrap (below); the helper closures above
-// that reference them resolve at call time, after that line runs. Only
-// remindScheduler is a mutable `let` — it is constructed in the bootstrap once
-// the `reminders` store exists, and crosses to SessionManager as a getter.
 let remindScheduler = null;
 
-// Resolve a session's strip level from its persisted entry, honoring the legacy
-// `stripThinking:'on'` field (pre-leveled) as level 1. Single source of truth
-// for both the poller's wire re-assert and the IPC/getArgs surface.
 function stripLevelOf(entry) {
   if (!entry) return 0;
   if (entry.stripLevel === 1 || entry.stripLevel === 2) return entry.stripLevel;
@@ -449,13 +274,10 @@ function stripLevelOf(entry) {
   return 0;
 }
 
-// Auto-compact-before-cold: default ON; only an explicit false opts out (so
-// every pre-existing entry — and a missing one — is on).
 function autoCompactOf(entry) {
   return !(entry && entry.autoCompact === false);
 }
 
-// Has this conversation already received the memory boot digest?
 function isDigested(entry, sessionId) {
   return !!(entry && sessionId && Array.isArray(entry.digested) && entry.digested.includes(sessionId));
 }
@@ -463,9 +285,6 @@ function isDigested(entry, sessionId) {
 
 
 
-// Resolve a session's system-prompt ref to an absolute, readable file path (for
-// --system-prompt-file), or null to fall back to the CLI default. A deleted/
-// renamed ref degrades to default rather than blocking the spawn.
 function resolveSystemPromptFile(stem) {
   if (!stem) return null;
   const p = promptLibrary._file('system', stem);
@@ -473,8 +292,6 @@ function resolveSystemPromptFile(stem) {
   catch { return null; }
 }
 
-// Resolve a session's ordered append refs to their bodies. Missing/empty stems
-// are skipped silently (a deleted shared prompt must never break a spawn).
 function readAppendBodies(stems) {
   const out = [];
   for (const stem of stems || []) {
@@ -484,16 +301,6 @@ function readAppendBodies(stems) {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Agent memory store (spec §10) — store + boot-digest composer live in
-// memory-store.js (extracted for Electron-free tests; the design rationale
-// moved with the code). What stays HERE is the delivery plumbing: the
-// SessionStart hook ships the digest to NEW conversations (source
-// startup/clear — see setupClaudeHook), and the digest ledger in
-// sessions.json (`digested: [sessionIds]`) makes sure a conversation gets it
-// exactly ONCE across GUI restarts — resumed conversations that predate the
-// feature receive a single tail append instead (_maybeDeliverDigest).
-// ---------------------------------------------------------------------------
 
 const MEMORY_DIR = path.join(REGISTRY_DIR, 'library', 'memory');
 const { createMemoryStore, composeDigest } = require('./memory-store');
@@ -501,23 +308,11 @@ const memoryStore = createMemoryStore(MEMORY_DIR);
 
 
 
-// clodex skill-injection library: user-authored SKILL.md files in
-// ~/.clodex/skills/*.md. At spawn the enabled subset is scaffolded into a
-// per-session plugin under ~/.clodex/skill-plugins/<name>/ and injected via
-// --plugin-dir (see skills-util.js). Claude-only.
 const SKILL_PLUGINS_DIR = path.join(REGISTRY_DIR, 'skill-plugins');
 const SKILL_PLUGIN_NAME = 'clodex-skills';
 
 
 
-// Resolve the exact library records ([{ name, content }, ...]) that WILL be
-// injected for this session: the persisted injectSkills UNION any `sessions:`-
-// scoped library skills assigned to it (assignment = intent, a spawn-time union
-// never written back to the record). skillLibrary.list() carries the raw file as
-// `content`, so parse the scope frontmatter here to feed autoEnabledFor (its
-// list() shape has no meta, kept lean for the wire). Single-sourced so the
-// injected-skill subagent-ref check scans EXACTLY what writeSkillPlugin loads —
-// scanning a different set than what's injected would be a lie.
 function effectiveInjectedSkills(name, injectSkills) {
   const lib = skillLibrary.list();
   const scoped = lib.map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content).meta }));
@@ -534,7 +329,6 @@ function writeSkillPlugin(name, injectSkills) {
   const records = effectiveInjectedSkills(name, injectSkills);
   const plugin = buildSkillPlugin(records.map((s) => s.name), records, SKILL_PLUGIN_NAME);
   const dir = path.join(SKILL_PLUGINS_DIR, name);
-  // Clear any prior scaffold (set shrank, or nothing injected now).
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   if (!plugin) return null;
   const manifestDir = path.join(dir, '.claude-plugin');
@@ -560,31 +354,16 @@ const CODEX_SL_COMPONENTS = [
   'model-with-reasoning',
 ];
 
-// Per-session raw-output ring buffer replayed on peer attach.
 const SCROLLBACK_MAX = 256 * 1024;
 
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
-// isAlive + peer registry + Unix-socket Transport live in agent-transport.js
-// (M3). REGISTRY_DIR + MAX_MSG are injected; isAlive is reused by SessionManager.
 const { createAgentTransport } = require('./agent-transport');
 const { isAlive, registry, Transport } = createAgentTransport({ REGISTRY_DIR, MAX_MSG });
 
-// ---------------------------------------------------------------------------
-// JSONL Watcher (port of jsonl_watcher.py)
-// ---------------------------------------------------------------------------
 
-// IPC protocol prompt + default compact-continuation live in ipc-prompt.js
-// (moved out in M3 — the sole protocol source of truth). buildIpcPrompt assembles
-// the per-seat variant that gates a session's grammar lines to its allowed intents.
 const { buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION } = require('./ipc-prompt');
 
-// Re-render statusline scripts for all running Claude sessions. Called when
-// the user updates preferences — Claude re-reads the script on each status
-// update, so changes show up within a tick.
 function rebuildAllStatusScripts(manager) {
   for (const [name, s] of manager.sessions) {
     if (s.agentType !== 'claude') continue;
@@ -593,17 +372,6 @@ function rebuildAllStatusScripts(manager) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// wirescope integration — identity probe + per-session telemetry pull
-// ---------------------------------------------------------------------------
-// Agent sessions route through a local analytical proxy at
-// <base>/agent/<proxyAgent>/…. When that proxy is the real wirescope we can
-// PULL live per-session cost / cache-warmth / context off the wire — data the
-// statusline can't surface for an idle session (its script only runs while the
-// user is interacting). One /_status poll per base, fanned out to sessions by
-// EXACT proxyAgent match. We deliberately do not subscribe (push is for
-// streaming/refusals, a clodex2 concern).
-// See https://github.com/avirtual/wirescope (INTEGRATION.md).
 
 const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies, boxWirescopeView } = require('./proxy-util');
 const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-util');
@@ -612,10 +380,6 @@ const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById } = require('./pending-store');
 const { createTeamManifest } = require('./team-manifest');
-// Teams (teams-design.md [internal design doc, not in this repo]): project resolution is pure cwd+fs math. Core
-// consumes findProjectRoot (the team-retire authorization check, string root)
-// and the rich resolveTeam (spawn-time team-context injection, session-manager);
-// the front door's team:create / team:join IPC handlers call createTeam / addRole.
 const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
   setRole, removeRole, renameRole, setTeamWatchdog,
@@ -648,17 +412,9 @@ const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
 const { resolveSessionArgsPatch } = require('./session-args');
-// wirescope client/poller live in wirescope-proxy.js and the supervisor in
-// wirescope-supervisor.js (M3). ProxyClient needs no injection; ProxyPoller +
-// the supervisor take log / stripLevelOf / WIRE_TELEMETRY_LIVE / ProxyClient by
-// value and uiSettings via getter. PROXY_* tuning consts moved into the proxy
-// module; PROXY_REPORT_TIMEOUT is re-imported (one /_report call still needs it).
 const { ProxyClient, createProxyPoller, PROXY_REPORT_TIMEOUT } = require('./wirescope-proxy');
 const ProxyPoller = createProxyPoller({
   log, stripLevelOf, WIRE_TELEMETRY_LIVE,
-  // M3-leak fix deps: helpers by value (hoisted fn declarations), whenReady-
-  // assigned singletons as getters, and SessionManager's static command map
-  // deferred past the class construction below.
   autoCompactOf, peerProxyView,
   getPersistence: () => persistence,
   getRemoteServer: () => remoteServer,
@@ -668,15 +424,6 @@ const { createWirescopeSupervisor } = require('./wirescope-supervisor');
 const { WirescopeSupervisor } = createWirescopeSupervisor({ log, ProxyClient, getUiSettings: () => uiSettings, getUserDataPath: () => userDataPath, isPackaged });
 const wirescope = new WirescopeSupervisor();
 
-// Parse the current skill roster from a Claude session's transcript. The CLI
-// records the available-skills list as `attachment` entries of type
-// "skill_listing", each carrying a structured `names` array; the latest one
-// reflects what's loaded now. Returns [] when there's no transcript yet (a
-// fresh session) or no skill_listing recorded. This is clodex's STANDALONE
-// catalog source for the Skills popover — no proxy needed; wirescope only
-// enriches with the aggregate per-turn token cost (the `skills` composition
-// category). A skill turned off via skillOverrides vanishes from later
-// listings, so callers union this with the persisted disabled set.
 function parseSkillRoster(name) {
   try {
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -696,17 +443,6 @@ function parseSkillRoster(name) {
   } catch { return []; }
 }
 
-// Read the EFFECTIVE lower-layer skill state for a session's cwd by merging the
-// three editable settings layers the CLI loads BELOW our generated --settings
-// (layer 4), per-key later-wins: user (~/.claude/settings.json) < project
-// (<cwd>/.claude/settings.json) < local (<cwd>/.claude/settings.local.json).
-// Also probes the macOS managed-settings file for a policy lock on the skills
-// surface (strictPluginOnlyCustomization). This lets the popover render a skill
-// that is off in a lower layer as unchecked + disabled + labeled with its
-// provenance, instead of misleadingly showing it checked — and lets us avoid a
-// silent no-op re-enable clodex can't actually perform (see SKILL_REENABLE_
-// CONFIRMED). Pure file reads; standalone, no proxy. policy/MDM is read-only
-// from a UI's perspective and only the lock matters here.
 function readEffectiveSkillState(cwd) {
   const layers = [
     { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
@@ -734,15 +470,10 @@ function readEffectiveSkillState(cwd) {
   return { overrides, skillsLocked };
 }
 
-// Tools mirror of readEffectiveSkillState: reads permissions.deny across the
-// same settings chain (user < project < local) plus the macOS managed file, so
-// the tools popover can render a tool disabled in a layer clodex doesn't own as
-// unchecked + read-only + labeled, instead of a checked toggle that silently
-// does nothing. Only a BARE tool name ("SendMessage") turns the whole tool off;
-// a SCOPED entry ("Agent(foo)", "Bash(rm:*)") denies a slice and leaves the tool
-// available, so it's ignored here. permissions.deny is UNION (deny always wins,
-// no allow overrides it), so such a deny is unrevokable from clodex's own
-// layer-4 settings — hence always read-only (skills' canReenable has no analog).
+// Only a BARE tool name ("SendMessage") disables the tool; a SCOPED entry
+// ("Bash(rm:*)") denies a slice and is ignored here. permissions.deny is a
+// UNION with no allow override, so a lower-layer deny is unrevokable from our
+// layer-4 settings — hence always read-only.
 function readEffectiveToolState(cwd) {
   const layers = [
     { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
@@ -766,20 +497,11 @@ function readEffectiveToolState(cwd) {
   return { overrides };
 }
 
-// Claude Code stores transcripts under ~/.claude/projects/<slug>/<uuid>.jsonl,
-// where the slug is the cwd with every '/' and '.' turned into '-'. Used only
-// as a FALLBACK for the session picker when the live run/<name>/transcript.jsonl
-// symlink can't be resolved (e.g. a never-run / dead session); the symlink's
-// real directory is preferred and authoritative when present.
 function claudeProjectDir(cwd) {
   if (!cwd) return null;
   return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
 }
 
-// When was this session last actually active? The resumed transcript's mtime
-// is the last real turn, and it survives GUI restarts (unlike the ~/.clodex
-// symlink, which _cleanup unlinks on exit). Claude-only: codex rollout paths
-// aren't derivable from the sessionId, so those fall back to spawn time.
 function lastTranscriptWrite(agentType, cwd, sessionId) {
   if (agentType !== 'claude' || !sessionId) return null;
   const dir = claudeProjectDir(cwd);
@@ -787,25 +509,11 @@ function lastTranscriptWrite(agentType, cwd, sessionId) {
   try { return fs.statSync(path.join(dir, `${sessionId}.jsonl`)).mtimeMs; } catch { return null; }
 }
 
-// Resume-time transcript bake. Before --resume, ask wirescope to bake the
-// session's on-disk transcript down to its safe-to-drop set so the prefix the
-// CLI replays is already slim — moving the strip from per-turn-on-the-wire to
-// once-on-disk.
-//
-// Warmth is IRRELEVANT, and that's the whole point. The prefix cache is keyed
-// on the WIRE bytes wirescope sends the API, not on what the CLI reads off
-// disk. With live-strip active, a plain resume sends the fat transcript and
-// wirescope strips it to X; a baked resume sends the slim transcript and
-// wirescope strips it to the SAME X (the bake is idempotent under the strip).
-// Same wire bytes → same cache key → the bake can't bust a warm cache. So
-// there is no cold-only gate: the safety isn't warmth, it's the invariant
-// bake ⊆ live-strip — the bake removes ONLY what the wire already drops, which
-// is what keeps the result byte-identical to the live wire (asserted by
-// wire_delta.byte_identical_to_live_wire). We pass the session's strip level so
-// wirescope matches bake depth to it; wirescope owns the transform and MUST
-// fail-safe (!ok, no rewrite) on anything it can't guarantee identical.
-// FAIL-SAFE throughout: opt-in, proxy-gated, and ANY error / !ok returns
-// quietly so the caller resumes the ORIGINAL transcript untouched.
+// Bake the on-disk transcript before --resume. Warmth is irrelevant and needs no
+// gate: the prefix cache is keyed on the WIRE bytes, and the bake removes only
+// what the live strip already drops (bake ⊆ live-strip), so baked and unbaked
+// resumes produce the same wire bytes and the same cache key.
+// Fail-safe: opt-in, proxy-gated, and any error / !ok resumes the ORIGINAL file.
 async function maybeCompactBeforeResume(entry) {
   try {
     if (!uiSettings.get().compactOnResume) return;     // opt-in — off by default
@@ -824,9 +532,6 @@ async function maybeCompactBeforeResume(entry) {
     const r = await ProxyClient.compact(base, entry.sessionId, tpath, stripLevelOf(entry));
     const j = (r && r.json) || {};
     if (j.ok && !j.noop) {
-      // wire_delta (wirescope v0.6.12+) reports the byte-identity readout: how
-      // many pure-thinking turns bake out-stripped live-strip (each re-caches
-      // once) and whether the baked source is byte-identical to the live wire.
       const wd = j.wire_delta || {};
       const ptt = wd.pure_thinking_turns;
       const bid = wd.byte_identical_to_live_wire;
@@ -842,10 +547,6 @@ async function maybeCompactBeforeResume(entry) {
   }
 }
 
-// Pull picker metadata out of one transcript file: the generated title (last
-// ai-title entry — they're rewritten as the session grows, latest wins), the
-// first/last activity timestamps, and a user-turn count. Tolerant of partial
-// lines (file may be mid-write) — bad lines are skipped, never thrown.
 function readSessionMeta(file) {
   let raw;
   try { raw = fs.readFileSync(file, 'utf8'); } catch { return null; }
@@ -864,38 +565,21 @@ function readSessionMeta(file) {
   return { title, first, last, turns };
 }
 
-// Digest-bearing SessionStart output: agent name + the memory boot digest
-// (memory-store.js composeDigest). Rewritten on every store mutation for the
-// agent so a later /clear cats a CURRENT digest, not the spawn-time one.
-// Returns whether a digest is present (main.js's birth-marking needs to know
-// if the hook actually had anything to deliver — an empty store must leave
-// the conversation unmarked so units saved later still reach it).
-// Per-session CLI hook wiring lives in cli-hooks.js (M3). REGISTRY_DIR +
-// memoryStore injected by value; uiSettings via getter (assigned in whenReady).
-// nodeInterp = the app's own Electron binary run as Node (ELECTRON_RUN_AS_NODE),
-// baked ABSOLUTE into every generated hook so the scripts never depend on an
-// ambient python3 / PATH (Task 9 — the packaged-.app memory-save bug). Injected
-// here so cli-hooks.js stays free of the `process` global (leak-scanner seam).
+// nodeInterp is the app's own binary run as Node, baked ABSOLUTE into every
+// generated hook so the scripts never depend on an ambient python3 or on PATH
+// (packaged .app). Injected here so cli-hooks.js stays free of the `process` global.
 const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
   cleanupClaudeHook, cleanupCodexHook,
 } = createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath });
 
-// JsonlWatcher lives in jsonl-watcher.js (M3). REGISTRY_DIR injected; text +
-// file-touch extraction delegated to transcript.js / file-touch.js.
 const { createJsonlWatcher } = require('./jsonl-watcher');
 const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });
 
-// Sidebar organizational metadata (session-meta.js): last-activity timestamps
-// (cheap transcript stat) + git branch / PR status (slow gh, TTL-cached). Powers
-// the sidebar toolbar's group/sort/filter. REGISTRY_DIR injected (electron-free).
 const { createSessionMeta } = require('./session-meta');
 const sessionMeta = createSessionMeta({ REGISTRY_DIR });
 
-// ---------------------------------------------------------------------------
-// Message spilling
-// ---------------------------------------------------------------------------
 
 let msgCounter = 0;
 
@@ -916,31 +600,11 @@ function spillToFile(sender, body, recipient) {
   return fpath;
 }
 
-// ---------------------------------------------------------------------------
-// Session Manager
-// ---------------------------------------------------------------------------
 
-// SessionManager (M4): the class lives in session-manager.js behind a
-// createSessionManager(deps) factory. Constructed just below the app-lifecycle
-// banner, where every injected dep is in scope. deps shapes: value (bound once),
-// getter (whenReady-assigned stores/singletons), and four electron seam fns —
-// see session-manager.js's header for the full contract.
 const { createSessionManager } = require('./session-manager');
 
-// The plugin host (plugin-plan.md [internal design doc, not in this repo] §3.1/§3.2) — declared HERE so the
-// SessionManager's getPluginHooks getter can close over it, ASSIGNED at the
-// bootstrap tail below, after stores/manager/wiring exist and before the engine
-// handle returns (i.e. before any window exists, and therefore before the
-// renderer-driven session restore). Stays null under the CLODEX_PLUGINS=0 kill
-// switch, which is exactly what makes that switch byte-equivalent: every hook
-// call site is `?`-guarded on it.
 const { createPluginHostEngine } = require('./plugin-host-engine');
 const { pluginsEnabled } = require('./plugin-api');
-// Exposed to plugins as the frozen host.lib.gitWorktree shared leaf (§4 W5):
-// git-worktree.js stays CORE because the New-Session worktree row and the delete
-// flow's removeWorktree depend on it, so a plugin gets a named, versioned view of
-// it rather than a private copy (drifts) or a relative require (which the
-// no-backdoor lint exists to kill).
 const gitWorktree = require('./git-worktree');
 // Phase 2: discovery + the enabled set. Declared beside the host because
 // setEnabled reaches it through a getter — the loader is constructed AFTER the
@@ -954,8 +618,6 @@ let pluginLoader = null;
 
 
 const SessionManager = createSessionManager({
-  // value deps — bound once at construction (native modules, dirs, timing
-  // consts, M3 infra, and the pure module-level helpers).
     AGENT_NAME_RE,
     COMPACT_CONTINUATION_DELAY,
     COMPACT_INFLIGHT_TIMEOUT,
@@ -1075,8 +737,6 @@ const SessionManager = createSessionManager({
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
-  // getter deps — stores + late-bound singletons are assigned in
-  // app.whenReady(), after this line runs, so they cross as getters.
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
@@ -1087,39 +747,19 @@ const SessionManager = createSessionManager({
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
   getNotifications: () => notifications,
-  // electron seam fns — injected by the host via createEngine's `seams`. Keeping
-  // these out of here is what lets session-manager.js never require('electron').
   getUserDataPath: () => userDataPath,
   openPath,
   notifyOS,
   setAppQuitting,
-  // Full app relaunch for the operator-gated [agent:reboot] intent (Task 27).
-  // The SAME seam the phone endpoint / File menu / tray already relaunch
-  // through (restartClodex → app.relaunch(); app.quit()); the handler's auth
-  // gate + rate limit live in session-manager, the electron call stays here.
   relaunchApp: restartHost,
-  // Plugin session hooks — getter-shaped: the plugin host is constructed at this
-  // factory's TAIL (after stores + manager + wiring), so nothing is bound here yet.
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
 const proxyPoller = new ProxyPoller(manager);
-// Back-ref for the intent handlers: [agent:who] labels and the dm hold gate
-// read warmth off the poller's last-emitted payloads (facts only — the policy
-// is peerStatusLabel/shouldHoldDm in proxy-util).
 manager._proxyPoller = proxyPoller;
 
 
-// ---------------------------------------------------------------------------
-// Remote access server (remote.js) — phone web UI on 127.0.0.1. Module-level
-// `let` because SessionManager's activity/lifecycle fan-outs poke it directly.
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Popover data sources — shared by the local IPC handlers and the peer query
-// endpoint, so a remote viewer's popup is fed by exactly the code path the
-// owner's own popup uses. All read-only snapshots.
-// ---------------------------------------------------------------------------
 
 async function fetchProxyContext(name, opts) {
   const s = manager.sessions.get(name);
@@ -1130,34 +770,13 @@ async function fetchProxyContext(name, opts) {
   }
   const wantUtil = !!(opts && opts.utilization);
   try {
-    // utilization=1 opts into wirescope's capture-scan (tool used-counts +
-    // deadweight rollup) — heavier I/O, so only requested when the popover
-    // will render it (gated on the context_utilization capability).
     let q = `/_context?session=${encodeURIComponent(snap.sessionId)}`;
     if (wantUtil) q += '&utilization=1';
-    // The two queries behind this one endpoint are not the same weight, so they
-    // do not get the same budget. Plain /_context is a memory read: 2.5ms
-    // measured. With utilization=1 the proxy disk-scans every retained capture
-    // for the session — 10.5s measured at 18k captures / 1.5GB, for a 7.9KB
-    // response. That wall time tracks RETENTION, not context size, so the
-    // snappy default (PROXY_HTTP_TIMEOUT, 4000) reported "timeout" on a healthy
-    // proxy doing exactly what it was asked. The scan is the same class of work
-    // as /_bust, /_pot and /_prune, which all pass PROXY_REPORT_TIMEOUT.
-    //
-    // Deliberately CONDITIONAL rather than raising the endpoint's budget
-    // outright: a timeout is a liveness signal and only informs when it sits
-    // near the expected duration. At 20s a genuinely hung plain read would hold
-    // the popover five times longer before saying so, and the plain path never
-    // approaches either budget — so one constant costs failure-case clarity and
-    // buys nothing in the healthy case. Left as `undefined` on the plain path so
-    // _req stays the single owner of the default.
     const r = await ProxyClient._getJson(s.proxyBase, q, wantUtil ? PROXY_REPORT_TIMEOUT : undefined);
     if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
     return { ok: true, data: r.json };
   } catch (e) {
     const msg = String((e && e.message) || e);
-    // The popover renders this string raw, and a bare "timeout" cannot be told
-    // from a dead proxy. Name the request and the budget it actually blew.
     if (msg === 'timeout') {
       return { ok: false, error: wantUtil
         ? `proxy /_context utilization scan timed out after ${PROXY_REPORT_TIMEOUT}ms`
@@ -1222,7 +841,6 @@ function fetchFilePeek(filePath) {
       buf = Buffer.alloc(n);
       fs.readSync(fd, buf, 0, n, 0);
     } finally { fs.closeSync(fd); }
-    // NUL in the head = binary; the viewer shows a stub instead of garbage.
     const binary = buf.subarray(0, 8192).includes(0);
     return {
       ok: true, size: st.size, mtime: st.mtimeMs,
@@ -1253,18 +871,11 @@ async function fetchFileDiff(name, filePath) {
 let remoteServer = null;
 let remoteError = null;
 
-// Shape a session's proxy telemetry for the peer wire: the INFO the owner's
-// status bar shows, none of the reach-back. Dropping base/sessionId/
-// capabilities is load-bearing — it's what makes every owner-local control
-// (keep-warm, strip level, wirescope links, ctx/cost/bust popovers) degrade
-// to plain text on the viewer instead of firing requests at endpoints that
-// only exist on the owner's machine.
+// Dropping base/sessionId/capabilities is load-bearing: it is what makes the
+// viewer's owner-local controls degrade to plain text instead of firing requests
+// at endpoints that exist only on the owner's machine.
 function peerProxyView(p) {
   if (!p) return null;
-  // `queries` advertises which popovers the peer query endpoint can answer
-  // for this session — the viewer lights those chips as clickable without
-  // ever holding base/sessionId/capabilities itself. Computed with the same
-  // gates the owner's own bar uses.
   const caps = p.capabilities || {};
   const queries = [];
   if (caps.context_composition || caps.context_view || caps.context_utilization) queries.push('ctx');
@@ -1283,28 +894,16 @@ function peerProxyView(p) {
     warmth: p.warmth || null,
     refusals: p.refusals || 0,
     busts: p.busts || null,
-    // Info-only extras the popovers render: the strip level annotates the
-    // composition breakdown; queries is the clickability contract above.
     stripLevel: typeof p.stripLevel === 'number' ? p.stripLevel : 0,
     queries,
   };
-  // A managed sandbox box runs this on the container side and advertises a
-  // host-reachable wirescope via CLODEX_WIRESCOPE_PUBLIC_URL (sandbox.js's compose
-  // env). Unlike a generic peer's loopback proxyBase (stripped above by omission),
-  // that URL resolves from the host, so surface base+sessionId to light the viewer's
-  // 🔍 wirescope session link. No-op for a generic peer (env unset → null). The
-  // query chips already route through the peer-query path, so this only affects the
-  // direct dashboard link.
   const box = boxWirescopeView(p, process.env.CLODEX_WIRESCOPE_PUBLIC_URL);
   if (box) { view.base = box.base; view.sessionId = box.sessionId; }
   return view;
 }
 
-// kill() only sends the signal — removal from manager.sessions happens in the
-// PTY's onExit, which can land well after a fixed sleep (kill() falls back to
-// SIGKILL at 5s). Spinning until the slot is actually free is the only safe
-// pre-respawn wait; a fixed 300ms caused "session already exists" on respawn,
-// which lost the session entirely.
+// kill() only signals; the slot frees in the PTY's onExit (SIGKILL fallback at
+// 5s). A fixed sleep here raced it into "session already exists" on respawn.
 async function waitForSessionExit(name, timeoutMs = 8000) {
   const start = Date.now();
   while (manager.sessions.has(name) && Date.now() - start < timeoutMs) {
@@ -1314,25 +913,12 @@ async function waitForSessionExit(name, timeoutMs = 8000) {
 }
 
 
-// Restart a session in place: kill the PTY and respawn from the persisted
-// entry. Shared by the local IPC handler (session:restart) and the peer
-// restart-session endpoint so the strip-level re-assert and the failed-respawn
-// safety net stay single-source. `wsId` is the workspace the respawn lands in
-// (IPC derives it from the sender window; the peer path passes the entry's own
-// workspaceId). Returns a distinguishable-error ack — not-found in persistence
-// vs a respawn failure whose message says the entry was kept.
 async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const entry = persistence.get(name);
   if (!entry) return { ok: false, error: 'Session not found in persistence' };
-  // A "fresh" restart starts a NEW conversation (no --resume). Required to apply
-  // a skill change: the skill roster is evaluated when a conversation is
-  // created, so --resume replays the roster frozen before the change (proven
-  // live — skillOverrides never lands on a resumed session). Costs the
-  // conversation history; the caller is responsible for warning the user.
-  // opts.resumeId switches to a chosen PAST conversation (the session picker):
-  // respawn with --resume <that id> and make it the active id so subsequent
-  // restarts continue from there (setSessionId also moves it to the head of
-  // the history chain). Falls back to the current id for a plain restart.
+// A skill change needs `fresh`: the roster is evaluated when a CONVERSATION is
+// created, so --resume replays the roster frozen before the change.
+// opts.resumeId switches to a past conversation and becomes the active id.
   if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
     persistence.setSessionId(name, opts.resumeId);
   }
@@ -1342,18 +928,10 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    // kill() dropped the persistence record; re-seed post-create fields BEFORE
-    // create() reads existingEntry (task 22/24 rework / MUST-FIX 2). A reviewer
-    // seat's ephemeral+reviewFor are seat IDENTITY (not conversation state), so
-    // they carry across ANY restart incl. fresh. The rosterSentAt stamp is
-    // conversation-scoped: a FRESH restart starts a NEW conversation with the
-    // roster NOT in it, so the stamp must NOT carry over (create() must re-deliver).
-    // createdAt is BIRTH TIME — the one field that is true of the session and not
-    // of the conversation, so it carries across every restart incl. fresh. It has
-    // to be re-seeded here for the same reason as the rest: create() reads
-    // existingEntry (session-manager.js:1462) and falls back to Date.now(), so
-    // without this line every restart re-mints the birth stamp and the sidebar's
-    // "created" sort jumps a long-lived session to the top as if newly spawned.
+// Re-seed post-create fields BEFORE create() reads existingEntry (kill() dropped
+// the record). rosterSentAt is conversation-scoped, so a FRESH restart must NOT
+// carry it. createdAt is birth time and must carry across every restart —
+// create() falls back to Date.now(), re-minting it and reordering "created" sort.
     const preserveFields = ['ephemeral', 'reviewFor', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
@@ -1365,25 +943,13 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const restartLvl = stripLevelOf(entry);
     if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
     if (entry.label) persistence.setLabel(name, entry.label);
-    // Return the freshly-computed backend so the renderer repaints the chip
-    // glyph authoritatively instead of carrying forward a stale row snapshot
-    // (a session first spawned before backend detection existed keeps 'A'
-    // through every UI restart otherwise).
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    // Same safety net as setArgs: never let a failed respawn eat the entry.
     persistence.upsert(entry);
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
 
-// The per-session context badge fields (ctx %, tokens, size, cost, model),
-// read from the registry ctx file. MOVED here from ipc-handlers (was a local
-// const inside the app:restore-sessions handler, its only consumer) as part of
-// the Phase-2 restore extraction: the restore core is now the electron-free
-// session-restore.js leaf, and the thin closure below owns readCtxFor so it can
-// inject it. Kept a main.js closure (not moved into the leaf) because its deps —
-// parseCtxFile/pathFor/REGISTRY_DIR/fs — are all main.js module scope already.
 const readCtxFor = (name) => {
   try {
     const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
@@ -1391,29 +957,15 @@ const readCtxFor = (name) => {
   } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
 };
 
-// Restore the persisted sessions for a workspace on renderer-ready. The CORE is
-// the electron-free session-restore.js leaf (test-pinned failure semantics);
-// this closure just binds the main.js module globals it needs. Defined here (the
-// restartSession precedent) and injected into ipc-handlers so its handler is a
-// one-liner; engine.js inherits this exact seam in Phase 3.
 async function restoreSessionsForWorkspace(workspaceId) {
   const restored = await restoreSessionsCore({
     workspaceId, persistence, manager, proxyPoller,
     maybeCompactBeforeResume, readCtxFor, log,
   });
-  // Task 28 — after this workspace's seats are back, deliver any armed post-reboot
-  // notice (idempotent one-shot; parks by name if the target lives in a workspace
-  // not yet restored). Fires per workspace restore, but self-clears on the first
-  // call so it can't double-deliver. Never let a notice hiccup fail the restore.
   try { manager.maybeDeliverRebootNotice(); } catch (e) { log.error('intent', `reboot notice delivery failed: ${e.message}`); }
   return restored;
 }
 
-// The scope context for a session: its own name + its workspace's DISPLAY name
-// (resolved through the entry's workspaceId → workspace record; unknown/headless
-// entries fall back to the default workspace name). Single source for every
-// offer-surface scope filter (Agents popover, Edit Session agents catalog, Skills
-// popover) so local + over-the-wire reads resolve scope identically.
 function sessionScopeCtx(name) {
   const entry = persistence.get(name);
   const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
@@ -1421,14 +973,6 @@ function sessionScopeCtx(name) {
   return { session: name, workspace: (ws && ws.name) || null };
 }
 
-// Read a session's editable args (the Edit Session dialog's source of truth).
-// Shared by the session:getArgs IPC handler and the peer session-args GET
-// endpoint (remote-wiring) so the local + over-the-wire reads can't drift — the
-// remote path just appends the box's catalogs. `agentCatalog` is the SCOPE-
-// FILTERED agent library for this session (the dialog's agents checklist renders
-// from it, local and remote alike), so a workspace/personal-scoped agent isn't
-// offered to a session it doesn't belong to. Returns { ok:false } for an unknown
-// name, mirroring the old inline handler.
 function readSessionArgs(name) {
   const entry = persistence.get(name);
   return entry ? {
@@ -1453,18 +997,9 @@ function readSessionArgs(name) {
   } : { ok: false };
 }
 
-// Apply edited args to a session (persist always; kill+respawn when restart).
-// Extracted verbatim from the session:setArgs IPC closure so the peer session-
-// args POST endpoint shares the exact undefined-means-untouched semantics, the
-// stripLevel/label re-assert, and the catch-and-upsert recovery (restartSession
-// precedent). `patch` carries the twelve fields the dialog sends; wsId is the
-// respawn target — the IPC handler passes the sender's workspace, the remote path
-// passes the entry's own workspaceId (no window to inherit from). Undefined patch
-// fields keep the persisted value; an explicit value (incl. [] / null) overwrites.
 async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const { extraArgs, restart, proxy } = patch;
   const beforeKill = persistence.get(name);
-  // Undefined-means-untouched resolution lives in the pure (unit-tested) core.
   const {
     agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools,
     disabledSkills: nextSkills, injectSkills: nextInject,
@@ -1479,19 +1014,8 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setDisabledTools(name, nextTools);
   persistence.setDisabledSkills(name, nextSkills);
   persistence.setInjectSkills(name, nextInject);
-  // The dialog OWNS the intents gate — persist the resolved value so a no-restart
-  // save still takes effect on next spawn. setIntents drops the key on null (the
-  // all-enabled default) and stores the array otherwise (incl [] = everything gated).
   persistence.setIntents(name, nextIntents);
-  // The dialog also OWNS the exec-grant allowlist now (a peer patch never carries
-  // it — stripped at the wire). setExecCommands drops the key on empty (no grants).
-  // The fire-time exec gate reads this fresh, so a no-restart save applies to the
-  // NEXT [agent:exec] immediately — a restart only refreshes the seat's prompt.
   persistence.setExecCommands(name, nextExec);
-  // The dialog OWNS the session env now (LOCAL-only; a peer patch never carries it
-  // — stripped at the wire — so nextEnv resolves to the box's persisted env there).
-  // setEnv drops the key on an empty map (env cleared = ABSENCE), so a no-restart
-  // save persists the new env for the next spawn/--resume.
   persistence.setEnv(name, nextEnv);
   if (!restart) return { ok: true, restarted: false };
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
@@ -1500,53 +1024,18 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    // kill() dropped the persistence record; re-seed post-create fields BEFORE
-    // create() reads existingEntry so an args-edit restart doesn't re-inject the
-    // roster (rosterSentAt) or lose a reviewer seat's identity (ephemeral/reviewFor)
-    // (task 22/24 rework / MUST-FIX 2). An args-edit restart keeps the same
-    // conversation (sessionId preserved), so it's never fresh — carry all three,
-    // plus createdAt (birth time, true of the SESSION not the conversation, so it
-    // carries across every restart — see restartSession for the full reasoning).
     manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor', 'createdAt']);
-    // Exec grants aren't editable in the args-edit dialog (no checklist there —
-    // grants stay template/create-time), so thread the persisted value through
-    // unchanged. Intents ARE owned by this dialog now: nextIntents came from the
-    // patch (null = all-enabled/cleared, or the enabled subset incl [] = everything
-    // gated), so thread it — not beforeKill's — so the edit's gate wins.
-    // Env IS owned by this dialog now (T46b): nextEnv came from the patch through
-    // the resolver (undefined = untouched → beforeKill's env; an explicit map =
-    // the edit, incl. {} = cleared), so thread nextEnv — not beforeKill's — so the
-    // edit's env wins on the respawn. Passing {} as null keeps create()'s no-scopes
-    // byte-identity (a cleared env respawns like an env-less session).
     const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null);
-    // kill() dropped the entry's stripLevel; re-assert the session's own level
-    // (see session:restart) so editing args doesn't reset stripping.
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    // kill() dropped the persistence entry and create() failed before
-    // re-adding it. Put it back (with the edited settings) so the session
-    // survives as a restorable entry instead of vanishing.
-    // Carry the edited intents gate too (array = gate, undefined = all-enabled;
-    // JSON.stringify drops the undefined key) so recovery reflects the edit, not the
-    // stale beforeKill gate the spread would otherwise restore.
-    // Carry the edited env too (map = keep, empty = undefined so JSON.stringify
-    // drops the key = cleared) so recovery reflects the edit, not the stale
-    // beforeKill.env the spread would otherwise restore.
     persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined });
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
 
-// Build the Skills-popover catalog for a session (Phase 2 shared reader).
-// Extracted verbatim from the session:skillCatalog IPC closure so the peer
-// skill-catalog GET endpoint returns EXACTLY the same shape — the transcript
-// roster is parsed BOX-side (parseSkillRoster reads the box's own ~/.clodex
-// transcript) and skillLib is the box's library, both semantically correct for a
-// peer edit because inject-skills materialize at spawn time on the box. Never
-// empty for Claude (the static seed floors it).
 function readSkillCatalog(name) {
   const entry = persistence.get(name);
   const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
@@ -1569,11 +1058,6 @@ function readSkillCatalog(name) {
   };
 }
 
-// Persist a session's skill gating (persist-only — restart is a SEPARATE call the
-// popover makes when the user asks; the roster is frozen at conversation
-// creation). Extracted verbatim from the session:setSkills IPC closure so the
-// peer session-skills POST endpoint shares the exact semantics: injectSkills is
-// optional (only the library section sends it) and left untouched when absent.
 function applySessionSkills(name, disabledSkills, injectSkills) {
   if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
   persistence.setDisabledSkills(name, Array.isArray(disabledSkills) ? disabledSkills : []);
@@ -1582,12 +1066,6 @@ function applySessionSkills(name, disabledSkills, injectSkills) {
 }
 
 
-// syncRemoteServer — extracted to remote-wiring.js (M5). createRemoteWiring
-// returns { syncRemoteServer }; the callback object it builds shares the
-// fetch*/restartSession/peerProxyView helpers (kept in main.js, injected).
-// manager/proxyPoller value-inject (const above); persistence/uiSettings/
-// workspaces cross as getters (whenReady-assigned); remoteServer/remoteError
-// cross as get+set (this fn writes them, main.js reads them elsewhere).
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
@@ -1599,17 +1077,9 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   restartClodex: restartHost, restartSession, peerProxyView,
   fetchProxyContext, fetchProxyReport, fetchProxyBust,
   fetchSessionFiles, fetchFilePeek, fetchFileDiff,
-  // Edit Session over the wire: the shared read/apply helpers + the box's
-  // catalogs the dialog's checklists need (agents/prompts via getters — stores
-  // assigned in whenReady; CLAUDE_TOOLS is a load-time const).
   readSessionArgs, applySessionArgs, CLAUDE_TOOLS,
-  // Skills over the wire (Phase 2, same 'args' cap): the shared skill-catalog
-  // reader + persist helper. readSkillCatalog parses the roster BOX-side and
-  // exposes the box's own skillLibrary — both correct for a remote edit.
   readSkillCatalog, applySessionSkills,
   getPromptLibrary: () => promptLibrary,
-  // Session-less catalogs (GET /api/catalogs, M5): the box's FULL agent + skill
-  // libraries (unscoped — no session to scope by pre-create).
   getAgentLibrary: () => agentLibrary,
   getSkillLibrary: () => skillLibrary,
   getPersistence: () => persistence,
@@ -1618,34 +1088,18 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   getRemoteServer: () => remoteServer,
   setRemoteServer: (v) => { remoteServer = v; },
   setRemoteError: (v) => { remoteError = v; },
-  // GUI-managed operator token: read bound to this host's userData; precedence
-  // (env-wins) applied in syncRemoteServer via resolveRemoteToken.
   readRemoteEnvToken: () => readRemoteEnvToken(userDataPath),
   resolveRemoteToken,
   appVersion,
   isPackaged,
-  // Read through on every hello, never snapshotted: the web host starts after
-  // this wiring is built, so a value captured here would always be null.
   getWebInfo,
 });
 
 
-// ---------------------------------------------------------------------------
-// Peer manager (peer-client.js) — outbound connections to other Clodexes.
-// Module-level like remoteServer; reconciled from settings.
-// ---------------------------------------------------------------------------
 
 let peerManager = null;
 let tunnelManager = null;
-// On-demand ssh forwards to a peer's WEB frontend (t30b). Stays null until
-// someone asks to look at one — unlike tunnelManager, which is constructed on
-// the first peer sync because every ssh peer needs its wire tunnel.
 let webTunnelManager = null;
-// Peer wiring — the peerOnlineLog map + the five reconcile/attach helpers moved
-// to peer-wiring.js (M5). peerManager/tunnelManager stay as the lets above and
-// cross as get+set; uiSettings crosses as a getter; scheduleAppMenuRefresh comes
-// from the app-menus destructure. The five fns destructure back so the whenReady
-// + ipc call sites stay byte-identical.
 const { createPeerWiring } = require('./peer-wiring');
 const {
   forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
@@ -1659,18 +1113,9 @@ const {
   setTunnelManager: (v) => { tunnelManager = v; },
   getWebTunnelManager: () => webTunnelManager,
   setWebTunnelManager: (v) => { webTunnelManager = v; },
-  // The peer web view opens in the operator's browser, which is a HOST concern:
-  // shell.openExternal under Electron, an open-external message to the browser
-  // tab under the web frontend. Same seam the renderer's app:openExternal uses.
   openExternal: (url) => openExternalSeam(url),
 });
 
-// ---------------------------------------------------------------------------
-// Managed Docker sandbox (sandbox.js, sandbox-plan.md [internal design doc, not in this repo] M1/M2) — one-button
-// local container run as the `sandbox` peer. Electron-free: deps are the same
-// seams/getters everything else here rides. registerPeer writes through the
-// uiSettings peers path and calls syncPeerManager to reconcile.
-// ---------------------------------------------------------------------------
 const { createSandboxManager } = require('./sandbox');
 const sandboxManager = enableSandbox ? createSandboxManager({
   getUserDataPath: () => userDataPath,
@@ -1682,43 +1127,21 @@ const sandboxManager = enableSandbox ? createSandboxManager({
   log,
 }) : null;
 
-// External-tool detection (Task 12): a TTL-cached probe of the CLIs the app
-// shells out to (claude/codex/git/gh/docker/ssh), so the New Session dialog can
-// gate Create on a missing CLI instead of letting the PTY fast-fail silently.
-// Reuses whichBin (the same PATH walk diagnostics use).
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
 
-  // ── Bootstrap — the electron-free part of the old app.whenReady body, in the
-  // EXACT original order (stores → pollers → scheduler → log → wirescope +
-  // watchdog → remote → peers → cleanup → sweep). ────────────────────────────
   const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, renameWorkspaceScope } = stores;
 
-  // Materialize the boiling-pot CLI closure into ~/.clodex/bin/ (grok skill reads
-  // it from there; the app's own copy is sealed in app.asar). Overwrite-always.
   try { materializePotCli({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
-  // Same for the exec-intent helper scripts (clodex-team/clodex-monitor): the
-  // seeded exec-defs invoke `node "${CLODEX_BIN}/clodex-team.js"`, so bin/ must
-  // hold them on every launch, dev and packaged alike (Task 10 portability).
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
   manager.startPendingPoll();
-  // Team ticket stall watchdog (Task 25): one 60s sweep, rearmed here at launch
-  // (the registry is on disk, so open tickets survive a restart).
   manager.startTicketWatchdog();
 
 
-  // Durable self-reminder scheduler: real clock + timers, the reminders store,
-  // and a deliver seam onto the existing DM pipeline. The reminder arrives as a
-  // dm from a synthetic `reminder` sender, its body prefixed with the schedule
-  // id + original spec so the agent recognizes its own loop (not a teammate).
-  // start() catches up missed fires (coalesced to one per schedule) and arms the
-  // nearest-fire timer — note it runs HERE, before windows/sessions restore, so
-  // a launch catch-up fire lands while the session map is still empty; the
-  // deliver seam parks those (see _deliverReminder) rather than dropping them.
   remindScheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -1727,10 +1150,6 @@ const toolCache = createToolCache({ whichBin });
     deliver: (agent, id, spec, body) => {
       const prefix = `[${id} ${spec}]`;
       const status = manager._deliverReminder(agent, body ? `${prefix} ${body}` : prefix);
-      // Agent gone for good (killed from the UI — no persistence entry): prune
-      // the ownerless schedule so a recurring one doesn't recompute + drop on
-      // every future fire. A transient park 'error' is NOT pruned, so a recurring
-      // reminder retries on its next tick.
       if (status === 'gone') reminders.remove(id);
     },
   });
@@ -1742,48 +1161,19 @@ const toolCache = createToolCache({ whichBin });
 
   logStartupDiagnostics();
 
-  // Zero-setup proxy: when sessions are configured to route through the
-  // managed local port, bring wirescope up ourselves (detect-first inside
-  // start() adopts an already-running instance instead of double-spawning).
-  // Fire-and-forget: a first-run venv install can take tens of seconds and
-  // sessions degrade gracefully (wire → Anthropic direct) until it's up.
   if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
 
-  // Remote access web UI (phone) — no-op unless remoteEnabled in settings.
   syncRemoteServer();
 
-  // Outbound connections to peered Clodexes — no-op with no peers configured.
   syncPeerManager();
 
-  // Managed sandbox auto-start: bring the container up at launch when the user
-  // opted in — AFTER peer wiring, so registerPeer's syncPeerManager reconcile
-  // lands on an initialized PeerManager. Fire-and-forget: a first-run image
-  // pull / build can take a while and the app must not block on it; failures
-  // just leave the sandbox stopped (the dialog surfaces the error on demand).
   try {
     for (const box of (sandboxManager ? sandboxManager.list() : [])) {
-      // .get() is reachable only when sandboxManager is non-null (the loop
-      // iterates [] when it's null in headless) — keep this deref INSIDE the loop.
       const inst = sandboxManager.get(box.id);
       try { if (inst && inst.getConfig().autoStart) inst.up().catch(() => {}); } catch { /* skip this box */ }
     }
   } catch { /* registry read failed — skip autostart */ }
 
-  // Mid-run watchdog. Autostart only fires at launch and on the settings
-  // toggle, so a managed wirescope that dies BETWEEN launches (crash, OOM,
-  // external kill) would stay dead — and every routed session bakes the proxy
-  // into its ANTHROPIC_BASE_URL at spawn, so a dead proxy means connection-
-  // refused on the next turn until relaunch. This poll refills that gap; a
-  // respawn on the same port lets in-flight sessions self-heal on their next
-  // turn (same host:port, no session restart).
-  //
-  // Safe by construction: start() is detect-first, so if anything is already
-  // serving the port (our survivor OR an adopted external) it adopts rather
-  // than double-spawning — we only ever spawn into a genuinely empty port, and
-  // only when autoStartWanted (proxy enabled + pointed at the managed local
-  // port; a toggle-off or remote proxyUrl silences it). Exponential backoff
-  // (15s→5min cap) throttles a crash-looping/broken-venv install without ever
-  // permanently giving up; a healthy probe resets it to fast recovery.
   let wsFails = 0;          // consecutive respawn attempts since last healthy
   let wsNextAttempt = 0;    // epoch ms gate for the next attempt
   const WS_WATCHDOG_INTERVAL = 10000;   // ms between health checks
@@ -1797,7 +1187,6 @@ const toolCache = createToolCache({ whichBin });
       wsFails = 0; wsNextAttempt = 0; return;   // healthy — nothing to do
     }
     if (st.state === 'installing' || st.state === 'starting') return; // mid-launch
-    // state === 'stopped': nothing serving the wanted port.
     const now = Date.now();
     if (now < wsNextAttempt) return;
     wsFails++;
@@ -1828,25 +1217,12 @@ const toolCache = createToolCache({ whichBin });
     log.info('migrate', `legacy sweep skipped (${e && e.message})`);
   }
 
-  // T31: clear the reviewer graveyard — drop persisted ephemeral+reviewFor+archivedAt
-  // seats (the old ARCHIVE-retire corpses) before any window restores archived rows.
   try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }
 
-  // ── Plugin host (plugin-plan.md [internal design doc, not in this repo] §3.1 "Engine lifecycle") ──────────────
-  // Constructed at the bootstrap TAIL: stores, manager, pollers, remote and peer
-  // wiring all exist, no window does yet, and the handle has not returned — so a
-  // plugin's activate() runs exactly once per app run, strictly before the
-  // renderer-driven restore can create any session. That ordering is what lets a
-  // plugin's sessions.onCreate see restored sessions rather than race them.
-  //
-  // Phase 1 registers NO plugins: core populates the registries and the loader
-  // that walks plugins/*/manifest.json is Phase 2. What exists here is the host
-  // itself, reachable by ipc-handlers, so the transport and the hooks are live
-  // and testable before anything depends on them.
-  //
-  // CLODEX_PLUGINS=0 skips construction entirely — pluginHost stays null, every
-  // hook call site short-circuits, and the four IPC handlers degrade to their
-  // shaped refusals. That is the whole-program reversibility the plan rides on.
+// Constructed at the bootstrap TAIL: stores/manager/wiring exist, no window does,
+// and the handle has not returned — so a plugin's activate() runs strictly before
+// the renderer-driven restore can create any session.
+// CLODEX_PLUGINS=0 skips construction; every hook call site is `?`-guarded.
   if (pluginsEnabled(process.env)) {
     try {
       pluginHost = createPluginHostEngine({
@@ -1858,31 +1234,8 @@ const toolCache = createToolCache({ whichBin });
         gitWorktree,
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
-        // T5: the app menu's Plugins entry is built from enable/quarantine
-        // state, so it goes stale on every setEnabled. Debounced, and the seam
-        // is already injected here (it defaults to a no-op in the headless host,
-        // which has no app menu to refresh).
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
       });
-      // TWO ROOTS, in precedence order (docs/plugin-sources.md §3-§4).
-      //
-      // `__dirname` is the repo root in dev and the app.asar root when packaged.
-      // That second case is why the user root exists at all: the packaged
-      // plugins dir is inside a READ-ONLY archive that an update replaces
-      // wholesale, so a DMG user cannot add a plugin and could not keep one if
-      // they could. This answers GAP G8 — core plugins stay in the asar, and
-      // user plugins live somewhere the app never writes.
-      //
-      // CORE WINS. A user copy of a core id is recorded as shadowed and not
-      // loaded, because user-wins fails late and quietly (a forgotten fork
-      // running against a core that moved under it) where core-wins fails
-      // immediately and visibly.
-      //
-      // ~/.clodex/plugins/ is a SHARED root-level dir, not per-agent, so it is
-      // deliberately absent from clodex-paths.js's KINDS table. The app never
-      // creates it: a directory that exists only because we made it teaches a
-      // user nothing, and its absence is the honest representation of "no user
-      // plugins".
       pluginLoader = createPluginLoader({
         fs, path,
         roots: [
@@ -1893,15 +1246,8 @@ const toolCache = createToolCache({ whichBin });
         log,
         requireModule: (p) => require(p),
       });
-      // Engine halves only. Renderer halves activate per BrowserWindow (§3.3
-      // law 1) — each window's plugin-host island pulls them via plugin:catalog.
       pluginLoader.loadAll(pluginHost);
     } catch (e) {
-      // A broken plugin host must not take the app down with it — degrade to
-      // "no plugins" and say so, loudly, in the log. Both halves are dropped:
-      // a live loader with a null host would offer enable/disable against
-      // nothing. (Per-plugin load failures never reach here — loadAll isolates
-      // them so one bad plugin cannot cost the others.)
       pluginHost = null;
       pluginLoader = null;
       log.info('plugin', `host construction failed, continuing without plugins: ${e && e.message}`);
@@ -1910,10 +1256,6 @@ const toolCache = createToolCache({ whichBin });
     log.info('plugin', 'CLODEX_PLUGINS=0 — plugin host not constructed');
   }
 
-  // Idempotent teardown — the Electron before-quit / window-all-closed paths and
-  // the headless SIGTERM/SIGINT paths all funnel here. Mirrors the old before-quit
-  // (remote/peer/tunnel stop + killAll) and additionally clears the engine's own
-  // timers + pollers so a headless process can exit cleanly.
   let didShutdown = false;
   function shutdown() {
     if (didShutdown) return;
@@ -1927,54 +1269,30 @@ const toolCache = createToolCache({ whichBin });
     if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
     if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
-    // Close #3 of the web view's four: app shutdown. A forgotten ssh forward to a
-    // remote box must not outlive the app that opened it.
     if (webTunnelManager) { try { webTunnelManager.stopAll(); } catch {} webTunnelManager = null; }
     manager.killAll();
   }
 
   return {
-    // ── Primary handles ──
     manager, stores, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
-    // GUI-managed remote token (remote:setToken handler + settings payload's
-    // derived remoteHasToken boolean; the value itself never leaves this host).
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
-    // ── Shared infra + read-only mutable-singleton accessors ──
     REGISTRY_DIR, proxyPoller, wirescope, ProxyClient, pty,
     getRemoteServer: () => remoteServer,
     getRemoteError: () => remoteError,
     getPeerManager: () => peerManager,
     getTunnelManager: () => tunnelManager,
-    // Peer web view (t30b): the open/close toggle for ipc-handlers, plus the
-    // manager itself so peer:list can hang each peer's web-tunnel status on its
-    // row the way it already does for the wire tunnel.
     getWebTunnelManager: () => webTunnelManager,
     openPeerWeb, closePeerWeb,
-    // getSandbox(boxId) resolves a managed box instance (default: the shared
-    // 'sandbox' box), or null for an unknown id. The manager itself is exposed for
-    // list()/iteration (autostart, and the P2 box-list UI).
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
-    // The plugin host, for ipc-handlers' four plugin channels (§3.4). Lazy like
-    // the sandbox pair above: null under CLODEX_PLUGINS=0 or a failed
-    // construction, and every handler degrades to a shaped refusal rather than
-    // throwing. Both hosts (main.js, web-host.js) spread `...engine` into
-    // registerIpcHandlers, so this wires itself into both transports at once.
     getPluginHost: () => pluginHost,
-    // ── ipc-handlers consumers (helper surface) ──
-    // Teams front door: the manifest writers + resolvers the team:* IPC handlers
-    // call. Exposed on the ENGINE seam (not just the SessionManager deps) — this
-    // is the object ipc-handlers destructures via main.js's `{...engine}` spread.
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,
-    // External-tool doctor (Task 12): the New Session dialog's tools:check IPC
-    // reads this (TTL-cached); invalidate lets a "re-check after you install it"
-    // path force a fresh probe.
     checkTools: () => toolCache.get(),
     invalidateToolCache: () => toolCache.invalidate(),
     fetchProxyContext, fetchProxyReport, fetchProxyBust,

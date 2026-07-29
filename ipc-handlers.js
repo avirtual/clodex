@@ -1,30 +1,6 @@
-// ipc-handlers.js — every channel registration, extracted verbatim from the
-// app.whenReady() body in main.js (M5). registerIpcHandlers(deps) RUNS the
-// registrations (it does not return them); main.js calls it from whenReady in
-// place of the blob, after the stores are initialized.
-//
-// TRANSPORT-AGNOSTIC (web-frontend Phase 1): this module no longer requires
-// electron. Registration rides the injected `handle(channel, fn)` / `on(channel,
-// fn)` seams (main.js passes ipcMain-backed wrappers; the web host will pass
-// WS-backed ones over the SAME handler map). Every native-GUI touch — dialogs,
-// context menus, shell/app calls — is likewise an injected capability seam
-// (popupMenu/showMessageBox/showSaveDialog/showOpenDialog/openExternal/openPath/
-// showItemInFolder/getAppVersion/getDesktopPath); the host owns window
-// resolution INSIDE each wrapper, so no BrowserWindow ever crosses the boundary
-// and the IPC event `e` is an opaque sender token this module never inspects.
-//
-// The blob was already 2-space indented inside the whenReady arrow and the factory
-// body is 2-space too, so the move is a ZERO-reindent copy — handler bodies are
-// byte-identical. The only body changes are the six READ-ONLY mutable-singleton
-// getter seams (remoteServer/remoteError/peerManager/tunnelManager/updateInfo/
-// releasesCache — 0 writes in the blob, so getters, no setters). All other names are
-// value-injected verbatim: they are every main.js module-scope identifier the blob
-// references (stores/manager/proxyPoller/wirescope, the require-consts, the hoisted
-// helpers restartSession/waitForSessionExit/fetch*, and the app-menus / peer-wiring
-// / remote-wiring exports refreshAppMenu/refreshTrayMenu/setUiTheme/syncPeerManager/
-// syncRemoteServer/forget*Peer* etc.), each defined at the call site. The deps set
-// was derived by static scan (raw-token ∩ main-scope) so it is a guaranteed
-// superset of the real references — an unused dep would simply be inert.
+// Transport-agnostic: this module must not require electron. Registration and
+// every native-GUI touch ride injected seams (handle/on, popupMenu, dialogs,
+// shell/app calls) supplied by the host.
 
 const { pathFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
@@ -34,9 +10,6 @@ const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
-// The intent grammar table: `catalogRows` serves the renderer checklist over IPC
-// (R-INT-4) and `allowlistFromChecked` collapses a checked set ENGINE-side, where
-// the live row set is authoritative.
 const { catalogRows, allowlistFromChecked } = require('./intent-registry');
 // contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
 // — an imported token must never round-trip through the renderer (see the
@@ -45,14 +18,7 @@ const peerImport = require('./peer-import');
 
 function registerIpcHandlers(deps) {
   const {
-    // Transport seams — registration (main.js: ipcMain.handle/on; web host:
-    // WS request/subscribe over the same handler map).
     handle, on,
-    // Native-GUI capability seams — main.js backs each with electron and owns
-    // window resolution internally; the web host passes v1 degradations. `e` is
-    // an opaque sender token (popupMenu) this module never inspects.
-    // getAppVersion mirrors the engine's appVersion seam — both trace to
-    // package.json version; do NOT deduplicate them across the boundary.
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
     openExternal, openPath, showItemInFolder, getAppVersion, getDesktopPath,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
@@ -73,49 +39,24 @@ function registerIpcHandlers(deps) {
     readSessionArgs, applySessionArgs, sessionMeta,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
-    // GUI-managed remote token (write-only): the setter, the derived hasToken
-    // read, and the force-reconcile that makes a token change live immediately.
     setRemoteToken, hasRemoteToken, refreshRemoteToken,
     waitForSessionExit, wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
-    // stores (siblings of persistence above, declared in main.js's multi-line
-    // `let persistence, templates, …` list) — value-injected: initStores runs
-    // before this factory in whenReady and the stores are never reassigned.
     templates, workspaces, promptLibrary, agentDefaults,
     agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes,
-    // read-only mutable singletons (get seams)
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
-    // Peer web view (t30b): the on-demand web-tunnel manager (null until someone
-    // opens one) plus the open/close toggle from peer-wiring.
     getWebTunnelManager, openPeerWeb, closePeerWeb,
-    // Managed sandbox module accessors (engine.getSandbox / getSandboxManager) —
-    // lazy so a host that omits them simply has no sandbox handlers reachable.
     getSandbox, getSandboxManager,
-    // Plugin host accessor (plugin-plan.md [internal design doc, not in this repo] §3.4) — lazy, like the sandbox
-    // pair above: a host that omits it (or a CLODEX_PLUGINS=0 run, where the
-    // engine never builds one) simply has no plugins, and the four plugin
-    // handlers below degrade to a shaped refusal instead of throwing.
     getPluginHost,
   } = deps;
 
-  // Shared spawn body for session:create AND the team front door (team:create /
-  // team:join). All three end at the same manager.create + strip-seed; `p` is a
-  // plain params object so the team handlers can add a manifest write in front of
-  // it without duplicating the 18-arg spawn call.
   async function spawnFromParams(e, p) {
     const workspaceId = workspaceOfSender(e);
-    // Name-collision guard for the MINT front door (Task 15, GH#9). This is the
-    // single chokepoint for every mint transport — session:create, team:create,
-    // team:join, and the web-host WS mirror all funnel here — while the resume
-    // paths (restore-on-launch, unarchive→retry, restart/reload) reach
-    // manager.create WITHOUT passing through spawnFromParams, so they legitimately
-    // re-create a persisted name. Reject a mint over any existing record: live
-    // (create() also backstops this) OR merely persisted/archived (archive keeps
-    // the record — minting over it would overwrite the entry and split the name
-    // across two sidebar rows, the reported bug). resumeId is NOT the discriminator
-    // (an "adopt" mint carries one but must still be blocked from clobbering a
-    // record) — the front-door-vs-restore-path split is.
+    // Mint front door: every mint transport funnels here, while the resume paths
+    // (restore, unarchive→retry, restart) call manager.create directly and may
+    // legitimately re-create a persisted name. Reject a mint over any existing
+    // record, live OR archived/persisted; resumeId is not the discriminator.
     const conflict = nameConflict({
       liveHas: manager.sessions.has(p.name),
       persistedHas: !!persistence.get(p.name),
@@ -124,29 +65,10 @@ function registerIpcHandlers(deps) {
     if (conflict === 'persisted') {
       throw new Error(`A session named "${p.name}" is archived or saved — unarchive it or pick another name.`);
     }
-    // Seed tool denies from the global "*" default when the caller passed none.
-    // The new-session dialog always pre-populates its checklist from the default
-    // and sends an explicit array (incl. [] for "deny nothing"), so this only
-    // fires for non-dialog callers — keeping new sessions on the shared, lean
-    // tools segment. An explicit array always wins (undefined === "untouched").
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    // mint=true: this IS the front door the comment above describes, so the frozen
-    // prompt cache must regenerate rather than inherit a same-named dead session's
-    // baseline — including for an "adopt" mint, which carries a resumeId.
     const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true);
-    // Strip level isn't a spawn arg (it's a proxy-side override the poller
-    // asserts once the session links), so persist it onto the entry after
-    // create() rather than threading it through the spawn path.
-    // Set at creation = the cold-cache path: the first re-write is tiny.
-    // An explicit dialog choice wins; otherwise seed from this agent name's
-    // standing default (set previously from the bottom-bar menu, kill-proof).
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
-    // NOTE: neither `execCommands` nor `intents` is seeded here — both are now
-    // spawn-time create() params (threaded in above), persisted by create()'s own
-    // upsert so they survive kill()+recreate. execCommands used to be a post-create
-    // seed here (and in the template path), which is exactly what dropped the grant
-    // on every restart. undefined → create's [] default (untouched); [] ≡ no grants.
     return { ok: true, session };
   }
 
@@ -158,14 +80,8 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Teams front door (teams-design.md [internal design doc, not in this repo] "Front door"). Both handlers write the
-  // manifest FIRST, then fall through to the normal spawn — the spawn resolves the
-  // (now-written) team and attaches the role prompt + initial roster. A write
-  // refusal (dup team, dup root, existing-role-with-different-def) surfaces as
-  // { ok:false, error } with the session NOT spawned.
-  //
-  // team:create — this session is adopted as the team's lead. `spec` is the full
-  // session-create params object plus `teamName` (the new team's name).
+  // The manifest write happens FIRST; the spawn then resolves the now-written
+  // team and attaches the role prompt. A write refusal leaves the session unspawned.
   handle('team:create', async (e, spec) => {
     try {
       const { teamName, ...p } = spec || {};
@@ -176,11 +92,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // team:join — join an existing team in a role. `spec` carries the session-create
-  // params plus `team` (the team name) and `role` (the role key: stock `hand` or a
-  // custom session-class role) and, for a custom role, `prompt` (the picked library
-  // system-prompt name). addRole no-ops when the role already exists identically
-  // (the second hand rides the shared entry) and refuses a divergent redefinition.
   handle('team:join', async (e, spec) => {
     try {
       const { team, role, prompt, ...p } = spec || {};
@@ -194,14 +105,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Team metadata mutation (T29 Layer A Slice 2) — the GUI's backend (Slice 3
-  // calls these). Operator-driven via the trusted renderer, so NO lead-gate here
-  // (the renderer IS the operator); the reviewer/lead-key protection (C1) and the
-  // tools/type strip (C6) still come from the mutators themselves. removeRole /
-  // renameRole run the stateful C5 seat/ticket fail-close (manager._roleInUse)
-  // BEFORE the pure mutator, returning the blocking seats/tickets so the GUI can
-  // name what must be reassigned/retired first — v1 is fail-closed, NO migrate
-  // (spec Q3). Same shape as team:join — {ok:false, error} on throw.
   handle('team:setRole', (_e, team, role, patch) => {
     try { return { ok: true, team: setRole(team, role, patch) }; }
     catch (err) { return { ok: false, error: err.message }; }
@@ -232,64 +135,37 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
-  // Existing team names — the create-mode dialog pre-checks for a duplicate and
-  // suggests a variant rather than letting createTeam bounce.
   handle('team:names', () => {
     try { return { ok: true, names: listTeams() }; }
     catch (err) { return { ok: false, error: err.message, names: [] }; }
   });
 
-  // Does this cwd already resolve to a team? Drives the dialog's create-vs-join
-  // mode + the "Join team <name>" label. Best-effort: a resolve hiccup → no team.
   handle('team:forCwd', (_e, cwd) => {
     try { const t = resolveTeam(cwd); return { team: t ? t.name : null, root: t ? t.root : null }; }
     catch { return { team: null, root: null }; }
   });
 
-  // team:get — the full loaded manifest by team NAME (T29 Slice 3 GUI read side).
-  // team:forCwd only returns the name; the management popover needs the whole role
-  // map + watchdogMs to render its rows. Reuses loadManifest (no new read path);
-  // a missing/invalid manifest → {ok:false, error} so the popover shows nothing.
   handle('team:get', (_e, name) => {
     try { return { ok: true, team: loadManifest(name) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 
-  // team:addRole — the GUI's create-a-custom-role path (T29 Slice 3). The intent
-  // and team:create/join already call addRole; this is its own IPC front so the
-  // popover's "Add role" affordance can reach it. addRole owns the guards (C1
-  // reserved-key mint refusal + C4 template NAME_RE) — surfaced verbatim as
-  // {ok:false, error}. Same shape as team:setRole.
   handle('team:addRole', (_e, team, role, def) => {
     try { return { ok: true, team: addRole(team, role, def) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 
-  // Rail-filtered role-prompt options for the join picker: stock clodex-team-*
-  // deltas plus library system prompts whose front matter declares rail: append.
-  // Undeclared (replace-class) prompts are excluded — the picker attaches its
-  // pick to the append rail and must not blend a replace-class prompt onto it.
   handle('team:rolePrompts', () => {
     try { return { ok: true, prompts: appendRailPrompts(promptLibrary.list('system')) }; }
     catch (err) { return { ok: false, error: err.message, prompts: [] }; }
   });
 
-  // Opt-in git worktree for a new session. The renderer calls this BEFORE
-  // session:create when the dialog's "Git worktree" box is checked; on success it
-  // uses the returned path as the session cwd, then stamps the worktree onto the
-  // persisted entry via session:markWorktree. Kept OUT of manager.create's
-  // (already huge) signature on purpose — worktree lifecycle is orthogonal to spawn.
   handle('worktree:create', async (_e, cwd, branch, opts) =>
     gitWorktree.createWorktree(cwd, branch, opts || null));
-  // Repo metadata for the dialog: is this cwd a git repo, its default branch, and
-  // the base-branch candidates for the autocomplete.
   handle('worktree:info', async (_e, cwd) => {
     try { return { ok: true, ...(await gitWorktree.repoInfo(cwd)) }; }
     catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
   });
-  // Working-directory suggestions for the New Session dialog: a persisted MRU of
-  // recently-picked dirs, plus the most-popular cwds across LIVE sessions (by
-  // count). Both are plain string lists; the renderer renders a datalist.
   handle('session:cwdSuggestions', () => {
     const recent = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
     const counts = new Map();
@@ -300,8 +176,6 @@ function registerIpcHandlers(deps) {
     const popular = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([cwd, count]) => ({ cwd, count }));
     return { ok: true, recent, popular };
   });
-  // Record a chosen cwd into the MRU (most-recent first, capped, deduped). Called
-  // by the dialog on create so the next open offers it.
   handle('session:noteCwd', (_e, cwd) => {
     const dir = typeof cwd === 'string' && cwd.trim();
     if (!dir) return { ok: false };
@@ -310,7 +184,6 @@ function registerIpcHandlers(deps) {
     uiSettings.set({ recentCwds: next });
     return { ok: true };
   });
-  // Stamp/clear the worktree provenance on a live+persisted session (post-create).
   handle('session:markWorktree', (_e, name, worktree) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
     persistence.setWorktree(name, worktree || null);
@@ -326,23 +199,13 @@ function registerIpcHandlers(deps) {
 
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:listAll', () => manager.list());
-  // Reserved names = every GLOBALLY taken session name: live (all workspaces, the
-  // Map is process-global) UNION persisted (incl. archived, all workspaces). The
-  // dialog's auto-suffix flows consult this so they bump past a persisted/archived
-  // name instead of suggesting one the mint guard would reject (Task 15). A DOM
-  // query alone misses cross-workspace + not-yet-rendered records.
   handle('session:reservedNames', () => {
     const names = new Set(manager.sessions.keys());
     for (const s of persistence.list()) names.add(s.name);
     return { ok: true, names: [...names] };
   });
-  // session:kill is now the DELETE action (right-click "Delete Session…"): it
-  // forgets the record and, for a worktree-backed session, removes the checkout
-  // too — grabbed BEFORE the kill (kill removes the record), awaited AFTER the
-  // PTY exits so git isn't racing a live cwd, and its failure returned so the
-  // renderer can toast it (not the PR's fire-and-forget setTimeout 6s). The
-  // session is deleted regardless — a worktree-remove failure leaves { ok:true,
-  // worktreeRemoved:false, error } so the row still goes.
+  // Grab the worktree BEFORE the kill (kill removes the record) and remove it
+  // AFTER the PTY exits, so git isn't racing a live cwd.
   handle('session:kill', async (_e, name) => {
     const entry = persistence.get(name);
     const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
@@ -358,11 +221,7 @@ function registerIpcHandlers(deps) {
     log.info('worktree', `remove failed for ${worktree.path} after deleting ${name}: ${error}`);
     return { ok: true, worktreeRemoved: false, error };
   });
-  // Operator flush of a session's parked DMs (sidebar ✉ badge click). Operator-only
-  // by construction — no agent intent maps here.
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
-  // Read-only peek at a session's parked DMs ([{ from, snippet }]) for the
-  // sidebar ✉ tooltip — no delivery side effect, snippets only (never full bodies).
   handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
   handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
   handle('session:setLabel', (_e, name, label) => persistence.setLabel(name, label));
@@ -378,43 +237,24 @@ function registerIpcHandlers(deps) {
 
   handle('update:check', () => checkForUpdate(false));
   handle('update:info', () => getUpdateInfo());
-  // Cached release list for the peer-identity popover's age/behind line. Returns
-  // [] until the first fetch lands / when offline — the renderer never blocks on
-  // it (it renders from whatever is cached at open time).
   handle('update:releases', () => getReleasesCache());
   handle('update:open', () => {
     if (getUpdateInfo()) openExternal(getUpdateInfo().url);
   });
   handle('app:getVersion', () => getAppVersion());
 
-  // Spawn-health diagnostics for the renderer banner — recomputed live so a
-  // post-launch `electron-rebuild` clears the warning on the next poll.
   handle('diagnostics:get', () => {
     const d = collectSystemDiagnostics();
     const warning = diagWarning(d);
-    // Is a missing agent CLI the SOLE cause of the warning? The both-missing branch
-    // is engine.diagWarning's lowest priority, so if pretending both CLIs are
-    // present clears the warning, installing one is the actionable fix — and the
-    // diag banner should offer Install buttons (Task 18). Single-sources engine's
-    // own branch precedence rather than duplicating it in the renderer.
     const cliMissingIsCause = !!warning && !diagWarning({ ...d, claude: 'present', codex: 'present' });
     return { ...d, warning, summary: diagSummary(d), cliMissingIsCause };
   });
 
-  // External-tool presence for the New Session dialog gate (Task 12): TTL-cached
-  // report { byTool: { <tool>: { present, path, notice } }, list, cachedAt }. The
-  // renderer's tool-gate leaf maps the selected type → its report to allow/block
-  // Create. Best-effort — a probe throw falls back to an empty report (gate reads
-  // it as "unknown → not blocked", same as pre-probe).
   handle('tools:check', async () => {
     try { return await checkTools(); }
     catch { return { byTool: {}, list: [] }; }
   });
 
-  // Bust the tool-doctor cache so the next tools:check re-probes PATH (Task 14):
-  // an Install session just finished, so the freshly-landed CLI must be seen. This
-  // is engine.invalidateToolCache's only caller (closes the task-12 dead-export
-  // nit). Best-effort — a throw here must never break the exit-driven refresh.
   handle('tools:invalidate', () => {
     try { invalidateToolCache(); return { ok: true }; }
     catch { return { ok: false }; }
@@ -422,23 +262,11 @@ function registerIpcHandlers(deps) {
 
   handle('templates:list', () => templates.list());
   handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
-  // Name-keyed upsert: the form's "Save as Template" and template-mode New route
-  // here so re-saving a name overwrites rather than duplicating. Returns the
-  // stored template (with its resolved id) so the caller can select it.
   handle('templates:saveByName', (_e, template) => {
     const t = templates.saveByName(template);
     return { ok: true, template: t, templates: templates.list() };
   });
   handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
-  // Snapshot a live session's PERSISTED config subset into a named template.
-  // persistence.get carries the whole entry, so we pick exactly the spawnable
-  // config — never identity (name/proxyAgent) or runtime state (sessionId).
-  // stripLevel/autoCompact are opt-out fields (present only when non-default),
-  // so they're snapshotted only when set. Prompt refs (systemPromptFile +
-  // appendPromptFiles) are LIBRARY FILE REFERENCES — symmetric with the
-  // agents/skills refs — so a reproducible seat carries its prompts; NEVER the
-  // inline systemPromptBody (legacy param 7). A ref absent on the target
-  // degrades to the CLI default at spawn (resolveSystemPromptFile/readAppendBodies).
   handle('templates:exportFromSession', (_e, name, templateName) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: `no session "${name}"` };
@@ -466,14 +294,10 @@ function registerIpcHandlers(deps) {
     // no `intents` key, so we must NOT write `intents: []` here (that would freeze
     // "everything gated" onto a template that meant "all on"). Absent stays absent.
     if (Array.isArray(entry.intents)) t.intents = entry.intents;
-    // Name-keyed: re-exporting the same session overwrites its template instead
-    // of piling up duplicates (saveByName mints the id when the name is new).
     templates.saveByName(t);
     return { ok: true, templates: templates.list() };
   });
 
-  // Prompts library (~/.clodex/library/prompts/{system,append}/*.md). Both
-  // Claude and Codex; referenced by session (system replaces, append composes).
   handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
   handle('prompts:save', (_e, kind, name, body) => {
     try { return { ok: true, prompts: promptLibrary.save(kind, name, body) }; }
@@ -483,7 +307,6 @@ function registerIpcHandlers(deps) {
     return { ok: true, prompts: promptLibrary.remove(kind, name) };
   });
 
-  // Custom subagent library (~/.clodex/agents/*.md). Claude-only.
   handle('agents:list', () => agentLibrary.list());
   handle('agents:get', (_e, name) => agentLibrary.raw(name));
   handle('agents:save', (_e, name, content) => {
@@ -499,9 +322,6 @@ function registerIpcHandlers(deps) {
     return { ok: true, agents };
   });
 
-  // Skill-injection library (~/.clodex/skills/*.md). Claude-only. Mirrors the
-  // agents handlers; the Skills app menu lists this library, so save/remove
-  // refresh the menu.
   handle('skilllib:list', () => skillLibrary.list());
   handle('skilllib:get', (_e, name) => skillLibrary.raw(name));
   handle('skilllib:save', (_e, name, content) => {
@@ -516,16 +336,9 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return { ok: true, skills };
   });
-  // Exec-command registry (~/.clodex/library/exec/*.json). Operator-only by
-  // construction: registration rides these ipcMain handlers (renderer → main),
-  // and there is deliberately NO exec-write intent verb — an agent can neither
-  // register a command nor grant itself one (the `execCommands` grant rides
-  // operator-authored spawn templates). save() rejects a def the exec dispatcher
-  // would later refuse: the command NAME must be a filename token, and the body
-  // must be a valid def (parseable JSON + non-empty string argv + an object
-  // schema), both checked via the single exec-schema validator — so the drawer
-  // can't author a file the backend can't run. No app-menu listing, so no
-  // refreshAppMenu (unlike agents/skills).
+  // Operator-only by construction: there is deliberately NO exec-write intent
+  // verb, so an agent can neither register a command nor grant itself one.
+  // save() rejects any def the exec dispatcher would later refuse.
   handle('exec:list', () => execLibrary.list());
   handle('exec:get', (_e, name) => execLibrary.raw(name));
   handle('exec:save', (_e, name, content) => {
@@ -538,8 +351,6 @@ function registerIpcHandlers(deps) {
     const check = validateExecDef(def, name);
     if (!check.ok) return { ok: false, error: check.error };
     try {
-      // Persist the re-serialized def (canonical 2-space JSON) so a saved file is
-      // always well-formed regardless of the textarea's whitespace.
       return { ok: true, commands: execLibrary.save(name, JSON.stringify(def, null, 2)) };
     } catch (err) { return { ok: false, error: err.message }; }
   });
@@ -547,9 +358,6 @@ function registerIpcHandlers(deps) {
     return { ok: true, commands: execLibrary.remove(name) };
   });
 
-  // Operator inbox ([agent:notify-user]). Read/mark/remove over the notifications
-  // store; the main-side handler owns the writes on arrival. list() is chronolog-
-  // ical (the drawer reverses for newest-first); markRead is idempotent.
   handle('notifications:list', () => notifications.list());
   handle('notifications:markRead', (_e, id) => notifications.markRead(id));
   handle('notifications:markAllRead', () => notifications.markAllRead());
@@ -563,36 +371,14 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
 
-  // Last-known proxy telemetry for a session — lets the renderer fill the
-  // status bar immediately on attach/switch instead of waiting for the next poll.
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
 
-  // Fetch the per-line tool roster + context composition for a session
-  // (wirescope /_context). Read-only; gated by the caller on the
-  // context_view/context_composition capability. Uses the live record's
-  // session_id (from the snapshot), never a possibly-stale persisted one.
   handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));
 
-  // Fetch the on-demand per-session cost/efficiency report (wirescope /_report,
-  // report_version 1). Disk-based on the proxy side, but we still resolve the
-  // session_id from the live record and gate the caller on the
-  // capabilities.context_report flag. detail=1 reserves the (v1.1) per-turn
-  // series; harmless to pass against a v1 proxy that ignores it.
   handle('proxy:report', (_e, name, opts) => fetchProxyReport(name, opts));
 
-  // On-demand cache-bust forensics for one session (the bust-inspector
-  // popover). Resolves the live session_id from the poller snapshot (never a
-  // stale persisted one), then fetches /_bust — the per-transition divergence
-  // series. Heavy disk read, called only when the popover opens (same profile
-  // as proxy:report), never in the 5s poll.
   handle('proxy:bust', (_e, name) => fetchProxyBust(name));
 
-  // On-demand live-activity detail for one subagent row (the child popover).
-  // Resolves the live session_id from the poller snapshot (never a stale
-  // persisted one), then fetches /_subagents for the given child key. Called on
-  // a 1-2s loop only while the popover is open — never in the 5s poll. A `found:
-  // false` body is a normal outcome (child expired / session cold), surfaced as
-  // ok:true with the proxy's reason so the popover can close gracefully.
   handle('proxy:subagentDetail', async (_e, name, child, maxlen) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
@@ -610,23 +396,14 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Open an external URL in the default browser (e.g. the proxy session page).
-  // http(s) only — never hand arbitrary schemes to the OS opener.
   handle('app:openExternal', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) openExternal(url);
   });
 
-  // Open a wirescope page in an in-app, clodex-chromed window instead of the
-  // system browser. backgroundColor is the caller's active theme `--bg` so the
-  // frame matches; the page content stays wirescope's own.
   handle('app:openWirescope', (_e, url, backgroundColor) => {
     openWirescopeWindow(url, backgroundColor);
   });
 
-  // Arm/disarm a cache hold for a session. Writes are gated: the session must
-  // be routed AND exactly linked to a live proxy record (we use that record's
-  // own session_id, never a possibly-stale persisted one), and the proxy must
-  // advertise the hold capability. hours=0 disarms.
   handle('proxy:hold', async (_e, name, hours, force) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
@@ -648,12 +425,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // In-process twin of proxy:hold — arm/disarm the wire HoldKeeper (wire/hold.js)
-  // for the session's wire-observed session_id. Same return contract as
-  // proxy:hold so the renderer's doWarmHold works unchanged; which channel the
-  // fire button uses is decided by the payload's holdSource (set by
-  // WireTelemetry.overlay under CLODEX_WIRE_TELEMETRY). hours<=0 disarms;
-  // arming is warm-gated like the proxy's (force is the only override).
   handle('wire:hold', (_e, name, hours, force) => {
     if (!manager._holdKeeper || !manager._wireTelemetry) {
       return { ok: false, error: 'In-process wire keep-warm is not running' };
@@ -666,11 +437,6 @@ function registerIpcHandlers(deps) {
       const j = (hours > 0)
         ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force })
         : manager._holdKeeper.disarm(w.sessionId);
-      // Persist the hold INTENT per session NAME so a restart can re-arm it
-      // (the keeper is in-memory by design). Derive the deadline from the
-      // clamped arm result's `until` (epoch SECONDS), never the raw requested
-      // hours. hours<=0 (explicit disarm) clears the field + logs here — the
-      // keeper's own 'off' disarm event is skipped by the lifecycle listener.
       if (j.armed && j.until) {
         persistence.setHoldUntil(name, Math.round(j.until * 1000));
         log.info('keepwarm', `armed ${name} ${hours}h until ${new Date(j.until * 1000).toISOString()}`);
@@ -684,11 +450,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Set the per-session strip LEVEL (0 off / 1 thinking / 2 thinking + tool
-  // results). Cumulative ladder. Persists our authoritative level (the proxy
-  // overrides are in-memory) and pushes the level's wire state now. Level 2's
-  // tool-result strip is gated on a separate capability and rejected until the
-  // proxy advertises it (the menu disables it too).
   handle('proxy:setStripLevel', async (_e, name, level) => {
     const s = manager.sessions.get(name);
     if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
@@ -702,50 +463,29 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: 'This proxy does not support strip-thinking' };
     }
     let lvl = (level === 1 || level === 2) ? level : 0;
-    // L2 (edit-acks + failed-call stubs) folds into strip_thinking as a level —
-    // there is no separate capability. Gate on the advertised max_level.
     if (lvl === 2 && !(cap.max_level >= 2)) {
       return { ok: false, error: 'This proxy does not support level 2 stripping yet' };
     }
     persistence.setStripLevel(name, lvl);
-    // A bottom-bar choice is also this agent name's standing default, so every
-    // future session of that name (even after a kill that drops the sessions.json
-    // entry) is seeded with it. Kill-proof; consulted only at session birth.
     agentDefaults.setStrip(name, lvl);
     proxyPoller.noteStripAsserted(name, snap.sessionId, lvl);
     try {
-      // One /_strip mechanism, three levels: 0 clears, 1 strips thinking, 2 adds
-      // edit-acks + failed-call stubs on top. At level 0, hold OFF with an explicit
-      // 0-override when the proxy's global default is ON (else a clear reverts to it).
       const gd = (snap.strip && snap.strip.globalDefaultLevel) || 0;
       const r = await ProxyClient.stripThinking(s.proxyBase, snap.sessionId, lvl, lvl === 0 && gd >= 1);
       const j = r.json || {};
       return { ok: true, status: r.status, level: lvl, effective: !!j.effective, body: j };
     } catch (e) {
-      // The push failed but our level is persisted; the poller will retry on the
-      // next tick. Surface the error so the UI can flag it.
       proxyPoller.stripAsserted.delete(name);
       return { ok: false, error: e.message, level: lvl };
     }
   });
 
-  // Editable args for the Edit Session dialog. The shape lives in main.js's
-  // readSessionArgs (shared with the peer session-args GET endpoint so local +
-  // remote reads can't drift); this handler is the thin local adapter.
   handle('session:getArgs', (_e, name) => readSessionArgs(name));
 
-  // Past conversations for the session picker. Two tiers:
-  //  - tracked: ids clodex observed live (persisted sessionIds ∪ current active
-  //    id) — authoritative, correctly attributed even when agents share a cwd.
-  //  - inferred: other recent transcripts sitting in the same project dir that
-  //    clodex never observed (pre-feature history, or started outside clodex).
-  //    Best-effort and flagged: a cwd shared by >1 agent can't be split, so
-  //    these may belong to a sibling agent. The renderer renders them dimmed.
   handle('session:history', (_e, name) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found' };
     if (entry.type !== 'claude' && entry.type !== 'codex') return { ok: true, sessions: [], activeId: null };
-    // Prefer the live symlink's real directory; fall back to the cwd→slug path.
     let slugDir = null;
     try { slugDir = path.dirname(fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript'))); } catch {}
     if (!slugDir) slugDir = claudeProjectDir(entry.cwd);
@@ -764,7 +504,6 @@ function registerIpcHandlers(deps) {
       out.push({ sessionId: sid, title: meta.title, firstActive: meta.first, lastActive: meta.last, turns: meta.turns, active: sid === activeId, inferred });
     };
     for (const sid of tracked) add(sid, false);
-    // Bootstrap: recent sibling transcripts we didn't observe (last 7 days).
     try {
       const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
       for (const fn of fs.readdirSync(slugDir)) {
@@ -779,12 +518,6 @@ function registerIpcHandlers(deps) {
     return { ok: true, sessions: out, activeId };
   });
 
-  // --- Session discovery (adopt sessions started OUTSIDE clodex) ----------
-  // Global scan of ~/.claude/projects (every slug, not just one session's cwd)
-  // for recent transcripts clodex doesn't already track, plus foreign live
-  // claude/codex processes on this box. The renderer surfaces these so the
-  // operator can adopt one — adoption is just a normal create() with resumeId set
-  // to the discovered sessionId, so nothing new is needed on the spawn side.
   handle('discovery:scan', async (_e, opts) => {
     try {
       const maxAgeMs = (opts && Number(opts.maxAgeMs)) || sessionDiscovery.DEFAULT_MAX_AGE_MS;
@@ -794,8 +527,6 @@ function registerIpcHandlers(deps) {
       if (!opts || opts.live !== false) {
         try { live = await sessionDiscovery.discoverLiveProcesses({ ownPids: manager.livePids() }); } catch {}
       }
-      // Cross-reference: flag disk rows whose cwd matches a live foreign process
-      // so the UI can mark "running now". Best-effort — cwd may be null either side.
       const liveCwds = new Set(live.map((p) => p.cwd).filter(Boolean));
       for (const r of disk) r.liveInCwd = !!(r.cwd && liveCwds.has(r.cwd));
       return { ok: true, disk, live };
@@ -804,10 +535,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Sidebar organizational metadata for this workspace's sessions: last-activity
-  // timestamps (always) + git branch / PR status (includePr, the slow tier). Fed
-  // to the sidebar toolbar's group/sort/filter. createdAt is folded in from the
-  // persisted record so one call feeds the whole toolbar.
   handle('sidebar:meta', async (e, opts) => {
     const workspaceId = workspaceOfSender(e);
     const list = persistence.listForWorkspace(workspaceId);
@@ -815,13 +542,6 @@ function registerIpcHandlers(deps) {
     const includePr = !opts || opts.includePr !== false;
     try {
       const meta = await sessionMeta.metaFor(sessions, { includePr });
-      // Fold in the persisted created/archive stamps so one call feeds the whole
-      // toolbar (the render engine merges these onto rows by name; archivedAt
-      // drives the status filter + the archived-row recency stand-in). `team` is
-      // the sidebar's group-by-project key when the cwd resolves to a team — a
-      // derived, main-only fact, carried here like prState/branch so every row
-      // (live, reattached, restarted, archived) converges on one refresh. Memo
-      // by cwd — the teams dir scan is small but shared across sessions.
       const teamByCwd = new Map();
       for (const s of list) {
         if (!meta[s.name]) meta[s.name] = {};
@@ -836,11 +556,8 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Archive / unarchive — the reshaped ✕ / ⌘W path. Archiving stops the PTY but
-  // keeps the record (stamped archivedAt); the renderer swaps the live row for an
-  // archived placeholder. Unarchive just clears the stamp — the operator resumes
-  // it through the normal retry/resume-spawn path, so the record must be clean
-  // BEFORE the respawn's own upsert (which would otherwise re-inherit archivedAt).
+  // Unarchive must clear the stamp BEFORE the operator's respawn upsert, which
+  // would otherwise re-inherit archivedAt.
   handle('session:archive', async (_e, name) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
     await manager.archive(name);
@@ -851,45 +568,20 @@ function registerIpcHandlers(deps) {
     persistence.setArchived(name, false);
     return { ok: true };
   });
-  // --- Touched-files feed + peek/diff -----------------------------------
-  // The feed is the session's in-memory ring (facts: tool + path + when, from
-  // the wire receipts or the legacy jsonl tap). Peek/diff are read-only looks
-  // at the CURRENT disk/git state — created-vs-modified truth comes from git
-  // here, never from the feed.
   handle('session:files', (_e, name) => fetchSessionFiles(name));
-  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]): cross-agent file-heat snapshot. A
-  // global read-time merge (not per-session), carriage-ranked. Tier-1 data is
-  // all local, so it renders wire-off.
   handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   handle('file:open', (_e, filePath) => openPath(filePath));
-  // Reveal, not open. The seam is already injected (main.js backs it with
-  // shell.showItemInFolder, web-host routes it to the connected browser); this
-  // is the renderer-reachable door onto it, which only the session-menu had
-  // before. Returns nothing useful by design — showItemInFolder is void.
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
 
-  // Focused per-session tool gating: persist disabledTools only (leaves
-  // extraArgs/proxy/posture/agents untouched). Takes effect on next spawn;
-  // the renderer calls session:restart afterward if the user wants it now.
   handle('session:setTools', (_e, name, disabledTools) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setDisabledTools(name, Array.isArray(disabledTools) ? disabledTools : []);
     return { ok: true };
   });
-  // Focused per-session skill gating (mirror of setTools): persist disabledSkills
-  // (+ optional injectSkills), applied on next spawn via skillOverrides. Thin
-  // adapter over the shared main.js applySessionSkills — the peer session-skills
-  // POST endpoint calls the same helper, keeping local + remote in lockstep.
   handle('session:setSkills', (_e, name, disabledSkills, injectSkills) =>
     applySessionSkills(name, disabledSkills, injectSkills));
-  // Focused per-session agent composition (mirror of setSkills/setTools):
-  // persist the enabled custom-subagent list + denyBuiltins only, leaving
-  // extraArgs/proxy/posture/tools/skills untouched. Takes effect on the next
-  // FRESH start — the agent roster, like skills, is frozen at conversation
-  // creation, so --resume replays the old one (the popover does the fresh
-  // restart when the user asks for it now).
   handle('session:setAgents', (_e, name, agents, denyBuiltins) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setAgents(name,
@@ -897,85 +589,41 @@ function registerIpcHandlers(deps) {
       Array.isArray(denyBuiltins) ? denyBuiltins : []);
     return { ok: true };
   });
-  // Focused per-session intent gating (mirror of setTools). UNLIKE the others this
-  // applies IMMEDIATELY with no restart: the fire-time gate (_handleIntent) re-reads
-  // persistence on every intent, so the upsert IS the apply. `intents` is the raw
-  // CHECKED SET from collectIntentChecklist — an ARRAY ([] = nothing checked) or
-  // NULL (section hidden). The COLLAPSE to the all-enabled default happens HERE, not
-  // in the renderer (plugin plan R-INT-4 / MUST-FIX 3): only the engine's registry
-  // knows the live row set, so only the engine can tell "every box checked" from "a
-  // subset that happens to be long". setIntents removes the key on null, never
-  // freezes an array (mirrors setStripLevel's delete-when-default).
+  // Applies IMMEDIATELY, no restart: the fire-time gate re-reads persistence.
+  // `intents` is the raw checked set (array, [] = none checked) or null (hidden);
+  // the collapse to the all-enabled default must happen HERE, not in the renderer,
+  // because only the engine knows the live row set. null removes the key.
   handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setIntents(name, Array.isArray(intents) ? allowlistFromChecked(intents) : null);
     return { ok: true };
   });
-  // Agent catalog for the Agents popover. Unlike skills there's no transcript
-  // roster or lower-layer/policy state to merge — built-ins are irreducible and
-  // have no trim lever — so the catalog is simply the custom-subagent library
-  // plus this session's persisted enabled set + denyBuiltins flag.
   handle('session:agentCatalog', (_e, name) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
     return {
       ok: true,
-      // Scope-filtered offer list (same resolver the Edit Session agents catalog
-      // uses) — a workspace/personal-scoped agent isn't offered to a session it
-      // doesn't belong to. The drawer still shows everything (agentLibrary.list()).
       agents: agentLibrary.listFor(sessionScopeCtx(name)),
       enabled: Array.isArray(entry.agents) ? entry.agents : [],
       denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
     };
   });
-  // Skill catalog for the Skills popover (the static CLAUDE_SKILLS seed ∪ the live
-  // transcript roster ∪ the persisted disabled set ∪ lower-layer overrides; never
-  // empty for Claude). Thin adapter over the shared main.js readSkillCatalog — the
-  // union logic lives there so the peer skill-catalog GET returns an identical shape.
   handle('session:skillCatalog', (_e, name) => readSkillCatalog(name));
-  // Skill catalog for the NEW-SESSION dialog (no session/transcript yet, just a
-  // chosen cwd). Static seed + whatever a lower settings layer for that cwd
-  // already disables, with the same effective-state + provenance so a globally-
-  // off skill renders disabled+labeled here too. This is the CLEAN trim path:
-  // the skill roster is evaluated at conversation creation, so a fresh session
-  // applies skillOverrides immediately — no restart/clear dance.
   handle('settings:skillCatalogFor', (_e, cwd) => {
     const eff = readEffectiveSkillState(cwd || null);
     const names = [...new Set([...CLAUDE_SKILLS, ...Object.keys(eff.overrides)])].sort();
     return { ok: true, names, effective: eff.overrides, skillsLocked: eff.skillsLocked, canReenable: SKILL_REENABLE_CONFIRMED };
   });
-  // Tool provenance for the NEW-SESSION dialog (mirror of skillCatalogFor): the
-  // tool list itself is the static CLAUDE_TOOLS seed (sent via getSettings), so
-  // here we only need the per-cwd lower-layer deny state to render externally-
-  // off tools as read-only + labeled before the session exists.
   handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  // Apply edited args. The core (undefined-untouched semantics, stripLevel/label
-  // re-assert, catch-and-upsert recovery) lives in main.js's applySessionArgs,
-  // shared with the peer session-args POST endpoint. This handler maps the
-  // positional IPC args to the patch object and supplies the sender's workspace
-  // as the respawn target (the peer path passes the entry's own workspaceId).
-  // execCommands and env ride POSITIONALLY (env is now the last param) — the
-  // exec-grant allowlist (Claude-only) and the per-session env (all types), both of
-  // which the Edit dialog now owns. Both are LOCAL-ONLY by construction: the peer
-  // POST endpoint routes through source.save({...}) which never carries either key,
-  // and remote-wiring strips both in both directions (withoutLocalOnly) belt-and-
-  // suspenders. So these positional slots are only ever reached by a local edit.
   handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
     }, workspaceOfSender(e)));
 
-  // Restart in place: kill the PTY and respawn with the persisted settings,
-  // resuming the same conversation. Useful after a CLI upgrade, a global
-  // preference change, or a wedged TUI. The core lives in restartSession()
-  // (module scope) so the peer restart-session endpoint shares the exact
-  // strip-level re-assert + failed-respawn safety net rather than duplicating
-  // (and drifting from) it. The IPC handler only supplies the sender's
-  // workspace as the respawn target.
   handle('session:restart', async (e, name, opts = {}) =>
     restartSession(name, opts, workspaceOfSender(e)));
 
@@ -999,9 +647,6 @@ function registerIpcHandlers(deps) {
       sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
-      // Operator wire token is WRITE-ONLY: the dialog sees only this derived
-      // boolean, never the value (it lives in <userData>/remote.env, not
-      // ui-settings). A host without the accessor (older wiring) reports false.
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
       // Peer auth token is WRITE-ONLY (remote-auth-plan.md [internal design doc, not in this repo] §4): the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
@@ -1013,9 +658,6 @@ function registerIpcHandlers(deps) {
   handle('settings:set', (_e, partial) => {
     const next = uiSettings.set(partial);
     rebuildAllStatusScripts(manager);
-    // The Traffic optimization toggle is the proxy's single control: on brings
-    // the managed wirescope up, off tears it down. stop() only ever kills OUR
-    // child — an adopted external instance is never touched either way.
     if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
     else wirescope.stop();
     syncRemoteServer();
@@ -1023,8 +665,6 @@ function registerIpcHandlers(deps) {
     return next;
   });
 
-  // Remote access status for the prefs dialog: running/port/error. The URL
-  // shown is the localhost one — off-machine reach is the user's tailnet.
   handle('remote:status', () => ({
     running: !!(getRemoteServer() && getRemoteServer().running),
     port: uiSettings.get().remotePort,
@@ -1046,19 +686,12 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ---- GUI-managed environment scopes (T46) --------------------------------
-  // The global/workspace env-var editor. Secrets discipline (docs/sessions.md):
-  // a value marked `secret` is WRITE-ONLY through IPC — the read handler NEVER
-  // returns it, only { key, secret:true, hasValue:true } (mirror of the remote/
-  // peer token surfaces above). Non-secret rows return { key, value } so the
-  // editor can show + edit them. `scope` is 'global' or a workspaceId.
-  // Session-scope env is NOT here — it rides the New Session dialog → create()'s
-  // env param, never a stored editable scope.
+  // A value marked `secret` is WRITE-ONLY through IPC: the read handler never
+  // returns it, only { key, secret:true, hasValue:true }. `scope` is 'global' or a
+  // workspaceId; session-scope env rides create()'s env param, not a stored scope.
   handle('envScopes:get', (_e, scope) => {
     if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
     const raw = envScopes.getScope(scope === 'global' ? 'global' : String(scope));
-    // Masked projection: a secret value never leaves the main process. hasValue
-    // lets the editor render a "•••• (replace)" affordance without the bytes.
     const vars = Object.entries(raw).map(([key, rec]) => {
       const secret = !!(rec && typeof rec === 'object' && rec.secret);
       if (secret) return { key, secret: true, hasValue: true };
@@ -1067,9 +700,6 @@ function registerIpcHandlers(deps) {
     }).sort((a, b) => a.key.localeCompare(b.key));
     return { ok: true, scope: scope === 'global' ? 'global' : String(scope), vars };
   });
-  // Set/replace one KEY. envScopes.set throws (envKeyError) on an invalid/denied/
-  // newline key → surfaced as { ok:false, error } for the editor to show. The
-  // value is never echoed back.
   handle('envScopes:set', (_e, scope, key, value, secret) => {
     if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
     try {
@@ -1089,17 +719,11 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ---- Plugin transport (plugin-plan.md [internal design doc, not in this repo] §3.4). FOUR handlers, registered
-  // ONCE, carrying every plugin forever. `plugin:invoke` is the multiplexed
-  // channel: it forwards to the engine-owned dispatch Map, which enable/disable/
-  // dispose mutate. The injected transport has no removeHandler, so a per-plugin
+  // One multiplexed channel for every plugin, forwarded to the engine-owned
+  // dispatch Map. The injected transport has no removeHandler, so a per-plugin
   // channel could never be unregistered — this is the only shape in which
-  // `dispose()` is implementable at every level of the API.
-  //
-  // getPluginHost() is a LAZY seam: a host that doesn't build a plugin host (or
-  // a run with CLODEX_PLUGINS=0) simply has no plugins, and every call degrades
-  // to the shaped refusal rather than throwing. Loud, not silent — an undefined
-  // resolution is indistinguishable from a successful empty call.
+  // dispose() is implementable. A missing host degrades to a shaped refusal
+  // rather than an undefined resolution.
   const pluginRefusal = () => errorEnvelope(NO_SUCH_METHOD);
   handle('plugin:invoke', async (_e, pluginId, method, args) => {
     const host = getPluginHost && getPluginHost();
@@ -1115,29 +739,15 @@ function registerIpcHandlers(deps) {
     if (!host) return pluginRefusal();
     return host.setEnabled(String(pluginId), enabled !== false);
   });
-  // The intent catalog, served rather than statically required (plan §2.3
-  // R-INT-4). The renderer checklist used to `require('../../intent-catalog')`
-  // directly — fine while the catalog was a frozen const, wrong the moment a
-  // plugin can register a verb, and doubly wrong in the web bundle where that
-  // require is frozen at build time. Rows are `{ type, label, privileged }`;
-  // the renderer computes checked-state client-side but the ALLOWLIST itself is
-  // computed engine-side (setIntents/setArgs), where the catalog is authoritative.
-  // Straight off intent-registry, NOT off the plugin host: the registry is a
-  // module-level table that both halves mutate, so it is authoritative whether or
-  // not a host exists (kill switch, no plugins installed, host construction
-  // failed). Routing this through the host would make the checklist go blank in
-  // exactly the degraded cases where core rows still matter most.
+  // Served, not statically required: a plugin can register a verb, and in a web
+  // bundle a require freezes at build time. Straight off intent-registry, NOT off
+  // the plugin host — the registry is a module-level table both halves mutate, so
+  // it stays authoritative with no host (kill switch, construction failed), where
+  // routing through the host would blank the checklist in exactly those cases.
   handle('intents:catalog', () => catalogRows());
 
-  // ---- Peer deploy wizard: probe a box, then install/update Clodex on it.
-  // Tunnel-free — both ssh in and curl hello ON the box (see peer-deploy.js /
-  // ssh-run.js). Classification + the deploy script live off-electron so they're
-  // unit-tested; these handlers are the thin electron adapter.
   handle('peer:probe', async (_e, sshHost, port, opts = {}) => {
     if (!sshHost || typeof sshHost !== 'string') return { kind: 'ssh-fail', stderr: 'no ssh host given' };
-    // Token resolution: the operator's typed value (write-only, never persisted
-    // to the renderer) wins; blank falls back to the stored token for the row's
-    // saved peer id; absent → probe bare. The stored value stays main-side only.
     let token = typeof opts.token === 'string' && opts.token.trim() ? opts.token.trim() : null;
     if (!token && opts.peerId) {
       const saved = (uiSettings.get().peers || []).find((p) => p && p.id === opts.peerId);
@@ -1150,11 +760,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Run the idempotent deploy script on the box, streaming each stdout line to
-  // the caller window as a `peer-deploy-line` event (the wizard parses ::markers
-  // via peer-deploy.parseDeployLine). Resolves with { code, timedOut, stderr }:
-  // code 0 = success, 42 = needs sudo (script emitted the exact commands as
-  // ::need-sudo/::sudo-cmd lines), anything else = failure.
   handle('peer:deploy', async (e, sshHost, opts = {}) => {
     if (!sshHost || typeof sshHost !== 'string') return { ok: false, error: 'no ssh host given' };
     let script;
@@ -1163,16 +768,11 @@ function registerIpcHandlers(deps) {
     } catch (err) {
       return { ok: false, error: `deploy script unreadable: ${err.message}` };
     }
-    // Params ride the environment the remote bash inherits — prepend exports so
-    // the script's ${VAR:-default} reads them without changing its shebang line.
     const port = Number.isInteger(opts.port) ? opts.port : (uiSettings.get().remotePort || 7900);
     const repoUrl = typeof opts.repoUrl === 'string' && opts.repoUrl ? opts.repoUrl : `https://github.com/${UPDATE_REPO}`;
     const branch = typeof opts.branch === 'string' && opts.branch ? opts.branch : 'master';
-    // Optional deploy-folder override → a CLODEX_SRC export appended to the
-    // preamble. classifyDeployFolder renders the tilde/absolute forms safely; a
-    // blank folder yields '' (script default stands). A malformed folder is a
-    // hard stop BEFORE we ssh — the wizard validates too, but never trust the
-    // renderer for a value that becomes a remote shell word.
+    // A malformed folder is a hard stop BEFORE we ssh — never trust the renderer
+    // for a value that becomes a remote shell word.
     const srcClass = classifyDeployFolder(opts.folder);
     if (!srcClass.ok) return { ok: false, error: srcClass.error };
     const shellEsc = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -1197,18 +797,11 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Agent fallback for a failed deploy: spin up a local ad-hoc Claude session
-  // (cwd = homedir, focused window's workspace) and hand it the deploy log +
-  // playbook pointers so it can untangle the box. The briefing rides the spill
-  // channel via _deliverMessage (>500B → file + @-attach). Injection is deferred
-  // a beat so the fresh CLI has reached its input prompt before we type.
+  // Injection is deferred a beat so the fresh CLI has reached its input prompt
+  // before we type.
   handle('peer:deployFix', async (e, sshHost, port, label, logText) => {
     const host = typeof sshHost === 'string' ? sshHost : '';
     const p = Number.isInteger(port) ? port : (uiSettings.get().remotePort || 7900);
-    // Auto-suffix against LIVE and PERSISTED names (Task 15): the mint guard now
-    // rejects a name that matches an archived/saved record, so the fix-session
-    // namer must dodge those too — otherwise a `fix-<label>` that collides with a
-    // persisted entry would bounce instead of bumping to `-2`.
     const taken = new Set(manager.sessions.keys());
     for (const s of persistence.list()) taken.add(s.name);
     const name = fixSessionName(label || host || 'peer', taken);
@@ -1218,7 +811,6 @@ function registerIpcHandlers(deps) {
       const out = await manager.create(
         name, 'claude', dir, [], null, wsId,
         null, false, null, [], [], [], [], [], null, [],
-        // A brand-new fix-session under a freshly deconflicted name: a mint.
         [], null, null, true,
       );
       const briefing = buildDeployFixBriefing({
@@ -1235,16 +827,9 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ---- Peered Clodexes: renderer-facing thin adapter. All protocol,
-  // reconnect and buffering logic lives in peer-client.js; events reach the
-  // renderer as peer-state / peer-activity / peer-replay / peer-data /
-  // peer-control / peer-exit broadcasts.
   handle('peer:list', () => {
     const out = getPeerManager() ? getPeerManager().statuses() : [];
     const tunnels = new Map((getTunnelManager() ? getTunnelManager().statuses() : []).map((t) => [t.id, t]));
-    // Web tunnels are on-demand, so most peers have none — null means "nobody
-    // asked to look at this box", which is exactly what the affordance renders as
-    // its closed state. The manager itself may not exist yet.
     const webTuns = new Map(
       ((getWebTunnelManager && getWebTunnelManager()) ? getWebTunnelManager().statuses() : []).map((t) => [t.id, t]),
     );
@@ -1254,17 +839,6 @@ function registerIpcHandlers(deps) {
     }
     return out;
   });
-  // ---- contexts→peers import (t32 step 4). The mirror of `clodexctl ctx
-  // import`, which seeds contexts FROM the peers array. Read-only on
-  // ~/.clodex/cli/contexts.json.
-  //
-  // BOTH halves run main-side, and that is the security shape, not an
-  // implementation detail: a context entry carries its TOKEN, and settings:get
-  // has always stripped peer tokens to a `hasToken` boolean. Previewing rows in
-  // the dialog and saving them back through collectPeers would have been the
-  // tidier reuse — and would have carried imported token VALUES through the
-  // renderer for the first time. So the renderer sees token STATE only, and
-  // apply re-derives the records here from names it sends back.
   handle('peer:importPreview', () => {
     const warnings = [];
     const { store, error, file } = peerImport.loadContexts({ warn: (m) => warnings.push(m) });
@@ -1276,13 +850,6 @@ function registerIpcHandlers(deps) {
       .map(({ peer, ...rest }) => rest);
     return { ok: true, file, warnings, candidates };
   });
-  // Apply: re-collect from the CURRENT store and CURRENT peers (never from a
-  // preview stash — the same whole-array-round-trip lesson the Peers dialog
-  // learned about managed boxes), keep the named ones, write, then REPORT FROM
-  // THE READ-BACK. sanitizePeers is private to stores.js, so its admission rules
-  // and this module's are two copies of one contract; reading back what actually
-  // survived means a divergence shows up as an honest "not imported" rather than
-  // a success message about a peer that isn't there.
   handle('peer:importApply', (_e, names) => {
     const wanted = Array.isArray(names) ? names.filter((n) => typeof n === 'string') : null;
     const { store, error, file } = peerImport.loadContexts();
@@ -1300,18 +867,12 @@ function registerIpcHandlers(deps) {
     return { ok: true, imported, rejected, file };
   });
 
-  // Peer web view (t30b): open/close the on-demand ssh forward to a peer's
-  // browser frontend. Open pops the operator's browser ONCE, on the first
-  // successful up (peer-wiring's firstUp branch) — this handler returns as soon
-  // as the supervisor is running, so a slow ssh doesn't block the renderer, and
-  // the affordance follows the `peer-web-tunnel` broadcast for live state.
   handle('peer:openWeb', (_e, id) => (openPeerWeb ? openPeerWeb(id) : { ok: false, error: 'unsupported host' }));
   handle('peer:closeWeb', (_e, id) => (closePeerWeb ? closePeerWeb(id) : { ok: true }));
   handle('peer:attach', (_e, id, name) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return { ok: false, error: 'no such peer' };
     const res = conn.attach(name);
-    // Persist the attachment so the tab auto-restores on the next app launch.
     if (res && res.ok) {
       const map = { ...(uiSettings.get().peerAttached || {}) };
       const list = Array.isArray(map[id]) ? map[id] : [];
@@ -1323,28 +884,19 @@ function registerIpcHandlers(deps) {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return { ok: false, error: 'no such peer' };
     const res = conn.detach(name);
-    // Explicit detach = user closed the tab: stop persisting it. Control implies
-    // attachment, so a gone tab drops its control claim too.
     forgetPeerAttached(id, name);
     forgetPeerControlled(id, name);
     return res;
   });
-  // Renderer reads this once at startup to seed its one-shot restore map.
   handle('peer:attachedNames', () => uiSettings.get().peerAttached || {});
-  // Renderer prunes a persisted name that no longer exists on the live peer,
-  // without a live connection to detach from.
   handle('peer:forgetAttached', (_e, id, name) => {
     forgetPeerAttached(id, name);
     return { ok: true };
   });
-  // Pause/resume a peer WITHOUT deleting its config (disabled:true on the record).
-  // A disabled peer is dropped from both syncs (syncPeerManager), so its tunnel +
-  // connection tear down and a peer-removed sheds the UI tabs — but crucially this
-  // path never calls forgetPeerAttached/forgetPeerControlled, so the persisted
-  // attachments/claims survive for re-enable. The flag is broadcast to every window
-  // BEFORE syncPeerManager runs, so each renderer marks the peer disabled ahead of
-  // the peer-removed it triggers and soft-sheds (keeps the durable record) instead
-  // of treating it as an explicit user detach.
+  // Pause without deleting. This path must NOT call forgetPeerAttached/
+  // forgetPeerControlled — the persisted attachments survive re-enable — and the
+  // broadcast must precede syncPeerManager so each renderer marks the peer
+  // disabled ahead of the peer-removed it triggers (soft shed, not user detach).
   handle('peer:setDisabled', (_e, id, on) => {
     const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
     const rec = peers.find((p) => String(p.id) === String(id));
@@ -1356,12 +908,6 @@ function registerIpcHandlers(deps) {
     log.info('peer', `${rec.label || id} ${on ? 'disabled' : 'enabled'}`);
     return { ok: true };
   });
-  // Per-peer relay-mesh membership (hub-relay federation, default OFF). Absence =
-  // off, mirroring the `disabled` flag's presence-encoding. The hub reads this
-  // flag when it computes each spoke's relayable roster (P1) and when it relays a
-  // claimed DM (P4): a cross-peer leg forms only when BOTH endpoints are
-  // relayAllowed (symmetric gate). No broadcast/sync needed — nothing in the peer
-  // connection lifecycle depends on it; the roster push reads it live each tick.
   handle('peer:setRelayAllowed', (_e, id, on) => {
     const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
     const rec = peers.find((p) => String(p.id) === String(id));
@@ -1371,12 +917,7 @@ function registerIpcHandlers(deps) {
     log.info('peer', `${rec.label || id} relay ${on ? 'allowed' : 'disallowed'}`);
     return { ok: true };
   });
-  // Per-peer visibility selection. Renderer reads the whole map at startup and
-  // keeps a local copy fresh from setVisible responses.
   handle('peer:visible', () => uiSettings.get().peerVisible || {});
-  // names = array ⇒ restrict this peer to those names (empty = show none);
-  // names = null ⇒ delete the key (back to show-all). Sanitized through the
-  // same name regex the persistence layer enforces.
   handle('peer:setVisible', (_e, id, names) => {
     const map = { ...(uiSettings.get().peerVisible || {}) };
     if (names === null || names === undefined) {
@@ -1393,19 +934,13 @@ function registerIpcHandlers(deps) {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.control(name, !!on, (res) => {
-      // Persist the control claim on a successful take, drop it on a successful
-      // release — so it auto-re-takes across a restart of this app OR the box.
-      // (Mirrors peer:attach's inline persist.) A failed take never persists.
       if (res && res.ok) {
         if (on) rememberPeerControlled(id, name); else forgetPeerControlled(id, name);
       }
       resolve(res);
     });
   }));
-  // Renderer reads this once at startup to seed its control-restore mirror.
   handle('peer:controlledNames', () => uiSettings.get().peerControlled || {});
-  // Explicit drop of a persisted control claim — used when a restore re-acquire
-  // finds the session is held by someone else (stale claim, don't retry-loop).
   handle('peer:forgetControlled', (_e, id, name) => {
     forgetPeerControlled(id, name);
     return { ok: true };
@@ -1415,28 +950,16 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.resize(name, cols, rows, resolve);
   }));
-  // Host-level remote restart of a peer's Clodex (restart-only, no self-update:
-  // the operator git-pulls on the peer host, then triggers this to pick up the
-  // new code). Authority is the tunnel, same as every other peer RPC; the
-  // viewer fronts a confirm dialog for intentionality. The peer acks, then
-  // quits + relaunches; its offline/online blip rides the existing reconnect.
   handle('peer:restart', (_e, id) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.restart(resolve);
   }));
-  // Remote session create/kill on a peer — makes the Mac the cockpit for a
-  // headless box. Trust is the tunnel (settled); the viewer fronts a dialog
-  // (create) / confirm (kill) for intentionality. The ack carries the outcome.
   handle('peer:createSession', (_e, id, spec) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.createSession(spec || {}, resolve);
   }));
-  // Session-less catalogs for a New Session dialog targeting a peer (M5) — so its
-  // checklists render the BOX's skills/agents/prompts/tools, not the viewer's own
-  // libraries. Rides the box's 'create'/'create2' cap; the owner wraps the result
-  // as { ok:true, catalogs } and it's returned intact (renderer reads `.catalogs`).
   handle('peer:catalogs', (_e, id) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
@@ -1447,17 +970,11 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.killSession(String(name || ''), resolve);
   }));
-  // Remote session restart on a peer — plain restart (keeps history) or a
-  // fresh reload (new conversation, re-reads skills). The viewer fronts a
-  // confirm only for the fresh variant, mirroring the local hard-restart.
   handle('peer:restartSession', (_e, id, name, opts) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.restartSession(String(name || ''), opts || {}, resolve);
   }));
-  // Edit Session on a peer — read the box's editable args + catalogs, then apply
-  // an edited patch. Gated in the UI on the 'args' cap (+ online); old boxes 501
-  // and the affordance is hidden. Thin adapters over the peer-client request pair.
   handle('peer:sessionArgs', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
@@ -1468,9 +985,6 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.setSessionArgs(String(name || ''), patch || {}, resolve);
   }));
-  // Edit Skills on a peer — read the box's skill catalog, then persist an edited
-  // disabled/inject set. Same 'args' cap + online gate as Edit Session; thin
-  // adapters over the peer-client skill request pair.
   handle('peer:skillCatalog', (_e, id, name) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
@@ -1481,39 +995,27 @@ function registerIpcHandlers(deps) {
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.setSessionSkills(String(name || ''), disabledSkills, injectSkills, resolve);
   }));
-  // Popover data for a peer session — one kind-dispatched pull, answered by
-  // the owner from the same sources its own popups use.
   handle('peer:query', (_e, id, name, kind, args) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (!conn) return resolve({ ok: false, error: 'no such peer' });
     conn.query(name, String(kind || ''), args, resolve);
   }));
-  // Keystrokes: fire-and-forget like local pty-input; a failed send surfaces
-  // as the terminal simply not echoing.
   on('peer:input', (_e, id, name, data) => {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (conn) conn.input(name, String(data ?? ''), () => {});
   });
 
-  // Global default tool-deny set new sessions inherit (the "*" agent-default).
-  // An explicit [] is honored (deny nothing); separate store from uiSettings, so
-  // it gets its own setter. Returns the persisted set for the renderer to render.
   handle('defaults:setToolDeny', (_e, list) => {
     agentDefaults.setDefaultDeny(Array.isArray(list) ? list : []);
     return agentDefaults.getDefaultDeny();
   });
 
-  // Theme set from a renderer's Preferences picker. The sender already applied
-  // it locally, so skip echoing back to it; sync the other windows + menu.
   handle('theme:set', (e, name) => { setUiTheme(name, e.sender); });
 
   handle('wirescope:status', () => wirescope.status());
   handle('wirescope:start', () => wirescope.start());
   handle('wirescope:stop', () => wirescope.stop());
   handle('wirescope:restart', () => wirescope.restart());
-  // Capture-log size/reclaimable readout. A non-200 / missing-endpoint result
-  // (older proxy without /_prune) comes back ok:false → the renderer hides the
-  // whole capture-logs affordance (presence IS the capability).
   handle('wirescope:pruneInfo', async () => {
     try {
       const r = await ProxyClient.pruneInfo(wirescope.baseUrl());
@@ -1525,9 +1027,6 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
-  // Execute (or dry-run) a prune. opts: { olderThan, tier, scope, dryRun }.
-  // wirescope enforces the safety guards (skips active/warm/recent); clodex just
-  // relays and surfaces the result body.
   handle('wirescope:prune', async (_e, opts) => {
     const o = opts || {};
     if (!o.olderThan) return { ok: false, error: 'older_than required' };
@@ -1542,24 +1041,14 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // ── Managed Docker sandbox (sandbox.js, sandbox-plan.md [internal design doc, not in this repo] M2 / M6b P1) ──
-  // The engine's sandbox manager owns N box instances; these are thin relays.
-  // getSandbox(boxId) resolves an instance lazily (default: the shared 'sandbox'
-  // box), or null for an unknown id — withBox guards that so a bogus id yields an
-  // error payload rather than a throw. The boxId is an OPTIONAL trailing arg: the
-  // P1 renderer omits it, so every call resolves the shared box unchanged. Every
-  // result shape is otherwise the module's own — no reshaping here.
   const withBox = (boxId, fn) => {
     const s = getSandbox(boxId);
     if (!s) return { ok: false, error: `no such sandbox: ${boxId}` };
     return fn(s);
   };
-  // Docker detection is docker-WIDE, not box-scoped — it must NOT go through
-  // withBox. Routing it through a box meant that deleting the last sandbox left
-  // no box to resolve against, so detect returned {ok:false,'no such sandbox'},
-  // which the dialog mis-rendered as "Docker isn't installed" (the create-box
-  // gate then disabled itself). Route through the manager's cached probe, which
-  // answers regardless of how many boxes exist.
+  // Docker detection is docker-WIDE, not box-scoped: it must NOT go through
+  // withBox. Deleting the last sandbox leaves no box to resolve against, and the
+  // dialog mis-renders "no such sandbox" as "Docker isn't installed".
   handle('sandbox:detect', () => {
     const mgr = getSandboxManager();
     if (!mgr) return { ok: false, error: 'sandbox manager unavailable' };
@@ -1577,9 +1066,6 @@ function registerIpcHandlers(deps) {
   // but NEVER back out — setToken/clearToken return a boolean hasToken flag only.
   handle('sandbox:setToken', (_e, token, boxId) => withBox(boxId, (s) => s.setAuthToken(token)));
   handle('sandbox:clearToken', (_e, boxId) => withBox(boxId, (s) => s.clearAuthToken()));
-  // Box registry CRUD (M6b P2): the manager owns the list; these mint/drop rows.
-  // getSandboxManager is the same lazy accessor as getSandbox, exposing list/
-  // create/remove. A host without a manager simply has no box-list surface.
   handle('sandbox:listBoxes', () => (getSandboxManager() ? getSandboxManager().list() : []));
   handle('sandbox:createBox', (_e, id, label) => {
     const mgr = getSandboxManager();
@@ -1597,7 +1083,6 @@ function registerIpcHandlers(deps) {
     if (!s) return { ok: false, error: 'Session not found' };
     if (!s.agentType) return { ok: false, error: 'Export only works for agent sessions' };
 
-    // Resolve the JSONL file via the symlink
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     let jsonlPath;
     try {
@@ -1606,7 +1091,6 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: 'No transcript found yet — wait until the agent has responded at least once.' };
     }
 
-    // Ask user where to save
     const defaultPath = path.join(
       getDesktopPath(),
       `${name}-${new Date().toISOString().slice(0, 10)}.md`,
@@ -1627,9 +1111,6 @@ function registerIpcHandlers(deps) {
   });
 
   on('session:context-menu', (e, { name, cwd }) => {
-    // Quick prompt picker — set the session's system/append prompt refs without
-    // opening the Edit Session dialog. Persists immediately + applies on next
-    // (re)start; the renderer is told so it can offer to restart now.
     const entry = persistence.get(name) || {};
     const isAgent = entry.type === 'claude' || entry.type === 'codex';
     const sysPrompts = promptLibrary.list('system');
@@ -1685,7 +1166,6 @@ function registerIpcHandlers(deps) {
         enabled: !!cwd,
         click: () => {
           if (!cwd) return;
-          // Open Terminal.app at the cwd
           const { exec } = require('child_process');
           exec(`open -a Terminal "${cwd.replace(/"/g, '\\"')}"`);
         },
@@ -1695,8 +1175,6 @@ function registerIpcHandlers(deps) {
         label: 'Export Conversation as Markdown…',
         click: () => e.sender.send('session:context-action', { action: 'export', name }),
       },
-      // Agent-only: a template snapshots the config subset (type/cwd/args/proxy/
-      // tool+skill gating/strip/autocompact), which a bash session can't carry.
       ...(isAgent ? [{
         label: 'Export as Template…',
         click: () => e.sender.send('session:context-action', { action: 'exportTemplate', name }),
@@ -1709,16 +1187,10 @@ function registerIpcHandlers(deps) {
     ], e);
   });
 
-  // Peer session rows get their own menu — the verbs (attach/control/detach/
-  // hide) differ entirely from a local session's, so it's a separate template
-  // rather than an overload. State is supplied by the renderer (the source of
-  // truth for attach/control lives there, not in persistence); we only render.
   on('peer:context-menu', (e, st) => {
     const { id, name, online, attached, controlled, holder, canCreate, canArgs, hostLabel, type } = st || {};
     const act = (action) => () => e.sender.send('peer:context-action', { action, id, name });
     const template = [];
-    // Who holds it, when it's not us — informational, like the peer bar. Take
-    // control stays enabled (acquire is last-wins), matching the bar.
     if (holder && !controlled) {
       template.push({ label: `Controlled by ${holder}`, enabled: false });
       template.push({ type: 'separator' });
@@ -1735,13 +1207,6 @@ function registerIpcHandlers(deps) {
     }
     template.push({ type: 'separator' });
     template.push({ label: 'Hide from List', click: act('hide') });
-    // Host-level lifecycle on the peer — restart/reload/kill. All gated on the
-    // create capability (they ship together) + peer online. Restart mirrors the
-    // local pair: a plain restart (--resume, keeps history, no confirm) and a
-    // fresh reload (new conversation, re-reads skills, confirmed in the renderer
-    // like doHardRestart). Kill is the destructive removal (no resume).
-    // Edit Session — remote args editing (the 'args' cap). Opens the shared dialog
-    // populated from the box's catalogs; online-gated (needs a live read/respawn).
     if (canArgs) {
       template.push({ type: 'separator' });
       template.push({
@@ -1749,8 +1214,6 @@ function registerIpcHandlers(deps) {
         enabled: !!online,
         click: act('editArgs'),
       });
-      // Edit Skills rides the SAME 'args' cap. Skills are Claude-only (the local
-      // popover is gated on type==='claude'), so offer it for claude sessions only.
       if (type === 'claude') {
         template.push({
           label: `Edit Skills "${name}" on ${hostLabel || 'peer'}…`,
@@ -1766,8 +1229,6 @@ function registerIpcHandlers(deps) {
         enabled: !!online,
         click: act('restartRemote'),
       });
-      // Fresh reload = new conversation + skill re-read: meaningless for bash
-      // (no conversation/roster), so it's offered for agents only.
       if (type !== 'bash') {
         template.push({
           label: `Reload "${name}" on ${hostLabel || 'peer'} (fresh)…`,
@@ -1785,19 +1246,6 @@ function registerIpcHandlers(deps) {
     popupMenu(template, e);
   });
 
-  // Peer HEADER right-click: host-level actions (remote restart today). Distinct
-  // from the per-session menu above — restart is host-scoped. The label rides
-  // through as `name` so the renderer's confirm/toast can address the peer; the
-  // action reuses the same peer:context-action channel. Restart needs the peer
-  // online (a down peer has nothing to restart — the process-gone case is out
-  // of scope).
-  // Deploy target for a peer id — the SINGLE resolver both the popover's Update
-  // button (peer:deployConfig) and the header-menu "Update Clodex…" item read,
-  // so the folder-precedence rule lives in exactly one place. { sshHost, port,
-  // folder } for an ssh-reachable peer, or null (url-only / unknown id) so the
-  // caller hides Update. folder follows resolveDeployFolder: the box's live
-  // self-reported srcDir wins over the persisted deployFolder guess (a stale
-  // guess must not shadow live truth), which wins over '' (script default).
   function deployTargetFor(id) {
     const cfg = (uiSettings.get().peers || []).find((p) => p && p.id === id);
     if (!cfg || !cfg.sshHost) return null;
@@ -1814,8 +1262,6 @@ function registerIpcHandlers(deps) {
   on('peer:header-menu', (e, st) => {
     const { id, label, online, canCreate, sev, isBox } = st || {};
     const template = [];
-    // Create is gated on the peer advertising the 'create' capability (older
-    // peers 501 the endpoint); the renderer passes canCreate from st.caps.
     if (canCreate) {
       template.push({
         label: `New Session on ${label || 'peer'}…`,
@@ -1829,9 +1275,6 @@ function registerIpcHandlers(deps) {
       enabled: !!online,
       click: () => e.sender.send('peer:context-action', { action: 'restart', id, name: label }),
     });
-    // Managed sandbox box only: Rebuild recreates the container on the current
-    // code/image (the box "upgrade" op) — kept off the crowded action strip. A
-    // different op from Restart (which just bounces the same build), so both show.
     if (isBox) {
       template.push({
         label: `Rebuild ${label || 'sandbox'}`,
@@ -1839,12 +1282,6 @@ function registerIpcHandlers(deps) {
         click: () => e.sender.send('peer:context-action', { action: 'rebuild', id, name: label }),
       });
     }
-    // "Update Clodex on <box>…" re-runs the idempotent deploy script over ssh.
-    // Only offered for peers reached via an ssh host (a url-only peer has no ssh
-    // route) and only when online (nothing to update on an unreachable box).
-    // Same deployTargetFor resolver as the popover — reported srcDir wins. Also
-    // gated on severity (updateApplies): hidden for a same-version or ahead box,
-    // the renderer passes sev from the header row it already computed.
     const target = (online && updateApplies(sev)) ? deployTargetFor(id) : null;
     if (target) {
       template.push({ type: 'separator' });
@@ -1861,9 +1298,6 @@ function registerIpcHandlers(deps) {
     popupMenu(template, e);
   });
 
-  // Native confirm for remote restart — same native showMessageBox pattern as
-  // the local dialogs. The peer's sessions resume via the normal quit/restore
-  // lifecycle, so the copy says so.
   handle('dialog:confirmPeerRestart', async (_e, label) => {
     const result = await showMessageBox({
       type: 'question',
@@ -1876,8 +1310,6 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  // Native confirm for the in-place update (re-run the deploy script over ssh).
-  // Cancel default; the box's app restarts on success, so the copy says so.
   handle('dialog:confirmPeerUpdate', async (_e, label) => {
     const result = await showMessageBox({
       type: 'question',
@@ -1890,8 +1322,6 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  // Native confirm for the agent fallback after a failed deploy — opens a local
-  // ad-hoc Claude session to untangle the box. Cancel default.
   handle('dialog:confirmDeployFix', async (_e, sshHost) => {
     const result = await showMessageBox({
       type: 'question',
@@ -1904,9 +1334,6 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  // Native confirm for killing a session ON a peer — destructive (removes it on
-  // the remote box, no resume; there's no archive over the wire), distinct from
-  // local Detach/Hide. Names the host so it's unmistakably the remote one.
   handle('dialog:confirmPeerKill', async (_e, name, label) => {
     const result = await showMessageBox({
       type: 'warning',
@@ -1919,10 +1346,6 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  // Native confirm for a fresh peer reload — mirrors doHardRestart's copy
-  // (new conversation, CLI re-reads skills/tools/settings; old convo stays in
-  // 🕘 history). Plain peer restart has NO confirm, parity with the local plain
-  // restart; only the fresh variant (which drops the live conversation) asks.
   handle('dialog:confirmPeerReload', async (_e, name, label) => {
     const result = await showMessageBox({
       type: 'question',
@@ -1937,10 +1360,6 @@ function registerIpcHandlers(deps) {
     return result.response === 0;
   });
 
-  // The DELETE confirm (the ✕ / ⌘W gesture archives instead — no dialog). Delete
-  // forgets the session for good; a worktree-backed one additionally removes its
-  // checkout, so the confirm names the branch/path when there is one. Returns a
-  // bool; session:kill does the actual delete + worktree removal.
   handle('dialog:confirmKill', async (_e, name) => {
     const entry = persistence.get(name);
     const displayName = (entry && entry.label) || name;
@@ -1963,16 +1382,8 @@ function registerIpcHandlers(deps) {
     manager.write(name, data);
   });
 
-  // Renderer tells us it's ready — restore sessions for its workspace. The core
-  // moved to the electron-free session-restore.js leaf (Phase 2); main.js binds
-  // its module globals in restoreSessionsForWorkspace and injects it here, so this
-  // handler is just the workspace-of-sender resolution. Sessions already running
-  // (e.g. the default workspace on a second tray-opened window) come back as-is
-  // so the renderer renders them without double-spawning; failures come back as
-  // `{ failed: true }` entries (kept in persistence) for the retry/forget UI.
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
-  // Retry spawning a session that failed during restore
   handle('session:retrySpawn', async (e, name) => {
     const workspaceId = workspaceOfSender(e);
     const entry = persistence.list().find(s => s.name === name);
@@ -2005,17 +1416,13 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // "Forget" a session — remove from persistence without killing (it's not running)
   handle('session:forget', (_e, name) => {
     persistence.remove(name);
     return true;
   });
 
-  // Workspace management
   handle('workspace:list', () => workspaces.list());
   handle('workspace:current', (e) => workspaceOfSender(e));
-  // Per-workspace sidebar view state (group/sort/status/activity/search) —
-  // restored on window create, persisted on every toolbar change.
   handle('workspace:getView', (e) => {
     const w = workspaces.get(workspaceOfSender(e));
     return { ok: true, view: (w && w.view) || null };
@@ -2043,14 +1450,9 @@ function registerIpcHandlers(deps) {
   });
   handle('workspace:new', () => {
     const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    // Persist the record HERE, not only inside createWindow. The web host stubs
-    // createWindow (browser tabs self-navigate), so without this upsert the
-    // browser's New Workspace would jump to a phantom id that never reaches
-    // workspaces.json — absent from the switcher and gone at container relaunch.
-    // Desktop is behaviorally unchanged: createWindow's own `if (!ws)` upsert
-    // (main.js:272) now finds the record and no-ops, and the name matches exactly
-    // what that branch writes for a non-default id, so nothing user-visible moves.
-    // Return the id so the web caller can navigate to the freshly minted record.
+    // Persist the record HERE, not only inside createWindow: the web host stubs
+    // createWindow, so without this upsert a browser New Workspace jumps to an id
+    // that never reaches workspaces.json. Desktop's own upsert then no-ops.
     workspaces.upsert({ id, name: 'New Workspace', bounds: null });
     createWindow(id);
     refreshAppMenu();

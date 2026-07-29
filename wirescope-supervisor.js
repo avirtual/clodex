@@ -1,19 +1,5 @@
-// wirescope-supervisor.js — the WirescopeSupervisor (phase-1 of the wirescope
-// integration): detect-first adoption of a wirescope already answering on the
-// configured port, else spawn the vendored `uvicorn logproxy:app` in a Clodex-
-// managed venv under userData. Manages venv create/reinstall, survivor pickup
-// across app restarts (pidfile), and clean SIGTERM shutdown of only our child.
-//
-// FACTORY (M3 DI): reads main.js globals — the logger and ProxyClient (injected
-// by value) and uiSettings (injected as a getUiSettings() getter, since it is
-// only assigned in app.whenReady(), after this module is required). The two
-// electron seams — getUserDataPath() and isPackaged() — are injected as getter
-// fns (same whenReady-lazy pattern as session-manager), so this module holds NO
-// electron require and runs unchanged under a headless host. crypto/fs/path/
-// child_process are ordinary requires. Bodies are byte-identical modulo the +2
-// factory indent and the flagged seam lines.
-//
-// Spawns real processes + touches userData, so integration-only; no unit tests.
+// No electron require in this module: the two electron seams are injected as
+// getter fns so it runs unchanged under a headless host.
 
 const fs = require('fs');
 const path = require('path');
@@ -21,11 +7,6 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { isEnvTruthy, teeBlindBackend } = require('./claude-env');
 
-// Bind host for the managed uvicorn: loopback by default (the instance is
-// in-process — _base() and every probe stay 127.0.0.1). CLODEX_WIRESCOPE_HOST
-// overrides it; ONLY the web-frontend Docker image sets it to 0.0.0.0 so the
-// full-dashboard links can be published on a loopback-mapped host port. Pure +
-// exported so the arg construction is testable without spawning uvicorn.
 function wirescopeBindHost(env = process.env) {
   return env.CLODEX_WIRESCOPE_HOST || '127.0.0.1';
 }
@@ -33,25 +14,10 @@ function uvicornArgs(port, env = process.env) {
   return ['-m', 'uvicorn', 'logproxy:app', '--host', wirescopeBindHost(env), '--port', String(port)];
 }
 
-// Node-level env kill-switch (T49). Returns the human-readable reason wirescope
-// is gated OFF, or null when no gate applies. Two gates, checked in order:
-// - CLODEX_WIRESCOPE set to `off` (the documented deploy value) or an
-//   isEnvTruthy-falsy value (""/0/false — truthiness single-sourced in
-//   claude-env.js) → explicit opt-out. Unset, or set truthy, → no gate.
-//   Deployed nodes get this from the systemd drop-in / pod env / docker -e
-//   that `deploy --no-wirescope` writes.
-// - a tee-blind backend in the NODE-LEVEL env (CLAUDE_CODE_USE_BEDROCK/VERTEX
-//   via teeBlindBackend): Bedrock/Vertex traffic ignores ANTHROPIC_BASE_URL,
-//   so the tee would never see a byte — wirescope is provably useless. Node
-//   env ONLY, deliberately not the per-session settings chain: a mixed node
-//   (some sessions Bedrock) with node-level env unset keeps wirescope.
-//   DELIBERATE: a truthy CLODEX_WIRESCOPE (e.g. =on) does NOT override this
-//   gate — it only means "no explicit opt-out"; on a Bedrock/Vertex node the
-//   proxy would still see zero traffic, so there is nothing to force on.
-//   (Entry points keep these flags through scrubInheritedClaudeMarkers —
-//   they are on its survivor list — or this gate could never fire.)
-// Pure (env injected) so the gate matrix is unit-testable; callers pass
-// process.env at call time so a headless node's drop-in env is honored live.
+// A truthy CLODEX_WIRESCOPE does NOT override the tee-blind gate — Bedrock/Vertex
+// traffic ignores ANTHROPIC_BASE_URL, so there is nothing to force on.
+// The tee-blind check reads the NODE-level env only, never the per-session
+// settings chain: a node with some Bedrock sessions still keeps wirescope.
 function wirescopeEnvGate(env = process.env) {
   if (Object.prototype.hasOwnProperty.call(env, 'CLODEX_WIRESCOPE')) {
     const v = String(env.CLODEX_WIRESCOPE == null ? '' : env.CLODEX_WIRESCOPE).trim().toLowerCase();
@@ -63,24 +29,6 @@ function wirescopeEnvGate(env = process.env) {
 }
 
 function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDataPath, isPackaged }) {
-  // ---------------------------------------------------------------------------
-  // WirescopeSupervisor (phase-1): run the vendored wirescope, zero setup
-  // ---------------------------------------------------------------------------
-  // Detect-first: if a wirescope is already answering on the configured port we
-  // ADOPT it (never spawn a second — that's how the user's shared :7800 stays the
-  // single ledger). Otherwise spawn `uvicorn logproxy:app` with the PORT +
-  // LOG_DIR + WARMTH_DB triple so a managed instance is fully owner-scoped and
-  // coexists with anything else. SIGTERM is a clean shutdown (uvicorn graceful +
-  // atexit writer drain). We only ever stop OUR child.
-  //
-  // Phase-1: the source defaults to the vendored snapshot shipped with Clodex
-  // (scripts/vendor-wirescope.sh → vendor/wirescope, pinned by VENDOR.json); an
-  // explicit wirescopeDir setting still wins for users tracking their own tree.
-  // Dependencies live in a Clodex-managed venv under userData, created on first
-  // start and re-installed when the source's requirements.txt changes. Requires
-  // a system python3 (macOS: xcode-select --install); everything degrades
-  // gracefully without one — sessions fall back to wire → Anthropic direct.
-  // See https://github.com/avirtual/wirescope and .claude/memory.md.
   class WirescopeSupervisor {
     constructor() {
       this.child = null;       // ChildProcess of a managed instance, else null
@@ -93,9 +41,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
 
     _base(port) { return `http://127.0.0.1:${port}`; }
 
-    // Base URL of the configured managed instance (for machine-wide endpoints
-    // like /_prune that aren't tied to a routed session). Doesn't probe — the
-    // caller's request surfaces a down proxy as an error.
     baseUrl() { return this._base(getUiSettings().get().wirescopePort || 7800); }
 
     _dirs() {
@@ -103,7 +48,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       return { logDir: path.join(root, 'logs'), warmthDb: path.join(root, 'warmth.sqlite') };
     }
 
-    // dir looks like a wirescope checkout if it has the logproxy entrypoint.
     _looksValid(dir) {
       try { return !!dir && fs.existsSync(path.join(dir, 'logproxy.py')); } catch { return false; }
     }
@@ -118,9 +62,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       return this._looksValid(dir) ? dir : null;
     }
 
-    // Source resolution: an explicit user checkout wins; otherwise the vendored
-    // snapshot. A set-but-invalid user dir is an error, not a silent fallback —
-    // the user pointed somewhere on purpose.
     _source() {
       const s = getUiSettings().get();
       const dir = s.wirescopeDir || '';
@@ -135,11 +76,8 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         : { dir: null, origin: null, error: 'No wirescope source (no vendored copy in this build; set a source directory)' };
     }
 
-    // Version the resolved source would run if (re)spawned — for staleness
-    // detection against a running instance. Only meaningful for the vendored
-    // snapshot: RELEASE is written by scripts/vendor-wirescope.sh and echoed
-    // verbatim by /_identity, so string equality is exact. A user checkout
-    // self-reports however it likes — no comparison, no false staleness.
+// Vendored only: a user checkout self-reports its version however it likes,
+// so comparing it would produce false staleness.
     _sourceVersion(src) {
       if (!src || src.origin !== 'vendored' || !src.dir) return null;
       try { return fs.readFileSync(path.join(src.dir, 'RELEASE'), 'utf8').trim(); } catch { return null; }
@@ -180,9 +118,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       });
     }
 
-    // Managed venv under userData, stamped with the source's requirements hash
-    // so a vendored upgrade (or a user checkout's dep bump) re-installs once and
-    // an unchanged one is a two-stat no-op.
     async _ensureVenv(srcDir) {
       const reqPath = path.join(srcDir, 'requirements.txt');
       let reqHash = '';
@@ -223,13 +158,8 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       }
     }
 
-    // Autostart is wanted only when sessions would actually route through the
-    // managed instance: proxy enabled AND proxyUrl pointing at the managed local
-    // port. A remote/custom proxyUrl means the user runs their own thing.
-    // The node-level env gate (CLODEX_WIRESCOPE=off / Bedrock-Vertex env) WINS
-    // over proxyEnabled=true — a deployed node's drop-in beats a remote viewer
-    // flipping the pref. process.env is read at CALL time (headless nodes get
-    // env from the systemd drop-in / pod env, live on restart).
+// process.env is read at CALL time (never hoisted): a headless node picks up
+// its systemd drop-in / pod env live on restart.
     autoStartWanted() {
       if (wirescopeEnvGate(process.env)) return false;
       const s = getUiSettings().get();
@@ -248,8 +178,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       const base = this._base(port);
       const src = this._source();
       const probe = await ProxyClient.probe(base).catch(() => null);
-      // "Ours" = the child of this launch, or a surviving instance from a
-      // previous launch (pidfile) — both count as managed, not external.
       const alive = !!(this.child && this.child.exitCode === null && !this.child.killed)
         || !!this._survivorPid();
 
@@ -259,10 +187,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       else if (alive || this._startChain) state = 'starting';
       else state = 'stopped';
 
-      // Managed instance serving a different version than the vendored source
-      // would spawn — the launch-time auto-restart normally clears this; it
-      // survives only if that path was latched or raced, and the prefs
-      // Restart button is the manual clear.
       const wantVersion = this._sourceVersion(src);
       const stale = !!(alive && probe && probe.version && wantVersion && probe.version !== wantVersion);
 
@@ -276,22 +200,11 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         stale,
         managed: alive,
         error: this.lastError,
-        // WHY autostart is gated off (T49): the node-level env kill-switch
-        // reason string, or null. Additive — the GUI toggle isn't a mystery
-        // on a CLODEX_WIRESCOPE=off / Bedrock node.
         envGate: wirescopeEnvGate(process.env),
       };
     }
 
-    // Fully async start chain: (venv ensure →) spawn. Returns immediately —
-    // first run installs the venv (python3 -m venv + pip install), which can
-    // take tens of seconds; the prefs dialog polls progress via status().
-    // Returns { ok, state, error? }. Adopts an existing wirescope rather than
-    // spawning a duplicate. Spawn errors surface asynchronously via status().
     async start() {
-      // Env-gated (T49): refuse with the reason, never a silent no-op — the
-      // same { ok:false, error } shape a missing source reports. Manual too:
-      // the drop-in/pod env is the node operator's word, it beats the pref.
       const gate = wirescopeEnvGate(process.env);
       if (gate) {
         this.lastError = `wirescope ${gate}`;
@@ -301,19 +214,12 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       const port = s.wirescopePort || 7800;
       const base = this._base(port);
 
-      // Detect-first: already serving here? Reattach if it's our survivor from
-      // a previous launch, adopt if it's someone else's — never spawn a second.
       const probe = await ProxyClient.probe(base).catch(() => null);
       if (probe) {
         this.lastError = null;
         const ours = !!this._survivorPid();
-        // Vendor-bump pickup: a managed survivor deliberately outlives the GUI,
-        // so after a re-vendor it keeps serving the OLD code forever unless
-        // someone kills it. If the survivor's reported version differs from the
-        // vendored RELEASE, restart it in place — once per app launch (the
-        // latch), so an unexpected version string can never restart-loop.
-        // Adopted external instances are someone else's process: never touched,
-        // whatever their version.
+// The _upgradeTried latch is once per app launch — without it an unexpected
+// version string restart-loops. Adopted external instances are never touched.
         if (ours && !this._upgradeTried) {
           const want = this._sourceVersion(this._source());
           if (want && probe.version && probe.version !== want) {
@@ -350,11 +256,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     _pidFile() { return path.join(getUserDataPath(), 'wirescope', 'wirescope.pid'); }
     _logFile() { return path.join(this._dirs().logDir, 'uvicorn.log'); }
 
-    // The pid of a still-running managed instance from a PREVIOUS app launch.
-    // Guarded by port match: a pidfile for a different port is stale config,
-    // not our instance (pid-reuse misfire is accepted as a local-tool risk —
-    // the exposure is one SIGTERM to a same-uid process recorded in our own
-    // pidfile).
     _survivorPid() {
       try {
         const rec = JSON.parse(fs.readFileSync(this._pidFile(), 'utf8'));
@@ -393,15 +294,9 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
             ...process.env,
             PORT: String(port), LOG_DIR: logDir, WARMTH_DB: warmthDb,
             PYTHONDONTWRITEBYTECODE: '1',
-            // Canonical start_proxy.sh defaults (verified against the script,
-            // 2026-07-03) — bare uvicorn leaves them OFF, which silently drops
-            // deployment behavior the fleet has always run with. Most load-
-            // bearing: WARMTH_BLOCK_COLD_PING (a ping/hold against an expired
-            // prefix must DECLINE, not re-write the full prefix at premium)
-            // and WS_OMIT_DEFAULT (subagent spawns don't inherit the userEmail
-            // block; main lines carry it unless the agent omits explicitly).
-            // Explicit user env overrides win (`?? '…'` mirrors the script's
-            // ${VAR-default}: an exported 0 sticks).
+// Canonical start_proxy.sh defaults — bare uvicorn leaves them OFF.
+// `?? '…'` mirrors the script's ${VAR-default}: an explicitly exported 0
+// sticks (`||` would silently re-enable the default).
             STRIP_COMPACT_CACHE: process.env.STRIP_COMPACT_CACHE ?? '1',
             WARMTH_BLOCK_COLD_PING: process.env.WARMTH_BLOCK_COLD_PING ?? '1',
             WARMTH_LOG_FILE: process.env.WARMTH_LOG_FILE ?? '1',
@@ -442,9 +337,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       child.unref();
     }
 
-    // Stop a Clodex-managed instance — the live child of this launch, or a
-    // survivor from a previous one (via pidfile). Never an adopted/external
-    // instance: those have no pidfile of ours.
     stop() {
       if (this.child && this.child.exitCode === null) {
         try { this.child.kill('SIGTERM'); } catch {}
