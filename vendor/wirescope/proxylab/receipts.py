@@ -23,6 +23,7 @@ import time
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
+from proxylab import hints_native as hints_native_mod
 from proxylab import meta as meta_mod
 from proxylab import subs as subs_mod
 from proxylab import warmth as warmth_mod
@@ -58,6 +59,9 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
     (same vocabulary as report._line_key)."""
     # back-compat: callers that pass only title_call get the old behavior
     side_call = title_call if side_call is None else side_call
+    # Feed the upstream-health hint provider: every forwarded outcome, so the
+    # "upstream is shedding" fact is measured from real traffic, not a probe.
+    hints_native_mod.note_outcome(status_code)
     if is_messages:
         usage = billing_mod._parse_usage_from_sse(blob)
         meta = billing_mod._parse_response_meta(blob)

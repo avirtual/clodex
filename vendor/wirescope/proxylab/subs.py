@@ -367,6 +367,26 @@ class _SubTee:
 
 
 # --- turn.completed assembly ---------------------------------------------------
+def _hints_receipt(session_id):
+    """Tail-hint attribution for the turn.completed receipt: which hint ids rode
+    the last request of this session, their sources, and the uncached token cost.
+    Imported lazily — subs must not gain a hard dependency on the hints registry
+    (a module creates only its own tables and knows only what it must)."""
+    if not session_id:
+        return None
+    try:
+        from . import hints as hints_mod
+        log = hints_mod.last_injection(session_id)
+    except Exception:
+        return None
+    if not log or not log.get("hint_ids"):
+        return None
+    return {"hint_ids": log["hint_ids"], "sources": log.get("sources"),
+            "chars": log.get("chars"), "est_tokens": log.get("est_tokens"),
+            "mode": log.get("mode"), "uncached": True,
+            "placement": hints_mod.placement_report(session_id)}
+
+
 def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
                                   stop, status_code, text, role, title_call,
                                   session_totals, context):
@@ -408,7 +428,12 @@ def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
                      "unpriced": bool(bill.get("unpriced"))},
             "session_totals": totals,
             "context": ctx,
-            "warmth": warm}
+            "warmth": warm,
+            # What tail hints rode THIS request, and what they cost. Attribution
+            # is a correctness property: a hint that changes behavior with no
+            # record of firing makes the change unattributable. None when the
+            # registry was empty (the resting case).
+            "hints": _hints_receipt(session_id)}
     return dispatch("turn.completed", agent, session_id, request_id, data,
                     subs=subs)
 

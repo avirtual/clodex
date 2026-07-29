@@ -254,6 +254,11 @@ def _restore_state():
     _RESTORED["hint_overrides"] = _restore_hint_overrides()
     _RESTORED["strip_guard_latches"] = _restore_strip_guard_latches()
     _RESTORED["rider_latches"] = _restore_rider_latches()
+    # AGENT-scoped hints only. Session-scoped FACTS are deliberately not
+    # persisted and so cannot be restored — a fact that survived a restart would
+    # be lying about live state (see hints.py module docstring).
+    from proxylab import hints as hints_mod
+    _RESTORED["agent_hints"] = hints_mod.load_agent_hints()
     print(f"[restore] holds={_RESTORED['holds']} "
           f"last_requests={_RESTORED['last_requests']} (auth-less until live "
           f"traffic) totals={'reloaded' if _RESTORED['totals'] else 'fresh'} "

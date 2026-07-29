@@ -6,14 +6,19 @@
 # tree, which is a live agent's dirty workspace. Writes VENDOR.json so the
 # shipped copy is traceable to an exact upstream commit.
 #
-# Usage: scripts/vendor-wirescope.sh [ref]        (default: the pinned REF below)
+# Usage: scripts/vendor-wirescope.sh [ref]        (default: re-vendor the current pin)
 #        WIRESCOPE_SRC=/path/to/checkout scripts/vendor-wirescope.sh v0.6.14
 set -euo pipefail
 
-REF="${1:-v0.6.37}"
 SRC="${WIRESCOPE_SRC:-$HOME/projects/proxy-lab}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/vendor/wirescope"
+
+# Default comes FROM the existing pin, never a literal here: a hardcoded default
+# is a second writer for the ref and drifts silently, so a bare run would report
+# success while downgrading the vendored payload.
+REF="${1:-$(sed -n 's/.*"ref": "\([^"]*\)".*/\1/p' "$DEST/VENDOR.json")}"
+[ -n "$REF" ] || { echo "error: no ref given and none readable from $DEST/VENDOR.json" >&2; exit 1; }
 PAYLOAD=(logproxy.py proxylab requirements.txt LICENSE)
 
 [ -d "$SRC/.git" ] || { echo "error: no git checkout at $SRC (set WIRESCOPE_SRC)" >&2; exit 1; }

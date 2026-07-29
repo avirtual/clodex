@@ -384,6 +384,7 @@ def _sweep_state(now=None):
     # into transforms' own sticky store for hygiene is consistent.
     from proxylab import transforms as _transforms_mod
     from proxylab import fold as _fold_mod
+    from proxylab import hints as _hints_mod
     for sid in stale:
         # companion debug state rides the same staleness verdict (since the
         # /_end redesign nothing else deletes it; ended markers + session_meta
@@ -396,6 +397,7 @@ def _sweep_state(now=None):
         _transforms_mod._ws_forget(sid)   # sticky wirescope spawn memory
         _transforms_mod._marker_state_forget(sid)   # owned-marker anchor memory
         _fold_mod._forget(sid)            # fold maps + override
+        _hints_mod.forget(sid)            # transient session facts + attribution
         meta_mod.writer_mod._forget_session_fp(sid)   # main-line fingerprint
     purged = heads = lr_aged = busts = 0
     try:

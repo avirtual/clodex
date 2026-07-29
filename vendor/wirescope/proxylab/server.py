@@ -16,6 +16,8 @@ from proxylab import canary as canary_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
 from proxylab import fold as fold_mod
+from proxylab import hints as hints_mod
+from proxylab import hints_native as hints_native_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
@@ -1087,6 +1089,77 @@ async def handler(request: Request) -> Response:
         print(f"[hint] agent={ag} override={new} (global={gdef})", flush=True)
         return Response(json.dumps(_hbody(new)), media_type="application/json")
 
+    # ---- /_hints — the tail-hint registry (see proxylab/hints.py) -------------
+    # GET    /_hints[?agent=<route>][&session=<id>]  -> resolved set + provenance
+    # POST   /_hints?agent=<route>   {hints:[{id,text[,ttl_s]}], mode:merge|replace}
+    # POST   /_hints?session=<id>    {hints:[{id,text,ttl_s}]}   ttl_s REQUIRED
+    # POST   /_hints?session=<id>&native=upstream_health,context_pressure
+    # DELETE /_hints?agent=|session=[&id=<hint-id>]  -> one hint, or the scope
+    # Scope split is by WHO OWNS THE GROUND TRUTH: agent-scoped = constant
+    # prohibitions (persisted, route-keyed, survives /clear); session-scoped =
+    # transient facts (IN-MEMORY, never persisted — a fact that survives a restart
+    # is lying about live state; ttl REQUIRED so nobody has to remember to
+    # retract); native = facts the PROXY measures (consumer enables by name, the
+    # proxy owns the text + freshness, single-sourced). Body convention: HTTP
+    # status = request validity, outcome in the JSON. Oversized sets are DECLINED,
+    # never truncated (a truncated hint reads as present and isn't).
+    if request.url.path.rstrip("/") == "/_hints":
+        q = request.query_params
+        ag, sess = q.get("agent"), q.get("session")
+        if request.method == "GET":
+            if not ag and not sess:
+                return Response(json.dumps({"ok": False,
+                                "reason": "need ?agent= or ?session="}),
+                                status_code=400, media_type="application/json")
+            body = {"ok": True, **hints_mod.read_scope(agent=ag, session=sess)}
+            if sess:
+                body["effective"] = [
+                    {k: v for k, v in h.items() if k != "set_at"}
+                    for h in hints_mod.effective(sess, ag)]
+                body["available_native"] = sorted(hints_native_mod.PROVIDERS)
+                # placement tallies: makes "the system_tail fallback was never
+                # exercised" distinguishable from "it was exercised and worked".
+                # A clean run with fallback_exercised:false proves NOTHING about
+                # that path, however healthy the session looks.
+                body["placement"] = hints_mod.placement_report(sess)
+            return Response(json.dumps(body, indent=2),
+                            media_type="application/json")
+        if request.method == "DELETE":
+            if not ag and not sess:
+                return Response(json.dumps({"ok": False,
+                                "reason": "need ?agent= or ?session="}),
+                                status_code=400, media_type="application/json")
+            code, body = hints_mod.clear_hints(agent=ag, session=sess,
+                                               hint_id=q.get("id"))
+            return Response(json.dumps(body), status_code=code,
+                            media_type="application/json")
+        if request.method == "POST":
+            native = q.get("native")
+            if native is not None:
+                if not sess:
+                    return Response(json.dumps({"ok": False,
+                                    "reason": "native hints need ?session="}),
+                                    status_code=400, media_type="application/json")
+                names = [x for x in re.split(r"[,\s]+", native) if x]
+                code, body = hints_mod.set_native(sess, names)
+                return Response(json.dumps(body), status_code=code,
+                                media_type="application/json")
+            try:
+                payload = json.loads(await request.body() or b"{}")
+            except Exception as e:
+                return Response(json.dumps({"ok": False,
+                                "reason": f"unparseable JSON body: {e}"}),
+                                status_code=400, media_type="application/json")
+            mode = (q.get("mode") or "merge").lower()
+            if mode not in ("merge", "replace"):
+                return Response(json.dumps({"ok": False,
+                                "reason": "mode must be merge|replace"}),
+                                status_code=400, media_type="application/json")
+            code, body = hints_mod.set_hints(payload, agent=ag, session=sess,
+                                             mode=mode)
+            return Response(json.dumps(body, indent=2), status_code=code,
+                            media_type="application/json")
+
     # ---- THROWAWAY PROTOTYPE: POST /_deliver?session= — mid-flight DM inject ---
     # Enqueue an opaque `text` for injection into the session's NEXT request
     # (double-reaction test; scratch port only, gated by DELIVER_PROTOTYPE). This
@@ -1517,6 +1590,30 @@ async def handler(request: Request) -> Response:
                     print(f"[hold] #{n} {he['action']} -> "
                           f"{'ARMED ' + str(he.get('hours') or '') if he.get('armed') else 'not armed'}"
                           f" (forwarding; model echoes the ack)", flush=True)
+            # TAIL HINTS: append the effective hint set as a NEW trailing block
+            # on the last user message. Runs after every marker-touching
+            # transform (pin / own-mobile / the budget clamp) so it sees the
+            # FINAL layout and can assert its safety invariant — the block must
+            # land strictly deeper than every cache_control marker, else it'd sit
+            # inside a cached segment and bust it every turn. Uncached by design
+            # (that's what makes a hint editable without paying for the edit) and
+            # never reaches the CLI transcript. Registry empty at rest -> no-op.
+            # (session_id is resolved fully further down — derive it here the
+            # same cheap way OWN_MOBILE_MARKER does.)
+            if upstream_path.split("?")[0].endswith("/v1/messages"):
+                th = hints_mod.inject(
+                    obj, agent=agent,
+                    session_id=(writer_mod._session_ids(obj) or [None])[0])
+                if th:
+                    record["tail_hints"] = th
+                    if th.get("hint_ids"):
+                        changed = True
+                        print(f"[hints] #{n} {agent} +{len(th['hint_ids'])} "
+                              f"({th['chars']}ch, ~{th['est_tokens']} tok, "
+                              f"uncached) {th['hint_ids']}", flush=True)
+                    else:
+                        print(f"[hints] #{n} {agent} DECLINED: "
+                              f"{th.get('declined')}", flush=True)
             # THROWAWAY PROTOTYPE (scratch port only, DELIVER_PROTOTYPE): inject
             # any pending mid-flight DM as a trailing block — LAST in the chain so
             # it's the final text the model reads. Inert unless the flag is set.
