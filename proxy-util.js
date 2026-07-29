@@ -1,13 +1,6 @@
-// Pure, dependency-free helpers for the wirescope integration.
-// Kept out of main.js so the identity lifecycle (the reviewed risk surface)
-// and the /_status field shaping can be unit-tested without booting Electron.
-// See https://github.com/avirtual/wirescope (INTEGRATION.md) for the contract.
 
 const crypto = require('crypto');
 
-// Namespaces Clodex's agents in a proxy shared with other tools (workbench
-// etc. run on the same machine). Records are prefiltered on this prefix; the
-// real bind is exact equality against a session's minted proxyAgent.
 const PROXY_AGENT_PREFIX = 'clodex-';
 
 // Mint a collision-free proxy agent id: clodex-<name>-<nonce>. The nonce makes
@@ -21,11 +14,6 @@ function mintProxyAgent(name, taken, rand = () => crypto.randomBytes(4).toString
   return id;
 }
 
-// Decide a session's proxy agent id per the lifecycle policy:
-//   fresh create / fork / legacy entry → mint a new nonce (fresh ledger)
-//   resume / restart / restore / clear → reuse the persisted id (continuity)
-// `existing` is the persisted entry (or null on fresh create); `taken` is the
-// set of already-used ids for uniqueness.
 function resolveProxyAgentId({ name, fork, existing, taken, rand }) {
   if (!fork && existing && existing.proxyAgent) return existing.proxyAgent;
   return mintProxyAgent(name, taken, rand);
@@ -52,44 +40,11 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
-// ---------------------------------------------------------------------------
-// Why a spawn falls back to `--strict-mcp-config` (t45).
-//
-// The `disableClaudeDesignMcp` setting sheds the auto-injected claude.ai
-// `claude_design` connector (~4k tok/turn). The PRIMARY mechanism is surgical
-// and lives on the wire: a strip-capable wirescope removes only that server's
-// tool family and keeps every real project/user MCP. `--strict-mcp-config` is
-// the FALLBACK, and it is all-or-nothing — the CLI's own help says it uses
-// "Only … MCP servers from --mcp-config, ignoring all other MCP
-// configurations", and Clodex passes it with no --mcp-config, i.e. the empty
-// set. So on the fallback path a user's real MCP servers go too.
-//
-// That trade is documented in the preferences hint for the UNROUTED case. What
-// was invisible until now: a ROUTED session also takes the fallback when the
-// wire is too old to advertise strip_mcp, or when the probe fails at the spawn
-// instant. The user reads "routed = handled by the proxy" and is, in those two
-// cases, wrong — with nothing anywhere saying so.
-//
-// This function is the single source of BOTH the decision and its reason, so
-// the log can never disagree with what actually happened. Returns null when the
-// wire will do the surgical strip (no fallback, and deliberately NO log line —
-// a signal that fires on the healthy path is one people learn to ignore), else
-// the reason the fallback is being taken. The three reasons are kept apart
-// because their remedies differ; collapsing them would repeat this ticket's own
-// bug one level up.
-//
-//   'unrouted'     no proxy at all — the documented, expected case
-//   'wire-no-strip' routed, but the wire advertises no strip_mcp for
-//                  claude_design (too old, or a strip-off/kill-switch port).
-//                  Remedy: deploy a newer wire / use a stripping port.
-//   'probe-failed' routed, but /_identity did not answer as a recognized
-//                  wirescope at the spawn instant. Transient by nature (this is
-//                  the fail-open path: a proxy hiccup must never block a spawn).
-//                  Remedy: restart the session. Note this also covers "something
-//                  else is listening on that port", which wants the same look.
-//
-// `probe` is ProxyClient.probe()'s resolved value — null when unreachable or
-// unrecognized; the caller owns the try/catch, so a throw arrives here as null.
+// --strict-mcp-config is passed with no --mcp-config, i.e. the empty set: on
+// this fallback path the user's real project/user MCP servers are dropped too.
+// The surgical alternative is a strip-capable wire removing only claude_design.
+// The reasons are kept distinct because their remedies differ.
+// `probe` is null when unreachable or unrecognized (caller owns the try/catch).
 function strictMcpReason(proxyBase, probe) {
   if (!proxyBase) return 'unrouted';
   if (!probe) return 'probe-failed';
@@ -99,48 +54,22 @@ function strictMcpReason(proxyBase, probe) {
   return 'wire-no-strip';
 }
 
-// One line of user-facing prose per reason, for the IPC-log broadcast. Kept
-// beside the reasons so a new reason cannot be added without one, and each
-// carries its own remedy — the whole point of not collapsing them.
 const STRICT_MCP_EXPLANATION = {
   'unrouted': 'session is not routed through a wirescope',
   'wire-no-strip': 'the wire does not strip claude_design — deploy a newer wirescope, or use a stripping port',
   'probe-failed': 'the wire did not answer at spawn — restart the session to retry',
 };
 
-// A managed sandbox box publishes its wirescope on a host-reachable loopback port
-// and advertises it via CLODEX_WIRESCOPE_PUBLIC_URL. peerProxyView strips
-// base/sessionId for a generic peer — its proxyBase is on the OWNER's loopback,
-// unreachable from the viewer — but a BOX's public URL is reachable from the host,
-// so the box should surface it (with the live sessionId) to light the viewer's
-// wirescope session link. Gated on the box's own wirescope actively tracking the
-// session (p.base && p.sessionId — the same gate the cost/bust/report query chips
-// use), so the link never points at a session wirescope isn't following. Returns
-// { base, sessionId } to merge into the peer view, or null (unset publicUrl — the
-// generic-peer case — or no live base/sessionId). Trailing slashes trimmed, matching
-// web-host's proxyBase→public rewrite.
+// The owner's proxyBase is on their loopback and unreachable from a viewer; a
+// box's CLODEX_WIRESCOPE_PUBLIC_URL is host-reachable, so only that may be
+// surfaced to peers. Gated on a live base+sessionId so the link never points
+// at a session wirescope isn't tracking.
 function boxWirescopeView(p, publicUrl) {
   const base = (publicUrl || '').trim().replace(/\/+$/, '');
   if (!base || !p || !p.base || !p.sessionId) return null;
   return { base, sessionId: p.sessionId };
 }
 
-// Normalize one /_status `sub_agents[]` entry (a Task/background subagent that
-// shares the parent's session_id on the wire) into the renderer's child-row
-// shape. `key` is the instance key (agent_id when the wire carried the
-// x-claude-code-agent-id header, else role) — it's BOTH the row key and the
-// `/_subagents?child=` detail param, identical by construction (wirescope
-// contract). Returns null for an unkeyable/garbage entry so the caller filters.
-// `last_active_s` is a server-computed fact (now - last_seen, dodges clock skew
-// between the proxy and us); we fall back to our own clock only on a pre-add
-// proxy that doesn't emit it yet. Running/idle/done + aging are POLICY and live
-// entirely renderer-side — we surface raw facts only (same split as /_health).
-// Child-row label, most-specific-first: an explicit display_name; else the
-// name part of agent_id (a spawn named through the agent-id header carries the
-// given name there — the `@session-…` suffix is a per-spawn disambiguator,
-// noise for display) unless that part is just a UUID/hex blob; else the role
-// (informative for built-ins like Plan/Explore, whose agent_id IS a bare
-// UUID); else the key. Presentation only — no classification happens here.
 function subagentLabel(s, key) {
   if (typeof s.display_name === 'string' && s.display_name) return s.display_name;
   const idName = typeof s.agent_id === 'string' ? s.agent_id.split('@')[0] : '';
@@ -176,35 +105,16 @@ function shapeSubagent(s, now) {
   };
 }
 
-// --- Auto-compact-before-cold ------------------------------------------------
-// The moment before the prompt cache expires is the cheapest possible time to
-// compact: the compact turn re-reads the big context at cache-READ prices, and
-// the next real turn cache-writes only the small summary. Doing nothing pays a
-// full cache-write over the whole context on wake-up anyway — so when a session
-// is about to go cold with a heavy context and no keep-warm hold, fire /compact
-// preemptively. Policy (clodex-side; wirescope only supplies the warmth/context
-// FACTS in the poll payload):
-//   - enabled: per-session, default ON (opt-out persisted as autoCompact:false)
-//   - warm and expiring within the headroom band (see headroomBand), no hold
-//     (keep-warm owns that moment — the two are alternatives for the same event)
-//   - context >= MIN_INPUT_TOKENS (small contexts aren't worth a lossy compact)
-//   - atPrompt: the last main-line stop was terminal (stop.is_turn). A paused
-//     turn that went quiet is usually a PERMISSION DIALOG — an injected Enter
-//     there would answer the dialog, so never fire without this latch.
-//   - INPUT_QUIET_MS since the user's last keystroke in that pane (the Ctrl-U
-//     in _injectText would eat a half-typed draft)
-//   - COOLDOWN_MS between fires (the 5s poll must not machine-gun /compact)
-//
-// Headroom band history: WARMTH_HEADROOM_S was a FIXED 60s, tuned when the proxy
-// served a ~300s TTL (60s = the last 20% = a sane "about to expire, act now"
-// band). Production wirescope moved to ttl_s=3600 (1h) and the constant never
-// followed — 60s became the last 1.6% of a warm lifetime, a band the 5s poll
-// essentially never sampled (6552 telemetry samples: zero warm-with-low-remaining
-// hits; sessions read warm-at-~full then snapped to cold-at-0.0). Auto-compact
-// had therefore NEVER fired in production. Fix: a TTL-RELATIVE band — a fraction
-// of the actual ttl_s, clamped to [floor, max] — so it scales with whatever TTL
-// the proxy serves. The 60s floor preserves the exact old semantics at the old
-// ~300s TTL (0.15*300 = 45 → clamps up to 60).
+// Auto-compact fires just before the prompt cache expires: the compact turn
+// re-reads context at cache-READ prices and the next real turn cache-writes
+// only the summary.
+// atPrompt is required because a paused turn that went quiet is usually a
+// PERMISSION DIALOG — an injected Enter there would answer the dialog.
+// INPUT_QUIET_MS exists because the inject path's Ctrl-U eats a half-typed draft.
+// The headroom band must stay TTL-relative: it was a flat 60s, and when the
+// proxy moved to ttl_s=3600 that became the last 1.6% of the warm lifetime,
+// which the 5s poll never sampled — auto-compact never fired. The 60s floor
+// reproduces the old band at the old ~300s TTL.
 const AUTO_COMPACT = {
   MIN_INPUT_TOKENS: 100_000,
   WARMTH_HEADROOM_S: 60,      // floor (and fallback when ttl_s is unknown)
@@ -214,34 +124,19 @@ const AUTO_COMPACT = {
   COOLDOWN_MS: 600_000,
 };
 
-// The remaining_s threshold at/under which a warm session is "about to cool".
-// TTL-relative (HEADROOM_FRAC of ttl_s), clamped to [floor, max]. A missing or
-// non-numeric ttl_s degrades to the flat floor — never NaN the comparison.
 function headroomBand(ttl_s) {
   if (typeof ttl_s !== 'number' || !(ttl_s > 0)) return AUTO_COMPACT.WARMTH_HEADROOM_S;
   const frac = AUTO_COMPACT.HEADROOM_FRAC * ttl_s;
   return Math.min(Math.max(frac, AUTO_COMPACT.WARMTH_HEADROOM_S), AUTO_COMPACT.HEADROOM_MAX_S);
 }
 
-// Human-vs-terminal-chatter classifier for PTY-bound data. xterm doesn't only
-// forward keystrokes: when the CLI enables focus reporting (DECSET 1004 — the
-// Claude CLI does) every pane focus/blur emits \x1b[I / \x1b[O through the same
-// onData path, and terminal query replies (cursor position, device attributes,
-// OSC color reports) arrive with no human at the keyboard at all. Treating
-// those as "a human touched this pane" killed the atPrompt latch whenever the
-// user merely LOOKED at a session — an idle agent never turns again, so the
-// latch stayed dead and auto-compact could never fire (live miss 2026-07-08).
-//
-// The worse case is MOUSE TRACKING: the Claude CLI enables it (DECSET 1000/1006),
-// so xterm forwards every scroll/click over a Claude pane as an SGR mouse report
-// (\x1b[<64;x;yM) — or a legacy X10 report (\x1b[M + 3 raw bytes) — through this
-// same path. Scrolling to merely READ a pane then stamps lastUserInputTs, which
-// makes _maybeParkDelivery think the operator is composing and parks EVERY DM to
-// that agent until the 300s quiet-gate cap drains it ("everything 5 minutes late";
-// mouse reports carry no Enter so the draft never closes on its own). So these
-// must classify as non-human too. Only data that isn't purely auto-replies counts
-// as human; unknown sequences count as human — that fails toward a missed compact
-// or an unnecessary take-control, never a bad injection or a swallowed keystroke.
+// The Claude CLI enables focus reporting (DECSET 1004) and mouse tracking
+// (1000/1006), so merely focusing or scrolling a pane sends \x1b[I / \x1b[O and
+// SGR or legacy X10 mouse reports down the same onData path as keystrokes.
+// Counting those as human input kills the atPrompt latch and parks every DM to
+// the pane. Legacy X10 reports carry 3 arbitrary raw bytes (may include \n).
+// Unknown sequences count as human: fail toward a missed compact, never a bad
+// injection or a swallowed keystroke.
 const PTY_AUTO_REPLY_RE = new RegExp(
   '\\x1b\\[[IO]' // focus in / focus out (mode 1004)
   + '|\\x1b\\[\\d+;\\d+R' // cursor position report (DSR 6 reply)
@@ -263,32 +158,16 @@ function isHumanPtyInput(data) {
   return String(data).replace(PTY_AUTO_REPLY_RE, '').length > 0;
 }
 
-// Bracketed-paste markers. Claude Code enables bracketed paste (mode 2004), so a
-// multiline paste arrives as ONE human chunk wrapped `\x1b[200~…\x1b[201~`, and
-// the CLI treats the interior \r as LITERAL newlines — the paste does NOT submit,
-// the draft stays open. A naive "\r ⇒ closed" would false-close the latch and let
-// the next parkable delivery splice straight through the open draft (Bogdan's
-// paste-logs-into-a-draft workflow — the exact bug this whole fix prevents).
+// Claude Code enables bracketed paste (mode 2004): a multiline paste arrives as
+// one chunk wrapped \x1b[200~…\x1b[201~ and the CLI treats the interior \r as
+// literal — the paste does not submit, so "\r ⇒ draft closed" is wrong.
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 
-// Draft-close detection, STATEFUL across chunks. A submit/abort key (Enter \r or
-// Ctrl-C \x03) closes the draft ONLY when it lands OUTSIDE a bracketed-paste
-// region; inside a paste every byte is literal content. node-pty splits a large
-// paste across reads, so the 200~/201~ region can SPAN chunks — the caller
-// threads the running `inPaste` bit back in each call (main.js keeps it on
-// s._inPaste next to the other keystroke stamps).
-//
-// Returns { closes, inPaste }: `closes` = a real submit/abort happened in this
-// chunk; `inPaste` = the paste state to carry into the next chunk. A \r AFTER the
-// 201~ closer in the same chunk still closes (we're back outside the region).
-//
-// \x03 inside a paste: treated as NON-closing (literal pasted byte, not a live
-// Ctrl-C — the CLI doesn't abort on it), consistent with the unsafe-false-close
-// direction this fix targets. clodex's spec leaned "still closes"; going the
-// fail-safe way instead (documented, easily flipped). Only ever consulted for
-// input already classified human (isHumanPtyInput), so focus/query replies never
-// reach it.
+// node-pty splits a large paste across reads, so a 200~/201~ region can span
+// chunks: the caller must thread the returned `inPaste` back in each call.
+// A \r or \x03 closes the draft only OUTSIDE a paste region; \x03 inside a
+// paste is treated as a literal pasted byte (the CLI does not abort on it).
 function draftChunkSignal(chunk, inPaste = false) {
   const s = chunk == null ? '' : String(chunk);
   let paste = !!inPaste;
@@ -303,18 +182,10 @@ function draftChunkSignal(chunk, inPaste = false) {
   return { closes, inPaste: paste };
 }
 
-// PTY-OUTPUT paste-mode tracker — the flip side of draftChunkSignal, which
-// reads INPUT. An application enables/disables bracketed paste by WRITING
-// \x1b[?2004h / \x1b[?2004l to its terminal, so the CLI's live paste-mode
-// state is readable from the output stream, CLI-agnostically. The inject path
-// uses it to decide whether wrapping a multi-line injection in 200~/201~
-// markers is safe: wrapped while the mode is OFF, the markers would land as
-// literal bytes in the input buffer. Returns the new state; a chunk carrying
-// neither sequence returns `prev`; when a chunk carries both, the LAST one
-// wins (matches the terminal's view). A sequence split across PTY reads is
-// missed — acceptable by fail direction: a missed enable ⇒ unwrapped
-// injection = the old behavior; a missed disable only matters in the
-// teardown window where the session is dying anyway.
+// An application enables/disables bracketed paste by WRITING \x1b[?2004h /
+// \x1b[?2004l, so the CLI's live paste mode is readable off the output stream.
+// Wrapping an injection in 200~/201~ while the mode is OFF lands the markers as
+// literal bytes in the input buffer. A sequence split across reads is missed.
 const PASTE_MODE_ON = '\x1b[?2004h';
 const PASTE_MODE_OFF = '\x1b[?2004l';
 function pasteModeSignal(chunk, prev = false) {
@@ -325,23 +196,10 @@ function pasteModeSignal(chunk, prev = false) {
   return on > off;
 }
 
-// Level-triggered "is the operator mid-draft right now?" latch. True once a
-// keystroke has landed more recently than the last submit/abort — and it STAYS
-// true across thinking pauses, unlike the time-windowed quiet-gate which
-// reopens the instant typing pauses. Callers stamp lastUserInputTs on every
-// human keystroke and lastUserSubmitTs when draftChunkSignal closes. Zero/absent
-// timestamps read as no-draft. Fail direction is safe for the park divert: a
-// stale "still open" parks the delivery (drains on the next submit or the cap),
-// which is never worse than a splice.
 function isDraftOpen({ lastUserInputTs = 0, lastUserSubmitTs = 0 } = {}) {
   return (lastUserInputTs || 0) > (lastUserSubmitTs || 0);
 }
 
-// Parse a version string into a [major, minor, patch] triple. Leading `v` and
-// any pre-release tail (after `-`) are dropped; a missing minor/patch reads 0
-// (so "2" == "2.0.0"). Returns null when the string isn't version-ish — a
-// present-but-non-numeric component (e.g. "2.x.1") or an empty/garbage value —
-// so callers can render 'unknown' rather than guess.
 function parseSemverTriple(v) {
   if (v == null) return null;
   const s = String(v).trim().replace(/^v/i, '');
@@ -356,12 +214,6 @@ function parseSemverTriple(v) {
   return out;
 }
 
-// Severity of a PEER's version relative to ours — the semver distance, named so
-// the UI can tint it. 'current' (equal), 'patch'/'minor'/'major' (peer behind
-// us, by the highest differing component), 'newer' (peer AHEAD — we're the stale
-// one, so it's informational, never alarming), 'unknown' (either side
-// unparseable). Pure; drives both the header tint and the popover's severity
-// line.
 function versionSeverity(ours, theirs) {
   const us = parseSemverTriple(ours);
   const peer = parseSemverTriple(theirs);
@@ -376,22 +228,10 @@ function versionSeverity(ours, theirs) {
   return 'patch';
 }
 
-// Does offering "Update Clodex" on a peer make sense at severity `sev`? Show for
-// a box genuinely behind us (patch/minor/major) and for 'unknown' — an
-// unparseable/dev version we can't rule an update out for, so keep the escape
-// hatch. Hide for 'current' (nothing to do) and 'newer' (the deploy script pulls
-// latest master, so "updating" a box ahead of us is a pointless restart). Pure.
 function updateApplies(sev) {
   return sev !== 'current' && sev !== 'newer';
 }
 
-// Best-effort age/behind facts for a peer's version, off a newest-first
-// `releases` list ([{tag, published_at}] as cached from GitHub). Finds the
-// release whose tag matches `v<version>` (leading `v` optional on either side);
-// its index IS the releases-behind count (newest-first). Returns
-// { behind, ageDays } — ageDays null when the date is missing/unparseable — or
-// null when the version isn't in the list (a dev build / unpublished tag), so
-// the popover omits the age line entirely. Pure.
 function releaseAgeInfo(version, releases, now = Date.now()) {
   if (version == null || !Array.isArray(releases) || !releases.length) return null;
   const want = String(version).trim().replace(/^v/i, '');
@@ -407,14 +247,9 @@ function releaseAgeInfo(version, releases, now = Date.now()) {
   return { behind: idx, ageDays };
 }
 
-// Decision + the reason it went that way — the reason drives the ops-log
-// observability ("autocompact suppressed: cache-not-warm") that surfaced the
-// silent-never-fired class. shouldAutoCompact stays a thin boolean wrapper so
-// existing callers and tests keep their contract. `fire` true ⇒ reason 'fire'.
-// `reasonClass` is the reason with any parenthesized live numbers stripped —
-// the caller's once-per-transition log dedup MUST key on it, not on `reason`:
-// warmth-headroom embeds the decaying countdown, so the full string "changes"
-// every poll (this flooded the ops log with one line per 5s tick).
+// Callers deduping this decision per transition MUST key on `reasonClass`, not
+// `reason`: warmth-headroom embeds a decaying countdown, so the full string
+// changes on every 5s poll and floods the log.
 function reasonClassOf(reason) { return reason.replace(/\(.*\)$/, ''); }
 function autoCompactDecision(args) {
   const d = _autoCompactDecision(args);
@@ -429,9 +264,6 @@ function _autoCompactDecision({ payload, enabled, atPrompt, lastInputTs = 0, las
   if (payload.hold) return { fire: false, reason: 'keep-warm-hold' };
   const w = payload.warmth;
   if (!w || w.state !== 'warm' || typeof w.remaining_s !== 'number') return { fire: false, reason: 'cache-not-warm' };
-  // TTL-relative headroom (see headroomBand): the band scales with the proxy's
-  // actual ttl_s so a 1h TTL doesn't make the fire window unreachable. `band` is
-  // returned either way so the caller can log "remaining Ns / band Ms".
   const band = headroomBand(w.ttl_s);
   if (w.remaining_s > band) return { fire: false, reason: `warmth-headroom(${w.remaining_s}s/band ${band}s)`, band };
   const ctx = payload.context;
@@ -446,20 +278,9 @@ function shouldAutoCompact(args) {
   return autoCompactDecision(args).fire;
 }
 
-// --- Peer visibility ([agent:who] labels + dm hold gate) ----------------------
-// A DM injection into a long-idle peer with a cold cache re-bills that peer's
-// ENTIRE context as a cache write — often dollars for a one-line message. So:
-// [agent:who] tells agents which peers are cheap to reach, and a non-urgent DM
-// to an expensive one bounces with instructions to resend `urgent` (sender's
-// judgment call, not ours). Facts: activityState/activityTs (stamped in
-// _emitActivity, both intent paths) + the poller's last payload for warmth.
 
 const DM_HOLD_IDLE_MS = 30 * 60_000;
 
-// Effective cache state NOW from a poll payload: remaining_s decays between
-// polls, so age it by payload.ts before trusting 'warm'. 'unknown' (unlinked /
-// no proxy / codex) is NOT 'cold' — the two are labeled differently and only
-// verifiable warmth counts as cheap-to-reach.
 function warmthNow(payload, now = Date.now()) {
   if (!payload || !payload.linked || !payload.warmth) return 'unknown';
   const w = payload.warmth;
@@ -478,12 +299,6 @@ function fmtIdle(ms) {
   return `${Math.floor(h / 24)}d`;
 }
 
-// One peer's [agent:who] status suffix: 'working' | 'idle 5h, cache cold' |
-// 'idle 12m, warm' | 'idle 3m'. Warmth only shown when known. A session
-// blocked on a permission dialog trumps everything — it is neither working
-// nor reachable, and peers should know a reply isn't coming until the human
-// answers the dialog. Codex sessions carry no warmth signal at all, so their
-// label never shows one (the poller's 'cold' for them is absence, not fact).
 function peerStatusLabel({ state, idleMs, payload, attention = null, agentType = null, now = Date.now() }) {
   if (attention === 'permission') return 'blocked on a permission dialog';
   if (state === 'thinking') return 'working';
@@ -494,15 +309,9 @@ function peerStatusLabel({ state, idleMs, payload, attention = null, agentType =
   return label;
 }
 
-// Hold a DM? Two independent gates:
-//   DIALOG gate — target is blocked on a permission dialog. Holds even
-//   URGENT: message injection ends with Enter, which would ANSWER the open
-//   dialog. This is a safety hold, not a cost hold — there is no override.
-//   COST gate — holds only when ALL of: not urgent, target not mid-turn, idle
-//   past the threshold, and not verifiably warm (a kept-warm peer is cheap no
-//   matter how long it's been idle — that's what keep-warm is FOR). Unknown
-//   warmth on a long-idle peer holds: 5h idle is cold in every realistic TTL
-//   regime, and urgent is a one-line retry if the sender disagrees.
+// The dialog gate holds even URGENT: injection ends with Enter, which would
+// ANSWER the open permission dialog. It is a safety hold with no override.
+// A verifiably warm peer is never held, however long it has been idle.
 function shouldHoldDm({ urgent, state, idleMs, payload, attention = null, now = Date.now() }) {
   if (attention === 'permission') {
     return {
@@ -520,8 +329,6 @@ function shouldHoldDm({ urgent, state, idleMs, payload, attention = null, now = 
   };
 }
 
-// Normalize one /_status record into the renderer payload. `r` is null when no
-// proxy record matches the session (unlinked). `probe` carries version + caps.
 function shapeProxyRecord(r, probe, now = Date.now()) {
   const base = { ts: now, version: probe.version, capabilities: probe.capabilities };
   if (!r) return { ...base, linked: false };
@@ -533,21 +340,12 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
     model: r.model || null,
     title: r.title || null,
     summary: r.summary || null,
-    // `usd` = whole-tree cost (unchanged semantics). `mainUsd` = the main line's
-    // OWN share (wirescope v0.6.22+ cost.main_est_usd, gated on cost_by_line);
-    // null (never 0) on pre-.22. With per-subagent estUsd, this lets the popover
-    // attribute where a fan-out run's cost actually went instead of one opaque
-    // whole-tree number.
     cost: r.cost ? {
       usd: r.cost.est_usd ?? null,
       mainUsd: typeof r.cost.main_est_usd === 'number' ? r.cost.main_est_usd : null,
       requests: r.cost.requests ?? null,
     } : null,
     turns: typeof r.turns_completed === 'number' ? r.turns_completed : null,
-    // Since-compact rollup (wirescope, shape frozen 07-15 per its dm): counters
-    // from the last detected compact boundary — or session start when
-    // `compacted` is false. Whole-tree like cost. Absent (older proxy) === null
-    // (no totals yet); NEVER partial per the contract, so shape all-or-nothing.
     sinceCompact: (r.since_compact && typeof r.since_compact === 'object') ? {
       turns: typeof r.since_compact.turns === 'number' ? r.since_compact.turns : null,
       requests: typeof r.since_compact.requests === 'number' ? r.since_compact.requests : null,
@@ -556,15 +354,10 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
       compacted: r.since_compact.compacted === true,
     } : null,
     refusals: typeof r.refusals === 'number' ? r.refusals : 0,
-    // Armed holds only fire pings once a real turn donates auth + a cache to
-    // replay; pingable=false means "armed but pending the next turn".
     pingable: r.pingable === true,
     context: r.context ? {
       turns: r.context.turns_in_context ?? null,
       messages: r.context.n_messages ?? null,
-      // Live input-token count (cache_read + cache_write + uncached input of the
-      // last turn). null on pre-v0.3.1 proxies — renderer falls back to the CLI
-      // side-channel. The window SIZE stays CLI-sourced (off-wire here).
       inputTokens: typeof r.context.input_tokens === 'number' ? r.context.input_tokens : null,
     } : null,
     warmth: w ? {
@@ -572,11 +365,6 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
       remaining_s: typeof w.remaining_s === 'number' ? w.remaining_s : null,
       ttl_s: typeof w.ttl_s === 'number' ? w.ttl_s : null,
     } : null,
-    // Proxy-truth strip config (wirescope v0.6.10+). The poller reconciles our
-    // persisted intent against `configuredLevel`/`source` here instead of
-    // fire-once asserting; `source` must be "override" for a level>=1 to be a
-    // durable, recorded intent (a coincidental global-default match isn't).
-    // null on pre-v0.6.10 proxies → poller skips assertion (degrades to off).
     strip: r.strip ? {
       configuredLevel: typeof r.strip.configured_level === 'number' ? r.strip.configured_level : null,
       source: r.strip.source || null,
@@ -584,17 +372,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
       ridersAvailable: r.strip.riders_available === true,
     } : null,
     hold: r.hold || null,
-    // Cache-bust forensics summary (wirescope v0.6.19+ `bust_summary`). Passed
-    // through verbatim — clodex RENDERS, wirescope CLASSIFIES (fault/fix_hint are
-    // its call, never re-derived here). Shape: {total, actionable, by_class,
-    // classes:[{class,count,fault,fix_hint}], last_bust}. `fault` ∈ {environment
-    // (expected cold), content (a real injected-prefix change — model swap, date
-    // rollover, CLAUDE.md edit), self (designed strip cost)}. The chip goes loud
-    // only on a `content` fault. null on pre-v0.6.19 proxies.
     busts: (r.busts && typeof r.busts === 'object') ? r.busts : null,
-    // Task/background subagents nested under this session (share its session_id
-    // on the wire). Empty until a real subagent makes a wire turn. Sorted
-    // newest-active first to match wirescope's emission order.
     subagents: Array.isArray(r.sub_agents)
       ? r.sub_agents.map((s) => shapeSubagent(s, now)).filter(Boolean)
       : [],

@@ -1,12 +1,3 @@
-// verbs.js — one function per verb. Two families:
-//
-//   ctx*   — local contexts-file operations (no wire). Take a { store, save,
-//            printer, ... } bundle.
-//   wire*  — HTTP verbs. Take a { client, printer, flags, args } bundle where
-//            `client` is a ready WireClient (transport already opened by main).
-//
-// Read verbs honor --json: print the raw wire payload verbatim so it stays a
-// stable machine binding. Human output is compact, emoji-free.
 'use strict';
 
 const readline = require('readline');
@@ -16,7 +7,6 @@ const imp = require('./import');
 const { validateEntry } = require('./contexts');
 const { openGuarded } = require('./sse-guard');
 
-// ── read verbs ────────────────────────────────────────────────────────────
 
 async function info({ client, printer, flags }) {
   const hello = await client.get('/api/peer/hello', 'info');
@@ -40,16 +30,7 @@ async function logs({ client, printer, flags, args, io = {} }) {
   else printer.line(out.renderTranscript(messages));
 }
 
-// logs --follow — kubectl-parity follow. Print the current tail, then subscribe
-// to /api/events; on an `activity` frame for NAME, refetch the transcript and
-// print only the entries newer than our snapshot (the same delta machinery
-// sendWait uses — deltaFrom). --json streams NDJSON (one object per new entry),
-// not a growing array. Shares the 60s staleness watchdog + bounded reconnect
-// with attach (sse-guard). Ctrl-C exits 0 — it's a pager, not a failure; a
-// non-TTY stdout is fine (piping into grep is the point).
 async function logsFollow({ client, printer, flags, name, initial, messages, io }) {
-  // Emit the tail first, same shape as a one-shot logs. In --json each ENTRY is
-  // its own NDJSON object (a stream can't be one growing array).
   if (flags.json) { for (const m of messages) printer.json(m); }
   else if (messages.length) printer.line(out.renderTranscript(messages));
 
@@ -109,8 +90,6 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
   });
 }
 
-// The transcript entries newer than a count watermark. Shared by sendWait
-// (which then skips to the first assistant) and logs -f (which prints all).
 function deltaFrom(msgs, snapshot) {
   return (msgs || []).slice(snapshot);
 }
@@ -126,8 +105,6 @@ async function query({ client, printer, flags, args }) {
   if (flags.path) qargs.path = String(flags.path);
   if (flags.detail) qargs.detail = true;
   const body = await client.post(`/api/query/${encodeURIComponent(name)}`, 'query', { kind, args: qargs });
-  // Always JSON — the query payloads are structured telemetry with no compact
-  // human form worth inventing; --json is documented as the shape.
   printer.json(body);
 }
 
@@ -143,14 +120,7 @@ async function skills({ client, printer, args }) {
   printer.json(body);
 }
 
-// ── write verbs ─────────────────────────────────────────────────────────────
 
-// Parse repeatable --env KEY=VALUE tokens into body.env, returning the sorted
-// keys we asked to set (for the old-box ack comparison). Split on the FIRST '='
-// so a value may itself contain '='. A token with no '=' or an empty key is a
-// usage error — a shapeless --env is a typo we should surface, not silently drop.
-// KEY/value validity (charset, deny-list, no-newline) is the BOX's call; the CLI
-// stays a thin passthrough so one box owns the rule.
 function parseEnvFlags(envFlag, body) {
   const raw = Array.isArray(envFlag) ? envFlag : (envFlag != null ? [envFlag] : []);
   if (!raw.length) return [];
@@ -193,25 +163,12 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   else if (flags.arg) extra.push(String(flags.arg));
   if (extra.length) body.extraArgs = extra;
   if (flags.fork) body.fork = true;
-  // Session env (T46): --env KEY=VALUE, repeatable (multi). Split on the FIRST
-  // '=' so a value may contain '='. The box re-validates + deny-lists server-side
-  // (never trusts the client); we only reject a shapeless token here for UX.
   const sentEnvKeys = parseEnvFlags(flags.env, body); // sorted keys we asked to set
   const res = await client.post('/api/sessions', 'spawn', body);
-  // Old-box compat (T46): the ack echoes envKeys = the set actually applied. A box
-  // predating env support omits the field entirely, and a box that sanitized away a
-  // bad/denied key returns a shorter set — either way a credential we asked for may
-  // NOT be live, and a session running as the wrong identity must never be silent.
-  // Gated on !flags.json: the warning is a human line (printer.line), and the JSON
-  // mode's raw payload already carries envKeys — printing it there would contaminate
-  // the stable-wire-payload stdout contract.
+      // Human-only warning: --json stdout stays the raw wire payload (which carries envKeys itself).
   if (sentEnvKeys.length && !flags.json) warnEnvMismatch(printer, sentEnvKeys, res.envKeys);
-  // Post-spawn liveness (the silent-death fix): a child that dies on execvp —
-  // e.g. its CLI isn't on the node's PATH (a fresh OS-flavor deploy) — STILL
-  // returns a pid, then the session vanishes from the engine with no hint. Wait a
-  // beat, then look for the name in the live list: gone → it was dead-on-arrival,
-  // so say WHY instead of reporting a pid the caller can't use. A read failure
-  // leaves `alive` unknown (null) — never turn a transient blip into a scary lie.
+      // A child that dies on execvp still returns a pid, then vanishes from the engine —
+      // hence the delayed re-check; a read failure leaves `alive` null, not false.
   const type = res.type || flags.type || null;
   const alive = await spawnAlive(client, res.name || name, io.sleepFn);
   if (flags.json) { printer.json({ ...res, alive }); return; }
@@ -225,10 +182,6 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''}${res.warnings && res.warnings.length ? `\nwarnings: ${res.warnings.join('; ')}` : ''}`);
 }
 
-// Is the just-spawned session still alive a beat later? Returns true (present),
-// false (absent — dead on arrival), or null (couldn't tell — a read error, so
-// the caller stays optimistic). A single short-delayed check keeps the added
-// latency bounded; sleepFn is the test seam (a no-op skips the wall-clock wait).
 const SPAWN_LIVENESS_DELAY_MS = 600;
 async function spawnAlive(client, name, sleepFn) {
   const sleep = sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -250,10 +203,6 @@ async function send({ client, printer, flags, args, io = {} }) {
   else printer.line(`sent to ${name} (fire-and-forget)`);
 }
 
-// Look up a session's AUTHORITATIVE type from the engine (one GET /api/sessions).
-// Never guess from the name — the engine's session list is ground truth (a bash
-// session named like an agent, or vice versa, can't confuse us). A miss →
-// NOTFOUND, listing the running names as a cheap near-miss aid.
 async function sessionType(client, name) {
   const body = await client.get('/api/sessions', 'session lookup');
   const list = body.sessions || [];
@@ -266,56 +215,30 @@ async function sessionType(client, name) {
   return found.type || '';
 }
 
-// run — THE verb for "make this session do something and show me the result".
-// It looks up the destination's authoritative type and ROUTES: a bash session →
-// the exec (PTY) path (keystrokes + Enter, collect screen output); any agent
-// (claude/codex/anything not bash) → the send --wait path (DM in, await the
-// turn's end, print the transcript delta). "Run" ALWAYS executes — a bash
-// command runs, an agent prompt is sent and awaited — so --no-enter is not run's
-// to choose (use `input` for raw partial keystrokes). --json carries
-// `mode:"agent"|"pty"` so a script can tell which path ran. Routing is binary
-// on `type === 'bash'`, not a claude/codex whitelist: a future agent type still
-// routes to the safe send-wait path, never accidentally into raw TUI typing.
+    // Routes on `type === 'bash'` (PTY exec) vs everything else (send --wait). Binary, not a
+    // claude/codex whitelist — an unknown future agent type must land on the send path.
 async function run({ client, printer, flags, args, stderr, io = {} }) {
   const name = requireName(args[0], 'run');
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'run needs text — a prompt for an agent, or a command for a bash session');
   const type = await sessionType(client, name);
   if (type === 'bash') {
-    // Reuse exec's PTY path verbatim; knownType skips its own lookup + guardrail.
     return exec({ client, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
   }
   return sendWait({ client, printer, flags, name, text, mode: 'agent', io });
 }
 
-// send --wait — deliver, then block until the agent goes IDLE (a matching
-// `activity` frame with turnEnd:true on the global events feed) and print the
-// transcript entries that landed after our message. HONESTY: --wait means "the
-// agent's turn ended", NOT "the agent declared the work done" — a long task
-// that parks mid-work still ends its turn. The formal completion contract is
-// T38. Watermark = transcript ENTRY COUNT snapshotted before the send; we print
-// entries newer than that, starting from the first assistant entry (our own
-// echoed user message is excluded). Count-watermark is exact until the
-// transcript exceeds the 500-entry fetch cap — acceptable for v1.
 async function sendWait({ client, printer, flags, name, text, mode = null, io = {} }) {
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
-  // --timeout is a HARD ceiling on the WHOLE verb, not just the wait: the wait
-  // phase is capped at timeoutMs and the post-wait refetch at an extra `grace`,
-  // so on EVERY transport the process returns by ~timeout+grace even when the
-  // engine never emits a turnEnd and even when a fetch wedges on a dead tunnel
-  // (a wedged fetch would otherwise hold a socket open AND keep sendWait from
-  // returning, so main.js's `finally { t.close() }` never reaps the tunnel
-  // child — the twin causes of the live 6-minute hang). io.refetchGraceMs is
-  // the test seam (keeps repro tests sub-second).
+      // --timeout is a hard ceiling on the WHOLE verb (wait phase, then refetch at +grace):
+      // a wedged fetch holds its socket open and keeps sendWait from returning, which blocks
+      // the caller from reaping the transport child. io.refetchGraceMs is the test seam.
   const graceMs = io.refetchGraceMs != null ? io.refetchGraceMs : 8000;
 
-  // 1. Open the global events feed and wait until it is live (subscribed).
   let stream = null;
   let settled = false;
   let hardTimer = null;
   let snapshot = 0;
-  // Cuts a hung snapshot GET / send POST when the ceiling fires — an aborted
-  // fetch rejects and releases its socket, which is what lets node exit.
   const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
     const finish = (fn, v) => { if (settled) return; settled = true; if (hardTimer) clearTimeout(hardTimer); fn(v); };
@@ -327,14 +250,11 @@ async function sendWait({ client, printer, flags, name, text, mode = null, io = 
     stream = client.openEventStream('/api/events', 'send --wait (events)', {
       onOpen: async () => {
         try {
-          // 2. Snapshot the transcript length BEFORE sending.
           const before = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
           snapshot = (before.messages || []).length;
-          // 3. Send.
           await client.post('/api/send', 'send', { name, text }, { signal: waitAc.signal });
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
-      // 4. Await a turn-end activity for OUR session; ignore all others.
       onEvent: (event, data) => {
         if (event !== 'activity' || !data || data.name !== name || !data.turnEnd) return;
         finish(resolve, { timedOut: false });
@@ -348,16 +268,9 @@ async function sendWait({ client, printer, flags, name, text, mode = null, io = 
   // alive (bin sets exitCode, never exit()). Idempotent, harmless when spent.
   waitAc.abort();
 
-  // 5. Refetch and print entries newer than the snapshot, from the first
-  //    assistant entry on (drops our echoed user message + any leading users).
-  //    The transcript FLUSH can lag the turnEnd frame slightly (the activity
-  //    signal fires before the last assistant text is persisted), so if the
-  //    delta has no assistant entry yet, retry a few times with a short backoff
-  //    before giving up — we print from the first assistant on, never a bare
-  //    echoed-user row. The whole loop is bounded by `grace`: a wedged engine
-  //    can hang a single refetch forever, and until sendWait returns the tunnel
-  //    child is never reaped, so the deadline aborts the in-flight fetch and we
-  //    stop retrying (this is the half of the ceiling the live hang tripped).
+      // Print from the first assistant entry on (drops our echoed user message). The transcript
+      // flush can lag the turnEnd frame, so an assistant-less delta is retried with backoff;
+      // the whole loop is bounded by grace because a wedged refetch would never return.
   const freshFrom = (msgs) => {
     const delta = deltaFrom(msgs, snapshot);
     const i = delta.findIndex((m) => m.role === 'assistant');
@@ -396,11 +309,7 @@ async function sendWait({ client, printer, flags, name, text, mode = null, io = 
   }
 }
 
-// input — keystrokes, wrapped in a control acquire/release so the wire's token
-// gate is satisfied (read-only viewers can't type). Best-effort release even if
-// the input POST fails. /api/input is a RAW keystroke channel (the GUI xterm
-// sends its own \r), so by DEFAULT we append \r — "send a command" means run it.
-// --no-enter posts the text verbatim (partial input / key sequences).
+    // /api/input is a raw keystroke channel — nothing appends Enter server-side, hence the default '\r'.
 async function input({ client, printer, flags, args }) {
   const name = requireName(args[0], 'input');
   const text = args.slice(1).join(' ');
@@ -417,25 +326,13 @@ async function input({ client, printer, flags, args }) {
   }
 }
 
-// exec — kubectl-exec-for-Clodex: run ONE command in a session's PTY and print
-// what the terminal produced. Open the attach SSE FIRST (it registers us as an
-// attacher server-side, and holds control alive — the last stream closing
-// auto-releases control), acquire control, type cmd+\r, then collect decoded
-// `output` frames until the stream goes QUIET (no bytes for --quiet-ms after at
-// least one arrived) or --timeout caps the wait. ANSI is stripped by default
-// (--raw keeps it). The remote command's EXIT STATUS is unknowable from screen
-// bytes — exit 0 means "delivered and went quiet", nothing about the command.
+    // Open the attach SSE BEFORE acquiring control: the stream registers us as an attacher and
+    // holds the control token alive — the last stream closing auto-releases control.
 async function exec({ client, printer, flags, args, mode = null, knownType = null, stderr = null }) {
   const name = requireName(args[0], 'exec');
   const cmd = args.slice(1).join(' ');
   if (!cmd) throw new CliError(EXIT.USAGE, 'exec needs a command to run');
 
-  // Guardrail: exec types into the session's RAW TUI screen. On a bash session
-  // that's the whole point; on an AGENT it repaints its TUI (Bogdan's "scary"
-  // report). So exec on an agent WARNS and refuses unless --pty was chosen —
-  // typing into an agent's TUI is legitimate (answering a permission dialog!)
-  // but must be deliberate, not stumbled into. `run` reaches exec only for bash
-  // (knownType='bash'), skipping this lookup entirely.
   if (knownType !== 'bash' && !flags.pty) {
     const type = knownType != null ? knownType : await sessionType(client, name);
     if (type && type !== 'bash') {
@@ -468,7 +365,6 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
 
     stream = client.openEventStream(`/api/attach/${encodeURIComponent(name)}`, 'exec (attach)', {
       onOpen: async () => {
-        // The whole-wait hard cap starts as soon as the stream is live.
         hardTimer = setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs);
         try {
           const acq = await client.post(`/api/control/${encodeURIComponent(name)}`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' });
@@ -488,8 +384,6 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
     });
   });
 
-  // Teardown ALWAYS: release our control token (best-effort), close the stream.
-  // The transport (tunnel child) stays alive until main.js's finally close().
   try { if (token) await client.post(`/api/control/${encodeURIComponent(name)}`, 'exec (release control)', { action: 'release', token }); } catch {}
   try { if (stream) stream.close(); } catch {}
 
@@ -500,22 +394,15 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
   if (flags.json) {
     printer.json({ ok: outcome.ok, name, ...(mode ? { mode } : {}), output: text, truncated: timedOut });
   } else if (text) {
-    // Print exactly what the terminal produced (echoed command + prompt
-    // included — that's honest terminal truth, we don't heuristically strip it).
     printer.line(text.replace(/\n$/, ''));
   }
 
-  // A transport/control failure surfaced as a coded error — propagate it.
   if (outcome.error) throw outcome.error;
   if (timedOut) {
     throw new CliError(EXIT.SERVER, `exec: no quiet within ${Math.round(timeoutMs / 1000)}s — printed partial output (exit reflects delivery, not the remote command's status)`);
   }
-  // ok:true — went quiet. Exit reflects delivery, NOT the remote command status.
 }
 
-// kill — wire kill is a HARD DELETE (no resume). Say so loudly; confirm unless
-// --force. The confirm reads from stdin (a TTY prompt); --json implies scripted
-// use, so require --force there rather than block on a prompt.
 async function kill({ client, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'kill');
   if (!flags.force) {
@@ -535,8 +422,6 @@ async function restart({ client, printer, flags, args }) {
   else printer.line(`restarted ${name}${flags.fresh ? ' (fresh)' : ' (resume)'}`);
 }
 
-// args set — apply a session-args patch. Flags map to the patch keys the owner
-// accepts; only provided keys are sent (undefined = untouched, owner-side).
 async function argsSet({ client, printer, flags, args }) {
   const name = requireName(args[0], 'args set');
   const patch = {};
@@ -550,8 +435,6 @@ async function argsSet({ client, printer, flags, args }) {
   else printer.line(`args applied to ${name}${res.restarted ? ' (respawned)' : ''}`);
 }
 
-// restart-app — whole-engine relaunch. Confirm unless --force (it drops the
-// wire out from under every client).
 async function restartApp({ client, printer, flags, prompt = defaultPrompt }) {
   if (!flags.force) {
     if (flags.json) throw new CliError(EXIT.USAGE, 'restart-app needs --force in --json/non-interactive mode');
@@ -563,7 +446,6 @@ async function restartApp({ client, printer, flags, prompt = defaultPrompt }) {
   else printer.line('engine restart requested');
 }
 
-// ── ctx verbs (local file) ───────────────────────────────────────────────────
 
 function ctxAdd({ store, saveStore, printer, flags, args }) {
   const name = requireName(args[0], 'ctx add');
@@ -571,9 +453,6 @@ function ctxAdd({ store, saveStore, printer, flags, args }) {
   if (flags.url) entry.url = String(flags.url);
   if (flags.ssh) entry.ssh = String(flags.ssh);
   if (flags.tunnel) entry.tunnel = Array.isArray(flags.tunnel) ? flags.tunnel : [String(flags.tunnel)];
-  // Cloud transport kinds — typed objects (DATA, importable/shareable). Each is
-  // exactly one flag family; validateEntry enforces the one-transport rule and
-  // the per-kind field requirements.
   if (flags.ssm != null && flags['ssm-ecs'] != null) throw new CliError(EXIT.USAGE, '--ssm and --ssm-ecs are mutually exclusive — pick one');
   if (flags.ssm != null || flags['ssm-ecs'] != null) {
     entry.ssm = {
@@ -640,7 +519,6 @@ function ctxRm({ store, saveStore, printer, args }) {
   printer.line(`context "${name}" removed`);
 }
 
-// ctx show — the resolved entry, tokens REDACTED (never echo a secret).
 function ctxShow({ store, printer, flags, args }) {
   const name = args[0] || store.current;
   if (!name) throw new CliError(EXIT.USAGE, 'ctx show needs a name (or set a current context)');
@@ -660,17 +538,12 @@ function ctxShow({ store, printer, flags, args }) {
   }
 }
 
-// ctx import — seed contexts from the LOCAL machine's Clodex userData. Read-only
-// on the GUI's files; collisions skip unless --force; --dry-run writes nothing;
-// `current` is never touched.
 function ctxImport({ store, saveStore, printer, flags, env }) {
   const meta = imp.resolveDataDir({ dataDirFlag: flags['data-dir'], env });
   const candidates = imp.collectCandidates(meta.dir);
   const { store: nextStore, results } = imp.applyImport(store, candidates, { force: !!flags.force });
   const dryRun = !!flags['dry-run'];
   if (!dryRun) {
-    // Only write if something actually changed (an all-skip run leaves the file
-    // untouched — read-only convenience shouldn't rewrite for nothing).
     if (results.some((r) => r.result === 'added' || r.result === 'overwritten')) saveStore(nextStore);
   }
   if (flags.json) {
@@ -683,9 +556,7 @@ function ctxImport({ store, saveStore, printer, flags, env }) {
   }
 }
 
-// ── shared helpers ───────────────────────────────────────────────────────────
 
-// The transport kind label for a stored entry (ctx list/show).
 function entryKind(e) {
   if (e.url) return 'url';
   if (e.ssh) return 'ssh';
@@ -697,8 +568,6 @@ function entryKind(e) {
   return '?';
 }
 
-// A one-line HONEST target string per kind (spec §ctx list/show). Renders the
-// distinguishing fields so a shared team file reads at a glance; no secrets.
 function entryTarget(e) {
   if (e.url) return e.url;
   if (e.ssh) return e.ssh;

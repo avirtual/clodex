@@ -1,18 +1,3 @@
-// agent-transport.js — the peer registry + Unix-domain-socket transport that
-// back every agent session's IPC. Registry writes ~/.clodex/{name}.json via an
-// atomic hardlink (register), prunes dead entries by socket-existence + live PID
-// (cleanup / listPeers), and resolves a peer's socket by name (getPeer).
-// Transport is the per-agent socket server plus a static send() for one-shot
-// dials to a peer's socket.
-//
-// FACTORY (M3 DI): the bodies read two main.js globals — REGISTRY_DIR (the
-// ~/.clodex runtime dir) and MAX_MSG (the 64K frame cap) — so they are injected
-// as factory params, keeping every body byte-identical. isAlive is pure and is
-// also returned (SessionManager reuses it for its own stale-name check).
-//
-// The socket/JSON I/O needs a live filesystem + net stack, so only the pure
-// registry round-trip is unit-tested (against a temp dir); the socket server is
-// left to integration.
 
 const path = require('path');
 const fs = require('fs');
@@ -20,14 +5,9 @@ const net = require('net');
 const { ensureDir } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 
-// How long Transport.isSocketLive waits before calling a socket dead. Much
-// shorter than send()'s 2000ms, and deliberately so: send() is dialing a peer we
-// already believe in, where a slow answer is still an answer worth waiting for.
-// The probe runs on the session-start path with the operator watching, and a
-// Unix-domain connect to a listening socket is a same-host kernel operation with
-// no network in it — it succeeds in microseconds or nothing is bound there.
-// Spending 2s to conclude "dead" would put that delay in front of every recovery
-// from an unclean shutdown, which is exactly the case the probe exists to fix.
+// 250ms, not send()'s 2000ms: this probe runs on the session-start path, and a
+// Unix-domain connect either succeeds in microseconds or nothing is bound there.
+// A longer wait would sit in front of every recovery from an unclean shutdown.
 const SOCKET_PROBE_TIMEOUT = 250;
 
 function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
@@ -36,14 +16,8 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     catch (e) { return e.code === 'EPERM'; }
   }
 
-  // Registry entries + sockets live per-agent at run/<name>/{agent.json,agent.sock}
-  // (clodex-paths grammar). Discovery iterates run/*/agent.json instead of the
-  // old flat *.json scan — we own both ends of this namespace, so there is no
-  // external reader to keep compatible.
   const RUN_DIR = path.join(REGISTRY_DIR, 'run');
 
-  // Every run/<name>/agent.json path, skipping half-written tmp files. Best
-  // effort: a missing run dir just yields nothing.
   function* regEntries() {
     let names;
     try { names = fs.readdirSync(RUN_DIR); } catch { return; }
@@ -58,9 +32,6 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     register(name, socketPath, cwd = null) {
       ensureDir(runDirFor(REGISTRY_DIR, name));
       const regPath = pathFor(REGISTRY_DIR, name, 'registry');
-      // cwd is additive (readers ignore unknown fields): it lets external
-      // tools (exec commands, teams roster) map an agent to its project by
-      // directory without a channel into the main process.
       const data = JSON.stringify({ name, socket: socketPath, pid: process.pid, ...(cwd ? { cwd } : {}) });
       const tmpPath = `${regPath}.tmp.${process.pid}`;
       fs.writeFileSync(tmpPath, data, { mode: 0o600 });
@@ -78,36 +49,16 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
       try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'registry')); } catch {}
     },
 
-    // ASYNC (t75), and the await is the whole point. `existsSync(socket) &&
-    // isAlive(pid)` cannot see the pid-recycle ghost: after an unclean shutdown
-    // the socket FILE survives and the OS hands the pid to a stranger, so the
-    // record, the file and the liveness check all look exactly like a running
-    // agent. The ghost's disk state is byte-identical to a live agent's —
-    // NOTHING readable from the filesystem separates them, which is why this
-    // dials instead of reading harder. Left unfixed, [agent:who] advertises an
-    // agent that does not exist and every dm to it fails silently at send().
-    //
-    // Why not an identity field in the record instead. A random token cannot
-    // work at all: it identifies the record's WRITER, and the ghost's record was
-    // written by the real agent, so the token matches — there is no independent
-    // holder to compare it against. Start-time does work (pid+starttime is the
-    // classic pid-reuse-safe identity) but darwin has no /proc, so reading
-    // another process's start time from Node is a `ps` fork/exec.
-    //
-    // COST, measured, because someone will later assume a dial is expensive and
-    // "optimize" it away: `ps -o lstart=` is 2.349 ms and BLOCKS the main
-    // process; dialing a live socket is 0.136 ms and a dead one 0.046 ms. The
-    // ghost case is the CHEAPEST branch — a socket with no listener refuses
-    // instantly — because the dial never leaves the kernel. Both consumers are
-    // already inside async _handleIntent, so nothing here forced a wider change.
+// The dial is load-bearing: after an unclean shutdown the socket file survives
+// and the OS can hand the pid to a stranger, so existsSync(socket) && isAlive(pid)
+// reads identically for a ghost and a live agent. Nothing readable from the
+// filesystem separates them. Measured: a refused dial 0.046ms, a live one
+// 0.136ms, vs 2.349ms to fork `ps` for a start time (darwin has no /proc).
     async listPeers() {
       const peers = [];
       for (const regPath of regEntries()) {
         try {
           const info = JSON.parse(fs.readFileSync(regPath, 'utf-8'));
-          // isAlive first: it is a free syscall and rejects the common dead case
-          // without a dial. The probe is the authority for everything it lets
-          // through, since a live-looking pid is exactly what the ghost has.
           if (!fs.existsSync(info.socket) || !isAlive(info.pid)) continue;
           if (await Transport.isSocketLive(info.socket)) peers.push(info);
         } catch {}
@@ -119,33 +70,6 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
       return (await this.listPeers()).find(p => p.name === name) || null;
     },
 
-    // Prune registry entries whose agent is gone.
-    //
-    // DELIBERATELY STILL PID-ONLY, AND THIS IS A SCOPE REDUCTION, NOT A
-    // COMPLETE FIX (t75). A pid-recycle ghost's entry SURVIVES this sweep —
-    // `isAlive` says the recycled pid is running, so the record is kept
-    // forever. That bullet of the ticket is knowingly not fixed.
-    //
-    // Why that is acceptable: every CONSUMER of the record is already guarded.
-    // listPeers/getPeer dial before returning a peer, and create()'s collision
-    // path dials the blocking record (session-manager.js:1343). So a ghost
-    // entry is a stale file that nothing anywhere trusts — [agent:who] will not
-    // advertise it, dm will not route to it, and it does not wedge its name.
-    // Buying its deletion costs either an async conversion through a
-    // synchronous bootstrap (engine.js:1810 sits in createEngine, which is not
-    // async) plus five test helpers, or a fire-and-forget sweep running
-    // concurrently with the restore path that calls create(). Neither is worth
-    // it to delete a file no reader consults.
-    //
-    // WHAT WOULD CHANGE THIS: a consumer that trusts the record without
-    // dialing — add one and this sweep becomes the last line of defence — or
-    // the entries accumulating enough that the residue itself matters.
-    //
-    // Read-then-delete, so the
-    // verdict is about BYTES and must not outlive them — see the re-validation
-    // below, which is the same shape as the stale-recovery guard at
-    // session-manager.js:1379-1385 and exists so the two read-then-act paths
-    // over this store do not differ for reasons nobody wrote down.
     cleanup() {
       let removed = 0;
       for (const regPath of regEntries()) {
@@ -153,59 +77,22 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
           const raw = fs.readFileSync(regPath, 'utf-8');
           const info = JSON.parse(raw);
           if (!fs.existsSync(info.socket) || !isAlive(info.pid)) {
-            // RE-VALIDATE BEFORE DELETING. The verdict above describes the bytes
-            // in `raw`; if the entry has been replaced since, those bytes are
-            // gone and the verdict is about a record that no longer exists.
-            // Applying it anyway unlinks a LIVE agent's registration — the
-            // re-register path in create() force-cleans a blocking entry and
-            // writes a fresh one (session-manager.js:1379-1401), so the
-            // replacement carries a live pid and would be deleted by a stale
-            // "dead" verdict. Recoverable rather than permanent (the socket
-            // survives, see below), but that agent is undiscoverable until it
-            // registers again, and nothing notices.
-            //
-            // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT. Re-read and unlink
-            // are two syscalls; another host can still replace the entry between
-            // them. What it buys is shrinking the exposure from "the whole
-            // verdict" to "two adjacent statements", which is the same bargain
-            // session-manager.js:1385 strikes. Closing it outright needs an
-            // atomic compare-and-unlink the filesystem does not offer.
-            //
-            // WHY IT IS UNREACHABLE IN-PROCESS TODAY, AND WHAT WOULD CHANGE THAT
-            // — stated because "currently unreachable" is exactly the rationale
-            // that decays without a signal. cleanup() and regEntries() are fully
-            // SYNCHRONOUS: no await, no promise, no callback between the read and
-            // the unlink, so within one engine the loop is atomic against the
-            // event loop and no create() can interleave at all. The ordering
-            // (engine.js:1810, bootstrap) is not what makes this safe; the
-            // absence of a suspension point is. So the guard is inert today and
-            // becomes load-bearing the moment either of these happens:
-            //   - cleanup() gains an await — t75 CONSIDERED deciding liveness
-            //     here with the async probe and DECLINED it, deliberately: the
-            //     door was tried, not left unopened. listPeers/getPeer probe,
-            //     cleanup does not, so this stays hypothetical. Reviving it
-            //     would open an in-process gap spanning a socket dial;
-            //   - a second cleanup() caller appears off the bootstrap path, or
-            //     bootstrap stops being the only one.
-            // Cross-process the gap is real now: two engines sharing ~/.clodex
-            // (the single-instance lock at main.js:492 is per-app, not per-volume).
+// The dead verdict describes the bytes in `raw`; if the entry was replaced since
+// (create()'s re-register path force-cleans a blocking record and writes a fresh
+// one), unlinking anyway removes a LIVE agent's registration and nothing notices.
+// The re-read narrows the window to two adjacent syscalls; it cannot close it,
+// since there is no atomic compare-and-unlink. Today cleanup() is fully
+// synchronous, so no in-process interleave exists — add an await anywhere in this
+// loop and this guard becomes load-bearing.
             let current = null;
             try { current = fs.readFileSync(regPath, 'utf-8'); } catch {}
             if (current !== raw) continue;   // replaced or already gone — not ours to delete
             fs.unlinkSync(regPath);
-            // The socket file is deliberately NOT unlinked here, and re-adding
-            // that as tidying would reintroduce a silent-unreachability bug.
-            // This read-then-delete never re-validates: if another host
-            // re-registers this name in the gap, we would unlink a LIVE socket —
-            // and a net.Server whose inode has been unlinked keeps listening with
-            // no error and no event, so that agent becomes permanently
-            // unreachable with nothing to notice by.
-            //
-            // Leaving the file behind costs nothing. Nothing enumerates socket
-            // files (regEntries yields agent.json paths only), every reader
-            // reaches a socket THROUGH a registry entry, and Transport.start
-            // unlinks the path itself before it binds — so an orphan neither
-            // advertises a dead agent nor blocks a live one from rebinding.
+// Deliberately does not unlink the socket file. This read-then-delete never
+// re-validates, so on a re-registration race we would unlink a LIVE socket — and
+// a net.Server whose inode has been unlinked keeps listening with no error and
+// no event, leaving that agent permanently unreachable. Orphans are harmless:
+// nothing enumerates socket files, and Transport.start unlinks before it binds.
             removed++;
           }
         } catch {}
@@ -235,7 +122,6 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
               this._onMessage(msg);
             } catch {}
           });
-          // Auto-close after 5s
           setTimeout(() => conn.destroy(), 5000);
         });
         this._server.listen(this._path, () => {
@@ -259,23 +145,11 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
       });
     }
 
-    // Is something actually LISTENING on this socket path? The registry records a
-    // bare pid, which after an unclean shutdown plus a pid recycle reads as alive
-    // for a corpse — so `existsSync(socket) && isAlive(pid)` cannot tell a running
-    // agent from a leftover file next to a reused pid number. A connect can: only
-    // a live server accepts one.
-    //
-    // Resolves true ONLY on a successful connect. ECONNREFUSED (file there,
-    // nothing bound — the ghost), ENOENT (no file at all), and timeout all mean
-    // not-live; every one of them is a socket we cannot deliver to, which is the
-    // question being asked. Never rejects — callers decide policy, not error
-    // handling.
-    //
-    // The probe writes NOTHING and closes immediately. That is safe by
-    // construction rather than by luck: the server discards zero-length frames
-    // before parsing (see the length check in start()'s 'end' handler), so a
-    // connect-and-close cannot be mistaken for a message and never reaches
-    // onMessage.
+// Resolves true only on a successful connect; ECONNREFUSED (file present, nothing
+// bound — the ghost), ENOENT and timeout all mean not-live. Never rejects.
+// The probe writes nothing and closes immediately: safe only because start()'s
+// 'end' handler discards zero-length frames before parsing, so a connect-and-close
+// can never reach onMessage.
     static isSocketLive(socketPath) {
       return new Promise((resolve) => {
         let done = false;

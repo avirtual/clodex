@@ -1,35 +1,3 @@
-// stores.js — the persistence layer as a single factory. initStores() builds
-// the ten on-disk stores and returns them; main.js calls it once in
-// app.whenReady() and destructures the result.
-//
-// DI seam: initStores(userDataPath, { log, registryDir, resourcesDir }).
-//   - userDataPath  — app.getPath('userData'); the eight JSON stores live here.
-//   - registryDir   — ~/.clodex; the prompt/agent/skill libraries live under it
-//                     (passed in to keep a single REGISTRY_DIR source of truth
-//                     in main.js rather than re-deriving os.homedir() here).
-//   - resourcesDir  — the shipped library seed root (repo `resources/library/`),
-//                     __dirname-relative by default so it rides app.asar in a
-//                     packaged build; overridable for hermetic tests. Its tree
-//                     is copied into registryDir/library ONCE PER FILE, seed-if-
-//                     absent (see seedLibraryDefaults).
-//   - log           — reserved; the moved bodies keep their verbatim
-//                     console.error on save failure (move-only), so it is
-//                     currently unused.
-//
-// Why a factory: the store file paths are derived INSIDE it from userDataPath,
-// so the stores simply do not exist until whenReady runs — which structurally
-// retires the old PERSIST_FILE-before-whenReady landmine (there is no module-
-// scope *_FILE global left to read too early). createMemoryStore in
-// memory-store.js is the in-repo shape template this mirrors.
-//
-// Gotchas owned:
-//   - The legacy prompts.json -> library/prompts migration is one-shot and runs
-//     during construction (it used to be an explicit whenReady call after
-//     PROMPTS_FILE was assigned); it only touches PROMPTS_FILE + the prompt dir,
-//     so its position relative to the other stores is immaterial.
-//   - Save failures are swallowed (console.error) exactly as before; a torn
-//     write is prevented by fs-util's atomicWriteFileSync, and persistence keeps
-//     an extra validated .bak snapshot.
 
 const fs = require('fs');
 const path = require('path');
@@ -54,10 +22,6 @@ const {
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
 
-// A managed box's config block (M6b). One shape, N instances — every box row in
-// the `boxes` registry carries a copy. workDir null = a named volume; a host path
-// = a bind mount. The three ports publish web/wirescope/peer-wire to loopback,
-// collision-bumped at compose-generation. image null = default resolution.
 const DEFAULT_SANDBOX_CONFIG = {
   workDir: null,
   webPort: 7810,
@@ -86,126 +50,30 @@ const DEFAULT_UI_SETTINGS = {
     claudeCommand: '',
     codex: ['context-used', 'model-name', 'project-root', 'git-branch', 'five-hour-limit', 'current-dir'],
   },
-  // ON by default since the proxy became self-contained (vendored copy +
-  // managed venv + autostart): "off" existed to protect users from a manual
-  // setup burden that no longer exists. The Traffic optimization toggle is
-  // the opt-out; missing python3 degrades to unrouted sessions, no breakage.
-  // Users who saved prefs before the flip keep their persisted choice.
   proxyEnabled: true,
-  // 7800 — wirescope's conventional port, ON PURPOSE (revisited 2026-07-03):
-  // since the managed instance detaches and survives GUI restarts it is a
-  // machine-level service, so OTHER agentic systems on this machine sharing
-  // it is a feature, not contamination. Detect-first adoption still means an
-  // already-running 7800 wins and we never double-spawn.
   proxyUrl: 'http://127.0.0.1:7800',
-  // Last CUSTOM proxy URL a New Session picked — a prefill convenience ONLY,
-  // decoupled from proxyUrl so remembering it never mutates the global default
-  // (which feeds ANTHROPIC_BASE_URL for default-proxy spawns and gates the
-  // managed wirescope's autostart on port match). Empty = never set a custom one.
   lastCustomProxyUrl: '',
-  // wirescope source override: empty = the vendored copy bundled with Clodex;
-  // a power user can point at their own checkout (settings-file-only, no UI).
   wirescopeDir: '',
   wirescopePort: 7800,
-  // Cold-resume compaction: when a parked session is resumed (GUI relaunch =
-  // cold by construction), ask wirescope to BAKE its transcript down to the
-  // safe-to-drop set before --resume. The re-cache is unavoidable on a cold
-  // resume, so baking just makes it cheaper + permanently slimmer. OFF by
-  // default — it mutates the on-disk transcript (wirescope backs up + integrity-
-  // gates; clodex fails safe to the original on any error). Needs a live proxy.
   compactOnResume: false,
-  // Startup session discovery: on launch, scan ~/.claude/projects for recent
-  // transcripts clodex doesn't track and offer to adopt them. OFF by default —
-  // an opt-in convenience; only the focused/most-recent window ever triggers it.
   discoverOnStartup: false,
-  // Working-directory MRU for the New Session dialog: the dirs most recently
-  // picked as a session cwd, most-recent first, capped at 12. Fed to the
-  // cwd-suggestions datalist alongside the popular-across-live-sessions list.
   recentCwds: [],
-  // Built-in Claude Design MCP: the CLI auto-injects the claude.ai `claude_design`
-  // connector (20 `mcp__claude_design__*` tools, ~4k tok/turn cache carriage) on
-  // every launch for entitled accounts, with no honored global opt-out. The PRIMARY
-  // fix is surgical and lives on the wire: a routed wirescope strips ONLY the design
-  // tools and keeps every real project/user MCP. This setting is just the no-proxy
-  // FALLBACK — `--strict-mcp-config`, which makes the CLI ignore ALL mcp config. That
-  // is a nuclear option: on an unrouted session sitting in a repo with a real
-  // `.mcp.json` it would silently drop those servers too, just to shed claude_design.
-  // So it is OFF by default — we don't impose the all-or-nothing flag on anyone who
-  // might have real MCPs. Turn it on only if you run unrouted clodex agents that use
-  // no MCP and want the ~4k/turn back without a proxy. Claude-only (Codex has no such
-  // connector). When routed through a strip-capable wire the gate ignores this entirely
-  // and lets the wire do the surgical strip regardless.
   disableClaudeDesignMcp: false,
-  // UI theme key (see THEMES in renderer.js). Canonical copy lives here so the
-  // View > Theme menu can show the right radio; the renderer mirrors it to
-  // localStorage for instant pre-paint application.
   theme: 'midnight',
-  // Sidebar width in px (Task 17, GH#7). The drag handle writes it here; every
-  // window applies it at startup. Clamped to [160, 560] on read AND write via
-  // clampSidebarWidth — a corrupt/out-of-range value can never reach the layout.
   sidebarWidth: 220,
-  // Remote access: phone-friendly web UI served on 127.0.0.1 only. OFF by
-  // default — it's a door into every agent session, so the user opens it
-  // deliberately and pairs it with `tailscale serve` (or an SSH tunnel) for
-  // off-machine reach. Port is settings-file-only (no UI), like wirescopePort.
   remoteEnabled: false,
   remotePort: 7900,
-  // Peered Clodexes on other machines: [{ id, label, sshHost?, remotePort?,
-  // url? }]. The friendly path is sshHost — Clodex spawns and supervises the
-  // `ssh -N -L` forward itself (remotePort = peer's phone-access port,
-  // settings-file-only like other ports). url is the manual escape hatch
-  // (tailnet, custom tunnel): a loopback endpoint reaching the peer's
-  // server. sshHost wins when both are set.
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
   // array via collectPeers/sanitizePeers and would clobber any extra fields.
   // Written by the peer:attach / peer:detach handlers, pruned by syncPeerManager.
   peerAttached: {},
-  // Per-peer session visibility: { [peerId]: [name, ...] }. NO key for a peer =
-  // show all (default, zero behavior change); a key restricts the sidebar to
-  // just those names. Unlike peerAttached an EMPTY array is meaningful here
-  // ("show none") and is kept. Same out-of-band-from-`peers` reasoning as
-  // peerAttached. Written by peer:setVisible, pruned by syncPeerManager.
   peerVisible: {},
-  // Auto-re-take control of peer tabs across restarts (yours OR the box's via
-  // remote restart/update): { [peerId]: [name, ...] }. Same out-of-band-from-
-  // `peers` reasoning as peerAttached (empty arrays dropped). Written by the
-  // peer:control / peer:detach / peer:forgetControlled handlers, pruned by
-  // syncPeerManager. Controlled implies attached, so a name here is always a
-  // subset of peerAttached.
   peerControlled: {},
-  // Managed-sandbox registry (M6b: N instances, one shape). Each row is
-  // { id, label, config } where config is DEFAULT_SANDBOX_CONFIG's shape. The
-  // registry is the SOLE source of box state — there is no legacy top-level
-  // `sandbox` key and no migration into this list. A fresh install seeds one box
-  // (id 'sandbox') so the panel isn't empty; the user can rename/delete/add from
-  // there. Deleting every box yields a genuinely empty list (not re-seeded).
   boxes: [{ id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_SANDBOX_CONFIG } }],
-  // Timestamp (ms epoch) of the last honored [agent:reboot] (Task 27). Rate-limit
-  // backstop: a reboot inside REBOOT_MIN_INTERVAL of this is refused, so a
-  // confused resumed transcript can't loop the app. 0 = never rebooted. (Auth is
-  // the per-session `intents` allowlist, NOT a key here — Bogdan's call: reuse the
-  // existing gate rather than invent a parallel settings surface.)
   lastRebootAt: 0,
-  // The one-shot post-reboot notice (Task 28): stamped by [agent:reboot] just
-  // before relaunch, delivered to the requesting seat once the app comes back
-  // and a workspace restore runs, then cleared. { name, at, reason } or null.
-  // Crash-safe by construction: it only fires if the app actually returned; a
-  // relaunch that never comes back leaves it set for the next manual launch
-  // (the requested-at time in the body self-explains a late one).
   pendingRebootNotice: null,
-  // Plugin state (plugin-plan.md [internal design doc, not in this repo] §3.1): a bag keyed three ways at once —
-  // `enabled` (the reserved array of ids the user has explicitly chosen; ABSENT
-  // means "never chosen", which falls back to each manifest's enabledByDefault),
-  // `_failures` (the quarantine strike record, host-owned), and one key per
-  // plugin id holding that plugin's own settings via host.settings.get/set.
-  //
-  // Deliberately NOT sanitized field-by-field like everything else here: the
-  // per-plugin sub-objects are a plugin's own schema, which core does not know
-  // and must not narrow. `sanitizePlugins` therefore only guarantees the SHAPE
-  // core relies on (an object; `enabled` an array of strings if present) and
-  // passes the rest through untouched.
   plugins: {},
 };
 
@@ -223,51 +91,15 @@ function sanitizePlugins(raw) {
   return out;
 }
 
-// `prior` (optional) is the CURRENT peers array — used to carry a peer's auth
-// token forward by id when an incoming entry OMITS `token` (remote-auth-plan.md [internal design doc, not in this repo]
-// §4). The Peers dialog round-trips `hasToken` only, never the value, so a plain
-// label-edit save omits `token` and must not wipe it. An incoming string SETS the
-// token (trimmed, cap 256); an explicit `''` CLEARS it; a dropped row drops its
-// token with the row. On a fresh disk load `prior` is absent — the persisted
-// string simply passes through the same set-on-string branch.
-// Typed cloud transports for peers (t32). Peers keep their OWN registry and
-// their own record shape; what is shared with the CLI is the VALIDATOR and the
-// argv builders, so the two sides cannot drift.
-//
-// CRITICAL — WHITELIST, the same hazard sanitizeSandbox documents below: every
-// sub-key MUST appear in the reconstruction or it is silently dropped on EVERY
-// write (a value the operator typed simply evaporates on the next save).
-// `test/stores.test.js` round-trips a full block of each kind through
-// set()/get() so a missing field fails loudly instead of quietly.
-//
-// THE FIELD LIST, and the only one. Each typed cloud kind names its required
-// and optional fields; the sanitizer below rebuilds from this table and nothing
-// else. Making the whitelist a DECLARATION rather than a hand-written
-// reconstruction per kind is the direct answer to the trigger this ticket named
-// twice: a layer that rebuilds a record from named fields silently drops what it
-// doesn't name, so the names live in one checkable place. Adding a field to a
-// kind means adding it here — there is no second site to forget.
-//
-// Field names are the CLI's, deliberately: these blocks are handed to
-// cli/src/transport.js's argv builders verbatim, so a rename here would be a
-// silent behaviour change there. `optional` fields are OMITTED when unset (never
-// null) because every builder tests presence to decide whether to emit a flag.
-//
-// `reject` marks a field this side cannot dial yet: present ⇒ the whole block is
-// refused rather than half-accepted, so anything the store admits is something
-// the tunnel can actually open. (ssm.ecs needs two awaited `aws` reads and
-// _spawnTunnel is synchronous — t32 step 3.)
-//
-// `az` IS accepted here but has NO destination-field syntax in the Peers dialog,
-// so today it can only arrive by import (t32 step 4) or from a hand-edited
-// settings file. That is deliberate, not an oversight: az needs three required
-// values and its `target` is a full slash-bearing Azure resource id
-// (/subscriptions/…/virtualMachines/x). Nobody types one of those twice — an az
-// destination arrives as a prepared context from whoever set up the
-// subscription. Accepting it at the store now means the import path is purely an
-// import, with no second pass through this layer. If az ever DOES want typing,
-// three revealed inputs on the row is the answer; a composite string crammed
-// into the one destination field is not, and that is settled, not open.
+// `prior` is the CURRENT peers array: an entry that OMITS `token` carries the
+// prior token forward by id — the Peers dialog round-trips `hasToken` only, so a
+// plain label-edit save must not wipe it. An explicit '' clears it.
+// WHITELIST: sanitizePeerCloud rebuilds only the fields named in this table, so
+// a sub-key missing here is silently dropped on EVERY write. The names are the
+// CLI argv-builders' own names — renaming one changes what gets dialled.
+// `optional` fields are OMITTED when unset (never null): the builders test
+// presence to decide whether to emit a flag. `reject` marks a field this side
+// cannot dial: present ⇒ refuse the whole block rather than half-accept it.
 const PEER_CLOUD_KINDS = {
   ssm:     { required: ['target'],   optional: ['region', 'profile'], reject: ['ecs'] },
   kubectl: { required: ['target'],   optional: ['namespace', 'context'] },
@@ -275,14 +107,9 @@ const PEER_CLOUD_KINDS = {
   az:      { required: ['bastion', 'resourceGroup', 'target'] },
 };
 
-// One typed cloud transport block for a peer, rebuilt field by field from the
-// table above. Returns the clean block, or null (drop it) for anything
-// malformed, incomplete, or not-yet-dialable.
-//
-// DATA ONLY. The typed kinds are declarative descriptions of a destination —
-// safe to persist, safe to share. A raw `tunnel` argv is CODE and must NEVER
-// become a peer-record field: this store is written from the renderer, so a
-// persisted argv would be a GUI-editable command line the app later executes.
+// DATA ONLY. A raw `tunnel` argv must NEVER become a peer-record field: this
+// store is written from the renderer, so a persisted argv would be a
+// GUI-editable command line the app later executes.
 function sanitizePeerCloud(kind, raw) {
   const spec = PEER_CLOUD_KINDS[kind];
   if (!spec) return null;
@@ -301,11 +128,6 @@ function sanitizePeerCloud(kind, raw) {
     const v = str(raw[f]);
     if (v) out[f] = v;      // absent, not null — the builders test presence
   }
-  // Final say goes to the CLI's validator, through its PUBLIC door. Reused
-  // rather than re-implemented so a peer's typed transport and a CLI context can
-  // never drift into two different ideas of a valid block; the per-kind checks
-  // (validateSsm et al.) stay private. A CliError means the block was malformed,
-  // and dropping it is the same stance the rest of this store takes on junk.
   try { validateEntry({ [kind]: out }); } catch { return null; }
   return out;
 }
@@ -327,13 +149,7 @@ function sanitizePeers(raw, prior) {
   for (const p of raw) {
     if (!p || typeof p.id !== 'string') continue;
     const url = typeof p.url === 'string' && /^https?:\/\//.test(p.url) ? p.url : null;
-    // ssh host or user@host — same charset ssh_config aliases allow.
     const sshHost = typeof p.sshHost === 'string' && /^[a-zA-Z0-9._@-]{1,128}$/.test(p.sshHost) ? p.sshHost : null;
-    // Typed cloud transports (t32). Like sshHost, one makes a peer ADMISSIBLE
-    // with no url of its own — the url comes from whatever local port its
-    // managed tunnel lands on. At most ONE may survive: two would leave every
-    // downstream reader (tunnel, wiring, dialog) picking a winner independently,
-    // which is how two halves of the app end up dialling different boxes.
     let cloud = null;
     for (const kind of Object.keys(PEER_CLOUD_KINDS)) {
       const block = sanitizePeerCloud(kind, p[kind]);
@@ -342,19 +158,12 @@ function sanitizePeers(raw, prior) {
       cloud = { kind, block };
     }
     if (!url && !sshHost && !cloud) continue;
-    // Optional per-peer deploy folder override (the clone dir on the box). Kept
-    // as the raw operator string (~/… or /abs) — validated/rendered at deploy
-    // time by classifyDeployFolder, not here; a blank/invalid value just falls
-    // back to the script's own $HOME/wb-wrap-ui default. Cap length defensively.
     const deployFolder = typeof p.deployFolder === 'string' && p.deployFolder.trim()
       ? p.deployFolder.trim().slice(0, 256) : null;
     const entry = {
       id: p.id,
       label: typeof p.label === 'string' && p.label ? p.label : (sshHost || url || cloudLabel(cloud)),
       url, sshHost,
-      // Presence-encoded like disabled/relayAllowed: the key is ABSENT for an
-      // ssh/url peer rather than written as null, so "has a typed transport" is
-      // a plain `p.ssm` / `p.kubectl` / `p.gcloud` test everywhere downstream.
       ...(cloud ? { [cloud.kind]: cloud.block } : {}),
       remotePort: Number.isInteger(p.remotePort) ? p.remotePort : 7900,
       deployFolder,
@@ -363,16 +172,8 @@ function sanitizePeers(raw, prior) {
       // the absence invariant syncPeerManager reads). Only a hard `=== true`
       // survives; truthy-but-not-true is dropped.
       ...(p.disabled === true ? { disabled: true } : {}),
-      // Relay-mesh membership (hub-relay federation): SAME presence-encoding as
-      // disabled — setRelayAllowed's off path deletes the key, so absence = not
-      // in the mesh (the symmetric gate's default-deny). MUST be preserved here
-      // or every settings write strips it and the flag never persists (the gate
-      // then stays OFF forever and no roster is ever pushed).
       ...(p.relayAllowed === true ? { relayAllowed: true } : {}),
     };
-    // Operator auth token — presence-encoded like disabled/relayAllowed (only a
-    // truthy value is written). Set on an incoming string, cleared on '', else
-    // carried forward from prior by id when omitted (see the header note).
     let token;
     if (typeof p.token === 'string') {
       token = p.token.trim().slice(0, 256) || null;   // '' / whitespace clears
@@ -403,32 +204,21 @@ function sanitizePeerNameMap(raw, { keepEmpty }) {
   return out;
 }
 
-// Persisted peer-tab attachments: empty arrays dropped (see keepEmpty above).
 function sanitizePeerAttached(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
 }
 
-// Persisted per-peer visibility selection: empty arrays kept ("show none").
 function sanitizePeerVisible(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: true });
 }
 
-// Persisted control claims: empty arrays dropped, like peerAttached.
 function sanitizePeerControlled(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
 }
 
-// A managed box's config block (sandbox-plan.md [internal design doc, not in this repo], M6b). Bounds every field so
-// a hand-edited settings file can't feed sandbox.js junk: ports coerced to ints in
-// the ephemeral/registered range (else the default), workDir/image as non-empty
-// strings-or-null, autoStart a strict boolean, mounts a sanitized array (M6a).
-// Returns null on a non-object so the caller falls back to DEFAULT_SANDBOX_CONFIG.
-// Junk/extra keys are dropped by reconstruction (same stance as sanitizePeers).
-// Consumed per-box by sanitizeBoxes — there is no top-level `sandbox` key.
-//
-// CRITICAL: this store is a WHITELIST — any key NOT reconstructed here is silently
-// dropped on every write. `mounts` (M6a) shipped without a line here and vanished
-// on every round-trip; every persisted box-config sub-key MUST appear below.
+// CRITICAL: this store is a WHITELIST — any key NOT reconstructed here is
+// silently dropped on every write. `mounts` shipped without a line here and
+// vanished on every round-trip; every persisted box-config sub-key must appear.
 function sanitizeSandbox(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const port = (v, dflt) => (Number.isInteger(v) && v >= 1 && v <= 65535 ? v : dflt);
@@ -444,11 +234,6 @@ function sanitizeSandbox(raw) {
   };
 }
 
-// M6a mount list → the persisted shape { host: non-empty string, ro: boolean,
-// container?: non-empty string }. Malformed entries (missing/blank host, non-object)
-// are dropped; a container is carried only when it's a non-empty string (an omitted
-// target stays dynamic — sandbox.js derives it). Non-array input → []. The store
-// only guards SHAPE; sandbox.js's normalizeMounts re-validates paths/shadows/dupes.
 function sanitizeSandboxMounts(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -463,16 +248,9 @@ function sanitizeSandboxMounts(raw) {
   return out;
 }
 
-// Managed-sandbox registry (M6b P2). Each row is { id, label, config } — id gated
-// UNIFORMLY to BOX_ID_RE (the compose project-name charset; a row failing it is
-// DROPPED, since box creation enforces the same rule so nothing valid can regress
-// to a bad id), label a non-empty display string (falls back to id), config the
-// sanitizeSandbox shape. Duplicate ids — and the reserved 'host' id — drop all but
-// the first / drop entirely. There is NO
-// migration and NO guaranteed 'sandbox' row: the registry is the sole source, an
-// empty/garbage input sanitizes to an empty list (the missing-key path in _load
-// supplies the fresh-install default instead). Returns null on non-array input so
-// the caller can pick between the persisted-empty [] and the default seed.
+// Returns null ONLY for non-array input: a persisted-but-empty `boxes: []` (the
+// user deleted every box) must survive, while a MISSING key falls back to the
+// default seed. Collapsing both to [] would re-seed an intentionally empty list.
 function sanitizeBoxes(rawBoxes) {
   if (!Array.isArray(rawBoxes)) return null;
   const out = [];
@@ -489,19 +267,11 @@ function sanitizeBoxes(rawBoxes) {
   return out;
 }
 
-// The one-shot post-reboot notice (Task 28). null unless a well-formed object
-// with a string seat name; `at` coerces to a finite ms stamp (0 if junk) and
-// `reason` to a string (''), so a delivered notice can always format its
-// requested-at time and optional reason. A missing/malformed value → null (no
-// notice pending), which is also the cleared state.
 function sanitizeRebootNotice(v) {
   if (!v || typeof v !== 'object' || typeof v.name !== 'string' || !v.name) return null;
   return {
     name: v.name,
     at: Number.isFinite(v.at) ? v.at : 0,
-    // Bound the stored reason so an unbounded settings write (or a hand-edited
-    // ui-settings.json) can't park a huge blob. Delivery still de-newlines and
-    // trims to its own 200-char display bound; this is just a storage sanity cap.
     reason: (typeof v.reason === 'string' ? v.reason : '').slice(0, 500),
   };
 }
@@ -517,31 +287,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   const UI_SETTINGS_FILE = path.join(userDataPath, 'ui-settings.json');
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
   const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
-  // GUI-managed env scopes (T46). Holds secret VALUES at rest, so it is written
-  // chmod 0600 after every save — it is the one JSON store whose contents are
-  // credential-sensitive.
   const ENV_SCOPES_FILE = path.join(userDataPath, 'env-scopes.json');
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
-  // Exec-command registry — operator-authored `[agent:exec <cmd>]` command defs.
-  // The exec DISPATCHER (session-manager `_handleExecIntent`) independently joins
-  // this same `library/exec/<cmd>.json` path to read a def at invocation; the two
-  // agree by construction (like AGENTS_DIR / the --agents key). This store is the
-  // authoring surface only — it never runs a command.
   const EXEC_DIR = path.join(registryDir, 'library', 'exec');
 
-  // ---------------------------------------------------------------------------
-  // Persistence — remember sessions across app restarts
-  // ---------------------------------------------------------------------------
   const persistence = {
     _load() {
       let all;
       try {
         all = JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
       } catch {
-        // Primary missing or corrupt — fall back to the last known-good copy
-        // before giving up (catches a bad hand-edit, not just a torn write).
         try {
           all = JSON.parse(fs.readFileSync(PERSIST_FILE + '.bak', 'utf-8'));
           console.error('sessions.json unreadable; recovered from .bak');
@@ -550,7 +307,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         }
       }
       if (!Array.isArray(all)) return [];
-      // Migrate entries without a workspaceId → assign to default
       let changed = false;
       for (const e of all) {
         if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
@@ -560,10 +316,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
     _save(entries) {
       try {
-        // Snapshot the current known-good file to .bak before overwriting, so a
-        // logically-bad-but-valid write (or a hand-edit slip) stays recoverable —
-        // atomicWriteFileSync only protects against torn writes. Validate first
-        // so we never back up garbage.
         try {
           const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
           JSON.parse(cur);
@@ -595,22 +347,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       const entry = all.find(s => s.name === name);
       if (entry && entry.sessionId !== sessionId) {
         entry.sessionId = sessionId;
-        // Ordered history of observed conversation ids (oldest → newest). Each
-        // /clear mints a new id and JsonlWatcher reports it here, so this chain
-        // accumulates every conversation the agent has had — authoritative, no
-        // cwd guessing. Dedup + move-to-end so re-resuming an old id marks it
-        // most-recent. Powers the session picker (session:history).
         const hist = (Array.isArray(entry.sessionIds) ? entry.sessionIds : []).filter((id) => id !== sessionId);
         hist.push(sessionId);
         entry.sessionIds = hist;
         this._save(all);
       }
     },
-    // Keep-warm hold INTENT, epoch ms. The in-process HoldKeeper is memory-only
-    // by design (wire/hold.js header) — persisting the deadline (never the
-    // last-request bytes/auth headers) lets the first main-line turn after a
-    // restart re-arm it. A falsy value CLEARS to an absent key (explicit
-    // disarm / lapse), so a dormant session carries no stale field.
     setHoldUntil(name, holdUntil) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -627,10 +369,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // Per-session git worktree provenance ({ path, branch, base, repo }), stamped
-    // after a worktree-backed create so a later teardown can offer to remove it. A
-    // falsy value clears the key (a session that no longer owns a worktree carries
-    // none).
     setWorktree(name, worktree) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -639,10 +377,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       else delete entry.worktree;
       this._save(all);
     },
-    // Manual archive: an archived session keeps its record (so it can be resumed
-    // later) but has no running PTY and is skipped by restore-spawn. Stamps
-    // archivedAt for the sidebar's status filter + sort/display; clearing it
-    // (unarchive) drops the key so a resumed session carries none.
     setArchived(name, archived) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -659,16 +393,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // Teams: stamp the one-time initial-roster DELIVERY. create() reads this
-    // pre-upsert to gate the team-context wiring: present → this seat already
-    // got its roster on a prior spawn, so a resume/restart must NOT re-inject it
-    // (the resumed context already carries it) or re-announce the seat to
-    // teammates (N seats each re-firing 'spawned' on app restart = N×N delta
-    // spam for a team that never changed). Written at delivery (not decision) so
-    // a seat that died before its roster landed carries no stamp and retries next
-    // spawn. Delete drops the whole record, so a delete+recreate is a genuine
-    // first spawn again. Absence, not value, is the signal — see the mint-vs-
-    // resume note in create() (resumeId's VALUE is not the axis; task 15).
     setRosterSent(name) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -748,12 +472,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // Per-session exec-command GRANT allowlist (the capability the fire-time exec
-    // dispatcher checks fresh on every [agent:exec], session-manager _handleExecIntent).
-    // Divergence-only like setIntents: a non-empty ARRAY persists; an empty grant
-    // REMOVES the key so "no grants" is stored as ABSENCE — matching create(), which
-    // only writes execCommands when non-empty. Written by the Edit dialog; agents can
-    // never reach it (no exec-write intent verb — grants ride operator templates).
     setExecCommands(name, execCommands) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -763,12 +481,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // Per-session env vars (T46b — the Edit dialog OWNS it, local-only). Stores a
-    // flat { KEY: value } map. Divergence-only like setExecCommands: a non-empty
-    // object persists; an empty/absent map REMOVES the key so "no env" is stored as
-    // ABSENCE — matching create(), which only writes env when non-empty. The caller
-    // (applySessionArgs) passes sanitizeFlat'd values, so the deny-list/key gate has
-    // already bitten; this is a plain writer.
     setEnv(name, env) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -804,11 +516,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // Boot-digest ledger: conversation ids that have received the memory digest
-    // (via the SessionStart hook at birth, or the append-once path). Durable so
-    // GUI restarts — which --resume the same conversation — never re-deliver.
-    // Capped like a ring: an evicted ancient id would at worst earn a harmless
-    // duplicate digest if that conversation is ever resumed again.
     markDigested(name, sessionId) {
       if (!sessionId) return;
       const all = this._load();
@@ -824,28 +531,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Templates — saved session configs, one portable JSON object per file under
-  // library/templates/<name>.json. A structural twin of agentLibrary: the
-  // FILENAME is the identity (mirrors _file(name)), and because the on-disk
-  // object is exactly the shape spawn's `template:./x.json` consumes, a library
-  // template literally IS a spawn-able file template. The stored file carries NO
-  // synthetic id — list() re-injects `id = <filename stem>` on read so the
-  // renderer/IPC (which key on `.id`) work unchanged against a name identity.
-  // Config subset: type/cwd/extraArgs/proxy/agents/execCommands/denyBuiltins/
-  // disabledTools/disabledSkills/injectSkills/systemPromptFile/appendPromptFiles
-  // + opt-out stripLevel/autoCompact/intents. NEVER a per-session identity (proxyAgent) or runtime
-  // state (sessionId). Schemaless: unknown fields load verbatim, missing config
-  // = clodex defaults at spawn (so pre-config / pre-prompt-refs templates load).
-  // ---------------------------------------------------------------------------
-  // The keys the New/Edit dialog FULLY controls — the exact set
-  // collectFormConfig() returns (renderer.js). Cross-pinned: this list and that
-  // return object are a maintained pair. `save()`'s merge-preserve treats these as
-  // editor-owned, so an OMITTED owned key on an edit save means "the user cleared
-  // it" (e.g. re-checked auto-compact / all intents), NOT "preserve the stored
-  // value" — only NON-owned keys (unknown/future fields) are carried forward. A
-  // new conditionally-omitted key in collectFormConfig MUST be added here too, or
-  // merge-preserve will resurrect it after the user clears it.
+  // The keys the New/Edit dialog FULLY controls — a maintained pair with
+  // collectFormConfig()'s return object in renderer.js. save()'s merge-preserve
+  // treats these as editor-owned, so an OMITTED owned key on an edit save means
+  // "the user cleared it", not "preserve the stored value"; only NON-owned keys
+  // are carried forward. A new conditionally-omitted key in collectFormConfig
+  // MUST be added here too, or merge-preserve resurrects it after a clear.
   const EDITOR_OWNED = new Set([
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'denyBuiltins', 'disabledTools', 'disabledSkills',
@@ -853,8 +544,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   ]);
   const templates = {
     _file(name) { return path.join(TEMPLATES_DIR, `${name}.json`); },
-    // Raw parsed body of an existing template file (no id/name re-injection), or
-    // null if absent/malformed — used by save()'s merge-preserve.
     _read(name) {
       try { const o = JSON.parse(fs.readFileSync(this._file(name), 'utf-8')); return (o && typeof o === 'object') ? o : null; }
       catch { return null; }
@@ -869,35 +558,22 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         try {
           const obj = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), 'utf-8'));
           if (!obj || typeof obj !== 'object') continue;
-          // Filename is authoritative identity: a hand-renamed file's name (and
-          // id) follow its filename, whatever the in-file `name` hint says.
           const stem = f.slice(0, -'.json'.length);
           out.push({ ...obj, name: stem, id: stem });
         } catch { /* skip a malformed file, like agentLibrary */ }
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     },
-    // Write the portable object (id/name stripped from the body — filename is the
-    // identity, `name` re-added on read as a hint only). Overwrites <name>.json.
     _write(name, template) {
       ensureDir(TEMPLATES_DIR);
       const { id, ...body } = template;
       body.name = name; // portability hint; read treats the filename as canonical
       fs.writeFileSync(this._file(name), JSON.stringify(body, null, 2), { mode: 0o600 });
     },
-    // Rename-in-place (drawer Edit / dialog template-mode): the renderer passes
-    // both the OLD name as `id` and the NEW `name`. When they differ it's a
-    // rename — write the new file and unlink the old so it can't orphan (the
-    // rename-leak). The renderer's clash-check already refuses a rename onto
-    // ANOTHER template's name (verified renderer saveTemplateFromForm), so this
-    // trusts the caller and does no dest-collision check. Same name → plain
-    // overwrite. This is the sole caller that needs id-vs-name semantics.
+    // Rename-in-place: the caller passes the OLD name as `id` and the NEW one as
+    // `name`. When they differ, write the new file and unlink the old or it
+    // orphans. Dest-collision is the caller's check; this trusts it.
     save(template) {
-      // Merge-preserve: carry forward keys the stored file has that the incoming
-      // cfg does NOT own (EDITOR_OWNED), so an export-only field (autoCompact
-      // pre-U9) or an unknown future key survives an edit round-trip instead of
-      // being wiped by the full-object overwrite. Owned keys come SOLELY from
-      // `template` — an omitted owned key is a clear, not a preserve.
       const prior = this._read(template.id);
       const merged = {};
       if (prior) for (const [k, v] of Object.entries(prior)) {
@@ -909,12 +585,9 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         try { fs.unlinkSync(this._file(template.id)); } catch {}
       }
     },
-    // Name-keyed upsert for the user-facing save paths (export-from-session, the
-    // form's "Save as Template", template-mode New). Scans existing filenames
-    // case-insensitively and overwrites the matching EXACT filename (preserving
-    // its original casing) so we never birth both Foo.json and foo.json on a
-    // case-sensitive FS. No match → write <name>.json. Returns the stored object
-    // (with id = its resolved filename stem) so callers can select it.
+    // Case-insensitive scan that overwrites the matching EXACT filename, keeping
+    // its original casing — otherwise a case-sensitive FS ends up holding both
+    // Foo.json and foo.json.
     saveByName(template) {
       const wanted = (template.name || '').toLowerCase();
       let target = template.name;
@@ -934,9 +607,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Workspaces — each window owns one, sessions are scoped to workspaces
-  // ---------------------------------------------------------------------------
   const workspaces = {
     _load() {
       try {
@@ -951,7 +621,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
     list() {
       const all = this._load();
-      // Ensure at least one workspace exists
       if (all.length === 0) {
         const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
         this._save([def]);
@@ -981,9 +650,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       const w = all.find(x => x.id === id);
       if (w) { w.bounds = bounds; this._save(all); }
     },
-    // Per-workspace sidebar view state (group/sort/status/activity/search).
-    // Merged so a partial update from the toolbar keeps the other keys; restored
-    // on window create via workspace:getView.
     setView(id, view) {
       const all = this._load();
       const w = all.find(x => x.id === id);
@@ -991,8 +657,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       w.view = { ...(w.view || {}), ...(view || {}) };
       this._save(all);
     },
-    // Per-window UI zoom (View-menu zoom items), restored on window create.
-    // 1.0 clears the key so untouched workspaces stay clean.
     setZoomFactor(id, factor) {
       const all = this._load();
       const w = all.find(x => x.id === id);
@@ -1007,11 +671,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       const w = all.find(x => x.id === id);
       if (w) { w.lastFocusedAt = Date.now(); this._save(all); }
     },
-    // Live open-window marker, so quit + relaunch restores the same window SET.
-    // Maintained by createWindow (true) and the closed handler (false); the
-    // closed handler skips the clear while a quit is in flight — quit tears
-    // every window down, and wiping the flags then would collapse the next
-    // launch back to a single window.
     setOpen(id, open) {
       const all = this._load();
       const w = all.find(x => x.id === id);
@@ -1027,27 +686,13 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Prompts library — user-authored prompts as plain .md files under
-  // ~/.clodex/library/prompts/{system,append}/*.md. On-disk (not a JSON blob) so
-  // they're human-inspectable, portable, and — crucially — REFERENCEABLE: a
-  // session points at a prompt by its filename stem, so one shared prompt (e.g.
-  // the clodex syntax) can be reused across many sessions and edited once.
-  //
-  //   kind = subfolder, not frontmatter — so a `system` prompt file can be handed
-  //   to the CLI verbatim via --system-prompt-file with nothing to strip.
-  //     system — REPLACES the CLI's default system prompt (a full base persona)
-  //     append — a composable fragment appended (non-system) on every spawn
-  //
-  // Spawn ordering for appends = filename sort, so prefix a stem (00-, 50-) to
-  // control order; shared/stable appends first keeps the cache prefix aligned
-  // across sessions. The IPC protocol is always prepended ahead of all of them.
-  // ---------------------------------------------------------------------------
+  // Prompts library — ~/.clodex/library/prompts/{system,append}/*.md.
+  // kind = subfolder, NOT frontmatter: a `system` file is handed to the CLI
+  // verbatim via --system-prompt-file, so there must be nothing to strip.
+  // Identity is the filename stem, and appends apply in filename sort order.
   const promptLibrary = {
     _dir(kind) { return path.join(PROMPTS_DIR, kind); },
     _file(kind, stem) { return path.join(this._dir(kind), `${stem}.md`); },
-    // Every *.md across both kinds (or one kind if given). Identity is the
-    // filename stem; save() keys by it so the file and the ref stay in sync.
     list(kind) {
       const kinds = kind ? [kind] : PROMPT_KINDS;
       const out = [];
@@ -1083,17 +728,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // Slugify a legacy prompt title into a valid filename stem for migration.
   function slugifyPromptName(s) {
     const slug = String(s || '').trim().toLowerCase()
       .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
     return slug || `prompt-${Date.now()}`;
   }
 
-  // One-shot migration: the pre-library prompts.json held {id,title,body} entries,
-  // all append-kind by nature (they were --append-system-prompt material). Write
-  // each out as append/<slug>.md, then rename the JSON aside so this never re-runs.
-  // Non-destructive: never clobbers a file that already exists.
   function migratePromptsJson() {
     let entries;
     try { entries = JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf-8')); }
@@ -1109,12 +749,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     try { fs.renameSync(PROMPTS_FILE, `${PROMPTS_FILE}.migrated`); } catch {}
   }
 
-  // One-shot: the legacy templates.json blob (misfiled in userData) → per-file
-  // library/templates/<name>.json. Existence-gated like migratePromptsJson.
-  // Names predate validation, so slugify to the filename charset; a dup slug or
-  // an already-present dest is SKIPPED (first-wins), and an empty slug drops the
-  // entry. None of that is data loss: templates.json is RENAMED to .migrated,
-  // never deleted, so any skipped/dropped entry stays recoverable on disk.
   function migrateTemplatesJson() {
     let entries;
     try { entries = JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf-8')); }
@@ -1137,14 +771,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     try { fs.renameSync(TEMPLATES_FILE, `${TEMPLATES_FILE}.migrated`); } catch {}
   }
 
-  // ---------------------------------------------------------------------------
-  // Per-agent defaults — standing preferences keyed by agent NAME that outlive
-  // any single session. Unlike sessions.json (whose entry a kill-from-UI
-  // deletes), this store survives kill/recreate, so a strip level the user picks
-  // in the bottom-bar menu becomes the default every FUTURE session of that name
-  // is seeded with — applied only at (cold) session birth, never re-imposed on a
-  // reload. Shape: { [name]: { strip: 1|2 } }, room to grow other per-agent prefs.
-  // ---------------------------------------------------------------------------
   const agentDefaults = {
     _load() {
       try {
@@ -1157,13 +783,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         atomicWriteFileSync(AGENT_DEFAULTS_FILE, JSON.stringify(map, null, 2));
       } catch (e) { console.error('agent-defaults save failed:', e); }
     },
-    // Standing strip level for an agent name (0 if never set).
     getStrip(name) {
       const e = this._load()[name];
       return (e && (e.strip === 1 || e.strip === 2)) ? e.strip : 0;
     },
-    // Record the agent's standing strip level; level 0 clears it (and prunes the
-    // entry when no other prefs remain).
     setStrip(name, level) {
       const map = this._load();
       const lvl = (level === 1 || level === 2) ? level : 0;
@@ -1172,23 +795,15 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       if (Object.keys(e).length) map[name] = e; else delete map[name];
       this._save(map);
     },
-    // Global default tool-deny set that NEW sessions inherit when the create
-    // dialog didn't pass an explicit one. Keyed by "*" (not a legal session name,
-    // so it can't collide with a per-agent entry). A uniform deny set across
-    // sessions yields a byte-identical, lean first cache segment (tools[] sits
-    // before the M1 cache breakpoint), so sessions share one warm tools segment
-    // instead of each cold-writing its own — measured cross-instance + cross-type.
-    //
-    // Tri-state: key ABSENT -> the in-code DEFAULT_TOOL_DENY_FLOOR (shipped
-    // default); key PRESENT with a deny array (incl. EMPTY) -> the user's explicit
-    // choice wins, so "" means "deny nothing" not "fall back to the floor".
+    // Tri-state: key ABSENT -> the in-code DEFAULT_TOOL_DENY_FLOOR; key PRESENT
+    // with a deny array (including EMPTY) -> the user's explicit choice wins, so
+    // [] means "deny nothing", not "fall back to the floor". Keyed "*", which is
+    // not a legal session name and so cannot collide with a per-agent entry.
     getDefaultDeny() {
       const e = this._load()['*'];
       if (e && Array.isArray(e.deny)) return e.deny.filter((t) => CLAUDE_TOOLS.includes(t));
       return DEFAULT_TOOL_DENY_FLOOR.slice();
     },
-    // Persist the global default deny set. An explicit [] is recorded as-is (the
-    // user opting out of the floor), distinct from clearing the key.
     setDefaultDeny(list) {
       const map = this._load();
       const clean = Array.isArray(list)
@@ -1201,19 +816,9 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Custom subagent library — user-authored agents as markdown-with-frontmatter
-  // files under ~/.clodex/agents/. On-disk (not in a JSON blob) so they're
-  // human-inspectable and portable into a project's .claude/agents or
-  // ~/.claude/agents. At spawn the enabled subset becomes the CLI's inline
-  // --agents flag (see agents-util.js). Claude-only; Codex has no equivalent.
-  // ---------------------------------------------------------------------------
 
   const agentLibrary = {
     _file(name) { return path.join(AGENTS_DIR, `${name}.md`); },
-    // Parsed metadata for every *.md in the folder. Identity is the frontmatter
-    // `name` (falling back to the filename); save() keys the file by name so the
-    // two stay in sync and duplicates can't arise by construction.
     list() {
       let files;
       try { files = fs.readdirSync(AGENTS_DIR); }
@@ -1263,10 +868,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // Skill-injection library — same fs shape as agentLibrary, over
-  // ~/.clodex/skills/*.md. Each file is a SKILL.md (frontmatter name/description
-  // + instruction body); identity is the filename stem (the frontmatter `name`
-  // is normalized to it at scaffold time, see skills-util.skillMd).
   const skillLibrary = {
     _file(name) { return path.join(SKILLS_LIB_DIR, `${name}.md`); },
     list() {
@@ -1285,11 +886,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     },
-    // Scope-filtered view for the OFFER surfaces (the Skills popover's inject
-    // catalog, local + over the wire). The scope keys live in each file's
-    // frontmatter, which list() carries verbatim as `content` — re-parse it here
-    // rather than widen the list() item shape, so the remote skillLib payload
-    // stays byte-for-byte what it was. list() itself stays unfiltered (drawer).
     listFor(ctx) {
       return this.list().filter((s) => visibleTo(parseSkillFrontmatter(s.content).meta, ctx || {}));
     },
@@ -1308,14 +904,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // Exec-command library — operator-authored command defs as JSON files under
-  // ~/.clodex/library/exec/*.json. A STRING twin of agentLibrary (raw/save do
-  // format-agnostic string I/O; the JSON validation lives above the store, in
-  // the IPC layer, so the SAME exec-schema guard covers both authoring and a
-  // hand-edited file's next load). Identity is the filename stem — the exact
-  // token the `[agent:exec <cmd>]` dispatcher paths on. list() parses each file
-  // for a summary row (name + argv preview) but skips a malformed one like the
-  // other libraries, so a bad hand-edit never breaks the drawer.
   const execLibrary = {
     _file(name) { return path.join(EXEC_DIR, `${name}.json`); },
     list() {
@@ -1354,22 +942,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Reminders — durable self-schedules for the `[agent:remind …]` scheduler
-  // (remind-scheduler.js owns the timers/clock; this is persistence ONLY, no
-  // timing logic). A flat JSON array under userData, same _load/_save idiom as
-  // persistence/workspaces. One record per schedule:
-  //   { id, agent, kind, spec, body, nextFireAt, createdAt, lastFiredAt }
-  // `spec` is the ORIGINAL spec string (re-parsed at load by the scheduler and
-  // shown verbatim by `remind list`); `kind` is its parsed head; `nextFireAt`
-  // is the epoch-ms the scheduler last computed (null for oncompact — event-
-  // driven, no timer). The store trusts its sole caller (the scheduler) and does
-  // no timing — it only assigns an id + createdAt and round-trips the fields.
-  //
-  // Ids are pure lowercase base36 (no separators) so a `[agent:remind cancel
-  // <id>]` token satisfies remind-schedule's ID_RE ([a-z0-9]+); minted with a
-  // collision retry against the live set.
-  // ---------------------------------------------------------------------------
+  // Ids must be pure lowercase base36 with no separators: a
+  // `[agent:remind cancel <id>]` token has to satisfy the scheduler's ID_RE
+  // ([a-z0-9]+). `nextFireAt` is null for oncompact (event-driven, no timer);
+  // this store does no timing — it mints id + createdAt and round-trips fields.
   const reminders = {
     _load() {
       try {
@@ -1387,16 +963,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         const id = Math.random().toString(36).slice(2, 8);
         if (id && !all.some((r) => r.id === id)) return id;
       }
-      // Astronomically unlikely fallback — timestamp tail keeps it unique + base36.
       return Date.now().toString(36).slice(-6);
     },
     list() { return this._load(); },
     listForAgent(agent) {
       return this._load().filter((r) => r.agent === agent);
     },
-    // Persist a new schedule. Caller supplies agent/kind/spec/body/nextFireAt;
-    // the store owns id + createdAt and initializes lastFiredAt. Returns the
-    // stored record (with its minted id) so the caller can arm a timer for it.
     add({ agent, kind, spec, body = '', nextFireAt = null }) {
       const all = this._load();
       const id = this._mintId(all);
@@ -1410,8 +982,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       this._save(all);
       return rec;
     },
-    // Drop one schedule by id. Returns true if it existed (so `cancel` can be
-    // silent on success and bounce a truly-unknown id).
     remove(id) {
       const all = this._load();
       const next = all.filter((r) => r.id !== id);
@@ -1419,9 +989,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       this._save(next);
       return true;
     },
-    // Record a fire: stamp lastFiredAt and store the recomputed nextFireAt (null
-    // for a spent one-shot the caller will remove separately, or an event kind).
-    // No-op if the id is gone (cancelled between fire and mark).
     markFired(id, firedAtMs, nextFireAt) {
       const all = this._load();
       const rec = all.find((r) => r.id === id);
@@ -1434,14 +1001,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     get(id) { return this._load().find((r) => r.id === id) || null; },
   };
 
-  // ---------------------------------------------------------------------------
-  // Operator inbox — [agent:notify-user] notes an agent raises to get Bogdan's
-  // attention when it's blocked on his decision. Chronological by createdAt (the
-  // store appends, so file order already IS chronological); the UI renders the
-  // list newest-first. Ids are base36 like reminders (no cancel-token contract
-  // here, but same _mintId keeps the two stores symmetric). readAt=null is the
-  // unread state; unreadCount() drives the sidebar badge.
-  // ---------------------------------------------------------------------------
   const notifications = {
     _load() {
       try {
@@ -1462,8 +1021,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return Date.now().toString(36).slice(-6);
     },
     list() { return this._load(); },
-    // Append a note. Caller supplies from/workspaceId/body; the store owns id +
-    // createdAt and initializes readAt=null. Returns the stored record.
     add({ from, workspaceId = null, body = '' }) {
       const all = this._load();
       const id = this._mintId(all);
@@ -1478,8 +1035,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       this._save(all);
       return rec;
     },
-    // Stamp one note read. Returns true if it existed and flipped (a no-op on an
-    // already-read note still returns true — the row IS read).
     markRead(id) {
       const all = this._load();
       const rec = all.find((n) => n.id === id);
@@ -1487,7 +1042,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       if (rec.readAt == null) { rec.readAt = Date.now(); this._save(all); }
       return true;
     },
-    // Stamp every unread note read at once. Returns the count flipped.
     markAllRead() {
       const all = this._load();
       const now = Date.now();
@@ -1496,7 +1050,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       if (count) this._save(all);
       return count;
     },
-    // Drop one note by id. Returns true if it existed.
     remove(id) {
       const all = this._load();
       const next = all.filter((n) => n.id !== id);
@@ -1507,23 +1060,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     unreadCount() { return this._load().reduce((n, r) => n + (r.readAt == null ? 1 : 0), 0); },
   };
 
-  // ---------------------------------------------------------------------------
-  // UI preferences — statusline components per CLI, global
-  // ---------------------------------------------------------------------------
-  // This file holds SECRETS — peer auth tokens (`peers[].token`) — so its mode
-  // is worth checking on read, not just setting on write. atomicWriteFileSync
-  // opens its temp file 0600 and renames over the target, so every write we make
-  // lands 0600 by construction; what this catches is a file that arrived some
-  // other way (restored from a backup, copied off another machine, a stray
-  // chmod -R) and is group/world-readable until the next save silently heals it.
-  //
-  // Warn, don't fail — exactly the stance cli/src/contexts.js:28-31 takes for
-  // the CLI's own token file. That symmetry is the point: the two token stores
-  // now have equal DETECTION, not merely equal permissions.
-  //
-  // Checked once per store bundle (so, once per process — initStores runs once
-  // in the app): _load runs on every settings read, and a statSync on each would
-  // be a syscall per read for a file that is 0600 in every normal case.
+  // This file holds SECRETS (peer auth tokens). Every write we make lands 0600
+  // via atomicWriteFileSync; the check catches a file that arrived some other
+  // way (restore, copy off another machine, stray chmod -R). Warn, don't fail.
+  // Checked once per process on purpose: _load runs on every settings read, and
+  // a statSync per read is a syscall per read for a file that is 0600 normally.
   let uiSettingsModeChecked = false;
   function warnUiSettingsMode() {
     if (uiSettingsModeChecked) return;
@@ -1564,9 +1105,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
-          // No top-level `sandbox` key — the boxes registry is the sole source.
-          // A present-but-empty `boxes: []` (user deleted every box) is preserved;
-          // a MISSING key (fresh install / pre-M6b file) falls to the default seed.
           boxes: sanitizeBoxes(raw?.boxes) ?? DEFAULT_UI_SETTINGS.boxes,
           lastRebootAt: Number.isFinite(raw?.lastRebootAt) ? raw.lastRebootAt : DEFAULT_UI_SETTINGS.lastRebootAt,
           pendingRebootNotice: sanitizeRebootNotice(raw?.pendingRebootNotice),
@@ -1607,11 +1145,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         pendingRebootNotice: (partial && 'pendingRebootNotice' in partial)
           ? sanitizeRebootNotice(partial.pendingRebootNotice)
           : cur.pendingRebootNotice,
-        // WHOLE-BAG replace, not a merge: every writer (loader.setEnabledInSettings,
-        // writeFailureRecord, host.settings.set) already reads the current bag,
-        // spreads it and hands back the complete next value. Merging here as well
-        // would make a deletion — dropping an id out of `enabled`, clearing a
-        // failure record — unrepresentable.
+        // WHOLE-BAG replace, not a merge: every writer already spreads the
+        // current bag, and merging here would make a deletion unrepresentable.
         plugins: (partial && 'plugins' in partial)
           ? (sanitizePlugins(partial.plugins) ?? cur.plugins)
           : cur.plugins,
@@ -1623,12 +1158,9 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
   };
 
-  // Workspace rename → rescope the libraries. A `workspace:`-scoped skill/agent
-  // keys off the workspace DISPLAY name, so renaming a workspace would orphan its
-  // scoped files unless we rewrite them in the same motion. Exact-match on the old
-  // trimmed name (what visibleTo compares); rewrites only the `workspace:`
-  // frontmatter line's value, leaving the body and every other key byte-identical.
-  // Returns the count rewritten. No-op when the name is unchanged/blank.
+  // A `workspace:`-scoped skill/agent keys off the workspace DISPLAY name, so a
+  // rename must rewrite those files in the same motion or they orphan. Exact
+  // match on the trimmed old name — the same comparison visibleTo makes.
   function renameWorkspaceScope(oldName, newName) {
     const from = String(oldName == null ? '' : oldName).trim();
     const to = String(newName == null ? '' : newName).trim();
@@ -1662,24 +1194,15 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     return count;
   }
 
-  // Seed the shipped library defaults (e.g. the clodex-team-lead system prompt) into
-  // ~/.clodex/library on every launch. VERSION-STAMPED reconciliation: a per-file
-  // provenance manifest (.seed-state.json = { relPath: sha256 of the shipped bytes
-  // we last wrote }) lets an upgrade overwrite an UNEDITED shipped copy when the app
-  // ships a newer one, while NEVER clobbering a file the operator has edited. The
-  // source tree rides app.asar (__dirname-relative), copied out because a packaged
-  // read lives sealed inside the asar — the same reason pot-bin materializes the pot
-  // CLI. Best-effort: a copy/read failure is logged and skipped, never thrown (a
-  // missing seed degrades a feature, it never blocks a launch); a corrupt manifest
-  // degrades to empty ({}), reverting that file to conservative seed-if-absent.
-  //   Per file:
-  //     - dest absent            -> copy, stamp state[rel] = shippedHash.
-  //     - dest present + stamped  -> if unedited (sha256(dest) === state[rel]) and we
-  //                                  ship something newer (shippedHash !== state[rel]),
-  //                                  overwrite + re-stamp; else leave it.
-  //     - dest present, NO stamp  -> LEGACY pre-marker file: cannot prove pristine, so
-  //                                  never overwrite; ADOPT (stamp state[rel] =
-  //                                  sha256(dest)) so the next ship reconciles cleanly.
+  // Version-stamped reconciliation against .seed-state.json ({ relPath: sha256
+  // of the shipped bytes we last wrote }), so an upgrade replaces an UNEDITED
+  // shipped copy but never an operator-edited one:
+  //   dest absent           -> copy, stamp shippedHash.
+  //   present + stamped     -> overwrite only if sha256(dest) === stamp AND
+  //                            shippedHash !== stamp; else leave it.
+  //   present, NO stamp     -> legacy: cannot prove pristine, so never
+  //                            overwrite; adopt sha256(dest) instead.
+  // Best-effort: a failed read/copy is logged and skipped, never thrown.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
   const SEED_STATE_NAME = '.seed-state.json';
   const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -1705,8 +1228,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         const childRel = path.join(rel, ent.name);
         if (ent.isDirectory()) { stack.push(childRel); continue; }
         if (!ent.isFile()) continue;
-        // Never treat the manifest itself as a seedable entry (defensive: it lives in
-        // destRoot, not SEED_SRC, but guard against a future shipped copy of the name).
         if (ent.name === SEED_STATE_NAME) continue;
         const dest = path.join(destRoot, childRel);
         try {
@@ -1720,17 +1241,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           }
           const stamped = state[childRel];
           if (stamped === undefined) {
-            // Legacy pre-marker file: adopt its current bytes, never overwrite.
             state[childRel] = sha256(fs.readFileSync(dest)); changed = true;
             continue;
           }
           const destHash = sha256(fs.readFileSync(dest));
           if (destHash === stamped && shippedHash !== stamped) {
-            // Unedited since we wrote it, and we ship something newer -> upgrade.
             atomicWriteFileSync(dest, srcBytes);
             state[childRel] = shippedHash; changed = true;
           }
-          // else: already current, or operator-edited -> preserve.
         } catch (e) {
           if (log) log.info?.('seed', `copy skipped ${childRel} (${e && e.message})`);
         }
@@ -1742,26 +1260,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Env scopes (T46) — GUI-managed environment variables merged over process.env
-  // for every wrapper PTY. Shape:
-  //   { global: { KEY: { value, secret } }, workspaces: { [id]: { KEY: {…} } } }
-  // Session-scope env is NOT here (it persists on the sessions.json entry like any
-  // spawn param). This store holds secret VALUES at rest, so EVERY write chmods
-  // the file 0600 (atomicWriteFileSync already writes the temp at 0600, but the
-  // rename can land on a pre-existing world-readable file — the explicit chmod
-  // guarantees the final mode). Reads NEVER mask (the pure merge module needs the
-  // values); masking is an IPC-layer concern (get returns hasValue, not value).
-  // Key/value validation is shared with the merge module (envKeyError): a key
-  // must match [A-Za-z_][A-Za-z0-9_]*, may not be deny-listed, and a value may
-  // not contain a newline — set() throws on any violation so the GUI/IPC surface
-  // shows the reason.
-  // ---------------------------------------------------------------------------
-  // Prototype-pollution guard for scope names: a workspace-scope path does
+  // Holds secret VALUES at rest: every write chmods 0600. Reads NEVER mask (the
+  // pure merge needs the values) — masking is an IPC-layer concern.
+  // Prototype-pollution guard: the workspace path does
   // `data.workspaces[scope] = data.workspaces[scope] || {}`, so a scope of
-  // '__proto__' / 'constructor' / 'prototype' would reach Object.prototype (and
-  // ENV_KEY_RE even admits `toString` as a KEY). Workspace ids are UUIDs; these
-  // are never legitimate scope names — reject them at every door.
+  // '__proto__' / 'constructor' / 'prototype' would reach Object.prototype.
+  // Workspace ids are UUIDs; reject these at every door.
   const UNSAFE_SCOPE = new Set(['__proto__', 'constructor', 'prototype']);
   const safeScope = (scope) => scope === 'global' || !UNSAFE_SCOPE.has(String(scope));
 
@@ -1784,21 +1288,13 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         try { fs.chmodSync(ENV_SCOPES_FILE, 0o600); } catch { /* best-effort */ }
       } catch (e) { console.error('env-scopes save failed:', e); }
     },
-    // The raw stored scope object for a scope. scope='global' → the global map;
-    // scope=<workspaceId> → that workspace's map ({} if none). Values are NOT
-    // masked here — this feeds the pure merge at spawn. The IPC read handler masks.
     getScope(scope) {
       if (!safeScope(scope)) return {};
       const data = this._load();
       if (scope === 'global') return data.global || {};
       return (data.workspaces && data.workspaces[scope]) || {};
     },
-    // Whole store (for the merge wire-in: global + the session's workspace map).
     all() { return this._load(); },
-    // Set/replace one KEY in a scope. Throws (via envKeyError) on an invalid key,
-    // a deny-listed key, or a newline value — the write surfaces (IPC/GUI) turn
-    // that into a user-facing error. `secret` marks the value write-only through
-    // IPC/wire (masked on read). Editing an existing key is a full replace.
     set(scope, key, value, secret) {
       if (!safeScope(scope)) throw new Error(`invalid scope "${scope}"`);
       const err = envKeyError(key, value);
@@ -1810,8 +1306,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       target[key] = { value: String(value == null ? '' : value), secret: secret === true };
       this._save(data);
     },
-    // Delete one KEY from a scope. Prunes an emptied workspace map so a deleted
-    // workspace's scope leaves no husk.
     remove(scope, key) {
       if (!safeScope(scope)) return;
       const data = this._load();
@@ -1823,7 +1317,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       }
       this._save(data);
     },
-    // Drop a whole workspace's scope (Delete Workspace… teardown).
     removeWorkspace(workspaceId) {
       if (!safeScope(workspaceId)) return;
       const data = this._load();

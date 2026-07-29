@@ -1,17 +1,7 @@
-// deploy.js — `clodexctl deploy <user@host>`: the CLI twin of the GUI's
-// add-peer deploy wizard. Drives the SAME battle-tested installer
-// (peering/clodex-deploy.sh, copied to cli/deploy/ for the published package)
-// over the system ssh binary, streams its ::marker progress, verifies the wire
-// through an ssh tunnel, and upserts a ready-to-use context.
-//
-// STANDALONE by construction: node:* + the CLI's own sibling modules only,
-// never an app require(). The env mechanism, the marker grammar and the ssh
-// runner are reimplemented here from their documented contracts (the same
-// standalone rule import.js follows) — ipc-handlers.js / ssh-run.js /
-// peer-deploy.js are the reference, not a dependency.
-//
-// NO TOKEN anywhere: the deploy path has none (loopback bind + ssh tunnel is
-// the auth boundary, same posture as the GUI's peers), and we keep it so.
+// STANDALONE by construction: node:* + this CLI's own sibling modules only,
+// never an app require() — the published package ships without the app.
+// NO TOKEN on the ssh deploy path: loopback bind + ssh tunnel is the auth
+// boundary; do not add one.
 'use strict';
 
 const fs = require('fs');
@@ -39,9 +29,6 @@ const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 // heredoc-terminator line into the outer root wrapper (validate before interp).
 const REF_RE = /^[A-Za-z0-9._:/@+~-]{1,256}$/;
 
-// docker flavor (deploy docker <name>): birth a container node from the
-// published, self-configuring image. The image bakes CLODEX_REMOTE_ENABLE/HOST
-// + the headless CMD, so one `docker run` = one node (docker/web/Dockerfile).
 const DOCKER_IMAGE_REPO = 'ghcr.io/avirtual/clodex';
 const DOCKER_DEFAULT_TAG = 'latest';
 const CONTAINER_PREFIX = 'clodexctl-';
@@ -50,9 +37,6 @@ const CONTAINER_WEB_PORT = 8080;            // the image's web GUI port (Dockerf
 const DOCKER_VERIFY_TIMEOUT_MS = 60 * 1000; // pull already happened in `run`; boot is seconds
 const DOCKER_VERIFY_POLL_MS = 1000;
 
-// ssh posture mirrors ssh-run.js: key-auth only (BatchMode), bounded dial,
-// TOFU first contact, keepalives so a wedged step is caught. No shell string —
-// argv is spawned directly.
 const SSH_DEPLOY_ARGS = [
   '-o', 'BatchMode=yes',
   '-o', 'ConnectTimeout=10',
@@ -62,14 +46,10 @@ const SSH_DEPLOY_ARGS = [
 ];
 const SSH_EXIT = 255;  // ssh's own connect/auth failure code
 
-// Single-quote a value for POSIX sh: wrap in '…', escape embedded quotes. One
-// safe literal word (peer-deploy.js:shSingleQuote, reimplemented).
 function shSingleQuote(v) {
   return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
 }
 
-// Resolve the packaged script relative to THIS module (cli/src/deploy.js →
-// cli/deploy/clodex-deploy.sh). Works for `npm i -g` and in-repo runs both.
 function scriptPath() {
   return path.join(__dirname, '..', 'deploy', 'clodex-deploy.sh');
 }
@@ -78,24 +58,11 @@ function readScript() {
   catch (e) { throw new CliError(EXIT.SERVER, `deploy script unreadable at ${scriptPath()}: ${e.message}`); }
 }
 
-// Build the export preamble the remote bash inherits (params ride the
-// environment, NOT the shell command). Each value single-quote-escaped so a
-// quote/space in a repo URL or path can't break out. CLODEX_SRC only when set —
-// otherwise the script's own $HOME/wb-wrap-ui default stands (one source of
-// truth). Returns a string ending in '\n', prepend it to the script.
-//
-// claudeToken (ssh flavor ONLY): the Claude OAuth token rides the SAME stdin the
-// script does (`ssh host 'bash -s'`) — the ssh channel is the auth boundary and
-// isn't logged, so a secret in its env-export line is fine (never argv, never
-// ps). The installer's service step writes it into the unit drop-in when
-// CLODEX_CLAUDE_TOKEN is set. The SSM flavor MUST NOT use this — its wrapper text
-// lands in CloudTrail; buildSsmScript calls this with no claudeToken and delivers
-// the secret post-verify over the encrypted wire instead.
-//
-// noWirescope (--no-wirescope, T49): CLODEX_NO_WIRESCOPE=1 tells the installer
-// to (a) skip the wirescope-only python venv/pip sys-deps (best-effort) and
-// (b) pin CLODEX_WIRESCOPE=off into the service env via a systemd drop-in —
-// the engine's autoStartWanted() honors that over the proxyEnabled pref.
+// claudeToken is ssh-flavor ONLY: it rides the same ssh stdin as the script,
+// which is the auth boundary and is not logged. The SSM flavor MUST NOT pass
+// it — that wrapper text lands in CloudTrail; deliver it post-verify over the
+// encrypted wire instead. CLODEX_SRC is omitted when unset so the script's own
+// default stays the single source of truth.
 function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, src = null, claudeToken = null, noWirescope = false } = {}) {
   let line = `export PORT=${shSingleQuote(port)} REPO_URL=${shSingleQuote(repo)} BRANCH=${shSingleQuote(branch)}`;
   if (src) line += ` CLODEX_SRC=${shSingleQuote(src)}`;
@@ -104,19 +71,14 @@ function buildPreamble({ port = DEFAULT_PORT, repo = DEFAULT_REPO, branch = DEFA
   return line + '\n';
 }
 
-// Read a Claude OAuth token from a local FILE (never argv — argv leaks via ps,
-// mirroring docker's --env-file posture). Accepts either a RAW token or an
-// env-file: a `CLAUDE_CODE_OAUTH_TOKEN=VALUE` line wins (docker --env-file
-// shape), else the whole trimmed file is the token. Rejects empty / multi-line /
-// control-char values (a token is a single opaque word; a newline could smuggle
-// a second env-export line into the ssh preamble). Never printed — a bad file is
-// a coded CliError with the PATH, never the contents.
+// Token from a FILE, never argv (argv leaks via ps). Whitespace/control chars
+// are rejected: a newline would smuggle a second env-export line into the ssh
+// preamble.
 function readClaudeToken(file) {
   let raw;
   try { raw = fs.readFileSync(file, 'utf8'); }
   catch (e) { throw new CliError(EXIT.USAGE, `--claude-token-file unreadable at ${file}: ${e.message}`); }
   let tok = null;
-  // env-file line takes precedence (KEY=VALUE, optional surrounding whitespace).
   for (const ln of raw.split('\n')) {
     const m = ln.match(/^\s*(?:export\s+)?CLAUDE_CODE_OAUTH_TOKEN\s*=\s*(.*)$/);
     if (m) { tok = m[1].trim().replace(/^["']|["']$/g, ''); break; }
@@ -127,14 +89,6 @@ function readClaudeToken(file) {
   return tok;
 }
 
-// Build the shell snippet that writes the Claude-token systemd drop-in as the
-// clodex user, fed over the wire into a throwaway bash session (ssm flavor). The
-// token rides a shell VARIABLE assignment (single-quote-escaped) → it never
-// enters a process argv/ps on the box; printf is a builtin. The drop-in lands
-// 0600 (umask 077 for the mkdir, explicit chmod belt), then daemon-reload +
-// restart pick it up (the restart drops the wire — the expected end of the
-// delivery session). Pure + test-pinned; token is the ONLY interpolated value
-// and it is shell-quoted.
 function buildTokenDropinScript(token) {
   return [
     'set -e',
@@ -150,9 +104,6 @@ function buildTokenDropinScript(token) {
   ].join('\n');
 }
 
-// Parse ONE line of the deploy script's ::marker stdout into a structured
-// event. Fresh minimal parse of the documented grammar (spec: do NOT fork
-// peer-deploy.js). Non-marker lines → { type:'log' }.
 function parseMarker(rawLine) {
   const line = String(rawLine == null ? '' : rawLine);
   const m = line.match(/^::(\S+)\s?(.*)$/);
@@ -174,14 +125,10 @@ function parseMarker(rawLine) {
   }
 }
 
-// The ssh argv for the deploy run: `ssh <opts> <extra> <host> 'bash -s'`.
-// sshOpts is the repeatable raw --ssh-opt passthrough (typed strings only).
 function sshDeployArgs(host, sshOpts = []) {
   return [...SSH_DEPLOY_ARGS, ...sshOpts, host, 'bash -s'];
 }
 
-// Derive a context name from an ssh destination: the bare host's short name,
-// sanitized to the ctx-name charset. `user@host.example.com` → `host`.
 function deriveCtxName(dest) {
   const host = String(dest || '').split('@').pop() || '';
   const short = host.split(':')[0].split('.')[0];
@@ -189,11 +136,6 @@ function deriveCtxName(dest) {
   return NAME_RE.test(stem) ? stem : '';
 }
 
-// Run the script on the box over ssh, streaming stdout line-by-line to onLine
-// (the marker stream) and stderr to onStderr (the script's human detail
-// channel). Resolves { code, timedOut } — a non-zero/42 exit is a normal
-// outcome the caller classifies, not a throw. Only a spawn failure (no ssh
-// binary) rejects. Mirrors ssh-run.js; spawnFn is the test seam.
 function runDeploy({ host, sshOpts = [], stdin, spawnFn = spawn, onLine = null, onStderr = null, timeoutMs = DEPLOY_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     let child;
@@ -229,9 +171,6 @@ function runDeploy({ host, sshOpts = [], stdin, spawnFn = spawn, onLine = null, 
   });
 }
 
-// Probe the freshly-deployed wire through an ssh tunnel (the existing
-// openTransport ssh path, remotePort = the deploy port). Returns the hello
-// payload, or throws a coded CliError. spawnFn is the tunnel's test seam.
 async function probeHello(dest, port, { spawnFn } = {}) {
   const t = await openTransport({ ssh: dest, remotePort: port }, { spawnFn });
   try {
@@ -242,8 +181,6 @@ async function probeHello(dest, port, { spawnFn } = {}) {
   }
 }
 
-// An ssh destination is the same charset the GUI's classifyPeerDest accepts:
-// user@host / bare host / IPv4 / ssh-config alias. No spaces, no scheme.
 const DEST_RE = /^[a-zA-Z0-9._@-]{1,128}$/;
 
 function parsePortOr(v) {
@@ -252,12 +189,6 @@ function parsePortOr(v) {
   return n;
 }
 
-// deploy verb — orchestration. Throws CliError (caught by main.run's try). io
-// carries the injectable seams: spawnFn (ssh child, for both the deploy run and
-// the verify tunnel), probeHello (verify override for tests), contextsFile.
-//
-// --json emits an NDJSON stream: one object per marker line, then a final
-// { type:'verify'|'context'|'error' } object — the machine binding for a deploy.
 async function deployVerb({ printer, flags, args, io = {} }) {
   const dest = args[0];
   if (!dest) throw new CliError(EXIT.USAGE, 'deploy needs an ssh destination (e.g. user@host)');
@@ -268,9 +199,6 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
   const src = flags.src ? String(flags.src) : null;
   const sshOpts = Array.isArray(flags['ssh-opt']) ? flags['ssh-opt'] : (flags['ssh-opt'] ? [String(flags['ssh-opt'])] : []);
-  // Claude auth (optional): read the OAuth token from a local file (never argv),
-  // then let it ride the ssh stdin as an env-export in the preamble — the ssh
-  // channel is the auth boundary. Never printed, never in argv.
   const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
   const noWirescope = !!flags['no-wirescope'];
   const script = readScript();
@@ -280,7 +208,6 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
 
-  // --dry-run: describe, run nothing.
   if (flags['dry-run']) {
     if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, noWirescope, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
     printer.line([
@@ -297,8 +224,6 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  // Stream the marker run. Human mode renders a live step list; --json emits one
-  // object per marker line. Script stderr passes through to our stderr.
   const sudoCmds = [];
   let sawDone = false;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
@@ -346,7 +271,6 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     throw new CliError(EXIT.SERVER, `deploy failed on ${dest} (exit ${res.code == null ? '?' : res.code})`);
   }
 
-  // Verify the wire through an ssh tunnel — deploy is not "done" until it answers.
   let hello;
   try {
     const probe = io.probeHello || probeHello;
@@ -359,8 +283,6 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${dest}:${port}`);
 
-  // Upsert the context (no token — tunnel is the auth boundary). Collision:
-  // skip+warn unless --force. --no-ctx opts out.
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
@@ -394,34 +316,18 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   }
 }
 
-// Tolerant contexts load (an absent/garbled file → empty store; deploy still
-// wrote a live node, so never fail the whole deploy over the local ctx file).
 function safeLoadContexts(io) {
   try { return contexts.load(io.contextsFile, { warn: () => {} }); }
   catch { return { current: null, contexts: {} }; }
 }
 
-// ── docker flavor: `clodexctl deploy docker <name>` ──────────────────────────
-//
-// A CLI-owned container node is the MINIMAL box — one `docker run` of the
-// published, self-configuring image (NOT the GUI's managed sandbox: no compose,
-// no registry row, no library binds; a plain peer named clodexctl-<name>). The
-// system `docker` binary is the operator's tool, spawned argv-direct like ssh —
-// zero SDKs, never a shell. Secrets only ride the operator's --env-file, passed
-// straight through by PATH; we never read or print it.
 
-// Normalize a --host value into a DOCKER_HOST URL. Bare `user@box` is sugar for
-// `ssh://user@box` (docker's own ssh transport). A value that already carries a
-// scheme (ssh:// tcp:// unix://) is passed through untouched.
 function normalizeDockerHost(h) {
   const s = String(h == null ? '' : h).trim();
   if (!s) return '';
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `ssh://${s}`;
 }
 
-// Derive the ssh destination (user@host) for our verify tunnel from a
-// ssh://user@host[:port][/path] DOCKER_HOST. Only ssh:// hosts are tunnel-able;
-// a non-ssh DOCKER_HOST (tcp/unix) returns '' (no ssh verify path).
 function dockerHostToSshDest(dockerHost) {
   const s = String(dockerHost || '');
   const m = s.match(/^ssh:\/\/([^/]+)/i);
@@ -429,12 +335,8 @@ function dockerHostToSshDest(dockerHost) {
   return m[1].replace(/:\d+$/, '');   // strip a trailing :port — belongs in ~/.ssh/config
 }
 
-// Compose the `docker run` argv (pure — leaf-tested). Loopback publish is the
-// trust boundary; --hostname is the engine's SELF_LABEL on the peer wire (must
-// be unique per node or DM routing collides). --env-file and extra -v ride
-// straight through in the operator's order.
-// --no-wirescope (T49) rides as -e CLODEX_WIRESCOPE=off — the engine-level
-// kill-switch (a fixed literal, no value interpolation).
+// --hostname becomes the engine's SELF_LABEL on the peer wire: it must be
+// unique per node or DM routing collides.
 function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volumes = [], noWirescope = false } = {}) {
   const cname = CONTAINER_PREFIX + name;
   const argv = [
@@ -452,12 +354,6 @@ function dockerRunArgs({ name, port = DEFAULT_PORT, image, envFile = null, volum
   return argv;
 }
 
-// Run the system docker binary argv-direct. DOCKER_HOST rides the child env when
-// remote (docker handles its own ssh). stdout is captured (the container id);
-// stderr streams through onStderr (pull progress, errors). Resolves
-// { code, stdout } on exit; rejects only on a spawn failure (e.g. no docker
-// binary → ENOENT) so the caller can render a clear "is docker installed?".
-// spawnFn is the test seam.
 function runDocker({ args, env = null, spawnFn = spawn, onStderr = null } = {}) {
   return new Promise((resolve, reject) => {
     let child;
@@ -476,12 +372,6 @@ function runDocker({ args, env = null, spawnFn = spawn, onStderr = null } = {}) 
   });
 }
 
-// Poll the freshly-run node's wire until it answers or the deadline lapses.
-// ctx is a transport descriptor ({url} local / {ssh,remotePort} remote) with NO
-// token — we never saw one. A 200 hello → { ok:true, hello }. A 401/403 (the
-// image was seeded a CLODEX_REMOTE_TOKEN via --env-file) → { ok:true,
-// tokenGated:true } and we STOP: the node is up, auth is the operator's setting.
-// A connect/other failure retries to the deadline; timeout → coded CliError.
 async function pollHello(ctx, { spawnFn, timeoutMs = DOCKER_VERIFY_TIMEOUT_MS, pollMs = DOCKER_VERIFY_POLL_MS } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
@@ -505,8 +395,6 @@ async function pollHello(ctx, { spawnFn, timeoutMs = DOCKER_VERIFY_TIMEOUT_MS, p
   }
 }
 
-// deploy docker <name> — orchestration. Same io seams as deployVerb, plus
-// io.pollHello (verify override for tests). Throws CliError (caught by main.run).
 async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'deploy docker needs a node name (e.g. deploy docker mybox)');
@@ -525,8 +413,6 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
 
   const runArgs = dockerRunArgs({ name, port, image, envFile, volumes, noWirescope });
 
-  // --dry-run: describe the exact argv (secrets never appear — the env-file is a
-  // PATH, its contents are docker's to read), run nothing.
   if (flags['dry-run']) {
     if (json) { emit({ type: 'dry-run', name, container: CONTAINER_PREFIX + name, port, image, dockerHost: dockerHost || null, argv: runArgs, envFile: envFile || null }); return; }
     printer.line([
@@ -539,16 +425,12 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  // Spawn docker argv-direct. DOCKER_HOST in the child env when remote.
   const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
   let res;
   try {
     res = await runDocker({ args: runArgs, env: childEnv, spawnFn: io.spawnFn, onStderr: (s) => { if (!json) writeErr(s); } });
   } catch (e) {
-    // ENOENT-shape spawn failure = docker isn't installed / not on PATH. Not a
-    // usage error (the argv was fine) nor a wire-connect failure — it's an
-    // environment/server-side failure with a pointed hint. (journal choice #2)
     if (e && (e.code === 'ENOENT' || /ENOENT|not found/i.test(e.message || ''))) {
       throw new CliError(EXIT.SERVER, `could not run docker: ${e.message} — is docker installed and on PATH?`);
     }
@@ -561,8 +443,6 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const containerId = res.stdout ? res.stdout.split('\n').pop().trim() : '';
   if (!json) printer.line(`started container ${CONTAINER_PREFIX + name}${containerId ? ` (${containerId.slice(0, 12)})` : ''}`);
 
-  // Verify: poll hello. Local → direct url. Remote → ssh tunnel to the box's
-  // loopback (only ssh:// DOCKER_HOSTs are tunnel-able).
   let ctx;
   if (sshDest) ctx = { ssh: sshDest, remotePort: port };
   else ctx = { url: `http://127.0.0.1:${port}` };
@@ -586,8 +466,6 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'}`);
   }
 
-  // Upsert the context (no token — we never saw the operator's env-file).
-  // Local → {url}; remote → {ssh, remotePort}. Collision skip unless --force.
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
@@ -599,14 +477,6 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
     return;
   }
-  // `deploy` (t54): flavor + the CONTAINER name, which is the identifying name
-  // an upgrade needs and is nowhere else in the entry — the ctx is named
-  // `<name>` but the container is `clodexctl-<name>`, and today that prefix is
-  // re-derived by string surgery at teardown. `dockerHost` is the daemon to
-  // address (absent for a local deploy), stored as the normalized DOCKER_HOST
-  // rather than the ssh dest because a tcp:// daemon has no ssh dest at all.
-  // The remote arm's TRANSPORT is byte-identical to the ssh flavor's entry
-  // above — which is exactly why the flavor is stored rather than sniffed.
   const dep = { flavor: 'docker', container: CONTAINER_PREFIX + name, ...(dockerHost ? { dockerHost } : {}) };
   const entry = sshDest
     ? { ssh: sshDest, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), deploy: dep }
@@ -619,64 +489,29 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'}${hint} — you can now: clodexctl --ctx ${name} sessions`);
 }
 
-// ── ssm flavor: `clodexctl deploy ssm <name> --target i-INSTANCE` ────────────
-//
-// The OS flavor (NOT docker) over AWS SSM RunCommand — no ssh, no open ports.
-// The agent is a first-class citizen of the box: a dedicated `clodex` host user
-// running the SAME systemd --user service the ssh flavor installs (docker adds
-// no real security on an instance we already own; the boundary is SSM/IAM).
-//
-// SSM has no clean stdin/stdout exec pipe (send-command is async, output polled,
-// 24KB capped), so the interactive git-clone-over-ssh path can't ride it. Since
-// RunCommand runs as ROOT, the exit-42 "needs sudo" dance INVERTS: one root
-// wrapper installs prereqs itself, mints the clodex user, then runs the PINNED
-// clodex-deploy.sh (byte-for-byte the drift-gated installer) as that user via
-// `sudo -iu clodex bash -s`. Streaming loss is accepted: send one command, poll
-// status, relay the ^:: marker trail (pseudo-streamed as partial output grows).
-//
-// Zero AWS SDK: we shell out to the operator's own `aws` binary argv-direct
-// (execFn seam, same pattern as transport.js:resolveEcsTarget), never a shell.
-// The wire is always token-gated (a minted CLODEX_REMOTE_TOKEN). The installer
-// itself is TOKENLESS (ssh flavor = tunnel-is-auth); the token is injected AFTER
-// it runs, via a systemd --user drop-in the app reads through its native env
-// precedence (CLODEX_REMOTE_TOKEN wins) — so the installer bytes stay identical
-// (the drift test is the gate; we never fork it). That token rides inside the
-// send-command parameters → visible in the account's SSM history/CloudTrail;
-// acceptable ONLY because the port never leaves loopback (reaching it needs
-// ssm:StartSession on the same account) — say it out loud in the docs, and
-// "re-run deploy to rotate" is the mitigation.
+// ── ssm flavor ──
+// RunCommand runs as ROOT and has no stdin/stdout pipe (async send, polled
+// output, 24KB cap) — hence the root wrapper that mints a clodex user and then
+// runs the PINNED installer as that user. The installer bytes must stay
+// byte-identical (a drift test gates them), so the wire token is injected
+// AFTER it runs via a systemd --user drop-in rather than by forking it.
+// That token rides send-command parameters → visible in SSM history/CloudTrail;
+// acceptable only because the port never leaves loopback.
 const SSM_DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;  // a cold clone+install+rebuild is minutes
 const SSM_POLL_MS = 5000;                       // get-command-invocation cadence
 const SSM_PREPOLL_MS = 2000;                    // let SSM register the invocation before the first poll
 const SSM_SEND_RETRY_MS = 2000;                 // backoff between send-command retries
 const SSM_SEND_RETRIES = 3;                     // InvalidInstanceId is eventually-consistent post-registration
 
-// A no-op-in-tests sleep seam (injected via io.sleepFn; real setTimeout by default).
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Build the root wrapper script for AWS-RunShellScript — pure and test-pinned.
-// port is int and token is hex by construction; repo/branch are validated
-// against REF_RE by the caller (deploySsmVerb) before they reach here, so no
-// interpolated value can carry a newline. Defense-in-depth: the two embedding
-// heredocs use a per-run RANDOM nonce delimiter (CLODEX_EOF_<hex>), so even a
-// field that slipped validation could not guess the terminator line. No
-// `set -e`: each load-bearing step gates explicitly with
-// `|| { echo "::fail …"; exit 1; }` (mirrors the installer's discipline),
-// best-effort steps use `|| true`.
-//
-// Five steps, each emitting a ::step marker so the relayed trail reads like the
-// ssh flavor's; the installer's own ^:: markers are filtered in from its log.
+// No `set -e` here on purpose: load-bearing steps gate with
+// `|| { echo "::fail …"; exit 1; }` and best-effort steps use `|| true`.
+// repo/branch are REF_RE-validated by the caller before interpolation, and the
+// heredoc delimiters carry a per-run random nonce, so no field can smuggle a
+// terminator line.
 function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branch = DEFAULT_BRANCH, noWirescope = false } = {}) {
-  // preamble + the byte-identical installer, fed verbatim to the clodex user's
-  // bash. The installer bytes are the SAME readScript() the drift test pins —
-  // the token is NOT here (installer is tokenless); it's injected in step 4.
-  // noWirescope rides the preamble (CLODEX_NO_WIRESCOPE=1): the installer
-  // itself writes the CLODEX_WIRESCOPE=off drop-in and skips the python
-  // venv/pip deps — same mechanism as the ssh flavor, not a fork.
   const embedded = buildPreamble({ port, repo, branch, noWirescope }) + readScript();
-  // Unguessable per-run heredoc delimiters (hex can't contain the delimiter, and
-  // a validated repo/branch can't either — this is the belt to validation's
-  // suspenders).
   const nonce = crypto.randomBytes(8).toString('hex');
   const INSTALL_EOF = `CLODEX_EOF_${nonce}`;
   const TOKEN_EOF = `CLODEX_TOKEN_EOF_${nonce}`;
@@ -817,8 +652,6 @@ function buildSsmScript({ port = DEFAULT_PORT, token, repo = DEFAULT_REPO, branc
   ].join('\n') + '\n';
 }
 
-// The `aws` base flags in the SAME order as transport.js:resolveEcsTarget
-// (profile before region) so a reader compares them one-to-one.
 function awsBase({ region, profile } = {}) {
   return [
     ...(profile ? ['--profile', profile] : []),
@@ -826,9 +659,6 @@ function awsBase({ region, profile } = {}) {
   ];
 }
 
-// argv builders — full argv (leading 'aws') so they double as the single source
-// for both execution and --dry-run display. --parameters is real JSON built
-// with JSON.stringify (never string-pasted), same discipline as ssmArgv.
 function ssmDescribeArgs({ target, region, profile } = {}) {
   return ['aws', ...awsBase({ region, profile }),
     'ssm', 'describe-instance-information',
@@ -851,9 +681,6 @@ function ssmGetInvocationArgs({ commandId, target, region, profile } = {}) {
     '--output', 'json'];
 }
 
-// Run an aws argv through the injectable execFn (default promisified execFile —
-// NEVER a shell). ENOENT → the "is aws installed?" hint; any other failure →
-// a coded CliError with aws's own stderr relayed. Returns trimmed stdout.
 async function runAws(execFn = execFileP, argv, what, code = EXIT.CONNECT) {
   try {
     const { stdout } = await execFn(argv[0], argv.slice(1));
@@ -908,17 +735,10 @@ async function ssmSendCommand({ target, region, profile, script }, { execFn = ex
   }
 }
 
-// Pseudo-streaming: get-command-invocation returns PARTIAL
-// StandardOutputContent while InProgress, so we surface NEW ::marker lines as
-// they appear. Keep a rendered cursor (count of ^:: lines already emitted); each
-// tick, diff the current output's ^:: lines against it and fire onMarker only for
-// the fresh ones. A line rendered mid-run never re-fires when the final superset
-// arrives (the trail is monotonic: partial output is a prefix that only grows).
-//
-// Only lines TERMINATED by a newline count: a poll that catches output mid-echo
-// (a partial trailing `::ok prer`) must not fire a truncated marker that the
-// cursor would then swallow when the real line arrives. The final invocation's
-// output is newline-terminated by the wrapper's `echo`s, so no marker is lost.
+// Only NEWLINE-TERMINATED lines count: a poll can catch output mid-echo, and a
+// truncated marker fired now would be swallowed by the cursor when the real
+// line arrives. Partial output is a growing prefix, so the cursor never
+// re-fires a rendered line.
 function ssmMarkerLines(stdout) {
   const s = String(stdout || '');
   const nl = s.lastIndexOf('\n');
@@ -926,12 +746,6 @@ function ssmMarkerLines(stdout) {
   return s.slice(0, nl).split('\n').filter((l) => /^::/.test(l));
 }
 
-// Poll get-command-invocation until a terminal status or the budget lapses.
-// A freshly-issued command 404s as InvocationDoesNotExist for a beat — tolerate
-// it until the deadline. onStatus fires on each observed (changed) status;
-// onMarker fires once per fresh ^:: line as partial output grows. Returns
-// { status, responseCode, stdout, stderr, markersStreamed }. Deadline → a
-// synthetic TimedOut (the caller maps non-Success → EXIT.SERVER).
 const SSM_TERMINAL = new Set(['Success', 'Failed', 'Cancelled', 'TimedOut']);
 async function ssmPoll({ commandId, target, region, profile }, { execFn = execFileP, timeoutMs = SSM_DEPLOY_TIMEOUT_MS, pollMs = SSM_POLL_MS, prePollMs = SSM_PREPOLL_MS, sleepFn = defaultSleep, onStatus = null, onMarker = null } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -981,16 +795,11 @@ async function ssmPoll({ commandId, target, region, profile }, { execFn = execFi
   }
 }
 
-// Pull the http code the on-box verify loop echoed (`::verify http=NNN`)
-// — informational; the authoritative verify is the laptop-side tunnel probe.
 function parseHelloMarker(stdout) {
   const m = String(stdout || '').match(/::verify\s+http=(\d{3})/);
   return m ? m[1] : null;
 }
 
-// Verify from the laptop through the REAL ssm tunnel the user will use: open the
-// typed-ssm transport and GET hello with the minted token. io.probeSsm overrides
-// for unit tests. Returns the hello payload or throws a coded CliError.
 async function ssmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
@@ -1001,22 +810,11 @@ async function ssmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
   }
 }
 
-// Deliver the Claude OAuth token to the freshly-deployed ssm node over the
-// AUTHENTICATED WIRE (the tunnel is encrypted; the secret never touches SSM
-// send-command parameters, so it stays out of SSM history/CloudTrail — the
-// non-negotiable constraint). Opens the same typed-ssm transport the verify
-// used, with the minted WIRE token, then: spawn a throwaway bash session →
-// acquire control → type the drop-in script (token rides a shell VAR, never a
-// process argv) → the script's `systemctl restart` drops the engine, which
-// tears the wire down under us (the throwaway session dies with it — a
-// post-input connection error is the EXPECTED end, not a failure). We then poll
-// hello with the wire token until the engine is back. NOTE the epistemics of a
-// fire-over-PTY design: success here confirms input-accepted + engine-reachable-
-// after, NOT that the drop-in write itself succeeded — if the typed script fails
-// partway and the engine restarts (or stays up) without the env, this still
-// reports delivered while `claude` stays unauthenticated. The first `spawn
-// --type claude` is the real proof; re-running deploy retries idempotently.
-// io.* seams thread through; token is NEVER logged.
+// The typed script's `systemctl restart` drops the engine, which tears this
+// wire down — a post-input CONNECT error is the EXPECTED end, not a failure.
+// Epistemics: success here proves input-accepted + engine-reachable-after, NOT
+// that the drop-in was written; the first `spawn --type claude` is the real
+// proof. The secret rides the encrypted wire, never SSM params/CloudTrail.
 const TOKEN_SESSION_PREFIX = 'clodex-token-';
 async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep } = {}) {
   const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
@@ -1026,25 +824,18 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
     // 1. throwaway bash session (as the clodex user the engine runs as). The
     //    engine REJECTS a create without cwd; /tmp exists on any box we deploy.
     await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash', cwd: '/tmp' });
-    // 2. acquire control (input is gated on the per-acquire capability token).
     const acq = await client.post(`/api/control/${encodeURIComponent(sessName)}`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
     const ctrlToken = acq && acq.token;
     if (!ctrlToken) throw new CliError(EXIT.SERVER, 'token delivery: could not acquire session control');
-    // 3. type the drop-in script + Enter. The trailing restart kills the engine.
     const dropin = buildTokenDropinScript(oauthToken) + '\n';
     try {
       await client.post(`/api/input/${encodeURIComponent(sessName)}`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
     } catch (e) {
-      // A connection death right after the restart line is the expected outcome
-      // (the engine went down mid-request). Only a CONNECT-class error is benign;
-      // anything else (4xx/5xx from a still-up engine) is a real failure.
       if (!(e instanceof CliError && e.exitCode === EXIT.CONNECT)) throw e;
     }
   } finally {
     try { t.close(); } catch {}
   }
-  // 4. wait for the engine to come back up authenticated (restart → wire drops →
-  //    reappears). Poll hello with the wire token until 200 or the deadline.
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
   for (;;) {
@@ -1063,9 +854,6 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
   }
 }
 
-// deploy ssm <name> — orchestration. io seams: execFn (aws child), spawnFn
-// (verify tunnel child), probeSsm (verify override for tests), contextsFile.
-// Throws CliError (caught by main.run). --json emits NDJSON events.
 async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'deploy ssm needs a node name (e.g. deploy ssm mybox --target i-…)');
@@ -1076,18 +864,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const region = flags.region ? String(flags.region) : null;
   const profile = flags.profile ? String(flags.profile) : null;
   const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
-  // repo/branch are interpolated into the SSM wrapper (embedded via heredoc), so
-  // they MUST be newline-/metachar-free before they reach buildSsmScript — a
-  // newline could smuggle a heredoc-terminator line into the root wrapper. Hold
-  // them to a strict git-ref / URL charset (the wrapper's random-nonce delimiter
-  // is the belt to this suspenders).
   const repo = flags.repo ? String(flags.repo) : DEFAULT_REPO;
   const branch = flags.branch ? String(flags.branch) : DEFAULT_BRANCH;
   if (!REF_RE.test(repo)) throw new CliError(EXIT.USAGE, `bad --repo "${repo}" — use a git URL/ref (${REF_RE.source})`);
   if (!REF_RE.test(branch)) throw new CliError(EXIT.USAGE, `bad --branch "${branch}" — use a git ref name (${REF_RE.source})`);
-  // Claude auth (optional): read the token from a local file NOW (fail fast on a
-  // bad path before any AWS call). It NEVER rides the SSM wrapper (CloudTrail) —
-  // it's delivered post-verify over the encrypted wire. Never printed.
   const claudeToken = flags['claude-token-file'] ? readClaudeToken(String(flags['claude-token-file'])) : null;
   const noWirescope = !!flags['no-wirescope'];
   const json = !!flags.json;
@@ -1096,15 +876,11 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const sleepFn = io.sleepFn;  // undefined → real setTimeout; tests inject a no-op
   const sd = { target, region, profile };
 
-  // The typed ssm ctx entry this deploy will save/verify against (remotePort
-  // only when non-default, matching the ssm kind's port convention).
   const entry = {
     ssm: { target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) },
     ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
   };
 
-  // Render one ^:: marker line from the relayed trail. Human = a live step list
-  // like the ssh flavor; --json = one NDJSON object per marker (mirrors deployVerb).
   const renderMarker = (raw) => {
     const ev = parseMarker(raw);
     if (json) { emit(ev); return; }
@@ -1117,8 +893,6 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     }
   };
 
-  // --dry-run: describe the exact argv + wrapper + would-be ctx; the minted token
-  // must NOT appear — print a placeholder.
   if (flags['dry-run']) {
     const script = buildSsmScript({ port, token: '<minted-token>', repo, branch, noWirescope });
     const sendArgv = ssmSendCommandArgs({ target, region, profile, script });
@@ -1141,21 +915,17 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  // 1. Mint a fresh wire token locally (always token-gated).
   const token = crypto.randomBytes(24).toString('hex');
   const script = buildSsmScript({ port, token, repo, branch, noWirescope });
 
-  // 2. Preflight — instance registered + online.
   const info = await ssmPreflight(sd, { execFn });
   if (json) emit({ type: 'preflight', ok: true, target, pingStatus: info.PingStatus || null, platform: info.PlatformName || null });
   else printer.line(`instance ${target} online${info.PlatformName ? ` (${info.PlatformName})` : ''} — sending install command…`);
 
-  // 3. send-command (bounded retry on eventually-consistent InvalidInstanceId).
   const commandId = await ssmSendCommand({ ...sd, script }, { execFn, sleepFn });
   if (json) emit({ type: 'command', commandId });
   else printer.line(`running remote install (SSM command ${commandId})…`);
 
-  // 4. Poll to a terminal status, pseudo-streaming the marker trail as it grows.
   let streamed = 0;
   const result = await ssmPoll({ commandId, ...sd }, {
     execFn, sleepFn,
@@ -1163,7 +933,6 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     onMarker: (raw) => { streamed++; renderMarker(raw); },
   });
   if (result.status !== 'Success') {
-    // Distinct terminal statuses (all → EXIT.SERVER, distinct message).
     const why = result.status === 'TimedOut'
       ? `remote install timed out on ${target} after ${Math.round(SSM_DEPLOY_TIMEOUT_MS / 60000)}min — re-run to resume (the installer is idempotent)`
       : result.status === 'Cancelled'
@@ -1174,13 +943,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     else if (tail) printer.line(tail.replace(/^/gm, '  '));
     throw new CliError(EXIT.SERVER, why);
   }
-  // Fallback: if partial output never surfaced (streamed 0), render the final
-  // trail now so a marker-less pseudo-stream still shows the step list.
   if (streamed === 0) { for (const l of ssmMarkerLines(result.stdout)) renderMarker(l); }
   const helloCode = parseHelloMarker(result.stdout);
   if (!json) printer.line(`  remote install ok${helloCode ? ` (on-box hello ${helloCode})` : ''}`);
 
-  // 5. Verify from the laptop through the REAL ssm tunnel.
   let hello;
   try {
     const probe = io.probeSsm || ssmVerifyHello;
@@ -1193,8 +959,6 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${target}:${port}`);
 
-  // 5b. Claude auth (optional): deliver the OAuth token over the ENCRYPTED WIRE
-  //     (never SSM params → never CloudTrail). Post-verify, so the wire is proven.
   if (claudeToken) {
     try {
       const deliver = io.deliverToken || deliverClaudeToken;
@@ -1208,7 +972,6 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     else printer.line('  claude token sent over the wire (unit drop-in, 0600) — verify with a claude spawn');
   }
 
-  // 6. ctx upsert (typed ssm kind + minted token). Collision skip unless --force.
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
@@ -1220,15 +983,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
     return;
   }
-  // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
-  // save it so `clodexctl web <ctx>` tunnels to the right remote port.
   const webPort = port + 1;
-  // `deploy` (t54): flavor + the SSM identity. `target`/`region`/`profile`
-  // duplicate the ssm transport object on purpose — the transport is how you
-  // REACH the node, `deploy` is how it was BUILT, and the two are only equal
-  // for this flavor by coincidence (fargate's ssm transport points at an ECS
-  // task while its deploy identity is a CF stack). Reading the flavor's own
-  // record keeps a consumer off the "which kind is it this time" branch.
   store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
   if (!store.current) store.current = name;
   contexts.save(store, io.contextsFile);
@@ -1239,20 +994,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   }
 }
 
-// ── helm flavor: `clodexctl deploy helm <name>` ──────────────────────────────
-//
-// One command births a k8s node from the PACKAGED chart (cli/deploy/helm/
-// clodex): mint a wire token → `helm upgrade --install` with --set-file token
-// delivery (the chart creates the Secret itself; shipped 4427bba) → save a
-// kubectl-kind ctx → laptop-side hello through the real `kubectl port-forward`
-// transport. Local/docker-desktop shape today; nothing here paints EKS into a
-// corner (identity rides the chart's serviceAccount values, not this verb).
-//
-// helm/kubectl are the operator's tools — spawned argv-direct via the SAME
-// injectable execFn seam the ssm flavor uses, never a shell, zero k8s SDKs.
-// TOKEN DISCIPLINE (binding): the token VALUE never enters argv, markers, logs
-// or errors — only FILE PATHS cross argv (`--set-file secrets.wireToken=F`).
-// The tempfile is 0600 and removed in a finally.
+// ── helm flavor ──
+// TOKEN DISCIPLINE: the token VALUE never enters argv, markers, logs or errors
+// — only FILE PATHS cross argv (--set-file). Tempfiles are 0600 and removed in
+// a finally.
 const HELM_TIMEOUT = '5m';                    // --wait budget (chart readiness probe)
 const DEFAULT_HELM_NAMESPACE = 'clodex';
 // Helm release names are DNS-1123 labels capped at 53 chars (lowercase
@@ -1260,36 +1005,19 @@ const DEFAULT_HELM_NAMESPACE = 'clodex';
 // own late failure is a worse message — and note the name doubles as the ctx
 // name (NAME_RE is a superset of this, so one check covers both).
 const HELM_RELEASE_RE = /^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$/;
-// Namespaces are DNS-1123 labels (63 chars).
 const K8S_NS_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-// Resolve the packaged chart relative to THIS module (the scriptPath pattern):
-// cli/src/deploy.js → cli/deploy/helm/clodex. `deploy/` is in the published
-// files list, chart included, so `npm i -g` and in-repo runs both resolve.
 function helmChartPath() {
   return path.join(__dirname, '..', 'deploy', 'helm', 'clodex');
 }
 
-// The `helm upgrade --install` argv — pure, leaf-tested, the single source for
-// execution AND --dry-run display. Token FILES ride --set-file (paths in argv
-// are fine; values never are). --wait rides the chart's readiness probe (curl
-// 200|401 in-pod), so a green exit already means the wire answered inside the
-// pod; the laptop-side verify then proves port-forward + token end-to-end.
-// `carriedValuesFile` is the operator's PRIOR user-supplied values, read back
-// off the live release and re-applied (see carryForward below). It must be the
-// FIRST --values: helm merges values files left-to-right, later wins, so a
-// carried value placed after the operator's own -f would beat a file passed on
-// THIS run — precedence inverted. --set beats every file regardless of argv
-// position (helm applies sets after all files), so this-run --set needs no
-// ordering care. Both merge rules verified against helm v4.1.0 with
-// `helm template`, not assumed from the docs.
-// `forceConflicts` is the opt-in remedy for the server-side-apply conflict
-// classified by ssaConflictHint below. It is OFF by default and must stay off:
-// forcing takes ownership of EVERY conflicting field, which would also stomp
-// fields a controller legitimately owns (an HPA on replicas, a sidecar
-// injector's container patch). "Silently take ownership of whatever disagrees"
-// is the wrong default for a tool touching someone's cluster — the operator
-// opts in having read WHICH manager they are overriding.
+// carriedValuesFile MUST be the FIRST --values: helm merges values files
+// left-to-right, later wins, so a carried value placed after the operator's own
+// -f would beat a file passed on THIS run. --set is applied after all files
+// regardless of argv position, so this-run --set needs no ordering care.
+// (Both verified against helm v4.1.0 with `helm template`.)
+// forceConflicts stays OFF by default: forcing takes ownership of every
+// conflicting field, including ones a controller legitimately owns.
 function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_PORT, wireTokenFile, oauthTokenFile = null, sets = [], valuesFiles = [], carriedValuesFile = null, forceConflicts = false } = {}) {
   return [
     'helm', 'upgrade', '--install', name, chart,
@@ -1306,50 +1034,14 @@ function helmArgv({ name, chart, namespace, kubeContext = null, port = DEFAULT_P
   ];
 }
 
-// Classify a helm failure as a SERVER-SIDE-APPLY FIELD CONFLICT and rewrite the
-// hint. Returns null for anything else, so the caller keeps its generic hint.
-// Pure — the whole point, since the alternative is a test that needs a cluster.
-//
-// Why this needs its own hint: the generic "partial state — fix the cause and
-// re-run" is actively MISLEADING here. Re-running the identical command hits
-// the identical wall, forever. Nothing about the release is partial or
-// transient; another field manager owns a field helm needs, and server-side
-// apply refuses to change a field it does not own.
-//
-// The failure is RELEASE-scoped, not build-scoped — this is the part that was
-// wrong in my first reading. helm records the apply method per release
-// (`apply_method` in the release Secret, surfaced by `helm get metadata`), and
-// `--server-side auto` inherits it. Verified against helm v4.1.0: a release
-// installed by helm 4 records `ssa` and conflicts on a hand-edited field; the
-// SAME release record with the field removed (what a helm-3 install looks like)
-// resolves to client-side, and the same hand-edit does not conflict at all —
-// the upgrade silently overwrites it. So two operators on the same clodexctl
-// and the same chart get opposite outcomes, decided by which helm first
-// installed the release. The hint says "this release", never "helm".
-//
-// Parsed, not hardcoded: helm emits two grammars, one per conflict count —
-//   … Apply failed with 1 conflict: conflict with "kubectl-edit" using apps/v1: .spec…image
-//   … Apply failed with 2 conflicts: conflicts with "kubectl-edit" using v1:
-//   - .data.j
-//   - .data.k
-// (both captured live, see tasks/helm-ssa-conflict/journal.md). Every extracted
-// detail is optional: an unrecognized shape still gets the what/why/remedy,
-// just without the specifics. A hint that degrades is worth more than a regex
-// that must win.
 const SSA_CONFLICT_RE = /Apply failed with \d+ conflicts?:/;
 function ssaConflictHint(stderr, { name, namespace } = {}) {
   const text = String(stderr || '');
   if (!SSA_CONFLICT_RE.test(text)) return null;
 
-  // Who owns it, and under which apiVersion.
-  //
-  // The quotes here must be UNESCAPED, and that is load-bearing rather than
-  // incidental: helm prints this text TWICE, once JSON-escaped inside a
-  // `level=WARN msg="upgrade failed" error="…\"kubectl-edit\"…"` line and once
-  // plain after `Error:`. A pattern that tolerates `\"` matches the WARN copy
-  // first and drags escapes plus a stray trailing quote into the captured field
-  // name — which is what the first version of this did on the real sample.
-  // Requiring a bare `"` skips the escaped copy and lands on the plain one.
+// The quotes must be UNESCAPED: helm prints this text twice, once JSON-escaped
+// inside a `level=WARN msg="upgrade failed" error="…\"kubectl-edit\"…"` line.
+// A pattern tolerating `\"` matches that copy and captures escaped garbage.
   const who = /conflicts? with "([^"]+)" using (\S+?):/.exec(text);
   const manager = who ? who[1] : null;
 
@@ -1397,7 +1089,6 @@ function ssaConflictHint(stderr, { name, namespace } = {}) {
   ].filter(Boolean).join('\n');
 }
 
-// `helm status` — the release-exists probe (exit 0 = installed). Pure.
 function helmStatusArgs({ name, namespace, kubeContext = null } = {}) {
   return ['helm', 'status', name, '--namespace', namespace,
     ...(kubeContext ? ['--kube-context', kubeContext] : [])];
@@ -1414,39 +1105,19 @@ function releaseSecretArgs({ name, namespace, kubeContext = null, key = 'wire-to
     '-o', `jsonpath={.data.${key}}`];
 }
 
-// `helm get values <name> -o json` — the operator's PRIOR overrides. Pure.
-//
-// NO `-a`. `-a/--all` dumps the COMPUTED value set (chart defaults merged in),
-// and re-applying that as an override would freeze every chart default at the
-// values of the day this release was last touched — including image.tag, which
-// t53 just made the authoritative version pin. Plain `get values` returns
-// user-supplied overrides ONLY, which is exactly the set an operator expects to
-// keep across a re-run.
+// NO `-a`: --all dumps the COMPUTED value set, so re-applying it would freeze
+// every chart default (including image.tag, the version pin) at the day the
+// release was last touched. Plain `get values` = user-supplied overrides only.
 function helmGetValuesArgs({ name, namespace, kubeContext = null } = {}) {
   return ['helm', 'get', 'values', name, '--namespace', namespace,
     ...(kubeContext ? ['--kube-context', kubeContext] : []), '-o', 'json'];
 }
 
-// Keys never carried forward, whatever the prior release holds.
-//
-// `secrets.*` is here because --set-file makes the wire/oauth token part of the
-// release's user-supplied values — so `helm get values` hands the token VALUE
-// straight back. Carrying it would put a token in a file we then LOG the keys
-// of, and this verb's binding rule is that the token value never enters argv,
-// markers, logs or errors. It would also create a second source for a value the
-// Secret read-back above already owns: that path is authoritative, and two
-// sources for one secret is how a rotation silently half-lands.
+// --set-file makes the tokens part of the release's user-supplied values, so
+// `helm get values` hands the token VALUE back. Never carry secrets.*: the
+// Secret read-back above is the single authoritative source.
 const HELM_NEVER_CARRY = ['secrets'];
 
-// Parse `helm get values -o json` into the set we will re-apply, minus the
-// never-carry keys. Returns { values, carried, dropped } — `carried`/`dropped`
-// are top-level key NAMES, for the log line.
-//
-// An override-free release renders as the JSON literal `null`, and a release
-// helm has never been given values for can render as empty stdout; both mean
-// "nothing to carry", not "parse failure". Anything else that fails to parse is
-// a real error and is thrown — see the call site for why a silent fallback here
-// would rebuild the exact defect this replaces.
 function parseCarriedValues(raw) {
   const s = String(raw == null ? '' : raw).trim();
   if (!s || s === 'null') return { values: {}, carried: [], dropped: [] };
@@ -1465,9 +1136,6 @@ function parseCarriedValues(raw) {
   return { values, carried, dropped };
 }
 
-// Run a vendor CLI (helm/kubectl) argv through the injectable execFn — the
-// runAws pattern generalized. ENOENT → the "is X installed?" hint transport.js
-// uses for vendor CLIs; other failures relay the child's own stderr.
 async function runVendor(execFn, argv, what, code = EXIT.CONNECT) {
   try {
     const { stdout } = await execFn(argv[0], argv.slice(1));
@@ -1481,10 +1149,6 @@ async function runVendor(execFn, argv, what, code = EXIT.CONNECT) {
   }
 }
 
-// Verify from the laptop through the REAL kubectl transport the saved ctx will
-// use: openTransport on the kubectl entry (spawns `kubectl port-forward`), GET
-// hello with the Bearer token, expect 200. The ssmVerifyHello shape for the
-// kubectl kind. io.probeHelm overrides for unit tests.
 async function helmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
@@ -1495,10 +1159,6 @@ async function helmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
   }
 }
 
-// deploy helm <name> — orchestration. io seams: execFn (helm/kubectl children),
-// spawnFn (verify tunnel child), probeHelm (verify override), contextsFile.
-// Throws CliError (caught by main.run). --json emits NDJSON step markers
-// shaped like parseMarker events (mirrors the other flavors).
 async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'deploy helm needs a release name (e.g. deploy helm mynode)');
@@ -1507,15 +1167,9 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   }
   const namespace = flags.namespace ? String(flags.namespace) : DEFAULT_HELM_NAMESPACE;
   if (!K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label (lowercase letters/digits/hyphens, max 63 chars)`);
-  // `port` starts as "this run's flag, else the default" and may be REPLACED by
-  // a carried-forward wirePort further down — hence `let` plus the explicit
-  // "was it flagged" bit, which is the only thing that can distinguish "the
-  // operator asked for 7900" from "nobody said". See the precedence block.
   const portFlagged = flags.port != null;
   let port = portFlagged ? parsePortOr(flags.port) : DEFAULT_PORT;
   const chart = flags.chart ? String(flags.chart) : helmChartPath();
-  // Only the PACKAGED default is existence-checked (it must ship with us); an
-  // operator --chart passes through untouched — helm resolves repo/oci refs.
   if (!flags.chart && !fs.existsSync(path.join(chart, 'Chart.yaml'))) {
     throw new CliError(EXIT.SERVER, `packaged helm chart unreadable at ${chart} — broken install?`);
   }
@@ -1528,12 +1182,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       throw new CliError(EXIT.USAGE, `--set ${s.split('=')[0]} is not allowed — secret values must never ride argv; the wire token is minted/reused automatically and claude auth rides --claude-token-file`);
     }
   }
-  // Does the chart publish its web GUI? The chart default is web.enabled=true;
-  // a `--set web.enabled=false` (last-wins) turns it off. Mirrors the ctx save
-  // below — we record a webPort only when there's a web port to reach. (A
-  // web.enabled override via --values file is not tracked here; --set is the
-  // documented way and the only one the CLI can see without rendering.)
-  // `null` = this run said nothing, so a carried-forward value may speak.
   let webEnabledFlag = null;
   for (const s of sets) {
     const m = /^web\.enabled=(.*)$/.exec(s);
@@ -1550,27 +1198,16 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const emit = (obj) => printer.json(obj);
   const execFn = io.execFn || execFileP;
 
-  // ::step/::ok/::log vocabulary, locally emitted (there is no remote marker
-  // stream to relay — helm is synchronous). --json mirrors parseMarker shapes.
   const step = (n) => { if (json) emit({ type: 'step', name: n }); else printer.line(`→ ${n} …`); };
   const okm = (n) => { if (json) emit({ type: 'ok', name: n }); else printer.line(`  ${n} ok`); };
   const log = (t) => { if (json) emit({ type: 'log', text: t }); else printer.line(`  ${t}`); };
 
-  // --no-wirescope is the ssh/ssm/docker spelling; helm's route is the chart
-  // value. Warn instead of silently ignoring (the wirescope stays ON without
-  // the --set).
   if (flags['no-wirescope']) {
     log('--no-wirescope is ignored by the helm flavor — use --set wirescope.enabled=false (the chart value)');
   }
 
-  // --dry-run: describe, run nothing. Placeholder paths — no tempfile is ever
-  // written, and the claude token is noted by PRESENCE only.
   if (flags['dry-run']) {
     const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles, forceConflicts: !!flags['force-conflicts'] });
-    // kubeContext is only resolved for real in the preflight below (it may come
-    // from `kubectl config current-context`), so the dry-run preview carries the
-    // flag or null — the same honesty the kubectl.context field above already
-    // has, rather than a guess at what the cluster would have answered.
     const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), token: '<minted-or-reused>', deploy: { flavor: 'helm', release: name, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null } };
     if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : name, ctxEntry }); return; }
     printer.line([
@@ -1588,8 +1225,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  // 1. preflight: both binaries resolve, and NAME the cluster this will hit —
-  //    deploying to the wrong cluster silently is the scary failure.
   step('preflight');
   await runVendor(execFn, ['helm', 'version', '--short'], 'version');
   await runVendor(execFn, ['kubectl', 'version', '--client', '--output=yaml'], 'version --client');
@@ -1599,9 +1234,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (!kubeContext) throw new CliError(EXIT.CONNECT, 'kubectl has no current context — pass --kube-context');
   }
   log(`cluster: kube context "${kubeContext}", namespace "${namespace}"`);
-  // Namespace: get-first, create if absent. A lost create race (another
-  // creator won between our get and create) surfaces as AlreadyExists —
-  // that's the state we wanted, tolerate it.
   try {
     await runVendor(execFn, ['kubectl', '--context', kubeContext, 'get', 'namespace', namespace], 'get namespace');
   } catch {
@@ -1630,7 +1262,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (!/not found/i.test(e.message || '')) {
       throw new CliError(EXIT.CONNECT, `could not determine whether release "${name}" exists (helm status failed for a reason other than not-found) — check cluster access and re-run: ${e.message}`);
     }
-    /* release not installed → fresh mint below */
   }
   let reusedOauth = null;   // existing release's oauth token (preserved on flagless re-run)
   if (releaseExists) {
@@ -1669,46 +1300,19 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   }
   okm('token');
 
-  // 2b. CARRY FORWARD the operator's prior overrides (t54).
-  //
-  // Until this existed, `deploy helm <name>` on a live release built a fresh
-  // value set from this run's flags alone, so every non-token override the
-  // operator had ever set — a pinned image.tag, a storageClassName, a
-  // resources bump — silently fell back to the chart default. Tokens were the
-  // one exception, carried by hand above; everything else reverted.
-  //
-  // NOT `--reuse-values`. It reuses the prior release's values AND ignores new
-  // chart defaults — helm ships `--reset-then-reuse-values` precisely because
-  // of that, which is the proof rather than the workaround (it needs helm
-  // 3.14+, and we do not control the operator's helm). t53 made the chart's
-  // image.tag the authoritative version pin, so `--reuse-values` would freeze
-  // every upgrade at the tag of the day the release was last touched: the same
-  // revert we are fixing, arriving by the other door.
-  //
-  // So: read the USER-SUPPLIED set back (`helm get values`, no -a) and
-  // re-apply it explicitly. It works on any helm 3, it is INSPECTABLE — which
-  // is why we can name the carried keys in the log, and a silent carry-forward
-  // would be the same class of invisible behaviour as the silent revert — and
-  // it is the read-back-and-re-apply shape the token carry-forward twenty
-  // lines above already uses, so it is the local idiom rather than a new one.
-  //
-  // Precedence, and every layer below is enforced somewhere concrete:
-  //   chart defaults  <  carried-forward prior values  <  this run's flags
-  // An explicit operator pin therefore SURVIVES a re-run: --set image.tag=4.5.0
-  // stays 4.5.0 even after the chart default moves to 4.6.0. That is what
-  // pinning means; the `upgrade` verb's explicit --tag is what moves it later.
+// Carry the operator's prior user-supplied overrides forward explicitly.
+// NOT `--reuse-values`: it also ignores new chart defaults, which would freeze
+// image.tag (the authoritative version pin) at the release's last touch — the
+// same silent revert by the other door. `--reset-then-reuse-values` needs helm
+// 3.14+, which we do not control.
+// Precedence: chart defaults < carried prior values < this run's flags, so an
+// explicit --set image.tag survives a re-run.
   let carriedValues = null;
   if (releaseExists) {
     let rawValues;
     try {
       rawValues = await runVendor(execFn, helmGetValuesArgs({ name, namespace, kubeContext }), 'get values', EXIT.SERVER);
     } catch (e) {
-      // HARD failure, deliberately. `helm get values` failing right after
-      // `helm status` succeeded is anomalous, and the only other branch is
-      // "proceed with no carried values" — i.e. perform the exact silent
-      // revert this block exists to prevent, at the moment we have the most
-      // evidence something is wrong. Same reasoning as the wire-token
-      // read-back above, which hard-errors rather than mint a fresh token.
       throw new CliError(EXIT.SERVER, `release "${name}" exists but its prior values could not be read (${e.message}) — refusing to continue, because upgrading without them would silently revert every override you set`);
     }
     const parsed = parseCarriedValues(rawValues);
@@ -1717,16 +1321,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     else log('no prior values to carry forward (the release has no operator overrides)');
     if (parsed.dropped.length) log(`not carried (owned by the release Secret, never re-applied from values): ${parsed.dropped.join(', ')}`);
 
-    // The two values this verb DERIVES from the run's flags must obey the same
-    // precedence, or the carry-forward creates a fresh inconsistency where the
-    // silent revert used to keep release and ctx accidentally in step:
-    //  - wirePort: carried, so the release keeps serving 8100; without this the
-    //    ctx would be saved with no remotePort and the transport would
-    //    port-forward to 7900, a port the release does not listen on.
-    //  - web.enabled: carried, so the Service still publishes no web port;
-    //    without this the ctx would claim webPort 8080 against nothing.
-    // A flag on THIS run wins in both cases — hence the "did the flag speak"
-    // bits rather than a truthiness test on the value itself.
     if (!portFlagged && Number.isInteger(carriedValues.wirePort)) port = carriedValues.wirePort;
     if (webEnabledFlag == null && carriedValues.web && typeof carriedValues.web === 'object'
         && typeof carriedValues.web.enabled === 'boolean') {
@@ -1734,24 +1328,13 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     }
   }
 
-  // 3+4. stage token FILES (0600, cleaned in a finally) and run helm. Only
-  //      paths enter argv; helm's --set-file reads the values client-side.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-'));
   try {
     const wireTokenFile = path.join(tmpDir, 'wire-token');
     fs.writeFileSync(wireTokenFile, token, { mode: 0o600 });
-    // The carried set rides a tempfile in the SAME 0600 dir as the tokens and
-    // is removed by the same finally. It holds no secret (secrets.* is dropped
-    // in parseCarriedValues), but a values file we wrote is still an artifact
-    // of the operator's cluster, and one cleanup path is easier to keep right
-    // than two.
     let carriedValuesFile = null;
     if (carriedValues && Object.keys(carriedValues).length) {
       carriedValuesFile = path.join(tmpDir, 'carried-values.json');
-      // JSON, not YAML: helm parses values files as YAML, and YAML is a JSON
-      // superset — so writing JSON gets us a correct serializer out of the
-      // stdlib instead of a hand-rolled YAML emitter that would have to get
-      // quoting, multiline strings and nested maps right.
       fs.writeFileSync(carriedValuesFile, JSON.stringify(carriedValues, null, 2), { mode: 0o600 });
     }
     let oauthTokenFile = null;
@@ -1766,12 +1349,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     try {
       await runVendor(execFn, argv, 'upgrade --install', EXIT.SERVER);
     } catch (e) {
-      // Failure honesty: a mid---wait failure leaves the release INSTALLED
-      // (helm does not roll back for us, and we don't auto-rollback).
-      //
-      // The SSA field conflict is asked about FIRST, because for it the generic
-      // hint below is worse than no hint: it tells the operator to re-run, and
-      // re-running is exactly what cannot work.
       const ssa = ssaConflictHint(e.message, { name, namespace });
       if (json) emit({ type: 'error', reason: ssa ? 'helm-conflict' : 'helm-failed', message: e.message });
       if (ssa) throw new CliError(EXIT.SERVER, `${e.message}\n${ssa}`);
@@ -1782,9 +1359,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 
-  // 5. ctx upsert — the kubectl-kind entry the verify (and the user) will use.
-  //    Name-taken: kept unless --force (the flavors' shared semantics); the
-  //    verify below still runs against the FRESH entry either way.
   const entry = {
     kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
     ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
@@ -1795,10 +1369,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     // chart's web is disabled (--set web.enabled=false): no port to reach.
     ...(webEnabled ? { webPort: CONTAINER_WEB_PORT } : {}),
     token,
-    // `deploy` (t54): flavor + the three names a helm upgrade must address the
-    // release by. `release` is the same string as the ctx name TODAY, and is
-    // stored anyway — the identity a re-run needs must not depend on the ctx
-    // key staying equal to it (a rename would silently retarget the upgrade).
     deploy: { flavor: 'helm', release: name, namespace, kubeContext },
   };
   let ctxSaved = false;   // the verify-failure hint must not claim a save that was skipped
@@ -1820,9 +1390,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     }
   }
 
-  // 6. verify: laptop-side hello through the REAL kubectl port-forward with the
-  //    Bearer token — proves port-forward + token end-to-end, not just the
-  //    pod-internal readiness --wait already rode on.
   step('verify');
   let hello;
   try {
@@ -1831,8 +1398,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   } catch (e) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`release "${name}" is live (helm --wait passed), but the wire did not answer through kubectl port-forward: ${e.message}`);
-    // The hint must tell the truth about the ctx: a skipped upsert (name
-    // collision, no --force) would send the operator to the OLD entry.
     const hint = flags['no-ctx'] ? ''
       : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${name} ctx test --verbose`
         : ` — the context was NOT saved (name "${name}" exists; re-run with --force to overwrite it)`;
@@ -1843,22 +1408,6 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} (svc/${name} -n ${namespace} @ ${kubeContext})`);
 }
 
-// ── fargate flavor: `clodexctl deploy fargate <stack>` ───────────────────────
-//
-// One command builds a Clodex node on AWS Fargate from the PACKAGED
-// CloudFormation template (cli/deploy/clodex-fargate.yaml): `aws cloudformation
-// deploy` (create OR idempotent update) → optionally populate the oauth-token
-// secret (file:// put-secret-value; SKIPPED on Bedrock) → read the stack's
-// self-minted wire token INTO MEMORY for the ctx entry → save a typed
-// {ssm:{ecs}} context → laptop-side hello through the REAL SSM/ECS tunnel.
-//
-// `aws` is the operator's tool, spawned argv-direct through the SAME runAws
-// seam the ssm flavor uses — never a shell, no AWS SDK. TOKEN DISCIPLINE
-// (binding): no secret VALUE ever enters argv/logs/errors/dry-run. The wire
-// token is the STACK's (get-secret-value into memory, never printed, never
-// rotated on re-run); the oauth token rides file://<path> into put-secret-value
-// (only the PATH crosses argv). ClusterName defaults to the stack name so two
-// stacks never collide on the template's 'clodex' default.
 const FARGATE_TEMPLATE = 'clodex-fargate.yaml';
 const FARGATE_VERIFY_TIMEOUT_MS = 5 * 60 * 1000;   // Fargate cold start: image pull + boot
 const FARGATE_VERIFY_POLL_MS = 5000;
@@ -1866,19 +1415,12 @@ const FARGATE_VERIFY_POLL_MS = 5000;
 // max 128. Stricter than NAME_RE because the name doubles as the ctx name, the
 // default cluster, and the secret prefix (<stack>/wire-token, <stack>/oauth-token).
 const FARGATE_STACK_RE = /^[A-Za-z][A-Za-z0-9-]{0,127}$/;
-// A --param KEY=VALUE override: KEY a CloudFormation parameter name (alnum),
-// VALUE anything (never a secret — those ride file:// / the stack's generator).
 const FARGATE_PARAM_RE = /^[A-Za-z][A-Za-z0-9]*=.*/;
 
-// Resolve the packaged template relative to THIS module (the helmChartPath
-// pattern): cli/src/deploy.js → cli/deploy/clodex-fargate.yaml. `deploy/` is in
-// the published files list, so `npm i -g` and in-repo runs both resolve.
 function fargateTemplatePath() {
   return path.join(__dirname, '..', 'deploy', FARGATE_TEMPLATE);
 }
 
-// A true|false flag value → bool (the parser hands single-value flags as
-// strings). Anything else is a USAGE error.
 function parseBoolFlag(v, name) {
   const s = String(v).toLowerCase();
   if (s === 'true' || s === '1') return true;
@@ -1886,12 +1428,6 @@ function parseBoolFlag(v, name) {
   throw new CliError(EXIT.USAGE, `--${name} must be true or false, got "${v}"`);
 }
 
-// The `--parameter-overrides` tokens — pure, the single source for execution AND
-// --dry-run display. ClusterName is ALWAYS emitted (defaults to the stack name,
-// so two stacks don't collide on the template's 'clodex' cluster default);
-// Persistent is ALWAYS emitted (the verb defaults it TRUE — a self-healing,
-// verifiable node — which differs from the template's 'false'). Everything else
-// only when chosen. Secret VALUES never appear here.
 function fargateParamOverrides({ stackName, cluster, image, useBedrock, noWirescope, assignPublicIp, subnets, securityGroup, persistent, params = [] } = {}) {
   return [
     `ClusterName=${cluster || stackName}`,
@@ -1906,8 +1442,6 @@ function fargateParamOverrides({ stackName, cluster, image, useBedrock, noWiresc
   ];
 }
 
-// Full aws argv (leading 'aws') so each doubles as execution + --dry-run
-// display, awsBase order matching the ssm flavor.
 function fargateDeployArgs({ stackName, templateFile, region, profile, paramOverrides = [] } = {}) {
   return ['aws', ...awsBase({ region, profile }),
     'cloudformation', 'deploy',
@@ -1936,7 +1470,6 @@ function fargatePutOauthArgs({ stackName, region, profile, tokenFile } = {}) {
     '--secret-id', `${stackName}/oauth-token`,
     '--secret-string', `file://${tokenFile}`];
 }
-// Read the stack's self-minted wire token into memory (for the ctx entry only).
 function fargateGetWireTokenArgs({ stackName, region, profile } = {}) {
   return ['aws', ...awsBase({ region, profile }),
     'secretsmanager', 'get-secret-value',
@@ -1949,10 +1482,6 @@ function fargateStackOutputsArgs({ stackName, region, profile } = {}) {
     '--stack-name', stackName,
     '--query', 'Stacks[0].Outputs', '--output', 'json'];
 }
-// describe-stacks Outputs JSON → { OutputKey: OutputValue }. The output VALUES
-// are literal copy-paste command templates (RunTaskCommand / PutTokenCommand
-// carry a `$(aws … get-secret-value …)` SUBSTITUTION, not a token value) — safe
-// to print. Best-effort: a parse failure yields {}.
 function parseStackOutputs(json) {
   try {
     const list = JSON.parse(json || '[]');
@@ -1963,14 +1492,6 @@ function parseStackOutputs(json) {
   } catch { return {}; }
 }
 
-// ── default-VPC networking auto-detect ───────────────────────────────────────
-// When --subnets / --security-group are omitted, resolve them from the account's
-// DEFAULT VPC preflight-style — the common first-run case ("the default VPC is
-// fine") without console archaeology. All read-only `aws ec2 describe-*` through
-// the SAME runAws seam; the resolved ids feed the SAME template parameters (the
-// template is untouched). NEVER guesses among non-default VPCs. vpcs/subnets use
-// --query/--output text (line/tab splitting); the SG uses --output json because
-// the posture gate needs the nested IpPermissions, which text can't carry.
 function fargateDescribeVpcsArgs({ region, profile } = {}) {
   return ['aws', ...awsBase({ region, profile }),
     'ec2', 'describe-vpcs',
@@ -1990,13 +1511,6 @@ function fargateDescribeSgArgs({ vpcId, region, profile } = {}) {
     '--output', 'json'];
 }
 
-// The default SG's FACTORY inbound is either nothing or a single all-self rule
-// (UserIdGroupPairs referencing the group itself — no CIDRs). Anything else — a
-// CIDR grant, an unrelated group — is operator-added: warn LOUD (the node needs
-// NO inbound; it listens on nothing public, so an open SG is slack, not exposure)
-// but PROCEED (warn-don't-block; no --force gate). Pure: returns the warning BODY
-// (the print site prepends "WARNING:", matching the no-claude-token loud line),
-// or null when the SG is in factory state.
 function fargateSgInboundWarning(sgId, ipPermissions = []) {
   const items = [];
   for (const p of ipPermissions || []) {
@@ -2016,12 +1530,6 @@ function fargateSgInboundWarning(sgId, ipPermissions = []) {
   return `detected default SG ${sgId} has inbound rules: ${items.join(', ')} — the node needs NO inbound; consider a closed SG`;
 }
 
-// Resolve the MISSING pieces (needSubnets/needSg) from the default VPC. Returns
-// { vpcId, subnets, securityGroup, sgInboundWarning } — a given flag stays null
-// here (the caller fills only the gaps; an explicit flag always wins). Missing
-// default VPC / empty default-for-az subnets / missing default SG → USAGE, each
-// naming BOTH flags so the operator can pass them explicitly. describe errors
-// ride the runAws CliError shape (`aws ec2 describe-* failed: …`).
 async function fargateDetectNetwork({ region, profile, needSubnets, needSg, execFn } = {}) {
   const passBoth = 'pass --subnets and --security-group explicitly';
   const vpcOut = await runAws(execFn, fargateDescribeVpcsArgs({ region, profile }), 'ec2 describe-vpcs');
@@ -2073,10 +1581,6 @@ async function fargatePollHello(entry, token, { spawnFn, execFn, timeoutMs = FAR
   }
 }
 
-// deploy fargate <stack> — orchestration. io seams: execFn (aws child), spawnFn
-// (verify tunnel child), probeFargate (verify override for tests), sleepFn,
-// contextsFile, env. Throws CliError (caught by main.run). --json emits NDJSON
-// step/ok/log events shaped like the helm flavor.
 async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const stackName = args[0];
   if (!stackName) throw new CliError(EXIT.USAGE, 'deploy fargate needs a stack name (e.g. deploy fargate clodex-node)');
@@ -2096,9 +1600,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const assignPublicIpGiven = assignPublicIp != null;   // an explicit flag always wins
   let subnets = flags.subnets ? String(flags.subnets) : null;
   let securityGroup = flags['security-group'] ? String(flags['security-group']) : null;
-  // The verb defaults Persistent TRUE — a self-healing, VERIFIABLE node (the
-  // one-command path's whole point); --persistent false is the disposable
-  // infra-only run-task shape.
   const persistent = flags.persistent != null ? parseBoolFlag(flags.persistent, 'persistent') : true;
   const params = Array.isArray(flags.param) ? flags.param.map(String) : (flags.param ? [String(flags.param)] : []);
   for (const p of params) {
@@ -2106,9 +1607,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   }
 
   const env = io.env || process.env;
-  // Oauth model credential (skipped ENTIRELY on Bedrock). Source: --token-file
-  // or CLODEX_CLAUDE_TOKEN_FILE. The value NEVER enters argv (file:// only) and
-  // is never read/printed here — we only verify the file EXISTS (fail fast).
   let oauthTokenFile = null;
   if (!useBedrock) {
     const tf = flags['token-file'] ? String(flags['token-file'])
@@ -2126,12 +1624,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const ctxName = flags.ctx ? String(flags.ctx) : stackName;
   const templateFile = fargateTemplatePath();
 
-  // Auto-detect default-VPC networking for the MISSING flag(s). Read-only ec2
-  // describe-* through runAws — an explicit flag always wins (fills only gaps),
-  // both flags given → zero new AWS calls. Runs on --dry-run too (read-only), so
-  // the printed argv shows the REAL resolved ids. autoDetected marks + the loud
-  // `network:` lines are computed here and surfaced below (live: before the
-  // template step; dry-run: in the plan).
   const needSubnets = !subnets;
   const needSg = !securityGroup;
   const autoDetected = { subnets: needSubnets, securityGroup: needSg };
@@ -2155,17 +1647,10 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     if (sgInboundWarning) networkLines.push(`WARNING: ${sgInboundWarning}`);
   }
 
-  // Resolve the EFFECTIVE region for the RECORD only — never to steer the
-  // deploy (aws still resolves that itself, unchanged). Explicit --region is
-  // already the effective region and is threaded + pinned as today. When the
-  // flag is unset, mirror the CLI's OWN precedence: AWS_REGION /
-  // AWS_DEFAULT_REGION env beat profile config — querying `aws configure get
-  // region` with env set would record the CONFIG region while the deploy went
-  // to the ENV region (the exact recorded≠actual bug this exists to kill).
-  // Only when env is silent too, ask `aws configure get region`
-  // (profile-aware) — an unset key exits non-zero → runAws throws → we leave
-  // it unresolved and WARN LOUD (the stack still goes wherever AWS defaults).
-  // This is OBSERVE-AND-RECORD: read-only, so it runs on --dry-run too.
+// Region is OBSERVED for the RECORD only — it never steers the deploy. When
+// --region is unset, mirror the AWS CLI's own precedence: AWS_REGION/
+// AWS_DEFAULT_REGION beat profile config, so asking `aws configure get region`
+// while env is set would record a region the deploy never used.
   let effectiveRegion = region;
   let regionResolvedFrom = null; // 'env' | 'profile' | null (flag = already effective)
   if (!effectiveRegion) {
@@ -2194,15 +1679,9 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const okm = (n) => { if (json) emit({ type: 'ok', name: n }); else printer.line(`  ${n} ok`); };
   const log = (t) => { if (json) emit({ type: 'log', text: t }); else printer.line(`  ${t}`); };
 
-  // --dry-run: describe the exact argv, run nothing. Secret VALUES never appear
-  // — the oauth file is a file:// placeholder, the wire-token read is noted as
-  // in-memory-only, no token is ever fetched.
   if (flags['dry-run']) {
     const putArgv = (!useBedrock && oauthTokenFile) ? fargatePutOauthArgs({ stackName, region, profile, tokenFile: '<oauth-token-file>' }) : null;
     const getArgv = fargateGetWireTokenArgs({ stackName, region, profile });
-    // The resolved (or explicitly-given) networking, so the plan is honest about
-    // what the real run would send — including the auto-detected ids and the
-    // implied public-ip rule.
     const networkPlan = {
       vpcId: netVpcId, subnets: subnets ? subnets.split(',') : [],
       securityGroup: securityGroup || null, assignPublicIp: assignPublicIp || null, autoDetected,
@@ -2226,8 +1705,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  // 1. preflight: aws resolves + NAME who we are (account+arn — identity
-  //    visibility so a wrong-account deploy is caught; NEVER a secret).
   step('preflight');
   const idOut = await runAws(execFn, callerIdentityArgs({ region, profile }), 'sts get-caller-identity');
   let account = null; let arn = null;
@@ -2235,25 +1712,14 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   log(`identity: account ${account || '?'} (${arn || '?'}) region ${effectiveRegion || '?'}`);
   okm('preflight');
 
-  // Region — LOUD before the template step so a wrong-region deploy is caught
-  // (the us-east-1-vs-us-west-2 live-run miss). WARNING when unresolvable.
   log(regionLine);
-  // Loud, one line per resolved networking item (json → log events) BEFORE the
-  // template step — the operator sees exactly what was auto-detected and fed in.
   for (const l of networkLines) log(l);
 
-  // 2. template: cloudformation deploy — create OR idempotent update
-  //    (--no-fail-on-empty-changeset makes a no-change re-run green).
   step('template');
   await runAws(execFn, deployArgv, 'cloudformation deploy', EXIT.SERVER);
   okm('template');
-  // Read the stack Outputs (real ARNs / joined subnets / copy-paste commands) —
-  // best-effort; absence just drops the RunTaskCommand/PutTokenCommand display.
   const outputs = parseStackOutputs(await runAws(execFn, fargateStackOutputsArgs({ stackName, region, profile }), 'describe-stacks', EXIT.SERVER).catch(() => ''));
 
-  // 3. oauth token (skip on Bedrock). put-secret-value with file:// — the value
-  //    never enters argv/logs. Absent → warn LOUD + print the manual command,
-  //    do NOT fail the deploy.
   if (!useBedrock) {
     if (oauthTokenFile) {
       step('oauth-token');
@@ -2266,9 +1732,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     }
   }
 
-  // 4. wire token: the STACK minted its own (WireTokenSecret). Read it INTO
-  //    MEMORY for the ctx entry only — never printed, never rewritten (no
-  //    rotation on re-run — the stack owns it).
   step('wire-token');
   const token = await runAws(execFn, fargateGetWireTokenArgs({ stackName, region, profile }), 'secretsmanager get-secret-value (wire-token)', EXIT.SERVER);
   if (!token || /[\s\x00-\x1f]/.test(token)) {
@@ -2276,21 +1739,11 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   }
   okm('wire-token');
 
-  // 5. ctx upsert BEFORE verify (the helm ctxSaved pattern). family = <stack>-node
-  //    (the TaskDefinition Family / Service name). Collision kept unless --force.
   const family = `${stackName}-node`;
   const entry = {
     ssm: { ecs: `${cluster}/${family}`, ...(effectiveRegion ? { region: effectiveRegion } : {}), ...(profile ? { profile } : {}) },
-    // webPort: the image's FIXED web GUI port (CONTAINER_WEB_PORT=8080), NOT
-    // the ssh installer's wire+1 — the SSM tunnel reaches any in-task port, so
-    // `clodexctl web <ctx>` lands on 8080. Without this it fell back to 7901.
     webPort: CONTAINER_WEB_PORT,
     token,
-    // `deploy` (t54): flavor + the CloudFormation identity. The stack name is
-    // what an upgrade re-deploys, and it is NOT the ssm target above — that
-    // points at the ECS task family this stack happens to run. Recovering the
-    // stack from the transport means splitting `<cluster>/<stack>-node` on a
-    // suffix, which is precisely the archaeology this field retires.
     deploy: { flavor: 'fargate', stack: stackName, ...(effectiveRegion ? { region: effectiveRegion } : {}), ...(profile ? { profile } : {}) },
   };
   let ctxSaved = false;
@@ -2312,9 +1765,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     }
   }
 
-  // 6. verify — only for a persistent node (a Service keeps a task alive to
-  //    poll). A non-persistent stack is infrastructure only: print the run-task
-  //    command and skip verify (nothing is running yet).
   if (!persistent) {
     if (json) emit({ type: 'verify', ok: false, skipped: 'non-persistent' });
     else {
@@ -2331,7 +1781,6 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   } catch (e) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`stack "${stackName}" deployed, but the node did not answer over the SSM tunnel within ${Math.round(FARGATE_VERIFY_TIMEOUT_MS / 60000)}min: ${e.message}`);
-    // Truthful hint: a skipped ctx (collision, no --force) points at the OLD entry.
     const hint = flags['no-ctx'] ? ''
       : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${ctxName} ctx test --verbose`
         : ` — the context was NOT saved (name "${ctxName}" exists; re-run with --force to overwrite it)`;

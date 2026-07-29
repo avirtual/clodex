@@ -1,42 +1,9 @@
-// plugin-host.js — the RENDERER half of the plugin host (plugin-plan.md [internal design doc, not in this repo]
-// §2.1-2.6, §3.3). Owns the six UI registries core reads from, and the `rhost`
-// object a plugin's renderer half is activated with. Phase 1 ships no plugins:
-// core populates nothing here, the registries sit empty, and every accessor
-// returns the empty answer that reproduces today's bytes exactly.
-//
-// FACTORY (island convention): initPluginHost(deps) returns the handles core
-// calls at its five seams (see renderer.js). Deps are the core functions the
-// registries need to do their job — never the reverse; no registry reaches back
-// into renderer.js scope (free-identifier-leaks gate).
-//
-// THREE LAWS this file exists to enforce:
-//
-// 1. DECLARATIVE ONLY. A plugin hands us data or a callback returning data —
-//    never an HTML string. Everything user-supplied is escaped HERE. That is
-//    what lets the same specs cross the Tier-B (out-of-process) boundary later
-//    without changing shape.
-//
-// 2. NAMESPACED IDS. Every registered id becomes "<pluginId>:<id>" before it
-//    reaches the DOM, so two plugins cannot collide and a `data-act` carrying a
-//    colon is by construction a plugin's, never core's.
-//
-// 3. REAL TEARDOWN (plan §3.1, Reviewer MUST-FIX A2). Window close is free
-//    teardown — the whole renderer dies. DISABLE-WITHOUT-CLOSE is not, and it
-//    is the path that leaves callbacks firing against a removed container in
-//    every open window. So a plugin gets THREE overlapping mechanisms and the
-//    host trusts none of them individually:
-//      a. an optional `dispose()` returned from activate(), invoked FIRST;
-//      b. `rhost.onDispose(fn)` for anything it set up out of band;
-//      c. host-WRAPPED setInterval/setTimeout/addEventListener, which the host
-//         unregisters itself — so the common leaks need no plugin discipline.
-//    `_liveResources()` is the introspection seam the W9 gate asserts zero on.
+// Plugins hand this host data or callbacks, never HTML: everything
+// user-supplied is escaped here. Every registered id becomes
+// "<pluginId>:<id>" before it reaches the DOM, so a `data-act` carrying a
+// colon is by construction a plugin's and never core's.
 
 const { esc } = require('./lib/format');
-// A sanctioned shared LEAF, exposed to plugins as `rhost.lib.renderDiffHtml`
-// (plan §4 W5). render-html.js stays core because renderer.js, files-popover,
-// bust-popover and cost-popover all use it — a plugin gets a named, versioned
-// view of it rather than a private copy (drifts) or a relative require that
-// escapes the plugin directory (which the no-backdoor lint exists to kill).
 const { renderDiffHtml } = require('./lib/render-html');
 
 function initPluginHost({
@@ -46,18 +13,11 @@ function initPluginHost({
   activePeerQueryable,       // () -> bool
   activePeerConfigurable,    // () -> bool
   scheduleSidebarRelayout,   // () -> void   (the debounced core relayout)
-  // Core capabilities a plugin's renderer half reaches through rhost instead of
-  // window.api (the no-backdoor lint). All three have non-workbench consumers in
-  // core, which is exactly why they are wrapped rather than moved.
   listSessions,              // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
   openPath,                  // (p) -> void   (window.api.fileOpen — reveal in Finder)
   showToast,                 // (msg, opts) -> void
-  // GETTER-shaped: this window's workspace id is filled ASYNCHRONOUSLY
-  // (renderer.js:353 awaits window.api.currentWorkspace()), so a captured value
-  // would be null forever. Law 1 of §3.3 requires rhost to carry it.
-  // No `= () => null` default: the leak scanner's param matcher cannot cross
-  // nested parens, and a defaulted arrow in this list would hide EVERY dep
-  // above it from the scan (verified — it did).
+// No `= () => null` default here: the leak scanner's param matcher cannot
+// cross nested parens, and a defaulted arrow hides every dep above it.
   getWorkspaceId,
 } = {}) {
   // ── Registries ────────────────────────────────────────────────────────────
@@ -71,7 +31,6 @@ function initPluginHost({
   const settingsSections = []; // { pluginId, id, title, render, collect }
   const overlays = [];        // { pluginId, id, mount, onOpen, onClose, el, mounted }
 
-  // pluginId -> { disposers:Set<fn>, timers:Set, intervals:Set, listeners:[], styleEl }
   const resources = new Map();
   const activated = new Map(); // pluginId -> the plugin's renderer module
 
@@ -85,8 +44,6 @@ function initPluginHost({
     return resources.get(pluginId);
   }
 
-  // A disposer that is safe to call twice and removes itself from the ledger,
-  // so `dispose()` inside a plugin and host teardown never double-fire.
   function disposable(pluginId, fn) {
     const r = res(pluginId);
     let done = false;
@@ -101,21 +58,15 @@ function initPluginHost({
   }
 
   function warn(pluginId, e) {
-    // Never throw out of a registry walk: one broken plugin must not blank the
-    // status bar or the sidebar for every other contribution.
     try { console.warn(`[plugin:${pluginId}]`, (e && e.message) || e); } catch {}
   }
 
-  // Remove every entry a plugin owns from every registry, in place.
   function purge(list, pluginId) {
     for (let i = list.length - 1; i >= 0; i--) {
       if (list[i].pluginId === pluginId) list.splice(i, 1);
     }
   }
 
-  // ── The context object every §2.1 callback receives ───────────────────────
-  // Built fresh per render pass from core's own predicates, so a plugin sees
-  // exactly what the bar sees and cannot drift from it.
   function barContext() {
     const session = getActiveSession ? getActiveSession() : null;
     return Object.freeze({
@@ -128,11 +79,6 @@ function initPluginHost({
     });
   }
 
-  // ── §2.1 Status bar ───────────────────────────────────────────────────────
-  // Contributions render INSIDE #proxy-actions via renderSessionActions, which
-  // every branch of renderProxyBar calls (incl. both early returns) — so a
-  // plugin's segment is never silently dropped on Bedrock/Vertex or unlinked
-  // sessions. Verified: renderer.js:3010 (top call) and :3040 (!linked re-call).
   const statusBar = {
     addAction(spec) {
       return register(statusActions, spec, ['when', 'button', 'onClick']);
@@ -142,7 +88,6 @@ function initPluginHost({
     },
   };
 
-  // Shared registration guts: validate, namespace, push, hand back a disposer.
   function register(list, spec, fnKeys, pluginId) {
     const owner = pluginId || (spec && spec.pluginId) || null;
     if (!owner) throw new Error('plugin registration requires a pluginId');
@@ -162,8 +107,6 @@ function initPluginHost({
     });
   }
 
-  // HTML for the plugin half of #proxy-actions, appended to core's own buttons.
-  // Both label and tip are escaped here (law 1) — a plugin cannot inject markup.
   function statusBarHtml() {
     const ctx = barContext();
     const out = [];
@@ -183,8 +126,6 @@ function initPluginHost({
       if (!r || !r.text) continue;
       const cls = r.accentClass ? ` ${esc(String(r.accentClass))}` : '';
       const tip = r.tip ? ` data-tip="${esc(String(r.tip))}"` : '';
-      // Clickable segments opt in by supplying onClick; the data-act is what the
-      // core delegated listener matches, same as the ctx/cost/bust segments.
       const act = typeof r.onClick === 'function' || typeof s.onClick === 'function'
         ? ` data-act="${esc(s.id)}"` : '';
       const btn = act ? ' px-ctx-btn' : '';
@@ -193,9 +134,6 @@ function initPluginHost({
     return out.join('');
   }
 
-  // The §2.1 bar-visibility question. Core's hide branch fires only when NO
-  // agent/peer condition holds; this lets a segment keep the bar alive for a
-  // session type core would hide it for (e.g. a bash session).
   function hasVisibleContribution() {
     const ctx = barContext();
     for (const a of statusActions) {
@@ -207,8 +145,6 @@ function initPluginHost({
     return false;
   }
 
-  // Route a namespaced data-act from the bar to its owner. Returns true iff a
-  // plugin owned it, so core's dispatch chain can fall through unchanged.
   function handleBarClick(act, anchorEl) {
     const ctx = barContext();
     for (const a of statusActions) {
@@ -229,9 +165,6 @@ function initPluginHost({
     return false;
   }
 
-  // ── §2.2 Sidebar ──────────────────────────────────────────────────────────
-  // A footer button is DOM the host owns, so registration paints it and the
-  // disposer un-paints it — the caller never has to remember either.
   function addFooterButton(spec, pluginId) {
     const d = register(footerButtons, spec, ['onClick'], pluginId);
     renderFooterButtons();
@@ -272,8 +205,6 @@ function initPluginHost({
     }
   }
 
-  // Footer buttons match #sidebar-footer's existing two (glyph span + label
-  // span); the optional badge() adds a count chip like #inbox-count.
   function renderFooterButtons() {
     const footer = document.getElementById('sidebar-footer');
     if (!footer) return;
@@ -312,15 +243,10 @@ function initPluginHost({
     }
   }
 
-  // ── §2.4 Session menu ─────────────────────────────────────────────────────
-  // The table stays a table: providers return entry LISTS, not predicates.
   const sessionMenu = {
     addProvider(spec) { return register(menuProviders, spec, ['entriesFor', 'onPick']); },
   };
 
-  // Extra entries for the ⚙ menu, appended after core's sessionMenuEntries.
-  // `act` is namespaced by the host, which is also how routeSessionAction tells
-  // a plugin pick from a core one.
   function menuEntriesFor(type) {
     const out = [];
     for (const p of menuProviders) {
@@ -335,8 +261,6 @@ function initPluginHost({
     return out;
   }
 
-  // Route a namespaced act back to the provider that offered it. Returns true
-  // iff a plugin owned it (core's routeSessionAction falls through otherwise).
   function handleMenuPick(act, sessionName, anchorEl) {
     const i = String(act).indexOf(':');
     if (i < 0) return false;
@@ -350,15 +274,10 @@ function initPluginHost({
     return false;
   }
 
-  // ── §2.5 Settings ─────────────────────────────────────────────────────────
   const settings = {
     section(spec) { return register(settingsSections, spec, ['render', 'collect']); },
   };
 
-  // Mount every registered section into #prefs-dialog before .dialog-actions,
-  // then hand each its own persisted values. Called from openPrefs.
-  // `values` comes from the caller (core awaits pluginInvoke('_host',
-  // 'settings.get') per plugin) — this half never touches window.api.
   function renderSettingsSections(valuesByPlugin = {}) {
     const dialog = document.getElementById('prefs-dialog');
     if (!dialog) return;
@@ -388,14 +307,10 @@ function initPluginHost({
     }
   }
 
-  // Which plugins have a section, so the caller knows whose values to pull
-  // BEFORE anything is rendered (pull-on-open, §3.3). Empty ⇒ zero invokes.
   function settingsSectionOwners() {
     return [...new Set(settingsSections.map((s) => s.pluginId))];
   }
 
-  // -> [{ pluginId, patch }] for the Save handler to persist. Collecting is
-  // separate from persisting so the transport stays core's.
   function collectSettingsSections() {
     const dialog = document.getElementById('prefs-dialog');
     if (!dialog) return [];
@@ -412,10 +327,6 @@ function initPluginHost({
     return out;
   }
 
-  // ── §2.6 Whole-surface mounting ───────────────────────────────────────────
-  // The disable guarantee: the host creates the container and removes it
-  // WHOLESALE on teardown, so cleanup never trusts the plugin's own code
-  // (MUST-FIX 6). mount() is called once, lazily, at first open.
   let openOverlay = null;
 
   function closeOpenOverlay() {
@@ -458,8 +369,6 @@ function initPluginHost({
     },
   };
 
-  // Escape closes the open overlay — centralized here so no plugin installs its
-  // own document-level key handler for it (one less thing teardown must reach).
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && openOverlay) { e.stopPropagation(); closeOpenOverlay(); }
   });
@@ -473,20 +382,10 @@ function initPluginHost({
       id: pluginId,
       get workspaceId() { return getWorkspaceId ? getWorkspaceId() : null; },
       invoke: (method, ...args) => invoke(pluginId, method, args),
-      // ── sessions (renderer side) ──
-      // ONE accessor, and it is the SCOPED one. There is deliberately no
-      // `listAll()` here and no unqualified `list()`: the engine half's law 1
-      // exists because conflating the two silently widens a per-window dropdown
-      // into a cross-workspace surface, and `fsScope` would NOT catch it (it
-      // refuses PEERS, not foreign workspaces). `session:list` is already
-      // sender-window-scoped [ipc-handlers.js:387
-      // `manager.listForWorkspace(workspaceOfSender(e))`]; the filter here makes
-      // the scope the CALLER's stated one rather than an implicit property of
-      // which window happened to ask.
+// Deliberately no unqualified `list()`/`listAll()`: `session:list` is already
+// scoped to the sender window, and the explicit wsId filter makes the scope
+// the caller's stated one rather than a property of which window asked.
       sessions: Object.freeze({
-        // The session the user is looking at in THIS window, or null. Same
-        // predicate the status-bar context uses, so a plugin and the bar can
-        // never disagree about what "active" means.
         active: () => (getActiveSession ? getActiveSession() : null),
         listWorkspace: async (wsId) => {
           if (!listSessions) return [];
@@ -497,11 +396,7 @@ function initPluginHost({
         },
       }),
       ui: Object.freeze({
-        // Reveal a path in the OS file manager. Core's row (window.api.fileOpen)
-        // stays — files-popover.js uses it too.
         openPath: (p) => { if (openPath) openPath(String(p)); },
-        // Core's toast host, so a plugin's errors look like every other error in
-        // the app instead of an alert().
         showToast: (msg, opts) => {
           if (showToast) showToast(String(msg), opts || {});
           else { try { console.warn(`[plugin:${pluginId}]`, msg); } catch {} }
@@ -525,13 +420,8 @@ function initPluginHost({
           overlay: (s) => surfaces.overlay({ ...s, pluginId }),
         }),
       }),
-      // Sanctioned shared pure leaves, mirroring the engine host's `lib`.
       lib: Object.freeze({ renderDiffHtml }),
-      // ── Law 3: the teardown surface ──
       onDispose: (fn) => disposable(pluginId, fn),
-      // Wrapped timers/listeners. The plugin writes ordinary code; the host
-      // holds the handles and clears them on disable, so the common leak needs
-      // no discipline from the plugin author.
       setInterval: (fn, ms, ...a) => {
         const h = setInterval(fn, ms, ...a);
         r.intervals.add(h);
@@ -560,20 +450,9 @@ function initPluginHost({
     });
   }
 
-  // ── Activation / disposal ─────────────────────────────────────────────────
-  // Once per BrowserWindow (law 1 of §3.3). `mod.activate(rhost)` MAY return a
-  // dispose function; if it does, that runs before host teardown.
   function activate(pluginId, mod, { invoke, css } = {}) {
-    // Already active in THIS window ⇒ an idempotent no-op returning the rhost the
-    // plugin already holds, NEVER a throw (t8). This used to throw, and the one
-    // real caller — renderer.js's `plugin-state` subscriber — catches around
-    // activation and reports the catch to `_host` renderer.report as a renderer
-    // FAILURE, which is a genuine quarantine strike. So an enable broadcast
-    // arriving at a window that had already activated (two windows toggling, a
-    // toggle racing the catalog pull at startup) put a strike on a perfectly
-    // HEALTHY plugin, and two of those quarantine it. Double activation is not a
-    // fault condition — it is the expected shape of an unbuffered broadcast
-    // (§3.3 law 2) reaching a window that already pulled.
+// Already active in THIS window ⇒ idempotent no-op returning the existing
+// rhost, never a throw: the caller reports a throw as a quarantine strike.
     if (activated.has(pluginId)) {
       const prev = resources.get(pluginId);
       return (prev && prev.rhost) || null;
@@ -616,11 +495,8 @@ function initPluginHost({
       try { r.ownDispose(); } catch (e) { warn(pluginId, e); }
       r.ownDispose = null;
     }
-    // Close an open overlay BEFORE the disposers run. A registry disposer
-    // splices the entry out of `overlays`, so by the time the sweep below
-    // looks, an eagerly-disposed overlay is invisible to it — `onClose` would
-    // never fire and `openOverlay` would be left pointing at a dead plugin,
-    // suppressing the next open's close. Found by test, not by reading.
+// Before the disposers: a registry disposer splices the entry out of `overlays`,
+// so the sweep below would miss it — onClose lost, openOverlay left dangling.
     if (openOverlay && openOverlay.pluginId === pluginId) closeOpenOverlay();
     for (const h of r.intervals) clearInterval(h);
     r.intervals.clear();
@@ -632,8 +508,6 @@ function initPluginHost({
     r.listeners.length = 0;
     for (const d of [...r.disposers]) d();
     r.disposers.clear();
-    // Containers the host created, removed wholesale — teardown never trusts
-    // the plugin to have cleaned its own interior.
     for (const o of overlays) {
       if (o.pluginId === pluginId && o.el) {
         if (openOverlay === o) closeOpenOverlay();
@@ -657,23 +531,18 @@ function initPluginHost({
   }
 
   return {
-    // Core's five seams.
     statusBarHtml, hasVisibleContribution, handleBarClick,
     applyRowBadges, renderFooterButtons,
     menuEntriesFor, handleMenuPick,
     renderSettingsSections, collectSettingsSections, settingsSectionOwners,
-    // Lifecycle (the Phase-2 loader and the in-tests fake plugin drive these).
     activate, dispose, disposeAll,
-    // Direct registry access for core-registered contributions (none in Phase 1).
     statusBar, sidebar, sessionMenu, settings, surfaces,
-    // Introspection seams — read-only counts, never the live containers.
     _counts: () => ({
       actions: statusActions.length, segments: statusSegments.length,
       footer: footerButtons.length, badges: rowBadges.length,
       menus: menuProviders.length, sections: settingsSections.length,
       overlays: overlays.length,
     }),
-    // W9 gate #1 asserts this is zero for a disabled plugin.
     _liveResources: (pluginId) => {
       const r = resources.get(pluginId);
       if (!r) return { timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false };

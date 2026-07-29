@@ -1,40 +1,18 @@
-// Layer-3 delivery parking (Claude sessions).
-//
-// Why this exists: when the operator is composing a prompt, injecting a DM
-// types Ctrl-U + text into the pane and eats the draft. The inject quiet-gate
-// defers that, but a long draft eventually trips the max-wait cap and splices
-// mid-word anyway (observed live). Parking is the real fix: while the operator
-// is typing, a delivery is written HERE instead of injected, and a
-// UserPromptSubmit hook drains it as additionalContext on the operator's next
-// submit — so it arrives WITH the prompt, never through the draft.
-//
-// Store shape: one directory per agent (<root>/<name>/), one file per message
-// (<seq>.json = {text}). Two disciplines make it zero-loss and order-preserving
-// without a shared lock (Node has no native flock):
-//   * publish  — write a hidden .tmp then rename into place, so a reader never
-//                sees a partial file (atomic write-then-rename per message).
-//   * drain    — CLAIM the whole directory with one atomic rename
-//                (<name> -> <name>.draining.<tag>), then read the snapshot. The
-//                hook drain and the Node cap-fire drain are thus mutually
-//                exclusive: whoever renames first owns every message then
-//                present, so nothing is delivered twice. A message parked after
-//                the claim lands in a fresh directory and drains next turn.
-// This is the atomic discipline the ack channel's lossy read+truncate lacks —
-// dropping a DM is not acceptable, dropping a bookkeeping ack is.
-//
-// Pure fs helpers, dependency-free, so parking/draining are unit-testable
-// without a live CLI. The Python UserPromptSubmit hook mirrors drainPending's
-// claim discipline exactly (same atomic dir-rename), so the two drainers stay
-// single-source-of-truth.
+// Store shape: one directory per agent (<root>/<name>/), one file per message.
+// Zero-loss and order-preserving without a shared lock (Node has no flock):
+//   * publish — write a hidden .tmp then rename into place, so a reader never
+//                sees a partial file.
+//   * drain   — CLAIM the whole directory with one atomic rename before reading
+//                it. Concurrent drainers are thus mutually exclusive: whoever
+//                renames first owns every message then present, so nothing is
+//                delivered twice. A message parked after the claim lands in a
+//                fresh directory and drains next turn.
 
 const fs = require('fs');
 const path = require('path');
 
 function agentDir(root, name) { return path.join(root, name); }
 
-// A transient claim entry at ROOT level (sibling of the agent dirs), created by
-// drainPending (`.draining.`) or claimParkedById (`.resend.`). Skipped when
-// scanning for agent dirs so a mid-flight claim can't masquerade as one.
 function isClaimEntry(name) { return /\.draining\.|\.resend\./.test(name); }
 
 // Does parked file `f` carry resend id `id`? STRUCTURAL match, not a suffix
@@ -51,34 +29,17 @@ function parkFileHasId(f, id) {
   return parts.length === 4 && parts[2] === id;
 }
 
-// Publish one delivery for `name`. `seq` is a lexically-sortable, monotonic
-// string (arrival order); filenames sort by it, so the drain reads in order.
-// `id` (optional) is a short resend handle: when present the filename becomes
-// `<seq>.<id>.json` — still `*.json` and still seq-sorted, so the drain (hook +
-// drainPending) is oblivious to it, while claimParkedById can find the file by
-// id for an [agent:resend]. Returns the published basename. Retries once into a
-// fresh dir if the store was claimed away mid-publish (drains next turn, not lost).
-//
-// `born` (optional) is the createdAt of the session this mail is FOR — the
-// addressee's birth stamp, not the sender's and not now(). The store is keyed by
-// NAME, and a name outlives the session that held it: kill a seat and spawn a new
-// one with the same name and the successor inherits its predecessor's parked mail.
-// Stamping the payload is what lets a drain tell "mine" from "my predecessor's"
-// (see drainPending). It lives in the PAYLOAD rather than the path so the whole
-// `<seq>[.<id>].json` grammar, parkFileHasId's 4-vs-3 segment split and
-// claimParkedById's `{ name, text }` routing (which reads the DIRECTORY as the
-// session name) all stay exactly as they are.
+// `born` is the createdAt of the session this mail is FOR — the addressee's birth
+// stamp, not the sender's and not now(). The store is keyed by NAME and a name
+// outlives the session that held it, so without it a fresh seat with a recycled
+// name inherits its predecessor's parked mail (see drainPending). It lives in the
+// PAYLOAD rather than the path so the `<seq>[.<id>].json` grammar and
+// parkFileHasId's segment split stay exactly as they are.
 function parkDelivery(root, name, text, seq, id = null, passive = false, born = null) {
   const dir = agentDir(root, name);
-  // Passive parks are ride-along notifications (monitor ticks etc.): drained by
-  // the organic carriers (hook drains, or any claim that was happening anyway)
-  // but never worth a turn of their own — the turn-generating drains gate on
-  // hasActivePending below. Marked in the FILENAME so the gate is a cheap peek;
-  // the drains themselves stay oblivious (still `*.json`, still seq-sorted).
-  // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
-  // parkFileHasId collisions because minted resend ids are 5 or 10 base36
-  // chars, never the 7-char literal "passive". Passive parks take no id: they
-  // are not conversational deliveries, so there is nothing to [agent:resend].
+      // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
+      // parkFileHasId collisions because minted resend ids are 5 or 10 base36
+      // chars, never the 7-char literal "passive". Passive parks take no id.
   const base = passive ? `${seq}.passive.json` : (id ? `${seq}.${id}.json` : `${seq}.json`);
   const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
@@ -100,41 +61,17 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
   return base;
 }
 
-// Atomically claim and read every parked delivery for `name`, in arrival order.
-// `claimTag` disambiguates concurrent drainers (e.g. 'hook' vs 'cap.<pid>').
-// Returns [] when nothing is parked or another drainer won the claim. The claim
-// directory is removed before returning, so returned texts are gone from the
-// store (single delivery).
-//
-// `expectedBorn` (optional) is the DRAINER'S OWN session createdAt. The store is
-// keyed by name and a name outlives its session, so a claim can turn up mail
-// addressed to a different generation of this name. The comparison against each
-// entry's `born` is DIRECTIONAL, and the two directions want opposite handling:
-//
-//   born <  expected — mail for a DEAD PREDECESSOR of this name. Discard: the
-//                      addressee is gone, and handing it to the successor is how
-//                      a fresh seat starts its life reading a stranger's mail.
-//   born >  expected — mail for a SUCCESSOR; *I* am the stale drainer (a hook
+// `expectedBorn` is the DRAINER'S OWN session createdAt. The comparison against
+// each entry's `born` is DIRECTIONAL:
+//   born <  expected — mail for a dead predecessor of this name. Discard.
+//   born >  expected — mail for a successor; *I* am the stale drainer (a hook
 //                      subprocess descheduled across its parent's death and the
-//                      next create()). PUT IT BACK — it is not mine to consume.
-//   born === expected — mine. Deliver.
-//   born undefined   — parked before this stamp existed, so the generation is
-//                      unknowable. DELIVER: unstamped is the pre-upgrade shape,
-//                      and dropping real mail to enforce a rule the sender never
-//                      played by is the wrong error. Self-expiring — the store is
-//                      drained continuously, so unstamped entries vanish within a
-//                      turn or two of the upgrade and never come back.
-//   expectedBorn omitted — no expectation, deliver everything. The default is the
-//                      SAFE direction (never silently drop), the same reasoning
-//                      create()'s `mint = false` default uses.
-//
-// WHY PUT BACK RATHER THAN JUST REFUSE. Refusing a non-matching entry reads like
-// the symmetric, conservative choice, and it is not: THE CLAIM IS DESTRUCTIVE.
-// The dir was renamed away before the first byte was read, so an entry we decline
-// to return and decline to restore is DESTROYED — and it would be destroyed in
-// exactly the race this stamp exists to fix. Symmetric-looking guards are not
-// symmetric when the operation they guard is. Restoring costs a write on a path
-// that should essentially never run; refusing costs a lost message.
+//                      next create()). PUT IT BACK — not mine to consume.
+//   born undefined, or expectedBorn omitted — deliver. Unstamped is the
+//                      pre-upgrade shape; the safe direction is never to drop.
+// Restoring rather than merely refusing is required because THE CLAIM IS
+// DESTRUCTIVE: the dir was renamed away before the first byte was read, so an
+// entry we decline to return and decline to restore is destroyed.
 function drainPending(root, name, claimTag, expectedBorn = null) {
   const dir = agentDir(root, name);
   const claim = `${dir}.draining.${claimTag}`;
@@ -153,8 +90,6 @@ function drainPending(root, name, claimTag, expectedBorn = null) {
       const obj = JSON.parse(raw);
       if (!obj || typeof obj.text !== 'string') continue;
       if (typeof expectedBorn === 'number' && typeof obj.born === 'number' && obj.born !== expectedBorn) {
-        // Not this generation's mail. Restore the successor's, drop the
-        // predecessor's; see the directional table above.
         if (obj.born > expectedBorn) restoreParked(dir, f, raw);
         continue;
       }
@@ -165,11 +100,8 @@ function drainPending(root, name, claimTag, expectedBorn = null) {
   return texts;
 }
 
-// Put one claimed entry back in the store under its ORIGINAL basename, so seq
-// order and the `<seq>.<id>.json` resend handle both survive the round trip.
-// Same write-then-rename publish discipline parkDelivery uses (a concurrent
-// reader never sees a partial file); best-effort, because the alternative to a
-// failed restore is a thrown drain that loses every other message in the batch.
+// Restore under the ORIGINAL basename so seq order and the resend handle survive.
+// Best-effort: a throwing restore would lose every other message in the batch.
 function restoreParked(dir, base, raw) {
   const tmp = path.join(dir, `.${base}.tmp`);
   try {
@@ -181,12 +113,6 @@ function restoreParked(dir, base, raw) {
   }
 }
 
-// Cheap peek (not a claim): does `name` have any NON-passive parked delivery?
-// The gate for turn-GENERATING drains (idle edge): a store holding only passive
-// notifications isn't worth a turn — leave them for an organic carrier (a hook
-// drain riding a turn that happens anyway). Mixed stores return true, and the
-// subsequent whole-dir claim sweeps the passives along with the actives — which
-// is exactly the ride-along semantics passive wants.
 function hasActivePending(root, name) {
   try {
     return fs.readdirSync(agentDir(root, name))
@@ -196,7 +122,6 @@ function hasActivePending(root, name) {
   }
 }
 
-// Cheap peek (not a claim): does `name` have any parked deliveries right now?
 function hasPending(root, name) {
   try {
     return fs.readdirSync(agentDir(root, name))
@@ -219,16 +144,6 @@ function countPending(root, name) {
   }
 }
 
-// Cheap peek (not a claim): the parked deliveries for `name` as
-// [{ from, snippet }], in arrival order, for the sidebar ✉ tooltip. Read-only —
-// no rename, no delivery side effect. `max` caps how many entries are parsed
-// (the tooltip shows a few and summarizes the rest); `snipLen` clamps each
-// snippet. The parked TEXT is the full delivery bytes _buildDeliveryText mints:
-// it starts `[agent:from <sender>] <body>` (or a `… attached: @path` spill
-// pointer for a big body). We recover the sender from that prefix and take the
-// body's first line as the snippet — never the whole body, so no full message
-// text leaves the store. A line that doesn't match the prefix (a system notice)
-// falls back to from='?' with the whole first line as snippet.
 function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   let files;
   try {
@@ -254,21 +169,10 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   return out;
 }
 
-// Every parked delivery's TEXT, across every agent store, as a flat array.
-// Read-only — no rename, no claim, no delivery side effect.
-//
-// The caller is the spill GC (engine.cleanupOldMessages): a delivery whose body
-// exceeded the spill threshold was parked as a POINTER to a file in
-// ~/.clodex/messages/, and age-based collection would delete that file out from
-// under the pointer while the parked entry waits (parking is unbounded in time;
-// the spill file is not). Handing out the texts lets the GC see which files are
-// still referenced. We return raw text and take no view on what a pointer looks
-// like — the path grammar belongs to whoever mints it, not to the store.
-//
-// Mid-flight claims are skipped (isClaimEntry) exactly as parkIdInUse skips
-// them, and that is the SAFE direction here: a claimed entry is committed for
-// delivery, so its spill file is about to be read within the turn, long before
-// the next 5-minute sweep.
+// Read-only. The caller is the spill GC: a delivery over the spill threshold was
+// parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
+// would delete that file out from under the still-parked pointer. Returning raw
+// text lets the GC see which files are still referenced.
 function allParkedTexts(root) {
   const out = [];
   let names;

@@ -1,36 +1,3 @@
-// peers-ui.js — the whole peered-Clodex subsystem as one self-contained
-// island. A peer is a session running on another machine's Clodex, reached
-// through its remote server; this side is a thin adapter (all protocol/
-// reconnect logic lives in main's peer-client.js). The island OWNS: the peer
-// bar + the peer rows in the sidebar (renderPeers), per-peer visibility
-// (peerVisibleMap) and control mirrors (peerControlledMap), the one-shot
-// restore/settle machinery, the take/release-control + type-to-take path, the
-// peer-select (eye) and peer-info (ⓘ) popovers, and every onPeer* subscription
-// + startup seed.
-//
-// Core keeps the sessions Map and the sidebar/terminal spine and injects them
-// as params. Six functions core still calls come back as destructured handles:
-// typeToTakeControl (createTerminal's PendingInput consumer), renderPeerBar
-// (switchSession), forgetControlMirror (removeSession), openPeerSession (the
-// open-peer-session wire), peerDisplayHost (the warmth toast's name@host), and
-// peerHideFromList (Cmd+W on a peer tab). peerStatuses/peerTunnels are core
-// Maps (the peers-setup dialog reads them) injected by reference; activeSession,
-// ourAppVersion and deployLineHandlers are read through getters (reassignable /
-// defined below the init site).
-//
-// Disable/enable (pause a peer without deleting its config): main flips a
-// `disabled` flag and broadcasts `peer-disabled` to every window BEFORE it re-runs
-// the peer syncs. Each renderer records the id in `disabledPeers` on that event
-// (and the initiator marks it synchronously before the invoke), so when the
-// disable-driven `peer-removed` lands, onPeerRemoved SOFT-sheds the tabs —
-// removeSession(key, {keepPersisted:true}) drops the terminal without the durable
-// detach, so the attachment survives. A disabled peer has no live status, so it
-// renders as a dimmed "paused" header (from config, seeded at startup via
-// getSettings) with an Enable affordance; live peers get Disable in the ⓘ popover.
-// Re-enable re-seeds the one-shot restore set from durable peerAttached so the
-// reconnect's peer-state → maybeRestorePeer reattaches the tabs.
-//
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, isHumanPtyInput } = require('../proxy-util');
@@ -50,28 +17,13 @@ function initPeersUi({
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
   isFilesPopoverForKey, openArgsDialog, openSkillsPopover,
 }) {
-  // Cached GitHub release list ([{tag, published_at}] newest-first) for the peer
-  // identity popover's best-effort age/behind line. Seeded once and refreshed
-  // when a popover opens; empty until the first fetch / when offline. The popover
-  // never blocks on this — it renders from whatever is cached at open time.
   let releasesCache = [];
   window.api.getReleases().then((r) => { releasesCache = Array.isArray(r) ? r : []; }).catch(() => {});
   const peerBar = document.getElementById('peer-bar');
-  // Per-peer visibility selection mirrored from main (peer:visible). No entry for
-  // a peer ⇒ show all its sessions; an array (possibly empty) restricts to those
-  // names. Kept authoritative-enough for rendering by updating from setVisible
-  // responses; seeded once at startup.
   let peerVisibleMap = {};
 
-  // Peers paused via disable (id -> { label }). Populated from config at startup
-  // and kept in lockstep with main's `disabled` flag through the peer-disabled
-  // broadcast; the disable initiator also sets its entry synchronously before the
-  // invoke so the disable-driven peer-removed can be discriminated as a SOFT shed.
   const disabledPeers = new Map();
 
-  // Whether a peer session should be listed under the current selection. No map
-  // entry ⇒ everything shows; otherwise only names in the array. Attachment
-  // overrides this at the call site (an open tab always renders).
   function peerNameVisible(id, name) {
     const sel = peerVisibleMap[id];
     return !Array.isArray(sel) || sel.includes(name);
@@ -82,12 +34,7 @@ function initPeersUi({
 
   function peerDisplayHost(st) { return (st && (st.host || st.label)) || 'peer'; }
 
-  // Managed sandbox boxes render distinct from generic peers. A box's peer id IS
-  // its box id (sandbox.js registerPeer keys off it), so the box-registry ids ∩
-  // peer ids marks them. Cached — renderPeers repaints often, so we never fetch
-  // per repaint: seeded once at init and refreshed only when a NEW peer id appears
-  // (a box's peer shows up when it's first started) or a peer drops. A changed set
-  // triggers one repaint.
+  // A box's peer id IS its box id, so box ids ∩ peer ids marks managed boxes.
   let boxIds = new Set();
   async function refreshBoxIds() {
     let boxes = [];
@@ -99,10 +46,6 @@ function initPeersUi({
   }
   refreshBoxIds();
 
-  // Open a running box's web UI in the external browser. The effective web port is
-  // the bug-#4 source of truth: sandboxStatus(id).ports.web (present only while
-  // running). Online-gated at the button, but guard anyway — an online peer whose
-  // container is mid-recreate could briefly lack ports.
   async function openBoxWeb(id, label) {
     let st;
     try { st = await window.api.sandboxStatus(id); } catch { st = null; }
@@ -114,17 +57,6 @@ function initPeersUi({
     window.api.openExternal(sandboxOpenUrl(port));
   }
 
-  // Open (or close) a PEER'S web frontend through an on-demand ssh forward
-  // (t30b). Distinct from openBoxWeb above: a managed box runs on this machine
-  // and its port is already published locally, while a peer's web UI lives on
-  // another host and is only reachable once Clodex forwards it.
-  //
-  // Everything here reads LIVE peer state — `st.webHost` comes off the hello via
-  // peer-client's status(), so a box that starts (or stops) serving is reflected
-  // on the next peer-state without this island caching anything.
-  // What a click does comes from the same pure decision the button rendered
-  // from, re-read at click time — so a peer that went offline (or a tunnel that
-  // came up) between paint and click is acted on as it is NOW, not as it looked.
   async function togglePeerWeb(id, label) {
     const a = webViewAffordance({
       status: peerStatuses.get(id), tunnel: peerTunnels.get(id), webTunnel: peerWebTunnels.get(id),
@@ -137,10 +69,6 @@ function initPeersUi({
       return;
     }
     if (a.action !== 'open') { showToast(a.tip, { kind: 'warm' }); return; }
-    // A gated box still gets its tunnel — that is what makes it reachable at all.
-    // What changes is that main does not pop a browser at a bare 401, and the URL
-    // arrives with the token instruction once it is LIVE (onPeerWebTunnel below),
-    // never promised before one exists.
     const res = await window.api.peerOpenWeb(id).catch((e) => ({ ok: false, error: (e && e.message) || String(e) }));
     if (!res || res.ok === false) {
       showToast(`Can't open ${label}'s web UI: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
@@ -156,15 +84,6 @@ function initPeersUi({
     );
   }
 
-  // Rebuild a box straight from its sidebar header (the box "upgrade" affordance —
-  // recreate on the current code/image). Mirrors the panel's Rebuild and the peer
-  // update flow's toast shape: a start toast, then a completion/failure toast. The
-  // recreate blips the container offline→online, which the row reflects as its live
-  // busy signal (no persistent strip button to spin). Distinct from the generic
-  // restart (bounce the same build); both stay meaningful for a box.
-  // Busy-lock: a rebuild is a minutes-long recreate reachable from three places
-  // (the Sandboxes panel, the header context menu, and now the ⓘ popover), so a
-  // second trigger while one is in flight must no-op rather than stack builds.
   const rebuildingBoxes = new Set();
   async function rebuildBox(id, label) {
     if (rebuildingBoxes.has(id)) return;
@@ -186,48 +105,23 @@ function initPeersUi({
       const header = document.createElement('div');
       header.className = 'peer-header';
       header.dataset.peerUi = '1';
-      // Offline + a managed tunnel that is itself down usually just means the
-      // other laptop is asleep; ssh's last stderr line rides the tooltip so a
-      // real misconfig (rejected key, unknown host) is diagnosable.
       const tun = peerTunnels.get(id);
       let stateText = st.online ? '' : 'offline';
       if (!st.online && tun && tun.state === 'down') {
         stateText = 'tunnel down';
         if (tun.error) header.dataset.tip = tun.error;
       }
-      // Identity surfacing: an online peer's hello carries version + caps (+ os).
-      // Show them in the header tooltip; the version delta tints the peer NAME
-      // (below) rather than adding state text — the old 'newer'/'outdated' strings
-      // pushed the action icons past the sidebar edge. Severity-driven so the name,
-      // the ⓘ icon, and the popover all ride the same class.
       let sev = 'unknown';
       if (st.online && st.version) {
         const capList = (st.caps || []).join(', ') || 'none';
         header.dataset.tip = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}`;
         if (getOurAppVersion()) sev = versionSeverity(getOurAppVersion(), st.version);
       }
-      // Tint the name only when the peer is genuinely BEHIND us (patch/minor/major
-      // climb yellow→orange→red). current/newer/unknown leave the name at its
-      // normal color — a dim tint on a bold label reads as disabled, and an
-      // up-to-date (or ahead) peer's name must never render dimmer than a session
-      // row. The ⓘ icon still carries the full-range sev tint (dim suits icon chrome).
       const nameSev = (sev === 'patch' || sev === 'minor' || sev === 'major') ? ` peer-sev-${sev}` : '';
-      // Right-aligned host action strip mirrors the header context menu: ＋ new
-      // session (create-capable peers only), ↻ restart Clodex, ◎ choose visible
-      // sessions (the old ⋯ opener). The first two need the peer online; the eye
-      // works offline too (you can still curate which open tabs show).
       const hostLabel = peerDisplayHost(st);
       const canCreate = peerSupportsCreate(st);
       const off = st.online ? '' : 'disabled';
-      // Managed sandbox box: a distinct chip before the label, plus a web-open (↗)
-      // action for its served UI. The generic dot stays (online/offline is still
-      // meaningful for a box); the chip is the "this is a box, not a laptop" mark.
       const isBox = boxIds.has(id);
-      // Peer web view (t30b): a ↗ for a NON-box peer that reports a web frontend
-      // in its hello. Every input is live — st.webHost rides peer-state and
-      // peerWebTunnels rides peer-web-tunnel — so this is never a snapshot from
-      // when something opened. All the judgment is in the pure leaf; this line
-      // only renders it. Boxes keep their own local-port ↗ (openBoxWeb).
       const webView = isBox
         ? { show: false }
         : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
@@ -241,8 +135,6 @@ function initPeersUi({
           (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? '' : 'disabled'}>&#8599;</button>` : '') +
           `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button>` +
           `<button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` +
-          // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
-          // identity to show (online + version) — nothing to surface otherwise.
           ((st.online && st.version) ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : '') +
         `</span>`;
       header.querySelector('.peer-eye').addEventListener('click', (e) => {
@@ -273,30 +165,17 @@ function initPeersUi({
         e.stopPropagation();
         restartPeerHost(id, hostLabel);
       });
-      // Right-click the peer header: host-level actions (today just remote
-      // restart). Restart is host-scoped, so it lives here, not on a session row.
       header.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         window.api.showPeerHeaderMenu({
           id, label: peerDisplayHost(st), online: !!st.online,
           canCreate: peerSupportsCreate(st),
-          // Managed box → the menu offers Rebuild (the strip stays uncrowded; a
-          // minutes-long recreate fits the menu next to Restart/Update).
           isBox,
-          // sev is in scope from this row's identity block; main gates the Update
-          // item on it (updateApplies) so we don't offer a pointless restart to a
-          // same-version or ahead peer. 'unknown' (offline / unparseable) keeps it.
           sev,
         });
       });
       sessionList.appendChild(header);
 
-      // Online: the peer's live session list. Offline: only tabs we already
-      // have open (so they stay reachable), dimmed.
-      // Visibility filter: hide names the user deselected — but an ATTACHED tab
-      // always renders (never an invisible open terminal). Offline rows are all
-      // attached, so attached-wins covers them; we still run peerNameVisible for
-      // uniform shape.
       const rows = (st.online
         ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats }))
         : [...sessions.entries()]
@@ -312,7 +191,6 @@ function initPeersUi({
         item.dataset.activity = s.activity || 'idle';
         if (sessions.has(key)) item.classList.add('attached');
         item.dataset.type = 'remote';
-        // Full path feeds the hover card (the row shows only the basename).
         item.dataset.cwd = s.cwd || '';
         const cwdLabel = s.cwd ? esc(baseName(s.cwd)) : '';
         item.innerHTML = `
@@ -327,16 +205,11 @@ function initPeersUi({
             </span>
           </div>
         </div>` +
-          // Close (detach) only makes sense for an attached tab; unattached rows
-          // get no X (it was a dead affordance before).
           (sessions.has(key) ? '<button class="session-close" data-tip="Detach">&times;</button>' : '');
         item.addEventListener('click', (e) => {
           if (e.target.classList.contains('session-close')) return;
           openPeerSession(id, s.name);
         });
-        // Right-click: native peer-flavored menu (Attach / Take·Release control /
-        // Detach / Hide). State is read from entry.peer here — the SAME source the
-        // peer bar renders from — so the two control paths can't drift.
         item.addEventListener('contextmenu', (e) => {
           e.preventDefault();
           const entry = sessions.get(key);
@@ -355,9 +228,6 @@ function initPeersUi({
         const closeBtn = item.querySelector('.session-close');
         if (closeBtn) closeBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          // X means "gone": detach AND drop from the visibility selection, so the
-          // row leaves the list (same end state as "Hide from list"). The
-          // keep-browsing case lives on the context menu ("Detach (keep listed)").
           if (sessions.has(key)) peerHideFromList(id, s.name);
         });
         sessionList.appendChild(item);
@@ -372,10 +242,6 @@ function initPeersUi({
         applyWarmBadge(key);
       }
     }
-    // Paused peers have no live status, so they render from config as a dimmed
-    // header with a single Resume affordance — no session rows, attach or expand
-    // (their tabs were shed on disable). A live status always wins the id, so this
-    // only paints genuinely-disconnected paused peers.
     for (const [id, cfg] of disabledPeers) {
       if (peerStatuses.has(id)) continue;
       const hostLabel = cfg.label || id;
@@ -406,15 +272,10 @@ function initPeersUi({
     window.api.peerSetDisabled(id, true).catch(() => {});
   }
 
-  // Resume a paused peer. Main re-adds it to the syncs (peer reconnects) and
-  // broadcasts peer-disabled(false); the broadcast handler clears the local mark
-  // and re-seeds the restore set, so nothing else to do here.
   function enablePeer(id) {
     window.api.peerSetDisabled(id, false).catch(() => {});
   }
 
-  // Create the terminal + attach the peer stream, without stealing focus. Used
-  // both by openPeerSession (user click) and the startup auto-restore.
   function attachPeerSession(id, name) {
     const key = peerKey(id, name);
     if (sessions.has(key)) return;
@@ -428,13 +289,9 @@ function initPeersUi({
     switchSession(peerKey(id, name));
   }
 
-  // One-shot auto-reattach of peer tabs persisted from the previous app run.
-  // Seeded once at startup (peer:attachedNames); each peer's names are consumed
-  // as its live session list arrives. Present names attach and drop from the
-  // pending set; a name still missing once the peer has settled online is
-  // genuinely gone and gets forgotten from persistence. Consuming per-name is
-  // the "one shot": an attached-then-closed tab leaves the pending set, so a
-  // later offline/online blip can't resurrect it.
+  // One-shot: each name is consumed from the pending set as it attaches, so a tab
+  // attached then closed can't be resurrected by a later offline/online blip. A name
+  // still missing once the peer has settled online is forgotten from persistence.
   const peerRestorePending = new Map(); // peerId -> Set<name> awaiting restore
   const peerRestoreSweep = new Set();   // peerId -> settle sweep already scheduled
   // The first online peer-state fires before the peer's session list is fetched
@@ -442,11 +299,6 @@ function initPeersUi({
   // may just be un-fetched. Give the refresh a beat before declaring it dead.
   const PEER_RESTORE_SETTLE_MS = 6000;
 
-  // Local mirror of ui-settings.peerControlled, seeded at startup and kept in
-  // lockstep with the durable store (which main writes inside peer:control /
-  // peer:detach). Read on every reattach replay to decide whether to auto-re-take
-  // control — covers both an app restart and a box restart/update, since both
-  // funnel a fresh replay through onPeerReplay.
   let peerControlledMap = {};
   function peerControlledHas(id, name) {
     return Array.isArray(peerControlledMap[id]) && peerControlledMap[id].includes(name);
@@ -460,8 +312,6 @@ function initPeersUi({
     const list = peerControlledMap[id].filter((n) => n !== name);
     if (list.length) peerControlledMap[id] = list; else delete peerControlledMap[id];
   }
-  // A restore re-acquire found the session held by someone else: drop the mirror
-  // AND tell main to forget the durable claim, so the stale claim never re-fires.
   function dropPersistedControl(id, name) {
     forgetControlMirror(id, name);
     window.api.peerForgetControlled(id, name);
@@ -477,9 +327,6 @@ function initPeersUi({
       if (live.has(name)) { attachPeerSession(id, name); pending.delete(name); }
     }
     if (!pending.size) { peerRestorePending.delete(id); return; }
-    // Names still missing: schedule one settle sweep. Live sessions that land in
-    // the interim get attached on the next peer-state; whatever's still missing
-    // while the peer is online after the sweep is forgotten.
     if (peerRestoreSweep.has(id)) return;
     peerRestoreSweep.add(id);
     setTimeout(() => {
@@ -497,9 +344,6 @@ function initPeersUi({
     }, PEER_RESTORE_SETTLE_MS);
   }
 
-  // Control-mode strip above the terminal for the active peer session:
-  // read-only by default, explicit Take control to type (and gain resize
-  // authority); never both hidden and a peer tab active.
   function renderPeerBar() {
     if (!peerBar) return;
     const main = document.getElementById('main');
@@ -542,11 +386,6 @@ function initPeersUi({
     applyPeerControl(entry, !entry.peer.controlled);
   }
 
-  // First data-producing keystroke in a read-only peer tab = intent to type.
-  // Buffer the keystroke and, if no acquire is already in flight, kick one; the
-  // buffered keys flush in order once control is granted. onData while the acquire
-  // is pending appends to the same queue (no second acquire) via the in-flight
-  // guard inside PendingInput.
   function typeToTakeControl(key, data) {
     // xterm's onData also carries terminal chatter — mouse reports (the Claude
     // pane enables tracking), focus/query replies — so scroll-reading a read-only
@@ -555,8 +394,6 @@ function initPeersUi({
     if (!isHumanPtyInput(data)) return;
     const entry = sessions.get(key);
     if (!entry || !entry.peer || entry.peer.controlled) return;
-    // Offline peer: nothing to acquire (the bar already says "reconnecting"); a
-    // peerControl would just fail. Drop the keystroke silently.
     const st = peerStatuses.get(entry.peer.id);
     if (!st || !st.online) return;
     if (!entry.peer.pendingInput) entry.peer.pendingInput = new PendingInput();
@@ -564,24 +401,14 @@ function initPeersUi({
     if (kick) applyPeerControl(entry, true, { flush: true });
   }
 
-  // Acquire/release control on a specific peer entry — shared by the peer-bar
-  // button, the row context menu, type-to-take, and the restore re-acquire, so
-  // all drive the same state transition. `flush` (type-to-take only) flushes the
-  // pending-input queue on success and drops it on failure.
   async function applyPeerControl(entry, on, { flush = false, dropOnFail = false } = {}) {
     const { id: peerId, name: peerName } = entry.peer;
-    // Coalesce concurrent takes on the same entry (type-to-take vs a reattach
-    // re-acquire firing together): the in-flight one owns the outcome.
     if (on && entry.peer._acquiring) return;
-    // Any fresh attempt clears a stale error banner.
     clearPeerControlError(entry.peer);
     if (on) entry.peer._acquiring = true;
     let res;
-    // try/catch/finally: an invoke rejection must land in the normal failure
-    // branch below (banner + pendingInput.reset) — letting it propagate would
-    // skip the reset and wedge pendingInput.acquiring true, the same silent
-    // type-to-take deadlock the unconditional reset exists to prevent. The
-    // finally keeps the coalesce guard from wedging either way.
+    // An invoke rejection must land in the failure branch below: propagating would skip
+    // pendingInput.reset() and wedge acquiring=true (silent type-to-take deadlock).
     try {
       res = await window.api.peerControl(peerId, peerName, on);
     } catch (e) {
@@ -592,30 +419,20 @@ function initPeersUi({
     if (on) {
       if (res && res.ok) {
         entry.peer.controlled = true;
-        // Control mode carries resize authority: fit to our pane and push it.
         entry.fitAddon.fit();
         window.api.peerResize(peerId, peerName, entry.terminal.cols, entry.terminal.rows);
         entry.terminal.focus();
-        // Flush anything typed during the acquire, in order.
         if (entry.peer.pendingInput) {
           const buffered = entry.peer.pendingInput.drain();
           if (buffered) window.api.peerInput(peerId, peerName, buffered);
         }
         rememberControlMirror(peerId, peerName);   // main persisted via peer:control
       } else {
-        // Acquire failed or (with the pre-fix socket-starvation bug) timed out.
-        // Never silent: show a transient banner instead of snapping back to a
-        // "Take control" button that looks like nothing happened.
         setPeerControlError(entry.peer, (res && res.error) || 'could not take control');
-        // Reset UNCONDITIONALLY (not just on flush): a keystroke can land during a
-        // restore re-acquire (flush:false) via the coalesce guard, setting
-        // pendingInput.acquiring=true. If THIS failing call doesn't clear it,
-        // acquiring stays true forever and every later keystroke buffers with
-        // kick=false, silently killing type-to-take on the tab. Mirrors the
-        // success path's unconditional drain.
+        // Reset unconditionally, not only when flushing: a keystroke can land during a
+        // flush:false re-acquire, and leaving pendingInput.acquiring true makes every
+        // later keystroke buffer with kick=false — type-to-take dies on the tab.
         if (entry.peer.pendingInput) entry.peer.pendingInput.reset(); // drop buffer
-        // Restore re-acquire that lost to another holder: drop the stale claim so
-        // it doesn't retry-loop on every future reconnect.
         if (dropOnFail) dropPersistedControl(peerId, peerName);
       }
     } else {
@@ -625,25 +442,12 @@ function initPeersUi({
     renderPeerBar();
   }
 
-  // Row context-menu actions from main. Verbs mirror the peer-bar's state
-  // transitions plus attach/detach/hide; taking control from an unattached row
-  // attaches first so it's one gesture.
-  // Host-level remote restart of the whole Clodex on a peer box. Shared by the
-  // header ↻ icon and the right-click header menu's 'restart' action so the
-  // confirm → fire → toast flow can't drift. `label` is the peer's display host.
-  // The peer drops offline and the existing reconnect/auto-reattach brings it
-  // back — no special reconnect logic. Failures (connection/timeout) surface as a
-  // calm toast, never a retry. Authority is the tunnel (settled model); the
-  // confirm is the intentionality gate.
   async function restartPeerHost(id, label) {
     const okToGo = await window.api.confirmPeerRestart(label);
     if (!okToGo) return;
     await doPeerRestart(id, label);
   }
 
-  // Restart core minus its own confirm — shared by the header ↻ (which confirms)
-  // and the update-in-place flow (which already confirmed the whole update, so a
-  // second dialog on success would be redundant).
   async function doPeerRestart(id, label) {
     const res = await window.api.peerRestart(id);
     if (res && res.ok) {
@@ -653,11 +457,6 @@ function initPeersUi({
     }
   }
 
-  // "Update Clodex on <box>…": re-run the idempotent deploy script over ssh, then
-  // restart the box on ::done so it picks up the new build. Progress surface is
-  // deliberately small: a start toast, a completion/failure toast, and the stderr
-  // tail in the ipc-log on failure (the peers dialog's live step-list is for the
-  // install-from-scratch wizard; a header-menu update has no row to stream into).
   async function updatePeerHost(id, label, sshHost, port, folder) {
     const go = await window.api.confirmPeerUpdate(label);
     if (!go) return;
@@ -670,8 +469,6 @@ function initPeersUi({
       else if (ev.type === 'fail') failReasons.push(ev.reason ? `${ev.name} — ${ev.reason}` : ev.name);
     });
     let res;
-    // folder reuses the peer's persisted deployFolder (main resolved it from
-    // config) so an update targets the same install dir as the original deploy.
     try { res = await window.api.peerDeploy(sshHost, { port, folder }); }
     catch (e) { res = { ok: false, error: (e && e.message) || 'deploy failed' }; }
     getDeployLineHandlers().delete(sshHost);
@@ -719,45 +516,29 @@ function initPeersUi({
         await restartPeerHost(id, name || 'peer');
         break;
       case 'rebuild':
-        // Managed box: recreate on the current code/image (the "upgrade" op). Only
-        // offered for box peers (main gates the item on isBox). `name` is the label.
         await rebuildBox(id, name || 'sandbox');
         break;
       case 'newSession':
-        // `name` carries the peer's display label here (header menu, no session).
         openPeerSessionDialog(id, name || 'peer');
         break;
       case 'update':
-        // Host-level in-place update — re-run the deploy script over ssh, restart
-        // on success. `name` is the display label; sshHost/port/folder ride the
-        // message (main resolved them from the peer config, url-only peers never
-        // get here).
         await updatePeerHost(id, name || 'peer', sshHost, port, folder);
         break;
       case 'editArgs': {
-        // Edit Session on a peer — reuse the local dialog with a peer data source
-        // (fetch args + box catalogs, save the patch, reattach on restart-to-apply).
         const st = peerStatuses.get(id);
         openArgsDialog(name, peerArgsSource(id, name, peerDisplayHost(st)));
         break;
       }
       case 'editSkills': {
-        // Edit Skills on a peer — reuse the local Skills popover with a peer source
-        // (fetch the box's catalog, persist the disabled/inject sets, fresh-restart
-        // + reattach to apply now). Anchored to the sidebar ROW (no ⚙ button here).
         const st = peerStatuses.get(id);
         const anchor = sessionList.querySelector(`[data-name="${CSS.escape(key)}"]`) || sessionList;
         openSkillsPopover(name, anchor, peerSkillsSource(id, name, peerDisplayHost(st)));
         break;
       }
       case 'restartRemote':
-        // Plain host-level restart of a peer SESSION (--resume, keeps history).
-        // No confirm — parity with the local plain restart.
         await restartPeerSessionWithReattach(id, name, false);
         break;
       case 'reloadRemote': {
-        // Fresh reload of a peer session (new conversation, re-reads skills). Native
-        // confirm mirroring doHardRestart — this drops the live conversation.
         const st = peerStatuses.get(id);
         const label = peerDisplayHost(st);
         if (!await window.api.confirmPeerReload(name, label)) break;
@@ -765,10 +546,6 @@ function initPeersUi({
         break;
       }
       case 'killRemote': {
-        // Destructive host-level kill on the peer. Native confirm (intentionality),
-        // then the endpoint; the owner's notifySessions fan-out refreshes the list,
-        // so no local list surgery — just report the ack. Detach our local tab if
-        // we had one open (the session it mirrored is gone).
         const st = peerStatuses.get(id);
         const label = peerDisplayHost(st);
         const okToGo = await window.api.confirmPeerKill(name, label);
@@ -786,11 +563,6 @@ function initPeersUi({
     }
   });
 
-  // New-session-on-a-peer dialog. Minimal (name/type/cwd) — the full new-session
-  // dialog's fields (prompts/skills/tools/agents/dir-picker) are local-only and
-  // don't travel to a remote fs. Errors surface INLINE (the owner's create ack is
-  // the only signal — the viewer can't see the box's dialogs). On success the
-  // owner's notifySessions refreshes the peer's session list; we just close.
   let peerSessionDialogTarget = null; // { id, label }
   function openPeerSessionDialog(id, label) {
     peerSessionDialogTarget = { id, label };
@@ -825,9 +597,6 @@ function initPeersUi({
     btn.disabled = false;
     if (res && res.ok) {
       closePeerSessionDialog();
-      // Owner's notifySessions fan-out refreshes the list; but if this peer's
-      // visible set is materialized the new name isn't in it — ensure it shows.
-      // Generic peers keep no-attach semantics: surface it, don't open it.
       await ensurePeerSessionVisible(id, res.name || name);
       showToast(`Created "${res.name}" (${res.type}) on ${label}.`, { kind: 'peer-ui' });
     } else {
@@ -844,11 +613,6 @@ function initPeersUi({
     else if (e.key === 'Escape') { e.preventDefault(); closePeerSessionDialog(); }
   });
 
-  // Remove one session from the peer's visible selection (context-menu "Hide from
-  // list"). Mirrors the peer-select popover's semantics: no selection yet ⇒
-  // materialize an explicit all-known-minus-this list; an existing selection ⇒
-  // drop the name. Pairs with Apply-detaches — a hidden attached tab is detached
-  // too, so "hidden" always means "gone from the sidebar".
   async function peerHideFromList(id, name) {
     const st = peerStatuses.get(id);
     const sel = peerVisibleMap[id];
@@ -868,14 +632,9 @@ function initPeersUi({
     renderPeers();
   }
 
-  // Ensure a just-created peer session is visible in the sidebar. Once a peer's
-  // visible set is materialized (any row hidden ⇒ explicit whitelist), a session
-  // created afterward isn't in the array and never renders until eye-toggled.
-  // No-op when the selection is unmaterialized (shows all already) or already
-  // includes the name; otherwise append + persist, mirroring peerHideFromList's
-  // peerSetVisible + res.peerVisible handling. Attachment overrides visibility at
-  // the render call site, but this keeps the row present if the tab is later
-  // detached, and is the ONLY thing that surfaces a no-attach generic-peer create.
+  // Once a peer's visible set is materialized, a name created afterward is absent from
+  // it and never renders. This is the only thing that surfaces a no-attach create;
+  // attachment overrides visibility at the render site, this keeps the row after detach.
   async function ensurePeerSessionVisible(id, name) {
     const next = nextVisibleWithName(peerVisibleMap[id], name);
     if (!next) return;
@@ -884,8 +643,6 @@ function initPeersUi({
     renderPeers();
   }
 
-  // Transient control-error banner on a peer entry. Auto-clears so it never
-  // sticks past the moment; re-renders the bar if the session is still active.
   function setPeerControlError(peer, msg) {
     peer.controlError = msg;
     clearTimeout(peer.controlErrorTimer);
@@ -904,10 +661,6 @@ function initPeersUi({
   }
 
   window.api.onPeerState((id, status) => {
-    // A newly-appeared peer might be a box's peer (first Start) — refresh the box-id
-    // cache once so the row can render its box chip/actions. refreshBoxIds repaints
-    // only if the set actually changed, so a plain generic-peer connect costs one
-    // cheap listBoxes and no extra render.
     const isNewPeer = !peerStatuses.has(id);
     peerStatuses.set(id, status);
     renderPeers();
@@ -933,20 +686,11 @@ function initPeersUi({
     if (info.cols && info.rows) entry.terminal.resize(info.cols, info.rows);
     if (info.data && info.data.length) entry.terminal.write(info.data);
     renderPeerBar();
-    // Reconnect replay into the ALREADY-active tab fires no switchSession, so the
-    // one place that re-measures a read-only peer never runs — a pane whose
-    // geometry shifted during the offline window keeps a stale letterbox until
-    // the next manual switch heals it. Re-measure here too when this is the
-    // active tab (inactive tabs are covered by the switch-on-activate path).
+    // A reconnect replay into the already-active tab fires no switchSession, so this is
+    // the only place a read-only peer's stale letterbox gets re-measured.
     if (peerKey(id, name) === getActiveSession() && !entry.peer.controlled) {
       remeasureReadonlyPeer(entry);
     }
-    // Control persistence: this reattach replay just reset us to read-only. If the
-    // tab is persisted as controlled, re-take control now that the replay has
-    // settled — covers an app restart (restored attach → first replay) AND a box
-    // restart/update (reconnect replay on an already-open tab). On failure
-    // (held by someone else) applyPeerControl shows the banner and dropOnFail
-    // sheds the stale claim so it never retry-loops.
     if (peerControlledHas(id, name) && !entry.peer.controlled) {
       applyPeerControl(entry, true, { dropOnFail: true });
     }
@@ -957,11 +701,8 @@ function initPeersUi({
     if (entry) entry.terminal.write(data);
   });
 
-  // Owner PTY resized: follow its geometry live so new output stops rendering
-  // into a stale letterbox. Owner geometry is canonical even in control mode —
-  // a controlling viewer's own resize echoes back the same (or PTY-clamped) dims,
-  // and applying them is an idempotent resize-in-place, never a feedback loop
-  // (viewers push geometry only on explicit fit, not on an applied resize).
+  // Owner geometry is canonical even in control mode; applying it can't feed back,
+  // since viewers push geometry only on explicit fit, never on an applied resize.
   window.api.onPeerResize((id, name, geom) => {
     const entry = sessions.get(peerKey(id, name));
     if (!entry || !entry.peer) return;
@@ -972,19 +713,10 @@ function initPeersUi({
     }
   });
 
-  // Owner-initiated UI mirroring: the owner surfaced a session-scoped component
-  // (a remote agent's [agent:file view], today) and wants attached viewers to
-  // render their own copy. The event carries only a small {kind, args} trigger —
-  // content is pulled locally through popoverApi (the query RPC), so it stays on
-  // the owner's vetted path. Kinds are dispatched through a registry so new
-  // mirrorable components are one entry, not new plumbing.
-  //
-  // Intrusiveness gate: a remote agent must NOT be able to slam a full-screen
-  // modal over whatever the operator is doing in another tab. So a mirrored
-  // component renders immediately ONLY when its peer tab is the active one;
-  // otherwise it becomes an unobtrusive, session-scoped toast whose click
-  // switches to that tab and then renders. `present` is the "act now" path,
-  // `announce` the deferred one — every kind supplies both.
+  // The event carries only a {kind, args} trigger — content is pulled locally through
+  // the query RPC, so it stays on the owner's vetted path. Intrusiveness gate: a remote
+  // agent must not slam a modal over another tab, so a kind renders immediately only in
+  // the active tab and otherwise announces via toast. Every kind supplies both paths.
   const PEER_UI_KINDS = {
     fileView: {
       label: 'shared a file',
@@ -1000,7 +732,6 @@ function initPeersUi({
     if (!spec) return;                          // unknown/stale kind — ignore gracefully
     const args = evt.args || {};
     if (getActiveSession() === key) { spec.present(key, args); return; }
-    // Not looking at that tab: announce, don't intrude. Click switches + renders.
     const disp = `${name}@${peerDisplayHost(peerStatuses.get(id))}`;
     showToast(`${disp}: ${spec.label} — ${spec.detail(args)}`, {
       kind: 'peer-ui',
@@ -1008,15 +739,9 @@ function initPeersUi({
     });
   });
 
-  // Status-bar telemetry for an attached peer session, streamed from the
-  // owner's poll (plus a seed frame right behind the replay). Feeding it into
-  // proxyState / the ctx maps under the peer key makes renderProxyBar, the
-  // warmth badge, and the 1s countdown tick render it natively. The owner
-  // ships an info-only view (no base/capabilities/sessionId), so every
-  // owner-local control (keep-warm, strip, popovers, wirescope link) degrades
-  // to plain text here instead of firing at endpoints that only exist on the
-  // owner's machine. Partial frames: {proxy} rides the poll, {ctx} the
-  // statusline side-channel — merge, don't replace.
+  // Partial frames: {proxy} rides the poll, {ctx} the statusline side-channel — merge,
+  // never replace. The owner ships an info-only view (no base/capabilities/sessionId),
+  // so owner-local controls degrade to text instead of firing at absent endpoints.
   window.api.onPeerTelemetry((id, name, tele) => {
     const key = peerKey(id, name);
     if (!sessions.has(key)) return;
@@ -1048,8 +773,6 @@ function initPeersUi({
     }
     if (key === getActiveSession()) {
       renderProxyBar();
-      // One-shot pulse on the freshly-rebuilt button (imperative, dies with the
-      // node) — same treatment as an arriving local file touch.
       if (filesGrew) {
         const btn = document.querySelector('#proxy-actions [data-act="files"]');
         if (btn) btn.classList.add('px-files-flash');
@@ -1078,17 +801,9 @@ function initPeersUi({
     renderPeers();
   });
 
-  // Peer web view (t30b). The affordance repaints from this, so its state is the
-  // supervisor's, never a guess. A 'closed' status means the tunnel is gone —
-  // drop the entry so the button returns to its openable state.
   window.api.onPeerWebTunnel((id, status) => {
     if (status && status.state === 'closed') peerWebTunnels.delete(String(id));
     else peerWebTunnels.set(String(id), status);
-    // First time it is genuinely up, tell the operator where it is. For an
-    // unGated box main has already popped the browser, so this is the receipt;
-    // for a gated one it is the ONLY handover, and it carries what to do with it
-    // rather than a link that would 401. The URL comes from the supervisor —
-    // this side never composes one.
     if (status && status.firstUp && status.url) {
       const st = peerStatuses.get(String(id));
       const label = peerDisplayHost(st);
@@ -1106,9 +821,6 @@ function initPeersUi({
   window.api.onPeerRemoved((id) => {
     peerStatuses.delete(id);
     peerTunnels.delete(id);
-    // Main closes the web tunnel for a removed/disabled peer (close #2, in
-    // syncPeerManager); drop the mirror so a re-enabled peer doesn't render a
-    // stale open state.
     peerWebTunnels.delete(String(id));
     // A disabled peer's removal is a PAUSE, not a delete: soft-shed its tabs so the
     // durable attachment survives for re-enable. A genuine removal/URL-edit (not in
@@ -1126,13 +838,8 @@ function initPeersUi({
     id = String(id);
     if (on) {
       disabledPeers.set(id, { label: label || id });
-      // Tabs are shed by the peer-removed that follows in main; discrimination
-      // happens there via disabledPeers.has(id).
     } else {
       disabledPeers.delete(id);
-      // Re-seed the one-shot restore set from durable truth so the reconnect's
-      // peer-state → maybeRestorePeer reattaches the tabs. Set-union is idempotent
-      // with any names a startup-disabled seed already left pending.
       window.api.peerAttachedNames().then((map) => {
         const names = (map && map[id]) || [];
         if (!Array.isArray(names) || !names.length) return;
@@ -1145,18 +852,13 @@ function initPeersUi({
     renderPeers();
   });
 
-  // Owner side: one of OUR sessions is being viewed/driven from a peer —
-  // flag its tab so remote control is never silent.
   window.api.onSessionPeerControl((name, holder) => {
     const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (!el) return;
-    // The holder name surfaces in the hover card (via dataset) and the
-    // [remote] name marker (CSS on data-remote-control) — no native title.
     if (holder) el.dataset.remoteControl = holder;
     else delete el.dataset.remoteControl;
   });
 
-  // Seed peer list on startup (peer-state events keep it fresh afterwards).
   window.api.peerList().then((statuses) => {
     for (const st of statuses || []) {
       peerStatuses.set(st.id, st);
@@ -1180,23 +882,15 @@ function initPeersUi({
     for (const id of [...peerRestorePending.keys()]) maybeRestorePeer(id);
   }).catch(() => {});
 
-  // Seed the per-peer visibility selection; peer-state events after this just
-  // re-render against the local copy (kept fresh from peerSetVisible responses).
   window.api.peerVisible().then((map) => {
     peerVisibleMap = map || {};
     if (peerStatuses.size) renderPeers();
   }).catch(() => {});
 
-  // Seed the control-restore mirror. Kept fresh locally from applyPeerControl /
-  // removeSession; on each reattach replay a persisted entry auto-re-takes.
   window.api.peerControlledNames().then((map) => {
     peerControlledMap = map || {};
   }).catch(() => {});
 
-  // Seed the paused-peer set from config so a peer disabled in a previous session
-  // renders as a dimmed "paused" header (it has no live status to arrive) and any
-  // stray peer-removed for it is discriminated as a soft shed. Kept fresh after
-  // this by the peer-disabled broadcast.
   window.api.getSettings().then((s) => {
     for (const p of (s && s.peers) || []) {
       if (p.disabled) disabledPeers.set(String(p.id), { label: p.label || String(p.id) });
@@ -1210,30 +904,14 @@ function initPeersUi({
     return !!(st && Array.isArray(st.caps) && st.caps.includes('create'));
   }
 
-  // Peer advertises remote session config editing (the 'args' cap — Edit Session).
-  // Phase 2's skills editing will ride the same cap. Old boxes 501 the endpoints,
-  // so the viewer hides the "Edit Session…" affordance.
   function peerSupportsArgs(st) {
     return !!(st && Array.isArray(st.caps) && st.caps.includes('args'));
   }
 
-  // Restart a PEER session in place and keep our attached tab live on the fresh
-  // process — the peer analogue of restartSessionWithReattach. The owner kills the
-  // old PTY (which sends an SSE `exit` that tears our tab down via onPeerExit, also
-  // fully detaching the peer-client attachment) and respawns the SAME name, so we
-  // re-open the attach afterward. The exit event and the restart ack race across
-  // two transports; the ack resolves only after the owner's respawn completes, and
-  // the exit (sent at kill time) normally lands first, so by the time we're here
-  // the tab is already gone. We still poll briefly for the teardown to settle
-  // before re-opening, so we never attach onto a tab the exit is about to remove.
-  // (If the exit is somehow missed, the stream-close reconnect in peer-client
-  // heals it instead — belt and suspenders.)
-  // Re-open our attached tab on a freshly-respawned peer session. The owner's
-  // kill sends an SSE `exit` that tears the tab down (onPeerExit); we poll briefly
-  // for that teardown to settle, then re-attach, so we never re-open onto a tab the
-  // exit is about to remove. Shared by restartPeerSessionWithReattach (remote
-  // restart/reload) and the Edit Session save (restart-to-apply on a peer). If the
-  // exit is somehow missed, peer-client's stream-close reconnect heals it instead.
+  // The owner's kill sends an SSE `exit` that tears our tab down (onPeerExit), and that
+  // exit races the restart ack across two transports. Poll for the teardown to settle
+  // before re-opening, or we attach onto a tab the exit is about to remove. A missed
+  // exit is healed instead by peer-client's stream-close reconnect.
   function reattachPeerSession(id, name) {
     const key = peerKey(id, name);
     let tries = 20;             // ~2s at 100ms — the exit-driven teardown window
@@ -1245,31 +923,19 @@ function initPeersUi({
     reattach();
   }
 
-  // Data source for editing a PEER session in the shared Edit Session dialog:
-  // read args + box catalogs, save the patch, reattach after a restart. wasAttached
-  // is captured at save time (the box hasn't killed the PTY yet) so a restart-to-
-  // apply only re-opens a tab that was actually open. onRestarted runs only when
-  // the save reports restarted:true.
+  // wasAttached is captured at save time — the box hasn't killed the PTY yet; by
+  // onRestarted the tab is already gone.
   function peerArgsSource(id, name, label) {
     const key = peerKey(id, name);
     let wasAttached = false;
     return {
       fetch: async () => {
-        // Pull the box's editable args and, in parallel, its skill catalog — the
-        // Edit Session dialog now hosts a peer-only Skills section (skills editing
-        // folded in here instead of a separate popover). Both read the box's own
-        // truth (its catalog/library), never local. The skill fetch is best-effort:
-        // a non-Claude session or an older box just yields no section.
         const [r, sc] = await Promise.all([
           window.api.peerSessionArgs(id, name),
           window.api.peerSkillCatalog(id, name).catch(() => null),
         ]);
         if (!r || !r.ok) return r || { ok: false, error: `Session "${name}" not found on ${label}.` };
         const cat = r.catalogs || {};
-        // Normalize to openArgsDialog's data slots. settings mirrors the getSettings
-        // fields the dialog reads (claudeTools + proxy default) from the BOX, never
-        // local. skillCatalog is the readSkillCatalog shape (names/disabledSkills/
-        // effective/skillLib/injectSkills) or null when unavailable.
         return {
           ok: true,
           res: r,
@@ -1279,14 +945,10 @@ function initPeersUi({
           skillCatalog: (sc && sc.ok) ? sc : null,
         };
       },
-      // The dialog hands us the args patch plus (for a Claude peer) disabledSkills/
-      // injectSkills. Skills are roster-frozen on the box (fixed at conversation
-      // creation), so a plain box-side resume restart wouldn't re-read them — the
-      // exact reason the old Skills popover used a FRESH restart. So when skills ride
-      // along we persist args WITHOUT the box restart, persist skills separately,
-      // and (if the user asked to apply now) do a fresh restart + reattach here,
-      // which re-reads args AND the skill roster. A non-skills peer edit keeps the
-      // box-side resume restart (history-preserving) as before.
+      // Skills are roster-frozen at conversation creation on the box, so a resume
+      // restart never re-reads them. When skills ride along, persist args WITHOUT the
+      // box restart, persist skills separately, and apply with a FRESH restart here.
+      // A non-skills peer edit keeps the history-preserving resume restart.
       save: async (patch) => {
         wasAttached = sessions.has(key);
         const { disabledSkills, injectSkills, restart, ...argsPatch } = patch || {};
@@ -1312,12 +974,6 @@ function initPeersUi({
     };
   }
 
-  // Data source for editing a PEER session in the shared Skills popover: read the
-  // box's skill catalog, persist the disabled/inject sets, and (when the user asks
-  // to apply now) do the box's FRESH restart + reattach via the existing helper —
-  // which already toasts and reattaches, so no tail duplication here. The catalog
-  // shape (names/effective/skillLib/injectSkills) is identical to the local one, so
-  // the popover's render/collect code is unchanged.
   function peerSkillsSource(id, name, label) {
     return {
       fetch: async () => {
@@ -1345,14 +1001,6 @@ function initPeersUi({
     reattachPeerSession(id, name);
   }
 
-  // The `⚙ Edit session` button on a PEER session's proxy bar. It opens the shared
-  // Edit Session dialog fed by a peer data source (peerArgsSource) — the same path
-  // the row's right-click "Edit Session…" uses, so the two can't drift. Skills fold
-  // INTO that dialog (a peer-only section there), so a single button covers all the
-  // remote config a viewer can edit — no dropdown. Caps ride the hello
-  // (peerStatuses), never the telemetry payload (which carries none by design), and
-  // the button's own gate (activePeerConfigurable in core) already required the
-  // 'args' cap + online, so this just opens.
   function openPeerArgs(key) {
     const entry = key ? sessions.get(key) : null;
     if (!entry || !entry.peer) return;
@@ -1362,13 +1010,6 @@ function initPeersUi({
     openArgsDialog(name, peerArgsSource(id, name, peerDisplayHost(st)));
   }
 
-  // --- Per-peer session visibility popover ---------------------------------
-  // Clones the tools-popover idiom: a checklist of the peer's sessions, checked =
-  // currently shown. No map entry ⇒ every session shown (all checked). Applying
-  // with every LIVE name checked and no known-but-gone name unchecked collapses
-  // back to show-all (peerSetVisible null); otherwise the checked set is stored.
-  // Gone names (in the map but not currently live) are listed dimmed so a
-  // temporarily-down session isn't silently dropped just by opening + applying.
   const peerSelectPopover = document.getElementById('peer-select-popover');
   const peerSelectPopoverName = document.getElementById('peer-select-popover-name');
   const peerSelectList = document.getElementById('peer-select-list');
@@ -1383,9 +1024,6 @@ function initPeersUi({
     const st = peerStatuses.get(id);
     const sel = peerVisibleMap[id]; // undefined ⇒ show all
     const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
-    // Known-but-not-live names to preserve: selection entries + our attached tabs
-    // for this peer that aren't in the live list. Offline peers have no live list,
-    // so everything we know rides this path.
     const known = new Set(liveNames);
     const gone = [];
     const fromSel = Array.isArray(sel) ? sel : [];
@@ -1420,7 +1058,6 @@ function initPeersUi({
     peerSelectPopoverName.textContent = peerDisplayHost(st);
     peerSelectPopover.dataset.peerId = id;
     peerSelectPopover.classList.remove('hidden');
-    // Anchor above the button, clamped to the viewport (mirrors tools popover).
     const rect = anchorBtn.getBoundingClientRect();
     const w = peerSelectPopover.offsetWidth;
     peerSelectPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
@@ -1434,19 +1071,14 @@ function initPeersUi({
     if (!id) return closePeerSelectPopover();
     const boxes = [...peerSelectList.querySelectorAll('input[type="checkbox"]')];
     const checked = boxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    // Collapse to show-all only when nothing is excluded: every box checked AND
-    // no gone-name was unchecked (an unchecked gone-name is a real exclusion).
     const allChecked = boxes.every((cb) => cb.checked);
     closePeerSelectPopover();
     const res = await window.api.peerSetVisible(id, allChecked ? null : checked);
     if (res && res.ok) peerVisibleMap = res.peerVisible || {};
     else peerVisibleMap = (await window.api.peerVisible().catch(() => peerVisibleMap)) || peerVisibleMap;
-    // Apply is authoritative for attached tabs too: any session excluded by this
-    // selection that's currently open gets detached (same path as the X — removeSession
-    // forgets persistence + re-homes focus if it was active). This deliberately
-    // overrides the attached-always-wins RENDER rule, but only for an explicit
-    // Apply exclusion; a tab that becomes attached by other means (auto-reattach
-    // of a later-unchecked name) still renders, since nothing re-runs this.
+    // Apply overrides the attached-always-wins render rule: an open tab excluded by
+    // this selection is detached. Only an explicit Apply does this — a tab attached
+    // later (auto-reattach of an unchecked name) still renders.
     for (const [key, entry] of [...sessions.entries()]) {
       if (entry.peer && entry.peer.id === id && !peerNameVisible(id, entry.peer.name)) {
         removeSession(key);
@@ -1454,7 +1086,6 @@ function initPeersUi({
     }
     renderPeers();
   });
-  // Dismiss on outside click / Escape.
   document.addEventListener('mousedown', (e) => {
     if (peerSelectPopover.classList.contains('hidden')) return;
     if (peerSelectPopover.contains(e.target)) return;
@@ -1465,12 +1096,6 @@ function initPeersUi({
     if (e.key === 'Escape' && !peerSelectPopover.classList.contains('hidden')) closePeerSelectPopover();
   });
 
-  // --- Peer identity popover (the ⓘ icon) ----------------------------------
-  // Read-only surface: peer version vs ours, platform, caps, a severity line, and
-  // a best-effort "released N days ago · N behind" pulled from the cached release
-  // list (omitted entirely when the version isn't a published release / no cache).
-  // The Update button reuses the header-menu deploy flow (sshHost + online gated),
-  // resolved from config via peer:deployConfig. Never blocks on a fetch.
   const peerInfoPopover = document.getElementById('peer-info-popover');
   const peerInfoPopoverName = document.getElementById('peer-info-popover-name');
   const peerInfoBody = document.getElementById('peer-info-body');
@@ -1501,8 +1126,6 @@ function initPeersUi({
     if (st.platform) rows.push(`<div class="peer-info-line"><span class="peer-info-key">Platform</span> ${esc(st.platform)}</div>`);
     rows.push(`<div class="peer-info-line"><span class="peer-info-key">Caps</span> ${esc(capList)}</div>`);
     if (SEV_LINE[sev]) rows.push(`<div class="peer-info-line peer-sev-${sev}">${esc(SEV_LINE[sev])}</div>`);
-    // Best-effort age line from the cached release list; omitted whole when the
-    // peer's version isn't a known published release (dev build / empty cache).
     const age = releaseAgeInfo(st.version, releasesCache);
     if (age) {
       const bits = [];
@@ -1513,22 +1136,12 @@ function initPeersUi({
     peerInfoBody.innerHTML = rows.join('');
     peerInfoPopover.dataset.peerId = id;
     peerInfoPopover.classList.remove('hidden');
-    // Anchor above the button, clamped to the viewport (mirrors the eye popover).
     const rect = anchorBtn.getBoundingClientRect();
     const w = peerInfoPopover.offsetWidth;
     peerInfoPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
     peerInfoPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
-    // Update button: online + ssh-reachable only (the exact header-menu gate).
-    // Resolved async from config; if the peer is url-only it stays hidden. Guard
-    // against a stale resolve landing after the popover was closed/retargeted.
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
-    // Update / Rebuild slot. For a managed box, "Update Clodex" is the wrong verb
-    // — a rebuild recreates the box on the current code, which IS its update — so
-    // the slot offers Rebuild instead (reusing the header flow + its busy-lock).
-    // Always available for a box: the ⓘ only opens for an online peer, and a box
-    // is always ssh-reachable locally. Generic peers keep the online + ssh + behind
-    // gate resolved below.
     if (boxIds.has(id)) {
       peerInfoUpdateBtn.textContent = 'Rebuild';
       peerInfoUpdateBtn.classList.remove('hidden');
@@ -1536,14 +1149,9 @@ function initPeersUi({
     } else {
       peerInfoUpdateBtn.textContent = 'Update Clodex';
     }
-    // Disable (pause) — always offered here: the ⓘ icon only renders for a live
-    // peer, so anything reaching this popover is disable-able.
     peerInfoDisableBtn.onclick = () => { closePeerInfoPopover(); disablePeer(id, label); };
-    // Relay-mesh membership (hub-relay federation, default OFF). The flag is a
-    // hub-side per-peer SETTING, not part of the peer's hello, so read it from
-    // config (non-blocking, like the Update resolve below). Guard a stale resolve
-    // landing after the popover was closed/retargeted. Toggling persists via main;
-    // the gated roster push converges within one hello tick (~15s).
+    // relayAllowed is a hub-side per-peer setting, not part of the peer's hello — read
+    // it from config, not from peerStatuses.
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
     window.api.getSettings().then((s) => {
@@ -1555,9 +1163,6 @@ function initPeersUi({
         window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {});
       };
     }).catch(() => {});
-    // Hidden when the peer isn't behind us: same-version or ahead has nothing to
-    // gain from our deploy (the script pulls latest master). Kept for
-    // patch/minor/major and 'unknown' (dev/unparseable — can't rule it out).
     if (!boxIds.has(id) && st.online && updateApplies(sev)) {
       window.api.peerDeployConfig(id).then((cfg) => {
         if (!cfg || !cfg.sshHost) return;
@@ -1569,7 +1174,6 @@ function initPeersUi({
         };
       }).catch(() => {});
     }
-    // Refresh the release cache in the background for next time (never awaited).
     window.api.getReleases().then((r) => { if (Array.isArray(r)) releasesCache = r; }).catch(() => {});
   }
 

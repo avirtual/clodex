@@ -23,9 +23,6 @@ const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
-// `sessions:`-scoped skills are auto-injected for a matching session (checked +
-// disabled in the inject list). Mirrors checklist-popovers' local helper so the
-// Edit Session dialog's peer skills section marks them the same way.
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 const { createIpcLog } = require('./ipc-log');
@@ -49,32 +46,12 @@ const { initSessionMenus } = require('./popovers/session-menus');
 const { initPeersUi } = require('./peers-ui');
 const { initPluginHost } = require('./plugin-host');
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
 
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 let activeSession = null;
 
-// ---------------------------------------------------------------------------
-// Themes — chrome retints via CSS [data-theme]; each theme also carries an
-// xterm color object (incl. the 16-color ANSI palette) since the terminal's
-// palette lives in JS, not CSS. 'midnight' is the default (matches :root).
-// ---------------------------------------------------------------------------
-// FLAG: applyTheme live-swaps every open terminal's palette, so the island
-// takes the sessions Map as a factory param. currentXtermTheme is destructured
-// out for createSession to read at terminal creation.
 const { currentXtermTheme } = initThemes({ sessions });
 
-// ---------------------------------------------------------------------------
-// Resizable sidebar (Task 17, GH#7). The drag handle drives the --sidebar-width
-// var; #main and the docked drawers already key off it, so setting the var
-// reflows everything and each terminal refits via its ResizeObserver (no
-// display:none, per the xterm gotcha). Width is clamped through the shared leaf,
-// persisted to uiSettings.sidebarWidth (canonical) + localStorage (the pre-paint
-// mirror index.html reads), and double-click resets to the default. Per-move
-// paints are rAF-throttled to keep the drag smooth.
-// ---------------------------------------------------------------------------
 (function initSidebarResize() {
   const resizer = document.getElementById('sidebar-resizer');
   if (!resizer) return;
@@ -85,14 +62,9 @@ const { currentXtermTheme } = initThemes({ sessions });
   const persist = (px) => {
     const w = clampSidebarWidth(px);
     try { localStorage.setItem(LS_KEY, String(w)); } catch {}
-    // uiSettings write goes through settings:set (the existing renderer→uiSettings
-    // path). Fires once per drag-end, not per move.
     try { window.api.setSettings({ sidebarWidth: w }); } catch {}
   };
 
-  // Reconcile against the canonical store on load: the pre-paint script applied
-  // the localStorage mirror; settings is authoritative (e.g. changed in another
-  // window), so re-apply + re-mirror once it arrives.
   window.api.getSettings().then((s) => {
     if (s && typeof s.sidebarWidth === 'number') {
       applyWidth(s.sidebarWidth);
@@ -115,8 +87,6 @@ const { currentXtermTheme } = initThemes({ sessions });
   });
   resizer.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    // The sidebar is pinned to the window's left edge, so its width IS the
-    // pointer's x-coordinate.
     pendingPx = e.clientX;
     if (!rafId) rafId = requestAnimationFrame(flush);
   });
@@ -141,7 +111,6 @@ const { currentXtermTheme } = initThemes({ sessions });
   });
 })();
 
-// DOM refs
 const sessionList = document.getElementById('session-list');
 const terminalContainer = document.getElementById('terminal-container');
 const emptyState = document.getElementById('empty-state');
@@ -153,11 +122,6 @@ const inputArgs = document.getElementById('input-args');
 const inputEnv = document.getElementById('input-env');
 const envHint = document.getElementById('env-hint');
 
-// Live feedback for an env textarea: parseEnvLines drops junk lines (no '=',
-// invalid key, the deny key) into `skipped` rather than throwing, so a silently-
-// vanished line would otherwise never be explained. Surface the reasons under the
-// field (warn color) so a typo'd or reserved var doesn't just disappear. Shared by
-// the New Session textarea (inputEnv) and the Edit Session one (argsEnv).
 function renderEnvHint(textarea, hint) {
   if (!textarea || !hint) return;
   const { skipped } = parseEnvLines(textarea.value || '');
@@ -183,9 +147,6 @@ const resumeRow = document.getElementById('resume-row');
 const proxyRow = document.getElementById('proxy-row');
 const inputProxyMode = document.getElementById('input-proxy-mode');
 const inputProxyUrl = document.getElementById('input-proxy-url');
-// Opt-in git worktree (New Session dialog): the row reveals only inside a git
-// repo, and the branch/base fields only once the box is checked. cwdSuggestionsList
-// backs the working-directory MRU datalist.
 const inputWorktree = document.getElementById('input-worktree');
 const inputWorktreeBranch = document.getElementById('input-worktree-branch');
 const inputWorktreeBase = document.getElementById('input-worktree-base');
@@ -193,11 +154,6 @@ const worktreeBaseList = document.getElementById('worktree-base-list');
 const worktreeFields = document.getElementById('worktree-fields');
 const worktreeRow = document.getElementById('worktree-row');
 const cwdSuggestionsList = document.getElementById('cwd-suggestions');
-// Teams front door (teams-design.md [internal design doc, not in this repo]): the New Session dialog's team section.
-// Its form depends on whether the cwd already resolves to a team — create mode
-// (no team) adopts this session as lead; join mode (cwd inside a team root) adds
-// a seat in a picked role. dialogTeamMode tracks which; dialogTeamName is the
-// resolved team in join mode.
 const teamRow = document.getElementById('team-row');
 const teamToggle = document.getElementById('input-team-toggle');
 const teamToggleLabel = document.getElementById('team-toggle-label');
@@ -213,40 +169,20 @@ let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
-// New Session placement selector (sandbox-plan.md [internal design doc, not in this repo] M3; N boxes in M6b P3) —
-// Host + one entry per registered sandbox box. The selected <option>'s value is the
-// placement: 'host' or a box id.
 const placementRow = document.getElementById('placement-row');
 const inputPlacement = document.getElementById('input-placement');
 const placementHint = document.getElementById('placement-hint');
-// The rich fields greyed for sandbox placement (skills/prompts/tools/proxy/
-// intents/exec don't cross the create-on-peer wire until M5). Resolved by id at
-// call time — some of these row/section consts are declared later in the file.
 const PLACEMENT_RICH_ROW_IDS = [
   'system-prompt-row', 'append-prompts-row', 'tools-section', 'skills-section', 'other-section', 'proxy-row',
 ];
 
-// Placement hint copy (M5). The greyed state means different things now: an old
-// (non-create2) box can't take the rich fields at all; a create2 box CAN but its
-// catalogs momentarily failed to load. Wrong-catalog is worse than no-catalog, so
-// a fetch failure greys with the "unavailable" hint rather than showing the Mac's
-// libraries as if they were the box's.
 const PLACEMENT_HINT_OLD_BOX = 'This sandbox is running an older Clodex that can’t configure skills, prompts, tools, proxy, or intents at create — set them from the session once it’s running, or update the sandbox.';
 const PLACEMENT_HINT_CATALOGS_UNAVAILABLE = 'Couldn’t load the sandbox’s skills/agents/tools catalogs — configure this session from the sandbox once it’s running.';
-// A box that's in the registry but not running (no online peer). Nothing to fetch
-// and create is blocked with a clear error — tell the user to start it first.
 const PLACEMENT_HINT_BOX_OFFLINE = 'This sandbox isn’t running — start it from the Sandboxes panel, then pick it here.';
-// Monotonic guard so a slow peerCatalogs() response that lands after the user has
-// flipped back to Host (or re-flipped) is discarded instead of clobbering the UI.
 let placementCatalogToken = 0;
-// Host catalogs captured at dialog open, so a flip back from Sandbox restores the
-// Mac's libraries without a re-fetch race (setAgentLibCache et al. are swapped to
-// box truth while on Sandbox).
 let dialogHostSettings = null;
 let dialogHostAgentLib = null;
 
-// Map a proxy <select> mode + URL field to the persisted tri-state value:
-// null = follow the Clodex-level preference, false = off, string = custom.
 function proxyValueFromControls(modeSel, urlInput) {
   if (modeSel.value === 'off') return false;
   if (modeSel.value === 'custom') return urlInput.value.trim() || false;
@@ -259,8 +195,6 @@ function setProxyControls(modeSel, urlInput, proxy, rememberedUrl) {
   urlInput.style.display = modeSel.value === 'custom' ? '' : 'none';
 }
 
-// Reflect the global preference in the "Default" option label so the
-// dialog says what inheriting actually means right now.
 function labelProxyDefault(modeSel, settings) {
   const opt = modeSel.querySelector('option[value=""]');
   if (opt) {
@@ -275,18 +209,10 @@ const btnCreate = document.getElementById('btn-create');
 const dialogTitle = document.getElementById('dialog-title');
 const nameFieldLabel = document.getElementById('name-field-label');
 
-// New Session dialog doubles as the Templates library editor (F4a): 'create'
-// spawns a session, 'template' saves a template (no spawn). editingTemplateId is
-// the id being edited in template-mode (null = New). templatesDrawerRefresh is
-// the open Templates drawer's list-refresh, captured from initLibraryDrawers so
-// a dialog-side save repaints it.
 let dialogMode = 'create';
 let editingTemplateId = null;
 let templatesDrawerRefresh = null;
 
-// A real in-app text-input modal — window.prompt() is a no-op in Electron. Used
-// by the session-menu "Export as Template" (no dialog open) and the dialog's own
-// "Save as Template" button. Resolves the entered string, or null on cancel.
 function promptText(title, initial = '') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -318,7 +244,6 @@ function promptText(title, initial = '') {
   });
 }
 
-// Default extra CLI args per session type — user can edit or clear
 const DEFAULT_ARGS = {
   claude: '--dangerously-skip-permissions',
   codex: '--dangerously-bypass-approvals-and-sandbox',
@@ -331,13 +256,9 @@ const ARGS_HINTS = {
   bash: '',
 };
 
-// Default cwd
 const homeDir = require('os').homedir();
 inputCwd.value = homeDir;
 
-// ---------------------------------------------------------------------------
-// Workspace (window) name display and rename
-// ---------------------------------------------------------------------------
 
 const sidebarHeader = document.getElementById('sidebar-header');
 let currentWorkspaceId = null;
@@ -397,24 +318,14 @@ function startWorkspaceRename() {
   });
 }
 
-// Event delegation — survives element replacement
 sidebarHeader.addEventListener('dblclick', (e) => {
   const target = e.target.closest('#workspace-name');
   if (target) startWorkspaceRename();
 });
 
-// Triggered from the File menu > Rename Workspace…
 window.api.onRequestRenameWorkspace(() => startWorkspaceRename());
 
-// ---------------------------------------------------------------------------
-// Session UI
-// ---------------------------------------------------------------------------
 
-// Type chip glyph — the tinted square at the row's left edge ([data-type]
-// picks the tint in CSS; unknown types fall back to the bash grey). A claude
-// session routed to a cloud backend shows its backend letter instead of 'A'
-// (B = AWS Bedrock, V = GCP Vertex) — it's still an Anthropic model, so the
-// chip keeps its claude tint; only the glyph differs.
 function typeGlyph(type, backend) {
   if (backend === 'bedrock') return 'B';
   if (backend === 'vertex') return 'V';
@@ -422,19 +333,15 @@ function typeGlyph(type, backend) {
     || (type ? type[0].toUpperCase() : '?');
 }
 
-// Local session rows stay contiguous ABOVE the peer block: renderPeers removes
-// and re-appends every [data-peer-ui] header/row at the END of sessionList, so
-// a new local row appended naively lands BELOW the peers (the interleaving bug).
-// Anchor before the first peer element instead; no peer block → append as before.
-// Stable under re-render — renderPeers re-appends the peer block at the end, so
-// locals stay above.
+// Local rows must stay contiguous ABOVE the peer block: the peer block is re-appended
+// at the END of sessionList on every peer render, so appending a new local row naively
+// lands it BELOW the peers.
 function insertLocalSessionRow(item) {
   const firstPeer = sessionList.querySelector('[data-peer-ui]');
   if (firstPeer) sessionList.insertBefore(item, firstPeer);
   else sessionList.appendChild(item);
 }
 
-// Add a sidebar entry for a session that failed to restore
 function addFailedSessionToSidebar(entry) {
   const item = document.createElement('div');
   item.className = 'session-item failed';
@@ -443,8 +350,6 @@ function addFailedSessionToSidebar(entry) {
   item.dataset.type = entry.type;
   item.dataset.failed = '1';
   if (entry.team) item.dataset.team = entry.team; // group-by-project team key
-  // The hover card (session-hovercard.js) shows the restore error + type/cwd —
-  // no title attributes on the row; the small close control keeps its own.
   if (entry.error) item.dataset.error = entry.error;
   if (entry.backend) item.dataset.backend = entry.backend;
   const displayName = entry.label || entry.name;
@@ -459,7 +364,6 @@ function addFailedSessionToSidebar(entry) {
     <button class="session-close" data-tip="Forget session">&times;</button>
   `;
 
-  // Click anywhere (except close) to retry
   item.addEventListener('click', async (e) => {
     if (e.target.closest('.session-close')) return;
     const res = await window.api.retrySpawnSession(entry.name);
@@ -467,7 +371,6 @@ function addFailedSessionToSidebar(entry) {
       alert(`Retry failed: ${res.error}`);
       return;
     }
-    // Reload this item: remove the failed placeholder and add a real one
     item.remove();
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
@@ -485,10 +388,6 @@ function addFailedSessionToSidebar(entry) {
   insertLocalSessionRow(item);
 }
 
-// A lightweight ARCHIVED placeholder row (no terminal, no live PTY). Clicking it
-// resumes the session (unarchive → resume-spawn); the ✕ deletes it for good.
-// Mirrors the failed-row gesture. Seeds sidebarMeta so the status filter, sort,
-// and grouping see it — its archivedAt doubles as the recency stand-in.
 function addArchivedSessionToSidebar(entry) {
   if (sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`)) return;
   const item = document.createElement('div');
@@ -510,8 +409,6 @@ function addArchivedSessionToSidebar(entry) {
     <button class="session-close" data-tip="Delete archived session">&times;</button>
   `;
 
-  // Click (except close) resumes: clear the archive stamp FIRST so the resume's
-  // own upsert doesn't re-inherit it, then spawn from the persisted entry.
   item.addEventListener('click', async (e) => {
     if (e.target.closest('.session-close')) return;
     await window.api.unarchiveSession(entry.name);
@@ -574,10 +471,6 @@ async function archiveSessionRow(name) {
   }
 }
 
-// The reshaped right-click "Delete Session…": confirm (worktree-aware, native),
-// then delete. session:kill removes the record + any worktree checkout (awaited
-// main-side); a worktree-removal failure comes back on { error } to toast while
-// the row still goes (session-exit removes it).
 async function deleteSessionRow(name) {
   if (!(await window.api.confirmKill(name))) return;
   const res = await window.api.killSession(name);
@@ -593,16 +486,8 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   item.dataset.cwd = cwd || '';
   item.dataset.type = type;
   if (backend) item.dataset.backend = backend;
-  // Team name owning this cwd (main-resolved): the group-by-project key so seats
-  // in one team cluster under a single header regardless of subdir. Absent for
-  // teamless sessions; kept fresh by the sidebar-meta refresh (groupFor also
-  // falls back to meta.team) so reattach/restart rows converge too.
   if (team) item.dataset.team = team;
   const displayName = label || name;
-  // Second line shows the cwd basename only; type + full path (and the live
-  // stats) live in the hover card (session-hovercard.js), so the row carries
-  // no title attributes — the small click controls (✉ flush, × kill) carry
-  // data-tip like the rest of the sidebar (tooltip.js), not native titles.
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
@@ -627,14 +512,11 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
     switchSession(name);
   });
 
-  // ✕ archives now (instant, resumable) — delete moved to the right-click menu.
   item.querySelector('.session-close').addEventListener('click', (e) => {
     e.stopPropagation();
     archiveSessionRow(name);
   });
 
-  // Click the ✉ parked-message chip to flush that session's queue NOW (operator
-  // override). stopPropagation so it doesn't also switch sessions.
   const pendingEl = item.querySelector('.session-pending');
   if (pendingEl) {
     pendingEl.addEventListener('click', async (e) => {
@@ -646,23 +528,18 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
     });
   }
 
-  // Double-click name to rename (just the display label, not the IPC name)
   const nameEl = item.querySelector('.session-name');
   nameEl.addEventListener('dblclick', (e) => {
     e.stopPropagation();
     startRename(item, nameEl, name);
   });
 
-  // Right-click to show context menu
   item.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     window.api.showSessionContextMenu(name, cwd || '');
   });
 
   insertLocalSessionRow(item);
-  // A freshly-created session is active NOW — seed its meta so recency sort
-  // places it correctly before the next meta poll, then re-lay-out the block so
-  // grouping/sorting/filtering apply immediately.
   sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
   scheduleSidebarRelayout();
 }
@@ -684,8 +561,6 @@ function restartSessionWithReattach(name) {
     }
     if (snapType) {
       createTerminal(name);
-      // The respawn recomputed backend authoritatively; prefer it over the row
-      // snapshot so a pre-detection session's chip heals on restart.
       addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam);
       switchSession(name);
     }
@@ -701,10 +576,6 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
       restartSessionWithReattach(name);
       break;
     case 'reattach':
-      // Main-process-driven respawn ([agent:context reload]) already killed +
-      // recreated the session; the kill removed our sidebar tab + terminal via
-      // session-exit, so rebuild them. Mirrors restartSessionWithReattach's
-      // success branch, but main owns the respawn (type/cwd come in the signal).
       if (type) {
         createTerminal(name);
         addSessionToSidebar(name, type, cwd, null, backend || null);
@@ -712,8 +583,6 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
       }
       break;
     case 'promptsChanged':
-      // The quick-picker persisted new prompt refs; they only take effect on a
-      // (re)start, so offer one now. Declining leaves them to apply next spawn.
       if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
         restartSessionWithReattach(name);
       }
@@ -730,15 +599,10 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
       deleteSessionRow(name);
       break;
     case 'retired': {
-      // Main-side team-retire (clodex-team exec). Two dispositions:
-      //  - 'discard' (ephemeral / off-manifest seat): main kill()'d and dropped
-      //    the record. Do NOT stash — onSessionExit finds no archivingSessions
-      //    entry and removes the row like a delete (the kill is expected, so no
-      //    crash toast either).
-      //  - 'archive' (persistent role, or an older core that omits the field):
-      //    main archived and is killing the PTY — this signal arrives BEFORE the
-      //    exit, so stash the row identity exactly like archiveSessionRow (minus
-      //    the API call) and onSessionExit rebuilds the row as archived.
+      // Main-side team-retire. disposition 'discard' (ephemeral seat): main already dropped
+      // the record, so do NOT stash — onSessionExit removes the row like a delete. 'archive'
+      // (or an older core omitting the field): this signal arrives BEFORE the exit, so stash
+      // the row identity like archiveSessionRow (minus the API call) and onSessionExit rebuilds it.
       if (disposition === 'discard') break;
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (!item) break;
@@ -765,8 +629,6 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
       });
       break;
     case 'exportTemplate': {
-      // Snapshot this session's config into a named, reusable template (spawnable
-      // by name via [agent:spawn … template:Y] or the New Session dropdown).
       promptText(`Export "${name}" as a template`, name).then((tn) => {
         if (!tn) return;
         tn = tn.trim();
@@ -806,7 +668,6 @@ function startRename(item, nameEl, sessionName) {
       newNameEl.textContent = newLabel;
       window.api.setSessionLabel(sessionName, newLabel);
     } else if (commit && (!newLabel || newLabel === sessionName)) {
-      // Clear label
       newNameEl.textContent = sessionName;
       window.api.setSessionLabel(sessionName, null);
     } else {
@@ -830,7 +691,6 @@ function startRename(item, nameEl, sessionName) {
 function removeSessionFromSidebar(name) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (el) el.remove();
-  // Child subagent rows are siblings, not descendants — sweep them too.
   sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
   if (isSubagentPopoverForParent(name)) closeSubagentPopover();
   sidebarMeta.delete(name);
@@ -843,21 +703,8 @@ function updateSidebarActive() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Sidebar view: group / sort / filter / search
-// ---------------------------------------------------------------------------
-// The row ELEMENTS are still created by addSessionToSidebar (so xterm state,
-// event listeners, and live badges survive); this engine only reorders them,
-// toggles their visibility, and inserts group headers — never destroys a live
-// row. Archive-backed rows are a later (kill-flow) slice; the status filter
-// tolerates their absence (nothing is archived yet, so active/all coincide).
 
-// Current view state; loaded from the workspace store on boot, persisted on
-// every change. Defaults: recency sort, no grouping, ALL statuses — archived
-// rows must be visible-dimmed by default so ✕/⌘W reads as archive (a dimmed
-// row in place), never as a silent delete. 'Active' is the opt-in hide.
 let sidebarView = { group: 'none', sort: 'recency', status: 'all', activity: 'all', search: '' };
-// name -> { lastActivityTs, createdAt, branch, prState, prNumber }
 const sidebarMeta = new Map();
 const collapsedGroups = new Set(); // group keys the user collapsed
 
@@ -867,7 +714,6 @@ const sbSort = document.getElementById('sidebar-sort');
 const sbStatus = document.getElementById('sidebar-status');
 const sbActivity = document.getElementById('sidebar-activity');
 
-// Project label for a cwd: repo/dir basename, with its parent for context.
 function projectLabel(cwd) {
   if (!cwd) return '(no directory)';
   const parts = cwd.split('/').filter(Boolean);
@@ -897,20 +743,12 @@ const DATE_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'U
 const STATE_ORDER = ['needs attention', 'working', 'idle', 'archived'];
 const PR_ORDER = ['open', 'merged', 'closed', 'none', 'no PR / unknown'];
 
-// Prefix marking a project-mode group key as a TEAM cluster (vs a plain
-// cwd-basename project group). Single-sourced so the group-header contextmenu
-// (team-management popover) can detect + strip it to recover the team name.
 const TEAM_GROUP_PREFIX = '▸ ';
 
-// The group key + display label a row falls into for the current group mode.
 function groupFor(item) {
   const meta = sidebarMeta.get(item.dataset.name) || {};
   switch (sidebarView.group) {
     case 'project': {
-      // Team identity wins over the cwd basename: seats in one team cluster under
-      // a single header regardless of subdir. dataset.team is set at row-creation
-      // (immediate); meta.team is the sidebar-meta catch-all (reattach, refresh).
-      // A "▸ " prefix reads it as a team, distinct from a "parent/dir" cwd label.
       const team = item.dataset.team || meta.team;
       return team ? `${TEAM_GROUP_PREFIX}${team}` : projectLabel(item.dataset.cwd);
     }
@@ -928,19 +766,16 @@ function groupSortIndex(mode, key) {
   return i === -1 ? order.length : i;
 }
 
-// Does a row pass the current status/activity/search filters?
 function rowPasses(item) {
   const meta = sidebarMeta.get(item.dataset.name) || {};
   const archived = item.classList.contains('archived');
   if (sidebarView.status === 'active' && archived) return false;
   if (sidebarView.status === 'archived' && !archived) return false;
-  // Last-activity window (skip for archived — they have no live activity).
   if (sidebarView.activity !== 'all' && !archived) {
     const ts = meta.lastActivityTs || meta.createdAt;
     const maxMs = Number(sidebarView.activity) * 86400000;
     if (!ts || (Date.now() - ts) > maxMs) return false;
   }
-  // Search over name, cwd, branch.
   const q = sidebarView.search.trim().toLowerCase();
   if (q) {
     const hay = `${item.dataset.name} ${item.dataset.cwd || ''} ${meta.branch || ''}`.toLowerCase();
@@ -964,36 +799,26 @@ function compareRows(a, b) {
   return vb - va; // recency/created: newest first
 }
 
-// The one place that lays out the local session block. Reads every non-peer,
-// non-child .session-item, applies filter/sort/group, and re-inserts them
-// (with group headers) ABOVE the peer block. Child subagent rows ride with
-// their parent. Idempotent and safe to call on any state change.
 function refreshSidebarView() {
   const firstPeer = sessionList.querySelector('[data-peer-ui]');
-  // Collect local top-level rows (exclude peer rows + subagent children).
   const rows = [...sessionList.querySelectorAll('.session-item')].filter(
     (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
-  // Remove any prior group headers / empty note.
   sessionList.querySelectorAll('.session-group-header, .session-empty-note').forEach((el) => el.remove());
 
-  // Partition into visible / hidden by filter, and paint each row's PR badge.
   for (const el of rows) {
     applyPrBadge(el);
     pluginBar.applyRowBadges(el); // no-op while no plugin registers a rowBadge
     const pass = rowPasses(el);
     el.style.display = pass ? '' : 'none';
-    // Hide a row's subagent children with it.
     sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)
       .forEach((c) => { c.style.display = pass ? '' : 'none'; });
   }
   const visible = rows.filter((el) => el.style.display !== 'none');
 
-  // childrenOf: subagent rows to re-attach right after each parent.
   const childrenOf = (name) =>
     [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`)];
 
   const place = (el, anchor) => {
-    // Insert el (and its children) before `anchor` (or before the peer block).
     const ref = anchor || firstPeer || null;
     if (ref) sessionList.insertBefore(el, ref); else sessionList.appendChild(el);
     for (const c of childrenOf(el.dataset.name)) {
@@ -1014,7 +839,6 @@ function refreshSidebarView() {
     return;
   }
 
-  // Group: bucket, then order groups, then rows within each group.
   const groups = new Map(); // key -> rows[]
   for (const el of visible) {
     const key = groupFor(el) || '(other)';
@@ -1040,9 +864,6 @@ function refreshSidebarView() {
   }
 }
 
-// Paint the PR-status chip + branch tooltip onto a row from its meta. Shown for
-// open/merged/closed (a real PR); hidden for none/unknown so the row stays lean.
-// The chip lives in .session-badges (created by addSessionToSidebar).
 function applyPrBadge(item) {
   const badges = item.querySelector('.session-badges');
   if (!badges) return;
@@ -1058,13 +879,9 @@ function applyPrBadge(item) {
   chip.classList.remove('open', 'merged', 'closed');
   if (state === 'open' || state === 'merged' || state === 'closed') chip.classList.add(state);
   chip.textContent = meta.prNumber ? `#${meta.prNumber}` : state;
-  // data-tip (not native title) — the sidebar tooltip mechanism (tooltip.js) is
-  // body-delegated, so this dynamically-added chip is picked up automatically.
   chip.setAttribute('data-tip', `PR ${state}${meta.branch ? ` · ${meta.branch}` : ''}`);
 }
 
-// Debounced re-layout — activity events can arrive in bursts; coalesce them so
-// grouping/sorting recomputes at most ~4×/sec instead of per event.
 let relayoutTimer = null;
 function scheduleSidebarRelayout() {
   if (relayoutTimer) return;
@@ -1090,11 +907,6 @@ function makeGroupHeader(key, count) {
     if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
     refreshSidebarView();
   });
-  // Right-click a TEAM group header → the team-management popover (T29 Slice 3).
-  // Only project-mode team groups carry the "▸ " prefix (groupFor: `▸ <team>`);
-  // plain cwd-basename project clusters don't, so the prefix is the reliable team
-  // discriminator. Strip it to the team name; teamGet inside the opener confirms
-  // (a non-team / unreadable name renders nothing). Collapse-on-click stays intact.
   if (key.startsWith(TEAM_GROUP_PREFIX)) {
     h.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1104,8 +916,6 @@ function makeGroupHeader(key, count) {
   return h;
 }
 
-// Pull fresh meta (timestamps + PR status) for this workspace and re-render.
-// includePr:false for cheap timestamp-only refreshes (the periodic poll).
 let metaRefreshInFlight = false;
 async function refreshSidebarMeta({ includePr = true } = {}) {
   if (metaRefreshInFlight) return;
@@ -1121,12 +931,9 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   refreshSidebarView();
 }
 
-// Persist + apply a view change from the toolbar controls.
 function onViewControlChange() {
   sidebarView = {
     group: sbGroup.value, sort: sbSort.value,
-    // Guarded read: sbStatus is the Active/Archived/All select; the fallback
-    // preserves the current value if the control is ever absent.
     status: sbStatus ? sbStatus.value : sidebarView.status,
     activity: sbActivity.value,
     search: sbSearch.value,
@@ -1140,20 +947,14 @@ if (sbStatus) sbStatus.addEventListener('change', () => { onViewControlChange();
 if (sbActivity) sbActivity.addEventListener('change', onViewControlChange);
 if (sbSearch) sbSearch.addEventListener('input', onViewControlChange);
 
-// Load persisted view state + do the first meta fetch. Called from the restore
-// bootstrap once rows exist.
 async function initSidebarView() {
   try {
     const res = await window.api.getSidebarView();
     if (res && res.ok && res.view) {
       const v = { ...res.view };
-      // One-time migration: 'active' was the OLD default and hides archived
-      // rows, which made the reshaped ✕/⌘W read as a silent delete (the dimmed
-      // archived row was filtered out). The default is now 'all'; normalize a
-      // persisted 'active' that predates this change. The statusMigrated marker
-      // makes it fire ONCE per workspace, so a future DELIBERATE Active choice
-      // survives (persisted after the marker is set). Persist here (a load-time
-      // migration write, same pattern as persistence._load's workspaceId fill).
+      // One-time migration: normalize a persisted 'active' status to 'all'. The
+      // statusMigrated marker makes it fire ONCE per workspace, so a deliberate
+      // later Active choice survives.
       if (!v.statusMigrated) {
         if (v.status === 'active') v.status = 'all';
         window.api.setSidebarView({ status: v.status, statusMigrated: true });
@@ -1168,12 +969,9 @@ async function initSidebarView() {
   if (sbActivity) sbActivity.value = sidebarView.activity;
   if (sbSearch) sbSearch.value = sidebarView.search || '';
   await refreshSidebarMeta();
-  // Periodic timestamp refresh so recency sort + activity filter stay live.
   setInterval(() => refreshSidebarMeta({ includePr: false }), 30000);
 }
 
-// Number of sessions currently flagged needs-attention — derived from the same
-// dataset the sidebar badge uses, so the title count can never drift from it.
 function webAttentionCount() {
   return sessionList.querySelectorAll('.session-item[data-attention]').length;
 }
@@ -1183,19 +981,10 @@ function updateWindowTitle() {
   const base = n === 0 ? 'Clodex'
     : n === 1 ? 'Clodex (1 session)'
     : `Clodex (${n} sessions)`;
-  // Browser tabs have no dock/taskbar badge, so a hidden tab surfaces pending
-  // attention through a "(N)" title prefix. Desktop is unchanged — the ternary
-  // yields the same three base strings.
   document.title = window.__CLODEX_WEB__ ? badgeTitle(base, webAttentionCount()) : base;
 }
 
-// ---------------------------------------------------------------------------
-// Terminal management
-// ---------------------------------------------------------------------------
 
-// peer (optional): { id, name, controlled } marks a terminal attached to a
-// session on a peered Clodex — keystrokes go to the peer (only in control
-// mode) and geometry follows the owner unless we hold control.
 function createTerminal(name, peer = null) {
   const terminal = new Terminal({
     fontSize: 13,
@@ -1220,7 +1009,6 @@ function createTerminal(name, peer = null) {
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
-    // Only update UI if this is the active session
     if (activeSession === name) {
       if (resultCount === 0) setSearchInfo('no matches');
       else setSearchInfo(`${resultIndex + 1}/${resultCount}`);
@@ -1234,11 +1022,8 @@ function createTerminal(name, peer = null) {
 
   terminal.open(wrapperEl);
 
-  // Send keystrokes to PTY. Peer terminals: pass through while holding control;
-  // otherwise the first data-producing key auto-takes control (buffering what
-  // you type during the acquire). onData ALSO fires for mouse/scroll reports
-  // (the Claude pane enables mouse tracking) and terminal query replies, so
-  // typeToTakeControl gates on isHumanPtyInput — passive browsing stays passive.
+  // onData ALSO fires for mouse/scroll reports and terminal query replies (the Claude pane
+  // enables mouse tracking), so typeToTakeControl gates on isHumanPtyInput.
   terminal.onData((data) => {
     if (peer) {
       if (peer.controlled) {
@@ -1263,13 +1048,9 @@ function createTerminal(name, peer = null) {
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
 
-// ── Drag-drop a file onto the active session: type its shell-quoted path at
-// the prompt (iTerm behavior). Desktop-only — browsers don't expose host paths
-// on dropped Files; Electron 32+ removed File.path, so resolution goes through
-// webUtils.getPathForFile. window.require (nodeIntegration) is the electron
-// access: esbuild leaves it alone, so the web bundle sees undefined and the
-// handler degrades to a toast. Document-level preventDefault first — without it
-// a drop that misses the handler navigates the whole window to file://.
+// Electron 32+ removed File.path, so host paths resolve via webUtils.getPathForFile —
+// desktop-only (window.require is undefined in the web bundle). The document-level
+// preventDefault is required: a drop that misses this handler navigates to file://.
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => e.preventDefault());
 terminalContainer.addEventListener('drop', (e) => {
@@ -1283,14 +1064,10 @@ terminalContainer.addEventListener('drop', (e) => {
   const entry = sessions.get(activeSession);
   if (!entry) return;
   if (entry.peer) {
-    // A host path means nothing inside a peer/sandbox filesystem — typing it
-    // would just plant a broken path at the remote prompt.
     showToast(`"${activeSession}" runs on a peer — its filesystem doesn’t have this file.`, { kind: 'peer-ui' });
     return;
   }
   const { webUtils } = window.require('electron');
-  // Claude sessions get @-mention form (CLI attaches the file itself — no agent
-  // Read round-trip); bash/codex get shell-quoted paths.
   const style = sessionTypeOf(activeSession) === 'claude' ? 'claude' : 'shell';
   const text = dropText(files.map((f) => {
     try { return webUtils.getPathForFile(f); } catch { return null; }
@@ -1300,15 +1077,10 @@ terminalContainer.addEventListener('drop', (e) => {
   entry.terminal.focus();
 });
 
-// Read-only peer re-measure: xterm can hold stale char metrics when its pane
-// was visibility:hidden (auto-restore attaches without switching) or when the
-// pane geometry shifted while a reconnect replayed into an already-active tab.
-// A fit() forces a re-measure against the now-visible pane, then we resize back
-// to the canonical owner letterbox and repaint. INVARIANT: this pushes nothing
-// upstream — read-only tabs have no onResize→peerResize wiring, so the fit()'s
-// dims never leave the viewer; geometry authority stays with the owner. Shared
-// by switchSession (on activate) and onPeerReplay (reconnect on the active tab)
-// so the exact sequence can't drift between the two.
+// Read-only peer re-measure: xterm holds stale char metrics when its pane was
+// visibility:hidden, so fit() forces a re-measure, then resize back to the owner's
+// canonical letterbox. INVARIANT: pushes nothing upstream — read-only tabs have no
+// onResize→peerResize wiring, so the fit()'s dims never leave the viewer.
 function remeasureReadonlyPeer(entry) {
   const { fitAddon, terminal } = entry;
   fitAddon.fit();
@@ -1321,7 +1093,6 @@ function remeasureReadonlyPeer(entry) {
 function switchSession(name) {
   if (!sessions.has(name)) return;
 
-  // Close search if open — decorations are per-terminal
   if (isSearchOpen()) closeSearch();
   if (isSubagentPopoverOpen()) closeSubagentPopover();
 
@@ -1335,8 +1106,6 @@ function switchSession(name) {
   updateSidebarActive();
   emptyState.style.display = 'none';
 
-  // Proxy status bar follows the active session. Render last-known immediately,
-  // then pull a fresh snapshot so the bar fills without waiting for a poll.
   renderProxyBar();
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
@@ -1349,9 +1118,6 @@ function switchSession(name) {
 
   renderPeerBar();
 
-  // Fit and focus after becoming visible. Peer terminals in read-only mode
-  // keep the owner's geometry (letterbox) — fitting would be a resize we
-  // have no authority to send.
   const entry = sessions.get(name);
   const { fitAddon, terminal } = entry;
   requestAnimationFrame(() => {
@@ -1360,11 +1126,6 @@ function switchSession(name) {
         fitAddon.fit();
         window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
       } else {
-        // Read-only peer: replay/output can have been written while this
-        // wrapper was visibility:hidden (auto-restore attaches without ever
-        // switching here), so xterm holds stale char metrics and paints
-        // garbled. Re-measure against the now-visible pane. Runs on every switch
-        // (idempotent) to cover a pane resized while the tab was hidden.
         remeasureReadonlyPeer(entry);
       }
       terminal.focus();
@@ -1380,11 +1141,6 @@ function removeSession(name, { keepPersisted = false } = {}) {
   const s = sessions.get(name);
   if (s) {
     if (s.peer) {
-      // Detach (main forgets both peerAttached + peerControlled durably); keep
-      // the local control mirror in step so a re-added tab starts read-only.
-      // keepPersisted (peers-ui's soft shed on a disable-driven peer-removed)
-      // skips the durable detach so the paused peer's attachment survives for
-      // re-enable — the local mirror is still cleared so it comes back read-only.
       if (!keepPersisted) window.api.peerDetach(s.peer.id, s.peer.name);
       forgetControlMirror(s.peer.id, s.peer.name);
     }
@@ -1413,9 +1169,6 @@ function removeSession(name, { keepPersisted = false } = {}) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// New session dialog
-// ---------------------------------------------------------------------------
 
 let sessionCounter = 0;
 
@@ -1427,56 +1180,36 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   const type = inputType.value;
   if (!skipAsyncRefresh) inputArgs.value = DEFAULT_ARGS[type] || '';
   argsHint.textContent = ARGS_HINTS[type] || '';
-  // Prompt refs ARE template fields (library-file references), so authoring mode
-  // shows them; only resume/fork stays hidden (runtime-only, still punted).
   const authoring = dialogMode === 'template';
   const supportsSystemPrompt = type === 'claude' || type === 'codex';
-  // Model is a projection of extraArgs' --model token — agent-only (both claude
-  // and codex take --model), hidden for bash. Clear on type-change alongside the
-  // args reset (gated so a template-apply's captured model survives).
   if (modelRow) modelRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (!skipAsyncRefresh) inputModel.value = '';
   systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (appendPromptsRow) appendPromptsRow.style.display = supportsSystemPrompt ? '' : 'none';
   if (!supportsSystemPrompt) inputSystemPrompt.value = '';
-  // Custom subagents and per-session tool/skill/strip gating are Claude-only.
-  // These live in collapsible accordion sections (Tools / Skills / Other) so the
-  // dialog stays short by default; toggle the whole section per type.
   const claudeOnly = type === 'claude';
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.style.display = claudeOnly ? '' : 'none';
   }
   if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionIntents(); refreshNewSessionTools(); }
   const agentType = type === 'claude' || type === 'codex';
-  // Resume/fork is runtime-only — hidden while authoring a template.
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
     inputResume.value = '';
     inputFork.checked = false;
   }
-  // Proxy routing only makes sense for agent types — and it IS a template field,
-  // so it stays visible in template-authoring mode.
   proxyRow.style.display = agentType ? '' : 'none';
   if (!agentType) {
     inputProxyMode.value = '';
     inputProxyUrl.style.display = 'none';
   }
-  // A type change reset (and, for Claude, re-fetched from HOST sources) the rich
-  // rows. If placement is a box, re-apply the sandbox state so box catalogs
-  // (create2) or the greyed state (non-create2/offline) win over the host defaults
-  // just rendered. No cwd mutation here — that's applyPlacement's job.
   if (currentPlacement() !== 'host') applySandboxState();
-  // Worktree is runtime-only (a concrete checkout, not reusable config) AND
-  // repo-only — refreshWorktreeForCwd owns its visibility (hidden here first so a
-  // non-repo / template-authoring open never flashes the row).
   if (worktreeRow) {
     worktreeRow.style.display = 'none';
     if (inputWorktree) inputWorktree.checked = false;
     if (worktreeFields) worktreeFields.style.display = 'none';
     if (!authoring) refreshWorktreeForCwd();
   }
-  // Team section: hidden first (a type flip to bash / template authoring hides it),
-  // then refreshTeamForCwd re-reveals it in create/join shape for agent+host.
   if (teamRow) {
     teamRow.style.display = 'none';
     if (teamToggle) teamToggle.checked = false;
@@ -1486,16 +1219,9 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   }
 }
 
-// Tool-doctor gate (Task 12): the last tools:check payload, cached so a type-flip
-// applies instantly from it before the live re-probe lands.
 let lastToolCheck = null;
 const newSessionToolNotice = document.getElementById('new-session-tool-notice');
 
-// Missing-CLI prominence overlay (Task 18): the "popover on the popover". Raised
-// when the selected type's CLI is missing (the inline notice is easy to miss below
-// the fold). `overlayDismissed` is the per-open flag — reset false in openDialog,
-// set true by "Continue anyway"; once dismissed, switching to another missing type
-// re-uses the inline treatment (no re-pop) until a fresh open.
 let overlayDismissed = false;
 const toolOverlay = document.getElementById('new-session-tool-overlay');
 const toolOverlayHeadline = document.getElementById('tool-overlay-headline');
@@ -1503,11 +1229,6 @@ const toolOverlayRemedy = document.getElementById('tool-overlay-remedy');
 const toolOverlayActions = document.getElementById('tool-overlay-actions');
 const toolOverlayDismiss = document.getElementById('tool-overlay-dismiss');
 
-// Raise / hide the prominence overlay from a plan (the pure newSessionOverlayPlan
-// decision), respecting the per-open dismiss flag. The inline notice + disabled
-// Create are applied independently by applyNewSessionToolGate, so they remain
-// underneath when the overlay is dismissed. Install buttons reuse openInstallSession
-// (the same visible-bash-installer path as the inline button, Task 14).
 function applyNewSessionToolOverlay(plan) {
   if (!toolOverlay) return;
   if (!shouldRaiseOverlay(plan, overlayDismissed)) {
@@ -1530,7 +1251,6 @@ function applyNewSessionToolOverlay(plan) {
     btn.title = `Run: ${entry.install.command}`;
     btn.addEventListener('click', () => openInstallSession(entry.install));
     col.appendChild(btn);
-    // Show the literal command on sight (copyable) for users who won't click.
     const cmd = document.createElement('code');
     cmd.className = 'tool-overlay-cmd';
     cmd.textContent = entry.install.command;
@@ -1540,7 +1260,6 @@ function applyNewSessionToolOverlay(plan) {
   toolOverlay.classList.remove('hidden');
 }
 
-// "Continue anyway" drops to today's inline treatment for the rest of this open.
 if (toolOverlayDismiss) {
   toolOverlayDismiss.addEventListener('click', () => {
     overlayDismissed = true;
@@ -1548,11 +1267,6 @@ if (toolOverlayDismiss) {
   });
 }
 
-// Apply a tool-gate decision to the dialog: show/hide the inline notice + toggle
-// Create. btnCreate is gated ONLY here in create mode, so re-enabling on ok is
-// safe. Reuses renderSandboxNotice for the docker-notice visual language. When the
-// missing tool has an install remedy, append an "Install <tool>…" button that
-// spawns the visible bash installer (Task 14).
 function applyNewSessionToolGate(gate) {
   if (!newSessionToolNotice) return;
   if (gate.disabled) {
@@ -1576,14 +1290,6 @@ function applyNewSessionToolGate(gate) {
   }
 }
 
-// Kick off a tool install in a VISIBLE bash session (Task 14). Transparency is the
-// point: the user watches the official installer and answers any prompt it raises
-// — no hidden exec of a remote script. Name collision (names are global): if the
-// install session already exists, just focus it rather than erroring [FLAGGED
-// choice: focus-existing over suffixing, so repeat clicks don't spawn a pile of
-// dead installers]. The dialog closes so the terminal is front-and-center; the
-// tool cache is busted on that session's exit (onSessionExit below), which
-// re-enables Create by itself once the CLI lands.
 async function openInstallSession(install) {
   const params = installSessionParams(install, homeDir);
   if (!params) return;
@@ -1607,10 +1313,6 @@ async function openInstallSession(install) {
   window.api.injectPrompt(params.name, params.command);
 }
 
-// Probe the selected type's CLI and gate Create. Template authoring and bash are
-// never gated (pass 'bash' to the leaf). Applies synchronously from the cached
-// check first (snappy on type-change), then re-applies from a fresh probe; guards
-// against the type changing during the await.
 async function refreshNewSessionToolGate() {
   const typeAtCall = dialogMode === 'template' ? 'bash' : inputType.value;
   applyNewSessionToolGate(newSessionToolGate(typeAtCall, lastToolCheck));
@@ -1618,16 +1320,11 @@ async function refreshNewSessionToolGate() {
   let check = null;
   try { check = await window.api.toolsCheck(); } catch { check = null; }
   lastToolCheck = check;
-  // The user may have flipped type / entered template mode during the await.
   const typeNow = dialogMode === 'template' ? 'bash' : inputType.value;
   applyNewSessionToolGate(newSessionToolGate(typeNow, check));
   applyNewSessionToolOverlay(newSessionOverlayPlan(typeNow, check));
 }
 
-// Grey (disable + dim) or restore the rich rows for the current placement. When
-// greyed, `hintText` (if given) replaces the default hint copy so the reason is
-// specific (old box vs catalogs-unavailable). For a create2 sandbox the fields
-// are live (not greyed) and carry box-truth catalogs.
 function greyRichFields(grey, hintText = null) {
   for (const id of PLACEMENT_RICH_ROW_IDS) {
     const el = document.getElementById(id);
@@ -1637,32 +1334,20 @@ function greyRichFields(grey, hintText = null) {
   placementHint.style.display = grey ? '' : 'none';
 }
 
-// Placement is only meaningful in create mode (templates are host-authored). When
-// the selector is hidden it always reads 'host'; otherwise it's the selected
-// <option>'s value — 'host' or a box id.
 function currentPlacement() {
   return placementRow.style.display !== 'none' ? (inputPlacement.value || 'host') : 'host';
 }
 
-// Does the given box's peer advertise the M5 `create2` capability (full-param
-// create + /api/catalogs)? Same peerStatuses + caps.includes() precedent as
-// peerSupportsArgs/activePeerConfigurable. Offline or old box → false → greyed.
 function boxHasCreate2(boxId) {
   const st = peerStatuses.get(boxId);
   return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('create2'));
 }
 
-// Is the given box's peer registered AND online? A box can be in the registry but
-// stopped (no peer / offline peer) — create must not fire at a dead peer.
 function boxPeerOnline(boxId) {
   const st = peerStatuses.get(boxId);
   return !!(st && st.online);
 }
 
-// Rebuild the placement <select> from the box registry: "This Mac" first, then one
-// option per box (label shown, box id carried as the value). Called at each open so
-// a created/deleted box is reflected. An offline box still gets an option (its
-// (stopped) suffix flags it) — create pre-checks the peer and errors clearly.
 function populatePlacementOptions(boxes) {
   inputPlacement.innerHTML = '';
   const host = document.createElement('option');
@@ -1678,51 +1363,32 @@ function populatePlacementOptions(boxes) {
   }
 }
 
-// Apply a placement change: swap the cwd default (without clobbering a typed path)
-// then apply the sandbox state. Flipping back to Host restores the Mac's catalogs
-// (they were swapped to box truth while on a box).
 async function applyPlacement() {
   const placement = currentPlacement();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
-  // Teams are host-local — a flip to/from a box shows/hides the team section.
   refreshTeamForCwd();
   if (placement !== 'host') { await applySandboxState(); return; }
   greyRichFields(false);
   await restoreHostCatalogs();
 }
 
-// Grey/un-grey the rich fields for the CURRENT placement and, for a create2
-// sandbox, swap the checklists to the box's catalogs. No cwd mutation — safe to
-// call from a type change (which re-rendered host catalogs and must be corrected).
-// Non-create2 sandbox → M3 greyed. create2 sandbox → fetch box catalogs, render
-// them, un-grey; a fetch failure greys with the unavailable hint (never render the
-// Mac's libraries as if they were the box's). Stale responses are guarded.
 async function applySandboxState() {
   const placement = currentPlacement();
   if (placement === 'host') { greyRichFields(false); return; }
-  // Docker down/absent → no box can run at all; grey with the docker remedy
-  // (same greyed treatment as an offline box, but the reason is Docker itself,
-  // not "Start it first"). The probe is TTL-cached main-side, so this is cheap.
   let dockerDetect = null;
   try { dockerDetect = await window.api.sandboxDetect(placement); } catch { dockerDetect = null; }
   if (currentPlacement() !== placement) return;   // user flipped during the probe
   const dockerGate = sandboxActionGate(dockerDetect);
   if (!dockerGate.running) { greyRichFields(true, dockerGate.reason); return; }
-  // Box placement. An offline box has no catalogs to fetch and create will be
-  // blocked — grey with a start-it-first hint rather than the old-box copy.
   if (!boxPeerOnline(placement)) { greyRichFields(true, PLACEMENT_HINT_BOX_OFFLINE); return; }
-  // The grey decision lives in the tested placement leaf: host never greys, a
-  // non-create2 box does (old box), a create2 box doesn't (fields live).
   if (richFieldsGreyed(placement, boxHasCreate2(placement))) {
     greyRichFields(true, PLACEMENT_HINT_OLD_BOX);
     return;
   }
-  // Box + create2: fetch the box's catalogs and render the fields from them.
   const token = ++placementCatalogToken;
   let res;
   try { res = await window.api.peerCatalogs(placement); }
   catch { res = null; }
-  // Discard if the user flipped away (or to another box) while the fetch was in flight.
   if (token !== placementCatalogToken || currentPlacement() !== placement) return;
   if (!res || res.ok === false || !res.catalogs) {
     greyRichFields(true, PLACEMENT_HINT_CATALOGS_UNAVAILABLE);
@@ -1732,12 +1398,6 @@ async function applySandboxState() {
   greyRichFields(false);
 }
 
-// Populate the dialog's checklists from a peer's box-truth catalogs (M5) — the
-// same cache setters + render functions openDialog uses for host catalogs, but
-// fed the box's agents/prompts/skills/tools instead of the Mac's. Checked sets
-// start empty (a fresh sandbox create begins from the box's defaults, like host).
-// The disable-skills checklist and tool provenance have no session-less box source
-// (they're cwd/roster-scoped, resolved box-side at spawn), so they render flat.
 function populateChecklistsFromCatalogs(cat) {
   setAgentLibCache(cat.agents || []);
   renderAgentChecklist(inputAgentsList, new Set());
@@ -1758,10 +1418,6 @@ function populateChecklistsFromCatalogs(cat) {
   setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
 }
 
-// Restore the Mac's catalogs after a flip back to Host (the caches hold box truth
-// while on Sandbox). Re-uses the captured open-time host settings/agentLib so
-// there's no re-fetch race; the cwd-scoped skill/tool provenance re-fetches (as it
-// does on any cwd change).
 async function restoreHostCatalogs() {
   populateHostCatalogs(dialogHostSettings, dialogHostAgentLib);
   // The prompt-lib cache holds box truth too after a Sandbox stint —
@@ -1788,7 +1444,6 @@ function fillSystemPromptSelect(selectEl, current) {
     opt.textContent = p.name;
     selectEl.appendChild(opt);
   }
-  // A persisted ref whose file was deleted falls back to (CLI default).
   selectEl.value = current && getPromptLibCache().system.some(p => p.name === current) ? current : '';
 }
 
@@ -1800,7 +1455,6 @@ async function refreshSystemPromptDropdown() {
 
 async function refreshTemplatesDropdown() {
   const list = await window.api.listTemplates();
-  // Clear existing options except the placeholder
   while (inputTemplate.options.length > 1) inputTemplate.remove(1);
   for (const t of list) {
     const opt = document.createElement('option');
@@ -1812,43 +1466,23 @@ async function refreshTemplatesDropdown() {
   return list;
 }
 
-// --- Custom subagent enablement (Claude only). Shared by the new-session
-// and edit-session dialogs; the library itself lives in the Agents drawer. ---
 const agentsRow = document.getElementById('agents-row');
 const inputAgentsList = document.getElementById('input-agents-list');
 const inputBuiltinsList = document.getElementById('input-builtins-list');
-// Exec-command grant checklist (Claude only) — which registered commands this
-// seat may run. Shares the new-session/edit dialogs; the registry lives in the
-// Exec Commands drawer.
 const inputExecList = document.getElementById('input-exec-list');
-// Per-session intent gate checklist (Claude only) — which `[agent:…]` verbs this
-// seat may EMIT. Lives beside exec in the New/template dialog's Other section.
 const inputIntentList = document.getElementById('input-intent-list');
 
-// --- Per-session tool gating (Claude only). The catalog is a curated static
-// list supplied by main via getSettings().claudeTools. Checkboxes default to
-// checked (= tool available); unchecking adds the tool to `disabledTools`,
-// which becomes a permissions.deny entry at spawn. A stored disabled tool that
-// isn't in the current catalog is still shown (unchecked) so editing a session
-// never silently re-enables a tool the catalog dropped. ---
 const toolsRow = document.getElementById('tools-row');
 const inputToolsList = document.getElementById('input-tools-list');
 const skillsRow = document.getElementById('skills-row');
 const inputSkillsList = document.getElementById('input-skills-list');
-// Bulk check/uncheck for the new-session dialog's catalog checklists (same
-// control as the popovers). wireBulkToggles is defined just above.
 wireBulkToggles(toolsRow, inputToolsList);
 wireBulkToggles(skillsRow, inputSkillsList);
 const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
 const stripRow = document.getElementById('strip-row');
 const inputStripLevel = document.getElementById('input-strip-level');
-// Auto-compact opt-out (Claude only; agent-type field). Checked = default ON, so
-// collectFormConfig OMITS the key; unchecked writes `autoCompact: false` — the same
-// 1:1 key-presence↔opt-out mapping export uses (ipc-handlers.js exportFromSession).
 const inputAutoCompact = document.getElementById('input-auto-compact');
-// Collapsible accordion sections grouping the Claude-only advanced controls, so
-// the new-session dialog stays short by default (expand the one you need).
 const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
@@ -1860,29 +1494,18 @@ async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
   renderInjectChecklist(inputInjectSkillsList, enabledSet);
 }
 
-// Exec-command grant checklist for the currently-entered config (Claude only).
-// Seeds the cache from the registry then renders with the enabled grant set.
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   if (inputType.value !== 'claude') return;
   setExecLibCache((await window.api.listExecCommands()) || []);
   renderExecChecklist(inputExecList, enabledSet);
 }
 
-// Intent-gate checklist for the currently-entered config (Claude only). The rows
-// are SERVED (`intents:catalog`) rather than statically required, so this seeds the
-// cache first and is async like the exec refresh — a plugin can add a verb at
-// runtime, and the web bundle's build-time copy of the catalog would be stale
-// forever. The arg is the raw persisted `intents` value (array, or undefined = the
-// all-enabled default → every non-privileged box checked).
 async function refreshNewSessionIntents(intentsList) {
   if (inputType.value !== 'claude') return;
   setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
-// Populate the new-session Skills checklist for the currently-entered cwd. The
-// catalog (known built-ins + whatever a lower settings layer for that cwd
-// disables) and provenance both depend on cwd, so this re-runs when cwd changes.
 async function refreshNewSessionSkills(disabledSet = new Set()) {
   if (inputType.value !== 'claude') return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
@@ -1891,21 +1514,14 @@ async function refreshNewSessionSkills(disabledSet = new Set()) {
   renderSkillChecklist(inputSkillsList, res.names || [], disabledSet,
     res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
 }
-// Tool provenance for the new-session dialog — same cwd-dependence as skills: a
-// lower settings layer for the chosen cwd may already deny tools, shown
-// read-only here. claudeToolsCache is seeded from getSettings in openDialog.
 async function refreshNewSessionTools(disabledSet = null) {
   if (inputType.value !== 'claude') return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
-  // Default: pre-uncheck the global default deny set so a fresh session inherits
-  // the shared, lean tools loadout out of the box (still editable here per
-  // session). A template supplies its OWN captured disabled set instead.
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());
   renderToolChecklist(inputToolsList, disabled, (res && res.ok && res.effective) || {});
 }
 
-// The branch/base fields only matter once the worktree box is checked.
 if (inputWorktree) {
   inputWorktree.addEventListener('change', () => {
     worktreeFields.style.display = inputWorktree.checked ? '' : 'none';
@@ -1913,9 +1529,6 @@ if (inputWorktree) {
   });
 }
 
-// Git repo detection for the current cwd — reveals the worktree row only inside
-// a repo and populates the base-branch autocomplete + default. A token guards
-// against a slower earlier cwd's response landing after a newer one.
 let worktreeInfoToken = 0;
 async function refreshWorktreeForCwd() {
   if (!worktreeRow) return;
@@ -1925,14 +1538,12 @@ async function refreshWorktreeForCwd() {
   const info = await window.api.worktreeInfo(cwd);
   if (token !== worktreeInfoToken) return; // a newer cwd won the race
   const isRepo = info && info.ok && info.isRepo;
-  // Worktrees are runtime-only (hidden in template authoring) AND repo-only.
   worktreeRow.style.display = (isRepo && !authoring) ? '' : 'none';
   if (!isRepo || authoring) {
     if (inputWorktree) inputWorktree.checked = false;
     if (worktreeFields) worktreeFields.style.display = 'none';
     return;
   }
-  // Populate the base-branch datalist (default first) and seed the placeholder.
   worktreeBaseList.textContent = '';
   for (const b of (info.branches || [])) {
     const opt = document.createElement('option');
@@ -1942,9 +1553,7 @@ async function refreshWorktreeForCwd() {
   inputWorktreeBase.placeholder = info.defaultBranch ? `${info.defaultBranch} (default)` : '(default branch)';
 }
 
-// --- Teams front door (teams-design.md [internal design doc, not in this repo]) -------------------------------
 
-// Slugify a dir basename into a team/seat-name-legal token (session charset).
 function slugifyTeamName(s) {
   const slug = String(s || '').trim().toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
@@ -1953,17 +1562,10 @@ function slugifyTeamName(s) {
 function pathBasename(p) {
   return String(p || '').replace(/\/+$/, '').split('/').pop() || '';
 }
-// Is a session name already taken? Checks THIS window's sidebar (live + archived
-// rows carry data-name) AND the prefetched global reserved set (live + persisted
-// across every workspace — Task 15), so the auto-suffix bumps past an archived or
-// cross-workspace name the mint guard would otherwise reject. The server still
-// enforces the global namespace on create; this just keeps the suggestion clean.
 function sessionNameTaken(name) {
   if (dialogReservedNames.has(name)) return true;
   return !!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
 }
-// The role KEY a join binds to: stock `hand`, or (custom) derived from the picked
-// prompt name — strip a leading clodex-team- and clamp to the role charset.
 function roleKeyForJoin() {
   if (!teamRoleSelect || teamRoleSelect.value === 'hand') return 'hand';
   const p = (teamRolePromptSelect && teamRolePromptSelect.value) || '';
@@ -1971,10 +1573,6 @@ function roleKeyForJoin() {
   return key || 'member';
 }
 
-// Show/hide + shape the team section for the current cwd. Agent types only (a
-// team is meaningless for bash), host placement only (teams are local in v1),
-// and never while authoring a template. Resolves the cwd's team to pick create
-// vs join mode. A token guards a slow response from an earlier cwd.
 let teamForCwdToken = 0;
 async function refreshTeamForCwd() {
   if (!teamRow) return;
@@ -1996,7 +1594,6 @@ async function refreshTeamForCwd() {
   if (token !== teamForCwdToken) return; // a newer cwd won the race
   teamRow.style.display = '';
   if (res && res.team) {
-    // JOIN mode — the cwd is inside an existing team root.
     dialogTeamMode = 'join';
     dialogTeamName = res.team;
     if (teamToggleLabel) teamToggleLabel.textContent = `Join team ${res.team}`;
@@ -2006,7 +1603,6 @@ async function refreshTeamForCwd() {
     if (teamRolePromptRow) teamRolePromptRow.style.display = teamRoleSelect.value === 'custom' ? '' : 'none';
     if (teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
   } else {
-    // CREATE mode — no team owns this cwd; this session would be the lead.
     dialogTeamMode = 'create';
     dialogTeamName = null;
     if (teamToggleLabel) teamToggleLabel.textContent = 'Create a team here — this session becomes its lead.';
@@ -2019,7 +1615,6 @@ async function refreshTeamForCwd() {
   }
 }
 
-// Suggest a free team name (append -2, -3, … past an existing one).
 function dedupeTeamName(base) {
   if (!dialogTeamNames.includes(base)) return base;
   let n = 2;
@@ -2027,7 +1622,6 @@ function dedupeTeamName(base) {
   return `${base}-${n}`;
 }
 
-// Populate the join role-prompt picker from the rail-filtered library list.
 async function populateTeamRolePrompts() {
   if (!teamRolePromptSelect) return;
   let res;
@@ -2042,8 +1636,6 @@ async function populateTeamRolePrompts() {
   }
 }
 
-// Auto-suggest the seat name `<team>-<role>` (with -N collision suffix) for a
-// join, unless the operator has typed their own name.
 function updateTeamJoinNameSuggestion() {
   if (dialogTeamMode !== 'join' || !dialogTeamName) return;
   if (inputName.value && inputName.value !== lastTeamAutoName) return; // user-owned
@@ -2055,9 +1647,6 @@ function updateTeamJoinNameSuggestion() {
   lastTeamAutoName = name;
 }
 
-// Working Directory datalist: recently-picked dirs (MRU) first, then the most-
-// popular cwds across live sessions (labelled with their session count). Deduped
-// so a dir that's both recent and active shows once.
 async function refreshCwdSuggestions() {
   if (!cwdSuggestionsList) return;
   const res = await window.api.cwdSuggestions();
@@ -2076,10 +1665,6 @@ async function refreshCwdSuggestions() {
   for (const p of (res.popular || [])) add(p.cwd, `${p.count} active session${p.count === 1 ? '' : 's'}`);
 }
 
-// prefill (optional): seed the dialog for adopting an existing session —
-// { name, type, cwd, resumeId }. Everything else stays at the normal new-session
-// defaults, so the operator can still pick tools/prompts/proxy before Create runs
-// the SAME create() path (resumeId set = resume the conversation).
 async function openDialog(prefill = null) {
   editingTemplateId = null;
   overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
@@ -2101,7 +1686,6 @@ async function openDialog(prefill = null) {
     inputWorktreeBase.value = '';
     if (worktreeFields) worktreeFields.style.display = 'none';
   }
-  // Reset the team section (a prior open's team name / mode must not leak).
   if (teamToggle) teamToggle.checked = false;
   if (teamNameInput) teamNameInput.value = '';
   if (teamRoleSelect) teamRoleSelect.value = 'hand';
@@ -2117,7 +1701,6 @@ async function openDialog(prefill = null) {
   // (which would fire a spurious catalog fetch). The options + placementRow
   // visibility are (re)built below once the box registry lands.
   inputPlacement.value = 'host';
-  // Collapse the advanced accordions each open so the dialog starts short.
   for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
     if (sec) sec.open = false;
   }
@@ -2133,42 +1716,23 @@ async function openDialog(prefill = null) {
     window.api.sandboxListBoxes(),
     window.api.reservedSessionNames(),
   ]);
-  // Global reserved-name set for the auto-suffix flows (Task 15) — live +
-  // persisted/archived across every workspace, beyond this window's DOM.
   dialogReservedNames = new Set((reserved && reserved.names) || []);
-  // The default `session-N` suggestion was minted before this set landed; bump
-  // it past a collision so the first Create doesn't bounce (Task 19). Only when
-  // it's still the untouched default — never clobber a typed name or a prefill.
   if (!prefill && inputName.value === defaultName) {
     inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
   }
-  // Capture the host catalogs so a flip box→Host restores them without a re-fetch
-  // race (M5 swaps the caches to box truth while on a box).
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
-  // Placement selector: rebuild its options from the box registry (Host + one per
-  // box), shown ONLY when at least one box is registered (zero noise otherwise).
-  // Default Host; a fresh open never inherits a stale grey.
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
   placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
   greyRichFields(false);
-  // Adopting an existing session: retitle so it's clear this resumes a
-  // conversation rather than starting fresh. Purely cosmetic — the Resume field
-  // carries the id and drives the behavior.
   if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
-  // Gate Create on the selected type's CLI being on PATH (Task 12). Fire-and-
-  // forget: it applies from the cached check immediately, then the live probe.
   refreshNewSessionToolGate();
   setTimeout(() => inputName.select(), 50);
 }
 
-// Populate the dialog's checklists + proxy from the Mac's catalogs (host
-// settings/agent-library). Shared by openDialog and the Sandbox→Host restore, so
-// the host path has one source of truth. cwd-scoped skill/tool provenance
-// re-fetches (refreshNewSessionSkills/Tools) as it does on any cwd change.
 function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set());
@@ -2193,14 +1757,9 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 // which then throws `.has is not a function` mid-render and blanks the checklist.
 inputCwd.addEventListener('change', () => refreshNewSessionSkills());
 inputCwd.addEventListener('change', () => refreshNewSessionTools());
-// A cwd change may cross a repo boundary — re-detect so the worktree row
-// reveals/hides. Change-only (matches the skill/tool refreshes above) so a path
-// field doesn't shell out to git on every keystroke.
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
 
-// Team section wiring: the toggle reveals the create/join fields; the role
-// select reveals the custom prompt picker and re-suggests the seat name.
 if (teamToggle) {
   teamToggle.addEventListener('change', () => {
     if (teamFields) teamFields.style.display = teamToggle.checked ? '' : 'none';
@@ -2222,11 +1781,6 @@ inputProxyMode.addEventListener('change', () => {
   if (inputProxyMode.value === 'custom') inputProxyUrl.focus();
 });
 
-// Apply a template's values to the form when selected. A template carries the
-// full config subset, so the dialog Create threads it through session:create
-// verbatim (no silent partial-apply footgun): type/cwd/args plus the Claude-only
-// agent/tool/skill gating, strip level, and proxy. Prompt refs are NOT in a
-// template (F6), so the prompt controls are left at their current values.
 inputTemplate.addEventListener('change', async () => {
   const id = inputTemplate.value;
   if (!id) return;
@@ -2241,9 +1795,6 @@ inputTemplate.addEventListener('change', async () => {
     inputArgs.value = rest.join(' ');
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
-  // Fix section show/hide for the type WITHOUT firing the default empty-set
-  // async renders — we render the rich checklists below with the template's own
-  // captured sets, and a competing default render would race them.
   applyTypeDefaults({ skipAsyncRefresh: true });
   if (t.type === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
@@ -2254,11 +1805,8 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
     await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
-    // Same opt-out prefill as openTemplateEditor — the dropdown-apply path also
-    // ignored t.autoCompact before U9 (silent-drop twin), fixed here.
     if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
   }
-  // Proxy is an agent-type field; reflect the template's tri-state choice.
   if (t.type === 'claude' || t.type === 'codex') {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }
@@ -2280,9 +1828,6 @@ btnSaveTemplate.addEventListener('click', async () => {
     alert('Template name must be 1–64 chars: letters, digits, . _ -');
     return;
   }
-  // Full config (F2 fix — the old path saved only type/cwd/args, silently
-  // dropping proxy/agents/tools/skills/strip). Name-keyed so re-saving a name
-  // overwrites rather than duplicating.
   const res = await window.api.saveTemplateByName({ name, ...collectFormConfig() });
   await refreshTemplatesDropdown();
   if (res && res.template) inputTemplate.value = res.template.id;
@@ -2293,7 +1838,6 @@ function closeDialog() {
   dialogOverlay.classList.add('hidden');
 }
 
-// Split a CLI args string into an argv array, respecting quoted segments
 function parseArgs(str) {
   const out = [];
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
@@ -2311,23 +1855,10 @@ function expandPath(p) {
   return p;
 }
 
-// The config subset a template captures — the single source shared by session
-// creation (doCreate) and every template save path (F2 fix: the old quick-save
-// snapshotted only type/cwd/args and silently dropped the rest). Runtime-only
-// bits (resume/fork, prompt refs) are NOT here — doCreate adds those itself.
 function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
-  // Intent allowlist: null when every box is checked (the all-enabled default) —
-  // spread conditionally so an all-enabled config carries NO `intents` key, exactly
-  // like exportFromSession's opt-out omission (never freeze `[]` = "everything
-  // gated" onto a seat that meant "all on"). Present only when ≥1 intent is off.
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
-  // Auto-compact opt-out: Claude-only (its checkbox lives in the claude-only
-  // Other section). Checked = default = OMIT the key; unchecked = write `false`;
-  // NEVER `true` — key presence maps 1:1 to the opt-out, matching export
-  // (ipc-handlers.js exportFromSession). Conditional-spread like `intents` so an
-  // all-default config carries no key.
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
@@ -2348,20 +1879,11 @@ function collectFormConfig() {
     disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
     injectSkills: type === 'claude' ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
-    // Prompt refs are library-file references (system replaces, appends compose)
-    // — captured for BOTH agent types so a codex template round-trips. The
-    // legacy inline body is NEVER captured (F2 guard): doCreate passes param-7
-    // systemPromptBody=null, sourced independently of cfg.
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
     appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : [],
   };
 }
 
-// Per-session env vars from the New Session dialog's KEY=value textarea, as a flat
-// { KEY: value } map (or null when empty → create()'s null default, no persisted
-// env, no-scopes byte-identity holds). Captured OUTSIDE collectFormConfig on
-// purpose: that config feeds the template save path too, and per-session env is
-// not a template field (T46 scope) — keeping it here leaves templates untouched.
 function collectDialogEnv() {
   const { env } = parseEnvLines(inputEnv ? inputEnv.value : '');
   return Object.keys(env).length ? env : null;
@@ -2375,9 +1897,6 @@ async function doCreate() {
           systemPromptFile, appendPromptFiles, intents } = cfg;
   const env = collectDialogEnv();
 
-  // Prompts are referenced by library file now (system replaces, appends
-  // compose), sourced through cfg (single capture path). The legacy inline body
-  // is NEVER authored at create — param 7 stays null, independent of cfg (F2).
   const supportsPrompts = type === 'claude' || type === 'codex';
   const systemPromptBody = null;
 
@@ -2390,18 +1909,9 @@ async function doCreate() {
   const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
   const fork = supportsPrompts ? inputFork.checked : false;
 
-  // Box placement: route the create through THAT box's peer instead of the local
-  // engine. The peer owner fans the new session back into the sidebar's peer
-  // section, so there's no local terminal/sidebar surgery to do. When the box
-  // advertises create2 (M5) the full cfg crosses the wire (same collectFormConfig
-  // path as host); an older box takes only the bare {name,type,cwd} (its rich
-  // fields were greyed and never collected). systemPromptBody stays null (F2);
-  // execCommands are stripped client-side in peer-client (grants never cross).
   const placement = currentPlacement();
   if (placement !== 'host') {
     const boxId = placement;
-    // Guard: don't fire a create at a stopped box — peerCreateSession would fail
-    // obscurely at a dead peer. Keep the dialog open with a clear, actionable error.
     if (!boxPeerOnline(boxId)) {
       alert(`The "${boxId}" sandbox isn't running — start it from the Sandboxes panel first.`);
       return;
@@ -2420,20 +1930,11 @@ async function doCreate() {
       alert(`Create sandbox session failed: ${(res && res.error) || 'unknown error'}`);
       return;
     }
-    // If the box peer's visible set was materialized (a row hidden earlier), the new
-    // session isn't in the whitelist and would land invisible — ensure it shows,
-    // then open it: a box placement gives the same land-in-the-session parity a
-    // local create does (createTerminal + switchSession).
     await ensurePeerSessionVisible(boxId, res.name || name);
     openPeerSession(boxId, res.name || name);
-    // Name the sandbox by its friendly label (peer status carries it), not the raw
-    // box id — parity with the "Created sandbox …" toast in the Sandboxes panel.
     const boxSt = peerStatuses.get(boxId);
     const boxLabel = (boxSt && boxSt.label) || boxId;
     showToast(`Created "${res.name || name}" (${res.type || type}) in ${boxLabel}.`, { kind: 'peer-ui' });
-    // Non-fatal spawn warnings from the box (e.g. an injected skill references a
-    // subagent the box hasn't enabled) — same ack shape + toast path as a local
-    // create (slice 2 forwards create()'s warnings[] over the wire).
     for (const w of (res.warnings || [])) showToast(w, { kind: 'warn', duration: 15000 });
     return;
   }
@@ -2443,9 +1944,6 @@ async function doCreate() {
   // can surface with the dialog still open for correction.
   let spawnCwd = cwd;
   let worktree = null;
-  // Only worktree-backed when the row is visible (i.e. cwd is a git repo) AND
-  // checked — the row hides itself outside a repo, so a stale checked state can't
-  // fire a worktree in a non-repo dir.
   if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
     const branch = inputWorktreeBranch.value.trim();
     if (!branch) {
@@ -2462,8 +1960,6 @@ async function doCreate() {
     worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
   }
 
-  // Remember the chosen source dir (the repo/cwd the user picked, not the derived
-  // worktree path) for the Working Directory MRU.
   window.api.noteCwd(cwd);
 
   closeDialog();
@@ -2472,10 +1968,6 @@ async function doCreate() {
   // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
   // could abandon the managed wirescope when the port stops matching).
   if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
-  // Teams front door: when the team box is checked (agent + host placement only),
-  // route through team:create / team:join — each writes the manifest first, then
-  // spawns down the same path. Otherwise the plain createSession. The seat params
-  // are identical across all three; the team calls add the team fields.
   const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
   const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env };
   let result;
@@ -2496,34 +1988,22 @@ async function doCreate() {
     return;
   }
 
-  // Stamp worktree provenance onto the persisted entry (a later teardown can use
-  // it to offer removing the checkout).
   if (worktree) window.api.markSessionWorktree(name, worktree);
 
   createTerminal(name);
   addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null);
   switchSession(name);
 
-  // Non-fatal spawn warnings (e.g. an injected skill references a subagent this
-  // session hasn't enabled) — the session is already live; these just surface a
-  // config foot-gun that would otherwise fail silently at delegation time.
   const warnings = (result.session && result.session.warnings) || [];
   for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
 }
 
-// The dialog's primary action depends on which mode it was opened in: create a
-// session, or save a template (no spawn).
 function submitDialog() {
   if (dialogMode === 'template') saveTemplateFromForm();
   else doCreate();
 }
 
-// Arrow-wrapped: a bare `openDialog` reference would pass the click MouseEvent as
-// the prefill arg (openDialog(prefill) now takes one), mis-seeding the dialog.
 document.getElementById('btn-new').addEventListener('click', () => openDialog());
-// Sidebar-header toolbar siblings of + (new session): new sandbox opens the
-// sandbox panel (P2's box list owns creation — no inline create flow), add peer
-// opens the peers-SETUP dialog. Both are just openers; Cmd+T still maps to +.
 document.getElementById('btn-new-sandbox').addEventListener('click', () => openSandboxDialog());
 document.getElementById('btn-add-peer').addEventListener('click', () => openPeersDialog());
 document.getElementById('btn-cancel').addEventListener('click', closeDialog);
@@ -2532,10 +2012,6 @@ btnCreate.addEventListener('click', submitDialog);
 document.getElementById('btn-browse').addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
   if (!dir) return;
-  // Box placement: the picker returns a HOST folder but the box takes a container
-  // path. Translate it against THAT box's live config; if the box can't see the
-  // folder, tell the user rather than writing a wrong path. Typed paths are left
-  // untouched (power users / web frontend enter a container path directly).
   if (currentPlacement() !== 'host') {
     await pickSandboxCwd(dir);
     return;
@@ -2546,52 +2022,32 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
   refreshWorktreeForCwd();
 });
 
-// Translate a picked HOST folder to the box's container path and fill the cwd
-// field. Reachable (under the box workDir or a configured mount) → fill silently.
-// Unreachable → leave the field as-is and tell the user, rather than writing a
-// wrong container path. (The mount-into-the-shared-box + restart flow was
-// superseded by M6b's per-project boxes — a folder the shared box can't see will
-// find-or-create its OWN box; that lands in the M6b work.)
 async function pickSandboxCwd(hostDir) {
   const t = await window.api.sandboxTranslatePath(hostDir, currentPlacement());
   if (t && t.container) { inputCwd.value = t.container; return; }
   showToast(`"${hostDir}" isn't reachable in the sandbox — type a container path, or mount the folder from the Sandboxes panel.`, { kind: 'warn', duration: 9000 });
 }
 
-// Enter to submit (Escape no longer closes — only Cancel button does)
 dialogOverlay.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitDialog();
 });
 
-// --- Templates library editing: the New Session dialog doubles as the template
-// editor (F4a — a template IS this form's config; no duplicate control set). ---
 
-// Toggle the dialog's chrome between session-create and template-authoring.
-// applyTypeDefaults also reads dialogMode to keep prompt/resume rows hidden while
-// authoring even when the type changes.
 function setDialogMode(mode) {
   dialogMode = mode;
   const authoring = mode === 'template';
   dialogTitle.textContent = authoring ? (editingTemplateId ? 'Edit Template' : 'New Template') : 'New Session';
   nameFieldLabel.textContent = authoring ? 'Template name' : 'Name';
   btnCreate.textContent = authoring ? 'Save Template' : 'Create';
-  // The spawn-from-a-template dropdown and the quick "Save as Template" button
-  // are create-mode affordances; in template-mode you're already editing one.
   btnSaveTemplate.style.display = authoring ? 'none' : '';
   if (authoring) {
     templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
-    // Placement is a create-time choice; templates are host-authored. Hide the
-    // selector and drop any grey so the full field set is editable.
     placementRow.style.display = 'none';
     greyRichFields(false);
-    // Template authoring is never CLI-gated (you may author for a CLI you lack) —
-    // clear any tool-gate disable a prior create-mode open left on Create.
     applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
   }
 }
 
-// Open the dialog as a template editor. tpl = null → blank "New Template"; a
-// template object → prefilled "Edit Template" keyed to its id.
 async function openTemplateEditor(tpl = null) {
   editingTemplateId = tpl ? tpl.id : null;
   inputType.value = (tpl && tpl.type) || 'claude';
@@ -2604,22 +2060,14 @@ async function openTemplateEditor(tpl = null) {
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
-  // Opt-out prefill: unchecked ONLY when the template captured autoCompact:false;
-  // absent/true → checked (the default). Mirrors collectFormConfig's key mapping.
   if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
   setDialogMode('template');
-  // Fix section show/hide for the type without firing the default empty-set async
-  // renders — we render the rich checklists below from the template's own sets.
   applyTypeDefaults({ skipAsyncRefresh: true });
   const settings = await window.api.getSettings();
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setAgentLibCache((await window.api.listAgents()) || []);
-  // Prompt refs are agent-type (claude||codex), NOT claude-only — load the
-  // library and prefill the system dropdown + append checklist so a codex
-  // template round-trips its prompts too. fillSystemPromptSelect falls back to
-  // '' when the ref's file is gone (graceful in the UI, like the spawn path).
   const agentType = inputType.value === 'claude' || inputType.value === 'codex';
   if (agentType) {
     await loadPromptLib();
@@ -2642,10 +2090,6 @@ async function openTemplateEditor(tpl = null) {
   setTimeout(() => inputName.select(), 50);
 }
 
-// Save the form as a template (template-mode primary action). New / quick-save
-// are name-keyed upserts; Edit renames in place on the known id, blocking a
-// rename that would collide with a DIFFERENT template's name (F3 edge — a nudge
-// rather than silently merging the other one away).
 async function saveTemplateFromForm() {
   const name = inputName.value.trim();
   if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
@@ -2666,9 +2110,6 @@ async function saveTemplateFromForm() {
   if (templatesDrawerRefresh) templatesDrawerRefresh();
 }
 
-// ---------------------------------------------------------------------------
-// PTY data routing
-// ---------------------------------------------------------------------------
 
 window.api.onPtyData((name, data) => {
   const s = sessions.get(name);
@@ -2676,23 +2117,15 @@ window.api.onPtyData((name, data) => {
 });
 
 window.api.onSessionExit((name, code, meta) => {
-  // Install session finished (Task 14): the CLI it fetched may now be on PATH, so
-  // bust the tool-doctor cache and — if the New Session dialog is still open —
-  // re-run the gate so Create re-enables itself once the tool landed. Invalidate
-  // FIRST (awaited) so the refresh's re-probe sees the fresh PATH, not the stale
-  // cache. `isToolInstallSession` is the pure decision (tool-doctor leaf). This
-  // runs BEFORE the archivedEntry early return below: closing the installer tab
-  // (✕/⌘W/retire) stamps archivingSessions, so the natural end gesture would
-  // otherwise skip the bust entirely and lean on the 30s TTL alone.
+  // Invalidate the tool cache FIRST (awaited) so the re-probe sees the fresh PATH, not the
+  // stale cache. Must stay BEFORE the archivedEntry early return below: closing the installer
+  // tab stamps archivingSessions, so the natural end gesture would otherwise skip the bust.
   if (isToolInstallSession(name)) {
     (async () => {
       try { await window.api.invalidateToolCache(); } catch {}
       if (!dialogOverlay.classList.contains('hidden')) refreshNewSessionToolGate();
     })();
   }
-  // Archive in flight (✕ / ⌘W): this exit IS the archive. Drop the live tab +
-  // terminal, then rebuild the row as an archived placeholder in place — no app
-  // restart needed — and stay silent (an archive exit is expected).
   const archivedEntry = archivingSessions.get(name);
   removeSession(name);
   if (archivedEntry) {
@@ -2701,18 +2134,10 @@ window.api.onSessionExit((name, code, meta) => {
     refreshSidebarView();
     return;
   }
-  // Deliberate exits (user kill, restart, app quit) arrive expected:true and
-  // stay silent, as does a clean self-exit (code 0, no signal — the user typed
-  // `exit`/quit in the pane they were looking at). What's left is the session
-  // dying on its own: without this toast the tab just vanished, and a crash
-  // was indistinguishable from a clean quit. AGENT-ONLY: the toast means
-  // "something you rely on died while you weren't looking" — a bash pane is
-  // usually one the operator is looking AT, and intent-spawned bash that
-  // fast-fails at code≠0 would otherwise storm toasts. Every exit still lands in
-  // the IPC log (main-side, all types) — narrowing the toast hides nothing.
+  // Deliberate exits (expected:true) and clean self-exits stay silent. AGENT-ONLY on
+  // purpose: intent-spawned bash that fast-fails at code≠0 would otherwise storm toasts.
+  // Every exit still lands in the IPC log, so narrowing the toast hides nothing.
   if (meta && meta.agentType && !meta.expected && (code !== 0 || meta.signal)) {
-    // Missing-CLI death (Task 12): a fast code-1 exit whose command still isn't on
-    // PATH — name the tool + the fix instead of the opaque generic message.
     if (meta.missingTool) {
       showToast(
         `${name} couldn't start: the \`${meta.missingTool}\` CLI wasn't found on PATH. Install it and try again.`,
@@ -2739,58 +2164,31 @@ window.api.onSessionActivity((name, state) => {
     applyThinkBadge(el);
   }
   el.dataset.activity = state;
-  // Activity bumps recency + the "working/idle" state group. Seed the meta and
-  // re-lay-out (debounced) so recency sort + state grouping stay live between the
-  // periodic meta polls.
   sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
   scheduleSidebarRelayout();
 });
 
-// Needs-attention badge: the session's CLI is blocked on the human (permission
-// dialog / unknown notification). attn is {kind, message, ts} or null; main
-// owns set/clear (keystroke or turn resume clears it there).
 window.api.onSessionAttention((name, attn) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   if (attn) {
     el.dataset.attention = attn.kind;
-    // Message rides the dataset for the hover card (no native title on rows).
     el.dataset.attentionMsg = attn.message || '';
-    // !document.hasFocus() mirrors the desktop's !owningWin.isFocused() gate on
-    // notifyOS — a tab the human is looking at doesn't need an OS notification.
     if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(attentionNotice(name, attn));
   } else {
     delete el.dataset.attention;
     delete el.dataset.attentionMsg;
   }
-  // The needs-attention set/clear changed the tab-title badge count (web-gated
-  // inside; a no-op on desktop).
   if (window.__CLODEX_WEB__) updateWindowTitle();
 });
 
-// ---------------------------------------------------------------------------
-// Peered Clodexes — core-side anchor only. The peer RUNTIME (sidebar rows,
-// peer bar, control, event subscriptions, peer popovers) lives in peers-ui.js;
-// what stays here is the shared state below (injected into the module by
-// reference) plus the peers-SETUP dialog further down — connection config,
-// which reads these Maps directly. Protocol/reconnect logic is main-process
-// (peer-client.js). A peer being offline is normal — render calm, never error.
-// ---------------------------------------------------------------------------
 
 const peerStatuses = new Map(); // peerId -> status from peer-state events
 const peerTunnels = new Map();  // peerId -> managed-tunnel status (may lag peerStatuses)
-// peerId -> on-demand WEB-view tunnel status (t30b). Sparse by design: an entry
-// exists only while someone has asked to look at that peer's browser frontend,
-// unlike peerTunnels which has a row for every ssh peer.
 const peerWebTunnels = new Map();
-// Our own app version, cached once for the peer identity "outdated" hint (a peer
-// reporting a different version in its hello). null until fetched / if it fails.
 let ourAppVersion = null;
 window.api.getVersion().then((v) => { ourAppVersion = v || null; }).catch(() => {});
 
-// Context-window usage per session, from Claude's statusline side-channel (the
-// real figures — the proxy only reports message/turn counts, not % or absolute
-// tokens of the window). Cached so the proxy bar can show them too.
 const ctxPct = new Map();
 const ctxTokens = new Map(); // name -> { used, size, cost, model }
 
@@ -2818,9 +2216,6 @@ window.api.onSessionCtx((name, pct, tok, size, cost, modelName) => {
   if (name === activeSession) renderProxyBar();
 });
 
-// Parked-DM count badge (✉N). Fed by the main-process pending-count poll (deltas
-// only) and seeded from session:list on first paint. Click-to-flush is wired in
-// addSessionToSidebar; this just paints the count. Hidden at 0 via :empty CSS.
 function applyPendingBadge(name, count) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
@@ -2830,20 +2225,12 @@ function applyPendingBadge(name, count) {
   badge.dataset.tip = count > 0
     ? `${count} parked message${count === 1 ? '' : 's'} waiting — click to deliver now`
     : 'Parked messages waiting — click to deliver now';
-  // With a live count, enrich the tooltip with per-message {from, snippet} so the
-  // operator can judge urgency without waking the agent. Lazy (on the count-change
-  // signal, not on hover — native/data-tip tooltips can't fetch on hover) and
-  // best-effort: a failed/empty peek leaves the plain count tip above. Snippets
-  // only — the main side clamps them; full bodies never reach the renderer.
   if (count > 0) {
     window.api.peekPending(name).then((items) => {
       if (!Array.isArray(items) || items.length === 0) return;
-      // Guard against a stale async result landing after the count went to 0.
       if (!badge.textContent) return;
       const shown = items.slice(0, 5)
         .map((m) => `• ${m.from}: ${m.snippet || '(no preview)'}`);
-      // The peek is a fresh store read; `count` is the (possibly older) delta
-      // value — reconcile so the header never disagrees with the bullets.
       const total = Math.max(count, items.length);
       const more = Math.max(0, total - shown.length);
       const lines = [
@@ -2860,10 +2247,6 @@ window.api.onPendingCount((msg) => {
   if (msg && typeof msg.name === 'string') applyPendingBadge(msg.name, msg.count || 0);
 });
 
-// Team ticket badge (Task 25): a seat holding an open ticket carries its id on
-// data-ticket (a small dot via CSS; the id itself shows in the hovercard). Fed by
-// the main-process session-ticket broadcast (per mutation + watchdog sweep) and
-// seeded from session:list on first paint. null clears it.
 function applyTicketBadge(name, ticket) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
@@ -2875,29 +2258,13 @@ window.api.onSessionTicket((msg) => {
   if (msg && typeof msg.name === 'string') applyTicketBadge(msg.name, msg.ticket || null);
 });
 
-// Peer touched-files count shadow: peer key -> count. Fed by the owner's
-// telemetry frames (count-only; the full list stays pull-on-demand via the
-// query endpoint). Lets a remote tab's 📄N badge tick live instead of only
-// updating when the popover is opened. Local sessions read the count off
-// filesState directly; peer tabs prefer this shadow.
 const peerFilesCount = new Map();
 
-// --- Proxy telemetry status bar (wirescope pull) --------------------------
-// The main process polls the proxy and pushes a per-session payload. We show
-// the ACTIVE session's line in a strip under the terminal, ticking the cache
-// countdown locally between polls and degrading honestly (~/grey/"stale")
-// when polls stop arriving so it never fakes precision.
 const PROXY_POLL_MS = 5000;
 const proxyState = new Map(); // name -> { payload, at }
-// Touched-files feed: name -> [{ path, tool, ts, count, sub }] newest-first
-// (main.js session ring, pushed on every observed file-tool call; pulled fresh
-// when the Files popover opens, so a detached-window gap loses nothing).
 const filesState = new Map();
-// Sessions whose feed grew since the popover was last opened — drives the
-// files button's unseen-changes highlight (cleared on open, never on poll).
 const filesUnseen = new Set();
 
-// Type of a session, read from its sidebar tab (the renderer's source for it).
 function sessionTypeOf(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   return item ? (item.dataset.type || null) : null;
@@ -2906,11 +2273,6 @@ function activeIsAgent() {
   const t = activeSession ? sessionTypeOf(activeSession) : null;
   return t === 'claude' || t === 'codex';
 }
-// Minimal telemetry line built purely from the CLI statusline side-channel
-// (ctxPct/ctxTokens), for a session with NO wirescope payload — a Bedrock/Vertex
-// session or any un-proxied one. Without this the proxy-bar's no-payload branch
-// blanks the whole line even though the sidebar ctx badge (same side-channel)
-// shows data. No clickable popovers (those need the wire), just ctx + cost text.
 function sideChannelSegs(name) {
   const segs = [];
   const pct = ctxPct.get(name);
@@ -2935,19 +2297,12 @@ function sideChannelSegs(name) {
   }
   return segs;
 }
-// Attached peer tab whose owner serves the popover query endpoint — such a
-// tab gets the status bar (for the files button) even with no telemetry.
 function activePeerQueryable() {
   const entry = activeSession ? sessions.get(activeSession) : null;
   if (!entry || !entry.peer) return false;
   const st = peerStatuses.get(entry.peer.id);
   return !!(st && st.online && Array.isArray(st.caps) && st.caps.includes('query'));
 }
-// Attached peer AGENT tab whose owner advertises remote config editing (the 'args'
-// cap) — such a tab gets a `⚙ Edit session` button on the proxy bar that opens the
-// shared Edit Session dialog (with Skills folded in as a peer-only section), served
-// by peers-ui's openPeerArgs. Gated to agent sessions so a remote bash tab doesn't
-// sprout a config button.
 function activePeerConfigurable() {
   const entry = activeSession ? sessions.get(activeSession) : null;
   if (!entry || !entry.peer) return false;
@@ -2957,33 +2312,16 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
-// --- Plugin host (renderer half) ---
-// Self-contained island (plugin-host.js) owning the six UI registries plugins
-// contribute through (plugin-plan.md [internal design doc, not in this repo] §2.1-2.6). Phase 1 ships NO plugins:
-// every registry is empty, so statusBarHtml() is '', hasVisibleContribution()
-// is false, menuEntriesFor() is [] and handleBarClick/handleMenuPick return
-// false — i.e. every seam below is byte-inert until a plugin registers.
-// getWorkspaceId is getter-shaped because currentWorkspaceId is filled async.
 const pluginBar = initPluginHost({
   getActiveSession: () => activeSession,
   sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
   scheduleSidebarRelayout,
   getWorkspaceId: () => currentWorkspaceId,
-  // Core capabilities plugins reach through rhost instead of window.api. Each
-  // has non-workbench consumers in core, which is why it is wrapped, not moved.
   listSessions: () => window.api.listSessions(),
   openPath: (p) => window.api.fileOpen(p),
   showToast,
 });
 
-// Renderer-half activation — ONCE PER WINDOW (§3.3 law 1). The engine loads
-// engine halves once per app run; each window pulls the catalog and requires the
-// renderer half of every loaded plugin itself, so per-window state lives in the
-// plugin's activation closure and dies with the window.
-//
-// Pull, not push: a window that opens later gets the same catalog, and a plugin
-// that arrives while this window is open is picked up by the plugin-state event
-// rather than by any buffered delta (§3.3 law 2 — events are unbuffered hints).
 async function activatePluginRenderer(id) {
   let reported = false;
   try {
@@ -3001,9 +2339,6 @@ async function activatePluginRenderer(id) {
     try { await window.api.pluginInvoke('_host', 'renderer.report', [id, true]); } catch {}
     return true;
   } catch (e) {
-    // One plugin's renderer half failing must not cost the others theirs, and
-    // must never take the window's own bootstrap down with it. The engine-side
-    // counter decides quarantine; this window only reports what it saw.
     console.error(`[plugin:${id}] renderer activation failed`, e);
     if (!reported) {
       try { await window.api.pluginInvoke('_host', 'renderer.report', [id, false, String((e && e.message) || e)]); } catch {}
@@ -3012,11 +2347,8 @@ async function activatePluginRenderer(id) {
   }
 }
 
-// `require` of an absolute path: contextIsolation is off by design in this app
-// (the renderer requires xterm modules directly), which is precisely what makes
-// a Tier-A in-process plugin possible without a bundler. The WEB bundle cannot
-// do this, so it resolves through the build-generated id→module registry
-// instead (plan GAP G7, step W8) — same module, different resolver.
+// require() of an absolute path works only because contextIsolation is off by design here.
+// The web bundle cannot, so it resolves through the build-generated id→module registry.
 function requirePluginRenderer(rendererPath, id) {
   const reg = window.__CLODEX_PLUGIN_REGISTRY__;
   if (reg && typeof reg.get === 'function') return reg.get(id) || null;
@@ -3035,78 +2367,40 @@ async function loadPluginRenderers() {
 }
 loadPluginRenderers();
 
-// The other half of W7's "disable removes it from EVERY window". The engine
-// broadcasts `plugin-state` on the `_host` pseudo-id when a plugin is toggled;
-// each open window disposes or activates its OWN renderer half in response,
-// because only the window holding those registries can tear them down. An
-// unbuffered hint by design (§3.3 law 2) — a window that opens later pulls the
-// catalog instead.
 if (window.api.onPluginEvent) {
   window.api.onPluginEvent((pluginId, topic, payload) => {
     if (pluginId !== '_host' || topic !== 'plugin-state' || !payload || !payload.id) return;
     if (payload.enabled) activatePluginRenderer(payload.id);
     else pluginBar.dispose(payload.id);
-    // A toggle from the menu, or from another window, while this window has the
-    // Manage Plugins dialog open. Re-render rather than leaving a stale tick —
-    // and only when it is open, so a closed dialog costs nothing (it pulls on
-    // open anyway).
     if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
   });
 }
 
-// Per-session quick-access icons on the left of the status bar. Claude gets a
-// Tools button (tool gating is Claude-only); both agent types get an Edit
-// shortcut so the crowded right-click menu isn't the only way in.
-// Right side of the bar: session actions (tools, edit) plus the keep-warm
-// control. `holdHtml` is the warm-control markup built by renderProxyBar from
-// the live payload; the early-return paths call this with no argument.
 function renderSessionActions(holdHtml = '') {
   const el = document.getElementById('proxy-actions');
   if (!el) return;
   const type = activeSession ? sessionTypeOf(activeSession) : null;
   const btns = [];
   if (type === 'claude' || type === 'codex') {
-    // Touched-files feed stays a STANDALONE button — it's live status (count +
-    // unseen accent latch), not a launcher. Fed by the wire (Claude); a Codex
-    // session only gets it once something lands in its feed (no Codex tap yet).
     const nFiles = (filesState.get(activeSession) || []).length;
     if (type === 'claude' || nFiles > 0) {
       const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
-      // Unseen-changes latch: accent-lit from the moment a touch lands until
-      // the popover is opened — a count silently ticking is too easy to miss.
       const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
       btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched — click to view or diff">${label}</button>`);
     }
-    // Everything else (tools/skills/agents/intents/edit/history/reload) collapses
-    // behind ONE button + a dropdown — the bar is out of width even at max, and
-    // these are seldom-clicked launchers. Entries are type-conditioned by the
-    // session-actions leaf; the menu's onPick routes back to the openers below.
     btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
   }
-  // Peer tabs (type "remote"): the touched-files popup is the one action that
-  // works across the link — served by the owner's query endpoint. Everything
-  // else on this bar is owner-local machinery.
   if (activePeerQueryable()) {
-    // Prefer the live count-shadow (fed by the owner's telemetry frames) over
-    // filesState, which is only populated when the popover pulls the full list.
     const nFiles = peerFilesCount.has(activeSession)
       ? peerFilesCount.get(activeSession)
       : (filesState.get(activeSession) || []).length;
     const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
-    // Same unseen latch as local sessions: a count silently ticking on a
-    // remote agent is exactly what Bogdan couldn't see without clicking.
     const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
     btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched (on its own machine) — click to view or diff">${label}</button>`);
   }
-  // Peer config: a single button opening the Edit Session dialog for the REMOTE
-  // session (Skills fold in there as a peer-only section), served by peers-ui's
-  // openPeerArgs through the existing peer data source.
   if (activePeerConfigurable()) {
     btns.push('<button class="px-action" data-act="peer-edit" data-tip="Edit this remote session\'s settings (args, prompts, tools, skills…)">⚙ Edit Session</button>');
   }
-  // Plugin actions + segments render INSIDE this span, on every branch of
-  // renderProxyBar (both early returns call this too), so a contribution is
-  // never silently dropped for Bedrock/Vertex or unlinked sessions.
   el.innerHTML = btns.join('') + pluginBar.statusBarHtml() + (holdHtml || '');
 }
 
@@ -3117,19 +2411,11 @@ function renderProxyBar() {
   const tele = document.getElementById('proxy-telemetry');
   renderSessionActions();
   const st = activeSession ? proxyState.get(activeSession) : null;
-  // Show the bar whenever an agent session is active (so the action icons are
-  // always reachable), or whenever there's telemetry to show. Hide it only for
-  // non-agent sessions with nothing to display.
   if (!st || !st.payload) {
-    // A plugin segment can keep the bar alive for a session type core would
-    // otherwise hide it for (plan §2.1) — false while no plugin registers.
     if (activeIsAgent() || activePeerQueryable() || activePeerConfigurable() || pluginBar.hasVisibleContribution()) {
       bar.style.display = '';
       if (main) main.classList.add('has-proxy-bar');
       tele.className = '';
-      // No wirescope payload (Bedrock/Vertex or un-proxied): fall back to the
-      // CLI statusline side-channel so the line shows ctx + cost instead of
-      // going blank. Empty for a non-claude/no-data tab.
       tele.innerHTML = activeIsAgent() ? sideChannelSegs(activeSession).join('<span class="px-sep">·</span>') : '';
     } else {
       bar.style.display = 'none';
@@ -3144,9 +2430,6 @@ function renderProxyBar() {
   if (!p.linked) {
     tele.className = 'px-muted';
     tele.textContent = 'proxy: no live session for this agent';
-    // Keep the action controls present (disabled) instead of yanking them on
-    // every link blip — the persisted strip level + advertised caps still ride
-    // this payload, so the buttons show their saved state and re-enable on relink.
     renderSessionActions(buildProxyExtras(p));
     return;
   }
@@ -3169,12 +2452,7 @@ function renderProxyBar() {
   const wireTok = p.context && typeof p.context.inputTokens === 'number' ? p.context.inputTokens : null;
   const usedTok = wireTok != null ? wireTok : (sc && sc.used > 0 ? sc.used : null);
   const sizeTok = sc && sc.size > 0 ? sc.size : null;
-  // When wirescope exposes the breakdown, the ctx seg becomes a button that
-  // opens the composition popover. Standalone (no cap) → plain text.
   const ctxUtil = !!(p.capabilities && p.capabilities.context_utilization);
-  // Peer payloads carry no capabilities/base/sessionId (deliberate — no
-  // reach-back); `queries` is the owner's advertisement of which popovers
-  // its query endpoint can answer, so those chips stay clickable remotely.
   const peerQueries = Array.isArray(p.queries) ? p.queries : [];
   const ctxClickable = !!(p.linked && p.capabilities &&
     (p.capabilities.context_composition || p.capabilities.context_view || ctxUtil))
@@ -3197,16 +2475,8 @@ function renderProxyBar() {
   } else if (p.context && p.context.messages != null) {
     segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Messages in context'}">🧠 ${p.context.messages} msg</span>`);
   }
-  // Turn count: the LIVE number (turns in context, resets at compact) leads;
-  // the cumulative total rides the tooltip. Decision shared with the hovercard
-  // via turn-stat.js.
   const tSeg = turnSeg(p);
   if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
-  // API roundtrips — the truer "how busy" gauge than turns (one prompt fans out
-  // into many tool-loop roundtrips; ~8× is typical). Live-first like the turn
-  // seg: prefers wirescope's since_compact rollup (p.sinceCompact, shape frozen
-  // 07-15 — flips automatically once the proxy release vendors), cumulative in
-  // the tooltip; degrades to the cumulative count on older proxies.
   const rSeg = reqSeg(p);
   if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
   // Warmth is Claude-only signal (a prompt-cache pinger). We have none for Codex,
@@ -3226,12 +2496,6 @@ function renderProxyBar() {
   }
   const cSeg = costSeg(p);
   if (cSeg) {
-    // Live-first cost via the shared turn-stat leaf: since-compact spend leads,
-    // the cumulative figure rides the tooltip (same policy as turn/req segs).
-    // When wirescope advertises the cost-over-time timeline, the cost number
-    // opens a native breakdown popover (read-carriage vs output, cumulative),
-    // which itself links out to the full /_timeline dashboard. Stays plain text
-    // otherwise, so a pre-deploy/standalone session just shows the estimate.
     const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId)
       || peerQueries.includes('cost');
     if (timeline) {
@@ -3240,33 +2504,16 @@ function renderProxyBar() {
       segs.push(`<span class="px-seg px-cost" data-tip="${esc(cSeg.tip)} (wirescope)">${esc(cSeg.text)}</span>`);
     }
   } else if (sc && typeof sc.cost === 'number' && sc.cost > 0) {
-    // Wire-off fallback (Bedrock/Vertex or no proxy): the wirescope cost
-    // telemetry above is dark, so show the CLI's own running total from the ctx
-    // side-channel. No time-series, so it's plain text — no breakdown popover.
     const costTxt = sc.cost >= 1 ? sc.cost.toFixed(2) : sc.cost.toFixed(4);
     segs.push(`<span class="px-seg px-cost" data-tip="Cost so far, reported by the CLI (no wirescope — no live breakdown)">~$${costTxt}</span>`);
   }
   if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">⚠ ${p.refusals}</span>`);
-  // Cache-bust chip: report GENUINE busts only. Two classes of noise are
-  // subtracted, per settled policy (07-06), so the number the operator sees is
-  // exactly "cache breaks worth a look":
-  //   1. fault:self — the per-turn thinking-strip microbusts (a settled turn's
-  //      cached thinking falling behind the last-user boundary each turn). A
-  //      DESIGN DECISION, every active session makes them by construction —
-  //      excluded entirely, not merely calmed.
-  //   2. restart_between — busts that straddled a proxy restart = the one-time
-  //      deploy/upgrade re-cache tax (wirescope v0.6.21+ attributes these per
-  //      class). Self-inflicted and self-healing, so subtracted per class:
-  //      real = count − restart_between.
-  // What remains is genuine: `content` (a real injected-prefix change — model
-  // swap, midnight date rollover, a CLAUDE.md edit → amber) and `environment`
-  // (idle-cold cache → calm, a real cache event but nothing changed). No chip at
-  // all when nothing genuine remains, which is every steady session by design.
-  // wirescope classifies + attributes; we just subtract + render. Clickable into
-  // the per-turn inspector when we can reach /_bust (base + live sessionId).
+  // Report GENUINE busts only: exclude fault:self entirely (the per-turn thinking-strip
+  // microbusts every active session makes by construction) and subtract each class's
+  // restart_between (the one-time proxy-restart re-cache tax) — real = count − restart_between.
+  // No chip at all when nothing genuine remains, which is every steady session by design.
   const bsum = p.busts;
   if (bsum && Array.isArray(bsum.classes)) {
-    // real busts per class, deploy-tax removed; drop the designed self microbusts.
     const real = (c) => Math.max(0, (c.count || 0) - (c.restart_between || 0));
     const genuine = bsum.classes.filter((c) => c && c.fault && c.fault !== 'self');
     const genuineCount = genuine.reduce((n, c) => n + real(c), 0);
@@ -3289,29 +2536,17 @@ function renderProxyBar() {
   }
 
   tele.innerHTML = segs.join('<span class="px-sep">·</span>');
-  // Keep-warm + strip level live with the actions on the right, not the info column.
   renderSessionActions(buildProxyExtras(p));
 }
 
-// The two live-action controls (keep-warm, strip level) that sit with the static
-// action buttons. Their VISIBILITY is gated on the advertised capability +
-// persisted state; their ACTIONABILITY (enabled vs disabled) on the live link.
-// Two independent disappearance bugs had to be closed for the strip button:
-//   1. Link flicker — the button was being removed from the DOM whenever the
-//      proxy link blipped. Fixed by gating presence on capability+persisted
-//      stripLevel (which we always know) and only DISABLING on lost link.
-//   2. Capability flap — a failed/foreign/fallback probe returns capabilities
-//      WITHOUT strip_thinking, which used to retract the button for up to a probe
-//      cache TTL. strip_thinking.available is a STATIC property of a wirescope
-//      deployment, so main.js latches it permanently per base (ProxyPoller
-//      .stripCapBases) and a downgraded probe can no longer drop the cap.
-// Net: the button's presence is now a deployment property, never a per-tick
-// network fact; only its enabled state tracks the live link.
+// VISIBILITY of these two controls is gated on advertised capability + persisted state;
+// ACTIONABILITY (enabled vs disabled) on the live link. Gating presence on the link makes
+// the strip button vanish on every blip, and on a downgraded capability probe —
+// strip_thinking.available is a static deployment property, latched main-side per base,
+// so a probe that omits it must not retract the button.
 function buildProxyExtras(p) {
   const actionable = !!(p.linked && p.base && p.sessionId);
 
-  // Keep-warm: a single fire button that opens a duration dropdown (1h/4h/8h,
-  // plus Stop when held). Held/armed state is only known on a live record.
   let holdHtml = '';
   if (p.capabilities && p.capabilities.hold) {
     if (actionable && p.hold) {
@@ -3332,10 +2567,6 @@ function buildProxyExtras(p) {
     }
   }
 
-  // Strip-level control (only when wirescope advertises the lever). A cumulative
-  // ladder opened via dropdown: 0 off · 1 strips prior-turn thinking · 2 also
-  // strips superseded tool results. The current turn is never touched;
-  // non-destructive. p.stripLevel is our persisted, authoritative level.
   let stripHtml = '';
   const stripCap = p.capabilities && p.capabilities.strip_thinking;
   if (stripCap && stripCap.available) {
@@ -3375,17 +2606,12 @@ function tickProxyBar() {
   } else w.textContent = '❄️ cold';
 }
 
-// Per-tab cache-warmth badge — the async payoff: every open session shows a
-// live countdown even while unfocused (the statusline can't, it only runs on
-// interaction). Also flags refusals on the tab.
 function applyWarmBadge(name) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   const badge = el.querySelector('.session-warm');
   const st = proxyState.get(name);
   const p = st && st.payload;
-  // Warmth is a Claude-only prompt-cache signal; a codex tab has none, so never
-  // paint a warmth state for it (see the proxy-bar seg gate above).
   const isCodex = el.dataset.type === 'codex';
 
   if (badge) {
@@ -3399,7 +2625,6 @@ function applyWarmBadge(name) {
         badge.textContent = '?'; badge.dataset.state = 'stale';
       } else if (p.warmth.state === 'warm' && remaining != null && remaining > 0) {
         badge.textContent = fmtMinutes(remaining);
-        // Under 5 minutes the pill turns red — cache expiry is imminent.
         badge.dataset.state = remaining < 300 ? 'low' : 'warm';
       } else {
         badge.textContent = 'cold'; badge.dataset.state = 'cold';
@@ -3416,14 +2641,6 @@ window.api.onSessionProxy((name, payload) => {
   if (name === activeSession) renderProxyBar();
 });
 
-// Thinking-duration badge — the wedge tell Bogdan asked for mid-debug: the
-// amber dot pulses identically for a 3s turn and a permanently-stuck agent.
-// Quiet for the first 2 minutes (normal turns stay badge-free), then shows
-// elapsed minutes; at 10 minutes the pill shifts to the error tint — long
-// enough that "is it wedged?" is a fair question, without claiming it IS
-// (deep Fable turns can run that long legitimately). Driven off the row's
-// thinkingSince stamp (set on the ENTRY into thinking in onSessionActivity),
-// ticked by the shared 1s interval below.
 const THINK_BADGE_MS = 2 * 60 * 1000;
 const THINK_LONG_MS = 10 * 60 * 1000;
 function applyThinkBadge(el) {
@@ -3440,19 +2657,11 @@ function applyThinkBadge(el) {
   badge.dataset.state = elapsed >= THINK_LONG_MS ? 'long' : 'on';
 }
 
-// --- Subagent child rows -----------------------------------------------------
-// Task/background subagents a session spawns share the parent's session_id on
-// the wire, so the parent's /_status record carries them in `payload.subagents`
-// (shaped in proxy-util). We draw them as indented child rows under the parent
-// tab and, on click, open a popover that polls the on-demand /_subagents detail
-// for "what is it doing right now" (~one turn stale — see wirescope contract).
-//
-// There is NO wire signal for "subagent done" — a Task sub just stops making
-// requests — so done/aging is POLICY we own here (the proxy emits raw facts
-// only). We derive an effective inactivity = lastActiveS + age-of-this-payload,
-// and: under ACTIVE_S → live (pulsing); past DROP_S → stop rendering (the entry
-// lingers in the array until the whole session is swept, so we age it out
-// ourselves rather than wait). Between the two it reads as a settled child.
+// Task/background subagents share the parent's session_id on the wire, so they arrive in
+// the parent's payload.subagents. There is NO wire signal for "subagent done" — a Task sub
+// just stops making requests — so done/aging is POLICY we own here: effective inactivity =
+// lastActiveS + age-of-this-payload; under ACTIVE_S → live, past DROP_S → stop rendering
+// (the entry lingers in the array until the whole session is swept).
 const SUBAGENT_ACTIVE_S = 30;   // seen within this window → "live"
 const SUBAGENT_DROP_S = 300;    // stale past this → drop the row entirely
 
@@ -3469,7 +2678,6 @@ function applySubagents(name) {
   const dead = ageS > PROXY_POLL_MS * 4 / 1000;
   const subs = (p && p.linked && !dead && Array.isArray(p.subagents)) ? p.subagents : [];
 
-  // Filter to the renderable (not-yet-aged-out) set, preserving proxy order.
   const live = [];
   for (const s of subs) {
     const eff = (s.lastActiveS == null) ? 0 : s.lastActiveS + ageS;
@@ -3501,9 +2709,6 @@ function applySubagents(name) {
       });
     }
     row.dataset.state = state;
-    // Per-subagent cost share (wirescope v0.6.22+ est_usd) rides the poll we
-    // already make — null (never 0) = unbilled/pre-.22, so only show it when
-    // present. In the meta it sits after the turn count: "3 · ~$0.42".
     const costTxt = (typeof s.estUsd === 'number') ? `~${fmtUsd(s.estUsd)}` : '';
     row.title = `${s.label || s.key}${s.model ? ' · ' + s.model : ''}`
       + `${s.requests ? ' · ' + s.requests + ' turn' + (s.requests === 1 ? '' : 's') : ''}`
@@ -3511,41 +2716,27 @@ function applySubagents(name) {
     row.querySelector('.child-label').textContent = s.label || s.key;
     row.querySelector('.child-meta').textContent =
       [s.requests ? `${s.requests}` : '', costTxt].filter(Boolean).join(' · ');
-    // Keep DOM order matching proxy order, right after the running anchor.
     if (anchor.nextSibling !== row) anchor.after(row);
     anchor = row;
   }
-  // Drop rows whose subagent vanished from the renderable set.
   existing.forEach((el) => { if (!seen.has(el.dataset.key)) el.remove(); });
 
-  // If a popover is open for this parent and its row aged out, close it.
   const openKey = subagentPopoverKeyForParent(name);
   if (openKey && !seen.has(openKey)) {
     closeSubagentPopover();
   }
 }
 
-// --- Subagent live-activity popover ------------------------------------------
-// Self-contained island (subagent-popover.js). applySubagents/subagentRows
-// above stay here — core tab rendering — and reach it via these handles.
 const {
   openSubagentPopover, closeSubagentPopover,
   isSubagentPopoverForParent, isSubagentPopoverOpen, subagentPopoverKeyForParent,
 } = initSubagentPopover();
 
-// --- Session-row hover card ----------------------------------------------------
-// Self-contained island (session-hovercard.js): replaces the sidebar rows'
-// native title tooltips with a styled card fed by the rows' datasets plus the
-// same live maps the badges paint from. Nothing comes back — it owns its DOM
-// node and listeners entirely.
 initSessionHovercard({
   sessionList, proxyState, ctxPct, ctxTokens,
   proxyPollMs: PROXY_POLL_MS, typeGlyph,
 });
 
-// Shared attr-driven tooltip for the sidebar's small icon chrome (tooltip.js).
-// Elements opt in with data-tip="…"; the rich per-row card above stays the
-// authority for session rows and defers wherever a data-tip child is hovered.
 initTooltips();
 
 // --- Toast bubbles -----------------------------------------------------------
@@ -3573,8 +2764,6 @@ function showToast(msg, opts = {}) {
     setTimeout(() => el.remove(), 220);
   };
   close.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); });
-  // Clicking the body runs opts.onClick if given (it owns the action), else the
-  // session-scoped default: jump to opts.name's session.
   if (opts.onClick || opts.name) {
     el.classList.add('toast-clickable');
     el.addEventListener('click', () => {
@@ -3589,11 +2778,8 @@ function showToast(msg, opts = {}) {
   return dismiss;
 }
 
-// --- Cache-cooldown heads-up -------------------------------------------------
-// Warn once per warm episode when a session's prompt cache is ~5 min from cold.
-// Scoped to kept-warm holds (ttl_s > the warn horizon): a plain ~5-min Anthropic
-// cache has a lifetime no longer than the horizon, so a 5-min warning would fire
-// the instant it warms — useless and noisy. The badge already shows those.
+// Scoped to kept-warm holds (ttl_s > the horizon): a plain ~5-min Anthropic cache has a
+// lifetime no longer than the horizon, so this would fire the instant it warms.
 const WARM_WARN_S = 300;
 const warmWarned = new Set(); // names warned in the current warm episode
 
@@ -3613,8 +2799,6 @@ function checkWarmthCooldown(name) {
   if (!warmWarned.has(name)) {
     warmWarned.add(name);
     const mins = Math.max(1, Math.round(remaining / 60));
-    // Peer keys are name@<uuid> — show name@host instead (the key still
-    // rides the toast payload for click-to-switch).
     const entry = sessions.get(name);
     const disp = entry && entry.peer
       ? `${entry.peer.name}@${peerDisplayHost(peerStatuses.get(entry.peer.id))}`
@@ -3623,18 +2807,12 @@ function checkWarmthCooldown(name) {
   }
 }
 
-// Tick live countdowns once a second: the active session's bar plus every
-// tab's warmth badge. Uses the light text-only update so keep-warm buttons
-// aren't rebuilt out from under the cursor.
 setInterval(() => {
   for (const name of proxyState.keys()) { applyWarmBadge(name); checkWarmthCooldown(name); }
   for (const el of sessionList.querySelectorAll('.session-item[data-thinking-since]')) applyThinkBadge(el);
   tickProxyBar();
 }, 1000);
 
-// Keep-warm control — delegated so it survives bar re-renders. Distinguishes
-// "armed" from "proxy declined (reason)" so a no-op never reads as success;
-// discloses the per-ping cost before arming.
 (() => {
   const bar = document.getElementById('proxy-bar');
   if (!bar) return;
@@ -3642,8 +2820,6 @@ setInterval(() => {
     const link = e.target.closest('.px-link');
     if (link && link.dataset.url) {
       e.preventDefault();
-      // Cmd/Ctrl-click escapes to the system browser (DevTools, tabs); a plain
-      // click opens the page in an in-app, theme-chromed wirescope window.
       if (e.metaKey || e.ctrlKey) {
         window.api.openExternal(link.dataset.url);
       } else {
@@ -3672,17 +2848,10 @@ setInterval(() => {
       }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
       else if (action.dataset.act === 'peer-edit') {
-        // Peer proxy-bar config button — opens the shared Edit Session dialog with a
-        // peer data source (peers-ui owns the source; the dialog DOM is identical).
         openPeerArgs(activeSession);
       }
       else if (action.dataset.act === 'session-menu') {
-        // Toggle the consolidated launcher menu. onPick routes the chosen entry
-        // to its opener — the openers span two islands + a core dialog, so the
-        // core owns this dispatch (the menu island stays opener-agnostic).
         if (isSessionMenuOpen()) closeSessionMenu();
-        // Plugin providers append their entries after core's table (§2.4); the
-        // menu island stays a pure renderer of whatever list it's handed.
         else openSessionMenu(action, sessionTypeOf(activeSession), (act, anchor) => routeSessionAction(act, anchor),
           pluginBar.menuEntriesFor(sessionTypeOf(activeSession)));
       }
@@ -3699,10 +2868,6 @@ setInterval(() => {
   });
 })();
 
-// --- Session-action dropdown menus: keep-warm / strip-level / history ---
-// Self-contained island (popovers/session-menus.js). No popoverApi — local
-// session actions via window.api; the bar's ⚙ actions call the returned openers,
-// and isWarmMenuOpen/isStripMenuOpen back the toggle dispatch.
 const {
   openWarmMenu, closeWarmMenu, isWarmMenuOpen,
   openStripMenu, closeStripMenu, isStripMenuOpen,
@@ -3713,14 +2878,8 @@ const {
   createTerminal, addSessionToSidebar, switchSession,
 });
 
-// Route a consolidated-menu pick to its opener. Kept in the core because the
-// openers span two islands (checklist-popovers + session-menus) plus the core
-// Edit dialog; the menu island stays opener-agnostic (it just emits the act).
-// `anchor` is the ⚙ button, so the launched popover positions over the bar.
 function routeSessionAction(act, anchor) {
   if (!activeSession) return;
-  // Namespaced acts belong to a plugin's menu provider (§2.4); core's table
-  // never emits one, so this branch is dead until a plugin registers.
   if (act.includes(':') && pluginBar.handleMenuPick(act, activeSession, anchor)) return;
   if (act === 'tools') openToolsPopover(activeSession, anchor);
   else if (act === 'skills') openSkillsPopover(activeSession, anchor);
@@ -3731,35 +2890,16 @@ function routeSessionAction(act, anchor) {
   else if (act === 'reload') doHardRestart(activeSession);
 }
 
-// --- Quick config-editor popovers: Tools / Skills / Agents ---
-// Self-contained island (popovers/checklist-popovers.js). No popoverApi — these
-// edit local session config via window.api; the ctx popover's manage links and
-// the bar's ⚙ actions call the returned openers. Tools/Agents are local-only;
-// Skills also accepts a peer source (used by peers-ui for Edit Skills on a row).
 const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession,
 });
 
-// Team-management popover (T29 Layer A Slice 3): right-click a team's sidebar
-// group header → edit its roles with zero hand-editing of team.json. Self-
-// contained local editor (popovers/team-roles-popover.js) driven by window.api.team*.
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
 
-// --- Context-breakdown popover — self-contained island (popovers/context-popover.js).
-// The core popover plumbing it shares stays here: popoverApi (the local-vs-peer
-// data seam every popover reads through) and ctxCatLabel (category labels, also
-// used by the report island). initContextPopover() is called after report init
-// below — the ctx body links out to the report panel.
 
-// Unknown future categories collapse to "other" (forward-compatible per the
-// wirescope contract).
 const ctxCatLabel = (c) => CTX_CAT_LABELS[c] || 'other';
 
 
-// Popover data router: local sessions fetch through their own IPC handlers,
-// peer sessions through the owner's query endpoint (peer:query → one
-// kind-dispatched RPC). Same response shapes either way, so every popover's
-// render code is shared — only this fetch seam knows the difference.
 function popoverApi(name) {
   const entry = sessions.get(name);
   if (entry && entry.peer) {
@@ -3786,34 +2926,18 @@ function popoverApi(name) {
 }
 
 
-// ── Cost-over-time popover — self-contained island (popovers/cost-popover.js).
-// Data via popoverApi(name).report({detail}); proxyState carries the live poll
-// payload (base/sessionId) for the dashboard link.
 const { openCostPopover } = initCostPopover({ popoverApi, proxyState });
 
 
-// ── Cache-bust inspector — self-contained island (popovers/bust-popover.js).
-// Data via popoverApi(name).bust(); proxyState carries base/sessionId.
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState });
 
-// ── Touched files popover + file-peek — self-contained island
-// (popovers/files-popover.js). Owns its onSessionFiles/onSessionFileView
-// subscriptions; peek/diff data via popoverApi; the bar's file count/unseen
-// state (filesState/filesUnseen/peerFilesCount) + renderProxyBar are core,
-// injected by reference; getActiveSession reads the live active tab.
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
   popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar,
   getActiveSession: () => activeSession,
 });
 
-// ── Session report (wirescope /_report) — self-contained island
-// (popovers/report-panel.js). Consumes the capture through popoverApi;
-// ctxCatLabel is the shared category-label helper (also used by ctx).
 const { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });
 
-// Context-breakdown popover island (popovers/context-popover.js). Wired here,
-// after report + checklist inits, because its body links to the report panel
-// and the manage-tools/skills popovers — it needs their openers.
 const { openContextPopover } = initContextPopover({
   popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover,
   proxyState, sessionTypeOf,
@@ -3827,46 +2951,17 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
   void el.offsetWidth;
   el.classList.add('mention-pulse');
   setTimeout(() => el.classList.remove('mention-pulse'), 2000);
-  // A mention is transient (the pulse, not a persistent fact), so it raises an
-  // OS notification but does NOT bump the title badge — the notification is the
-  // signal a hidden tab needs. Focus gate as at the attention site.
   if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(mentionNotice(name, mtype));
 });
 
-// ---------------------------------------------------------------------------
-// IPC log panel
-// ---------------------------------------------------------------------------
 
-// Owns its DOM, counters, and IPC subscription (incl. onRequestOpenIpcLog).
-// FLAG: toggleIpcLog refits the active terminal, so the island takes core state
-// — `sessions` (the live Map) and getActiveSession (activeSession is a
-// reassignable let) — as factory params. `appendIpcEntry` is the only handle
-// renderer.js keeps (for the synthetic deploy-failure line).
 const { appendIpcEntry } = createIpcLog({ sessions, getActiveSession: () => activeSession });
 
-// Operator inbox drawer + sidebar unread badge (inbox-drawer.js). Self-contained
-// — driven by the `notify` ipc broadcast and its own window.api queries, so it
-// takes no core state.
 createInboxDrawer();
 
-// Boiling-pot drawer (pot-drawer.js). Self-contained — a global, cross-agent
-// file-heat ranking pulled fresh on open via window.api.potSnapshot; no core
-// state. Opened from the View menu ("Boiling Pot…") via request-open-boiling-pot.
 createPotDrawer();
 
-// Workbench — a PLUGIN (plugins/workbench/). Core has NO workbench code left:
-// no markup, no CSS, no entry point, no data rows. It registers its own sidebar
-// footer button through the plugin host (§2.2), so the button exists exactly
-// when the plugin does.
 
-// ---------------------------------------------------------------------------
-// Peered Clodexes — self-contained subsystem (peers-ui.js). Owns the peer bar,
-// per-peer visibility/control mirrors, the restore/settle machinery, the
-// peer-select + peer-info popovers, and every onPeer* subscription + seed. Core
-// injects the sessions Map + sidebar/terminal spine; the six handles it still
-// calls come back destructured. peerStatuses/peerTunnels (read by the peers-
-// setup dialog) stay core, injected by reference; activeSession/ourAppVersion/
-// deployLineHandlers are read through getters (reassignable / defined below).
 const {
   typeToTakeControl, renderPeerBar, forgetControlMirror,
   openPeerSession, peerDisplayHost, peerHideFromList,
@@ -3880,36 +2975,20 @@ const {
   proxyState, ctxPct, ctxTokens, peerFilesCount, filesUnseen,
   applyCtxBadge, applyWarmBadge, renderProxyBar,
   openFilePeek, isFilesPopoverForKey,
-  // Edit Session on a peer row reuses the local dialog with a peer data source
-  // (hoisted function decl, so referenced above its definition).
   openArgsDialog,
-  // Edit Skills on a peer row reuses the local Skills popover with a peer source.
   openSkillsPopover,
 });
 
-// ---------------------------------------------------------------------------
-// Terminal search (Cmd+F)
-// ---------------------------------------------------------------------------
 
-// FLAG: search drives the active terminal, so the island takes core state —
-// `sessions` + getActiveSession (activeSession is a reassignable let) — as
-// factory params. openSearch/closeSearch are destructured out so their call
-// sites stay identical; isSearchOpen/setSearchInfo front the two spots that
-// reached the island's DOM directly (switch-session teardown + createSession's
-// result callback).
 const { openSearch, closeSearch, isSearchOpen, setSearchInfo } =
   createTermSearch({ sessions, getActiveSession: () => activeSession });
 
-// ---------------------------------------------------------------------------
-// Resize handling
-// ---------------------------------------------------------------------------
 
 function refitActiveTerminal() {
   if (!activeSession) return;
   const s = sessions.get(activeSession);
   if (!s) return;
   if (s.peer) {
-    // Read-only peer view: owner geometry is canonical, never fit.
     if (s.peer.controlled) {
       s.fitAddon.fit();
       window.api.peerResize(s.peer.id, s.peer.name, s.terminal.cols, s.terminal.rows);
@@ -3923,19 +3002,13 @@ function refitActiveTerminal() {
 const resizeObserver = new ResizeObserver(refitActiveTerminal);
 resizeObserver.observe(terminalContainer);
 
-// View-menu zoom changed this window's zoom factor: the container's CSS-pixel
-// geometry moved under xterm, so refit through the same path resize uses.
 window.api.onZoomNudge(refitActiveTerminal);
 
-// ---------------------------------------------------------------------------
-// Keyboard shortcuts — Cmd+T (new), Cmd+W (close), Cmd+1..9 (switch)
-// ---------------------------------------------------------------------------
 
 // Capture at document level (capture phase) so xterm doesn't swallow them
 document.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.altKey || e.ctrlKey) return;
 
-  // Cmd+T — new session (open dialog)
   if (e.key === 't') {
     e.preventDefault();
     e.stopPropagation();
@@ -3943,7 +3016,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Cmd+W — archive active session (or close dialog if open). ✕'s twin.
   if (e.key === 'w') {
     e.preventDefault();
     e.stopPropagation();
@@ -3953,8 +3025,6 @@ document.addEventListener('keydown', (e) => {
       const target = activeSession;
       const entry = sessions.get(target);
       if (entry && entry.peer) {
-        // Same gesture as the X: "gone" = detach + drop from the visibility
-        // selection (the session keeps running on its owner regardless).
         peerHideFromList(entry.peer.id, entry.peer.name);
       } else {
         archiveSessionRow(target);
@@ -3963,7 +3033,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Cmd+1..9 — switch to nth session
   if (/^[1-9]$/.test(e.key)) {
     const idx = parseInt(e.key, 10) - 1;
     const items = Array.from(sessionList.querySelectorAll('.session-item'));
@@ -3975,7 +3044,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Cmd+F — open search bar for active terminal
   if (e.key === 'f' && !e.shiftKey) {
     if (activeSession) {
       e.preventDefault();
@@ -3985,7 +3053,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Cmd+Shift+] / Cmd+Shift+[ — next/prev session (like browser tabs)
   if (e.shiftKey && (e.key === ']' || e.key === '[')) {
     const items = Array.from(sessionList.querySelectorAll('.session-item'));
     if (items.length === 0) return;
@@ -3999,12 +3066,9 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 
-// Browser-only Alt shortcuts — a tab's chrome reserves Cmd+T/W/1-9, so the
-// desktop Cmd chords above silently fail in a browser. The web frontend mirrors
-// them onto Alt: Alt+T new, Alt+W close, Alt+1..9 switch, Alt+Shift+] / [ cycle
-// (classified by e.code in web-shortcuts.js, since Option composes characters on
-// macOS). Same capture-phase + preventDefault/stopPropagation so xterm never sees
-// them. No-op in Electron, where window.__CLODEX_WEB__ is undefined.
+// Browser tabs reserve Cmd+T/W/1-9, so the web frontend mirrors them onto Alt. Classified
+// by e.code in web-shortcuts.js (Option composes characters on macOS, so e.key is unusable).
+// Same capture-phase + preventDefault so xterm never sees them. No-op in Electron.
 document.addEventListener('keydown', (e) => {
   if (!window.__CLODEX_WEB__) return;
   const action = altChordAction(e);
@@ -4064,27 +3128,13 @@ if (window.__CLODEX_WEB__) {
   document.addEventListener('keydown', askOnce, true);
 }
 
-// ---------------------------------------------------------------------------
-// Restore sessions on startup
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Banners (update + spawn diagnostics)
-// ---------------------------------------------------------------------------
 
-// Mostly self-contained (window.api / navigator); openInstallSession is injected
-// so the diag banner's both-CLIs-missing case can offer Install buttons (Task 18,
-// the same visible-bash-installer path as the dialog). refreshDiagBanner is
-// destructured out for createSession's spawn-error path to re-run.
 const { refreshDiagBanner } = initBanners({ openInstallSession });
 
-// Tray-triggered actions (the drawer-open handlers live in library-drawers.js)
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
 
-// ---------------------------------------------------------------------------
-// Discover Sessions dialog — adopt claude/codex sessions started outside clodex
-// ---------------------------------------------------------------------------
 const discoveryOverlay = document.getElementById('discovery-overlay');
 const discoveryList = document.getElementById('discovery-list');
 const discoveryRefresh = document.getElementById('discovery-refresh');
@@ -4092,7 +3142,6 @@ const discoveryClose = document.getElementById('discovery-close');
 
 function closeDiscovery() { discoveryOverlay.classList.add('hidden'); }
 
-// A short, unique clodex session name derived from a cwd's basename (or type).
 function suggestAdoptName(cwd, type) {
   const base = (cwd && cwd.split('/').filter(Boolean).pop()) || type;
   let name = String(base).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 48) || type;
@@ -4112,12 +3161,6 @@ function relTime(ts) {
   return `${Math.round(hr / 24)}d ago`;
 }
 
-// Adopt = fill the New Session dialog (already open behind the picker) with the
-// chosen session's type/cwd/id and a suggested name, then return to it. The
-// operator customizes tools/prompts/proxy/etc. and hits Create, which runs the
-// normal create() path (resumeId set → resumes the conversation). If the dialog
-// wasn't already open (Find opened straight from a fresh state), open it
-// pre-filled instead.
 function adoptSession(rec) {
   closeDiscovery();
   const prefill = {
@@ -4127,8 +3170,6 @@ function adoptSession(rec) {
     resumeId: rec.sessionId,
   };
   if (!dialogOverlay.classList.contains('hidden')) {
-    // Dialog is open — fill it in place without resetting the operator's other
-    // choices. Type change drives the type-dependent sections (skills/tools/…).
     inputName.value = prefill.name;
     if (inputType.value !== prefill.type) { inputType.value = prefill.type; applyTypeDefaults(); }
     inputCwd.value = prefill.cwd;
@@ -4198,9 +3239,6 @@ function renderDiscovery(res) {
     addGroupHead(`Recent conversations (${disk.length})`);
     for (const rec of disk) addItem(rec);
   }
-  // Live foreign processes whose transcript wasn't in the disk list (e.g. a
-  // brand-new session with no cwd match). Adopting needs a sessionId, which the
-  // process lens doesn't carry — so these are informational unless matched.
   const unmatchedLive = live.filter((p) => p.cwd && !disk.some((d) => d.cwd === p.cwd));
   if (unmatchedLive.length) {
     addGroupHead(`Running now, no resumable transcript found (${unmatchedLive.length})`);
@@ -4242,18 +3280,11 @@ if (discoveryRefresh) discoveryRefresh.addEventListener('click', () => openDisco
 if (discoveryClose) discoveryClose.addEventListener('click', () => closeDiscovery());
 if (discoveryOverlay) discoveryOverlay.addEventListener('click', (e) => { if (e.target === discoveryOverlay) closeDiscovery(); });
 window.api.onRequestOpenDiscovery(() => openDiscovery());
-// Sidebar-toolbar entry — same action as File ▸ Discover Sessions…; the sidebar
-// is where sessions live, and the dialog's "Find…" sits below the fold.
 const btnDiscover = document.getElementById('btn-discover');
 if (btnDiscover) btnDiscover.addEventListener('click', () => openDiscovery());
-// "Find…" next to the Resume field opens the picker on top of the New Session
-// dialog; adopting a row fills this dialog's fields in place.
 const btnFindSession = document.getElementById('btn-find-session');
 if (btnFindSession) btnFindSession.addEventListener('click', () => openDiscovery());
 
-// ---------------------------------------------------------------------------
-// Preferences dialog
-// ---------------------------------------------------------------------------
 
 const prefsOverlay = document.getElementById('prefs-overlay');
 const prefsClaudeBox = document.getElementById('prefs-claude-components');
@@ -4281,10 +3312,6 @@ const prefsRemoteTokenSave = document.getElementById('prefs-remote-token-save');
 const prefsRemoteTokenClear = document.getElementById('prefs-remote-token-clear');
 const prefsRemoteTokenState = document.getElementById('prefs-remote-token-state');
 
-// --- Environment variables editor (T46) ------------------------------------
-// Global / per-workspace scoped env vars, wired to the write-only-secret IPC
-// (envScopesGet masks secret values as { key, secret:true, hasValue:true } — the
-// value never leaves main, same discipline as the phone-access token above).
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
 const prefsEnvKey = document.getElementById('prefs-env-key');
@@ -4293,7 +3320,6 @@ const prefsEnvSecret = document.getElementById('prefs-env-secret');
 const prefsEnvAdd = document.getElementById('prefs-env-add');
 const prefsEnvState = document.getElementById('prefs-env-state');
 
-// The scope arg the IPC handlers take: 'global', or this window's workspace id.
 function prefsEnvScopeArg() {
   return prefsEnvScope && prefsEnvScope.value === 'workspace'
     ? (currentWorkspaceId || 'default')
@@ -4306,9 +3332,6 @@ function setPrefsEnvState(msg, kind) {
   prefsEnvState.style.color = kind === 'error' ? 'var(--warn, #d9a55b)' : 'var(--muted, #8b949e)';
 }
 
-// Render the current scope's rows. A secret row shows a masked placeholder + a
-// Replace affordance (no value ever arrives here to display); a plain row shows
-// its value. Delete removes the key immediately then re-renders.
 async function refreshPrefsEnv() {
   if (!prefsEnvList) return;
   const scope = prefsEnvScopeArg();
@@ -4343,8 +3366,6 @@ async function refreshPrefsEnv() {
     editBtn.style.flex = 'none';
     editBtn.textContent = v.secret ? 'Replace' : 'Edit';
     editBtn.addEventListener('click', () => {
-      // Seed the add row for a replace/edit — a secret's value is never round-
-      // tripped (it can only be re-set), so the value field starts empty.
       prefsEnvKey.value = v.key;
       prefsEnvValue.value = v.secret ? '' : String(v.value == null ? '' : v.value);
       prefsEnvSecret.checked = !!v.secret;
@@ -4388,8 +3409,6 @@ async function addPrefsEnvVar() {
 if (prefsEnvAdd) prefsEnvAdd.addEventListener('click', addPrefsEnvVar);
 if (prefsEnvScope) prefsEnvScope.addEventListener('change', () => { setPrefsEnvState(''); refreshPrefsEnv(); });
 
-// Reflect the write-only token state (a derived boolean — the value never leaves
-// main). Called on prefs-open and after every set/clear.
 function renderRemoteTokenState(hasToken) {
   prefsRemoteTokenState.textContent = hasToken
     ? 'A token is configured ✓ — paste a new one to replace it, or Clear to remove.'
@@ -4405,8 +3424,6 @@ async function saveRemoteToken(value) {
   }
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!res.hasToken);
-  // The server was torn down + rebuilt with the new gate; reflect it now rather
-  // than waiting for the 1.5s poll tick.
   refreshWsStatus();
   showToast(res.hasToken ? 'Phone-access token saved.' : 'Phone-access token cleared.', { kind: res.hasToken ? 'warm' : 'peer-ui' });
 }
@@ -4446,11 +3463,6 @@ function renderPrefsCheckboxes(container, all, enabled, labels) {
   }
 }
 
-// Read-only proxy health line under the Traffic optimization toggle. The
-// proxy lifecycle is fully Clodex-managed (autostart on launch/settings-save,
-// vendored source, managed venv) so there is deliberately NO start/stop/port/
-// dir UI — status is the only surface. Power users: wirescopeDir/wirescopePort
-// in ui-settings.json still override the bundled copy (no UI on purpose).
 const WS_DOT = { managed: '#3fb950', external: '#58a6ff', starting: '#d29922', installing: '#d29922', stopped: '#888', error: '#f85149' };
 
 function renderWsStatus(st) {
@@ -4460,8 +3472,6 @@ function renderWsStatus(st) {
   let text;
   if (st && st.state === 'managed') {
     text = `Active${st.version ? ' — ' + st.version : ''}`;
-    // stale = running version differs from the bundled snapshot (normally
-    // auto-cleared at launch; this is the manual path if that was missed).
     if (st.stale) {
       text += ' — update ready, restart to apply';
       color = WS_DOT.starting;
@@ -4480,8 +3490,6 @@ function renderWsStatus(st) {
   }
   wsDot.style.background = color;
   wsStatusText.textContent = text;
-  // Restart applies only to a Clodex-managed instance (external ones belong
-  // to whoever started them; main-side restart() enforces this too).
   wsRestartBtn.style.display = (st && st.state === 'managed' && !wsRestartBusy) ? '' : 'none';
 }
 
@@ -4506,14 +3514,6 @@ async function refreshWsStatus() {
   try { renderRemoteStatus(await window.api.remoteStatus()); } catch {}
 }
 
-// Capture-log size readout + Clear button with an age picker. Sourced entirely
-// from wirescope's /_prune (no client-side du). A non-ok GET = older proxy
-// without the endpoint → hide the block (presence IS the capability). The total
-// comes from GET; the "reclaimable" teaser + button state follow the selected
-// age via a dry-run POST preview (the fixed GET cutoffs only cover 30/180/7d).
-// The Clear action is always tier=receipts scope=all — billing receipts kept,
-// only /_bust forensics for old sessions + the probe bucket dropped; recent/
-// warm/held skipped server-side regardless of the age chosen.
 let wsLogsTotalBytes = 0;
 let wsLogsPreviewSeq = 0;
 function wsSelectedAge() { return wsLogsAge.value || '30d'; }
@@ -4531,9 +3531,6 @@ async function refreshWsLogs() {
   await previewWsLogs();
 }
 
-// Dry-run the selected age to show exactly what a Clear would reclaim, and
-// enable the button only when there's something to collect. Seq-guarded so a
-// fast picker change can't render a stale preview.
 async function previewWsLogs() {
   const seq = ++wsLogsPreviewSeq;
   wsLogsClearBtn.disabled = true;
@@ -4564,8 +3561,6 @@ wsLogsClearBtn.addEventListener('click', async () => {
   wsLogsClearBusy = true;
   wsLogsClearBtn.disabled = true;
   try {
-    // Fresh dry-run for the exact numbers in the confirm (age may differ from
-    // the last preview if the poll refreshed in between).
     const pv = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all', dryRun: true });
     if (!pv || !pv.ok || !pv.data) {
       wsLogsSize.textContent = (pv && pv.error) ? `Error: ${pv.error}` : 'Preview failed';
@@ -4609,16 +3604,9 @@ function renderRemoteStatus(st) {
   }
 }
 
-// Peers editor rows: label + url + remove. IDs stay stable across edits so
-// main can reconcile connections instead of restarting them all.
-// Peer add/edit/remove now lives in its own dialog (opened from Window > Peers >
-// Manage Peered Clodexes…), not Preferences — keeps the prefs dialog lean.
 const peersListBox = document.getElementById('peers-list');
 const peersOverlay = document.getElementById('peers-overlay');
 
-// Deploy-line router: main streams `peer-deploy-line` (sshHost, line) globally
-// as the deploy script runs; each in-flight wizard registers a handler keyed by
-// its ssh host so concurrent deploys never cross wires.
 const { parseDeployLine, classifyDeployFolder, classifyPeerDest } = require('../peer-deploy');
 const deployLineHandlers = new Map(); // sshHost -> (line) => void
 window.api.onPeerDeployLine((sshHost, line) => {
@@ -4626,58 +3614,32 @@ window.api.onPeerDeployLine((sshHost, line) => {
   if (h) h(line);
 });
 
-// Fold a peer row back to its one-line summary, refreshing that summary from the
-// row's live inputs first so an edited label/host is reflected while collapsed.
 function collapsePeerRow(wrap) {
   if (wrap._refreshSummary) wrap._refreshSummary();
   wrap.classList.add('collapsed');
 }
 
 function addPeerRow(peer, { expanded = false } = {}) {
-  // Drop the "No peers yet." placeholder the moment a real row appears.
   const emptyHint = peersListBox.querySelector('.peers-empty');
   if (emptyHint) emptyHint.remove();
-  // Accordion: only one row's full config surface is open at a time. A row added
-  // expanded (Add Peer) collapses every existing row first; the dialog's initial
-  // load renders all rows collapsed (one line each).
   if (expanded) peersListBox.querySelectorAll('.peer-row-wrap').forEach((w) => collapsePeerRow(w));
   const wrap = document.createElement('div');
   wrap.className = expanded ? 'peer-row-wrap' : 'peer-row-wrap collapsed';
   const row = document.createElement('div');
   row.className = 'peer-row';
   row.dataset.peerId = peer.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
-  // Port + folder are OVERRIDES, pre-filled with the real defaults (7900 and the
-  // deploy script's own $HOME/wb-wrap-ui clone dir). Left as-is they reproduce
-  // today's behavior; the operator changes them only when a box needs a
-  // different port or install location. They wrap to a second line via the
-  // full-width break so the primary inputs stay uncrowded.
   const portVal = Number.isInteger(peer.remotePort) ? peer.remotePort : 7900;
-  // Folder pre-fill precedence: the box's LIVE self-reported install dir wins
-  // over a persisted deployFolder (a stale guess must not shadow live truth —
-  // Bogdan's settings may still carry a polluted ~/wb-wrap-ui for a mac that
-  // actually runs from ~/projects/clodex), which wins over the default. When the
-  // value came from the live report we surface a dim inline hint below.
   const liveSrc = (peer.id && peerStatuses.get(peer.id) && peerStatuses.get(peer.id).online)
     ? (peerStatuses.get(peer.id).srcDir || '') : '';
   const folderReported = !!(liveSrc && typeof liveSrc === 'string' && liveSrc.trim());
   const folderVal = folderReported
     ? liveSrc.trim()
     : ((typeof peer.deployFolder === 'string' && peer.deployFolder) ? peer.deployFolder : '~/wb-wrap-ui');
-  // One smart destination field: ssh host / IP / alias, an http(s):// URL, or a
-  // typed cloud destination (`ssm:` / `k8s:` / `gcp:`). The prefix disambiguates
-  // (classifyPeerDest), so no protocol dropdown. The settings schema grows by
-  // addition — a classified 'ssh' saves peer.sshHost, 'url' saves peer.url, and
-  // a cloud kind saves peer.<kind>. Pre-fill from sshHost, then a cloud block,
-  // then url (a legacy url-only peer).
   const cloud = peerCloudDest(peer);
   const destVal = peer.sshHost || (cloud ? cloud.text : '') || peer.url || '';
-  // Fields with NO input of their own (ssm region/profile, kubectl namespace/
-  // context, gcloud zone/project, and every az field) are stashed on the row so
-  // collectPeers can carry them back on save. Without this, opening the dialog
-  // and pressing Save would silently erase a hand-configured region — the same
-  // silent-loss class as the store's whitelist hazard, one layer up. Any layer
-  // that rebuilds a record from named fields drops what it doesn't name, and a
-  // dialog does that as surely as a store does.
+  // Fields with NO input of their own (ssm region/profile, kubectl namespace/context, gcloud
+  // zone/project, and every az field) are stashed on the row so collectPeers carries them
+  // back on save — without this, opening the dialog and pressing Save silently erases them.
   row._cloudExtra = cloud ? { kind: cloud.kind, rest: cloud.rest } : null;
   row.innerHTML = `
     <input type="text" class="peer-row-label" placeholder="label (e.g. laptop2)" value="${esc(peer.label || '')}">
@@ -4694,20 +3656,13 @@ function addPeerRow(peer, { expanded = false } = {}) {
     <input type="password" class="peer-row-token" autocomplete="off" spellcheck="false" title="Operator auth token for a tokened remote wire (CLODEX_REMOTE_TOKEN on the peer). Write-only: leave blank to keep the stored one." placeholder="${peer.hasToken ? 'set — blank keeps' : 'optional'}">
     ${peer.hasToken ? `<label class="peer-row-cleartoken" title="Delete the stored token on save"><input type="checkbox" class="peer-row-token-clear"> clear</label>` : ''}
     ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ''}`;
-  // Status/progress area (probe result → install offer → deploy step list).
-  // Below the inputs so it can grow without reflowing the row.
   const status = document.createElement('div');
   status.className = 'peer-row-status hidden';
   row.querySelector('.peer-row-remove').addEventListener('click', () => wrap.remove());
   row.querySelector('.peer-row-test').addEventListener('click', () => peerTestAndSetUp(row, status));
-  // Live destination detection badge (→ ssh tunnel / → direct / inline error).
   const destInput = row.querySelector('.peer-row-dest');
   destInput.addEventListener('input', () => updatePeerDestBadge(row));
   updatePeerDestBadge(row); // reflect a pre-filled destination immediately
-  // Collapsed one-liner header: a disclosure caret, the peer's label/host, and a
-  // dim live-status note. Clicking it toggles the row's full config surface below
-  // (accordion — see collapsePeerRow/expandPeerRow). Refreshed from the live
-  // inputs whenever the row collapses so an edited label shows when folded.
   const summary = document.createElement('div');
   summary.className = 'peer-row-summary';
   summary.innerHTML =
@@ -4737,15 +3692,10 @@ function addPeerRow(peer, { expanded = false } = {}) {
   wrap.appendChild(row);
   wrap.appendChild(status);
   peersListBox.appendChild(wrap);
-  // If this peer is already connected, show its live identity passively (version
-  // + caps from the hello we already have) — the same facts Test would surface,
-  // without a round-trip, and with an "outdated" nudge on a version mismatch.
   const st = peer.id && peerStatuses.get(peer.id);
   if (st && st.online && st.version) {
     const capList = (st.caps || []).join(', ') || 'none';
     const sev = ourAppVersion ? versionSeverity(ourAppVersion, st.version) : 'unknown';
-    // A peer behind us gets the "outdated" nudge; one ahead reads "newer" (we're
-    // the stale one). current/unknown add nothing.
     const delta = (sev === 'patch' || sev === 'minor' || sev === 'major')
       ? `<span class="peer-status-warn"> · outdated (you run v${esc(ourAppVersion)})</span>`
       : sev === 'newer'
@@ -4757,42 +3707,23 @@ function addPeerRow(peer, { expanded = false } = {}) {
   }
 }
 
-// Raw destination string from a row's single smart input (trimmed).
 function peerRowDest(row) {
   const el = row.querySelector('.peer-row-dest');
   return el ? el.value.trim() : '';
 }
 
-// Live "what will this become?" badge under the destination input. Dim for the
-// two happy paths (→ ssh tunnel / → direct), warn-colored inline text for a bad
-// value, and hidden when empty. Read-only feedback — the authoritative
-// validation runs in collectPeers on Save.
-// The UI half of the typed cloud kinds — one row per kind, mirroring the tables
-// in stores.js (PEER_CLOUD_KINDS) and peer-tunnel.js (CLOUD_KINDS). Kept here
-// rather than imported because those are main-process modules and this decides
-// only what the dialog SAYS.
-//
-//   name    — how the operator's cloud calls it
-//   cli     — the vendor binary the tunnel shells out to, named in the badge
-//             because "it needs that CLI on YOUR machine" is the misconfig a
-//             cloud destination invites and a bare "→ ssm tunnel" warns nobody
-//   field   — the block field the destination text carries
-//   prefix  — how it is typed back into the one destination input
-//
-// `az` is absent on purpose: it has no destination-field syntax (three required
-// values, one of them a slash-bearing resource id), so it arrives by import and
-// is carried through a save by _cloudExtra like any other unedited field.
+// Duplicates the kind tables in stores.js (PEER_CLOUD_KINDS) and peer-tunnel.js (CLOUD_KINDS)
+// on purpose: those are main-process modules and this decides only what the dialog SAYS.
+// `cli` is named in the badge because "it needs that CLI on YOUR machine" is the misconfig
+// a cloud destination invites.
+// `az` is absent deliberately — it has no destination-field syntax, so it arrives by import
+// and is carried through a save by _cloudExtra like any other unedited field.
 const PEER_CLOUD_UI = {
   ssm:     { name: 'AWS SSM',   cli: 'aws',     field: 'target',   prefix: 'ssm:' },
   kubectl: { name: 'kubectl',   cli: 'kubectl', field: 'target',   prefix: 'k8s:' },
   gcloud:  { name: 'GCP IAP',   cli: 'gcloud',  field: 'instance', prefix: 'gcp:' },
 };
 
-// A peer's cloud transport as the dialog needs it: the text for the destination
-// input, plus EVERY other field of the block so a save can carry them back
-// untouched. Returns null for an ssh/url peer. An az block (or any kind with no
-// UI row) still returns `rest` with the whole block in it — unshowable, but
-// preserved, which is the point.
 function peerCloudDest(peer) {
   for (const kind of ['ssm', 'kubectl', 'gcloud', 'az']) {
     const block = peer && peer[kind];
@@ -4827,24 +3758,17 @@ function updatePeerDestBadge(row) {
   } else badge.innerHTML = `<span class="peer-status-warn">${esc(cls.error)}</span>`;
 }
 
-// Per-peer remote port, read live from the row's port input. Returns NaN for a
-// blank/non-numeric field so callers can validate; a valid 1..65535 int passes.
 function peerRowPort(row) {
   const el = row.querySelector('.peer-row-port');
   const raw = el ? el.value.trim() : '';
   return raw === '' ? NaN : parseInt(raw, 10);
 }
 
-// Per-peer deploy folder override (raw operator string, ~/… or /abs). '' = the
-// field is blank → deploy falls back to the script's own default.
 function peerRowFolder(row) {
   const el = row.querySelector('.peer-row-folder');
   return el ? el.value.trim() : '';
 }
 
-// Validate a row's port + folder together, marking the offending input and
-// returning the first error (or null when both are fine). port defaults are
-// applied by the caller; here we only reject an explicitly-bad value.
 function validatePeerRowInputs(row) {
   const portEl = row.querySelector('.peer-row-port');
   const folderEl = row.querySelector('.peer-row-folder');
@@ -4863,25 +3787,15 @@ function validatePeerRowInputs(row) {
   return { ok: true, port, folder: peerRowFolder(row) };
 }
 
-// "Test & Set Up": probe the box (ssh + curl hello on the box, no tunnel), then
-// render one of four outcomes. hello-ok = ready to save; no-listener = offer an
-// install; not-clodex / ssh-fail = diagnostics. The wizard is an OFFER — Save
-// still works whether or not you ever click Test.
 async function peerTestAndSetUp(row, status) {
   const dest = classifyPeerDest(peerRowDest(row));
   if (dest.kind === 'empty') { renderPeerStatus(status, `<span class="peer-status-warn">Enter an ssh host or URL first (e.g. user@laptop2).</span>`); return; }
   if (dest.kind === 'error') { renderPeerStatus(status, `<span class="peer-status-warn">${esc(dest.error)}</span>`); return; }
   if (dest.kind === 'url') {
-    // Probe + deploy are ssh-only; a direct URL peer just connects on Save.
     renderPeerStatus(status, `<span class="peer-status-dim">Direct URL — nothing to install over ssh; Save and it connects.</span>`);
     return;
   }
   if (PEER_CLOUD_UI[dest.kind]) {
-    // Genuinely ssh-only, and SAID so rather than hidden (t30b's rule): probe
-    // and deploy both run a shell and copy files over ssh, which a port-forward
-    // — a single forwarded TCP port — cannot carry. Naming what does still work
-    // keeps this a limit, not a dead end. The port is still validated first, so
-    // a bad one is reported here rather than at Save.
     const ui = PEER_CLOUD_UI[dest.kind];
     const vs = validatePeerRowInputs(row);
     if (!vs.ok) { renderPeerStatus(status, `<span class="peer-status-warn">${esc(vs.error)}</span>`); return; }
@@ -4897,8 +3811,6 @@ async function peerTestAndSetUp(row, status) {
   const testBtn = row.querySelector('.peer-row-test');
   testBtn.disabled = true;
   renderPeerStatus(status, `<span class="peer-status-dim">ssh <span class="peer-spin">…</span> connecting to ${esc(sshHost)}</span>`);
-  // Pass the row's typed token (write-only) + its saved-peer id so MAIN can fall
-  // back to the stored token when the field is blank (typed || stored || none).
   const tokenEl = row.querySelector('.peer-row-token');
   const typedToken = tokenEl ? tokenEl.value.trim() : '';
   const probeOpts = { peerId: row.dataset.peerId };
@@ -4921,8 +3833,6 @@ async function peerTestAndSetUp(row, status) {
       `<div class="peer-status-actions"><button type="button" class="peer-install-btn">Install Clodex on this peer</button></div>`);
     status.querySelector('.peer-install-btn').addEventListener('click', () => peerRunDeploy(row, status, sshHost, port));
   } else if (res.kind === 'auth-required') {
-    // A live, token-protected Clodex answered (401/403) — NOT an empty box, so
-    // never offer a fresh install here. Point at the row's token field.
     if (res.tokenSent) {
       renderPeerStatus(status,
         `<span class="peer-status-ok">✓ ssh</span><span class="peer-status-warn"> · Clodex is running on 127.0.0.1:${port}, but it rejected that auth token.</span>` +
@@ -4944,9 +3854,6 @@ async function peerTestAndSetUp(row, status) {
   }
 }
 
-// Install/update Clodex on the box: stream the deploy script's ::marker lines
-// into a live step list. Terminal states: ::done (success → save hint),
-// ::need-sudo (copyable commands + re-run), or a ::fail / non-zero exit.
 async function peerRunDeploy(row, status, sshHost, port) {
   const folder = peerRowFolder(row);   // '' → box uses the script default clone dir
   const steps = new Map();   // name -> { el, state }
@@ -4998,23 +3905,17 @@ async function peerRunDeploy(row, status, sshHost, port) {
   if (res && res.ok && sawDone) {
     tailBox.innerHTML = `<div class="peer-status-ok">✓ Clodex is running on ${esc(sshHost)}. Click Save to add the peer — the tunnel connects automatically.</div>`;
   } else if (res && res.needSudo) {
-    // The sudo commands are already shown from the ::sudo-cmd lines; just anchor the retry.
     if (!sudoCmds.length) tailBox.innerHTML = `<div class="peer-status-warn">Needs sudo on the peer — see the peer's terminal, then Test &amp; Set Up again.</div>`;
     appendDeployActions(tailBox, row, status, sshHost, port, null);
   } else {
     const why = res && res.timedOut ? 'timed out' : (res && res.error) ? res.error : `exit ${res ? res.code : '?'}`;
     const tail = res && res.stderr ? `<pre class="peer-status-pre">${esc(res.stderr)}</pre>` : '';
     tailBox.innerHTML = `<div class="peer-status-err">Install did not finish (${esc(String(why))}).</div>${tail}`;
-    // Real failure (not need-sudo): offer an agent to untangle it, plus Re-test.
-    // The agent gets the full ::marker stream + the stderr tail as its briefing.
     const logText = logLines.join('\n') + (res && res.stderr ? `\n\n[stderr]\n${res.stderr}` : '');
     appendDeployActions(tailBox, row, status, sshHost, port, logText);
   }
 }
 
-// Terminal-state action row for the deploy wizard: always a Re-test (re-runs the
-// probe, same as Test & Set Up), and — when a real failure gives us a log — a
-// "Fix with an agent" offer that spins up a briefed local Claude session.
 function appendDeployActions(tailBox, row, status, sshHost, port, logText) {
   const actions = document.createElement('div');
   actions.className = 'peer-status-actions';
@@ -5050,31 +3951,21 @@ function renderPeerStatus(status, html) {
   status.classList.remove('hidden');
 }
 
-// Gather + validate every peer row. Returns { ok:true, peers } or, on the first
-// bad port/folder, { ok:false, error, row } after marking the offending input
-// and surfacing the message in that row's status panel (so Save can bail).
 function collectPeers() {
   const out = [];
   for (const row of peersListBox.querySelectorAll('.peer-row')) {
     const destEl = row.querySelector('.peer-row-dest');
     if (destEl) destEl.classList.remove('invalid');
     let dest = classifyPeerDest(peerRowDest(row));
-    // An UNSHOWABLE cloud peer (az: no destination-field syntax) leaves the dest
-    // input blank, so classifyPeerDest says 'empty'. Blank-because-unshowable is
-    // NOT blank-because-deleted — without this, opening the dialog and pressing
-    // Save would silently delete every imported az peer, because its row would
-    // just be skipped. Rewritten as an 'unshowable' dest so it flows through the
-    // one save path below (port, folder and token handling included) instead of
-    // duplicating it.
+    // An unshowable cloud peer (az: no destination-field syntax) leaves the dest input blank,
+    // so classifyPeerDest says 'empty'. Without rewriting it as a dest here the row would be
+    // skipped — opening the dialog and pressing Save would silently delete every az peer.
     const unshowable = (dest.kind === 'empty' && row._cloudExtra && !PEER_CLOUD_UI[row._cloudExtra.kind])
       ? { kind: row._cloudExtra.kind, [row._cloudExtra.kind]: { ...row._cloudExtra.rest } }
       : null;
     if (unshowable) dest = unshowable;
     if (dest.kind === 'empty') continue;
     const label = row.querySelector('.peer-row-label').value.trim();
-    // A malformed destination now errors inline (marks the input, keeps the
-    // dialog open) instead of silently vanishing on Save — and one input can
-    // only be ssh XOR url, so the old sshHost-wins shadowing is gone.
     if (dest.kind === 'error') {
       if (destEl) destEl.classList.add('invalid');
       const status = row.parentElement && row.parentElement.querySelector('.peer-row-status');
@@ -5097,24 +3988,17 @@ function collectPeers() {
     if (dest.kind === 'ssh') peer.sshHost = dest.sshHost;
     else if (dest.kind === 'url') peer.url = dest.url;
     else if (cloudBlock) {
-      // Carry back the settings-file-only fields stashed at render time (ssm
-      // region/profile, kubectl namespace/context, gcloud zone/project) so
-      // editing anything else in the dialog doesn't erase them. Only when the
-      // KIND is unchanged: retyping the destination as a different cloud would
-      // otherwise graft the old kind's selectors onto the new block.
+      // Carry back the stashed settings-file-only fields, but only when the KIND is unchanged:
+      // retyping the destination as a different cloud would otherwise graft the old kind's
+      // selectors onto the new block.
       const carried = (row._cloudExtra && row._cloudExtra.kind === dest.kind) ? row._cloudExtra.rest : {};
       peer[dest.kind] = { ...cloudBlock, ...carried };
     }
-    // Port + folder are settings-file-only overrides (like wirescopePort): carry
-    // the row's validated values through the save. A folder equal to the default
-    // pre-fill still round-trips harmlessly (main re-validates at deploy time).
     peer.remotePort = v.port;
     if (v.folder) peer.deployFolder = v.folder;
-    // Operator auth token — write-only (remote-auth-plan.md [internal design doc, not in this repo] §4). A typed
-    // value SETS it; the "clear" checkbox sends '' to delete it; leaving the field
-    // blank OMITS the key so sanitizePeers carries the stored token forward (the
-    // dialog only ever knows hasToken, never the value). Typed value wins over the
-    // clear box if both are somehow set.
+    // Write-only token: a typed value SETS it, the clear checkbox sends '' to delete it, and a
+    // blank field OMITS the key so the stored token carries forward (the dialog only ever
+    // knows hasToken, never the value). Typed wins over clear if both are set.
     const tokenInput = row.querySelector('.peer-row-token');
     const clearBox = row.querySelector('.peer-row-token-clear');
     const typed = tokenInput ? tokenInput.value.trim() : '';
@@ -5127,16 +4011,6 @@ function collectPeers() {
 
 document.getElementById('peers-add').addEventListener('click', () => addPeerRow({}, { expanded: true }));
 
-// ---- Import from clodexctl's contexts file (t32 step 4) ------------------
-// The mirror of `clodexctl ctx import`, which seeds contexts from these peers.
-//
-// The whole exchange is by NAME: preview returns each context's kind/target and
-// a token STATE, apply takes back the names to import. An imported token value
-// never reaches this file — settings:get has always stripped peer tokens to a
-// `hasToken` boolean, and routing imported ones through the dialog would have
-// been the first exception. So no row is injected here: apply writes main-side
-// and we re-open the dialog, which renders the new peers through the ordinary
-// path with the ordinary token handling.
 const peersImportBox = document.getElementById('peers-import-box');
 
 function closePeersImport() {
@@ -5162,9 +4036,6 @@ function renderPeersImport(res) {
   const addable = cands.filter((c) => c.action === 'add');
   const parts = [];
   parts.push(`<div class="peer-status-dim">${esc(res.file || 'contexts.json')}</div>`);
-  // The CLI's own loader warnings (today: the 0600 mode check) are SHOWN, not
-  // swallowed — a token file the whole machine can read is exactly the thing an
-  // operator should learn about while looking at an import screen.
   for (const w of Array.isArray(res.warnings) ? res.warnings : []) {
     parts.push(`<div class="peer-status-warn">${esc(w)}</div>`);
   }
@@ -5182,8 +4053,6 @@ function renderPeersImport(res) {
         + `</label>`,
       );
     } else {
-      // Skips carry the module's reason verbatim: "already a peer", a refused
-      // tunnel argv, an ECS family. Saying WHICH and why beats a silent absence.
       parts.push(
         `<div class="peers-import-row">`
         + `<span style="flex:0 0 14px"></span>`
@@ -5214,15 +4083,8 @@ function renderPeersImport(res) {
       peersImportBox.innerHTML = `<span class="peer-status-err">${esc((out && out.error) || 'import failed')}</span>`;
       return;
     }
-    // Re-open from settings so imported peers arrive through the normal render
-    // path (unsaved edits in the dialog are discarded — the import wrote
-    // straight to settings, so leaving stale rows on screen would let a
-    // following Save clobber what was just imported).
     closePeersImport();
     await openPeersDialog();
-    // The read-back is the truth: main reports which names the store actually
-    // kept. A rejected name means the peer store refused a record this side
-    // previewed as importable, and saying so is the whole point of checking.
     if (Array.isArray(out.rejected) && out.rejected.length) {
       peersImportBox.classList.remove('hidden');
       peersImportBox.innerHTML =
@@ -5237,13 +4099,6 @@ document.getElementById('peers-import').addEventListener('click', () => {
   else closePeersImport();
 });
 
-// Managed boxes register themselves as peers (sandbox.js registerPeer), but they
-// have their own management surface (the Sandboxes panel) and must NOT be
-// double-managed in this dialog. They're filtered out of the row list for display
-// only; Save re-fetches and re-merges them fresh at WRITE time (see the save
-// handler) — never from a dialog-open snapshot, because a box Rebuild between open
-// and Save re-registers the box with a fresh url/token that a stale stash would
-// clobber (same whole-array-round-trip lesson as the whitelist store).
 async function boxPeerIds() {
   try { return new Set(((await window.api.sandboxListBoxes()) || []).map((b) => b && b.id).filter(Boolean)); }
   catch { return new Set(); }
@@ -5272,13 +4127,9 @@ document.getElementById('btn-peers-cancel').addEventListener('click', closePeers
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
   const collected = collectPeers();
   if (!collected.ok) return;   // invalid port/folder — inline error already shown, keep the dialog open
-  // Re-merge the managed box peers FRESH at write time (never from a dialog-open
-  // stash): a box Rebuild since open bumps its ports and re-registers the peer with
-  // a new url/token, and setSettings replaces the whole peers array, so a stale
-  // snapshot here would overwrite that fresh entry. Re-fetch settings + the box-id
-  // set now; carry the box entries through untouched (hasToken is the derived
-  // getSettings shape — strip it; tokens round-trip via sanitizePeers' omit-carries-
-  // forward-by-id path).
+  // Re-merge the managed box peers FRESH at write time, never from a dialog-open stash: a box
+  // Rebuild since open re-registers its peer with a new url/token, and setSettings replaces the
+  // whole peers array. Strip hasToken (derived); omitted tokens carry forward by id.
   const fresh = await window.api.getSettings();
   const boxIds = await boxPeerIds();
   const boxPeers = (fresh.peers || [])
@@ -5290,18 +4141,10 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
 window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 
-// ── Manage Plugins dialog (T5, plugin-plan.md [internal design doc, not in this repo] §2.5) ────────────────────
-// The detail surface behind the Plugins menu. The menu is the fast path — tick
-// to enable, untick to disable — and this is where what does not fit a menu
-// item lives: descriptions, versions, the real error behind a quarantine, and
-// an explicit Retry.
-//
-// It reads `plugins.status`, not `catalog()`: catalog lists what successfully
-// registered, which by definition excludes the plugin you came here to fix.
-// Toggling applies IMMEDIATELY (its own await, no Save button) because
-// enable/disable is not a form value — it tears down live DOM in every window,
-// and a Cancel that silently left the plugin gone would be a lie. Hence a single
-// Close button.
+// Reads `plugins.status`, not `catalog()`: catalog lists what successfully registered, which
+// by definition excludes the plugin you came here to fix.
+// Toggling applies IMMEDIATELY (its own await, no Save button) — enable/disable tears down
+// live DOM in every window, so a Cancel that silently left the plugin gone would be a lie.
 const pluginsOverlay = document.getElementById('plugins-overlay');
 const pluginsList = document.getElementById('plugins-list');
 
@@ -5321,9 +4164,6 @@ async function renderPluginsDialog() {
   const shadowed = (status && status.ok && status.shadowed) || [];
   pluginsList.innerHTML = '';
   if (!plugins.length && !problems.length && !shadowed.length) {
-    // Reachable only by an explicit open under CLODEX_PLUGINS=0, where the
-    // refusal comes back shaped and empty — the MENU that normally opens this
-    // dialog is absent in that state.
     const empty = document.createElement('div');
     empty.className = 'plugin-row-note';
     empty.textContent = 'No plugins are installed.';
@@ -5334,8 +4174,6 @@ async function renderPluginsDialog() {
     row.className = 'plugin-row';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    // The checkbox shows INTENT, never the quarantine shadow — that is the whole
-    // point of keeping the two separate.
     cb.checked = !!p.enabled;
     cb.addEventListener('change', async () => {
       cb.disabled = true;
@@ -5361,22 +4199,15 @@ async function renderPluginsDialog() {
       d.textContent = p.description;
       body.appendChild(d);
     }
-    // A verb conflict is checked FIRST and is not a failure count: the plugin is
-    // fine and another plugin holds the verb, so the row has to name the verb and
-    // the holder or the user cannot act on it (t20). "Activation failed" told them
-    // nothing and pointed at the wrong plugin.
     if (p.verbConflict) {
       const n = document.createElement('div');
       n.className = 'plugin-row-note warn';
       n.textContent = `Not running: it uses the intent verb [agent:${p.verbConflict.verb}], which the "${p.verbConflict.heldBy}" plugin already registered. Two plugins cannot share a verb — disable one of them.`;
       body.appendChild(n);
     } else if (p.restartRequired) {
-      // The disk copy moved under a plugin that is already running. Node's
-      // require cache is keyed by path, so the code in memory is the OLD code no
-      // matter what the manifest beside it now says — and the version shown on
-      // this row comes from that manifest. Saying so is the entire point: a row
-      // that displayed the new version silently would be claiming an upgrade the
-      // process never performed.
+      // Node's require cache is keyed by path: the code in memory is the OLD code no matter
+      // what the manifest beside it now says, and the version shown on this row comes from
+      // that manifest — displaying it silently would claim an upgrade never performed.
       const n = document.createElement('div');
       n.className = 'plugin-row-note warn';
       const was = p.restartRequired.was ? `v${p.restartRequired.was}` : 'no version';
@@ -5396,9 +4227,6 @@ async function renderPluginsDialog() {
     row.appendChild(cb);
     row.appendChild(body);
     if (p.quarantined) {
-      // Retry = clear the counter and try to activate now. It routes through
-      // pluginSetEnabled(true), which clears failures first — so a user who
-      // fixed the plugin is not refused by a stale strike.
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.className = 'secondary';
@@ -5415,8 +4243,6 @@ async function renderPluginsDialog() {
     }
     pluginsList.appendChild(row);
   }
-  // Directories that look like a plugin but were refused. No toggle: there is no
-  // id to key anything by when the manifest itself is what is broken.
   for (const pr of problems) {
     const row = document.createElement('div');
     row.className = 'plugin-row';
@@ -5433,19 +4259,11 @@ async function renderPluginsDialog() {
     row.appendChild(body);
     pluginsList.appendChild(row);
   }
-  // Copies of an id another root's copy beat. No toggle: the enabled flag is
-  // keyed by bare id and belongs to whichever copy WON, so a checkbox here would
-  // toggle the other plugin. Shown rather than dropped because the failure it
-  // prevents is a user editing code that is not running (docs/plugin-sources.md
-  // §4).
-  //
-  // THIS ROW IS A SAFETY MECHANISM, not a label. Since t21 the loser can be the
-  // BUILT-IN copy — a user-root copy with a higher version supersedes it — and
-  // the hazard that creates is a user plugin declaring version 99 that wins
-  // forever and can never be superseded by a real release. Nothing prevents
-  // that, so the row has to make it legible: name which copy is not running,
-  // which one beat it, and THE VERSION ON BOTH SIDES. A user who cannot see the
-  // two numbers has no way to work out why their update did nothing.
+  // No toggle: the enabled flag is keyed by bare id and belongs to whichever copy WON, so a
+  // checkbox here would toggle the other plugin.
+  // The loser can be the BUILT-IN copy (a higher-versioned user copy supersedes it), so a user
+  // plugin declaring version 99 wins forever. The row must name both versions or a user has no
+  // way to work out why their update did nothing.
   for (const sh of shadowed) {
     const row = document.createElement('div');
     row.className = 'plugin-row';
@@ -5466,10 +4284,6 @@ async function renderPluginsDialog() {
     const mine = sh.version ? `v${sh.version}` : 'no version';
     const winner = sh.shadowedByLabel || sh.shadowedBy;
     const theirs = sh.shadowedByVersion ? `v${sh.shadowedByVersion}` : 'no version';
-    // Three wordings, and the REASON comes from the loader rather than being
-    // guessed from the two version strings — a copy whose version cannot be
-    // parsed lost as uncomparable, not as lower, and telling its author to bump
-    // the number would send them somewhere that cannot help.
     if (sh.reason === 'superseded') {
       n.textContent = `Not running: this ${sh.rootLabel || sh.root} copy is ${mine} and the ${winner} copy is ${theirs} — the higher version wins.`;
     } else if (!sh.comparable) {
@@ -5489,18 +4303,9 @@ async function renderPluginsDialog() {
   }
 }
 
-// Reveal the user plugins folder. The single cheapest fix for the install flow:
-// ~/.clodex is a dot-directory Finder hides, so a user told to "put it in
-// ~/.clodex/plugins" has to know ⌘⇧G exists. The path comes from the engine
-// rather than being rebuilt here — the renderer does not own where roots live.
-//
-// ON WEB THIS IS A DIFFERENT ACTION, not a degraded one (t28). Revealing in a
-// file manager is not merely unsupported in a browser — it is WRONG: it would
-// open the folder on the machine holding the browser, while the plugins live on
-// the machine running the engine. The button assumed those were one machine.
-// So the browser shows the engine's path and what is in it instead, which
-// answers the same question ("where do plugins go, and what is there?") with the
-// two machines kept straight. Desktop behaviour is untouched.
+// On web this is a DIFFERENT action, not a degraded one: revealing in a file manager would
+// open the folder on the machine holding the browser, while the plugins live on the machine
+// running the engine. So the browser shows the engine's path and listing instead.
 const pluginsFolderPanel = document.getElementById('plugins-folder');
 
 async function showPluginsFolderListing() {
@@ -5514,9 +4319,6 @@ async function showPluginsFolderListing() {
   pluginsFolderPanel.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'plugin-row-note';
-  // Named as the ENGINE's path explicitly. On a headless box the viewer's own
-  // filesystem has no such directory, and a bare path invites copying it into a
-  // local Finder window that will never contain anything.
   head.textContent = `Plugins folder on the Clodex host: ${r.dir}`;
   pluginsFolderPanel.appendChild(head);
   const body = document.createElement('div');
@@ -5527,8 +4329,6 @@ async function showPluginsFolderListing() {
   } else if (!r.entries.length) {
     body.textContent = 'Empty — drop a plugin directory here on the host, then Re-scan.';
   } else {
-    // One level, directories marked. Not a browser: there is no descending into
-    // an entry, because the engine row does not offer it.
     body.textContent = r.entries.map((e) => (e.isDir ? `${e.name}/` : e.name)).join('   ');
   }
   pluginsFolderPanel.appendChild(body);
@@ -5546,9 +4346,6 @@ document.getElementById('btn-plugins-reveal').addEventListener('click', async ()
   try { await window.api.fileReveal(r.dir); } catch {}
 });
 
-// The label has to match what the button does on each frontend, or the browser
-// offers a Finder action it cannot perform. Set once at load; the title carries
-// the two-machines distinction that the label has no room for.
 if (window.__CLODEX_WEB__) {
   const revealBtn = document.getElementById('btn-plugins-reveal');
   if (revealBtn) {
@@ -5557,10 +4354,6 @@ if (window.__CLODEX_WEB__) {
   }
 }
 
-// Re-scan without restarting. Honest about the three outcomes it can produce:
-// added plugins really are running, removed ones really are gone, and a CHANGED
-// plugin cannot be swapped in-process — that one gets a restart-required row from
-// the loader rather than a version badge the running code does not match.
 document.getElementById('btn-plugins-rescan').addEventListener('click', async () => {
   const btn = document.getElementById('btn-plugins-rescan');
   btn.disabled = true;
@@ -5571,9 +4364,6 @@ document.getElementById('btn-plugins-rescan').addEventListener('click', async ()
     showToast(`Re-scan failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
     return;
   }
-  // The renderer half of a newly loaded plugin activates from the plugin-state
-  // hint the engine broadcast, same as an enable — nothing to do here but say
-  // what happened and redraw the rows.
   const bits = [];
   if (r.added.length) bits.push(`${r.added.length} added`);
   if (r.removed.length) bits.push(`${r.removed.length} removed`);
@@ -5589,7 +4379,6 @@ document.getElementById('btn-plugins-close').addEventListener('click', closePlug
 pluginsOverlay.addEventListener('mousedown', (e) => { if (e.target === pluginsOverlay) closePluginsDialog(); });
 window.api.onRequestOpenPluginsDialog(() => openPluginsDialog());
 
-// ── Managed Docker sandbox dialog (sandbox-plan.md [internal design doc, not in this repo] M2) ─────────────────
 const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
 const sbStatusRow = document.getElementById('sandbox-status');
@@ -5599,8 +4388,6 @@ const sbToggleBtn = document.getElementById('btn-sandbox-toggle');
 const sbRebuildBtn = document.getElementById('btn-sandbox-rebuild');
 const sbOpenRow = document.getElementById('sandbox-open-row');
 const sbOpenLink = document.getElementById('sandbox-open-link');
-// Effective-ports line: shown only while running (what the box IS listening on).
-// Ports have no editable field — engine-managed, settings-file-only (M6b bug #4).
 const sbPortsLine = document.getElementById('sandbox-ports-line');
 const sbToken = document.getElementById('sandbox-token');
 const sbTokenSave = document.getElementById('sandbox-token-save');
@@ -5608,8 +4395,6 @@ const sbTokenClear = document.getElementById('sandbox-token-clear');
 const sbMountsList = document.getElementById('sandbox-mounts-list');
 const sbMountsAdd = document.getElementById('sandbox-mounts-add');
 const sbMountsRestart = document.getElementById('sandbox-mounts-restart');
-// M6b P2: box list + create/delete controls. The detail fields above are now
-// scoped to sbCurrentBox — every sandbox IPC call threads it as the boxId.
 const sbBoxList = document.getElementById('sandbox-box-list');
 const sbBoxNewId = document.getElementById('sandbox-box-new-id');
 const sbBoxCreate = document.getElementById('sandbox-box-create');
@@ -5620,31 +4405,17 @@ const sbDeleteBtn = document.getElementById('btn-sandbox-delete');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
-// Docker action gate (Task 8/13): the last-probed sandboxActionGate result
-// (running + notice + reason). Init PESSIMISTIC (running:false) so the markup
-// opens disabled — the probe can take seconds when the daemon is down, and an
-// optimistic paint (the old default running:true) would flash enabled Start/
-// Rebuild the user could click into a raw compose failure. refreshSandboxStatus
-// and renderBoxList replace this with a real probe on open and each poll; the
-// probe's catch{} falls back to this pessimistic gate rather than a stale good one.
+// Init PESSIMISTIC (running:false) so the markup opens disabled: the docker probe can take
+// seconds when the daemon is down, and an optimistic default would flash an enabled Start/
+// Rebuild. The probe's catch{} falls back here, never to a stale good gate.
 const SB_GATE_UNKNOWN = { running: false, notice: { kind: 'idle', text: 'Checking Docker…' }, reason: 'Checking Docker…' };
 let sbGate = SB_GATE_UNKNOWN;
-// The selected box's EFFECTIVE (last-generated, possibly bumped) host ports by
-// role — status.ports while running, null when stopped. Both the Open-in-browser
-// link and its click handler read the live web port from here, not the (disabled,
-// possibly-stale) configured field. Bug #4: two boxes on the same configured port.
 let sbEffectivePorts = null;
-// The box the detail view is currently scoped to (default: the shared box), and
-// the registry rows [{id,label}] backing the list.
 let sbCurrentBox = 'sandbox';
 let sbBoxes = [];
-// M6a mounts editor: the live in-memory list (host + ro per row), and a flag set
-// when the list is edited while the box is running — a bind only attaches at
-// container create, so the change needs a restart to take effect.
 let sbMounts = [];
 let sbMountsDirty = false;
 
-// Render a notice {kind,text} into a .sandbox-row as a colored dot + text.
 function renderSandboxNotice(row, notice) {
   row.innerHTML = '';
   const dot = document.createElement('span');
@@ -5653,17 +4424,10 @@ function renderSandboxNotice(row, notice) {
   row.appendChild(document.createTextNode(notice.text));
 }
 
-// The live web port to open: the effective (bumped) port when running, else the
-// engine default (the link only shows while running, so effective is normally set).
-// Keeps box 2's link off box 1's port (bug #4).
 function effectiveWebPort() {
   return (sbEffectivePorts && sbEffectivePorts.web) || 7810;
 }
 
-// Reflect running/stopped into the button label, the Open-in-browser link, and the
-// effective-ports line. `ports` is the effective per-role host ports from status
-// (running only); ports have no editable field now — they're engine-managed and
-// only ever surfaced here, as what the box IS listening on.
 function applySandboxRunning(running, ports = null) {
   sbRunning = running;
   sbEffectivePorts = running ? (ports || null) : null;
@@ -5683,15 +4447,6 @@ function applySandboxRunning(running, ports = null) {
   }
 }
 
-// Apply the docker action gate to the detail buttons + box-create from the
-// last-probed gate (sbGate) and the selected box's running state (sbRunning). The
-// per-element decisions live in the tested leaf (sandboxGateTreatment); this only
-// plumbs them into the DOM. Docker-down must be OBVIOUS (Task 13): a gated control
-// is disabled AND dimmed (`.sandbox-gated`, the greyRichFields precedent), the
-// docker row reads at banner weight (`.sandbox-docker-banner`), and Stop stays live
-// + undimmed. sbBusy (a lifecycle op in flight) also disables the toggle/rebuild,
-// so this is safe from a finally after sbBusy clears. The reason rides the title so
-// a hover explains a disabled control; the banner states it in full.
 function applyActionGate() {
   const t = sandboxGateTreatment(sbGate, sbRunning);
   sbToggleBtn.disabled = sbBusy || t.startDisabled;
@@ -5700,11 +4455,9 @@ function applyActionGate() {
   sbToggleBtn.title = t.startDisabled ? (t.reason || '') : '';
   sbRebuildBtn.title = t.rebuildDisabled ? (t.reason || '') : '';
   sbBoxCreate.title = t.boxCreateDisabled ? (t.reason || '') : '';
-  // Dim the gated action areas — never a live Stop.
   sbToggleBtn.classList.toggle('sandbox-gated', t.dimStart);
   sbRebuildBtn.classList.toggle('sandbox-gated', t.dimRebuild);
   if (sbBoxNew) sbBoxNew.classList.toggle('sandbox-gated', t.dimBoxCreate);
-  // Raise the docker notice to banner weight while gated (dominant, not a quiet line).
   sbDockerRow.classList.toggle('sandbox-docker-banner', t.banner);
 }
 
@@ -5723,11 +4476,7 @@ async function refreshSandboxStatus() {
     // toggle right after a state flip (defect #1).
     if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
     applyActionGate();
-    // The mounts restart-hint depends on running state — repaint it each poll.
     sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
-    // Keep the selected box's list row (dot + Start/Stop label + Start gating) in
-    // step with the detail poll, so the row reflects the same state — including a
-    // docker-down row Start going dim/disabled — without its own docker call.
     const selRow = sbBoxList.querySelector('.sandbox-box-row.selected');
     if (selRow) {
       const dot = selRow.querySelector('.sandbox-dot');
@@ -5742,17 +4491,11 @@ async function refreshSandboxStatus() {
       }
     }
   } catch {
-    // Probe/status failed (dialog closed mid-poll, or an engine hiccup). Fall back
-    // to the pessimistic gate so a stale GOOD probe can't leave Start/Rebuild/create
-    // enabled after docker goes away (defect #3); the next tick retries.
     sbGate = SB_GATE_UNKNOWN;
     applyActionGate();
   }
 }
 
-// The token field is WRITE-ONLY (sandbox-plan.md [internal design doc, not in this repo] M4): the value never
-// crosses back out, so the field always opens blank and the placeholder is the
-// only "configured" signal — a blank Save keeps whatever's already stored.
 function applyTokenState(hasToken) {
   sbToken.value = '';
   sbToken.placeholder = hasToken
@@ -5760,9 +4503,6 @@ function applyTokenState(hasToken) {
     : 'Run `claude setup-token`, then paste the token here';
 }
 
-// Render the mounts editor from sbMounts: one row per mount (host path + rw/ro
-// toggle + remove), plus the running-restart hint. Pure DOM off the in-memory
-// list — every mutation goes through persistMounts, which is the validation gate.
 function renderMounts() {
   sbMountsList.innerHTML = '';
   for (let i = 0; i < sbMounts.length; i++) {
@@ -5790,11 +4530,6 @@ function renderMounts() {
   sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
 }
 
-// Validate + persist a proposed mounts list through setConfig (the engine is the
-// single validation authority — absolute/exists/no-shadow/no-dup). On success
-// adopt the cleaned list the engine stored and re-render; on rejection keep the
-// old list and toast the reason. A successful edit while running arms the
-// restart-needed hint.
 async function persistMounts(next) {
   const r = await window.api.sandboxSetConfig({ mounts: next }, sbCurrentBox);
   if (r && r.ok === false) {
@@ -5813,15 +4548,8 @@ sbMountsAdd.addEventListener('click', async () => {
   await persistMounts([...sbMounts, { host: dir, ro: false }]);
 });
 
-// Render the box list from sbBoxes: one row per registry box (status dot + label
-// + inline Start/Stop), the current box highlighted. Each row's dot/toggle comes
-// from that box's own compose status (fetched in parallel on render — not on the
-// steady 3s poll, which only touches the selected box). Clicking a row selects it;
-// the Start/Stop button toggles that box without selecting it.
 async function renderBoxList() {
   const boxes = sbBoxes;
-  // Probe docker alongside the per-box statuses so a row's Start can be gated the
-  // same as the detail Start. Cheap: the main-side probe is TTL-cached + deduped.
   const [detect, notices] = await Promise.all([
     window.api.sandboxDetect(sbCurrentBox).catch(() => null),
     Promise.all(boxes.map((b) =>
@@ -5851,7 +4579,6 @@ async function renderBoxList() {
     tog.type = 'button';
     tog.className = 'secondary sandbox-box-toggle';
     tog.textContent = sn.running ? 'Stop' : 'Start';
-    // A row's Start is gated when docker is down; its Stop is never gated.
     const rowStartGated = boxRowStartGated(sbGate.running, sn.running);
     tog.disabled = rowStartGated;
     tog.classList.toggle('sandbox-gated', rowStartGated);
@@ -5863,9 +4590,6 @@ async function renderBoxList() {
   });
 }
 
-// Load the detail fields for sbCurrentBox from its stored config. Every box is
-// deletable (M6b P2, no shared-box special status); 'sandbox' is merely the
-// default-created box name.
 async function loadBoxDetail() {
   // Switching boxes: drop the previous box's effective ports so its link/hint can't
   // apply here — the next status poll (refreshSandboxStatus) repopulates them.
@@ -5881,12 +4605,8 @@ async function loadBoxDetail() {
   applyTokenState(!!cfg.hasToken);
 }
 
-// Show/hide the per-box detail surface. Hidden when the registry is empty (the
-// user deleted every box) — only the create row remains.
 function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
 
-// Switch the detail view to another box. No-op mid-lifecycle so a switch can't
-// race an in-flight up/down/rebuild.
 async function selectBox(id) {
   if (sbBusy || id === sbCurrentBox) return;
   sbCurrentBox = id;
@@ -5895,8 +4615,6 @@ async function selectBox(id) {
   await refreshSandboxStatus();
 }
 
-// Start/Stop a box straight from its list row (no field persist — its config is
-// already stored). Guarded by sbBusy like the detail lifecycle buttons.
 async function toggleBox(id, running) {
   if (sbBusy) return;
   sbBusy = true;
@@ -5921,9 +4639,6 @@ async function openSandboxDialog() {
   await renderBoxList();
   sandboxOverlay.classList.remove('hidden');
   if (sbCurrentBox) await refreshSandboxStatus();
-  // Poll compose ps only while the dialog is open (the peer row's dot is the
-  // global indicator — no background polling). The poll touches the selected box
-  // only; other rows refresh on list re-render (open/select/create/delete/toggle).
   if (sbPollTimer) clearInterval(sbPollTimer);
   sbPollTimer = setInterval(refreshSandboxStatus, 3000);
 }
@@ -5933,11 +4648,8 @@ function closeSandboxDialog() {
   sandboxOverlay.classList.add('hidden');
 }
 
-// Persist the editable config from the fields (ports coerced; blank workDir =
-// named volume). The engine's sanitizer is the backstop, but send clean values.
-// The ports are engine-managed (no field) so they're NOT collected — setConfig
-// merges over the stored config, so the persisted port values (or defaults) are
-// preserved untouched. workDir + autoStart are the only GUI-editable config now.
+// Ports are engine-managed and deliberately NOT collected: setConfig merges over the stored
+// config, so the persisted port values survive only while this keeps omitting them.
 function collectSandboxConfig() {
   return {
     workDir: sbWorkdir.value.trim() || null,
@@ -5945,13 +4657,7 @@ function collectSandboxConfig() {
   };
 }
 
-// The work-folder picker is native on the desktop; on the web frontend the text
-// field is the input surface (the degraded picker would confuse), so hide the
-// button there.
 const sbWorkdirPick = document.getElementById('sandbox-workdir-pick');
-// The folder pickers are native (dialog.showOpenDialog); on the web frontend the
-// degraded picker would confuse, so hide both add-by-folder affordances there
-// (existing mount rows still render + toggle/remove — those need no picker).
 if (window.__CLODEX_WEB__) { sbWorkdirPick.classList.add('hidden'); sbMountsAdd.classList.add('hidden'); }
 sbWorkdirPick.addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
@@ -5959,14 +4665,8 @@ sbWorkdirPick.addEventListener('click', async () => {
 });
 document.getElementById('sandbox-workdir-clear').addEventListener('click', () => { sbWorkdir.value = ''; });
 
-// Persist autoStart the moment it's toggled — it's honored at next launch even
-// if the user never clicks Start.
 sbAutoStart.addEventListener('change', () => { window.api.sandboxSetConfig({ autoStart: sbAutoStart.checked }, sbCurrentBox); });
 
-// Auth token — write-only paste + clear (M4). Save writes the 0600 auth.env;
-// Clear deletes it. Neither reads a value back; the placeholder reflects state.
-// The token applies on the next Start (the env_file line lands when compose is
-// regenerated), so no restart is forced here.
 sbTokenSave.addEventListener('click', async () => {
   const t = sbToken.value.trim();
   if (!t) { showToast('Paste a token first (or use Clear to remove it).', { kind: 'peer-ui' }); return; }
@@ -5996,8 +4696,6 @@ sbToggleBtn.addEventListener('click', async () => {
   sbRebuildBtn.disabled = true;
   sbToggleBtn.textContent = wasRunning ? 'Stopping…' : 'Starting…';
   try {
-    // Persist the current field values before Start so the container comes up on
-    // the configured ports/workdir; a Stop doesn't need them but a save is cheap.
     await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
     const r = wasRunning ? await window.api.sandboxDown(sbCurrentBox) : await window.api.sandboxUp(sbCurrentBox);
     if (!r || r.ok === false) {
@@ -6014,9 +4712,6 @@ sbToggleBtn.addEventListener('click', async () => {
   }
 });
 
-// Rebuild the box on the current code (dev: image rebuild; packaged: image pull),
-// then recreate the container. A build can take minutes, so both buttons lock and
-// the label shows progress; the box --resumes its sessions so no confirm is needed.
 sbRebuildBtn.addEventListener('click', async () => {
   if (sbBusy) return;
   sbBusy = true;
@@ -6024,8 +4719,6 @@ sbRebuildBtn.addEventListener('click', async () => {
   sbRebuildBtn.disabled = true;
   sbRebuildBtn.textContent = 'Rebuilding…';
   try {
-    // Persist the current field values first so the rebuilt container comes up on
-    // the configured ports/workdir, exactly like Start does.
     await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
     const r = await window.api.sandboxRebuild(sbCurrentBox);
     if (!r || r.ok === false) {
@@ -6044,8 +4737,6 @@ sbRebuildBtn.addEventListener('click', async () => {
   }
 });
 
-// Create a box: the engine gates the id (lowercase compose-charset) and mints a
-// row from defaults. On success refresh the list and select the new box.
 sbBoxCreate.addEventListener('click', async () => {
   if (sbBusy) return;
   const id = sbBoxNewId.value.trim();
@@ -6066,10 +4757,6 @@ sbBoxCreate.addEventListener('click', async () => {
 });
 sbBoxNewId.addEventListener('keydown', (e) => { if (e.key === 'Enter') sbBoxCreate.click(); });
 
-// Delete the current box: confirm (noting the left-behind volumes), then the
-// engine stops the container, drops the peer row, and removes the registry row.
-// Any box is deletable — 'sandbox' has no special status (M6b P2). Emptying the
-// registry hides the detail surface until a box is created.
 sbDeleteBtn.addEventListener('click', async () => {
   if (sbBusy || !sbCurrentBox) return;
   const box = sbBoxes.find((b) => b.id === sbCurrentBox);
@@ -6109,7 +4796,6 @@ document.getElementById('btn-sandbox-close').addEventListener('click', closeSand
 sandboxOverlay.addEventListener('mousedown', (e) => { if (e.target === sandboxOverlay) closeSandboxDialog(); });
 document.getElementById('btn-peers-sandbox').addEventListener('click', () => { closePeersDialog(); openSandboxDialog(); });
 window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
-// Window > Peers > <peer> > <session>: attach in this (focused) window.
 window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
 
 async function openPrefs() {
@@ -6124,23 +4810,14 @@ async function openPrefs() {
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken);
-  // Env-scope editor: reset the add row + render the current scope's vars.
   if (prefsEnvScope) prefsEnvScope.value = 'global';
   if (prefsEnvKey) prefsEnvKey.value = '';
   if (prefsEnvValue) prefsEnvValue.value = '';
   if (prefsEnvSecret) prefsEnvSecret.checked = false;
   setPrefsEnvState('');
   refreshPrefsEnv();
-  // Global default tool-deny set (cwd-independent, so no lower-layer provenance).
-  // Unchecked = denied by default for new sessions.
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
-  // Plugin settings sections (§2.5) — one <section data-plugin> per registered
-  // section, appended before .dialog-actions. Values are pulled per plugin
-  // through the one multiplexed channel; a disabled plugin's section does not
-  // exist. No-op (and no invokes) while no plugin registers a section. Only a
-  // plugin's OWN settings live here — the on/off switch is the Plugins menu's
-  // (T5), so this dialog never lists a plugin the user hasn't already enabled.
   await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
@@ -6149,9 +4826,6 @@ async function openPrefs() {
   wsPollTimer = setInterval(refreshWsStatus, 1500);
 }
 
-// Pull each registered section's persisted values through the ONE multiplexed
-// plugin channel (`_host` pseudo-id, §2.5) and hand them to the island to
-// render. Pull-on-open, per the multi-window law — never a maintained cache.
 async function renderPluginPrefs() {
   const owners = pluginBar.settingsSectionOwners();
   const values = {};
@@ -6187,22 +4861,13 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });
-  // Default tool denies live in a separate store (the "*" agent-default), so
-  // persist them via their own setter. collectToolChecklist returns the
-  // unchecked (= denied) tools.
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
-  // Plugin sections persist under uiSettings.plugins[<id>] via the same one
-  // multiplexed channel (§2.5). Empty (and so no invokes) while no plugin
-  // registers a section.
   for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
     try { await window.api.pluginInvoke('_host', 'settings.set', [pluginId, patch]); } catch {}
   }
   closePrefs();
 });
 
-// Phone-access token is managed OUT of the main Save flow — it lives write-only
-// in <userData>/remote.env, not ui-settings, and applies immediately (the server
-// rebuilds), so Save/Clear act on their own.
 prefsRemoteTokenSave.addEventListener('click', () => {
   const v = prefsRemoteToken.value.trim();
   if (!v) { showToast('Paste a token first (use Clear to remove).', { kind: 'warn' }); return; }
@@ -6212,9 +4877,6 @@ prefsRemoteTokenClear.addEventListener('click', () => saveRemoteToken(''));
 
 window.api.onRequestOpenPreferences(() => openPrefs());
 
-// ---------------------------------------------------------------------------
-// Edit Session Args
-// ---------------------------------------------------------------------------
 
 const argsOverlay = document.getElementById('args-overlay');
 const argsInput = document.getElementById('args-input');
@@ -6241,16 +4903,11 @@ const argsIntentsList = document.getElementById('args-intents-list');
 const argsIntentsSection = document.getElementById('args-intents-section');
 const argsExecList = document.getElementById('args-exec-list');
 const argsExecSection = document.getElementById('args-exec-section');
-// Skills section — PEER-only (a local edit keeps the standalone Skills popover on
-// the ⚙ session menu). Folded here so a peer viewer edits every travelable setting
-// from one dialog whose modal scrolls (the floating popover overflowed under the
-// top chrome when anchored to the proxy bar).
 const argsSkillsRow = document.getElementById('args-skills-row');
 const argsSkillsList = document.getElementById('args-skills-list');
 const argsSkillsSection = document.getElementById('args-skills-section');
 const argsInjectSkillsSection = document.getElementById('args-inject-skills-section');
 const argsInjectSkillsList = document.getElementById('args-inject-skills-list');
-// Session env (T46b) — LOCAL-only (like exec grants), shown for every session type.
 const argsEnvSection = document.getElementById('args-env-section');
 const argsEnv = document.getElementById('args-env');
 const argsEnvHint = document.getElementById('args-env-hint');
@@ -6258,9 +4915,6 @@ if (argsEnv) argsEnv.addEventListener('input', () => renderEnvHint(argsEnv, args
 wireBulkToggles(argsToolsRow, argsToolsList);
 wireBulkToggles(argsSkillsRow, argsSkillsList);
 let argsEditingName = null;
-// Non-null when the open dialog targets a PEER session: a { fetch, save,
-// onRestarted } source (built by peers-ui) that swaps the data layer while the
-// dialog DOM stays identical. Null = the local session path (default).
 let argsEditingSource = null;
 // Scoped-checklist Save inputs for the args-dialog agents list: persisted set,
 // rendered (in-scope) names, and auto-included names — so save reconciles instead
@@ -6268,8 +4922,6 @@ let argsEditingSource = null;
 let argsAgentsPersisted = [];
 let argsAgentsRendered = [];
 let argsAgentsAuto = [];
-// Same scoped-checklist Save inputs for the peer skills inject list (mirrors the
-// standalone Skills popover): persisted inject set, rendered names, auto-included.
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
 let argsSkillsInjectAuto = [];
@@ -6279,13 +4931,6 @@ argsProxyMode.addEventListener('change', () => {
   if (argsProxyMode.value === 'custom') argsProxyUrl.focus();
 });
 
-// Edit Session dialog. `argsSource` (peers-ui's peer descriptor) swaps the data
-// layer only — fetch the args + catalogs, save the patch, and reattach after a
-// restart. Null = the local session path: fetch the four local sources, save via
-// setSessionArgs, re-home the tab on restart. The dialog DOM is identical either
-// way; a peer edit populates its checklists from the BOX catalogs in the response,
-// never the local libraries (the box's agents/prompts/tools are the truth for its
-// sessions), and rows with no box catalog fall back to empty, not local data.
 async function openArgsDialog(name, argsSource = null) {
   let res, settings, promptLib, agentLib, skillCatalog = null;
   if (argsSource) {
@@ -6299,8 +4944,6 @@ async function openArgsDialog(name, argsSource = null) {
       window.api.listPrompts(),
     ]);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-    // Agents come SCOPE-FILTERED from getSessionArgs (res.agentCatalog), same as
-    // the peer path pulls the box's filtered catalog — never the unscoped library.
     agentLib = res.agentCatalog || [];
   }
   argsEditingSource = argsSource;
@@ -6321,21 +4964,14 @@ async function openArgsDialog(name, argsSource = null) {
   argsProxyRow.style.display = isAgent ? '' : 'none';
   setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(argsProxyMode, settings);
-  // Prompt rows drive the save-time collect logic via their display; the
-  // accordion sections that wrap them are toggled per type so inapplicable
-  // sections don't show as empty boxes. Sections start collapsed each open.
   argsPromptRow.style.display = isAgent ? '' : 'none';
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
   fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '');
   renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []));
-  // Custom subagents + tools — Claude-only.
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
-  // Scope: `sessions:`-scoped agents render auto (checked+disabled `· auto`); the
-  // agentLib carries frontmatter meta both locally (readSessionArgs.agentCatalog)
-  // and over the wire (the box's catalog), so autoEnabledFor resolves either way.
   const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto);
   argsAgentsPersisted = res.agents || [];
@@ -6346,30 +4982,15 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-  // Intents gate — Claude-only, mirroring the New-Session/template checklist. Prefill
-  // from the seat's persisted allowlist: res.intents is the raw value (null = all
-  // enabled → every box checked; array = membership), read straight into the shared
-  // widget. Editing here OWNS intents (the save patch carries the result).
   argsIntentsSection.style.display = isClaude ? '' : 'none';
   setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
-  // Exec grants — Claude-only AND LOCAL-only. A peer edit can neither read the box's
-  // grants (readSessionArgs strips them at the wire) nor set them (the save omits the
-  // key), so hide the whole section on a peer row: never rendered, collected, or sent.
-  // Locally, fill the grant checklist from the exec registry, prechecking this seat's
-  // persisted grants. res.execCommands is [] on a peer row (stripped) but the section
-  // is hidden there regardless.
   const isExecEditable = isClaude && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
     setExecLibCache((await window.api.listExecCommands()) || []);
     renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }
-  // Skills — PEER Claude only (a local edit uses the standalone popover). Rendered
-  // from the box's skill catalog carried in the peer fetch; hidden (never collected
-  // or sent) for a local edit or a non-Claude / catalog-less peer. Mirrors the
-  // standalone Skills popover: a disable checklist + an optional library-inject
-  // section shown only when the box's skill library is non-empty.
   const isSkillsEditable = isClaude && !!argsSource && !!skillCatalog;
   argsSkillsSection.style.display = isSkillsEditable ? '' : 'none';
   if (isSkillsEditable) {
@@ -6389,20 +5010,12 @@ async function openArgsDialog(name, argsSource = null) {
       argsSkillsInjectPersisted = []; argsSkillsInjectRendered = []; argsSkillsInjectAuto = [];
     }
   }
-  // Session env — LOCAL-only (mirrors exec grants: a peer edit never reads the box's
-  // env — values may be creds, no secret masking over the wire — so the section is
-  // hidden on a peer row, never rendered/collected/sent; getSessionArgs strips env at
-  // the wire regardless). Applies to every session type (claude/codex/bash), so it's
-  // gated on !argsSource only, not Claude-only. Prefill from the entry's persisted
-  // env via formatEnvLines (its first live caller); res.env is {} when absent.
   const isEnvEditable = !argsSource;
   argsEnvSection.style.display = isEnvEditable ? '' : 'none';
   if (isEnvEditable) {
     argsEnv.value = formatEnvLines(res.env || {});
     renderEnvHint(argsEnv, argsEnvHint);
   } else {
-    // Peer row: the section is hidden and never collected, but wipe any stale local
-    // content from a prior local edit so nothing lingers behind the hidden textarea.
     argsEnv.value = '';
     renderEnvHint(argsEnv, argsEnvHint);
   }
@@ -6428,40 +5041,21 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const promptsHidden = argsPromptRow.style.display === 'none';
   const systemPromptFile = promptsHidden ? null : (argsSystemPrompt.value || null);
   const appendPromptFiles = promptsHidden ? [] : collectAppendChecklist(argsAppendList);
-  // Reconcile the scoped agents checklist: keep an out-of-scope persisted agent
-  // (never rendered) and exclude auto-included ones from the persisted set.
   const agents = argsAgentsRow.style.display === 'none' ? [] : reconcilePartialSelection(
     argsAgentsPersisted, argsAgentsRendered, collectAgentChecklist(argsAgentsList), argsAgentsAuto);
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
-  // Intents: this dialog OWNS the gate now (Claude-only section). collect returns
-  // null when every box is checked (clear the gate / stay all-enabled) or the
-  // enabled subset (incl [] = everything gated, a real value). Non-Claude sessions
-  // carry no gate, so null there matches the always-null create-time default — same
-  // clear-on-hidden shape as the sibling tools/agents fields above. Both are explicit
-  // values that OVERWRITE (the U9 lesson live: an owned key all-checked clears, it
-  // doesn't preserve); undefined-preserve is reserved for a patch that omits intents.
+  // This dialog OWNS the gate: collect returns null (every box checked → clear) or the enabled
+  // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
+  // reserved for a patch that omits intents entirely.
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
-  // Exec grants: LOCAL-only. The section is shown ONLY for a local Claude edit, so a
-  // hidden section means either a peer row or a non-Claude/non-owning edit — in every
-  // such case the grants must be left UNTOUCHED, which the positional local call and
-  // the peer patch express differently: the local path passes the collected array (or,
-  // when hidden, omits it below); the peer path never carries the key at all.
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
-  // Session env: LOCAL-only, like exec grants. The section is shown ONLY for a local
-  // edit, so a hidden section = a peer row → leave env UNTOUCHED (peer save omits the
-  // key entirely below). Locally the dialog OWNS env: an empty box = {} = a real clear
-  // (the resolver/setEnv store absence). parseEnvLines drops junk (surfaced by the
-  // live hint); the box re-validates server-side (sanitizeFlat) regardless.
+  // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
+  // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
   const env = argsEnvSection.style.display === 'none'
     ? undefined
     : parseEnvLines(argsEnv.value || '').env;
-  // Skills — collected only when the peer-only section is shown; undefined otherwise
-  // so the save preserves the persisted set (a hidden section = local edit or a
-  // non-Claude peer, neither of which owns skills here). Inject is RECONCILED against
-  // the scoped render (out-of-scope survivors kept, auto excluded), exactly like the
-  // standalone popover; undefined when the library section is hidden.
   const skillsShown = argsSkillsSection.style.display !== 'none';
   const disabledSkills = skillsShown ? collectSkillChecklist(argsSkillsList) : undefined;
   const injectSkills = !skillsShown || argsInjectSkillsSection.style.display === 'none'
@@ -6469,12 +5063,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     : reconcilePartialSelection(argsSkillsInjectPersisted, argsSkillsInjectRendered,
         collectInjectChecklist(argsInjectSkillsList), argsSkillsInjectAuto);
   const name = argsEditingName;
-  // Capture the peer source before closeArgsDialog() clears it (the save runs
-  // after the dialog closes).
   const source = argsEditingSource;
-  // Snapshot metadata from the current sidebar entry so we can re-render it
-  // after the kill+respawn wipes it via session-exit. (Local path only — a peer
-  // restart reattaches through its own source.onRestarted.)
   const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = existing ? existing.dataset.type || null : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
@@ -6484,12 +5073,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
   const res = source
     ? await source.save({
-        // Peer save NEVER carries execCommands — exec grants are local-only, so the
-        // key is omitted entirely (not even []) so a peer edit can't clear the box's
-        // grants. remote-wiring strips it belt-and-suspenders regardless. Skills DO
-        // travel now (peer-only section): disabledSkills/injectSkills carry the
-        // collected values, and the peer source persists them + fresh-restarts on
-        // apply-now (a resume wouldn't re-read the roster).
+            // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),
+            // so a peer edit cannot clear the box's grants. Skills DO travel, and the peer source
+            // fresh-restarts on apply-now — a resume wouldn't re-read the roster.
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
@@ -6508,24 +5094,13 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Library drawers (prompts / agents / skills)
-// ---------------------------------------------------------------------------
 
-// Moved to library-drawers.js AS-IS (not de-duped — see that file's header).
-// FLAG: takes getActiveSession (prompt inject) + the checklists cache setters.
-// The templates drawer reuses the New Session dialog as its editor, so it calls
-// back into the core's openTemplateEditor; the core keeps the drawer's list
-// refresh so a dialog-side save repaints the open drawer.
 ({ refreshTemplatesList: templatesDrawerRefresh } = initLibraryDrawers({
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
 }));
 
-// ---------------------------------------------------------------------------
-// Restore sessions on startup
-// ---------------------------------------------------------------------------
 
 (async function restoreSessions() {
   const restored = await window.api.restoreSessions();
@@ -6534,27 +5109,18 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   let firstHealthy = null;
   for (const entry of restored) {
     if (entry.archived) {
-      // Archived — no PTY; a lightweight placeholder that resumes on click.
       addArchivedSessionToSidebar(entry);
       continue;
     }
     if (entry.failed) {
-      // Render as a ghost entry — no xterm, but visible in the sidebar so
-      // the user can either retry it or forget it.
       addFailedSessionToSidebar(entry);
       continue;
     }
     const { terminal } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
-    // Seed the dot from the reattach snapshot — activity/attention events
-    // fired while this window was detached were dropped, and the next live
-    // event may be a turn away.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
     if (item) {
-      // A reattached thinking dot gets a fresh stamp — the true start was lost
-      // with the detached window's events, so the badge undercounts rather
-      // than guesses.
       if (entry.activity) {
         item.dataset.activity = entry.activity;
         if (entry.activity === 'thinking') item.dataset.thinkingSince = String(Date.now());
@@ -6575,26 +5141,17 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (!firstHealthy) firstHealthy = entry.name;
   }
   if (firstHealthy) switchSession(firstHealthy);
-  // Focus the first restored session
   switchSession(restored[0].name);
-  // Load persisted view state, fetch meta, and lay out the grouped/sorted list.
   initSidebarView();
 })();
 
-// Opt-in startup session discovery: if enabled, scan for adoptable external
-// sessions once the app has settled and open the picker only when there's
-// something to adopt. Gated on the preference (default off) so launch is silent
-// unless the operator asked for it; File ▸ Discover Sessions… is always available
-// regardless. Window gate: only the OS-focused window at launch runs this — every
-// restored workspace window loads this same script, and without the gate all of
-// them would pop the picker at once. document.hasFocus() is the codebase's
-// established "is this the active window" idiom (see the notifier gates above).
+// Opt-in startup discovery. Window gate: every restored workspace window loads this same
+// script, so without the document.hasFocus() check all of them pop the picker at once.
 (async function maybeDiscoverOnStartup() {
   try {
     if (!document.hasFocus()) return;
     const s = await window.api.getSettings();
     if (!s || !s.discoverOnStartup) return;
-    // Let restore + reattach finish painting before we scan/prompt.
     await new Promise((r) => setTimeout(r, 1500));
     // Re-check focus after the settle delay — the operator may have clicked into
     // another window meanwhile; don't steal focus with an unexpected modal.

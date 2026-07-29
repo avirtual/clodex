@@ -1,90 +1,20 @@
-// session-manager.js — the SessionManager class: PTY spawn, per-session
-// lifecycle/state, activity + attention tracking, and the local end of intent
-// routing (dm/who/name/context/memory/spawn/file/exec/remind/notify-user).
-// Extracted verbatim from
-// main.js (M4); every method body is byte-identical to the original modulo the
-// dependency seams documented below.
-//
-// createSessionManager(deps) returns the class; main.js constructs it once at
-// module load. deps carries everything the class used to read as a main.js
-// module global, in three shapes:
-//   * value deps  — native modules, dirs, timing consts, the M3 infra objects
-//     (registry/Transport/isAlive, JsonlWatcher, ProxyClient), and the pure
-//     module-level helpers. Bound once, referenced under their original names.
-//   * getter deps — getPersistence, getUiSettings, getPromptLibrary,
-//     getAgentLibrary, getRemoteServer, getPeerManager. The stores and the
-//     late-bound singletons (remoteServer/peerManager) are assigned in
-//     app.whenReady(), AFTER this class is constructed, so they cross as
-//     getters — a captured value would be undefined. Each in-class use is getX().
-//   * electron seam fns — getUserDataPath, openPath, notifyOS, setAppQuitting.
-//     This class NEVER requires('electron'). Its only electron touches were
-//     app.getPath('userData') (×2), shell.openPath (×1), the two Notification
-//     toasts, and the appQuitting write; all four cross as injected fns. The
-//     isFocused gating for the toasts STAYS here (it reads the owning window) —
-//     only the Notification construction lives behind notifyOS(). (The dep is
-//     notifyOS, not notify, because _emitActivity already has a boolean `notify`
-//     parameter that would otherwise shadow it.)
-//
-// WINDOW BRIDGE / opaque-handle contract: this class owns the
-// workspaceId -> BrowserWindow Map (registerWindow/unregisterWindow) and reaches
-// windows only through five handle methods — .webContents.send(),
-// .isDestroyed(), .isFocused(), .show(), .focus(). It never imports electron to
-// do so, which is the whole point. Adding any other electron touch to this
-// class is a regression: route it through a new injected dep instead.
-//
-// LANDMINE (preserved exactly): in the ptyProc.onExit handler, _sendToSession
-// MUST run BEFORE _cleanup — _cleanup drops the session from the map that
-// session -> workspace -> window resolution depends on, so reversing the order
-// strands a dead sidebar tab. See the onExit block in create() (the inline
-// comment there marks it) and _cleanup.
 
-// [agent:notify-user] body cap. The inbox is an attention channel, not a
-// payload store; a note over this bounces with a "keep it a summary" nudge so a
-// runaway turn can't bloat the UI-rendered-wholesale notifications store.
 const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
-// Rate-limit window for [agent:reboot] (Task 27). A honored reboot stamps
-// uiSettings.lastRebootAt; a second reboot inside this window is refused. The
-// backstop against a reboot loop — even though the jsonl-watcher seeks to EOF
-// on resume (so historical intents never re-fire), this guards the edge where a
-// CLI replays a last turn into a fresh transcript, or an agent re-emits.
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
-// Age cap for the one-shot post-reboot notice (Task 28). A notice that keeps
-// failing to deliver (store/inject error) is RETAINED for a retry on the next
-// launch — but not forever: past this age it's stale-beyond-useful and gets
-// dropped with a log line. Only bounds the retain-on-error path; a healthy
-// delivery/park/gone clears immediately regardless of age (a relaunch that never
-// returned still delivers on the next manual launch — that's the crash-safety).
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
-// Tee-blind backend detection (Bedrock/Vertex). Pure fs/os/path leaf, required
-// directly like ./wire-intents — it's stateless and electron-free, so it needs
-// no dep seam. See the wire-intent cutover gate in create().
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
-// Live bracketed-paste-mode tracking for the inject paste-wrap. Pure leaf,
-// required directly like ./claude-env (its siblings draftChunkSignal /
-// isDraftOpen cross as deps only because they predate the direct-require
-// precedent — move-only history, not a rule).
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
-// Boiling-pot tier-1 producer + read-time merge (boiling-pot-plan.md [internal design doc, not in this repo]).
-// Pure electron-free leaves, required directly like ./claude-env — no dep seam.
 const { createFileHeat, aggregateStates, normalizeState, foldRedundancy } = require('./file-heat');
 const { readJsonSafe } = require('./fs-util');
-// Spawn-time team-context block (teams-design.md [internal design doc, not in this repo]). Pure string formatting —
-// no fs — so it's required directly like relay-protocol/file-heat; the fs-backed
-// resolveTeam that feeds it crosses as an injected dep (engine's manifest
-// instance). Appended to the seat's prompt material at the assembly callsite in
-// create(), deliberately OUTSIDE ipc-prompt (that file is byte-pinned).
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
-// Built-in tool catalog (pure constants leaf, like catalogs' other consumers).
-// Used to derive a cold reviewer's disabledTools DENYLIST from REVIEWER_TOOL_CAP
-// (below): everything the effective allowlist does NOT grant is disabled.
 const { CLAUDE_TOOLS } = require('./catalogs');
 // Cold-reviewer tool cap (Task 29a). The [agent:team-review] reviewer is SOLD as
 // independent verification against a confused lead — but team.json is
@@ -108,14 +38,7 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'FORCE_PROMPT_CACHING_5M',
   'CLODEX_DISABLE_IPC_PROMPT',
 ]);
-// The shipped default reviewer template's name (file stem under
-// library/templates/). team.roles.reviewer.template may name an alternative; absent
-// → this default. (T52)
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
-// Built-in reviewer constants (T52 fallback). The values below are the SHIPPED
-// default template's payload, byte-for-byte — the source of truth when the
-// template file is missing/unparseable so a review still spawns lean (a review
-// beats no review). Mirrors resources/library/templates/clodex-team-reviewer.json.
 const REVIEWER_FALLBACK = {
   systemPromptFile: 'clodex-team-reviewer',
   intents: [],
@@ -127,15 +50,9 @@ const REVIEWER_FALLBACK = {
   },
   spawnerHint: 'off',
 };
-// Team ticket registry (Task 25). Pure leaf (electron-free), required directly
-// like team-manifest's formatters; the store persists to ~/.clodex/teams/<team>/
-// tickets.json (team-scoped, shared with the clodex-team exec).
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
 const { hostNotice } = require('./host-stamp');
 
-// Ticket stall watchdog default: a lead is nudged once when an open ASSIGNED
-// ticket's assignee has been quiet longer than this. Per-team override:
-// `watchdogMs` in team.json. 30 minutes (Bogdan design 07-20).
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
 // First claude spawn on a fresh box (deployed node, sandbox container) hits
@@ -164,7 +81,6 @@ function preseedClaudeOnboarding({ fs, path, homeDir }) {
     return true;
   } catch { return false; }
 }
-// Human-readable age for the list summary + the stall nudge ("34m", "2h", "3d").
 function humanizeAge(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
@@ -182,22 +98,8 @@ function humanizeAge(ms) {
 // Mirrored in scripts/clodex-team.js (the exec listing) — see _taskList.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
-// The recently-closed window on the DEFAULT board (t100). t80 made the default
-// view open-only, which cost the board its memory: a day's closes became
-// invisible without filtering over the whole done pile.
-//
-// THE CAP IS LOAD-BEARING, NOT POLISH. One real day on this team closed 19
-// tickets, so an uncapped 24h window puts back exactly the bloat t80 removed,
-// just on a different axis — and it would grow with the team. Overflow folds
-// into a count line instead. Do not "simplify" either constant away.
-// Mirrored in scripts/clodex-team.js — see _taskList.
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
-// Derived, never written as a literal in the sentence: the count line is
-// user-facing, so a hardcoded "24h" beside a constant someone later moves is a
-// statement that becomes FALSE rather than merely stale. A revert moving
-// RECENT_DONE_MS to 20h left the whole suite green with the text still saying
-// 24h — the tests scrape the constant, so nothing was left to notice.
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
@@ -290,8 +192,6 @@ function createSessionManager(deps) {
     collectSystemDiagnostics,
     composeDigest,
     ctxReminderFor,
-    // ipc-prompt-cache.js: freeze a resumed session's system prompt and stage
-    // protocol changes as a diff instead of rewriting it under the conversation.
     bakePrompt,
     promptCacheDir,
     diagSummary,
@@ -312,11 +212,6 @@ function createSessionManager(deps) {
     setTeamWatchdog,
     fs,
     hasActivePending,
-    // Intent grammar table (intent-registry.js, plugin plan §2.3). `bodyModeFor`
-    // replaced the per-(type,sub) allow-set this file used to hard-code;
-    // `intentEnabledFor` wraps intent-catalog's `intentEnabled` so a PLUGIN verb
-    // is never granted by an absent allowlist; `pluginRowFor` is the dispatch
-    // tail's lookup; `validIntentNames` is the near-miss bounce list.
     bodyModeFor,
     intentEnabledFor,
     pluginGrammarLines,
@@ -373,23 +268,11 @@ function createSessionManager(deps) {
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
-    // getter deps (whenReady-assigned; see header)
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
-    // Plugin session hooks (plugin-plan.md [internal design doc, not in this repo] §3.2) — a GETTER for the same
-    // reason the stores above are: the plugin host is built at the createEngine
-    // TAIL, after this class is constructed, so a captured value would be
-    // undefined. Returns null on a host that builds no plugin host (headless,
-    // CLODEX_PLUGINS=0), which is why both call sites are `?.`-guarded.
     getPluginHooks,
-    // electron seam fns (see header)
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
 
-  // A non-claude (codex) team seat's initial roster is deferred to the first quiet
-  // window AFTER its boot output — the settle delay from the LAST output chunk. It
-  // is armed/reset by real PTY output (not a blind spawn timer), so it fires when
-  // the boot render quiesces (the TUI at its prompt, safe to inject). Injectable
-  // for tests; 400ms in production.
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
   // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
@@ -402,71 +285,35 @@ function createSessionManager(deps) {
   // the wall-clock defer can. Long enough to let the readline loop come up.
   // Injectable for tests (driven at 0); ~750ms in production.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
-  // Absolute-wait cap on the settle re-arm (inject-queue maxWaitMs precedent): a
-  // codex TUI with a sub-settle idle repaint (spinner / status clock) would push
-  // the deadline forever and starve the roster SILENTLY — worse than the original
-  // visible bug. Past this cap from stash time, flush immediately instead of
-  // re-arming. Injectable for tests; 10s in production.
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
-  // Team ticket registry, built over the class's injected fs/path (real modules in
-  // production; tests point teamDir at a temp dir). Tickets live on real disk under
-  // ~/.clodex/teams/<team>/ so the clodex-team exec can read them.
   const ticketsStore = createTicketsStore({ fs, path });
 
   class SessionManager {
     constructor() {
       this.sessions = new Map();
       this.windows = new Map(); // workspaceId -> BrowserWindow
-      // Origins (consumer labels) we've received an inbound wire DM from this run —
-      // the box routes outbound DMs to an outbox only for an origin it has heard
-      // from (plus any origin dir still on disk after a restart). Runtime-only.
       this._knownDmOrigins = new Set();
-      // Hub-relay federation (spoke side): relay rosters a hub pushed us, keyed by
-      // `via` (the hub's label). Each value is { roster:[{name,origin,type}], at }.
-      // The via-table (origin → via) and the [agent:who] relay listing both derive
-      // from this, gated on freshness (RELAY_ROSTER_TTL_MS — a roster not refreshed
-      // within the window means the hub's leg dropped). Runtime-only, like
-      // _knownDmOrigins.
       this._relayRosters = new Map();
-      // name -> last-broadcast parked-DM count, so the pending-count poll emits
-      // deltas only (see startPendingPoll). Entry dropped when count returns to 0.
       this._lastPendingCounts = new Map();
-      // name -> { teamDir, role } for seats holding an open ticket (Task 25), so
-      // _emitActivity can cheaply bump lastActivityAt on the seat's tickets without
-      // an fs scan for every other seat. Refreshed by _reconcileTickets.
       this._ticketWatch = new Map();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
-      // W3 intent cutover (wire-intents.js): claim-once intent ledger shared by
-      // the wire dispatch and the tee-failure recovery watcher, and the
-      // wire-event-fed activity tracker. Built eagerly — they're pure state,
-      // and the JSONL path never touches them.
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
       this._intentDeduper = new IntentDeduper();
       this._activity = new ActivityTracker((name, state, { turnEnd }) => {
-        // Notify only on a REAL turn end (stop.is_turn) — the quiet-gap idle
-        // (mid-turn tool run gone silent) isn't "finished". The JSONL path
-        // notified on every 1s flush; this is the honest version.
         this._emitActivity(name, state, state === 'idle' && turnEnd);
       });
     }
 
-    // --- In-process wire tee (Phase W1, shadow mode) ---
 
-    // Lazy singleton: first claude spawn under WIRE_SHADOW brings the tee up.
-    // Ephemeral port, per-agent tokens. Everything observed goes to the
-    // shadow log; the JSONL path stays the live intent authority.
     async _ensureWire() {
       if (this._wire) return this._wire;
       const { rearmPlan } = require('./wire/hold'); // pure re-arm math (used in the turn hook below)
       const { WireProxy } = require('./wire/proxy');
       const { isSubagentRole } = require('./wire/role');
       const { ShadowDiff } = require('./wire/shadow');
-      // Prefix-warmth ledger (W2): durable, same schema as proxylab but its
-      // own file (hashes differ by construction — wire/warmth.js header).
-      // Store failure never blocks the wire: warmth is telemetry-only.
       let warmth = null;
       try {
         const { WarmthStore } = require('./wire/warmth');
@@ -474,10 +321,6 @@ function createSessionManager(deps) {
       } catch (e) {
         this._shadowLog({ type: 'wire-warmth-unavailable', error: e.message });
       }
-      // Keep-warm driver (W2 step 5): replayable last-request cache + hold
-      // auto-pinger, warm-only gated against the warmth store. Passive until
-      // something arms a hold (app-side arm/disarm lands with the W2 renderer
-      // cutover); its tick loop is unref'd and costs nothing while idle.
       let hold = null;
       if (warmth) {
         try {
@@ -497,18 +340,12 @@ function createSessionManager(deps) {
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {
         try {
-          // Activity: every non-side-call completion feeds the tracker; only a
-          // main-line terminal stop (is_turn) reads as "finished". Wire-owned
-          // sessions only — the JsonlWatcher owns activity everywhere else.
           {
             const s = this.sessions.get(t.agent);
             if (s && s.intentSource === 'wire') {
               this._activity.turnCompleted(t.agent, { reqId: t.reqId, sideCall: t.sideCall, stop: t.stop });
             }
           }
-          // Touched files + boiling-pot heat ride every non-side-call receipt —
-          // subagent turns included (their edits are real file touches / real
-          // carriage; the jsonl path never saw them cleanly, the wire does).
           if (!t.sideCall) {
             const s = this.sessions.get(t.agent);
             if (s) {
@@ -524,25 +361,9 @@ function createSessionManager(deps) {
             intents: intents.length,
           });
           const s = this.sessions.get(t.agent);
-          // Prompt-state fact for auto-compact-before-cold: only a terminal
-          // main-line stop (stop.is_turn) parks the CLI at its input prompt. A
-          // non-terminal stop that then goes quiet is a PAUSED turn — typically
-          // a permission dialog, where an injected Enter would answer the
-          // dialog. shouldAutoCompact requires this latch to be terminal.
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
-          // Boot-digest append-once: a conversation missing from the digest
-          // ledger (resumed from before the feature, or born with an empty
-          // store that has units now) gets the digest right after a terminal
-          // turn — the cache is hot (append rides at cache-read prices) and
-          // the CLI is parked at its prompt.
           if (s && t.stop && t.stop.is_turn) this._maybeDeliverDigest(s, t.sessionId || s.sessionId);
           if (s && s.intentSource === 'wire') {
-            // W3 LIVE path: dispatch off the wire receipt. A healthy main-line
-            // turn also ends any tee-failure recovery window (the sentinel's
-            // stop() flushes its pending text back through this same deduper,
-            // so the handover turn can't double-fire). Dispatch is deferred off
-            // the wire's finalize callback — _handleIntent can kill/inject
-            // PTYs and even unregister this agent from the wire (reload).
             if (s.sentinel) s.sentinel.noteWireHealthy();
             // Per-batch Set: LOAD-BEARING, not a nicety. The deduper allows
             // wire-after-wire (distinct turns), so two IDENTICAL intents in ONE
@@ -569,27 +390,9 @@ function createSessionManager(deps) {
               fired.add(bkey);
               setImmediate(() => this._handleIntent(t.agent, intent));
             }
-            // Compact LATCH fire (wire-owned Claude only): a [agent:context
-            // compact] this turn set _compactPending synchronously in
-            // _handleContextIntent (dispatched above via setImmediate — FIFO, so
-            // this check, ALSO setImmediate, runs after the dispatch loop's
-            // handlers have set the latch). Fire the real /compact only on a
-            // TERMINAL main-line stop with both queues empty (canFireCompact) —
-            // Claude Code silently drops slash commands while busy. If the queue
-            // is non-empty (or this stop is non-terminal) the latch waits for the
-            // next terminal stop; no timers. Normal case degenerates to today's
-            // behavior: the emitting turn is usually terminal with nothing queued,
-            // so this fires it on the very next receipt.
             if (t.stop && t.stop.is_turn) {
               setImmediate(() => this._maybeFireCompactLatch(s));
             }
-            // Identity backstop: the sentinel's symlink poll is the primary
-            // (it fires at CLI boot, before any turn); the receipt keeps
-            // persistence honest even if the hook's symlink got wiped — but
-            // only a CORROBORATED id may rebind (see _wireSessionCorroborated:
-            // the wire attributes by proxy route, so a child claude spawned
-            // inside the session mints stray main-line-looking ids; rebinding
-            // to one would point the next --resume at the child's conversation).
             if (t.sessionId && s.sessionId !== t.sessionId) {
               if (this._wireSessionCorroborated(s, t.sessionId)) {
                 s.sessionId = t.sessionId;
@@ -599,13 +402,6 @@ function createSessionManager(deps) {
                 this._shadowLog({ type: 'wire-stray-session', agent: t.agent, sessionId: t.sessionId });
               }
             }
-            // Keep-warm re-arm across restart: the HoldKeeper is memory-only
-            // (wire/hold.js), so an armed hold dies on app restart while its
-            // INTENT survives on the sessions.json record. Restore it off the
-            // first main-line turn — the organic turn just warmed the prefix, so
-            // the warm-gated arm succeeds. Guard UNTIL armed (not once-per-spawn):
-            // a decline this turn retries next turn, so a hold is never silently
-            // re-lost. Keyed by s.sessionId (the corroborated identity above).
             if (this._holdKeeper && !s._holdRearmed) {
               try {
                 const p = getPersistence();
@@ -625,15 +421,12 @@ function createSessionManager(deps) {
                     log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
                       `until ${new Date(r.until * 1000).toISOString()}`);
                   }
-                  // decline (prefix not warm yet) → leave the guard, retry next turn
                 }
               } catch (e) {
                 this._shadowLog({ type: 'wire-hold-rearm-error', agent: t.agent, error: e.message });
               }
             }
           } else if (s && s.agentType === 'claude') {
-            // Shadow-compare mode (CLODEX_WIRE_INTENTS=0): record wire
-            // sightings for the differ; the JSONL path stays live.
             for (const intent of intents) {
               this._shadow.record('wire', shadowIntentKey(t.agent, intent), {
                 agent: t.agent, sessionId: t.sessionId, intentType: intent.type,
@@ -645,8 +438,6 @@ function createSessionManager(deps) {
           this._shadowLog({ type: 'wire-observer-error', error: e.message });
         }
       });
-      // Activity opens on the request, not the response — the bar/tray dot
-      // flips to "thinking" the moment a messages call leaves the CLI.
       wire.on('turn.started', (t) => {
         try {
           const s = this.sessions.get(t.agent);
@@ -655,15 +446,8 @@ function createSessionManager(deps) {
           }
         } catch { /* observer-grade */ }
       });
-      // W2 step-4 bridge (clodex-side, dark): shape receipts into poll-payload
-      // parity + diff against ProxyPoller emissions (wire-telemetry.js). Its own
-      // listener so the shadow-intent handler above stays untouched; every
-      // WireTelemetry method swallows its own errors.
       try {
         const { WireTelemetry } = require('./wire-telemetry');
-        // Lifetime-totals continuity: wire totals are per-launch; this file
-        // carries each session's cumulative base across restarts (and imports
-        // wirescope's persisted history via seedLifetime while it still runs).
         const totalsPath = path.join(getUserDataPath(), 'wire-totals.json');
         const persistTotals = {
           read: () => JSON.parse(fs.readFileSync(totalsPath, 'utf8')),
@@ -675,15 +459,6 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'wire-telemetry-unavailable', error: e.message });
       }
       wire.on('session', (ev) => this._shadowLog({ type: 'wire-session', ...ev }));
-      // Failed request: no receipt will come for this reqId. Unstick activity;
-      // for a wire-owned session a tee-failure also means that turn's TEXT (and
-      // any intents in it) is lost to the wire — arm the transcript recovery
-      // watcher: the CLI writes the turn to the transcript regardless, and the
-      // sentinel replays the tail through the same dedupe'd dispatch until the
-      // wire produces a healthy main-line turn again. Visible, not silent: the
-      // IPC log broadcast is the W3 form of the "tee-failure must disable/
-      // degrade wire-fed controls visibly" contract — the degradation IS the
-      // fallback path, announced.
       const onWireFailure = (ev, kind) => {
         this._shadowLog({ type: kind, ...ev });
         try {
@@ -691,7 +466,6 @@ function createSessionManager(deps) {
           const s = this.sessions.get(ev.agent);
           if (s && s.intentSource === 'wire' && s.sentinel && !s.sentinel.recovering) {
             s.sentinel.armRecovery((text) => {
-              // Same per-batch Set as the wire loop (load-bearing — see there).
               const fired = new Set();
               for (const intent of this._extractIntents(text)) {
                 const bkey = shadowIntentKey(ev.agent, intent);
@@ -733,9 +507,6 @@ function createSessionManager(deps) {
       } catch { /* shadow only — never surfaces */ }
     }
 
-    // Resolve a wire session_id back to its (stable) session NAME — the key the
-    // hold intent is persisted under. Best-effort: a /clear-rotated id may not
-    // match, in which case the caller logs the raw id.
     _nameForWireSession(sid) {
       if (!sid) return null;
       for (const [name, s] of this.sessions) {
@@ -744,19 +515,6 @@ function createSessionManager(deps) {
       return null;
     }
 
-    // clodex.log keep-warm lifecycle (INFO/WARN). The shadow log carries the
-    // full firehose (armed / re-anchored / ping / disarmed) for forensics; THIS
-    // is the operator-facing subset Bogdan went looking for and found empty:
-    // disarms and ping FAILURES only — successful pings and re-anchors stay
-    // shadow-only (263 re-anchors in one run is too chatty for clodex.log).
-    // Failure-strikes also CLEAR the persisted intent (a dead credential must
-    // not re-arm on the next restart); expiry/max-pings just log — the field
-    // clears lazily on the next re-arm check. Explicit ('off') disarms are
-    // logged+cleared by the wire:hold handler, so they're skipped here.
-    // Re-anchors are quiet but DO persist: every organic turn restarts the
-    // keeper's window (until = now + hours), so without this the persisted
-    // holdUntil lags reality and a restart late in a re-anchored window would
-    // wrongly lapse-clear a still-valid hold.
     _onHoldLifecycle(ev) {
       try {
         if (!ev) return;
@@ -779,7 +537,6 @@ function createSessionManager(deps) {
       } catch { /* logging must never break the emitter */ }
     }
 
-    // --- Window <-> workspace registration ---
 
     registerWindow(workspaceId, win) {
       this.windows.set(workspaceId, win);
@@ -794,8 +551,6 @@ function createSessionManager(deps) {
       return w && !w.isDestroyed() ? w : null;
     }
 
-    // Reverse lookup for callers holding only a BrowserWindow (the View-menu
-    // zoom persists per workspace). null for non-workspace windows (wirescope).
     workspaceForWindow(win) {
       for (const [wsId, w] of this.windows) {
         if (w === win) return wsId;
@@ -817,16 +572,12 @@ function createSessionManager(deps) {
       return out;
     }
 
-    // Send an event scoped to the window that owns this session.
-    // If no window is currently attached to this session's workspace,
-    // buffer pty-data so it can be replayed when a window reopens.
     _sendToSession(name, channel, ...args) {
       const win = this.windowForSession(name);
       if (win) {
         win.webContents.send(channel, ...args);
         return;
       }
-      // Buffer PTY output for detached sessions (no window in their workspace)
       if (channel === 'pty-data') {
         const session = this.sessions.get(name);
         if (!session) return;
@@ -837,53 +588,24 @@ function createSessionManager(deps) {
           session.pendingOutput = session.pendingOutput.slice(-MAX_BUFFER);
         }
       }
-      // session-exit / session-activity for detached sessions: just drop.
-      // They don't have a UI to notify, and the state will be recomputed
-      // from scratch when a window reattaches.
     }
 
-    // Broadcast to every window (used for app-wide events like IPC traffic)
     _broadcast(channel, ...args) {
       for (const w of this.allLiveWindows()) {
         w.webContents.send(channel, ...args);
       }
     }
 
-    // `mint` is the mint-vs-restore axis (see nameConflict's header): true only on
-    // the front door (spawnFromParams and the other deliberate NEW-session
-    // callers), false on every restore path — restore-on-launch, unarchive→retry,
-    // restart/reload. It is NOT resumeId, which an "adopt" mint carries and a
-    // sessionId-less persisted entry lacks. Only the frozen-prompt cache reads it
-    // (a mint must never inherit a dead session's baseline), so it is defaulted
-    // false: a caller that forgets it gets the SAFE direction — a spurious freeze
-    // is a stale prompt the delta channel repairs, a spurious regenerate is the
-    // token bust itself.
     async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
-      // A nonexistent cwd makes the spawned CLI exit ~immediately (code 1), which
-      // the UI renders as a tab that flickers and vanishes — fail loudly up front
-      // instead so the dialog / spawn intent / restore path can show the reason.
-      // Empty cwd stays legal (the spawn falls back to HOME below).
       if (cwd) {
         let st = null;
         try { st = fs.statSync(cwd); } catch { /* missing — handled below */ }
         if (!st) throw new Error(`Directory does not exist: ${cwd}`);
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
-      // Merged scope env (T46). Build it ONCE, up front, because two consumers
-      // need it: the tee-blind consult below (readEffectiveClaudeEnv's baseEnv —
-      // a SCOPE-set CLAUDE_CODE_USE_BEDROCK must be seen there or the session is
-      // misclassified as wire-routed and its intent scanner goes dark) and the
-      // PTY env construction further down. Precedence lives in env-scopes.js:
-      //   process.env < global < workspace < session(env param) < override file.
-      // process.env is already scrubInheritedClaudeMarkers'd at startup, so scope
-      // CLAUDE_* values are deliberate and survive. With NO scopes set anywhere +
-      // no override file, mergeSessionEnv returns exactly { ...process.env } — so
-      // the `{ ...mergedEnv, TERM }` below stays byte-identical to the old
-      // `{ ...process.env, TERM }`. Best-effort read of the scope store: a store
-      // hiccup degrades to base process.env, never blocks a spawn.
       let mergedEnv;
       try {
         const store = getEnvScopes && getEnvScopes();
@@ -903,40 +625,16 @@ function createSessionManager(deps) {
 
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
-      // Non-fatal config heads-up collected during the claude arm and handed back
-      // on the create result (the renderer toasts them). Never blocks a spawn.
       const warnings = [];
       const agentType = (type === 'claude') ? 'claude' : (type === 'codex') ? 'codex' : null;
-      // W3: which mechanism owns live intent dispatch + activity for this
-      // session. 'wire' only when the claude spawn actually registered with the
-      // in-process wire (set below); everything else keeps the JSONL path.
-      // wireRouted (bytes flow through the tee, whatever owns intents) gates
-      // the shadow differ: comparing feeds only makes sense when both exist.
       let intentSource = 'jsonl';
       let wireRouted = false;
-      // Which cloud backend this claude session's effective env routes to:
-      // 'bedrock' (AWS) | 'vertex' (GCP) | null (Anthropic-direct / non-claude).
-      // Read once at spawn from the layered .claude settings `env` blocks. Two
-      // consumers: the wire-intent gate below (Bedrock/Vertex bypass the tee, so
-      // they must take intents from the JsonlWatcher) and the sidebar chip glyph
-      // (B/V in place of A), surfaced via the session record + list().
       const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: mergedEnv })) : null;
-      // A tee-blind backend (Bedrock/Vertex) routes to AWS/GCP and IGNORES the
-      // ANTHROPIC_BASE_URL a proxy needs, so wirescope can never link — it would
-      // just show a permanent "Proxy: no live session" and futile poll traffic.
-      // Force the proxy off at spawn (the stored preference is untouched — this
-      // is cwd-derived, so removing the backend env re-honors it on respawn); the
-      // status bar then falls to the CLI side-channel line (model/ctx/cost).
       if (backend && proxyBase) {
         this._shadowLog({ type: 'proxy-off-tee-blind', agent: name, backend });
         proxyBase = null;
       }
 
-      // Stable per-session proxy identity (clodex-<name>-<nonce>). Reuse the
-      // persisted one across resume/restart/restore/clear; mint fresh on a new
-      // create or a fork (divergent session = fresh cost ledger); lazy-mint for
-      // legacy entries that predate this field. Uniqueness enforced against both
-      // persisted and live ids. See ProxyPoller / github.com/avirtual/wirescope.
       let proxyAgent = null;
       if (agentType) {
         const taken = new Set();
@@ -969,18 +667,6 @@ function createSessionManager(deps) {
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
-      // Spawn-time team context: if this agent's cwd sits inside a team's root,
-      // append a small team block to its system-prompt material so the seat knows
-      // its team, role, lead, and roster tool. Agent sessions only (bash is
-      // private, never on a team). Derived from cwd on EVERY spawn, so a resumed
-      // session picks it up through the same file-regeneration path — present now
-      // even for agents that spawned before this landed. Empty string when the
-      // cwd is on no team, so the concatenations below are no-ops then.
-      // When the seat's matched role names a `prompt` (a system-prompt library
-      // entry), append that prompt's content AFTER the team block — order is
-      // "who you're with" (team block) then "how you operate" (role prompt).
-      // Best-effort read from ~/.clodex/library/prompts/system/<name>.md: a
-      // missing/unreadable file is skipped silently, the team block still stands.
       let teamBlock = '';
       let teamName = null;
       let resolvedTeam = null; // kept for the post-spawn roster/delta wiring below
@@ -993,13 +679,6 @@ function createSessionManager(deps) {
             teamBlock = formatTeamBlock(team, name);
             const role = matchSeatRole(team, name);
             const def = role ? team.roles[role] : null;
-            // Dedupe (T51): when THIS spawn already carries the role prompt as its
-            // REPLACEMENT system prompt (--system-prompt-file, systemPromptFile ===
-            // def.prompt — the lean-reviewer path), do NOT also append it to the
-            // team block, or the briefing is delivered twice (once as system, once
-            // as append). The small formatTeamBlock ("who you're with") still rides
-            // the append; only the role-prompt concat stands down. Any other seat
-            // (no systemPromptFile, or a different stem) keeps the append as before.
             const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
             if (def && def.prompt && !promptRidesAsSystem) {
               try {
@@ -1018,33 +697,13 @@ function createSessionManager(deps) {
           if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir() })) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
-          // IPC protocol always goes in; the posture prompt is a persistent
-          // session property — applied on resume/restart too, editable via
-          // the Edit Session dialog.
-          // Prompt channels: a session-referenced library file replaces the base
-          // system prompt (pointed at directly below), while the IPC protocol +
-          // ordered library appends + any legacy inline body form the append blob.
           const sysFile = resolveSystemPromptFile(systemPromptFile);
           const appendBodies = readAppendBodies(appendPromptFiles);
-          // CLODEX_DISABLE_IPC_PROMPT (T51) is a Clodex-INTERNAL directive var —
-          // NOT process env, read off the merged effective env this spawn is about
-          // to receive — that drops the IPC protocol append entirely for this seat.
-          // A falsy/empty ipcPrompt is filtered out by mergeClaudeSystemPrompt, so
-          // the protocol blob vanishes while the role/library/inline appends still
-          // ride. Used by the lean-reviewer path (a seat whose replacement system
-          // prompt already teaches the one line it needs); every other seat gets
-          // the full IPC protocol as before.
-          // Third arg (plugin plan P3): the grammar lines of the PLUGIN verbs this
-          // seat was granted. Empty for every seat on a plugin-less run, so the
-          // prompt bytes are unchanged.
           const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents));
           const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
             appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
           });
           args = cleaned;
-          // Drop a stale user-persisted --settings that points into the old
-          // /tmp/wb-wrap dir — keeping it would skip hook generation entirely
-          // and silently break intent delivery after the ~/.clodex move.
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
           if (staleSettings !== -1) args.splice(staleSettings, 2);
@@ -1067,9 +726,6 @@ function createSessionManager(deps) {
               console.error('wire shadow unavailable, spawning unshadowed:', e.message);
             }
           }
-          // Intent cutover is per-session and spawn-bound: only a session whose
-          // bytes actually flow through the wire may take intents from it. A
-          // wire-failed spawn stays JSONL — never a silent intent blackout.
           wireRouted = !!wireBase;
           if (wireBase && WIRE_INTENTS_LIVE) {
             // A Bedrock/Vertex-backed session ignores the ANTHROPIC_BASE_URL our
@@ -1096,34 +752,6 @@ function createSessionManager(deps) {
           }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          // Suppress the auto-injected claude.ai `claude_design` connector (20
-          // `mcp__claude_design__*` tools, ~4k tok/turn cache carriage) that the CLI
-          // injects with no honored global opt-out. Two mechanisms, and we prefer the
-          // surgical one: when this session is routed through a wirescope that strips
-          // `claude_design` on the wire (advertised via /_identity
-          // capabilities.strip_mcp.servers), the wire removes ONLY the design tools and
-          // keeps any real project/user MCP. So we fall back to `--strict-mcp-config`
-          // — which is all-or-nothing (it makes the CLI ignore ALL mcp config) — ONLY
-          // when no such wire will do it: unrouted, or routed to a proxy that doesn't
-          // advertise the strip (kill-switch / strip-off port). Reading the advertised
-          // FACT (not assuming routed => strips) keeps a strip-off port from regressing.
-          // This is self-sequencing: a pre-v0.6.13 wire advertises no strip_mcp, so the
-          // gate keeps pushing strict — byte-identical to the always-strict behavior —
-          // until the capable wire is deployed, then flips itself per port. Honors an
-          // explicit user flag and won't fight a real `--mcp-config`. Fail-open: if the
-          // proxy is momentarily DOWN at the spawn instant, probe is null and we push
-          // strict (degraded-but-functional, self-heals next restart) rather than block
-          // the spawn on proxy-up — a hiccup must never stop a session starting. The one
-          // case that feels it: an agent that has real MCPs AND spawns in the ms-window
-          // the proxy is down AND isn't restarted for a while. A comment, not a code path.
-          //
-          // t45 made this LEGIBLE without changing WHEN it fires. The decision
-          // and its reason now come from one function (proxy-util.strictMcpReason)
-          // so the log can never disagree with the argv: null = the wire strips,
-          // no flag and no log line (a signal on the healthy path is one people
-          // learn to ignore); any other value = the flag, plus one IPC-log line
-          // naming which of the three reasons it was. The reasons are kept apart
-          // because their remedies differ.
           if (getUiSettings().get().disableClaudeDesignMcp
               && !args.includes('--strict-mcp-config')
               && !args.includes('--mcp-config')) {
@@ -1140,35 +768,15 @@ function createSessionManager(deps) {
               });
             }
           }
-          // clodex-managed custom subagents: a session-only, priority-2 overlay
-          // (above project/user .claude/agents) read from the ~/.clodex/agents
-          // library. Writes no file, touches no repo. The paired permissions.deny
-          // (above) is what forces the model to actually use these lean agents.
           if (!args.includes('--agents')) {
-            // Union the persisted enabled agents with any `sessions:`-scoped
-            // library agents assigned to THIS session (assignment = intent —
-            // computed at spawn, never written back to the record).
             const agentLib = getAgentLibrary().list();
             const effectiveAgents = unionEnabled(agents, agentLib, name);
             const agentsObj = buildAgentsArg(effectiveAgents, agentLib);
             if (agentsObj) args.push('--agents', JSON.stringify(agentsObj));
           }
-          // clodex-injected skills: scaffold the enabled library subset into a
-          // session-only plugin and load it via --plugin-dir. A plugin's skills/
-          // join the always-on roster — the only injection door the CLI gives for
-          // skills (no inline --skills flag). Writes only under ~/.clodex.
           if (!args.includes('--plugin-dir')) {
             const pluginDir = writeSkillPlugin(name, injectSkills);
             if (pluginDir) args.push('--plugin-dir', pluginDir);
-            // Warn (never block) when an injected skill's body names a subagent that
-            // isn't on THIS session's roster — the CLI would just fail to delegate,
-            // invisibly. Scan the EXACT records writeSkillPlugin loaded against the
-            // enabled set: custom agents (the --agents overlay) ∪ built-ins minus the
-            // denied ones. Lives inside this branch because a user-supplied
-            // --plugin-dir (else arm) means clodex injected nothing — warning about
-            // skills that aren't loaded would be the exact lie the shared union
-            // exists to prevent. Observer-grade: any hiccup degrades to no warning,
-            // so a detector bug can't stop a spawn.
             try {
               const records = effectiveInjectedSkills(name, injectSkills);
               if (records.length) {
@@ -1190,14 +798,10 @@ function createSessionManager(deps) {
             args.push('--resume', resumeId);
             if (fork && !args.includes('--fork-session')) args.push('--fork-session');
           }
-          // Point --system-prompt-file directly at the library file (no copy) so
-          // editing the shared prompt takes effect on the next spawn; skipped when
-          // the ref is missing → the CLI keeps its default system prompt.
           if (sysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
             args.push('--system-prompt-file', sysFile);
           }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-          // Team block rides the append channel (persistent across resume/clear).
           const realIpc = teamBlock ? `${append}\n\n${teamBlock}\n` : append;
           // FREEZE on resume (see ipc-prompt-cache.js). create() runs on
           // restore-with---resume too, so writing `realIpc` unconditionally here
@@ -1240,19 +844,13 @@ function createSessionManager(deps) {
         }
         case 'codex': {
           cmd = 'codex';
-          // Codex has one instructions channel: fold the system base + ordered
-          // appends + legacy inline body into it alongside the IPC protocol.
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
           const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
-          // Build top-level flags first, then the optional `resume <uuid>`
-          // subcommand — clap expects subcommands AFTER top-level args.
           args = [...cleaned];
           setupCodexHook(name, cwd);
-          // `codex_hooks` was renamed to `hooks` (deprecated in codex-cli
-          // ~0.139). Honor either if the user passed one in extraArgs.
           if (!args.includes('hooks') && !args.includes('codex_hooks')) args.push('--enable', 'hooks');
           if (!args.includes('--no-alt-screen')) args.push('--no-alt-screen');
           if (!args.some(a => a.startsWith('tui.status_line'))) {
@@ -1261,12 +859,8 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const instructionsPath = pathFor(REGISTRY_DIR, name, 'instructions');
-          // Codex folds everything into one instructions channel; the team block
-          // is a cheap string concat here, so Codex seats get it too (they speak
-          // the same [agent:exec clodex-team] intent).
           fs.writeFileSync(instructionsPath, teamBlock ? `${merged}\n\n${teamBlock}\n` : merged, { mode: 0o600 });
           args.push('-c', `model_instructions_file=${instructionsPath}`);
-          // Optional API proxy routing (skip if the user already set one in args)
           if (proxyBase && !args.some(a => a.startsWith('openai_base_url='))) {
             args.push('-c', `openai_base_url=${proxyBase}/agent/${proxyAgent || name}/openai/v1`);
           }
@@ -1286,9 +880,6 @@ function createSessionManager(deps) {
           args = [...extraArgs];
       }
 
-      // App-owned keys applied AFTER the scope merge so they always win. With no
-      // scopes set, mergedEnv === { ...process.env } and this is byte-identical to
-      // the historical `{ ...process.env, TERM }` (+ WB_WRAP_NAME for codex).
       const env = { ...mergedEnv, TERM: 'xterm-256color' };
       if (type === 'codex') env.WB_WRAP_NAME = name;
 
@@ -1302,11 +893,6 @@ function createSessionManager(deps) {
           env,
         });
       } catch (e) {
-        // node-pty's "posix_spawnp failed." hides whether the helper or the target
-        // binary is at fault. Append the resolved cmd + system state so the UI alert
-        // is self-diagnosing (arch mismatch is the usual answer — see diagnostics).
-        // Lead with diagWarning() when it fires so the alert names the FIX
-        // (npx electron-rebuild), not just the raw state.
         const d = collectSystemDiagnostics();
         const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
         const warning = diagWarning(d);
@@ -1317,36 +903,20 @@ function createSessionManager(deps) {
         );
       }
 
-      // Registry + transport — only for agent sessions; bash sessions are private
       let transport = null;
       let socketPath = null;
       if (agentType) {
-        // Bind the per-agent socket under run/<name>/ (clodex-paths grammar).
-        // ensureDir here so the bind never depends on hook-setup ordering having
-        // created the dir first.
         ensureDir(runDirFor(REGISTRY_DIR, name));
         socketPath = pathFor(REGISTRY_DIR, name, 'socket');
 
-        // Ask the socket whether a blocking registration is a LIVE agent — and
-        // ask it HERE, before we bind, because binding destroys the answer.
-        //
-        // Socket paths are derived from the name, so a blocking record's
-        // `socket` is byte-identical to the `socketPath` we are about to take.
-        // Transport.start() unlinks that path before it listens, so any probe
-        // made after the bind is a probe of OUR OWN server: it reports "live"
-        // unconditionally, for a ghost exactly as for a real agent. The pre-bind
-        // instant is the only one at which the question is still answerable.
-        //
-        // Why the question needs asking at all: the registry records a bare pid.
-        // After an unclean shutdown the socket file survives and the OS recycles
-        // the pid, so isAlive() reports a stranger's process as our agent and
-        // wedges the name with no in-app recovery (audit.md §5.1). A socket with
-        // nothing listening on it cannot be a running agent, whatever its pid
-        // says; a socket that accepts a connection means the name is genuinely
-        // taken and the EEXIST error below is true rather than misleading.
-        //
-        // Best-effort: no blocking record, or an unreadable one, leaves this null
-        // and the EEXIST branch falls back to the pid-only verdict it always had.
+        // Probe the blocking record's socket BEFORE binding: Transport.start()
+        // unlinks socketPath (which is name-derived, so it is the SAME path a live
+        // blocker listens on) before it listens, so any probe made after the bind
+        // answers "live" unconditionally — for a ghost exactly as for a real agent.
+        // The registry records a bare pid, and after an unclean shutdown the OS
+        // recycles it, so isAlive() alone reports a stranger's process as our agent
+        // and wedges the name. Best-effort: an unreadable record leaves this null and
+        // the EEXIST branch falls back to the pid-only verdict it always had.
         let blockerLive = null;
         // The exact bytes the verdict describes. The probe awaits, so another
         // actor can replace the record while we are dialing; a verdict about the
@@ -1362,71 +932,34 @@ function createSessionManager(deps) {
           }
         } catch {}
 
-        // Decide who owns the name BEFORE binding anything. The bind used to
-        // come first, and because socketPath is name-derived it is the very
-        // path a blocking agent is listening on: Transport.start() unlinks it
-        // as its first statement, so by the time we discovered the name was
-        // taken we had already pulled the victim's socket out from under it,
-        // and stop() unlinked it a second time on the way out. A net.Server
-        // whose inode is unlinked keeps listening with no error and no event —
-        // permanently unreachable, with nothing to notice by. The shape was
-        // perverse: the more correct the refusal, the more damage it did.
-        // Force-cleaning a stale record had the same problem in reverse — the
-        // unlink of `existing.socket` below landed on OUR just-bound socket.
-        //
-        // So: register (and settle EEXIST) first, bind second. Every unlink
-        // then happens while nothing of ours is listening, and a refusal
-        // returns having touched nothing at all.
-        //
-        // This does create a state that did not exist before: for the duration
-        // of listen(), a registry entry whose socket file is not there yet, and
-        // cleanup() prunes exactly that shape. Considered and deliberately left
-        // uncovered — cleanup() runs once at boot (engine.js:1724), so hitting
-        // it needs a SECOND engine sharing this ~/.clodex booting inside a
-        // sub-millisecond window, and the shipped Docker layout gives each box a
-        // private volume (audit.md §5.3). Not worth a lock.
+        // Register FIRST, bind SECOND. socketPath is name-derived, so it is the very
+        // path a blocking agent is listening on: Transport.start() unlinks it as its
+        // first statement, and force-cleaning a stale record unlinks existing.socket —
+        // either one, done after our own bind, pulls the inode out from under a live
+        // net.Server, which then keeps listening with no error and no event and is
+        // permanently unreachable. With this order every unlink happens while nothing
+        // of ours is listening, and a refusal returns having touched nothing.
+        // This does leave a window where a registry entry exists before its socket
+        // file does; cleanup() prunes exactly that shape, and reaching it needs a
+        // second engine sharing this ~/.clodex booting inside a sub-millisecond
+        // window. Deliberately uncovered.
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
-          // If a stale registration with a dead PID is blocking us, force-clean it
-          // (This used to wrap the recovery in a second try whose only job was to
-          // `await transport.stop()` before rethrowing. With the bind moved
-          // below, there is no transport yet and the wrapper only rethrew what
-          // it caught, so it is gone rather than kept as a no-op.)
           if (e.code !== 'EEXIST') throw e;
           const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
           const existing = JSON.parse(existingRaw);
-          // If the record changed under us while the probe was awaiting, the
-          // verdict describes bytes that are no longer there — discard it and
-          // fall back to the pid-only check, the same conservative default t57
-          // chose for a record it could not read.
           if (existingRaw !== blockerRaw) blockerLive = null;
-          // The pre-bind probe above is the authority here, and it
-          // deliberately OVERRIDES isStaleRegistration: proven-not-live wins
-          // even when the pid check says "live, and not ours", because that
-          // check answers from the pid alone — the thing that just lied.
-          // `blockerLive === null` means we never got an answer (no record to
-          // read at probe time, or an unreadable one), so the pid-only
-          // verdict stands, exactly as before this existed.
-          //
-          // Stale (dead pid, or our own pid for a session we don't run — the
-          // deterministic-pid Docker case) → force-clean and re-register. See
-          // isStaleRegistration above for the full rationale.
-          //
-          // A PROVEN-live socket also vetoes that pid check (`blockerLive !==
-          // true`), because the own-pid clause fires on any record naming our
-          // pid — including one a concurrent create() of the same name wrote
-          // moments ago. `this.sessions.has(name)` at the top of create() cannot
-          // catch that: the map is not written until well past the bind, so two
-          // in-flight creates both sail through it, and the second would unlink
-          // the first's socket and rebind, leaving a live server on a detached
-          // inode one branch after the probe explicitly proved it alive.
-          // This does not re-wedge the Docker case: the listening server belongs
-          // to the ENGINE process, so "our pid AND something is listening" can
-          // only mean this very process is bound to that name right now. After a
-          // Docker restart the previous engine is gone and its PTY children
-          // never inherited the listen fd, so nothing accepts and the probe
-          // returns false or null there — the veto never closes on it.
+        // The pre-bind probe OVERRIDES isStaleRegistration: proven-not-live wins even
+        // when the pid check says "live, and not ours", because that check answers
+        // from the pid alone. blockerLive === null means no answer, so the pid-only
+        // verdict stands. A proven-LIVE socket also vetoes the own-pid clause: two
+        // concurrent creates of one name both pass the sessions.has() check at the top
+        // of create() (the map is not written until past the bind), and without the
+        // veto the second would unlink the first's socket and rebind, leaving a live
+        // server on a detached inode. This does not re-wedge the deterministic-pid
+        // Docker case: a listening server belongs to the ENGINE, so "our pid AND
+        // something is listening" can only mean this process is bound to that name.
           if (blockerLive === false || (blockerLive !== true && isStaleRegistration(existing.pid, process.pid, isAlive))) {
             registry.unregister(name);
             try { fs.unlinkSync(existing.socket); } catch {}
@@ -1437,8 +970,6 @@ function createSessionManager(deps) {
             );
           }
         }
-        // Nothing is bound yet on any path that reaches here — the throws above
-        // leave no transport to stop, which is why they no longer try to.
 
         transport = new Transport(socketPath, (msg) => {
           this._onIncoming(name, msg);
@@ -1446,9 +977,6 @@ function createSessionManager(deps) {
         try {
           await transport.start();
         } catch (e) {
-          // The registration above is now the thing that outlives this failure:
-          // an entry pointing at a socket nobody listens on would advertise a
-          // session that does not exist. Take it back before rethrowing.
           registry.unregister(name);
           transport = null;
           throw e;
@@ -1457,22 +985,13 @@ function createSessionManager(deps) {
 
       const session = {
         name, type, cwd, pty: ptyProc, transport, socketPath,
-        // Spawn timestamp — the enriched session-exit heuristic (Task 12) uses it
-        // to tell a fast "CLI not found on PATH" death from a later crash.
         spawnedAt: Date.now(),
-        // Birth time, the SAME value the persistence upsert below writes (not a
-        // second Date.now() — spawnedAt is already the per-spawn one). Carried on
-        // the live session so the pending drains and parks can stamp/compare
-        // generations without a persistence read on every message. Stable across
-        // restarts; see the createdAt comment above.
         createdAt,
         agentType, lineBuffer: '', watcher: null,
         sessionId: resumeId || null,
         workspaceId,
         proxyAgent, proxyBase,
         intentSource, wireRouted, backend, sentinel: null,
-        // Touched-files feed (file-touch.js ring): which files this session's
-        // file tools were aimed at. In-memory, session-lifetime — like activity.
         fileTouches: [],
         // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
         // since-when, updated in _emitActivity. Restores seed from the resumed
@@ -1481,9 +1000,6 @@ function createSessionManager(deps) {
         // and letting DMs to them past the hold gate for 30 minutes.
         activityState: 'idle',
         activityTs: lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(),
-        // Needs-attention fact from the Notification hook (attention.js):
-        // { kind: 'permission'|'other', message, ts } while the CLI is blocked
-        // on the human, null otherwise. Cleared on keystroke / turn start.
         needsAttention: null,
         // Auto-compact atPrompt seed. A freshly spawned or resumed CLI is by
         // definition parked at its input prompt — permission dialogs don't
@@ -1495,11 +1011,6 @@ function createSessionManager(deps) {
         // the prompt after that. Unproxied sessions are still blocked by the
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
-        // Boot-digest bookkeeping (memory-store.js): the id we resumed with
-        // (any OTHER id observed later means a conversation born under this
-        // session — its SessionStart hook fired with source startup/clear and
-        // delivered the digest) and whether the digest file has content (an
-        // empty store delivers nothing, so birth must not mark the ledger).
         bootResumeId: resumeId || null,
         // Recompute rather than re-write: setupClaudeHook already wrote the
         // digest file pre-spawn, and rewriting here would race the CLI's
@@ -1508,12 +1019,6 @@ function createSessionManager(deps) {
       };
       this.sessions.set(name, session);
 
-      // Persist this session so we can resume it on next launch.
-      // Bash/other sessions persist too (restored as fresh shells in the
-      // saved cwd); their entry is dropped on natural exit instead.
-      // createdAt / existingEntry are computed up at the proxy-identity block —
-      // the claude arm needs the stamp for the pending-drain hook, which is
-      // written before the spawn. See the comment there.
       getPersistence().upsert({
         name, type, cwd,
         extraArgs,
@@ -1523,8 +1028,6 @@ function createSessionManager(deps) {
         systemPrompt: systemPromptBody || null,
         systemPromptFile: systemPromptFile || null,
         appendPromptFiles: Array.isArray(appendPromptFiles) ? appendPromptFiles : [],
-        // Tri-state, NOT the resolved base: inheriting sessions must keep
-        // following the Clodex-level preference across restarts.
         proxy: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         proxyAgent,
         agents: Array.isArray(agents) ? agents : [],
@@ -1541,15 +1044,6 @@ function createSessionManager(deps) {
         // absent — never freeze `intents: null` onto the record — while `[]`
         // (everything gated) is a real value that persists.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
-        // execCommands is the capability grant (the allowlist of registered
-        // command ids this seat may [agent:exec]). Like intents it's spawn-time
-        // config that MUST survive kill()+recreate — which drops the record and
-        // rebuilds it from create()'s args only — so it's a create() param
-        // persisted by this own upsert, NOT a post-create seed (the hole that
-        // dropped grants on every restart). Unlike intents, an empty grant is
-        // NOT a distinct value: absent ≡ [] ≡ "nothing granted" (see the `|| []`
-        // read in _handleIntent + the export coalesce), so omit an empty list to
-        // keep the record lean — matching the template seed's prior .length guard.
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
         // Session-scope env (T46). Persisted on the entry so --resume respawns
         // with the SAME env (the wrong AWS identity on restart would be silent
@@ -1569,17 +1063,6 @@ function createSessionManager(deps) {
         })(),
       });
 
-      // Turn observation for agent modes. Two mutually exclusive paths:
-      //
-      //   wire (W3 cutover)  claude session successfully registered with the
-      //     in-process wire — intents/activity ride turn events (_ensureWire
-      //     listeners); a TranscriptSentinel keeps the transcript-only jobs
-      //     (symlink identity, compact rendezvous, tee-failure recovery).
-      //     Steady-state transcript PARSING: none.
-      //
-      //   jsonl (legacy)  codex sessions (no wire route yet), wire-failed
-      //     spawns, and CLODEX_WIRE_INTENTS=0 — the full JsonlWatcher, exactly
-      //     the pre-cutover behavior (incl. shadow-compare when wire-routed).
       const onSessionId = (sessionId) => {
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
@@ -1590,9 +1073,6 @@ function createSessionManager(deps) {
         session.sentinel = new TranscriptSentinel({
           linkPath: pathFor(REGISTRY_DIR, name, 'transcript'),
           onSessionId,
-          // The sentinel never parses transcripts itself: armed windows get a
-          // real JsonlWatcher (starts at EOF — exactly the "tail from now"
-          // semantics both the compact rendezvous and recovery replay need).
           makeWatcher: ({ onText, onCompactSummary }) => new JsonlWatcher(
             name, onText || (() => {}), () => {}, () => {}, onCompactSummary || (() => {})),
         });
@@ -1609,8 +1089,6 @@ function createSessionManager(deps) {
         session.watcher.start();
       }
 
-      // Claude sidechannel: statusline script writes numeric ctx% to a file;
-      // tail it to decorate the sidebar tab.
       if (agentType === 'claude') {
         const ctxPath = pathFor(REGISTRY_DIR, name, 'ctx');
         let lastRaw = null;
@@ -1622,18 +1100,10 @@ function createSessionManager(deps) {
             const c = parseCtxFile(raw);
             if (c.pct != null) {
               this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
-              // Kept for peer attach seeding (getAttachInfo) + live-mirrored to
-              // attached peers, so the viewer's ctx chip tracks the owner's.
               session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName };
               if (getRemoteServer()) {
                 try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
               }
-              // High-context reminder side-channel: when the absolute token count
-              // crosses a threshold, drop a {name}-ctxwarn file whose contents the
-              // UserPromptSubmit hook cats into additionalContext (nudging the agent
-              // to self-compact on its next turn — no PTY interruption). Removed
-              // when it drops back under threshold (post-compact). Idempotent: the
-              // file content is stable, so re-writing it on every ctx tick is fine.
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               const warn = ctxReminderFor(c.tok);
               try {
@@ -1643,9 +1113,6 @@ function createSessionManager(deps) {
             }
           } catch {}
         };
-        // Needs-attention tail: the Notification hook appends raw event JSON to
-        // attn.jsonl (truncated at setup — offset 0 is always fresh). Rides the
-        // same per-agent run-dir watch as the ctx sidechannel.
         const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
         let attnOffset = 0;
         const readAttn = () => {
@@ -1665,8 +1132,6 @@ function createSessionManager(deps) {
             }
           } catch { /* observer-grade */ }
         };
-        // Watch the per-agent run dir (not the shared root) — the ctx/attn files
-        // are now run/<name>/{ctx,attn.jsonl} with unsuffixed basenames.
         try {
           session.ctxWatcher = fs.watch(runDirFor(REGISTRY_DIR, name), (_event, fname) => {
             if (fname === 'ctx') readCtx();
@@ -1677,8 +1142,6 @@ function createSessionManager(deps) {
       }
 
       ptyProc.onData((data) => {
-        // Always-on scrollback ring: what a peer attach replays. Best-effort
-        // recent output, not terminal state — capped small.
         session.scrollback = ((session.scrollback || '') + data);
         if (session.scrollback.length > SCROLLBACK_MAX) {
           session.scrollback = session.scrollback.slice(-SCROLLBACK_MAX);
@@ -1686,36 +1149,10 @@ function createSessionManager(deps) {
         this._sendToSession(name, 'pty-data', name, data);
         if (getRemoteServer()) { try { getRemoteServer().pushOutput(name, data); } catch {} }
 
-        // Live bracketed-paste mode (2004), sniffed from the CLI's own
-        // enable/disable writes — gates the InjectQueue's multi-line
-        // paste-wrap. The substring guard keeps the tracker off the hot path:
-        // it only runs on the rare chunk that carries the sequence at all.
         if (data.includes('\x1b[?2004')) {
           session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
-          // Boot-readiness latch (T35): the FIRST time 2004 goes on, the CLI's
-          // composer is actually accepting input — latch it so the InjectQueue's
-          // boot gate opens. This is a BOOT gate, not a liveness gate: 2004 keeps
-          // toggling around dialogs/teardown for the paste-wrap decision, but
-          // _bootReadySeen never un-sets once true.
           if (session._pasteModeOn && !session._bootReadySeen) {
             session._bootReadySeen = true;
-            // Boot-ready rising edge = the ONLY reliable post-boot drain trigger
-            // for a boot-silent seat (T54). A seat that never takes a turn never
-            // reaches an idle EDGE — the wire ActivityTracker seeds 'idle' and
-            // dedupes, the JsonlWatcher only emits idle after a real turn flush —
-            // so a team-review scope parked ACTIVE would sit forever waiting for
-            // an idle that never comes. This rising edge fires exactly once (the
-            // latch guards it). DEFERRED, not same-tick (T54 fix): the first 2004h
-            // announces bracketed-paste during terminal setup and can precede the
-            // readline loop accepting input, so a same-tick drain writes into a
-            // composer the boot re-render wipes AND destructively claims the file
-            // first → silent loss. Wait BOOT_DRAIN_SETTLE_MS (which is the SOLE
-            // margin here — _bootReadySeen is latched on THIS line, so the queue's
-            // ready-gate is already true by the time the deferred drain runs and
-            // adds no wait of its own), then drain via the fire-time-claim path
-            // (_drainPendingAtBootReady): the destructive pending claim happens
-            // past the queue's gates, so a delivery that still can't land stays
-            // parked (its ✉ survives).
             clearTimeout(session._bootDrainTimer);
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
@@ -1724,17 +1161,10 @@ function createSessionManager(deps) {
           }
         }
 
-        // In agent mode, PTY output is pass-through (intents come from JSONL)
         if (!agentType) {
           this._scanPtyOutput(session, data);
         }
 
-        // A booting codex team seat's boot-settle window rides the FIRST quiet
-        // window after boot output — each chunk re-arms the settle timer, so it
-        // closes once the boot render quiesces (the TUI at its prompt). Closing
-        // it delivers any stashed initial roster and re-opens the seat to
-        // actively-typed deltas. No-op once settled. See _armBootSettle /
-        // _settleBoot.
         if (session._bootSettling) this._armBootSettle(session);
       });
 
@@ -1744,18 +1174,7 @@ function createSessionManager(deps) {
         // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
         session._dead = true;
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
-        // Every deliberate teardown flags the session first (kill() →
-        // _userKilled, which restart also routes through; killAll() →
-        // _shuttingDown), so an unflagged exit means the process died on its
-        // own — the renderer uses that to surface it instead of silently
-        // dropping the tab.
         const expected = !!(session._userKilled || session._shuttingDown || session._archived);
-        // Missing-CLI heuristic (Task 12, pure helper below): node-pty's execvp
-        // fails SILENTLY in the forked child (no stderr) — a bare code-1 exit
-        // within a few seconds of spawn. If the command still isn't resolvable on
-        // PATH, name it so the toast reads "the `claude` CLI wasn't found on PATH"
-        // instead of the generic "exited unexpectedly (code 1)". Computed main-side
-        // so headless benefits too. `cmd` is the spawn command in this closure.
         const missingTool = missingToolOnExit({
           expected, exitCode, signal,
           elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
@@ -1764,35 +1183,14 @@ function createSessionManager(deps) {
         // the session → workspace → window mapping. Otherwise the sidebar
         // tab sticks around as a "dead" entry.
         this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null, missingTool });
-        // Exit observability: an always-on IPC-log entry (every exit, any type) so
-        // a vanished tab leaves a forensic trace — grep-stable body: `code=N`
-        // always, ` signal=X` / ` unexpected` only when applicable. Physically
-        // before _cleanup for handler ordering discipline (this send doesn't ride
-        // the session→window map, but the next editor shouldn't have to re-derive
-        // which sends do — see the _sendToSession landmine above).
         this._broadcast('ipc-message', {
           type: 'exit', from: name, to: 'exit',
           body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
         });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
-        // Agents keep their entry on natural exit (they get --resume'd next
-        // launch). A shell exiting naturally (user typed `exit`) is done —
-        // don't respawn it forever. Quit-kills keep entries for restore. An
-        // ARCHIVED shell keeps its entry too — archive stamped the record and
-        // stopped the PTY on purpose; dropping it here would turn archive into
-        // delete for a bash session (agents are already spared by agentType).
         if (!agentType && !session._shuttingDown && !session._userKilled && !session._archived) {
           getPersistence().remove(name);
         }
-        // Plugin sessions.onExit (plugin-plan.md [internal design doc, not in this repo] §3.2, MUST-FIX 4). ONE host
-        // call site, positioned INSIDE the landmine: after the session-exit send
-        // and the exit ipc-message broadcast (so the renderer has already resolved
-        // session → workspace → window), and physically BEFORE _cleanup(name),
-        // which drops the map entry that resolution depends on. Subscribers see a
-        // handle that is already _dead — isAlive() false, inject() a safe no-op —
-        // and run sync-only under try/catch inside the host, so neither a throw
-        // nor an async subscriber can re-break this ordering. Do not move this
-        // line; see the LANDMINE note in the module header.
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
@@ -1803,36 +1201,13 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      // Teams context architecture (teams-design.md [internal design doc, not in this repo]): composition rides as
-      // DATA, never the system prompt. A seat born on a team gets one initial
-      // roster message (sender `team`) as its first appended context, and every
-      // OTHER live seat of the team gets a passive "spawned" delta — but ONLY on
-      // a genuine first spawn, never on a resume/restart (existingEntry is the
-      // PRE-upsert record; a rosterSentAt stamp means this seat already got its
-      // roster). Best-effort: wrapped so a resolution hiccup never fails spawn.
       if (resolvedTeam) {
         this._maybeInjectComposition(session, resolvedTeam, existingEntry);
-        // Boot-settle window (task 22 rework / MUST-FIX 1): a codex seat has no
-        // passive store, so ANYTHING delivered while its TUI is still booting is
-        // ACTIVE-typed into an unsubmitted input box (the task-11 boot race). That
-        // hazard is independent of whether this seat stashed an initial roster —
-        // a RESUMED (stamped) seat skips the roster above yet still boots, and a
-        // composition delta fanned to it mid-boot would race the same way. So the
-        // boot-settle signal is armed for EVERY codex team seat here, NOT inside
-        // _injectRoster: the settle machinery (_armBootSettle → _settleBoot,
-        // re-armed by onData) closes the window, and _pendingRoster only decides
-        // WHAT (if anything) delivers at close. Claude seats never type at boot
-        // (passive park), so they need no window.
         if (session.agentType !== 'claude') {
           session._bootSettling = true;
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor
         }
       }
-      // Plugin sessions.onCreate (plugin-plan.md [internal design doc, not in this repo] §3.2) — the create() tail,
-      // after registration/notify, so a subscriber's handle resolves against a
-      // session that is fully in the map. Sync-only + try/catch inside the host,
-      // like onExit; wrapped again here so a hook can never fail a spawn.
-      // Restored sessions route through create(), so this fires for them too.
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
       return { name, type, pid: ptyProc.pid, backend, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
     }
@@ -1840,37 +1215,14 @@ function createSessionManager(deps) {
     write(name, data) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
-      // Only HUMAN input carries meaning below — focus reports and terminal
-      // query replies ride the same onData path with nobody at the keyboard
-      // (isHumanPtyInput). Stamping on those killed the atPrompt latch every
-      // time the user merely looked at a pane, which starved auto-compact of
-      // its window on any session the user ever viewed.
       if (isHumanPtyInput(data)) {
-        // A human touched this pane — auto-compact's quiet-window fact (injecting
-        // /compact starts with Ctrl-U, which would eat a half-typed draft).
         s.lastUserInputTs = Date.now();
-        // Level-triggered draft latch (isDraftOpen): a chunk carrying Enter/Ctrl-C
-        // OUTSIDE a bracketed-paste region CLOSES the draft (stamp submit ts); any
-        // other keystroke leaves it open. draftChunkSignal is stateful across
-        // chunks (a large paste's 200~…201~ region can span reads), so we thread
-        // s._inPaste through. This is what the inject park divert reads to decide,
-        // at fire time, whether the operator is still mid-composition. Peer-
-        // controller remote input rides this same choke point, tracked for free.
         const sig = draftChunkSignal(data, s._inPaste);
         s._inPaste = sig.inPaste;
         if (sig.closes) s.lastUserSubmitTs = s.lastUserInputTs;
-        // And drop the atPrompt latch: a user at the keyboard can open dialog UIs
-        // WITHOUT an API turn (/permissions et al.) — the quiet window only covers
-        // 2 minutes, a dialog can sit until warmth expiry. Only the next terminal
-        // wire receipt re-proves the prompt. Fails toward a missed compact.
         s.lastMainStop = null;
-        // A keystroke in the pane means the human is handling whatever the CLI
-        // asked for — clear the needs-attention badge (and the dm dialog gate;
-        // this same keystroke is what answers the dialog).
         if (s.needsAttention) this._setAttention(s, null);
       }
-      // node-pty throws Napi::Error from C++ if the fd closed under us; never
-      // let it escape — an unhandled native throw aborts the app.
       try { s.pty.write(data); } catch {}
     }
 
@@ -1878,22 +1230,11 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       try { s.pty.resize(cols, rows); } catch {}
-      // Observability: this is the sole owner-side PTY-mutation path in the peer
-      // surface, so log who reflowed the terminal and to what. Dedup on settled
-      // dims per session — resize bursts during window drags, and only a real
-      // geometry change (or a change of requester) is worth a line. This is what
-      // arbitrates the "does a read-only viewer ever perturb the owner" question:
-      // every legitimate perturbation must carry requester='peer-control'.
       const key = `${s.pty.cols}x${s.pty.rows}:${requester}`;
       if (s._lastLoggedResize !== key) {
         s._lastLoggedResize = key;
         log.info('resize', `${name} ${s.pty.cols}x${s.pty.rows} by ${requester}`);
       }
-      // Mirror the new geometry to any read-only peer viewers so their letterbox
-      // follows the owner's. This is the single resize choke point — both the
-      // owner's own refit (session:resize IPC) and a controlling viewer's resize
-      // (resizePty callback) land here — so one notify covers every case. Read
-      // back the PTY's actual dims (canonical) rather than the requested ones.
       if (getRemoteServer()) {
         try { getRemoteServer().notifyResize(name, s.pty.cols, s.pty.rows); } catch {}
       }
@@ -1903,29 +1244,8 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `kill ${name} (user-initiated) pid=${s.pty.pid}`);
-      // User-initiated kill — the reshaped DELETE action (right-click "Delete
-      // Session…"): forget this session so it doesn't resume on relaunch. Along
-      // with Delete Workspace, the only path that drops a record; ✕ / ⌘W archive
-      // instead (archive() keeps it). The delete handler removes any worktree.
       s._userKilled = true;
-      // Composition delta BEFORE teardown (the seat is still in the map, so its
-      // team + role still resolve): a kill drops the seat, so the other live
-      // seats learn it retired. Covers the retire-discard path and the Delete
-      // Session gesture alike — a single chokepoint on the teardown primitive.
       this._notifyComposition(s, 'retired');
-      // wirescope spawner-hint CLEAR (T51): a retired reviewer seat's suppression
-      // row must be released — wirescope's hint table has no TTL/sweeper and
-      // reloads whole at proxy restart, so monotonic ephemeral reviewer names
-      // (team-reviewer-1, -2, …) would accrete rows unbounded. Gated to reviewer
-      // seats ONLY (the persistence record carries ephemeral + reviewFor, set at
-      // team-review spawn) so an ordinary Delete-Session on any other seat never
-      // touches the proxy. Read the record BEFORE remove() below. Keyed by the
-      // seat's route name (proxyAgent), same key the spawn-time on=0 used. Both
-      // retire flows (review-done → kill, team-retire discard → kill) funnel here,
-      // so one clear covers both. Best-effort: never fail or delay teardown on it
-      // (a hard-crash w/o teardown leaves one dead row — accepted, wirescope reaps
-      // by age if it ever matters). No strip-override clear needed — that's
-      // session-id-keyed and self-reaps on wirescope's session sweep.
       const killRec = getPersistence().get(name);
       if (killRec && killRec.ephemeral && killRec.reviewFor && s.proxyBase && s.proxyAgent) {
         try {
@@ -1942,20 +1262,10 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
-    // Archive: stop the PTY but KEEP the persistence record (stamped archivedAt),
-    // so the conversation can be resumed later. This is the reshaped ✕ / ⌘W
-    // gesture (delete moved to the right-click menu). Unlike kill(), _userKilled
-    // stays false so _cleanup doesn't drop parked DMs, and the record is stamped
-    // BEFORE teardown so a fast onExit can't race the mark. The _archived flag
-    // marks the exit expected and — load-bearing for a bash/shell archive —
-    // stops onExit from dropping the record on its natural-exit path (only an
-    // agent's entry survives there otherwise). Restore-spawn filters archivedAt.
     async archive(name) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${s.pty.pid}`);
-      // Composition delta BEFORE teardown (team + role still resolve): archiving
-      // scales the team down, so the other live seats learn it archived.
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
@@ -1965,25 +1275,8 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
-    // Launch-time sweep of the reviewer graveyard (T31): drop every persisted
-    // record carrying ALL THREE of ephemeral + reviewFor + archivedAt. The ONLY
-    // writer of ephemeral+reviewFor is the team-review spawn seed (_handleTeamReview's
-    // pre-spawn upsert), and an
-    // archivedAt on such a seat means a pre-T31 review concluded via the old
-    // ARCHIVE retire path (now discard) — either way the recovery is a fresh cold
-    // spawn, never a resume, so these are corpses. The three-marker guard is the
-    // doubt-guard: a record missing any one marker (a plain archived agent, or a
-    // still-live ephemeral+reviewFor reservation not yet archived) STAYS. Runs once
-    // at launch, before windows restore archived rows, so the existing
-    // <team>-reviewer-N rows clear with no manual clicking. Reviewers share the
-    // project cwd (no worktree) and no path removes the run/{name}/ dir on delete,
-    // so — like the discard retire — this drops the record only. Returns the swept
-    // names for the caller's log + test visibility.
     sweepReviewerGraveyard() {
       const swept = [];
-      // Snapshot the names first — remove() mutates the store, and a fake/store
-      // whose list() returns the LIVE array (not a fresh copy) would skip entries
-      // if we removed mid-iteration.
       const corpses = getPersistence().list()
         .filter((e) => e && e.ephemeral === true && e.reviewFor && e.archivedAt)
         .map((e) => e.name);
@@ -1997,19 +1290,11 @@ function createSessionManager(deps) {
       return swept;
     }
 
-    // Team name owning `cwd` (or null). Thin, best-effort wrapper over the
-    // injected resolveTeam — a resolve failure or a teamless cwd is null, never
-    // a throw. Callers that resolve many cwds (list, sidebar meta) should memo;
-    // the teams dir is small, but resolveTeam does an fs scan per call.
     teamNameFor(cwd) {
       if (!cwd) return null;
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
     }
 
-    // Live agent seats whose cwd belongs to project `teamRoot` (the team's
-    // membership at this instant). Best-effort per seat — a resolve failure or a
-    // teamless cwd just excludes that seat. Used to compose the roster and to
-    // fan out composition deltas.
     _teamLiveSeats(teamRoot) {
       const names = [];
       for (const s of this.sessions.values()) {
@@ -2020,29 +1305,12 @@ function createSessionManager(deps) {
       return names;
     }
 
-    // Gate the one-time team-context wiring (initial roster + the seat's own
-    // 'spawned' delta to teammates) on a genuine FIRST spawn. On a resume/restart
-    // the seat's restored context already holds its roster, so reinjecting is pure
-    // noise — and N restored seats each re-firing 'spawned' at app relaunch is
-    // N×N delta spam for a team whose composition never changed. `existingEntry`
-    // is the PRE-upsert persistence record; a rosterSentAt stamp on it means this
-    // seat received its roster on a prior spawn. resumeId's VALUE is deliberately
-    // NOT the signal (task 15's lesson: a persisted no-sessionId entry resumes
-    // with resumeId=null, an adopt-mint carries one — value is not the mint-vs-
-    // restore axis; the stamp is). The stamp is written at DELIVERY, so a seat
-    // that died before its roster landed (no stamp) retries on the next spawn
-    // (self-heal). 'retired'/'archived' deltas are unaffected — they fire from
-    // the archive/kill paths on genuine membership changes, not here.
     _maybeInjectComposition(session, team, existingEntry) {
       if (existingEntry && existingEntry.rosterSentAt) return;
       this._injectRoster(session, team);
       this._notifyComposition(session, 'spawned');
     }
 
-    // Stamp the initial-roster delivery on the persistence record (best-effort;
-    // a persistence stub without the method — some tests — is a clean no-op).
-    // Called from the delivery points, not the decision, so the stamp reflects
-    // an actually-delivered roster (self-heal: no delivery → no stamp → retry).
     _markRosterSent(session) {
       const p = getPersistence();
       if (p && typeof p.setRosterSent === 'function') p.setRosterSent(session.name);
@@ -2075,28 +1343,12 @@ function createSessionManager(deps) {
       if (p && typeof p.upsert === 'function') p.upsert(seed);
     }
 
-    // Inject the one-time initial roster (sender `team`) into a freshly
-    // registered team seat — its first appended-context message (mechanism 2 in
-    // the context architecture): roles, briefs, live seats, subagent-class
-    // roles. It must NEVER be actively typed into a still-booting TUI: this fires
-    // at spawn, and an active write typed the roster into the not-yet-ready input
-    // box where the trailing Enter got swallowed — an un-submitted draft the
-    // operator had to submit by hand.
-    //
-    // Claude seats park it PASSIVELY (the pending store drains on the seat's first
-    // organic hook turn — no PTY typing) with the roster formatted NOW (immediate
-    // delivery, no staleness window). Codex has no passive store, so
-    // _deliverPassive there falls back to an ACTIVE write — the same boot-race bug,
-    // scoped to codex. So a codex seat DEFERS: the TEAM REF is stashed on the
-    // session (not a pre-rendered body) and the boot-settle machinery
-    // (_armBootSettle → _settleBoot, armed at create for every codex seat)
-    // recomputes + delivers on the normal path once the boot render quiesces (the
-    // TUI up, active injection safe — how mid-session DMs already work). Stashing
-    // the ref rather than a snapshot body is deliberate:
-    // a teammate that spawns DURING this seat's boot must appear in the roster it
-    // finally receives (task 20's dropped-delta contract leans on exactly this —
-    // the pending roster supersedes the coalesced delta, so it must be fresh at
-    // delivery). Best-effort. `team` is a resolveTeam() result.
+      // Never actively write into a still-booting TUI: at spawn the trailing Enter is
+      // swallowed and the roster is left as an un-submitted draft. Claude parks the
+      // roster passively (drains on its first organic hook turn); codex has no passive
+      // store, so it stashes the TEAM REF — not a rendered body — and _settleBoot
+      // renders + delivers once boot output quiesces. Stashing the ref is what lets a
+      // teammate that spawned DURING this seat's boot appear in the roster it receives.
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
@@ -2104,24 +1356,12 @@ function createSessionManager(deps) {
           this._markRosterSent(session);   // parked = delivered for claude; stamp so a restart won't re-inject
         } else {
           session._pendingRoster = team;   // team ref; body recomputed FRESH by _settleBoot at boot-settle
-          // The boot-settle window + its cap anchor (_bootSettling/_bootSettleSince)
-          // are armed by create() for EVERY codex seat, not here — a resumed seat
-          // that skips the roster still needs the window (MUST-FIX 1). The codex
-          // stamp is deferred to _settleBoot (actual delivery) — a seat that dies
-          // before the flush keeps no stamp and retries next spawn.
         }
       } catch (e) {
         log.error('inject', `roster inject failed for ${session.name}: ${e.message}`);
       }
     }
 
-    // Arm/re-arm the boot-settle timer for a non-claude seat. Every output chunk
-    // pushes the deadline out, so the window closes only after the boot render
-    // goes quiet — an ACTIVITY-gated wait, not a blind spawn timer. But a TUI that
-    // repaints faster than the settle interval (spinner / status clock) would
-    // re-arm forever; past ROSTER_MAX_WAIT_MS from arm time, close NOW rather than
-    // re-arm (inject-queue maxWaitMs precedent). No-op once settled
-    // (_bootSettling cleared).
     _armBootSettle(session) {
       if (!session._bootSettling) return;
       if (Date.now() - (session._bootSettleSince || 0) >= ROSTER_MAX_WAIT_MS) {
@@ -2134,17 +1374,6 @@ function createSessionManager(deps) {
       session._bootSettleTimer = setTimeout(() => this._settleBoot(session), ROSTER_SETTLE_MS);
     }
 
-    // Close a codex seat's boot-settle window: the TUI is up now, so it re-opens
-    // to actively-typed deltas (_bootSettling cleared) AND delivers any stashed
-    // initial roster on the normal (active) path — a safe mid-session-style inject
-    // (quiet-gate/busy-hold apply as for any DM). A RESUMED seat has no stashed
-    // roster (_pendingRoster null): the window just closes, nothing is delivered.
-    // The roster body is rendered HERE, at delivery, from the stashed team ref +
-    // current live seats — so it lists any teammate that spawned during this seat's
-    // boot (fresh-at-delivery, not a spawn-time snapshot). Once-only + dead-safe.
-    // The render/deliver is wrapped: this runs from a setTimeout callback, so a
-    // throw would be an uncaughtException in main — the roster path is
-    // best-effort-never-throws (task 22 rework NIT).
     _settleBoot(session) {
       session._bootSettleTimer = null;
       session._bootSettling = false;   // boot window closed → deltas deliver normally now
@@ -2159,29 +1388,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // Fan a passive composition delta (sender `team`) to every OTHER live seat
-    // of `session`'s team when its membership changes — `verb` is
-    // spawned|archived|retired. Passive class: rides each seat's next organic
-    // turn, no wake, no cache impact (the roster pull is ground truth, so a
-    // missed or double delta is harmless). No-op for non-agent sessions,
-    // teamless cwds, or when team resolution is unavailable (e.g. tests without
-    // the injected dep) — wrapped so it never throws into a teardown.
-    //
-    // Boot-race coalesce (task 20 + task-22 rework): a target codex seat still
-    // inside its boot-settle window (_bootSettling) would have _deliverPassive
-    // fall back to an ACTIVE PTY write and type the delta into the unsubmitted
-    // TUI — the task-11 boot-race, narrower trigger (near-simultaneous spawns /
-    // an app restart that mints a seat while others reboot). So we COALESCE
-    // rather than queue a second timer: DROP the delta. The guard keys on the
-    // boot-settle FLAG, not on a stashed roster — a RESUMED (stamped) seat skips
-    // its roster (no _pendingRoster) yet still boots, and MUST be suppressed just
-    // the same (MUST-FIX 1); keying on _pendingRoster alone would let a delta
-    // race into a resumed seat's booting TUI. Dropping (vs deliver-at-settle) is
-    // the T20 harmless-miss contract: the seat's resumed context + its on-demand
-    // roster pull are ground truth and supersede the one-line delta, and a missed
-    // delta is harmless by this fn's contract above. Claude seats park passively
-    // regardless (boot-safe, never _bootSettling), and a settled codex seat (TUI
-    // up) takes the delta on the normal path.
     _notifyComposition(session, verb) {
       if (!session || !session.agentType) return;
       let team;
@@ -2189,26 +1395,12 @@ function createSessionManager(deps) {
       if (!team) return;
       const role = matchSeatRole(team, session.name);
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
-      // An EPHEMERAL subject seat's lifecycle (a reviewer spawning/archiving) is
-      // lead↔seat business, not durable team topology — fanning it to every seat
-      // burns bystanders' wakeups/context on noise (T34, field-promoted from a T29
-      // fast-follow). Restrict those deltas to the LEAD; persistent-role seats keep
-      // the full fan (a second hand or the lead arriving/leaving IS topology every
-      // seat should learn). Two markers, belt-and-braces: the role DEF's ephemeral
-      // flag (matchSeatRole → team.roles[role].ephemeral) OR the persistence record's
-      // ephemeral — and for a reviewer seat only the LATTER actually holds: the
-      // reviewer role def in team.json carries no ephemeral:true (normalizeRoleDef
-      // defaults it false), while _handleTeamReview seeds ephemeral:true onto the
-      // seat's persistence record at spawn. Guarding on both is future-proofing for
-      // an explicitly-ephemeral role def.
       const roleDef = role ? (team.roles && team.roles[role]) : null;
       let rec = null; try { rec = getPersistence().get(session.name); } catch { rec = null; }
       const ephemeral = (roleDef && roleDef.ephemeral === true) || (rec && rec.ephemeral === true);
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
         if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
-        // Ephemeral subject → lead-only. team.lead absent/dead just means nobody
-        // matches (loop shape handles absence naturally — no throw).
         if (ephemeral && s.name !== team.lead) continue;
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
         if (root && root === team.root) this._deliverPassive(s.name, 'team', body, 'dm');
@@ -2216,9 +1408,6 @@ function createSessionManager(deps) {
     }
 
     list() {
-      // Team name per cwd (sidebar group-by-project reflects team identity).
-      // resolveTeam scans ~/.clodex/teams on each call and list() runs often, so
-      // memoize by cwd within this single invocation.
       const teamByCwd = new Map();
       const resolvedTeamFor = (cwd) => {
         if (!cwd) return null;
@@ -2229,13 +1418,8 @@ function createSessionManager(deps) {
         return t;
       };
       const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
-      // Tickets per team dir, memoized within this call (Task 25). The seat's open
-      // ticket id drives the sidebar badge; role-addressed tickets match via the
-      // seat's derived role.
       const ticketsByDir = new Map();
       const openTicketFor = (s) => {
-        // Best-effort like teamFor: a team without a resolvable file, or any read
-        // failure, just means no badge — never break the list over a ticket lookup.
         try {
           const t = resolvedTeamFor(s.cwd);
           if (!t || !t.file) return null;
@@ -2253,20 +1437,11 @@ function createSessionManager(deps) {
         pid: s.pty.pid,
         cwd: s.cwd,
         workspaceId: s.workspaceId,
-        // Team name owning this cwd (or null) — the sidebar groups by it so seats
-        // in the same team but different subdirs cluster under one header.
         team: teamFor(s.cwd),
-        // Open ticket id this seat holds (or null) — the sidebar ticket badge
-        // (Task 25). Restore/reattach seeds dataset.ticket from this.
         ticket: s.agentType ? openTicketFor(s) : null,
-        // Cloud backend ('bedrock'|'vertex'|null) driving the sidebar chip glyph.
         backend: s.backend || null,
-        // Live turn state + dialog fact, so list() consumers (tray menu,
-        // reattach seeding) don't start stale until the next activity event.
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
-        // Parked-DM count so a freshly opened window paints the ✉ badge without
-        // waiting for the next pending-count delta broadcast. Claude-only store.
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }
@@ -2275,8 +1450,6 @@ function createSessionManager(deps) {
       return this.list().filter(s => s.workspaceId === workspaceId);
     }
 
-    // Live PTY child pids of the sessions Clodex owns. Session-discovery uses
-    // this to exclude Clodex's own agents from the "foreign live process" scan.
     livePids() {
       const pids = new Set();
       for (const s of this.sessions.values()) {
@@ -2285,10 +1458,6 @@ function createSessionManager(deps) {
       return pids;
     }
 
-    // Every Claude/Codex conversation id Clodex knows about — the live session
-    // id plus each persisted entry's full sessionIds history. Session-discovery
-    // subtracts this from the on-disk scan so already-adopted transcripts don't
-    // show up as "new".
     trackedSessionIds() {
       const ids = new Set();
       for (const s of this.sessions.values()) if (s.sessionId) ids.add(s.sessionId);
@@ -2299,17 +1468,11 @@ function createSessionManager(deps) {
       return ids;
     }
 
-    // Parked-DM count for one session (0 for non-claude). Lets the reattach
-    // snapshot seed the ✉ badge without waiting for the next poll delta.
     pendingCountFor(name) {
       const s = this.sessions.get(name);
       return s && s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0;
     }
 
-    // Parked-DM previews for one session as [{ from, snippet }] (empty for
-    // non-claude). Read-only — feeds the sidebar ✉ tooltip so the operator can
-    // judge who's waiting and roughly what about, without waking the agent to
-    // drain the queue. Snippets only; never the full body (peekPending clamps).
     peekPendingFor(name) {
       const s = this.sessions.get(name);
       return s && s.agentType === 'claude' ? peekPending(PENDING_DIR, s.name) : [];
@@ -2337,8 +1500,6 @@ function createSessionManager(deps) {
           else this._lastPendingCounts.delete(s.name);
           this._broadcast('pending-count', { name: s.name, count });
         }
-        // A session that went away with a non-zero last count: emit a final 0 so a
-        // lingering badge clears, then forget it.
         for (const name of Array.from(this._lastPendingCounts.keys())) {
           if (live.has(name)) continue;
           this._lastPendingCounts.delete(name);
@@ -2349,22 +1510,14 @@ function createSessionManager(deps) {
     }
 
     async killAll() {
-      // App shutdown — suppress node-pty's native teardown throws from here on.
       setAppQuitting(true);
-      // mark all sessions so _cleanup knows not to wipe persistence
       for (const s of this.sessions.values()) {
         s._shuttingDown = true;
       }
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
-        // Killing an already-exited PTY throws Napi::Error from node-pty's
-        // native layer; unguarded on quit it aborts the app with SIGABRT.
         try { s.pty.kill(); } catch {}
       }
-      // Deliberately NOT stopping the managed wirescope: it detaches at spawn
-      // and outlives the GUI so warmth/cache continuity survives app restarts.
-      // The next launch reattaches via its pidfile; the Traffic optimization
-      // toggle (settings:set → stop()) is how it actually goes down.
     }
 
     _cleanup(name) {
@@ -2377,38 +1530,14 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       s._compactPending = null; // no timer, but null for symmetry with the valve state
-      // Parked deliveries are deliberately NOT dropped here, under any gate. This
-      // used to rm the store when `s._userKilled` was set, and that gate was wrong
-      // in BOTH directions — the same misreading the prompt-cache paragraph below
-      // documents, one channel over:
-      //   * too WIDE: _userKilled is set by restart too (see the onExit comment —
-      //     "kill() → _userKilled, which restart also routes through"), so an
-      //     ordinary restart deleted the seat's parked DMs. Undelivered mail,
-      //     destroyed, on the button labelled "restart". That is the zero-loss
-      //     violation this store exists to prevent.
-      //   * too NARROW as a hygiene measure: it fired only on a user-kill, so the
-      //     stale-mail case it was reaching for (a name recreated later, inheriting
-      //     a dead predecessor's parked mail) survived every other exit anyway.
-      // Both ends are now handled where they belong: nothing is deleted on exit,
-      // and the successor generation refuses its predecessor's mail at DRAIN time
-      // via the `born` stamp (parkDelivery/drainPending in pending-store.js, and
-      // the same comparison baked into the generated hook). Residue for a
-      // never-recreated name is a few small JSON files and is harmless — the same
-      // judgement, for the same reason, as the frozen prompt below.
-      // The frozen system prompt (ipc-prompt-cache.js) is deliberately NOT dropped
-      // here, under any gate. _userKilled is not the "going away for good" signal
-      // it reads as: restart routes through kill() too (see the onExit comment
-      // above — "kill() → _userKilled, which restart also routes through"), so
-      // gating the rm on it deleted the cache on an ordinary restart, and the
-      // create() that followed carried a non-null resumeId into an empty cache —
-      // a full prompt rewrite under a --resume'd conversation, i.e. exactly the
-      // 111k-139k bust this module exists to stop, on the button labelled
-      // "restart". The stale-cache hazard the rm was added for is handled at the
-      // read end instead: a MINT regenerates unconditionally (see the `mint`
-      // param on create()), so a name recreated at the front door never diffs
-      // against the dead session's baseline — including an "adopt" mint, which
-      // carries a resumeId but is still a mint. Residue for a never-recreated
-      // name is four small texts and is harmless.
+      // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are
+      // deliberately NOT dropped here, under any gate. _userKilled is not a "going
+      // away for good" signal — restart routes through kill() too — so gating an rm
+      // on it destroyed undelivered mail and busted the prompt cache on the button
+      // labelled "restart". Both stale-successor hazards are handled at the READ end
+      // instead: drainPending compares the `born` stamp, and a MINT regenerates the
+      // prompt unconditionally. Residue for a never-recreated name is a few small
+      // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
       if (s.watcher) s.watcher.stop();
       if (s.fileHeat) { try { s.fileHeat.close(); } catch {} } // flush pending heat
@@ -2424,7 +1553,6 @@ function createSessionManager(deps) {
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
     }
 
-    // --- PTY output scanning (non-agent mode) ---
 
     _scanPtyOutput(session, data) {
       session.lineBuffer += data;
@@ -2439,28 +1567,17 @@ function createSessionManager(deps) {
       // doesn't.
       for (const line of lines) {
         const intent = parseIntent(line);
-        // `end` is the body terminator — meaningless on the line-at-a-time
-        // PTY path (no body capture here), swallowed like escape.
         if (!intent || intent.type === 'escape' || intent.type === 'end') continue;
         this._handleIntent(session.name, intent);
       }
     }
 
-    // Touched-files fan-in shared by both observation paths (wire turn receipts
-    // + legacy JsonlWatcher tap): fold into the session's ring and push the
-    // fresh list to the owning window. Detached windows just drop the event —
-    // the Files popover pulls session:files on open, so nothing is lost.
     _noteFileTouches(session, touches, sub = false) {
       try {
         noteFileTouches(session.fileTouches, touches, {
           cwd: session.cwd, ts: Date.now(), sub, resolve: path.resolve,
         });
         this._sendToSession(session.name, 'session-files', session.name, session.fileTouches);
-        // Mirror the count (not the list) to attached peer viewers so their 📄N
-        // badge ticks live — the full list stays pull-on-demand via the query
-        // endpoint. Deduped on unchanged count: a hot re-edit of the same file
-        // grows f.count but not the distinct-file count, and must not spam the
-        // wire (same discipline as the resize debounce).
         const count = session.fileTouches.length;
         if (session._peerFileCount !== count) {
           session._peerFileCount = count;
@@ -2469,9 +1586,6 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never near the PTY/intent path */ }
     }
 
-    // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo] tier 1). Lazily bind the per-agent
-    // heat recorder at run/<name>/file-heat.json (created only once a turn
-    // actually touches files, so idle sessions never mint an empty file).
     _fileHeatFor(session) {
       if (!session.fileHeat) {
         session.fileHeat = createFileHeat({ filePath: pathFor(REGISTRY_DIR, session.name, 'fileHeat') });
@@ -2479,9 +1593,6 @@ function createSessionManager(deps) {
       return session.fileHeat;
     }
 
-    // Fold one turn's reads (carriage) + edits into the per-agent recorder.
-    // Best-effort diagnostic — never throws on the hot wire path; recordRead is
-    // fire-and-forget (its own stat is swallowed), we just guard the rejection.
     _recordHeat(session, reads, files) {
       try {
         const hasReads = Array.isArray(reads) && reads.length;
@@ -2496,16 +1607,6 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — heat is a diagnostic, never worth a throw */ }
     }
 
-    // Boiling-pot read-time view. Flush every live recorder so the on-disk files
-    // are current, then merge EVERY per-agent file-heat.json (live + dead agents)
-    // into one carriage-ranked snapshot (tier 1). Cross-agent merge happens HERE at
-    // read time — never at write time (no shared-write contention). Then tier 2:
-    // fetch wirescope's /_pot redundancy rollup once per DISTINCT proxy base
-    // (global-per-base — ?session= is ignored) and fold it into the ALREADY-SLICED
-    // top-N rows by path. Fold-after-slice is deliberate: redundancy never re-ranks
-    // (ordering is carriage, fixed by aggregateStates), so we only fold the rows we
-    // actually return. Wire-off / fetch failure degrades silently to tier-1 nulls —
-    // the drawer already gates its redundant column on non-null.
     async potSnapshot(topN) {
       let snap;
       try {
@@ -2523,8 +1624,6 @@ function createSessionManager(deps) {
       } catch {
         return { window: null, files: [] };
       }
-      // Tier 2 — best-effort, isolated so a proxy hiccup never sinks the tier-1
-      // view the drawer depends on.
       try {
         const bases = new Set();
         for (const s of this.sessions.values()) { if (s.proxyBase) bases.add(s.proxyBase); }
@@ -2539,34 +1638,17 @@ function createSessionManager(deps) {
       return snap;
     }
 
-    // Activity fan-out shared by both observation paths (wire tracker + legacy
-    // JsonlWatcher callback): renderer event + optional "finished" notification
-    // when the owning window isn't focused.
     _emitActivity(name, state, notify) {
-      // Stamp peer-visibility facts (both intent paths funnel through here).
       const s = this.sessions.get(name);
       if (s && s.activityState !== state) {
         s.activityState = state; s.activityTs = Date.now();
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
-      // A turn starting means the CLI is NOT parked at its prompt — drop the
-      // atPrompt latch (covers injected turns too, which bypass write()); the
-      // turn's terminal wire receipt re-stamps it. Invariant: atPrompt holds
-      // iff a turn completed more recently than anything else happened.
       if (s && state !== 'idle') s.lastMainStop = null;
-      // A seat holding an open ticket that's working resets its stall episode +
-      // bumps lastActivityAt (Task 25). Gated on the watch map → no-op for others.
       if (state !== 'idle') this._touchTicketActivity(name);
-      // A turn resuming also means any dialog was answered (the CLI can't run
-      // and ask at the same time) — clear the needs-attention badge. Never
-      // cleared on 'idle': the dialog notification often lands AFTER the
-      // activity tracker's quiet-fallback flips to idle.
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
-      // The idle transition is the busy-hold's release event.
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
       this._sendToSession(name, 'session-activity', name, state);
-      // notify is only ever true on a real end-of-turn idle, so it doubles as
-      // the remote client's "refetch the transcript now" signal.
       if (getRemoteServer()) { try { getRemoteServer().notifyActivity(name, state, notify); } catch {} }
       if (!notify) return;
       const owningWin = this.windowForSession(name);
@@ -2581,10 +1663,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // A Notification-hook event landed for this session (attention tail in
-    // create()). 'idle' chatter is dropped; 'permission'/'other' set the
-    // needs-attention fact — badge, OS notification when the owning window
-    // isn't focused, and (for 'permission') the dm dialog gate.
     _onAttention(session, entry) {
       const kind = classifyNotification(entry);
       if (kind === 'idle') return;
@@ -2608,33 +1686,15 @@ function createSessionManager(deps) {
       }
     }
 
-    // Single set/clear funnel for the needs-attention fact so the renderer badge
-    // can never drift from the dm gate's view of it.
     _setAttention(session, attn) {
       session.needsAttention = attn;
       this._sendToSession(session.name, 'session-attention', session.name, attn);
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
-      // Clearing a dialog fact is the dialog-hold's release event. (The flush
-      // re-checks all holds, so a clear that rode a turn-start is a no-op.)
       if (!attn) this._maybeFlushInjectQueue(session);
     }
 
-    // Compact summary landed. If this compact was self-fired via
-    // [agent:context compact], a continuation was stashed — inject it now as
-    // the first post-compact turn so the agent keeps working instead of
-    // parking. One-shot: clear the stash so a later manual /compact (no stash)
-    // never replays it. Defer so the inject lands after the summary write
-    // fully settles in the PTY.
     _fireCompactContinuation(session) {
-      // Summary landed = compact completed normally: cancel the in-flight valve
-      // so it can't later clear state / log a false "never landed".
       this._clearCompactValve(session);
-      // Fire this agent's `on compact` self-reminders. This is the single choke
-      // point for EVERY compact flavor — self-fired [agent:context compact],
-      // manual /compact, and auto-compact all land the same isCompactSummary
-      // entry (jsonl-watcher), and BOTH observation paths (the legacy watcher's
-      // onCompactSummary callback and the wire sentinel's armCompact) route here
-      // — so hooking the event trigger once covers them all.
       const sched = getRemindScheduler && getRemindScheduler();
       if (sched) { try { sched.fireCompactFor(session.name); } catch {} }
       const cont = session._compactContinuation;
@@ -2643,36 +1703,14 @@ function createSessionManager(deps) {
         setTimeout(() => {
           if (session._dead) return;
           this._injectText(session, cont, { bypassHold: true });
-          // Release the guard only after the continuation's deferred Enter has
-          // fired, so anything queued flushes as a strictly LATER turn.
           const delay = cont.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY;
           setTimeout(() => this._releaseCompactGuard(session), delay + 200);
         }, COMPACT_CONTINUATION_DELAY);
       } else {
-        // Summary landed with nothing stashed (manual /compact, or the stash
-        // already fired). No continuation to order against — release now.
         this._releaseCompactGuard(session);
       }
     }
 
-    // Inject-hold queue: while the session can't usefully receive a turn,
-    // programmatic injections queue in clodex instead of stacking up in the
-    // CLI's stdin, then flush as ONE concatenated turn. Holding costs no
-    // latency in turn-terms — a mid-turn inject only becomes the next turn
-    // anyway — and batching N held messages saves N-1 full-context billings
-    // and lets the agent see them together (message 2 may supersede message 1).
-    // Three hold reasons, three release events:
-    //   'compact-window'  self-fired /compact ran, continuation hasn't fired —
-    //                     an inject here would steal the first post-compact
-    //                     turn. Released by _fireCompactContinuation.
-    //   'dialog'          a permission dialog is OPEN (attention.js) — the
-    //                     inject's Enter would answer it. Released when the
-    //                     attention fact clears. Only 'permission' holds:
-    //                     'other' has no evidence of a dialog (settled in
-    //                     attention.js) and must not gate delivery.
-    //   'busy'            mid-turn ('thinking' from either observation path).
-    //                     Released on the idle transition.
-    // Human keystrokes ride write(), not _injectText — never held.
     _injectHoldReason(session) {
       if (session._compactGuard) return 'compact-window';
       if (session.needsAttention && session.needsAttention.kind === 'permission') return 'dialog';
@@ -2680,23 +1718,16 @@ function createSessionManager(deps) {
       return null;
     }
 
-    // Arm the safety valve if it isn't already running. One timer per session,
-    // shared by all hold reasons: 5 min after the FIRST cause (guard armed or
-    // first message queued), force the flush past whatever hold is stuck.
     _armInjectValve(session) {
       if (session._injectHoldTimer) return;
       session._injectHoldTimer = setTimeout(() => {
         session._injectHoldTimer = null;
         console.warn(`inject hold ${session.name}: release never came (${this._injectHoldReason(session) || 'none'}) — forcing flush after timeout`);
-        // A wedged compact window must not survive the valve — future injects
-        // would immediately re-queue against it.
         session._compactGuard = false;
         this._maybeFlushInjectQueue(session, true);
       }, INJECT_HOLD_TIMEOUT);
     }
 
-    // Armed on the [agent:context compact] intent path only — a human's manual
-    // /compact and auto-compact-before-cold never queue anything.
     _armCompactGuard(session) {
       session._compactGuard = true;
       this._armInjectValve(session);
@@ -2709,22 +1740,6 @@ function createSessionManager(deps) {
       this._maybeFlushInjectQueue(session);
     }
 
-    // In-flight release valve (see COMPACT_INFLIGHT_TIMEOUT): a self-compact whose
-    // summary never lands — OR a LATCH that never fires (queue never drains, no
-    // further terminal stop) — would otherwise leave _compactPending / _compactGuard
-    // / _compactContinuation stuck, silently suppressing every future self-compact
-    // via the in-flight guard. On timeout, clear ALL THREE and flush anything
-    // queued, logging + mirroring to the IPC drawer. No auto-retry — and the
-    // stashed continuation text is dropped (the agent's post-compact follow-up is
-    // lost, logged not retried; re-issuing is the agent's call). Cleared on the
-    // normal completion path (_fireCompactContinuation / _releaseCompactGuard).
-    // Armed at BOTH latch-set and fire time; each arm RESETS the timer
-    // (_clearCompactValve first), so the post-fire window is a full 5min.
-    //
-    // Accepted trade-off: a LEGITIMATE compaction that streams longer than 5 min
-    // trips the valve too, freeing the queue so injections can land mid-compaction
-    // — exactly the pre-guard status quo. Deliberately accepted: a bounded chance
-    // of the old behavior beats a permanent wedge on the common failure case.
     _armCompactValve(session) {
       this._clearCompactValve(session);
       session._compactValveTimer = setTimeout(() => {
@@ -2748,27 +1763,18 @@ function createSessionManager(deps) {
       if (session._compactValveTimer) { clearTimeout(session._compactValveTimer); session._compactValveTimer = null; }
     }
 
-    // Flush the queue as a single '\n'-joined inject — the \n→\r PTY path
-    // already carries multi-line dm bodies as one message, so the batch lands
-    // as ONE turn in arrival order. No-op while a hold reason stands (the
-    // matching release event re-attempts) unless forced by the valve.
     _maybeFlushInjectQueue(session, force = false) {
       clearTimeout(session._injectFlushRetry);
       session._injectFlushRetry = null;
       if (session._dead) return;
       const queue = session._injectQueue;
       if (!queue || !queue.length) {
-        // Nothing held; drop the valve unless a compact window still needs it.
         if (!session._compactGuard) {
           clearTimeout(session._injectHoldTimer);
           session._injectHoldTimer = null;
         }
         return;
       }
-      // Hold-reason still standing: keep batching, the release event re-attempts.
-      // The typing quiet-gate is NOT re-checked here anymore — the InjectQueue the
-      // flushed turn drains through owns it now (single source of truth), so it
-      // applies uniformly to batch flushes, direct injects, and self-intents.
       if (!force && this._injectHoldReason(session)) return;
       clearTimeout(session._injectHoldTimer);
       session._injectHoldTimer = null;
@@ -2776,48 +1782,13 @@ function createSessionManager(deps) {
       this._injectText(session, queue.join('\n'), { bypassHold: true });
     }
 
-    // Piece-3 fallback drain for parked DMs at the busy→idle edge. Closes the
-    // no-tool-turn gap: a DM parked while the agent was busy (park-on-busy in
-    // _maybeParkDelivery) is normally picked up MID-LOOP by the PostToolUse hook,
-    // but a pure-text reply calls no tool, so nothing fires that hook — the DM
-    // would then wait for the operator's next UserPromptSubmit (or the long park
-    // cap). Draining here at turn-end restores the old idle-flush latency.
-    //
-    // Exactly-once is the SAME atomic rename-claim the two hooks use: if the
-    // PostToolUse hook already drained this turn, drainPending renames a dir that's
-    // gone → ENOENT → [] → no-op here. Whoever renames first wins; losers see
-    // nothing. So this can't double-deliver against a mid-loop hook drain.
-    //
-    // Draft-gated: if an operator draft is open we must NOT drain — injecting would
-    // risk splicing the draft (the whole reason parking exists). Leave the DMs
-    // parked; they drain on the operator's submit (UserPromptSubmit), the next idle
-    // with the draft closed, or the park cap. The pre-claim gate is the cheap first
-    // line; the parkable inject below is the race backstop (a draft opening between
-    // this gate and the queue's write re-parks via the fire-time divert rather than
-    // splicing). Claude-only: pending is a Claude-hook store (codex never parks).
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
-      // Draft check fail-closed: this now also runs from the PTY onData hot path
-      // (boot-ready edge), where a throw would escape into the data handler.
       try { if (isDraftOpen(session)) return; } catch { return; }   // don't splice an open draft
-      // Passive-only stores don't earn a turn: leave ride-along notifications
-      // (monitor ticks) parked for an organic carrier — a hook drain during a
-      // turn that happens anyway, or a mixed claim once an active DM lands.
-      // Peek-then-claim race (an active park landing between the two) is
-      // benign: the next idle edge or hook drain picks it up.
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       let texts = [];
       try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch {}
       if (!texts.length) return;                        // hook already drained, or nothing parked
-      // Parkable: if a draft opens before the queue writes, the fire-time divert
-      // re-parks the body instead of splicing (best-effort — falls through to a
-      // normal inject on park failure, never dropping a DM).
-      // ONE injection for the whole drain (matching _flushParkedNow + the hook's
-      // texts.join('\\n\\n')): N sequential injects race the TUI turn-start and
-      // strand the tail. Batching changes re-park granularity — a divert re-parks
-      // the combined body as ONE entry, which then re-delivers as one next turn.
-      // That's the same shape a single hook drain would have produced, so it's a
-      // consistency win, not a regression. drainPending returns park order.
       this._injectText(session, texts.join('\n\n'), { parkable: true });
     }
 
@@ -2837,9 +1808,6 @@ function createSessionManager(deps) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
-      // Fire-time producer: the destructive claim happens HERE, inside the queue's
-      // critical section, past the ready + quiet gates. A draft opening or the seat
-      // dying between now and then re-checks fail-closed → claim nothing, stay parked.
       const produce = () => {
         if (session._dead) return null;
         try { if (isDraftOpen(session)) return null; } catch { return null; }
@@ -2848,22 +1816,13 @@ function createSessionManager(deps) {
         if (!texts.length) return null;                 // hook/idle already claimed it
         return texts.join('\n\n');
       };
-      // bypassHold: the boot edge has no compact/mid-turn hold to respect, and the
-      // producer itself is the draft/dead guard — route straight to the byte-atomic
-      // queue so the fire-time claim lands in the queue's critical section.
       this._injectQueueFor(session).enqueue('', { produce });
     }
 
-    // --- JSONL text scanning (agent mode) ---
 
-    // Parse a flushed turn's text into its intent list. Shared by the live
-    // JSONL path (which handles each) and the wire shadow observer (which
-    // only records) — one grammar, one body-capture rule, two callers.
     _extractIntents(text) {
       const intents = [];
       const lines = text.split('\n');
-      // A buffer parses as a complete JSON value? (trim first — leading/trailing
-      // whitespace and newlines are legal around a value). Used only for exec.
       const jsonComplete = (s) => {
         const t = s.trim();
         if (!t) return false;
@@ -2877,14 +1836,6 @@ function createSessionManager(deps) {
       // (a fence only renders as a block; raw turn text keeps each line at
       // column 1 — observed live, a documentation block sent two real dms).
       const fenced = fencedLines(lines);
-      // One synthesized `unknown` per batch, with a counter for the rest: a
-      // near-miss line ([agent:-shaped but parses to nothing) at THIS level was
-      // previously dropped in silence — a typo'd verb cost the agent a whole
-      // failed attempt with zero feedback. Near-misses INSIDE a captured body
-      // never reach here (parseIntent returns null for them, so the body
-      // capture keeps them as text) — quoting inside a dm stays safe. Capped
-      // at one intent so a pasted doc full of examples yields one bounce, not
-      // one per line.
       let unknown = null;
       while (i < lines.length) {
         const line = lines[i].trim();
@@ -2892,10 +1843,6 @@ function createSessionManager(deps) {
         i++;
         if (inFence) continue;
         const intent = parseIntent(line);
-        // `end` is a pure body terminator: as `next` inside a capture loop it
-        // ends the body (the generic boundary check below covers it — any
-        // recognized intent does); at THIS level it is spent and emits
-        // nothing. Never pushed → never dispatched, deduped, or gated.
         if (intent && intent.type === 'end') continue;
         if (!intent || intent.type === 'escape') {
           const nearMiss = !intent && looksLikeIntent(line);
@@ -2906,34 +1853,11 @@ function createSessionManager(deps) {
           continue;
         }
 
-        // BODY CAPTURE MODE comes from the grammar table (intent-registry
-        // `bodyModeFor`), not from a list of types spelled out here. It is a
-        // PREDICATE OVER THE PARSED INTENT (plugin plan MUST-FIX 7), because the
-        // answer depends on the sub-verb: `task add` captures a body and `task
-        // assign` must not — a per-type flag would swallow the prose after an
-        // assign. See intent-registry.js for the per-row modes.
-        //
-        // 'json' (exec today): the bodies are JSON DATA, not free text. The shared greedy capture
-        // below would swallow any prose a seat writes on FOLLOWING lines into the
-        // payload, so the downstream JSON.parse then fails on a valid-value-plus-
-        // prose buffer (observed live). Terminate exec capture at the JSON value
-        // instead: accumulate body lines and JSON.parse the buffer after each; the
-        // first line at which it parses is the complete value, so stop there and
-        // leave any trailing prose lines for the outer loop to scan. JSON.parse is
-        // exact — braces inside strings and multi-line pretty-printed values are
-        // both handled — so there is no brace-counting lexer. The scan region is
-        // bounded to execBodyCap (exec-schema's DEFAULT_MAX_BYTES backstop) so a
-        // runaway non-JSON turn can't drive an unbounded re-parse. If it never
-        // parses within the cap — an incomplete value, or prose on the SAME line
-        // as the value (unextractable without a lexer) — fall through to the
-        // greedy capture so it bounces exactly as it does today. dm / memory /
-        // context keep the greedy capture untouched.
         if (bodyModeFor(intent) === 'json') {
           let buf = intent.body || '';
           let j = i;
           let complete = jsonComplete(buf); // may already be complete on the intent line
           while (!complete && j < lines.length) {
-            // fenced lines are quoted text — never a boundary
             const next = fenced[j] ? null : parseIntent(lines[j]);
             if (next && next.type !== 'escape') break; // a col-1 intent ends the body
             const grown = buf + '\n' + lines[j];
@@ -2948,27 +1872,12 @@ function createSessionManager(deps) {
             intents.push(intent);
             continue;
           }
-          // not complete within the cap → fall through to the greedy capture below,
-          // reproducing today's bytes so an incomplete payload bounces as before.
         }
 
-        // 'greedy': capture the multi-line body — every line from here until the
-        // next real intent line (at column 1) or the end of the turn, whichever
-        // comes first. Using parseIntent as the boundary keeps it consistent
-        // with the scanner: any line that WOULD fire as its own intent ends the
-        // body instead of being swallowed, so an agent can emit several intents
-        // in one turn. An escaped \[agent:…] line is literal text, not a
-        // boundary, so it stays part of the body.
-        // Note the `|| 'json'`: an exec whose payload never completed within the
-        // cap FALLS THROUGH to here, reproducing the bytes an incomplete payload
-        // bounced with before the JSON terminator existed. That fall-through is
-        // control flow in this shell, not a fourth mode.
         const bodyMode = bodyModeFor(intent);
         if (bodyMode === 'greedy' || bodyMode === 'json') {
           const body = [];
           while (i < lines.length) {
-            // fenced lines are quoted text — part of the body, never a
-            // boundary (an intent-shaped example in a code block stays text)
             const next = fenced[i] ? null : parseIntent(lines[i]);
             if (next && next.type !== 'escape') break;
             body.push(lines[i]);
@@ -2989,10 +1898,6 @@ function createSessionManager(deps) {
     _scanJsonlText(text, senderName) {
       const s = this.sessions.get(senderName);
       for (const intent of this._extractIntents(text)) {
-        // Differ: only when this session ALSO has a wire feed to compare
-        // against (shadow-compare mode, CLODEX_WIRE_INTENTS=0). A codex or
-        // wire-failed session has no wire side — recording it would only
-        // manufacture unmatched noise.
         if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {
           try {
             this._shadow.record('jsonl', shadowIntentKey(senderName, intent), {
@@ -3005,26 +1910,12 @@ function createSessionManager(deps) {
       }
     }
 
-    // --- Intent handling + message routing ---
 
     async _handleIntent(senderName, intent) {
       const session = this.sessions.get(senderName);
 
-      // `end` is a body terminator, not an action — both scan paths filter it
-      // before dispatch, so this is defensive (a future call site must not
-      // bounce it through the gate as "the end intent is disabled").
       if (intent.type === 'end') return;
 
-      // Near-miss bounce (synthesized in _extractIntents): a `[agent:…]`-shaped
-      // line that parsed to nothing used to vanish in silence — the agent
-      // believed it acted and nothing happened. Diagnostic, not a capability,
-      // so it runs BEFORE the intent gate (a seat's allowlist never contains
-      // 'unknown', and "the unknown intent is disabled" would be nonsense).
-      // Agent sessions only: bash panes never produce it (_scanPtyOutput calls
-      // parseIntent directly), and a bounce injected into a shell would be
-      // typed at the prompt. Echoing the bounce back at column 1 would bounce
-      // again — that requires the agent to actively quote it unescaped, same
-      // exposure every existing bounce already has.
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
@@ -3040,30 +1931,8 @@ function createSessionManager(deps) {
         return;
       }
 
-      // Per-session intent gating (SEND side). Read the SENDER's allowlist FRESH
-      // from persistence on every fire — same as the exec per-command grant below
-      // — so a checklist toggle applies WITHOUT a respawn. `intentEnabledFor`
-      // treats an absent list as "all enabled" (back-compat, the overwhelming
-      // default) and never gates `name` (identity), EXCEPT for privileged verbs,
-      // which need an explicit grant — and every PLUGIN verb is privileged by
-      // construction (intent-registry rule P1), so a plugin can never ride the
-      // "absent = all enabled" default into a seat that predates it.
-      // A disabled intent gets a loud bounce
-      // naming the gate, then stops here. This is send-side ONLY: `_deliverMessage`
-      // is untouched, so a dm-GATED agent still RECEIVES dms — it just can't emit
-      // them. `exec` that passes here still hits its finer per-command grant in
-      // _handleExecIntent (the two gates are coarse + fine, both must allow).
       if (!intentEnabledFor(intent.type, getPersistence().get(senderName)?.intents)) {
-        // agentType guard mirrors the unknown-intent bounce above: bash panes
-        // reach here too (_scanPtyOutput → _handleIntent with any KNOWN type),
-        // and since `reboot` is gate-disabled on every default seat, cat'ing a
-        // doc that quotes [agent:reboot] would otherwise TYPE this bounce into
-        // the operator's live shell.
         if (session && session.agentType) {
-          // resend has no prompt line — its instruction rides the dm park-bounce
-          // notice — so an agent with dm-on/resend-off will be told to emit a
-          // handle that then lands here. Spell out that the fallback is a DELAY
-          // (the parked copy still drains on the peer's next turn), not a loss.
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
             : `the ${intent.type} intent is disabled for this session`;
@@ -3074,31 +1943,18 @@ function createSessionManager(deps) {
 
       switch (intent.type) {
         case 'dm': {
-          // Only deliver to agent sessions; bash sessions can't process intents
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.agentType) {
-            // Cost gate: a dm injection into a long-idle, not-warm peer re-bills
-            // that peer's whole context. Instead of dropping the message, PARK it
-            // (Claude targets): it drains as additionalContext on the target's next
-            // UserPromptSubmit via the existing pending hook, so nothing is lost and
-            // the sender never re-emits the body — the notice hands them a short
-            // [agent:resend <id>] to escalate if it can't wait for that next turn.
-            // The gate + park-or-deliver core is _gatedDeliver (shared with the wire
-            // deliverDm callback); this case owns the sender-notice copy.
             const r = this._gatedDeliver(intent.target, senderName, intent.body, intent.urgent === true);
             if (r.parked || r.held) {
               const parkId = r.parked || null;
               if (session) {
                 let notice;
                 if (parkId) {
-                  // Dialog holds keep the no-urgent stance: parked (drains after the
-                  // human answers the dialog), but NO resend advertised — a resend
-                  // would refuse identically (injecting answers the dialog).
                   notice = r.noUrgent
                     ? `[agent:dm] parked for ${intent.target} (${r.reason}) as ${parkId} — it'll be delivered after the human answers the dialog.`
                     : `[agent:dm] parked for ${intent.target} (${r.reason}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
                 } else {
-                  // Legacy bounce (non-Claude target, or parking failed).
                   const retry = r.noUrgent
                     ? `Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
                     : `If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`;
@@ -3114,11 +1970,7 @@ function createSessionManager(deps) {
               });
               break;
             }
-            // delivered — fall through to the shared ipc broadcast below.
           } else if (!localTarget) {
-            // Federated `name@peer` target (no local session; `@` can't occur in a
-            // session name, so it's never a socket peer either) → route out. The
-            // helper owns its notice + ipc-log, so break before the shared one.
             if (intent.target.includes('@')) {
               this._routeFederatedDm(session, senderName, intent);
               break;
@@ -3129,10 +1981,6 @@ function createSessionManager(deps) {
                 type: 'dm', from: senderName, body: intent.body,
               });
             } else {
-              // No local session, no federated route, no socket peer: the
-              // message has nowhere to go. This used to fall through to the
-              // ipc-log broadcast alone — a typo'd target name lost the dm
-              // with zero feedback to the sender.
               if (session) {
                 this._injectText(session,
                   `[agent:dm] NOT delivered: no agent named "${intent.target}". Check [agent:who] for reachable peers.`,
@@ -3145,9 +1993,6 @@ function createSessionManager(deps) {
               break;
             }
           } else {
-            // Target EXISTS but is a bash session — not DM-able (no registry,
-            // no socket, can't process intents). Same silent-loss hole as the
-            // missing-target case above.
             if (session) {
               this._injectText(session,
                 `[agent:dm] NOT delivered: "${intent.target}" is a bash session — bash sessions can't receive dms.`,
@@ -3165,11 +2010,6 @@ function createSessionManager(deps) {
           break;
         }
         case 'resend': {
-          // Escalate a parked-on-hold dm: claim the parked COPY by id and deliver
-          // it NOW, bypassing the cost gate — the sender never re-emits the body.
-          // Anyone may resend (same trust domain). Claim + drain race safely: an
-          // ENOENT (or no match) means the target's next-turn drain already took
-          // it, which is a success, so we report "delivered" not an error.
           const reply = (msg) => { if (session) this._injectText(session, `[agent:resend] ${msg}`, { parkable: true }); };
           const claimed = claimParkedById(PENDING_DIR, intent.id);
           if (!claimed) {
@@ -3181,9 +2021,6 @@ function createSessionManager(deps) {
             reply(`can't deliver "${intent.id}": ${claimed.name} is gone.`);
             break;
           }
-          // Re-check the DIALOG hold only (urgent bypasses the cost gate). If the
-          // target is now dialog-blocked, injecting would answer the dialog — re-park
-          // under the SAME id (a later resend still resolves it) and say so.
           const verdict = shouldHoldDm({
             urgent: true,
             state: target.activityState || 'idle',
@@ -3199,13 +2036,6 @@ function createSessionManager(deps) {
               : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
             break;
           }
-          // Release the parked copy. Not bypassHold: a mid-turn/compacting target
-          // still queues-and-flushes correctly; only the cost hold is bypassed.
-          // parkable + the SAME id: if a draft is open in the target pane at fire
-          // time, the divert re-parks under intent.id rather than splicing — so the
-          // handle survives and a later resend still resolves it. The reply is
-          // worded for that possibility (the inject is fire-and-forget, so we can't
-          // synchronously know whether it wrote or re-parked).
           this._injectText(target, claimed.text, { parkable: true, parkId: intent.id });
           const origin = (claimed.text.match(/^\[agent:from (\S+)\]/) || [])[1] || senderName;
           this._sendToSession(target.name, 'session-mention', target.name, 'dm', origin);
@@ -3217,17 +2047,6 @@ function createSessionManager(deps) {
           break;
         }
         case 'who': {
-          // ALL local agent sessions, every workspace — for parity with the
-          // federated-peer listing below, which already surfaces `name@peer`
-          // agents from other machines to every workspace. Once we list agents
-          // next door on another Clodex, hiding the ones merely in a different
-          // LOCAL workspace is the inconsistent case (and every name is a valid
-          // dm handle regardless — a secondary supporting fact). Bash sessions
-          // are excluded — they can't process intents. Each local peer carries a
-          // reachability status (working / idle-for + cache warmth when known)
-          // so senders can weigh whether a dm is worth waking a cold peer — the
-          // same facts the dm hold gate reads. External socket peers stay bare
-          // names: no visibility.
           const localAgents = Array.from(this.sessions.values())
             .filter(s => s.agentType)
             .map(s => ({ name: s.name, label: peerStatusLabel({
@@ -3241,11 +2060,6 @@ function createSessionManager(deps) {
             .map(p => p.name)
             .filter(n => !this.sessions.has(n))
             .map(n => ({ name: n, label: null }));
-          // Federated agents on peered Clodexes: an online peer advertising the
-          // 'dm' cap, whose label is a routable name, exposes its agent-type
-          // sessions as `name@label` — this is how an agent discovers it CAN
-          // initiate a cross-Clodex dm. Bare, like socket peers (no reachability
-          // v1); the box lists nothing extra (asymmetric, like reachability).
           const remoteNames = [];
           for (const st of (getPeerManager() ? getPeerManager().statuses() : [])) {
             if (!st.online || !(st.caps || []).includes('dm')) continue;
@@ -3256,13 +2070,6 @@ function createSessionManager(deps) {
               }
             }
           }
-          // Hub-relay: agents on OTHER spokes reachable through a hub that pushed us
-          // its roster. The address stays BARE (`worker@remote-linux`) — the hub is
-          // inferred from our via-table at send time, never typed — but the entry is
-          // annotated `(via <hub>)` so the sender knows it's a relayed path (best-
-          // effort receipts, higher latency, dies if the hub's leg drops). Deduped
-          // against directly-reachable addresses so a peer we can reach both ways
-          // isn't listed twice.
           const directAddrs = new Set([...localAgents, ...externalNames, ...remoteNames].map(p => p.name));
           const relayNames = [];
           for (const e of this._relayRosterEntries()) {
@@ -3283,134 +2090,80 @@ function createSessionManager(deps) {
           break;
         }
         case 'context': {
-          // Self-directed context-lifecycle control (operator-independence): an
-          // agent can't self-inject a slash command, but clodex owns the PTY write
-          // and can do it on the agent's behalf. Only agent sessions; bash can't.
           if (!session || !session.agentType) break;
           this._handleContextIntent(session, intent.sub, intent.body || '');
           break;
         }
         case 'memory': {
-          // Agent self-managing its own clodex memories (spec §10). Agent sessions
-          // only — keyed by the agent's session name.
           if (!session || !session.agentType) break;
           this._handleMemoryIntent(session, intent.sub, intent.body || '');
           break;
         }
         case 'spawn': {
-          // Agent minting a new persistent peer session (spec Piece 2). Agent
-          // sessions only — bash can't process intents and shouldn't spawn peers.
           if (!session || !session.agentType) break;
           this._handleSpawnIntent(session, intent);
           break;
         }
         case 'file': {
-          // Agent surfacing a file on the operator's screen. Agent sessions only.
           if (!session || !session.agentType) break;
           this._handleFileIntent(session, intent.sub, intent.path);
           break;
         }
         case 'exec': {
-          // Agent firing an operator-registered command (registered-only; no
-          // arbitrary shell). Agent sessions only — bash can't process intents.
           if (!session || !session.agentType) break;
           this._handleExecIntent(session, intent.cmd, intent.body || '');
           break;
         }
         case 'remind': {
-          // Agent scheduling a durable SELF-reminder (see remind-scheduler.js).
-          // Agent sessions only — bash can't process intents, and the delivery
-          // rides the DM pipeline which only reaches agent sessions.
           if (!session || !session.agentType) break;
           this._handleRemindIntent(session, intent.spec, intent.body || '');
           break;
         }
         case 'notify-user': {
-          // Agent raising a note into the operator's persistent inbox (to get
-          // Bogdan's attention when it's blocked on his decision). Agent sessions
-          // only — bash can't process intents.
           if (!session || !session.agentType) break;
           this._handleNotifyUserIntent(session, intent.body || '');
           break;
         }
         case 'team-review': {
-          // Team LEAD dispatching a cold review (Task 24). Agent sessions only;
-          // the lead-role guard is inside the handler (a non-lead is bounced).
           if (!session || !session.agentType) break;
           this._handleTeamReview(session, intent.body || '');
           break;
         }
         case 'review-done': {
-          // Ephemeral reviewer seat returning its verdict (Task 24). Agent
-          // sessions only; the reviewer-seat guard is inside the handler.
           if (!session || !session.agentType) break;
           this._handleReviewDone(session, intent.body || '');
           break;
         }
         case 'task': {
-          // Team ticket protocol (Task 25). Agent sessions only; per-verb sender
-          // guards (lead-only / assignee-only) live inside the handler.
           if (!session || !session.agentType) break;
           this._handleTask(session, intent);
           break;
         }
         case 'team': {
-          // Team metadata mutation (T29 Layer A): a LEAD edits roles / watchdog.
-          // Agent sessions only; the lead-only (D2) gate + per-verb guards live
-          // inside the handler.
           if (!session || !session.agentType) break;
           this._handleTeam(session, intent);
           break;
         }
         case 'reboot': {
-          // Operator-gated full app relaunch (Task 27). Agent sessions only; the
-          // allowlist + rate-limit gates live inside the handler.
           if (!session || !session.agentType) break;
           this._handleRebootIntent(session, intent.body || '');
           break;
         }
         default:
-          // PLUGIN VERBS (plugin-plan.md [internal design doc, not in this repo] R-INT-2). The switch above keeps
-          // every core case verbatim; a registry lookup runs only for a type no
-          // core case claimed, so this tail cannot change core dispatch even if a
-          // plugin registers something adjacent. Gate ORDER is preserved by
-          // sitting here: unknown bounce → per-seat intentEnabledFor gate → this.
           this._dispatchPluginIntent(session, intent);
           break;
       }
     }
 
-    // Run a plugin-registered intent's handler. Split out of _handleIntent's
-    // switch so the failure policy is one readable block rather than a lump in
-    // an already-long method.
-    //
-    // The handler receives (SessionHandle, intent) — the same opaque handle
-    // sessions.onCreate/onExit get, never the raw session object — and replies
-    // via `handle.inject(...)`, mirroring the exec reply convention.
-    //
-    // Agent sessions only, like every other bounce-producing path: a bash pane
-    // reaches _handleIntent too (_scanPtyOutput calls parseIntent directly), and
-    // injecting into a shell would TYPE the text at the operator's prompt.
-    //
-    // A throwing handler becomes a `[agent:<verb>] error: …` bounce, never a
-    // crash: a Tier-A plugin runs in this process, so an unguarded throw here
-    // would take down intent handling for every session.
     _dispatchPluginIntent(session, intent) {
       const row = pluginRowFor(intent.type);
       if (!row || !row.handler) return;
       if (!session || !session.agentType) return;
-      // The handle is MINTED BY THE HOST, not here: plugin-host-engine owns the
-      // handle's shape (§3.2) and this file must not grow a second, drifting
-      // copy of it. No host (kill switch, or a plugin verb somehow outliving
-      // its host) ⇒ nothing to dispatch to.
       const hooks = getPluginHooks && getPluginHooks();
       const handle = hooks && hooks.handleFor ? hooks.handleFor(session.name) : null;
       if (!handle) return;
       try {
         const r = row.handler(handle, intent);
-        // Sync-only, like the sessions.onCreate/onExit hooks: a returned promise
-        // would let a plugin's rejection escape every try/catch on this path.
-        // Logged as the contract violation it is, then ignored.
         if (r && typeof r.then === 'function') {
           log(`[plugin:${row.source}] intent handler for ${intent.type} returned a promise — handlers must be synchronous; result ignored`);
         }
@@ -3420,15 +2173,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // [agent:notify-user] text — raise a note into the operator's persistent
-    // inbox. Distinct from `_onAttention`: this is agent-initiated (not a CLI
-    // permission dialog) and the OS notification fires UNCONDITIONALLY on every
-    // arrival, focus or not — the prompt line's "use sparingly, for decisions
-    // you're blocked on" is the volume control, not a focus gate. Result tone
-    // matches exec/remind: SILENT on a clean add (no re-bill), LOUD
-    // `[agent:notify-user] …` bounce on an empty body or an over-cap body (the
-    // inbox is an attention channel, not a payload dump). Guarded on the store
-    // dep so a build without it is a clean no-op rather than a crash.
     _handleNotifyUserIntent(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:notify-user] ${msg}`, { parkable: true });
       const who = session.name;
@@ -3440,8 +2184,6 @@ function createSessionManager(deps) {
         reply('empty note — say what decision you need from the operator');
         return;
       }
-      // Cap the body so a runaway turn can't bloat a store the UI renders
-      // wholesale. Bytes, not chars — the store persists UTF-8.
       if (Buffer.byteLength(text, 'utf8') > NOTIFY_USER_MAX_BYTES) {
         reply(`note too long (>${Math.round(NOTIFY_USER_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
         return;
@@ -3449,11 +2191,6 @@ function createSessionManager(deps) {
 
       const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
       const preview = text.split('\n')[0].slice(0, 200);
-      // Attention: fire the OS notification (title = sender, body = first line)
-      // unconditionally, then broadcast one ipc event. The single `notify`
-      // ipc-message both audits into the IPC Traffic log (like remind/exec) AND
-      // is the U4 inbox island's live signal — it re-syncs the unread badge and,
-      // if the drawer is open, refetches + repaints the (human-scale) list.
       try {
         notifyOS({
           title: who,
@@ -3465,21 +2202,6 @@ function createSessionManager(deps) {
       log.info('intent', `notify-user by ${who}: ${rec.id}`);
     }
 
-    // [agent:reboot] [reason] — operator-gated full app relaunch (Task 27). Lets
-    // the clodex lead restart Clodex itself to field-test restart-window behaviors
-    // overnight without the operator. AUTHORIZATION is the per-session `intents`
-    // allowlist: `reboot` is a PRIVILEGED intent (intent-catalog), so the fire-time
-    // gate in _handleIntent already bounced any seat that wasn't explicitly granted
-    // it — this handler only runs for an authorized seat. That grant is
-    // operator-owned: an agent-initiated spawn/template or a peer-wire edit is
-    // stripped of privileged intents (withoutPrivilegedIntents), so only a local
-    // GUI grant lands it. The one remaining gate here is the rate limit: refuse if a
-    // reboot happened < REBOOT_MIN_INTERVAL ago (persisted lastRebootAt stamp) — a
-    // loop backstop. On success: stamp, log to the ipc broadcast (sender + reason),
-    // confirm to the sender, then fire the injected relaunchApp() seam. Normal quit
-    // lifecycle applies — killAll() keeps sessions.json entries, restore-on-launch
-    // --resumes them (the T22/T23 machinery). The confirm mostly matters for the
-    // transcript/log: the sender's process dies with the app.
     _handleRebootIntent(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:reboot] ${msg}`, { parkable: true });
       const who = session.name;
@@ -3497,16 +2219,6 @@ function createSessionManager(deps) {
         return;
       }
 
-      // Stamp BEFORE the relaunch fires — intentional: if relaunchApp throws
-      // or wedges, the 5-min lockout still holds, so a broken relaunch can't
-      // become a rapid retry loop from a confused agent re-emitting. Alongside
-      // the stamp, arm the one-shot post-reboot notice (Task 28): the requester's
-      // process dies with the app, so its [agent:reboot] confirm never lands —
-      // this durable flag replays "relaunch complete" to it once the app comes
-      // back and a workspace restore runs (maybeDeliverRebootNotice), closing the
-      // "did it actually reboot, or did relaunchApp fail?" ambiguity.
-      // A settings-write failure here is best-effort: the reboot is the command,
-      // the notice is a convenience — proceed with the relaunch, just log (Task 28).
       try { store.set({ lastRebootAt: now, pendingRebootNotice: { name: who, at: now, reason } }); }
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
@@ -3515,11 +2227,6 @@ function createSessionManager(deps) {
       try {
         if (relaunchApp) relaunchApp();
       } catch (e) {
-        // relaunchApp threw — the process did NOT die. The notice was armed
-        // pre-relaunch (so it survives the process dying); but since we're still
-        // alive, a persisted "Clodex restarted and is running again" would become
-        // a FALSE success on the next real launch. Clear it. The lastRebootAt stamp
-        // stays — a broken relaunch must not open a rapid-retry window (T27).
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
         try { store.set({ pendingRebootNotice: null }); }
@@ -3527,19 +2234,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // Task 28 — deliver the one-shot post-reboot notice armed by [agent:reboot],
-    // called AFTER a workspace restore runs (engine.restoreSessionsForWorkspace).
-    // The requester's process died with the app, so its own confirm never landed;
-    // this tells the seat the app came BACK (vs a silently-failed relaunchApp), a
-    // non-actionable status line that explicitly does NOT re-grant reboot.
-    //
-    // Resolve the requester by its PERSISTED record + normal parking (NOT by
-    // "first workspace restore finished") so it lands whichever workspace restores
-    // it. Three outcomes clear the one-shot flag: LIVE (delivered) / OFFLINE-but-
-    // resumable incl. failed-restore (parked by name; drains on its next prompt) /
-    // truly GONE (no persisted entry — deleted while down). A TRANSIENT store or
-    // inject error RETAINS the flag for a retry next launch (bounded by
-    // REBOOT_NOTICE_MAX_AGE, so a persistently-failing notice can't stick forever).
     maybeDeliverRebootNotice() {
       const store = getUiSettings && getUiSettings();
       if (!store) return;
@@ -3552,8 +2246,6 @@ function createSessionManager(deps) {
         try { store.set({ pendingRebootNotice: null }); }
         catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       };
-      // Transient-error path: keep the flag for a retry unless it's stale-beyond-
-      // useful, in which case drop it (an at=0/junk stamp reads as infinitely old).
       const retainOrExpire = (why) => {
         const at = Number.isFinite(notice.at) ? notice.at : 0;
         const age = at ? Date.now() - at : Infinity;
@@ -3565,48 +2257,17 @@ function createSessionManager(deps) {
         }
       };
 
-      // Copy: never "relaunch complete" (the flag is written BEFORE relaunchApp
-      // fires, so on a crash + later manual launch that would be a false success).
-      // A plain, timestamped "restarted and is running again", written for a general
-      // user reading it in the sidebar. The old belt-and-suspenders "This does not
-      // grant reboot permission." line was dropped (T30): it enforced nothing — the
-      // real gate is the per-session intents allowlist at fire time — and only
-      // confused the operator. No inner [agent:reboot] prefix — delivery already
-      // stamps [agent:from reboot], so the seat reads a single clean prefix.
       const at = Number.isFinite(notice.at) ? notice.at : 0;
       const when = at ? new Date(at).toISOString() : 'an earlier time';
-      // Cap + de-newline the echoed reason (it round-trips from a settings file an
-      // operator could hand-edit, and rides into an injected line).
       const reason = (typeof notice.reason === 'string' ? notice.reason : '').replace(/\s+/g, ' ').trim().slice(0, 200);
       const body = `notice: Clodex restarted and is running again (reboot requested at ${when}${reason ? `: ${reason}` : ''}).`;
 
       const target = this.sessions.get(notice.name);
       if (target && target.agentType) {
-        // LIVE. But a just-restored seat is mid-boot (banner, resume replay,
-        // alt-screen setup); an ACTIVE inject (text + trailing Enter) races the
-        // booting TUI and the \r is SWALLOWED — the operator finds the notice sitting
-        // unsubmitted in stdin (field bug T30). This is the same boot race the initial
-        // roster already dodges. A CLAUDE seat has a passive store, so PARK the notice
-        // exactly like the OFFLINE branch below: it drains on the seat's first organic
-        // hook turn (no PTY typing) — the boot-safe path _injectRoster takes. A CODEX
-        // seat has no passive store (parking would strand the message), so it keeps the
-        // active deliver — a codex reboot-requester mid-boot is the narrower,
-        // out-of-scope T20-codex race. Sender tag 'reboot' → no reply trailer, like
-        // 'reminder': it's a system notice, not a dm to answer. The park stays inside
-        // this try so a park throw still RETAINS the flag (T28), same as the offline
-        // branch — that's why this doesn't route through _deliverPassive (whose park-
-        // failure fallback would silently degrade to an active deliver + clear).
         try {
           if (target.agentType === 'claude') {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
             parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
-            // A park alone can strand: every drain trigger (hooks, idle EDGE)
-            // needs the seat to earn a turn, and a restored-then-idle requester
-            // never does — the notice sat in the ✉ inbox forever (field bug,
-            // second round). Arm the starvation cap: forced drain via the normal
-            // inject queue after INJECT_QUIET_MAXWAIT, by which time boot has
-            // long settled (no Enter-swallow). An earlier organic turn still
-            // wins the atomic claim and the cap-fire no-ops.
             this._armParkCap(target);
             log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed)`);
           } else {
@@ -3621,21 +2282,12 @@ function createSessionManager(deps) {
       }
       const entry = getPersistence().get(notice.name);
       if (!entry) {
-        // GONE — truly no persisted entry (seat deleted while down). A failed
-        // restore KEEPS its entry ({failed:true}), so it does NOT land here — it's
-        // resumable and parks below until retry succeeds or the entry is deleted.
         log.info('intent', `reboot notice for ${notice.name} dropped — no persisted entry (seat deleted)`);
         clear();
         return;
       }
-      // OFFLINE but resumable (incl. failed-restore) — park by name so it drains on
-      // the seat's next UserPromptSubmit after its workspace restores it (start()'s
-      // catch-up runs before windows/sessions restore, so a park placed here is caught).
       try {
         const finalText = this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm');
-        // Offline park: _bornFor falls back to the PERSISTED createdAt, which is
-        // the stamp the restored seat will carry — that is what makes an
-        // offline-parked notice match when it finally drains.
         parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
         log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume`);
         clear();
@@ -3644,14 +2296,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // [agent:remind <spec>] text — schedule/manage a durable self-reminder. The
-    // scheduler (injected) owns timing + persistence; this is the intent seam:
-    // parse the spec's HEAD to split management (list/cancel) from scheduling,
-    // and match exec's result tone — SILENT on a clean schedule/cancel (no
-    // re-bill), LOUD `[agent:remind] …` bounce on any parse error or a cancel of
-    // an unknown id. `list` always replies (it's a query). Guarded on the
-    // scheduler dep so a build without it (shouldn't happen post-whenReady) is a
-    // clean no-op rather than a crash.
     _handleRemindIntent(session, spec, body) {
       const reply = (msg) => this._injectText(session, `[agent:remind] ${msg}`, { parkable: true });
       const who = session.name;
@@ -3684,49 +2328,26 @@ function createSessionManager(deps) {
         return;
       }
 
-      // A real schedule (every/in/at/cron/on compact).
       const r = sched.add(who, spec, body);
       if (!r.ok) {
         reply(r.error);
         this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${r.error}` });
         return;
       }
-      // Silent success (no re-bill), like a clean exec. Audit only.
       log.info('intent', `remind ${r.record.kind} by ${who}: scheduled ${r.record.id}`);
       this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `scheduled ${r.record.id} (${spec})` });
     }
 
-    // [agent:exec <cmd>] {json} — fire-and-forget invocation of an OPERATOR-
-    // REGISTERED command. The whole value is that the JSON body is DATA, never
-    // shell-spliced: we validate it against the command's schema, then hand it to
-    // the command via STDIN. argv comes WHOLLY from the registry entry — the
-    // payload NEVER contributes to argv, which is what makes argv-injection
-    // structurally impossible.
-    //
-    // Registry: ~/.clodex/library/exec/<cmd>.json, operator-owned (agents cannot
-    // register), read fresh at invocation (no watcher — dodges the headless
-    // no-live-reload gotcha). Capability: the invoking seat's persisted
-    // `execCommands` allowlist must contain <cmd>, else it's refused — the grant
-    // rides spawn templates, so a seat not granted a command can't run it.
-    //
-    // Result asymmetry: SILENT on clean exit 0 (fire-and-forget, no re-bill);
-    // LOUD on any of the three failure classes — unknown/ungranted cmd, schema-
-    // validation failure, nonzero-exit/timeout — bouncing one terse [agent:exec]
-    // line back to the invoking agent (a lost exec = a lost datum, so failure must
-    // never be silent). Every attempt logs to both the structured log and the IPC
-    // drawer, ok or err.
-    // Resolve a seat's granted command IDS into the { name, description, schema }
-    // summaries the EXEC prompt section renders (t81). Read at create() only —
-    // the prompt is assembled once per spawn, so there's nothing to keep fresh,
-    // and this mirrors _handleExecIntent's own read-off-disk path (same join,
-    // deliberately not the store, so the spawn path stays store-free too).
-    //
-    // Degrades to the bare id STRING on any failure — missing def, unreadable
-    // file, garbled JSON. A command whose def can't be read still LISTS (the
-    // grant is real and the seat should know it holds it); it just loses its
-    // payload form. A spawn must never fail because a def is malformed.
-    // argv/cwd are dropped on the floor here: they can carry absolute paths and
-    // must never reach a prompt.
+    // argv comes WHOLLY from the registry entry — the validated JSON payload is
+    // handed to the command over STDIN and NEVER contributes to argv, which is what
+    // makes argv-injection structurally impossible. The invoking seat's persisted
+    // execCommands allowlist is the capability; the registry is read fresh at
+    // invocation (no watcher, so a headless host cannot serve a stale cache).
+    // Success is SILENT (no re-bill); all three failure classes bounce loudly,
+    // because a lost exec is a lost datum.
+    // _resolveExecDefs degrades to the bare id STRING on any read/parse failure — a
+    // malformed def must never fail a spawn — and drops argv/cwd, which can carry
+    // absolute paths that must never reach a prompt.
     _resolveExecDefs(execCommands) {
       if (!Array.isArray(execCommands)) return [];
       return execCommands.map((c) => {
@@ -3754,23 +2375,15 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `err: ${msg}` });
       };
 
-      // 1) cmd id shape — a registry FILENAME token, so a malformed id can't
-      // escape library/exec/ when we build the path below.
       if (!isFilenameToken(cmd)) {
         fail('invalid command id');
         return;
       }
-      // 2) Capability grant — the invoking seat must be granted this command.
       const grants = getPersistence().get(who)?.execCommands || [];
       if (!Array.isArray(grants) || !grants.includes(cmd)) {
         fail('not granted to this seat');
         return;
       }
-      // 3) Load the registry entry (read-at-invocation, no cache/watch). This
-      // join mirrors stores.js `EXEC_DIR` (the execLibrary authoring surface) —
-      // the two independently derive `library/exec/<cmd>.json` and agree by
-      // construction (like AGENTS_DIR / the --agents key); kept un-shared so the
-      // dispatcher stays free of a store dependency.
       const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
       let entry;
       try {
@@ -3783,20 +2396,12 @@ function createSessionManager(deps) {
         fail('malformed registry entry (needs a non-empty argv)');
         return;
       }
-      // 4) Validate the payload (size cap on RAW body → JSON.parse → schema).
       const v = parseAndValidate(entry, rawBody);
       if (!v.ok) {
         fail(v.error);
         return;
       }
 
-      // 5) Run it — argv wholly from the registry, payload only via stdin (or an
-      // opt-in temp file). Detached, timeout-killed. Defer off the watcher scan.
-      // Expand the machine-independent placeholders the seeded exec-defs carry so
-      // the argv holds no absolute path baked at author time: ${CLODEX_BIN} → the
-      // materialized helper-script dir (run/bin), ${CLODEX_HOME} → the ~/.clodex
-      // root. Applied to every argv element (and cwd, if a def ever sets one).
-      // Still a plain string array afterwards, so validateExecDef is unaffected.
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
@@ -3833,14 +2438,6 @@ function createSessionManager(deps) {
         child.on('error', (e) => finish(() => fail(`run failed (${e.message})`)));
         child.on('exit', (code, signal) => finish(() => {
           if (code === 0) {
-            // Success is silent (no re-bill) UNLESS the registry entry opts in
-            // with replyStderr: true — then a non-empty stderr injects back
-            // with the same tail discipline as the failure path (last line,
-            // 200-char slice). The gate keeps ungated entries byte-identical
-            // (the bridge-reply commands rely on silent success). stdout stays
-            // dropped: it's data, not a channel — a long-running job wanting a
-            // richer return is the documented growth path (ephemeral DM
-            // channel), deliberately NOT built here.
             const tail = entry.replyStderr === true ? (stderr.trim().split('\n').pop() || '') : '';
             if (tail) {
               reply(`${cmd}: ${tail.slice(0, 200)}`);
@@ -3856,26 +2453,14 @@ function createSessionManager(deps) {
           const tail = stderr.trim().split('\n').pop() || '';
           fail(tail ? `${how}: ${tail.slice(0, 200)}` : how);
         }));
-        // Hand the validated payload over stdin, then close it.
         try {
           if (child.stdin) { child.stdin.write(payloadJson); child.stdin.end(); }
         } catch { /* a fast-exiting child may EPIPE — the exit handler reports it */ }
       });
     }
 
-    // [agent:file view|open <path>] — put a file in front of the operator without
-    // them having to switch workspaces and hunt for it ("open the report you just
-    // wrote"). view = the touched-files peek modal (diff + contents) over this
-    // session's workspace window; open = shell.openPath, so the OS default app
-    // comes to the foreground regardless of which Clodex window is focused.
-    // Vetting (cwd-anchored realpath, regular-file only, launchables refused for
-    // open) is vetFileIntent in file-touch.js. Errors inject back as an
-    // [agent:file] line; success is silent — the file appearing IS the ack, and
-    // an inject costs the agent a turn. Every attempt logs to the IPC drawer.
     _handleFileIntent(session, sub, rawPath) {
       const reply = (msg) => this._injectText(session, `[agent:file] ${msg}`, { parkable: true });
-      // Token bucket, not min-gap: "open all three reports" is one legitimate
-      // burst; a confused agent machine-gunning windows is not.
       const now = Date.now();
       const times = (session._fileIntentTs = (session._fileIntentTs || []).filter(t => now - t < 30000));
       if (times.length >= 5) { reply('error: rate limit — at most 5 files per 30s'); return; }
@@ -3899,20 +2484,11 @@ function createSessionManager(deps) {
       win.show();
       win.focus();
       win.webContents.send('session-file-view', session.name, vet.path);
-      // Mirror the surfaced component to any attached peer viewers — the same
-      // trigger point, just fanned to remote screens. Small {kind, args} only;
-      // the viewer pulls contents through the query RPC. `open` never reaches
-      // here (it returned above), so external launches never mirror.
       if (getRemoteServer()) {
         try { getRemoteServer().pushUiEvent(session.name, 'fileView', { path: vet.path }); } catch {}
       }
     }
 
-    // Digest-ledger birth marking: any conversation id OTHER than the one this
-    // session resumed with was born under it — its SessionStart hook fired with
-    // source startup/clear and cat'd the digest file. Mark iff that file had
-    // content: an empty-store birth stays unmarked so units saved later still
-    // reach the conversation via _maybeDeliverDigest.
     _noteConversationForDigest(s, sid) {
       if (!sid || sid === s.bootResumeId) return;
       if (s.digestNonEmpty) getPersistence().markDigested(s.name, sid);
@@ -3933,24 +2509,10 @@ function createSessionManager(deps) {
       } catch { return true; }
     }
 
-    // Boot-digest append-once (the resume path). The hook only delivers to
-    // conversations being born; one resumed from before the ledger existed —
-    // or born when the store was empty — never got a digest. Deliver it ONCE
-    // as a tail append (prefix cache untouched; only system-prompt bytes bust)
-    // and mark the ledger first, so a delivery failure costs a missed digest,
-    // never a repeat loop. Wire-turn-completion is the call site: cache hot,
-    // CLI at its prompt.
     _maybeDeliverDigest(s, sid) {
       try {
         if (!sid || s._dead || s.agentType !== 'claude') return;
         if (s.needsAttention) return; // injection would answer the dialog
-        // Only the PTY's OWN conversation gets the digest: a wire sid that
-        // doesn't match the watcher-maintained identity is a stray (a child
-        // claude sharing the session's proxy route — each one minted a
-        // "never-digested" id and earned trader 7 digests in 4 minutes,
-        // 2026-07-10). A skipped match (e.g. s.sessionId briefly stale after
-        // /clear) just retries on a later turn — fail toward a missed
-        // delivery, never a repeat.
         if (sid !== s.sessionId) return;
         if (isDigested(getPersistence().get(s.name), sid)) return;
         const digest = composeDigest(memoryStore.list(s.name));
@@ -3961,16 +2523,6 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never break the turn handler */ }
     }
 
-    // Mutation SUCCESS acks (remember/pin/unpin/forget) don't wake the agent:
-    // injecting a turn just to say "saved" bills a whole request for pure
-    // bookkeeping. For Claude the line is queued to {name}-acks and the
-    // UserPromptSubmit hook (setupClaudeHook) attaches it to the agent's NEXT
-    // turn as additionalContext — informative bytes, not user-voice input (which
-    // also keeps the deletion ack away from Fable's refusal classifier). Codex
-    // has no equivalent hook, so it keeps the immediate injected line. Failures
-    // always inject — an agent that believes a failed write succeeded acts on a
-    // store it doesn't have. Best-effort by design: an ack queued after the
-    // conversation's final turn is simply never read.
     _memoryAck(session, line) {
       if (session.agentType === 'claude') {
         try {
@@ -3981,15 +2533,6 @@ function createSessionManager(deps) {
       this._injectText(session, line);
     }
 
-    // Memory MANAGEMENT intents (spec §10): list / remember / recall / pin /
-    // unpin / forget, keyed by the agent's own name. Replies/recalls land back
-    // in the agent's own input — list via _injectText (a short [agent:memory]
-    // line: it's a question, the agent is waiting), mutation acks via
-    // _memoryAck (deferred, see above), recall via _deliverMessage so a large
-    // unit rides the spill channel and never busts msg0 (snapshot, costs a turn
-    // — same semantics as any tail push, §2.2). Mutations rewrite the hook
-    // digest file so a later /clear (or the next fresh conversation) boots with
-    // the current store, not the spawn-time snapshot.
     _handleMemoryIntent(session, sub, body) {
       const agent = session.name;
       const refreshDigest = () => {
@@ -4004,9 +2547,6 @@ function createSessionManager(deps) {
         return;
       }
       if (sub === 'remember') {
-        // Optional leading `scope=<token>` / `pinned=true` (any order); the rest
-        // is the unit text. pinned rides remember so save-and-pin is one intent —
-        // the standalone pin sub only flips EXISTING units.
         let scope = '';
         let pinned = false;
         let text = body.trim();
@@ -4017,8 +2557,6 @@ function createSessionManager(deps) {
         try {
           const unit = memoryStore.remember(agent, { scope, text, source: agent, pinned });
           refreshDigest();
-          // A conversation that WRITES a unit knows its store — mark it so the
-          // append-once path doesn't echo the agent's own words back next turn.
           getPersistence().markDigested(agent, session.sessionId);
           this._memoryAck(session, `[agent:memory] remembered ${unit.id}${scope ? ` [${scope}]` : ''}${pinned ? ' (pinned)' : ''}`);
         } catch (e) {
@@ -4032,9 +2570,6 @@ function createSessionManager(deps) {
           this._injectText(session, `[agent:memory] no match for "${body.trim().slice(0, 60)}"`, { parkable: true });
           return;
         }
-        // Surface as a tail message (spill if large) — the spec-prescribed recall
-        // channel (§10). A neutral 'memory' sender so the delivered label reads
-        // "[agent:from memory] (mem-id scope) …", not as a message from itself.
         this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}`, 'memory');
         return;
       }
@@ -4052,8 +2587,6 @@ function createSessionManager(deps) {
         try {
           memoryStore.forget(agent, body.trim());
           refreshDigest();
-          // Neutral wording on purpose: "forgot <id>" in the injected turn has
-          // tripped Fable's refusal classifier (memory-tampering pattern match).
           this._memoryAck(session, `[agent:memory] removed ${body.trim()} from the store`);
         } catch (e) {
           this._injectText(session, `[agent:memory] could not remove: ${e.message}`, { parkable: true });
@@ -4063,51 +2596,23 @@ function createSessionManager(deps) {
       this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall|pin|unpin|forget)`, { parkable: true });
     }
 
-    // Spawn a NEW persistent peer session from inside a running agent (spec
-    // Piece 2). `name` is always required; `cwd` comes from the intent or a
-    // referenced template. Without a template, everything structural is
-    // clodex's job: type / workspace / proxy inherit the spawner, prompts and
-    // tool-gating take clodex defaults, only the permission posture is
-    // inherited. With `template:Y`, the template supplies type + the full
-    // config subset (proxy / agents / tool+skill gating / strip / autocompact)
-    // — the automation Bogdan asked for: spawn-matching-a-template by name.
-    // The IPC protocol does NOT need an append ref — the IPC prompt (buildIpcPrompt,
-    // per-seat but all-enabled by default) is prepended unconditionally for every
-    // agent session (see mergeClaudeSystemPrompt / mergeCodexSystemPrompt), so a
-    // child spawned with appendPromptFiles=[] still speaks dm/who/context (templates
-    // carry no prompt refs — F6). Replies
-    // (ok + every error) inject straight back into the spawner's input.
     _handleSpawnIntent(spawner, intent) {
       const reply = (msg) => this._injectText(spawner, `[agent:spawn] ${msg}`, { parkable: true });
       const name = (intent.name || '').trim();
       if (!name) { reply('error: usage [agent:spawn name:X cwd:Y [template:Z]]'); return; }
-      // Validate-hard BEFORE touching disk (same discipline as the rename inventory).
       if (!AGENT_NAME_RE.test(name)) {
         reply(`error: invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
         return;
       }
-      // Sessions are globally keyed; a taken name would fight the registry. Refuse
-      // up front and tell the spawner, rather than throwing into the void.
       if (this.sessions.has(name) || getPersistence().get(name)) {
         reply(`error: name taken "${name}"`);
         return;
       }
 
-      // Template resolution: `template:VALUE` names a LIBRARY template OR points
-      // at a JSON template FILE, resolving to ONE template object fed to the
-      // single apply path below (so library and file spawns can't drift).
-      // DISCRIMINATOR: a VALUE containing '/' or starting with '~' or '.' is a
-      // PATH; a bare token is always a library name — keeping the common named
-      // case unambiguous (use ./x.json for a cwd-relative file).
       let tpl = null;
       if (intent.template) {
         const v = intent.template;
         if (v.includes('/') || v.startsWith('~') || v.startsWith('.')) {
-          // File path — expand ~, resolve relative to the SPAWNER's cwd, read +
-          // parse. TRUST: the spawner is same-trust-domain and can already read
-          // files with its own tools, so reading a JSON template it names adds no
-          // exposure — no cwd-confinement here (unlike the file-VIEW intent, which
-          // paints the operator's screen).
           let p = v.replace(/^~(?=$|\/)/, os.homedir());
           if (!path.isAbsolute(p)) p = path.resolve(spawner.cwd || os.homedir(), p);
           let obj;
@@ -4119,20 +2624,12 @@ function createSessionManager(deps) {
             reply(`error: template file ${v}: ${why}`);
             return;
           }
-          // Template-shaped: a usable `type` is the floor; id/name are optional in
-          // a file (the library needs them for lookup, a path spawn doesn't).
           if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !obj.type) {
             reply(`error: template file ${v}: not a template object (needs a "type")`);
             return;
           }
           tpl = obj;
         } else {
-          // Library name — case-insensitive exact. Templates are now per-file
-          // (filename = identity), so the name is unique on a case-INsensitive
-          // FS; the >1 branch stays reachable only on a case-SENSITIVE FS
-          // (headless Linux peers), where Foo.json + foo.json can coexist. 0
-          // matches errors with the choices, >1 asks to disambiguate. NEVER
-          // silent-pick.
           const wanted = v.toLowerCase();
           const all = getTemplates().list();
           const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
@@ -4148,10 +2645,8 @@ function createSessionManager(deps) {
           tpl = matches[0];
         }
       }
-      // Display label for logs/replies — a file template may carry no name.
       const tplLabel = tpl ? (tpl.name || intent.template) : null;
 
-      // cwd from the intent or the template (intent wins); required from at least one.
       const rawCwd = (intent.cwd || (tpl && tpl.cwd) || '').trim();
       if (!rawCwd) {
         reply(tpl
@@ -4159,25 +2654,14 @@ function createSessionManager(deps) {
           : 'error: usage [agent:spawn name:X cwd:Y [template:Z]]');
         return;
       }
-      // Expand a leading ~ and resolve to absolute so ensureDir/create get a real path.
       const cwd = path.resolve(rawCwd.replace(/^~(?=$|\/)/, os.homedir()));
       const type = tpl ? (tpl.type || 'claude') : (spawner.type || 'claude');
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
-      // The spawner's PERMISSION POSTURE is the no-template default for extraArgs: a
-      // headless peer that blocks on a permission prompt defeats operator-
-      // independence, but force-yolo would be surprising — so the child carries
-      // --dangerously-skip-permissions iff the spawner has it (sandboxed parent →
-      // sandboxed child). The session object doesn't carry extraArgs, so read the
-      // spawner's persisted entry.
       const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
       const postureArgs = spawnerArgs.includes('--dangerously-skip-permissions')
         ? ['--dangerously-skip-permissions'] : [];
 
-      // Config: a template supplies the full subset; otherwise clodex defaults
-      // (empty gating) + spawner-inherited proxy. F5: template.extraArgs is used
-      // VERBATIM when present (it snapshots the source session's posture, incl.
-      // yolo), else fall back to the spawner-posture inherit.
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
         ? tpl.extraArgs : postureArgs;
@@ -4186,26 +2670,15 @@ function createSessionManager(deps) {
       const disabledTools = (tpl && tpl.disabledTools) || [];
       const disabledSkills = (tpl && tpl.disabledSkills) || [];
       const injectSkills = (tpl && tpl.injectSkills) || [];
-      // Prompt refs are library-file references (like agents/skills), so a
-      // template carries them; a non-template spawn keeps null/[] (unchanged).
-      // Absent-on-target degrades to the CLI default in create() (F1 grace).
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
 
-      // Defer off the JsonlWatcher scan callback that triggered us (same discipline
-      // as reload): don't drive a full PTY spawn synchronously from inside a watcher
-      // emit. setImmediate lets the scan unwind first.
       setImmediate(async () => {
         try {
           ensureDir(cwd); // self-contained: mkdir the cwd if absent — no external tool
           await this.create(
             name, type, cwd, childArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
-            // execCommands (the capability grant) and intents (the intent-gate
-            // allowlist) are BOTH spawn-time create() params now — threaded IN so
-            // create()'s own upsert persists them and they survive kill()+recreate.
-            // A Bash-less trader seat's "read-only toward the trading system" rides
-            // the template as physics; an absent grant passes [] → create() omits it.
             Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [],
             // `[]` intents (everything gated) is a real value that must apply; an
             // absent key (all-enabled template) passes null → create() omits it →
@@ -4215,23 +2688,12 @@ function createSessionManager(deps) {
             // template) can't self-grant the capability — only an operator's local
             // GUI create/edit may. null passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
-            // sessionEnv, then mint=true: an agent-initiated spawn is a NEW seat, so
-            // the frozen-prompt cache regenerates rather than inheriting a same-named
-            // dead session's baseline. resumeId is null here too, so this changes
-            // nothing today — it keeps the axis honest if that ever stops being true.
             null, true,
           );
-          // stripLevel + autoCompact are NOT create() params — the poller asserts
-          // strip on relink and reads autoCompact from persistence. Apply post-
-          // create onto the entry, mirroring the ipc-handlers session:create seed.
           if (tpl) {
             if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
             if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
           }
-          // The intent path bypasses the renderer's create flow, so tell the owning
-          // window to draw the sidebar tab + terminal (reused verbatim from reload).
-          // Dropped harmlessly if the window is detached — the session still spawned
-          // and the UI recomputes on reattach.
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });
@@ -4247,39 +2709,17 @@ function createSessionManager(deps) {
       });
     }
 
-    // C5 (T29 Slice 2): the stateful fail-close the pure removeRole/renameRole
-    // mutators deferred (an electron-free module can't see live/persisted seats or
-    // tickets). A role is IN USE — and must not be removed or renamed away — when a
-    // seat encodes its key or an active ticket is addressed to it. Returns a
-    // structured { seats, tickets } of what blocks (empty arrays → free to mutate).
-    // Both checks enforce at CONSUME (the live sessions map + on-disk persistence /
-    // tickets), never a stale snapshot. Seat names encode the ROLE key
-    // (`<team>-<role>-N`) so matchSeatRole derives membership; a rename orphans a
-    // persisted seat's role-prompt binding on resume just as a remove does, so BOTH
-    // callers run this first.
     _roleInUse(team, roleKey) {
       const seats = new Set();
-      // LIVE seats (this.sessions) whose derived role is roleKey.
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         if (matchSeatRole(team, s.name) === roleKey) seats.add(s.name);
       }
-      // PERSISTED/ARCHIVED seats (records that resume with the role binding).
-      // FAIL-CLOSED (C5): a read error means we CAN'T prove the role is free, so
-      // we block with a reason rather than wave the mutation through.
       try {
         for (const e of getPersistence().list()) {
           if (e && e.name && matchSeatRole(team, e.name) === roleKey) seats.add(e.name);
         }
       } catch { seats.add('<persisted-seat check unavailable>'); }
-      // OPEN tickets ADDRESSED to the role key block (an open ticket is live work
-      // the role owns). done/cancelled are NON-blocking: done tickets are retained
-      // for history, so blocking on them would make any role that ever did work
-      // permanently un-removable (spec §settled: the bar is "no OPEN ticket
-      // assigned"). KNOWN MINOR EDGE (deferred to the GUI / a reject-time guard, not
-      // this slice): a done ticket rejected back to open AFTER its role was removed
-      // orphans its assignee. A ticket-store read error FAILS CLOSED (C5): can't
-      // verify → block with a reason.
       const tickets = [];
       try {
         const teamDir = path.dirname(team.file);
@@ -4290,14 +2730,6 @@ function createSessionManager(deps) {
       return { seats: [...seats], tickets };
     }
 
-    // [agent:team-review] <scope> — a team LEAD dispatches a cold review; clodex
-    // owns the machinery. Spawn an EPHEMERAL reviewer seat from the team's
-    // `reviewer` role, brief it, and inject the lead's scope as its first turn;
-    // the seat later returns its verdict via [agent:review-done] (below), which
-    // routes back to the lead and retires the seat. The lead writes ONLY the
-    // scope — no spawn/lifecycle boilerplate in its context. Guards: the sender
-    // must be its team's lead, and the team must define a `reviewer` role; a
-    // failure bounces to the lead and nothing is spawned.
     _handleTeamReview(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true });
       const scope = String(body == null ? '' : body).trim();
@@ -4313,16 +2745,6 @@ function createSessionManager(deps) {
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
-      // T52: the reviewer seat is DATA. Its shape (system prompt ref, gated intents,
-      // tool allowlist, lean-context env, wirescope hint) lives in a TEMPLATE under
-      // library/templates/, referenced by team.roles.reviewer.template; absent → the
-      // shipped default. The template AND the manifest are both agent-writable, so
-      // EVERY authority-bearing field the template carries is re-capped IN CODE at
-      // consume time below (tools ∩ REVIEWER_TOOL_CAP; intents through
-      // withoutPrivilegedIntents; env keys through REVIEWER_ENV_ALLOWLIST;
-      // force-claude). A missing/unparseable template falls back to REVIEWER_FALLBACK
-      // (the shipped values) with a loud note — a review beats no review. Per-field
-      // precedence: template value > role manifest value (tools/prompt) > built-in.
       const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
       let reviewTpl = null;
       try { reviewTpl = getTemplates().list().find((t) => t && t.name === templateName) || null; }
@@ -4331,9 +2753,6 @@ function createSessionManager(deps) {
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
 
-      // systemPromptFile: template > role prompt > built-in. Becomes THE replacement
-      // system prompt (create()'s --system-prompt-file); create()'s auto role-prompt
-      // path dedupes its own append when this stem === def.prompt (T51).
       let reviewerSystemPrompt =
         (reviewTpl && typeof reviewTpl.systemPromptFile === 'string' && reviewTpl.systemPromptFile)
           ? reviewTpl.systemPromptFile
@@ -4353,16 +2772,10 @@ function createSessionManager(deps) {
         reviewerSystemPrompt = REVIEWER_FALLBACK.systemPromptFile;
       }
 
-      // intents: template > built-in ([]), ALWAYS stripped of privileged intents
-      // (agent-writable source, same posture as the tools cap). [] = every catalog
-      // intent gated (the reviewer emits only the uncatalogued [agent:review-done]).
       const reviewerIntents = withoutPrivilegedIntentsFor(
         Array.isArray(reviewTpl && reviewTpl.intents) ? reviewTpl.intents : REVIEWER_FALLBACK.intents,
       );
 
-      // env: template > built-in, then FILTERED through REVIEWER_ENV_ALLOWLIST — a
-      // doctored template cannot set an authority key (ANTHROPIC_BASE_URL, proxy/
-      // credential redirects) on a review seat. Unknown keys are dropped LOUDLY.
       const rawReviewerEnv =
         (reviewTpl && reviewTpl.env && typeof reviewTpl.env === 'object' && !Array.isArray(reviewTpl.env))
           ? reviewTpl.env : REVIEWER_FALLBACK.env;
@@ -4376,8 +2789,6 @@ function createSessionManager(deps) {
         ? ` — reviewer template env keys [${droppedEnvKeys.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
         : '';
 
-      // spawnerHint: 'off' (default) → suppress the proxy's spawner-hint block on the
-      // seat (fired post-create below). Any other value leaves the hint in place.
       const wantSpawnerHintOff =
         ((reviewTpl && typeof reviewTpl.spawnerHint === 'string') ? reviewTpl.spawnerHint : REVIEWER_FALLBACK.spawnerHint) === 'off';
 
@@ -4397,18 +2808,6 @@ function createSessionManager(deps) {
       const typeWarn = requestedType !== 'claude'
         ? ` — NOTE: manifest requested reviewer type "${requestedType}", but cold reviewers always spawn as claude (a non-claude seat can't enforce the tools cap); ignoring`
         : '';
-      // Task 29a: manifest `tools` is a NARROWING hint under REVIEWER_TOOL_CAP,
-      // NOT an authority source — team.json is agent-writable, so a lead cannot be
-      // trusted to widen its own reviewer. The effective allowlist is the
-      // INTERSECTION of the cap and the manifest (in cap order for determinism);
-      // absent/empty manifest → the cap as-is. A manifest asking for tools BEYOND
-      // the cap is spawned CAPPED (a review beats no review) with a loud
-      // operator-approval line to the lead. This inversion into the disabledTools
-      // DENYLIST is the seam create()'s claude arm enforces — its auto role-prompt
-      // path binds only the role `prompt`, never `tools`.
-      // T52: tools source is template > role manifest (both agent-writable, both
-      // NARROWING hints under the cap — never authority). The intersection with
-      // REVIEWER_TOOL_CAP is the ceiling regardless of which supplied the request.
       const requestedTools = (Array.isArray(reviewTpl && reviewTpl.tools) && reviewTpl.tools.length)
         ? reviewTpl.tools
         : ((Array.isArray(def.tools) && def.tools.length) ? def.tools : null);
@@ -4418,21 +2817,11 @@ function createSessionManager(deps) {
       const beyondCap = requestedTools
         ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
         : [];
-      // type is force-claude (above), so the denylist is ALWAYS live — no dead
-      // non-claude branch. Disable every catalog tool outside the effective cap.
       const disabledTools = CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t));
-      // A manifest that reached beyond the cap gets a loud line in the lead's
-      // confirm: it spawned, but capped — the widening it asked for needs an
-      // operator, not a self-grant.
       const capWarn = beyondCap.length
         ? ` — requested [${beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${effectiveTools.join(', ')}]`
         : '';
 
-      // Collision-free ephemeral seat name, N bumped past every live OR persisted
-      // name (Task 15 taken-name rule — an archived reviewer still reserves its slot).
-      // The `reviewer` stem MATCHES the role KEY, so create()'s name-driven auto
-      // role-prompt path (matchSeatRole → team.roles.reviewer.prompt) binds the
-      // reviewer briefing itself — no explicit prompt read here.
       let n = 1;
       let name;
       do { name = `${team.name}-reviewer-${n++}`; } while (this.sessions.has(name) || getPersistence().get(name));
@@ -4447,14 +2836,6 @@ function createSessionManager(deps) {
       // over this stub, and the restart-preserve seam re-seeds it after a kill().
       getPersistence().upsert({ name, ephemeral: true, reviewFor: session.name });
 
-      // NIT 3 (unbriefed-reviewer trap): create() binds the role prompt best-effort
-      // and silently skips a missing file — a team that never installed the prompt
-      // gets a reviewer with NO briefing and no signal. Preflight the file so the
-      // lead's confirm line warns when it's absent. Best-effort: a read error here
-      // is treated as "present" (don't block on a stat hiccup).
-      // T52: preflight the ACTUAL system-prompt file the reviewer boots with
-      // (reviewerSystemPrompt = template > role > built-in), not just def.prompt —
-      // a template-supplied prompt ref can be missing too.
       let promptWarn = '';
       if (reviewerSystemPrompt) {
         try {
@@ -4465,51 +2846,18 @@ function createSessionManager(deps) {
         } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
       }
 
-      // Permission posture: inherit the LEAD's, same as _handleSpawnIntent (F5). A
-      // cold reviewer spawned WITHOUT the lead's --dangerously-skip-permissions
-      // blocks on its first tool permission prompt — and with no operator awake
-      // (the whole point of an autonomous overnight review) that dialog strands the
-      // seat forever, so it never delivers [agent:review-done]. A sandboxed lead
-      // spawns a sandboxed reviewer; a prompt-gated lead spawns a prompt-gated one.
-      // The reviewer is already tool-capped (Read/Grep/Glob), so inheriting skip is
-      // not a widening — it only removes the interactive gate on those read tools.
       const leadArgs = (getPersistence().get(session.name)?.extraArgs) || [];
       const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
         ? ['--dangerously-skip-permissions'] : [];
 
-      // Lean-reviewer context (T51, now template-driven in T52). The three levers —
-      // system prompt REPLACEMENT (reviewerSystemPrompt → --system-prompt-file, a
-      // full swap of the CLI's bulky default; create() dedupes its auto role-prompt
-      // append when the stem === def.prompt), gated intents (reviewerIntents — [] =
-      // every catalog intent gated; buildIpcPrompt([]) sheds all gateable grammar +
-      // MEMORY), and lean-context env (reviewerEnv, incl. the Clodex-internal
-      // CLODEX_DISABLE_IPC_PROMPT directive create()'s claude arm consumes to drop
-      // the IPC protocol append) — are all resolved from the reviewer template above,
-      // re-capped in code. Env is defense-in-depth WITH intents:[]: the prompt skip
-      // removes the teaching, the gate removes the capability; they fail independently.
 
-      // Defer off the scan callback that fired us (same discipline as
-      // _handleSpawnIntent): never drive a PTY spawn synchronously from a watcher emit.
       setImmediate(async () => {
         try {
           await this.create(
             name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
             null, false, session.proxy ?? null, [], [], disabledTools, [], [],
-            // mint=true: an ephemeral reviewer seat is always brand new, and its
-            // monotonic name (team-reviewer-1, -2, …) is exactly the recycled-name
-            // case the frozen cache must not inherit a baseline across.
             reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
           );
-          // wirescope spawner-hint suppression (T51): tell the proxy to drop its
-          // spawner-hint block from THIS seat's system prompt. Keyed by the seat's
-          // actual route name (proxyAgent, minted INSIDE create()), read back off
-          // the live session. Fire AFTER create() but BEFORE the scope is handed
-          // over: the scope rides passive delivery (no API request yet), and the
-          // CLI makes no request until its first prompt lands, so this is safely
-          // pre-first-request (wirescope's only hard requirement). Best-effort: the
-          // proxy base re-resolves exactly as create() did (session.proxy → the
-          // resolved base); any failure is logged and ignored — a review with the
-          // hint beats no review, and this must never fail or delay the spawn.
           try {
             const hintBase = wantSpawnerHintOff ? resolveProxyBase(session.proxy ?? null, getUiSettings()) : null;
             const routeName = (this.sessions.get(name) || {}).proxyAgent || null;
@@ -4518,27 +2866,11 @@ function createSessionManager(deps) {
                 .catch((e) => log.warn('intent', `team-review spawner-hint(off) ${routeName} failed: ${e.message}`));
             }
           } catch (e) {
-            // Best-effort to the last byte: a sync throw here (resolve/dep hiccup)
-            // must not fall into the spawn-failure catch and free the reserved name.
             log.warn('intent', `team-review spawner-hint(off) skipped: ${e.message}`);
           }
-          // Draw the sidebar tab/terminal (the intent path bypasses the renderer's
-          // create flow — reused verbatim from _handleSpawnIntent).
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });
-          // Deliver the lead's scope as an ACTIVE-CLASS PARK (T54): parked (NO
-          // spawn-time PTY write, so the T40/T42 boot-race stays fixed — an early
-          // mode-2004 proxy can't strand the scope as a Ctrl-U-wiped draft) but
-          // TURN-EARNING. A plain _deliverPassive parked it, but passive parks
-          // never earn a turn by design (hasActivePending excludes them), and a
-          // fresh reviewer seat has no other traffic — so the scope stalled until
-          // the operator manually clicked the envelope (operator-reported, 3/3).
-          // The active park is claimed by the boot-ready rising edge
-          // (_bootReadySeen → _drainPendingAtIdle) or any later idle edge, with
-          // the existing isDraftOpen guard + parkable divert re-park safety.
-          // Safe here because the reviewer is force-claude above (parking is a
-          // claude-hook store; codex never parks).
           this._deliverParkedActive(name, session.name, scope, 'dm');
           this._broadcast('ipc-message', {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
@@ -4546,11 +2878,6 @@ function createSessionManager(deps) {
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
           reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${typeWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
-          // Spawn failed → free the reserved name so it doesn't linger as a phantom
-          // persisted seat that blocks the slot forever (MUST-FIX 1 reservation cleanup).
-          // Only when the seat isn't live: create() can throw AFTER sessions.set +
-          // its own full upsert (sentinel/watcher start), and removing the record
-          // out from under a live session would orphan its review-done guard.
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
           reply(`error: ${err.message}`);
@@ -4558,21 +2885,6 @@ function createSessionManager(deps) {
       });
     }
 
-    // [agent:review-done] <verdict> — an ephemeral reviewer seat returns its
-    // verdict. Guard: the sender's record must carry ephemeral + reviewFor (set at
-    // team-review spawn); anything else bounces. Deliver the verdict to the
-    // reviewFor lead as a dm (normal parking / >500B-spill rules), THEN retire the
-    // seat by DISCARD (kill() drops the record — no archived row), never archive.
-    // Reviewer seats are ephemeral: the old ARCHIVE retire piled one dimmed
-    // "click to resume" corpse per completed review into the team group (the
-    // reviewer-graveyard) — and we never resume one, a targeted re-review is a
-    // fresh cold spawn (better anyway, per cold-review doctrine). The verdict is
-    // fully enqueued into the LEAD's queue before the reviewer's PTY dies (it lives
-    // in the lead's queue, not the reviewer's, so the reviewer's cleanup can't drop
-    // it — onExit-before-cleanup gotcha respected), so discard loses nothing
-    // durable. Mirrors _handleTeamRetire's ephemeral discard branch (:5174-5228).
-    // MUST-FIX 3 preserved: a delivery failure keeps the seat LIVE (no discard) so
-    // it can retry once the lead is reachable.
     _handleReviewDone(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
       const verdict = String(body == null ? '' : body).trim();
@@ -4584,12 +2896,6 @@ function createSessionManager(deps) {
         return;
       }
       const lead = rec.reviewFor;
-      // Deliver (enqueue) BEFORE retiring. MUST-FIX 3: check the return — an ABSENT
-      // or DEAD lead ({error}) means the verdict went nowhere; archiving anyway
-      // would strand it unrecoverably. Bounce to the reviewer and SKIP the archive
-      // so the seat stays LIVE and can retry [agent:review-done] once the lead is
-      // back. A HELD/parked delivery ({held}/{parked}) is accepted (the lead is
-      // real, just busy — the queue/park store carries it), so retire as normal.
       const r = this._gatedDeliver(lead, session.name, verdict, false);
       if (r && r.error) {
         reply(`error: ${r.error} — verdict NOT delivered, seat kept live; re-fire [agent:review-done] once ${lead} is reachable`);
@@ -4599,31 +2905,12 @@ function createSessionManager(deps) {
         type: 'review-done', from: session.name, to: lead, body: `verdict → ${lead}`,
       });
       log.info('intent', `review-done ${session.name} → ${lead}; retiring (discard)`);
-      // Tell the owning window BEFORE the teardown so the renderer removes the row
-      // like a delete instead of building an archived placeholder (same choreography
-      // as _handleTeamRetire's discard branch, :5212-5216). The renderer already
-      // routes disposition:'discard' from team-retire — no renderer change needed.
       this._sendToSession(session.name, 'session:context-action', {
         action: 'retired', name: session.name, disposition: 'discard',
       });
-      // kill() drops the persistence record unconditionally (getPersistence().remove
-      // at :1503) — so the seat leaves no archived corpse. Reviewers share the
-      // project cwd (no worktree), and kill() never touches a worktree, so discard
-      // removes the record + PTY and nothing else.
       this.kill(session.name);
     }
 
-    // [agent:team <verb>] — a team LEAD edits its own metadata (T29 Layer A): the
-    // role map (role-add/role-set/role-rm/role-rename) and the stall watchdog
-    // (watchdog). The agent transport for Slice 1's pure mutators; the IPC handlers
-    // are the operator/GUI transport. D2 gating: LEAD-ONLY for every verb (a role
-    // edit repoints prompt bindings — a mild trust event, and Layer A has no finer
-    // per-role grant). The reviewer/lead KEY protection (C1) lives one layer down in
-    // the mutators (operator-owned topology), so a lead's `role-rm reviewer` gets
-    // the mutator's error surfaced verbatim — correct. role-rm/role-rename also run
-    // the C5 seat/ticket fail-close FIRST. These mint no authority (C6 strips tools/
-    // type at the mutator), so the verb is ORDINARY (not privileged) — lead-gated,
-    // not allowlist-gated.
     _handleTeam(session, intent) {
       const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       let team;
@@ -4634,9 +2921,6 @@ function createSessionManager(deps) {
         return;
       }
       const name = intent.name || null;
-      // Cap the free-text brief body (matches the dm-spill discipline): a role
-      // brief is a one-liner, and this is lead-gated, but an absurd body is cheap
-      // to refuse here rather than write into team.json.
       const BRIEF_MAX = 500;
       try {
         switch (intent.sub) {
@@ -4714,46 +2998,11 @@ function createSessionManager(deps) {
       }
     }
 
-    // ── Team ticket protocol (Task 25) ──────────────────────────────────────
-    // A team LEAD opens/directs tickets; an ASSIGNEE closes them; clodex owns the
-    // registry (~/.clodex/teams/<team>/tickets.json), lifecycle, and the stall
-    // watchdog. Reuses T24's lessons: body-intent parsing (intent-scanner), sender-
-    // role guards, and delivery-BEFORE-lifecycle ordering with the {error} bounce.
-    //
-    // Assignee model: an assignee is a manifest ROLE (durable — stored as the role
-    // key so instance churn/respawn never orphans the ticket; re-resolved to a live
-    // seat at delivery) or an explicit LIVE seat name. Backlog tickets have
-    // assignee=null (watchdog-exempt). REGISTRY-SHAPE NOTE: the ticket record also
-    // carries the full `spec` text (beyond the spec's listed fields) — reassign must
-    // redeliver the spec to the new assignee, which is impossible without storing it.
 
-    // The stale-host suffix (t93), appended to every task reply — but ONLY when
-    // the running process is genuinely older than the code on disk, which is
-    // rare and binary. A task reply is where the wrong conclusion actually
-    // forms: a lead reads `ticket t91 → hand`, believes the merged behaviour is
-    // what just ran, and reasons from there. Quiet on a fresh host, deliberately:
-    // t82 settled that a NOTE on every dispatch trains the lead to ignore the
-    // ones that matter, so this says nothing at all until the assumption the
-    // reader is about to make is actually false.
-    // runRoot/dir are seams, defaulted to the real ones: without them the only
-    // way to exercise this method is against the developer's own ~/.clodex and
-    // checkout, where every state is an accident of the machine and the
-    // speaking path cannot be driven at all. (A revert proved that: deleting
-    // the whole t94 call here failed no test.)
     _staleHostSuffix(now = Date.now(), seams = {}) {
-      // Defaults resolved INSIDE the try, never as default parameters: a
-      // default parameter is evaluated before the body, so a throw from
-      // REGISTRY_DIR being unset would escape this method entirely and take the
-      // ticket reply down with it. An existing t93 test caught exactly that.
       try {
         const dir = seams.dir || __dirname;
         const runRoot = seams.runRoot || path.join(REGISTRY_DIR, 'run');
-        // No `ps` on this path: THIS process is the host, so its own start time
-        // is process.uptime() and its own tree is __dirname. The fallback only
-        // fires when there is no stamp, which for the in-host surface means a
-        // host whose stamp write failed — a stamp-less host that predates t93
-        // has no code to run this at all. That bootstrap gap is exactly why the
-        // clodex-team surface exists as a separate process.
         const notice = hostNotice(
           runRoot,
           dir,
@@ -4765,10 +3014,6 @@ function createSessionManager(deps) {
     }
 
     _handleTask(session, intent) {
-      // Guarded at the CALL SITE as well as inside: _staleHostSuffix catches its
-      // own fs errors, but a diagnostic must not be able to take down the ticket
-      // protocol by any route at all. Ticket work is the thing that matters here;
-      // the notice is a convenience riding along.
       let stale = '';
       try { stale = this._staleHostSuffix(); } catch { stale = ''; }
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
@@ -4786,8 +3031,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // Resolve an addressing token to a stored assignee: a ROLE key (durable, wins)
-    // or a LIVE seat name on this team. Unresolvable → null (caller bounces).
     _resolveAssignee(team, who) {
       if (!who) return null;
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who; // role-addressed
@@ -4795,9 +3038,6 @@ function createSessionManager(deps) {
       return null;
     }
 
-    // The live seat a stored assignee currently resolves to, or null. A role
-    // assignee re-resolves to whichever seat holds that role now (instance churn);
-    // a name assignee is that seat if it's still a live team member.
     _ticketAssigneeSeat(team, ticket) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
@@ -4810,21 +3050,6 @@ function createSessionManager(deps) {
       return this._teamLiveSeats(team.root).includes(a) ? a : null;
     }
 
-    // Deliver a ticket's spec text to its current assignee seat. Passes the
-    // gated pipeline's outcome through UNFLATTENED:
-    //   { self }        — assignee is the lead, skip the echo
-    //   { delivered }   — injected now
-    //   { parked, reason } — held, but queued to drain on the seat's next turn
-    //   { held, reason }   — held and UN-PARKABLE: a real drop (Codex seat or
-    //                        dead target; see canPark in _gatedDeliver)
-    //   { undelivered } — no live seat resolves, or the target isn't an agent
-    // The three non-error outcomes used to be collapsed into { delivered:true },
-    // which told the lead the spec landed in the two cases where it had not.
-    // `urgent` is the caller's call, NOT this function's: a work ASSIGNMENT
-    // wakes, a status notice rides passively. Note urgent is best-effort — it
-    // bypasses the idle/cold-cache hold but NOT a permission-dialog hold
-    // (proxy-util.js:507, which returns noUrgent:true to say so), which is
-    // exactly why the parked/held distinction above has to reach the lead.
     _deliverTicketSpec(team, ticket, specText, fromName, urgent = false) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
@@ -4836,8 +3061,6 @@ function createSessionManager(deps) {
       return { delivered: true };
     }
 
-    // The lead-facing suffix for a spec delivery outcome. Parked and held read
-    // differently on purpose: parked WILL arrive (next turn), held will NOT.
     _ticketDeliverySuffix(d, assignee) {
       if (d.undelivered) return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
       if (d.held) return ` — NOTE: spec NOT delivered (${d.reason || 'held'}); the seat cannot be parked for, so it has not seen the spec — re-send when it clears`;
@@ -4845,41 +3068,14 @@ function createSessionManager(deps) {
       return '';
     }
 
-    // A seat just closed a ticket. Does it still hold an open one? If so, deliver
-    // that spec NOW — otherwise the seat stops at the turn boundary holding work
-    // nobody re-triggers, and only a human poke restarts it (observed three times
-    // in one session: a seat completed a ticket, reported, and went idle holding
-    // three more).
-    //
-    // WHY t82 DID NOT ALREADY COVER THIS. t82 made ticket DISPATCH wake the
-    // assignee (urgent at _taskAdd/_taskAssign). That is the ARRIVAL edge: a seat
-    // already holding a queue received those specs turns ago, and the delivery
-    // that would have woken it is long past. The COMPLETION edge had no trigger
-    // at all.
-    //
-    // ORDER IS FIFO — openedAt, ties broken by numeric id (total and
-    // deterministic; two tickets minted in the same ms must not advance in array
-    // order). There is deliberately no priority field: a lead who wants a
-    // different ticket next re-assigns it to the seat that already holds it,
-    // which _taskAssign delivers urgently (its `reassigning` flag only changes
-    // the reply wording, so a same-assignee assign is a working promote). Adding
-    // a second way to express that ordering is a feature, not this fix.
-    //
-    // Reuses _deliverTicketSpec so the advance is the SAME wake the dispatch edge
-    // uses — parked/held stay distinguishable, and urgent bypasses the idle/cold
-    // hold that a just-finished seat is about to fall into. Returns the advanced
-    // ticket (for the closer's reply) or null. Silent when the seat closed its
-    // LAST ticket: a wake carrying nothing actionable is exactly the cost t82 was
-    // careful not to pay.
-    //
-    // `closedId` is REDUNDANT ON BOTH CURRENT CALLERS and kept deliberately. Each
-    // stamps its terminal state and SAVES before calling, so the `state === 'open'`
-    // filter already excludes the just-closed ticket — proved by reverting the id
-    // filter, which changes no test. It stays because that redundancy is an
-    // ORDERING ACCIDENT, not a property of the helper: move the advance above the
-    // save (or call it from a path that closes later) and without this the seat is
-    // handed back the ticket it just finished. Tested directly below rather than
-    // through a caller, since no caller can distinguish it.
+    // Hand a seat its next open ticket when it closes one: the COMPLETION edge has no
+    // other trigger, and a seat holding a queue otherwise goes idle until a human
+    // pokes it. Order is FIFO by openedAt, ties broken by numeric id — array order is
+    // not deterministic for two tickets minted in the same ms.
+    // `closedId` is redundant on both current callers (each stamps its terminal state
+    // and SAVES before calling, so the state filter already excludes it) — kept
+    // because that is an ordering ACCIDENT, not a property of the helper: move the
+    // advance above the save and without it the seat is handed back what it finished.
     _advanceSeat(team, teamDir, seatName, closedId) {
       const role = matchSeatRole(team, seatName);
       const open = ticketsStore.load(teamDir)
@@ -4916,10 +3112,6 @@ function createSessionManager(deps) {
       ticketsStore.save(teamDir, tickets);
       let suffix = '';
       if (assignee) {
-        // urgent: a ticket is a WORK ASSIGNMENT, not conversation. Parking it
-        // leaves the board saying "assigned" while nothing runs. The wake cost
-        // (re-billing the seat's carried context) gets paid the moment the work
-        // starts anyway; an assignment that never starts is worth nothing.
         const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
         suffix = this._ticketDeliverySuffix(d, assignee);
       }
@@ -4941,10 +3133,6 @@ function createSessionManager(deps) {
       if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
       const prev = ticket.assignee;
       const reassigning = prev != null && prev !== assignee;
-      // Reassign: the OLD assignee's reassigned-notice is enqueued FIRST (ordering
-      // reads best in logs), the NEW assignee's spec SECOND. Each rides normal
-      // delivery INDEPENDENTLY — one target parked/dead must not block the other,
-      // so the old notice's outcome is never checked against the new delivery.
       if (reassigning) {
         const oldSeat = this._ticketAssigneeSeat(team, { assignee: prev });
         if (oldSeat && oldSeat !== team.lead) {
@@ -4955,7 +3143,6 @@ function createSessionManager(deps) {
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null; // fresh assignment starts a new stall episode
       ticketsStore.save(teamDir, tickets);
-      // urgent: same reasoning as dispatch — a reassign is a work assignment.
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team, teamDir);
@@ -4964,9 +3151,6 @@ function createSessionManager(deps) {
       reply(reassigning ? `ticket ${ticket.id}: ${prev} → ${assignee}${suffix}` : `ticket ${ticket.id} → ${assignee}${suffix}`);
     }
 
-    // Close an open ticket with a report. The assignee closes its own; the LEAD
-    // can close any, which is what keeps a backlog ticket or one whose seat
-    // retired from being un-closable forever — see the gate below.
     _taskDone(session, team, teamDir, intent, reply) {
       if (!intent.id) { reply('error: done needs a ticket id — [agent:task done <id>] <report>'); return; }
       const report = String(intent.body == null ? '' : intent.body).trim();
@@ -4975,30 +3159,10 @@ function createSessionManager(deps) {
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open`); return; }
-      // The assignee (its role for a role-addressed ticket, or its name) OR the
-      // team lead. The lead is here because THE STALL PATH REQUIRES NO ACTOR, SO
-      // THE CLOSE PATH MUST HAVE ONE WHO ALWAYS EXISTS. Assignee-only left two
-      // legitimate tickets nobody was permitted to close — a backlog ticket
-      // (`task add` with no assignee, which is a deliberate dispatch shape) and
-      // one whose seat retired — while the watchdog went on nudging for both,
-      // because nudging needs no actor at all. `team.lead` is structural (reject
-      // and cancel already gate on it), so it is the actor that always exists.
       const myRole = matchSeatRole(team, session.name);
       const isAssignee = ticket.assignee != null && (ticket.assignee === session.name || ticket.assignee === myRole);
       const isLead = team.lead === session.name;
       if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it`); return; }
-      // Deliver the report to the opener (lead) BEFORE stamping done — same
-      // ordering + {error} discipline as review-done (T24 MF3): an absent/dead lead
-      // means the report went nowhere, so keep the ticket OPEN and bounce so the
-      // assignee can retry, rather than closing it with the report stranded.
-      //
-      // A LEAD closing skips both: there is no delivery (the same refusal
-      // `_deliverTicketSpec` makes with `{ self }` — the lead is the one writing
-      // the report, so echoing it back is noise), and therefore no keep-open
-      // bounce either. That bounce exists to protect a third party's report from
-      // being stranded by the close; when the sender is the lead there is no
-      // third party, and keeping the ticket open would strand nothing but the
-      // ticket.
       const lead = team.lead;
       if (!isLead) {
         const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
@@ -5006,20 +3170,10 @@ function createSessionManager(deps) {
       }
       ticket.state = 'done';
       ticket.closedAt = Date.now();
-      // Who actually closed it — audit only, and additive. With two permitted
-      // actors "it is done" no longer implies "its assignee said so", and a
-      // ticket closed by the lead over a silent seat is exactly the case worth
-      // being able to tell apart later. Not a column in the board (see
-      // scripts/clodex-team.js): the list answers what is open, not who ended it.
       ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(teamDir, tickets);
       this._reconcileTickets(team, teamDir);
-      // Completion edge: hand the seat its next held ticket (see _advanceSeat).
-      // Keyed on the TICKET'S assignee seat, not the closer — the lead may be
-      // closing over a silent seat, and that seat is precisely the one that needs
-      // restarting. A lead closing its own self-assigned ticket resolves to
-      // itself and _deliverTicketSpec's { self } skip handles it.
       const doneSeat = this._ticketAssigneeSeat(team, ticket);
       const next = doneSeat ? this._advanceSeat(team, teamDir, doneSeat, ticket.id) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
@@ -5037,22 +3191,12 @@ function createSessionManager(deps) {
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}`); return; }
-      // The reopen is the lead's authoritative act (recorded regardless); the reason
-      // to the assignee is best-effort (skipped if no live seat) — unlike done, no
-      // sender is at risk, so there's nothing to keep alive for a retry.
       ticket.state = 'open';
       ticket.closedAt = null;
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       ticketsStore.save(teamDir, tickets);
-      // urgent: a reject REOPENS the ticket, so the reason is a work assignment,
-      // not a status notice — same reasoning as dispatch and reassign. The seat it
-      // targets is by construction one that already reported done and has gone
-      // idle, which is exactly the state a non-urgent dm is held for
-      // (proxy-util shouldHoldDm) — so at urgent=false the rework silently sat
-      // parked on an idle seat while the board said open. Same defect as the
-      // completion edge, one edge over.
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, true);
       this._reconcileTickets(team, teamDir);
@@ -5077,42 +3221,22 @@ function createSessionManager(deps) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
       this._reconcileTickets(team, teamDir);
-      // Cancel frees the seat exactly as done does — same completion edge, same
-      // advance. (The cancellation NOTICE above stays non-urgent: cancelling
-      // creates no work. What follows it might.)
       const next = seat ? this._advanceSeat(team, teamDir, seat, ticket.id) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }
 
-    // [agent:task list [filter]] — the board only ever grows, so listing all of
-    // it puts ~80 lines of mostly-closed noise in front of every reader. Default
-    // to OPEN plus a count line that NAMES THE QUERY for the rest (a reader who
-    // has to guess the syntax is being told to go away).
-    //
-    // t100 gives the default view its MEMORY back. Open-only left it unable to
-    // answer "what just happened" — a day's closes were invisible without
-    // filtering over the whole done pile — so the default now carries a capped
-    // RECENTLY CLOSED section (done only, RECENT_DONE_MS window, newest first)
-    // and a tail that counts done and cancelled SEPARATELY. One number for both
-    // answers neither "how much did this team ship" nor "how much did I drop".
-    //
-    // Recently-CANCELLED is deliberately absent: a cancellation is a non-event,
-    // and putting it in the view every reader sees gives it standing it has not
-    // earned. It stays one explicit filter away.
-    //
-    // The filter vocabulary is the real state set and nothing else: a ticket is
-    // written 'open' (_taskAdd), 'done' (_taskDone) or 'cancelled' (_taskCancel).
-    // REJECT IS NOT A STATE — _taskReject sets state back to 'open' — so there is
-    // deliberately no `rejected` filter: it would answer "none" and be read as
-    // "none were rejected" rather than "that is not a category".
-    //
+    // Default view is OPEN plus a capped recently-CLOSED section (done only) and a
+    // tail that counts done and cancelled SEPARATELY — one number answers neither
+    // "what did this team ship" nor "what did I drop". Recently-cancelled is
+    // deliberately absent. The filter vocabulary is the real state set: reject sets
+    // state back to 'open', so a `rejected` filter would always answer none.
     // NOTE: scripts/clodex-team.js doTickets is a SECOND implementation of this
-    // listing (the exec pull) and must stay behaviourally identical. It is not
-    // shared code on purpose — that script is materialized out of the repo as a
-    // flat basename copy into run/bin/ and may require node builtins ONLY, so a
-    // shared module would fail to resolve at run time. Change both together.
+    // listing and must stay behaviourally identical. It is not shared code on
+    // purpose — that script is materialized out of the repo as a flat basename copy
+    // into run/bin/ and may require node builtins ONLY, so a shared module would fail
+    // to resolve at run time. Change both together.
     _taskList(session, team, teamDir, intent, reply) {
       const filter = intent.filter || 'open';
       if (!TICKET_FILTERS.includes(filter)) {
@@ -5129,17 +3253,10 @@ function createSessionManager(deps) {
       const now = Date.now();
       const row = (t) =>
         `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
-      // The recent section sorts by closedAt, so it shows closedAt: a list
-      // ordered by a number it does not display reads as arbitrary (a ticket
-      // opened 5d ago and closed an hour ago would sit above one opened an hour
-      // ago, with nothing on screen explaining why).
       const closedRow = (t) =>
         `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
-      // The recent section and the count line ride the DEFAULT view only: on an
-      // explicit filter the caller already chose the slice and knows the board
-      // is bigger.
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
       const doneAll = closed.filter((t) => t.state === 'done');
       const recentAll = doneAll
@@ -5148,9 +3265,6 @@ function createSessionManager(deps) {
       const recent = recentAll.slice(0, RECENT_DONE_CAP);
       const over = recentAll.length - recent.length;
       const recentBlock = recent.length ? `\nrecently closed:\n${recent.map(closedRow).join('\n')}` : '';
-      // Counted directly rather than as `closed.length - doneAll.length`: that
-      // subtraction labels EVERY non-open non-done state "cancelled", so a
-      // fourth state added later would be silently miscounted as a drop.
       const cancelledAll = closed.filter((t) => t.state === 'cancelled');
       const tail = closed.length
         ? `\n(${over > 0 ? `+${over} more done in the last ${RECENT_DONE_LABEL}; ` : ''}${doneAll.length} done, ${cancelledAll.length} cancelled`
@@ -5165,10 +3279,6 @@ function createSessionManager(deps) {
       reply(`${head}:\n${lines.join('\n')}${recentBlock}${tail}`);
     }
 
-    // Recompute each live team seat's open-ticket id: refresh the activity-watch map
-    // (name → { teamDir, role } for seats holding an open ticket, so _emitActivity
-    // can cheaply bump lastActivityAt) and push a `session-ticket` badge event per
-    // live seat. Idempotent — the renderer just sets/clears dataset.ticket.
     _reconcileTickets(team, teamDir) {
       const tickets = ticketsStore.load(teamDir);
       for (const name of this._teamLiveSeats(team.root)) {
@@ -5181,10 +3291,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // A seat with an open ticket had activity → bump its open tickets' lastActivityAt
-    // and clear any stall-nudge episode (activity resets it). Gated on the watch map
-    // so it's a no-op (no fs) for the overwhelming majority of seats. Called from
-    // _emitActivity on a non-idle transition.
     _touchTicketActivity(name) {
       const w = this._ticketWatch.get(name);
       if (!w) return;
@@ -5202,11 +3308,6 @@ function createSessionManager(deps) {
       if (changed) ticketsStore.save(w.teamDir, tickets);
     }
 
-    // Clodex-owned stall watchdog (replaces the lead's manual reminders). One
-    // periodic sweep; per open ASSIGNED ticket idle past the team's stall window,
-    // deliver ONE nudge to the lead and mark it nudged (activity clears the mark →
-    // one nudge per episode). Backlog/closed tickets are exempt. Survives app
-    // restart by construction — the registry is on disk and the sweep rearms here.
     startTicketWatchdog(intervalMs = 60000) {
       if (this._ticketWatchdogTimer) return;
       this._ticketWatchdogTimer = setInterval(() => { try { this._sweepTickets(); } catch (e) { log.error('ticket', `watchdog sweep failed: ${e.message}`); } }, intervalMs);
@@ -5214,8 +3315,6 @@ function createSessionManager(deps) {
     }
 
     _sweepTickets(now = Date.now()) {
-      // Teams reachable from live sessions, deduped by team dir (a dead lead can't
-      // receive a nudge anyway, so bounding to live teams loses nothing).
       const seen = new Set();
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
@@ -5238,28 +3337,13 @@ function createSessionManager(deps) {
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode
-        // NOT urgent, deliberately: this is an alarm, but it is addressed to the
-        // LEAD and it is not a work assignment. It fires on a schedule against a
-        // possibly-idle lead, and a stalled ticket is by definition not urgent to
-        // the minute — parking it costs one turn of latency, waking costs a full
-        // context re-bill on every sweep. Ticket-waking is for assignment only.
         const r = this._gatedDeliver(team.lead, 'ticket-watchdog',
           `[ticket ${t.id}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false);
-        // Mark nudged only when the nudge actually went somewhere — a dead lead
-        // must not consume the one nudge (retry when the lead is back). `held` is
-        // the same kind of nowhere as `error`: un-parkable means the lead never
-        // sees it, so it must not burn the one-per-episode nudge either. `parked`
-        // DOES count — it drains on the lead's next turn.
         if (r && !r.error && !r.held) { t.nudgedAt = now; changed = true; }
       }
       if (changed) ticketsStore.save(teamDir, tickets);
     }
 
-    // The CLI slash command each context sub-command maps to, per session type.
-    // Claude is confirmed; Codex's TUI slash set differs by version, so it's an
-    // explicit (best-effort) branch rather than a shared hardcode — an unknown
-    // command degrades to a harmless "unknown command" line in the TUI, never a
-    // broken session. `reload` is NOT a slash command (handled separately).
     static CONTEXT_COMMANDS = {
       claude: { compact: '/compact', clear: '/clear' },
       codex: { compact: '/compact', clear: '/clear' },
@@ -5267,13 +3351,6 @@ function createSessionManager(deps) {
 
     _handleContextIntent(session, sub, body = '') {
       if (sub === 'reload') {
-        // Tier 3 (rare nuclear option): not a slash injection — a fresh respawn
-        // with resumeId OMITTED to force a cold boot. Its real purpose is adopting
-        // changed STATIC config a running session can't pick up (the prefix is
-        // snapshotted at spawn): canonical case is "a library/prompts/system/*
-        // building block was edited, respawn to run under it." Re-including the
-        // durable briefing is a consequence of the cold boot (the briefing gate
-        // keys on resumeId===null), not the motivation.
         const name = session.name;
         const entry = getPersistence().get(name);
         if (!entry) return;
@@ -5292,12 +3369,6 @@ function createSessionManager(deps) {
             + 'this session is untouched.', { parkable: true });
           return;
         }
-        // In-flight guard: a reload is a kill + cold respawn. A duplicate intent
-        // (e.g. the same turn re-dispatched via a recovery replay) landing before
-        // the respawn completes would double-kill/respawn — strictly worse than a
-        // double compact. Drop the dup; the flag self-clears when the fresh
-        // process replaces this session object (or on the failure path, where the
-        // session is dead anyway).
         if (session._reloadInFlight) {
           this._broadcast('ipc-message', {
             type: 'context', from: name, to: name, body: 'context reload → dropped (already in flight)',
@@ -5328,42 +3399,21 @@ function createSessionManager(deps) {
               await this.kill(name);
               if (!await waitExit(name)) throw new Error('old process did not exit in time');
             }
-            // kill() dropped the persistence entry; create() rebuilds it from the
-            // snapshot. resumeId=null → cold boot adopts changed static config.
-            // Re-seed createdAt BEFORE create() reads existingEntry (:1462), or the
-            // birth stamp re-mints to Date.now() and a reload silently jumps the
-            // session to "just created" in the sidebar's created sort. This is a
-            // FRESH restart (new conversation), so rosterSentAt deliberately does
-            // NOT carry — create() must re-deliver the roster.
             this._preserveAcrossRestart(name, entry, ['createdAt']);
             await this.create(
               name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
               entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
               entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
-              // Thread the persisted grant + allowlist through the cold respawn — kill()
-              // dropped the record, so without these the seat would come back with no
-              // exec grant and all-enabled intents (the exact hole the stripLevel
-              // re-assert below plugs for stripping).
               Array.isArray(entry.execCommands) ? entry.execCommands : [],
               Array.isArray(entry.intents) ? entry.intents : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
             if (entry.label) getPersistence().setLabel(name, entry.label);
-            // The intent path bypasses the renderer's restartSessionWithReattach,
-            // so tell the owning window to rebuild the sidebar tab + terminal the
-            // kill removed. Dropped harmlessly if the window is detached — the
-            // session still respawned and the UI recomputes on reattach.
             this._sendToSession(name, 'session:context-action', {
               action: 'reattach', name, type: entry.type, cwd: entry.cwd, backend: (this.sessions.get(name) || {}).backend || null,
             });
-            // Inject the mandatory handoff as turn-one once the FRESH process is
-            // listening. reattach (above) is a UI signal fired immediately after
-            // create() — too early; the new CLI's input loop isn't up yet. The
-            // real readiness gate is the SessionStart hook recreating the
-            // transcript symlink (= CLI booted; kill's cleanup removed the old
-            // one). _injectReloadHandoff polls for it, then settles + injects.
             const fresh = this.sessions.get(name);
             if (fresh) this._injectReloadHandoff(fresh, handoff);
           } catch (err) {
@@ -5377,22 +3427,11 @@ function createSessionManager(deps) {
       const cmd = map && map[sub];
       if (!cmd) {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
-        // Loud like memory's unknown-sub bounce — a typo'd sub used to be a
-        // console line the agent never saw, so its compact/clear silently
-        // didn't happen.
         this._injectText(session,
           `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use compact|clear|reload)`,
           { parkable: true });
         return;
       }
-      // In-flight guard: while a self-compact is in flight (LATCH set, guard set,
-      // or continuation stashed awaiting the summary), a SECOND /compact would
-      // land mid-compaction and collide with the first (observed as "Connection
-      // closed mid-response"), or stomp the first's stashed continuation. Drop the
-      // duplicate. Path-independent — catches a re-dispatched intent from any
-      // source. The release valve bounds how long this suppresses: a failed/
-      // abandoned compact (or a latch that never fires) must not wedge self-
-      // compact forever.
       if (sub === 'compact' && isInjectInFlight({ pending: session._compactPending, guard: session._compactGuard, continuation: session._compactContinuation })) {
         this._broadcast('ipc-message', {
           type: 'context', from: session.name, to: session.name,
@@ -5403,14 +3442,6 @@ function createSessionManager(deps) {
       }
       if (sub === 'compact') {
         const cont = (body && body.trim()) ? body.trim() : DEFAULT_COMPACT_CONTINUATION;
-        // Wire-owned Claude: LATCH, don't fire now. Claude Code silently discards
-        // slash commands while the CLI is busy — which is how the original
-        // 3-attempt failure happened (a /compact injected mid-turn evaporated).
-        // So stash the intent and let the wire turn.completed fire-check
-        // (_maybeFireCompactLatch) run it on the next TERMINAL main-line stop with
-        // both inject queues empty (= CLI genuinely parked at its prompt). Arm the
-        // valve at LATCH-SET: a latch that never fires (queue never drains, no
-        // further terminal stop) must not wedge self-compact via the guard above.
         if (session.intentSource === 'wire') {
           session._compactPending = { cmd, continuation: cont };
           this._armCompactValve(session);
@@ -5420,10 +3451,6 @@ function createSessionManager(deps) {
           });
           return;
         }
-        // Non-wire (codex, jsonl-fallback claude): no wire terminal-stop receipt
-        // exists to fire a latch off, so inject immediately as before. Documented
-        // degradation (messaging.md): a mid-turn compact here can still be dropped
-        // by the CLI — the latch protection is wire-only.
         this._executeCompact(session, cmd, cont);
         return;
       }
@@ -5438,14 +3465,6 @@ function createSessionManager(deps) {
       });
     }
 
-    // Run the actual self-compact: stash the continuation (native /compact PARKS
-    // waiting for input after summarizing — without a continuation an operator-
-    // independent agent compacts and stalls forever), arm the sentinel's compact
-    // rendezvous (isCompactSummary is a transcript fact — nothing rides the wire
-    // for it), inject the literal /compact as a turn, then arm the guard + valve.
-    // Shared by the non-wire immediate path and the wire latch-fire path. Arming
-    // the valve here RESETS it (_armCompactValve → _clearCompactValve first), so
-    // the post-fire in-flight window is a full 5min, never the latch-set remainder.
     _executeCompact(session, cmd, continuation) {
       session._compactContinuation = continuation;
       if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
@@ -5458,14 +3477,6 @@ function createSessionManager(deps) {
       });
     }
 
-    // Wire turn.completed fire-check for a latched self-compact (scheduled via
-    // setImmediate AFTER the dispatch loop on a terminal main-line stop, so a
-    // latch set synchronously by THIS turn's compact intent is already visible —
-    // FIFO setImmediate ordering). Fire only when the latch is set AND both inject
-    // queues are empty (canFireCompact): a queued inject is about to wake the CLI,
-    // and /compact injected then would be silently dropped. Otherwise a no-op —
-    // the next terminal stop retries (event-driven, no timers). Never throws into
-    // the wire observer.
     _maybeFireCompactLatch(session) {
       try {
         if (!session || session._dead) return;
@@ -5512,19 +3523,7 @@ function createSessionManager(deps) {
       if (!session._dead) this._injectText(session, handoff);
     }
 
-    // --- Message delivery ---
 
-    // The cost-gate + park-or-deliver core, shared by the LOCAL dm case and the
-    // wire deliverDm callback so both ends apply identical semantics. `senderTag`
-    // is the name the recipient sees in `[agent:from …]` — a plain name locally,
-    // `name@origin` for a wire dm (so the reply trailer teaches an address that
-    // routes back). Returns a small verdict the caller shapes into a notice / HTTP
-    // response; it never injects the notice itself (the local case owns that copy,
-    // byte-identical to before):
-    //   { delivered:true }                         — injected/parked-for-draft now
-    //   { parked:<id>, reason, noUrgent }          — held + parked (resend id)
-    //   { held:<reason>, noUrgent }                — held, un-parkable (Codex/dead)
-    //   { error:<msg> }                            — target isn't a local agent
     _gatedDeliver(targetName, senderTag, body, urgent) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
@@ -5536,9 +3535,6 @@ function createSessionManager(deps) {
         attention: target.needsAttention ? target.needsAttention.kind : null,
       });
       if (verdict.hold) {
-        // Park only for Claude targets (the drain rides a UserPromptSubmit hook
-        // Codex lacks); build the delivery text ONLY when we can actually park, so
-        // the bounce path never orphans a >500-byte spill file.
         const canPark = target.agentType === 'claude' && !target._dead;
         const parkId = canPark
           ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm'))
@@ -5551,23 +3547,11 @@ function createSessionManager(deps) {
       return { delivered: true };
     }
 
-    // Route a `name@origin` dm that isn't a local session or socket peer. Runs on
-    // BOTH consumer and box (symmetric): (1) if `origin` matches a configured
-    // ONLINE peer advertising the 'dm' cap, POST it there (consumer leg); (2) else
-    // if `origin` is a known outbox origin (heard from this run, or a dir still on
-    // disk), queue it for that origin to claim (box leg); (3) else bounce. Handles
-    // its own notice + ipc-log; the caller just breaks after.
-    // Hub-relay: cache a roster a hub pushed us (full replacement for that `via`).
-    // An empty roster is stored too (not deleted) so a hub that just lost all its
-    // relayable agents converges us to empty on the next tick rather than leaving
-    // a stale set; the TTL then reaps the entry if the hub stops pushing entirely.
     _setRelayRoster(via, roster) {
       if (!via) return;
       this._relayRosters.set(via, { roster: Array.isArray(roster) ? roster : [], at: Date.now() });
     }
 
-    // Fresh relay entries across every via, as {name, origin, via, type}. Stale
-    // rosters (hub leg dropped — no refresh within the TTL) are skipped and pruned.
     _relayRosterEntries() {
       const now = Date.now();
       const out = [];
@@ -5578,9 +3562,6 @@ function createSessionManager(deps) {
       return out;
     }
 
-    // The relay hop for an `origin` we can only reach via a hub: the `via` label to
-    // enqueue the outbox under, or null if no fresh roster lists that origin. First
-    // fresh match wins (our star has a single hub, so there's never a real choice).
     _relayViaForOrigin(origin) {
       const now = Date.now();
       for (const [via, rec] of this._relayRosters) {
@@ -5599,7 +3580,6 @@ function createSessionManager(deps) {
         bounce(`can't route "${intent.target}" — a federated target is name@peer, both plain names.`);
         return;
       }
-      // (1) Consumer leg: a configured peer whose label matches `origin`.
       const peers = getPeerManager() ? getPeerManager().statuses() : [];
       const match = peers.find((p) => p.label && p.label.toLowerCase() === origin.toLowerCase());
       if (match) {
@@ -5609,7 +3589,6 @@ function createSessionManager(deps) {
         if (!conn) { bounce(`peer '${origin}' is not reachable right now.`); return; }
         conn.dm({ to: name, from: senderName, body: intent.body, urgent: intent.urgent === true }, (resp) => {
           if (resp && resp.ok && resp.delivered) {
-            // delivered — silent, exactly like a local delivery.
           } else if (resp && resp.ok && resp.parked) {
             if (session) this._injectText(session,
               `[agent:dm] parked on ${origin} for ${name} — it'll be delivered with ${name}'s next turn. If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`.`,
@@ -5622,27 +3601,15 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin}: ${intent.body}` });
         return;
       }
-      // (2) Box leg: queue for an origin we've heard from (or one lingering on disk).
       if (this._knownDmOrigins.has(origin) || outboxHasOrigin(OUTBOX_DIR, origin)) {
         const r = enqueueOutbox(OUTBOX_DIR, origin,
           { from: senderName, to: name, body: intent.body, urgent: intent.urgent === true, ts: Date.now() },
           this._nextParkSeq());
         if (!r.ok) { bounce(`could not queue for ${intent.target}: ${r.error}`); return; }
-        // Ring the doorbell so the consumer claims now instead of waiting a hello
-        // interval; the outbox it just landed in is the durable fallback.
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(origin); } catch {} }
-        // Silent on success — like a local delivery, the sender gets no notice.
         this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (outbox): ${intent.body}` });
         return;
       }
-      // (2.5) Relay leg: an `origin` we can't reach directly (no configured peer,
-      // never heard from) but which a hub advertised in a roster it pushed us. Route
-      // THROUGH the hub: enqueue to OUR OWN outbox under origin=<via> (the hub claims
-      // it like any box→consumer reply) carrying a relay envelope with the final
-      // target. `from` is qualified with OUR label here and never rewritten again —
-      // it's the load-bearing field for the reply path. Best-effort: the sender gets
-      // a "relayed" ack (ruling 5, the deliberate exception to leg-2 silence), but no
-      // end-to-end receipt (that's v2).
       const via = this._relayViaForOrigin(origin);
       if (via) {
         const qualifiedFrom = `${senderName}@${SELF_LABEL}`;
@@ -5659,24 +3626,9 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'dm', from: qualifiedFrom, to: intent.target, body: `WIRE→${via} (relay→${intent.target}): ${intent.body}` });
         return;
       }
-      // (3) No route.
       bounce(`no route to '${intent.target}' — peer '${origin}' is not configured, has never contacted this box, and no hub advertises it.`);
     }
 
-    // Deliver DMs a consumer just claimed from a box's outbox. Each rides straight
-    // into _gatedDeliver — NEVER back through _handleIntent (that's the loop
-    // guard). The sender tag uses OUR configured label for the peer (NOT the origin
-    // the box recorded), so the recipient's reply trailer generates an address that
-    // routes back out through our own peer config. `to` must be a local agent;
-    // anything else is dropped with an ipc-log line rather than looped. Park gives
-    // the remote sender no notice (the accepted mailbox-leg asymmetry — nothing is
-    // lost, it drains on the target's next turn).
-    //
-    // Hub-relay (P4): a claimed message carrying a finalTarget is NOT for a local
-    // agent — WE are the hub on the path between two spokes. Relay it onward via a
-    // plain direct DM (conn.dm), staying on this claimed-delivery side of the loop
-    // guard (never _handleIntent). The hop-count is the belt: a re-relay that
-    // somehow loops back arrives with hops already spent and is dropped.
     _deliverClaimedDms(peerId, messages) {
       const cfg = (getUiSettings().get().peers || []).find((p) => p && p.id === peerId);
       const peerLabel = (cfg && cfg.label) || String(peerId);
@@ -5695,33 +3647,18 @@ function createSessionManager(deps) {
       }
     }
 
-    // Relay one claimed relay-envelope onward (the hub hop). `srcId`/`srcLabel`/
-    // `srcCfg` identify the spoke we claimed from (the sender's side); `m` is the
-    // relay envelope { rv, to, finalTarget, from, body, urgent, hops }. The terminal
-    // leg is a PLAIN direct DM — conn.dm sends only {to,from,origin,body,urgent}, so
-    // the relay fields are stripped by construction (a deliberate loop-prevention
-    // feature: an offline destination sees an ordinary direct DM to a missing local
-    // name and parks/bounces it, with no finalTarget to chase). `from`'s LOCAL part
-    // is sacred (the reply path depends on it); its origin suffix is normalized to
-    // OUR label for the source spoke — see the inline comment at the rewrite.
     _relayClaimedDm(srcId, srcLabel, srcCfg, m) {
       const drop = (why) => {
         log.info('peer', `relay from ${srcLabel} → ${m.finalTarget} dropped: ${why}`);
         this._broadcast('ipc-message', { type: 'dm', from: m.from || srcLabel, to: m.finalTarget, body: `WIRE relay DROPPED (${why}): ${m.body || ''}` });
       };
       if (!relayVersionOk(m.rv)) return drop('unsupported relay version');
-      // Loop-guard belt: budget spent (or malformed) → drop. A legitimate single
-      // relay arrives with hops=1 → 0 and proceeds; a looped re-relay arrives at 0.
       const hop = hopRule(m.hops);
       if (!hop.relay) return drop('hop budget exhausted');
       const at = String(m.finalTarget || '').indexOf('@');
       if (at <= 0) return drop('malformed finalTarget');
       const destName = m.finalTarget.slice(0, at);
       const destOrigin = m.finalTarget.slice(at + 1);
-      // Access gate (symmetric, both endpoints must be relayAllowed on THIS hub).
-      // P1 already hides non-allowed peers from the roster, so reaching here means a
-      // hand-typed off-mesh address — bounce explicitly (ruling 7) so the sender
-      // isn't left guessing. srcCfg is the sender's spoke; destCfg the destination.
       const peers = getUiSettings().get().peers || [];
       const destCfg = peers.find((p) => p && (p.label || '').toLowerCase() === destOrigin.toLowerCase());
       const srcAllowed = !!(srcCfg && srcCfg.relayAllowed);
@@ -5730,40 +3667,21 @@ function createSessionManager(deps) {
         this._bounceRelaySender(srcId, m, `relay to ${m.finalTarget} not permitted (peer not relay-enabled)`);
         return drop('relay not permitted (relayAllowed gate)');
       }
-      // Resolve the destination peer connection (online + dm cap). Best-effort: an
-      // offline/unreachable destination just drops (no far-end receipt in v1).
       const dest = (getPeerManager() ? getPeerManager().statuses() : [])
         .find((st) => st.label && st.label.toLowerCase() === destOrigin.toLowerCase());
       if (!dest || !dest.online) return drop(`destination peer '${destOrigin}' offline`);
       if (!(dest.caps || []).includes('dm')) return drop(`destination peer '${destOrigin}' predates dm federation`);
       const conn = getPeerManager().get(dest.id);
       if (!conn) return drop(`destination peer '${destOrigin}' not reachable`);
-      // Reply-path normalization: the originating spoke stamped `from`'s origin
-      // suffix with its OWN selfLabel (hostname-ish, e.g. agent@clodex-docker),
-      // but the only origin namespace the destination can route a reply through
-      // is OUR configured label for the source spoke — that's what the relay
-      // roster advertises (agent@docker). Rewrite the SUFFIX to srcLabel; the
-      // LOCAL part stays sacred (rewriting THAT, or the whole from to the hub's
-      // identity, is what the sacred rule forbids). Live failure this fixes:
-      // infra dm'd docker@docker, the ack came back stamped docker@clodex-docker
-      // — an address that bounces if replied to.
       const fromAt = String(m.from || '').indexOf('@');
       const senderLocal = fromAt > 0 ? String(m.from).slice(0, fromAt) : String(m.from || '');
       const relayFrom = `${senderLocal || 'peer'}@${srcLabel}`;
-      // Terminal leg: plain direct DM. The relay fields are stripped by
-      // construction — buildTerminalDm returns exactly conn.dm's
-      // {to,from,body,urgent} signature (conn.dm stamps origin itself).
       conn.dm(buildTerminalDm({ to: destName, from: relayFrom, body: m.body || '', urgent: m.urgent === true }), (resp) => {
         if (!(resp && resp.ok)) log.info('peer', `relay → ${m.finalTarget} not delivered: ${(resp && resp.error) || 'no response'}`);
       });
       this._broadcast('ipc-message', { type: 'dm', from: relayFrom, to: m.finalTarget, body: `WIRE relay ${srcLabel}→${destOrigin}: ${m.body || ''}` });
     }
 
-    // Bounce a refused relay back to the originating sender on their spoke. Best-
-    // effort: the sender is a local agent on the spoke we claimed from (srcId), so
-    // we reach them via that spoke's own /api/dm (we're its consumer). `m.from` is
-    // `sender@srcLabel`; the bounce targets the bare local name. Silent on failure —
-    // a refusal that can't be delivered is logged at the drop site.
     _bounceRelaySender(srcId, m, why) {
       const conn = getPeerManager() ? getPeerManager().get(srcId) : null;
       if (!conn) return;
@@ -5774,22 +3692,6 @@ function createSessionManager(deps) {
       try { conn.dm({ to: senderLocal, from: 'relay', body: `NOT delivered to ${m.finalTarget}: ${why}.`, urgent: false }, () => {}); } catch {}
     }
 
-    // Is `senderName` an agent a recipient could actually [agent:dm] back RIGHT
-    // NOW? Gates the reply trailer (see _buildDeliveryText) so we never advertise
-    // a dead reply path. Two reachable shapes:
-    //   * name@origin — a federated peer sender: reachable iff that origin peer is
-    //     ONLINE (a reply routes through the consumer leg, which bounces an offline
-    //     peer). No dm-caps recheck: having RECEIVED a federated dm from them proves
-    //     they speak dm federation.
-    //   * plain name — a LIVE local agent session: in the map, agent type (bash
-    //     sessions aren't DM-able), not dead. A dead-but-resumable sender is
-    //     deliberately excluded: a plain local dm to an absent target DROPS in
-    //     _deliverMessage (`if (!target) return`), so a trailer would point at a
-    //     path that silently discards. This is why 'user' and 'reminder' need no
-    //     special-case — neither names a live agent session, so both return false.
-    // COUPLING: this "live-or-online only" rule tracks _deliverMessage's drop-if-
-    // absent behavior; if local dm parking ever widens to cover absent/resumable
-    // targets, widen this to match (a resumable sender would then be reachable).
     _isDmReachable(senderName) {
       if (!senderName) return false;
       const at = senderName.lastIndexOf('@');
@@ -5797,40 +3699,20 @@ function createSessionManager(deps) {
         const origin = senderName.slice(at + 1);
         const peers = getPeerManager() ? getPeerManager().statuses() : [];
         if (peers.some((p) => p.online && p.label && p.label.toLowerCase() === origin.toLowerCase())) return true;
-        // Hub-relay: a sender whose origin isn't a directly-configured online peer
-        // may still be reachable THROUGH a hub — if a fresh relay roster lists that
-        // origin, the reply routes out via the relay leg (_routeFederatedDm 2.5).
-        // Without this the trailer would be wrongly suppressed for every relayed dm.
         return this._relayViaForOrigin(origin) != null;
       }
       const s = this.sessions.get(senderName);
       return !!(s && s.agentType && !s._dead);
     }
 
-    // Build the FINAL delivery text (prefix + spill-pointer/inline body + reply
-    // trailer) a recipient reads — the exact bytes _deliverMessage would inject.
-    // Factored out so the hold-park path parks byte-identical text (same
-    // formatting, spill, trailer) rather than duplicating the shaping.
     _buildDeliveryText(target, senderName, body, mtype) {
       const prefix = `[agent:from ${senderName}]`;
 
-      // Reply-syntax nudge, appended as the LAST thing the recipient reads before
-      // composing: after a long analytical stretch an agent's register drifts to
-      // "report to operator" and it can write a full reply without ever emitting
-      // the intent line, leaving the sender blocked. Parenthesized and never at
-      // column 1, so IntentScanner (which only fires on a cleaned line STARTING
-      // with [agent:) can't mistake it for a real intent. Empty when not
-      // applicable, so the pointer line's load-bearing trailing space is preserved.
-      //
-      // Only emitted when the reply path it advertises actually EXISTS, on both ends:
-      //   (a) the RECEIVER's `dm` intent is enabled (fresh persistence read) — a
-      //       dm-gated seat can't emit [agent:dm …], so nudging it to is a lie; and
-      //   (b) the SENDER is dm-reachable right now (_isDmReachable): a live local
-      //       agent session, or an online federated peer. This subsumes the old
-      //       hardcoded `user`/`reminder` exclusions — neither is a reachable agent
-      //       session, so both fall out naturally — and also fixes external senders
-      //       (e.g. a `nc -U` wake script posting from:"t1-wake") that used to
-      //       advertise a reply to a name no session answers.
+      // The reply nudge is parenthesized and never at column 1, so IntentScanner
+      // (which fires only on a cleaned line STARTING with [agent:) cannot mistake it
+      // for a real intent. Emitted only when the path it advertises exists on BOTH
+      // ends: the receiver's `dm` intent is enabled AND the sender is dm-reachable
+      // right now — otherwise it teaches a reply address that silently drops.
       const trailer = (mtype === 'dm'
           && intentEnabled('dm', getPersistence().get(target.name)?.intents)
           && this._isDmReachable(senderName))
@@ -5857,38 +3739,12 @@ function createSessionManager(deps) {
       const target = this.sessions.get(targetName);
       if (!target) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype);
-      // Layer-3 parking: if the operator is mid-composition, park this delivery to
-      // drain in with their next prompt (see _maybeParkDelivery) instead of typing
-      // it into the pane and splicing the draft. Falls through to a normal inject
-      // otherwise, or if parking isn't applicable / fails.
       if (!this._maybeParkDelivery(target, finalText)) {
-        // parkable: the delivery-time park above is a one-shot; if the operator
-        // opens a draft AFTER it (but before the queue writes), the fire-time
-        // divert re-checks and parks rather than splicing the draft.
         this._injectText(target, finalText, { parkable: true });
       }
       this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
     }
 
-    // Deliver a fired self-reminder (the remind-scheduler's deliver seam routes
-    // here via main.js). Three cases, because a reminder's whole value is
-    // durability — a fire must NOT be silently dropped the way a plain dm to an
-    // absent target is:
-    //   LIVE (session in the map)          → the normal DM inject path.
-    //   OFFLINE but resumable (name still  → PARK into the pending store so it
-    //     in persistence: exited-naturally,  drains through the UserPromptSubmit
-    //     or not-yet-restored at launch —    hook on the agent's next prompt after
-    //     start()'s catch-up runs BEFORE     resume. Keyed by name, so a later
-    //     windows/sessions restore)          respawn under the same name picks it up.
-    //   GONE (no persistence entry — the   → drop, and signal the caller so it can
-    //     agent was killed from the UI by     prune the now-ownerless schedule
-    //     operator intent)                    (recurring would otherwise recompute
-    //                                          and drop forever).
-    // Returns 'delivered' | 'parked' | 'gone' | 'error'. The `reminder` sender
-    // gets no reply trailer (suppressed in _buildDeliveryText) — it's the
-    // agent's own loop, not a conversational dm. The live path still emits the
-    // session-mention badge via _deliverMessage, deliberately: the operator
-    // seeing the tab light up on a fire is useful signal.
     _deliverReminder(agent, body) {
       const target = this.sessions.get(agent);
       if (target && target.agentType) {
@@ -5900,10 +3756,6 @@ function createSessionManager(deps) {
         log.info('intent', `remind fire for ${agent} dropped — no live session, no persisted entry`);
         return 'gone';
       }
-      // Build the delivery bytes without a live session — _buildDeliveryText only
-      // needs a name (spill filename) and agentType (claude @-mention vs codex
-      // read-pointer), both known from the persisted entry. No resend id: a self-
-      // reminder has no sender to escalate, and drainPending reads id-less parks.
       const finalText = this._buildDeliveryText({ name: agent, agentType: entry.type }, 'reminder', body, 'dm');
       try {
         parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq(), null, false, this._bornFor(agent));
@@ -5915,25 +3767,15 @@ function createSessionManager(deps) {
       }
     }
 
-    // Monotonic, lexically-sortable park seq so a drain reads in arrival order,
-    // stable across restarts (timestamp dominates; a counter breaks within-ms ties).
     _nextParkSeq() {
       return `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
     }
 
-    // The GENERATION stamp for `name` — the createdAt of the session that holds
-    // the name right now. Every park stamps its addressee's, every drain compares
-    // its own; see drainPending in pending-store.js for what the comparison does.
-    //
-    // Live session first, persistence second, because both callers exist: a park
-    // for an OFFLINE-but-resumable seat (the reboot notice, a reminder firing at a
-    // name with no process) has no session object to read, and the persisted
-    // createdAt is the same value create() will hand that seat when its workspace
-    // restores it — which is exactly what makes the stamps match on arrival.
-    // That equality is what phase 3a bought: before it, every kill()-based restart
-    // re-minted the stamp and this comparison would have discarded live mail.
-    // Returns null when neither knows (a session the manager has never seen), and
-    // null means "no expectation" at both ends — deliver, never drop.
+    // The generation stamp for `name`: live session first, PERSISTENCE second — an
+    // offline-but-resumable park (the reboot notice, a reminder firing at a name with
+    // no process) has no session object, and the persisted createdAt is the same
+    // value create() will hand that seat on restore, which is what makes the stamps
+    // match on arrival. null means "no expectation" at both ends — deliver, never drop.
     _bornFor(name) {
       const s = this.sessions.get(name);
       if (s && typeof s.createdAt === 'number') return s.createdAt;
@@ -5944,10 +3786,6 @@ function createSessionManager(deps) {
       return null;
     }
 
-    // Mint a short, collision-free resend handle. Ids must be unique across ALL
-    // pending stores (resend carries only the id, not the target), so we retry
-    // against parkIdInUse; the 5-char base36 space (~60M) makes a collision rare
-    // even before the check.
     _mintParkId() {
       for (let i = 0; i < 50; i++) {
         const id = randBase36(5);
@@ -5973,26 +3811,8 @@ function createSessionManager(deps) {
       return id;
     }
 
-    // Park a delivery for a hook drain instead of injecting it now, in either of
-    // two cases: the operator is actively composing (drain rides the operator's
-    // next UserPromptSubmit), OR the target is mid-turn/busy (drain rides the
-    // PostToolUse hook, which fires between tool calls so a busy agent picks the
-    // DM up MID-LOOP as CLI-authored, natively-persisted additionalContext — not
-    // an in-memory _injectQueue stdin flush at the next idle edge). Returns true
-    // if parked (caller must not inject), false to fall through to a normal inject.
-    // Claude only — both drains ride Claude hook events Codex's surface lacks;
-    // Codex keeps the quiet-gate queue. Self-intents and memory/system lines route
-    // through _injectText directly (not here), so they never park — they're for
-    // the CLI/bookkeeping, not conversational deliveries.
-    //
-    // Exactly-once across the two hooks + the Node idle-edge drain + the park cap
-    // is guaranteed by drainPending's atomic rename-claim: whoever renames the dir
-    // first gets every message then present; the losers see ENOENT and emit nothing.
     _maybeParkDelivery(target, finalText) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
-      // "Composing" = a human touched the pane within the quiet window. Same
-      // signal the inject quiet-gate uses (covers local keystrokes AND a peer
-      // controller's input, both stamped at the write() choke point).
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
       // "Busy" = mid-turn ('thinking' from either the wire tracker or the JSONL
       // watcher). A busy DM used to flow to _injectText's busy-branch _injectQueue
@@ -6005,7 +3825,6 @@ function createSessionManager(deps) {
       try {
         parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
       } catch (e) {
-        // Parking is best-effort; never drop a DM. Fall back to a normal inject.
         log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
         return false;
       }
@@ -6013,13 +3832,6 @@ function createSessionManager(deps) {
       return true;
     }
 
-    // Non-destructive starvation cap: if the operator never submits (walked-away
-    // draft), parked deliveries would sit forever, since only a submit drains the
-    // hook. After INJECT_QUIET_MAXWAIT, drain them through the normal inject queue
-    // instead. The cap is now long (parking is non-destructive to a live draft, so
-    // there's no rush) — its only job is the abandoned-draft case. Self-checking
-    // against the hook: whoever wins the atomic dir-claim delivers; if the hook
-    // already drained on a submit, the cap-fire claim comes back empty and no-ops.
     _armParkCap(target) {
       if (target._parkCapTimer) return;         // earliest-parked deadline governs
       target._parkCapTimer = setTimeout(() => {
@@ -6028,15 +3840,6 @@ function createSessionManager(deps) {
       }, INJECT_QUIET_MAXWAIT);
     }
 
-    // Claim + drain the target's parked deliveries NOW and inject them through the
-    // normal (NON-parkable) path. Shared by the starvation cap (tag `cap.<pid>`)
-    // and the operator flush button (tag `flush.<pid>`). The claim is atomic, so it
-    // races safely with the UserPromptSubmit hook, the idle-edge drain, and each
-    // other — whoever renames the dir first delivers, the losers read empty and
-    // no-op. NON-parkable on purpose: re-arming the parkable divert here is what
-    // let a resent DM re-park itself (the recursion Bogdan hit); a manual flush must
-    // land. A mid-turn target still batches to its idle edge via _injectText's hold
-    // gate, so no torn turn. Returns { ok, count }.
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead) return { ok: true, count: 0 };
       let texts = [];
@@ -6059,18 +3862,6 @@ function createSessionManager(deps) {
       return { ok: true, count: texts.length };
     }
 
-    // Operator-initiated flush of a session's parked DMs (sidebar ✉ badge click).
-    // Operator-only by construction — reached via the session:flushPending
-    // ipcMain.handle, never an agent intent (agents keep [agent:resend] for id'd
-    // cost-holds; there is deliberately no agent-facing flush verb). Guards:
-    //   * unknown / non-claude / dead target → refuse, nothing to flush.
-    //   * dialog-blocked → REFUSE WITHOUT DRAINING. Draining would move the
-    //     durable, zero-loss parked files into the volatile in-memory inject queue
-    //     (lost on quit) where they'd sit behind the dialog anyway — and the Enter
-    //     that ends an injection would answer the open dialog. Leave them parked.
-    // On a successful claim, cancel the pending starvation cap (the messages are
-    // gone from the store) and push an immediate count:0 delta so the badge clears
-    // without waiting for the next poll tick.
     flushPending(name) {
       const target = this.sessions.get(name);
       if (!target || target.agentType !== 'claude' || target._dead) {
@@ -6088,47 +3879,20 @@ function createSessionManager(deps) {
 
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
-      // Hold gate (see _injectHoldReason): while the session is compacting,
-      // dialog-blocked, or mid-turn, queue instead of writing — the matching
-      // release event (or the safety valve) flushes the batch as one turn.
-      // Only the compact continuation and the flush itself bypass. (This is the
-      // TURN-batching layer — a separate concern from the byte-atomicity layer
-      // below, which every injection ultimately drains through.)
       if (!opts.bypassHold && this._injectHoldReason(session)) {
         (session._injectQueue = session._injectQueue || []).push(text);
         this._armInjectValve(session);
         return;
       }
-      // Byte-atomicity layer: hand the write to this session's serialized
-      // InjectQueue. It performs Ctrl-U + text + settle + Enter as one atomic
-      // unit (no interleave with a concurrent injection) and applies the typing
-      // quiet-gate before starting. The queue self-drains; callers stay
-      // fire-and-forget. Enter fires inside the queue's critical section (bailing
-      // if the PTY died) — same death-window guard as before, just serialized.
-      //
-      // Park-at-fire-time: conversational deliveries/notices pass parkable:true so
-      // the queue re-checks (via the divert) whether a draft opened during its
-      // quiet-gate wait and parks instead of splicing. OPT-IN by design, not
-      // opt-out: a missed tag just falls back to today's inject-through behavior
-      // (a possible splice, no worse than before), whereas parking a CLI-driving
-      // self-intent (compact/reload continuation, slash command) would stall the
-      // agent — so those stay unparkable by omission, which is the safe direction.
+      // parkable is OPT-IN, not opt-out: a missed tag falls back to inject-through (a
+      // possible splice, no worse than before), whereas parking a CLI-driving
+      // self-intent (compact/reload continuation, a slash command) would stall the
+      // agent. The divert re-checks for an open draft at write time, inside the
+      // queue's critical section.
       const divert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
       this._injectQueueFor(session).enqueue(text, divert ? { divert } : undefined);
     }
 
-    // Build the park-at-fire-time divert for a parkable injection, or null when
-    // parking doesn't apply (non-claude: the drain rides a Claude UserPromptSubmit
-    // hook Codex lacks — same gate as _maybeParkDelivery). The returned predicate
-    // is called by the InjectQueue right before it writes: if a draft is open at
-    // that instant, park the text for the operator's next submit (arming the
-    // non-destructive cap) and tell the queue to skip the write. Parking is
-    // best-effort — on failure it returns false so the delivery still injects.
-    // `id` (optional) is a resend handle to preserve across a re-park: a resent DM
-    // that hits an open draft at fire time re-parks under the SAME id, so a later
-    // [agent:resend <id>] still resolves it (without this the divert re-parked
-    // id-less and the handle died). Only the resend call site passes it; every
-    // other parkable delivery re-parks id-less as before.
     _parkDivertFor(session, id = null) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
@@ -6145,11 +3909,6 @@ function createSessionManager(deps) {
       };
     }
 
-    // Lazily build (and memoize on the session) the per-session InjectQueue. The
-    // seams read live session state each call: lastUserInputTs is stamped at the
-    // keystroke choke point in write() for BOTH local keystrokes AND peer-
-    // controller remote input, so the quiet-gate protects a remote controller's
-    // draft too, for free (no separate timestamp needed).
     _injectQueueFor(session) {
       if (!session._injectPtyQueue) {
         // Boot-readiness gate (T35): the first inject into a freshly spawned
@@ -6167,23 +3926,12 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           isDead: () => !!session._dead,
-          // Read live at each write: the CLI toggles 2004 around dialogs and
-          // teardown, so the wrap decision must track the CURRENT state, not
-          // the state when the item was enqueued.
           bracketedPaste: () => !!session._pasteModeOn,
-          // Boot-readiness seam: claude seats wait for the latched 2004 edge;
-          // everything else passes straight through (undefined ⇒ () => true).
           ready: isClaude ? () => !!session._bootReadySeen : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
-          // Observability: the boot cap forced an inject before the seat ever
-          // signalled ready (a CLI build that doesn't emit 2004, or a boot slower
-          // than the cap). Never suppress the inject — surface it and proceed.
           onReadyCapFire: isClaude ? () => {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
           } : null,
-          // Observability: the quiet-gate cap forced an inject through active
-          // typing (splice risk). Should drop to ~zero once parking handles DMs
-          // during composition — this line validates that.
           onCapFire: () => {
             log.warn('inject', `quiet-gate cap fired for ${session.name} — injected through active typing (${INJECT_QUIET_MAXWAIT / 1000}s cap)`);
             this._broadcast('ipc-message', {
@@ -6196,28 +3944,15 @@ function createSessionManager(deps) {
       return session._injectPtyQueue;
     }
 
-    // --- Incoming from external peers ---
 
     _onIncoming(targetName, msg) {
       const sender = msg.from || '?';
       const body = msg.body || '';
       const mtype = msg.type || 'dm';
-      // Passive delivery class (socket envelope opt-in, `delivery:'passive'`):
-      // ride-along notifications — monitor ticks and other telemetry-grade
-      // traffic that should reach the agent WITH its next organic turn (hook
-      // drains) but never generate a turn of its own. Anything else falls
-      // through to the normal wake path. Unknown values also fall through, so
-      // an old core paired with a newer tool degrades to today's behavior.
       if (msg.delivery === 'passive') {
         this._deliverPassive(targetName, sender, body, mtype);
         return;
       }
-      // Teams control envelope (teams-design.md [internal design doc, not in this repo]): retire = archive the
-      // session this socket belongs to, requested by a teammate via the
-      // clodex-team exec command. Routed here (not a new intent) because the
-      // socket already identifies the target and the exec grant already gates
-      // who can send. `from` is self-supplied in v1 (same documented limitation
-      // as clodex-monitor's agent field).
       if (mtype === 'team-retire') {
         this._handleTeamRetire(targetName, sender);
         return;
@@ -6225,23 +3960,6 @@ function createSessionManager(deps) {
       this._deliverMessage(targetName, sender, body, mtype);
     }
 
-    // Retire, requested over the target's socket. Authorization: requester
-    // session must exist and share the target's project (both cwds resolve to
-    // the SAME team.json root — the cwd-join rule). Message discipline: success
-    // confirms PASSIVELY to the requester (it asked; confirmation is not news),
-    // failures wake it.
-    //
-    // Disposition depends on the target's MANIFEST ROLE (resolveTeam +
-    // matchSeatRole against its own name): a persistent role (ephemeral:false,
-    // the default) archives — a resumable scale-down that keeps the record and
-    // rebuilds an archived sidebar row. An OFF-manifest seat (matches no role)
-    // or a role marked ephemeral:true is discarded — kill() drops the record so
-    // ephemeral workers don't pile up as archived rows we never resume; their
-    // durable output lives in the task artifact. These seats share the project
-    // cwd (no dedicated worktree), and kill() never touches a worktree anyway
-    // (that's the session:kill IPC handler's job, which we bypass here) — so a
-    // discard removes the record + PTY and nothing else. On any ambiguity
-    // (resolution throws) we DEFAULT TO ARCHIVE — never discard on doubt.
     _handleTeamRetire(targetName, requesterName) {
       const fail = (why) => {
         log.warn('intent', `team-retire ${requesterName} → ${targetName} refused: ${why}`);
@@ -6258,8 +3976,6 @@ function createSessionManager(deps) {
         fail(`"${requesterName}" and "${targetName}" are not in the same project (no shared team.json root)`);
         return;
       }
-      // Positively identify off-manifest / ephemeral seats; anything else (incl.
-      // a resolution failure) stays on the safe, recoverable archive path.
       let discard = false;
       try {
         const team = resolveTeam(target.cwd);
@@ -6270,10 +3986,6 @@ function createSessionManager(deps) {
         }
       } catch { discard = false; }
       const disposition = discard ? 'discard' : 'archive';
-      // Tell the owning window BEFORE the teardown so the renderer can route the
-      // row: archive → stash + rebuild as an archived row when the exit lands
-      // (mirrors the ✕ path's archivingSessions choreography); discard → let the
-      // exit remove the row like a delete (no archived placeholder).
       this._sendToSession(targetName, 'session:context-action', { action: 'retired', name: targetName, disposition });
       this._broadcast('ipc-message', {
         ts: Date.now(), from: requesterName, to: targetName, kind: 'retire',
@@ -6289,14 +4001,6 @@ function createSessionManager(deps) {
       }).catch((err) => fail(err.message));
     }
 
-    // Park a passive notification for an organic hook drain instead of waking
-    // the target. Claude-only (pending is a Claude-hook store) — Codex targets
-    // fall back to the normal wake path rather than dropping. Same drop-if-
-    // absent rule as _deliverMessage (a passive tick for a dead session has no
-    // one to ride with). No session-mention badge — passive means "no
-    // attention needed" — but the IPC drawer still logs it (observability).
-    // Park failure falls back to a normal delivery: degraded to noisy beats
-    // dropped.
     _deliverPassive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target) return;

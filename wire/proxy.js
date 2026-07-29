@@ -1,78 +1,10 @@
 'use strict';
 
-// Clodeux wire core: transparent API proxy with an SSE observer tee.
-// Seeded from clodex2 lib/proxy.js (tested + live-verified there), adapted
-// for Phase W1 of CLODEUX-PLAN.md. Differences from the clodex2 seed:
-//   - no IntentScanner: the wire does NOT scan intents. It emits
-//     'turn.completed' with the full normalized assistant text; the
-//     SessionManager's existing parseIntent consumes it (one intent
-//     grammar in the app, not two).
-//   - turn.completed carries { agent, sessionId, text, usage } so the
-//     consumer never has to join events to identify a turn.
-//
-// Invariant — TEE, DON'T TRANSFORM: the client receives the exact raw
-// upstream bytes (status, headers minus hop-by-hop, body). All parsing
-// happens on an observer copy; parser failures degrade to "no turn seen",
-// never to a broken session. The one deliberate exception is the codex
-// ChatGPT-backend REQUEST rewrite (auth injection), carried over as-is.
-//
-// Ordering contract (matches wirescope's): client bytes first, always.
-// 'turn.completed' and 'stream-end' fire strictly AFTER the final client
-// byte has been written.
-//
-// Events:
-//   'request'        { agent, provider, reqId, method, path }
-//   'response'       { agent, reqId, status, sse }
-//   'stream-start'   { agent, reqId }                  → activity: thinking
-//   'turn.started'   { agent, provider, reqId, sessionId, role, sideCall,
-//                      model }
-//                    W3: emitted at request-accept for exactly the calls
-//                    that will later produce a turn.completed (anthropic
-//                    POST /v1/messages, count_tokens excluded) — so a
-//                    started/completed in-flight counter can't leak. App-
-//                    side activity tracking opens 'thinking' here.
-//   'turn.completed' { agent, provider, reqId, sessionId, role, sideCall,
-//                      text, usage, truncated, model, status, billing, stop,
-//                      sessionTotals, warmth }
-//                    role: parent/unknown = main line; Plan/verification/
-//                    general-purpose/subagent = Task subs (see wire/role.js).
-//                    sideCall: title-generator / health-probe request.
-//                    billing/stop/sessionTotals (W2): the receipt — priced
-//                    tokens (wire/billing.js, usage_final contract), stop
-//                    facts incl. is_turn (terminal main-line response), and
-//                    a snapshot of the session's running totals. Python twin:
-//                    proxylab/receipts.py; the tee close is the one
-//                    turn-finalize convergence point in-process.
-//                    Fires for EVERY anthropic messages response — error
-//                    streams and non-SSE JSON error bodies too (empty text,
-//                    all-null usage, is_turn false), matching proxylab's
-//                    per-response receipt. count_tokens responses are
-//                    billed + accumulated (0-token, request-rate-limit
-//                    spend) but do NOT emit turn.completed, matching the
-//                    subscriber contract. status = upstream HTTP status.
-//                    warmth (W2 step 2): the prefix-ledger stamp record
-//                    (wire/warmth.js) when opts.warmth is set and the
-//                    response confirmed a cache event; null otherwise.
-//                    files: [{ tool, path }] — file-mutating tool calls
-//                    (Edit/Write/NotebookEdit) seen in this response's
-//                    stream (wire/sse.js FileToolCollector). Anthropic SSE
-//                    only; [] elsewhere. Feeds the touched-files UI.
-//                    reads: [{ tool:'Read', path, offset?, limit? }] — Read
-//                    calls seen in the stream (same collector, separate
-//                    channel; never overlaps files). Anthropic SSE only; []
-//                    elsewhere. Feeds the boiling-pot file-heat ranking.
-//   'stream-end'     { agent, reqId }                  → activity: idle
-//   'session'        { agent, sessionId, previous }    → persistence/--resume
-//                    fires on CHANGE only (first sight or /clear rotation),
-//                    and only from main-line non-side-call turns.
-//   'usage'          { agent, reqId, usage }           → cost/ctx telemetry
-//   'proxy-error'    { agent, reqId, error }
-//   'tee-failure'    { agent, reqId, error }
-//                    the OBSERVER died for this stream; the client keeps
-//                    receiving raw bytes untouched. Contract (reviewer
-//                    condition, CLODEUX-PLAN.md): when the app makes wire
-//                    events load-bearing (W3), a tee-failure must disable
-//                    ALL wire-fed controls visibly — never a partial set.
+// Tee, don't transform: the client receives the exact raw upstream bytes.
+// All parsing happens on an observer copy; parser failures degrade to "no
+// turn seen", never to a broken session. Ordering: client bytes first,
+// always — 'turn.completed' and 'stream-end' fire strictly after the final
+// client byte. A 'tee-failure' must disable ALL wire-fed controls, never some.
 
 const http = require('http');
 const https = require('https');
@@ -106,14 +38,8 @@ const DEFAULT_UPSTREAMS = {
   openai: 'https://chatgpt.com/backend-api/codex',
 };
 
-// Cap on accumulated turn text. A turn past this size keeps streaming to
-// the client untouched; the observer just stops appending and marks the
-// event truncated (intents live at column 1 of ordinary-sized turns).
 const TURN_TEXT_CAP = 4 * 1024 * 1024;
 
-// ---------------------------------------------------------------------------
-// ChatGPT-backend mode — codex ChatGPT-subscription auth.
-// ---------------------------------------------------------------------------
 
 const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
 
@@ -134,8 +60,6 @@ function readCodexAuth() {
   }
 }
 
-// Strip /v1 prefix and inject ChatGPT OAuth headers. Leaves everything
-// untouched when the auth file is unreadable.
 function rewriteChatgptRequest(upstreamPath, headers) {
   const { accessToken, accountId } = readCodexAuth();
   if (!accessToken) return upstreamPath;
@@ -189,25 +113,8 @@ function extractSessionId(bodyBuf) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Proxy
-// ---------------------------------------------------------------------------
 
 class WireProxy extends EventEmitter {
-  // opts:
-  //   host        default 127.0.0.1 (do not bind wider without a reason)
-  //   port        default 0 (ephemeral; read back from listen())
-  //   upstreams   { anthropic, openai } URL overrides
-  //   requireTokens  when true, every registered agent needs a token and
-  //                  requests must carry it as the first path segment after
-  //                  the agent name: /agent/<name>/<token>/v1/...
-  //   warmth      a wire/warmth WarmthStore; when set, every cache-confirmed
-  //               anthropic response stamps the prefix ledger and
-  //               turn.completed carries the warmth record. null = off.
-  //   hold        a wire/hold HoldKeeper; when set, every MAIN-LINE
-  //               anthropic messages request is cached as the session's
-  //               replayable last request (keep-warm ping source) and
-  //               re-anchors any armed hold. null = off.
   constructor(opts = {}) {
     super();
     this.host = opts.host || '127.0.0.1';
@@ -249,21 +156,9 @@ class WireProxy extends EventEmitter {
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
-  // Register an agent and mint its token. Returns the base URL to put in
-  // the CLI's env (ANTHROPIC_BASE_URL / equivalent). The token is the
-  // closed-loop guarantee: it only ever exists in the app's memory and the
-  // spawned CLI's environment, so nothing else on the machine can speak
-  // for this agent.
-  //
-  // Spawn-time identity binding (closes the pre-first-request window the
-  // external proxy had): registration happens BEFORE the PTY spawns, and a
-  // resume can pre-bind the known sessionId so the proxy never has an
-  // unbound agent. The binding then tracks the CLI's declared identity
-  // ('session' fires only on change — first sight or /clear rotation).
-  // opts.upstreams: per-agent { provider: baseUrl } overrides — the
-  // chaining mechanism: a session already routed through an external
-  // wirescope keeps that path (upstream = the wirescope agent base) while
-  // the in-process wire observes in front. Same bytes end-to-end.
+  // The token exists only in the app's memory and the spawned CLI's env —
+  // nothing else on the machine can speak for this agent. Registration must
+  // happen before the PTY spawns, so the proxy never has an unbound agent.
   registerAgent(name, opts = {}) {
     if (opts.sessionId) this._agentSessions.set(name, opts.sessionId);
     if (opts.upstreams) this._agentUpstreams.set(name, { ...opts.upstreams });
@@ -363,10 +258,6 @@ class WireProxy extends EventEmitter {
     const { agent, provider, reqId, upstreamBase, chatgptMode, body, query } = ctx;
     let upstreamPath = ctx.upstreamPath;
 
-    // Session identity + role classification ride in the request body.
-    // Observer-side: a parse failure degrades to null role, never a broken
-    // request. Anthropic wire only — codex carries neither the billing
-    // header nor metadata-embedded identity (hook path covers codex in W1).
     let sessionId = null;
     let role = null;
     let sideCall = false;
@@ -383,8 +274,6 @@ class WireProxy extends EventEmitter {
           sideCall = isTitleCall(obj) || isProbeCall(obj);
           role = this._roles.classify(obj, sessionId, agentId);
           if (!sideCall && !isSubagentRole(role)) {
-            // Durable main line: stamp the content fingerprint (the
-            // stale-agent-id backstop) and own the agent↔session binding.
             this._roles.noteMainFingerprint(sessionId, obj);
             if (sessionId) this._bindSession(agent, sessionId);
           }
@@ -392,11 +281,8 @@ class WireProxy extends EventEmitter {
       } catch { /* not JSON — nothing to observe */ }
     }
 
-    // Turn-open observation (W3 intent cutover: app-side activity tracking).
-    // Emitted for exactly the requests that will later produce a
-    // turn.completed — anthropic POST /v1/messages, count_tokens excluded
-    // (it bills but never emits a turn receipt) — so started/completed pair
-    // 1:1 and an in-flight counter can't leak. Observation only.
+    // count_tokens is excluded: it bills but never emits turn.completed, so
+    // started/completed stay 1:1 and an in-flight counter can't leak.
     if (provider === 'anthropic' && req.method === 'POST'
         && upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages')) {
       this.emit('turn.started', { agent, provider, reqId, sessionId, role, sideCall, model });
@@ -418,12 +304,9 @@ class WireProxy extends EventEmitter {
       return this._json(res, 502, { error: `bad upstream url: ${e.message}` });
     }
 
-    // Replayable last request + hold re-anchor (wire/hold.js): only the
-    // MAIN LINE of a messages call is the session's durable, pingable
-    // request — a subagent, title side-call, or quota probe shares the
-    // session_id but is transient, and must not replace what a ping
-    // replays nor re-anchor the keep-warm hold (else we'd keep a finished
-    // subagent's context warm, or pin a one-token probe as the body).
+    // Main line only: a subagent, title side-call or quota probe shares the
+    // session_id but is transient — caching one as the replayable request
+    // would keep a finished subagent warm or pin a one-token probe as body.
     if (this.hold && provider === 'anthropic' && req.method === 'POST'
         && bodyObj && sessionId && !sideCall && !isSubagentRole(role)
         && ctx.upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages')) {
@@ -441,11 +324,8 @@ class WireProxy extends EventEmitter {
       const sse = detectSse(upRes.headers['content-type'], chatgptMode, req.method, ctx.upstreamPath);
       this.emit('response', { agent, reqId, status: upRes.statusCode, sse });
 
-      // Second guard level (the first is inside _buildTee): even a tee
-      // whose construction or entry points are broken cannot touch the
-      // client path. On the first throw the tee is dropped for this
-      // stream and 'tee-failure' fires; stream-end still pairs with
-      // stream-start so activity state can't wedge.
+      // On the first tee throw the tee is dropped for this stream; stream-end
+      // must still pair with stream-start so activity state can't wedge.
       let tee = null;
       let streamEnded = !sse; // stream-start/-end pair exists only for SSE
       const teeFail = (e) => {
@@ -469,9 +349,6 @@ class WireProxy extends EventEmitter {
             upRes.headers['content-encoding']);
         } catch (e) { teeFail(e); }
       } else if (provider === 'anthropic' && req.method === 'POST') {
-        // Non-SSE anthropic replies (W2 step 4): count_tokens results and
-        // JSON messages bodies (error responses, stream:false) still get a
-        // receipt, so request counts match proxylab's.
         const base = ctx.upstreamPath.replace(/\/+$/, '');
         const isCount = base.endsWith('/count_tokens');
         if (isCount || base.endsWith('/v1/messages')) {
@@ -512,7 +389,6 @@ class WireProxy extends EventEmitter {
           if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
         }
       });
-      // Client gave up mid-stream — stop pulling from upstream, flush tee.
       res.on('close', () => {
         if (!res.writableEnded) {
           upRes.destroy();
@@ -533,17 +409,12 @@ class WireProxy extends EventEmitter {
     else upReq.end();
   }
 
-  // Observer pipeline: raw bytes → decompress → SSE frames → text deltas →
-  // turn accumulator (+ usage collector for anthropic). Emission order on
-  // stream close: 'usage' → 'turn.completed' → 'stream-end', all strictly
-  // after the client's final byte. Consumers wanting main-line turns only
-  // (intent scanning) filter role parent/unknown + sideCall false.
+  // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
+  // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
     const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
-    // Touched-files observer (anthropic only; see wire/sse.js). Same containment
-    // as the other collectors: a throw lands in `fail`, never the client path.
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
     let text = '';
     let truncated = false;
@@ -579,9 +450,6 @@ class WireProxy extends EventEmitter {
         closed = true;
         decomp.end(() => {
           try {
-            // Receipt convergence (receipts.py's job, in-process): parse →
-            // bill → accumulate → one event. Anything downstream of "a turn
-            // happened" hangs off turn.completed, not a second closure.
             let usageRecord = null;
             let bill = null;
             let stop = null;
@@ -600,9 +468,6 @@ class WireProxy extends EventEmitter {
                   stop_reason: usage.stopReason,
                   stop_details: usage.stopDetails,
                   request_id: requestId,
-                  // one terminal response = one completed user turn
-                  // (refusal/max_tokens still END a turn; tool_use is a
-                  // mid-turn hop). Side-calls + subagents don't count.
                   is_turn: !sideCall && (role === 'parent' || role === 'unknown')
                     && usage.stopReason != null && usage.stopReason !== 'tool_use',
                 };
@@ -619,11 +484,8 @@ class WireProxy extends EventEmitter {
               }
             }
             if (usageRecord) this.emit('usage', { agent, reqId, usage: usageRecord });
-            // Anthropic emits a receipt for EVERY messages response — but
-            // only from a healthy observer: a quietly-dead decompressor saw
-            // an unknown truncation, and an empty receipt synthesized from
-            // that would be a confident lie. Partial data (text/usage seen
-            // before death) still emits, as it always did.
+            // A quietly-dead decompressor saw an unknown truncation; an empty
+            // receipt synthesized from that would be a confident lie.
             if (!dead && ((provider === 'anthropic' && !decomp.dead) || text || usageRecord)) {
               this.stats.turnsCompleted += 1;
               let sessionTotals = null;
@@ -632,18 +494,10 @@ class WireProxy extends EventEmitter {
                 this.billing.accumulate(bill, sessionKey, stop);
                 sessionTotals = { ...this.billing.session(sessionKey) };
               }
-              // Prefix-warmth stamp (response-confirmed; wire/warmth.js).
-              // Parity detail: the stamping decision reads the cache fields
-              // from message_start ONLY (proxylab's flat usage parse) — the
-              // merged record could flip a 0→nonzero across iterations.
-              // All anthropic turns stamp, side-calls and subagents too
-              // (content-addressed; matches receipts.py, which never role-
-              // gates the ledger). The session HEAD, though, advances on
-              // main-line turns only: a subagent shares the session_id, and
-              // letting its 5m-TTL prefix repoint the head makes the badge's
-              // per-session warmth flip-flop and lapses read as spurious
-              // cold-resumes. record() skips head + cold-resume when the
-              // session is null, so the gate rides the sessionId argument.
+              // Stamp from message_start's cache fields ONLY — the merged
+              // record can flip a 0→nonzero across iterations. The session
+              // HEAD must advance on main-line turns only: a subagent shares
+              // the session_id and its 5m-TTL prefix would flip the badge.
               let warmthRec = null;
               if (this.warmth && provider === 'anthropic' && bodyObj) {
                 const us = usage.usageStart || {};
@@ -667,16 +521,6 @@ class WireProxy extends EventEmitter {
     };
   }
 
-  // Non-SSE observer (W2 step 4): anthropic messages/count_tokens replies
-  // that come back as plain JSON — count_tokens results, error bodies,
-  // stream:false messages. proxylab finalizes these through the same
-  // receipts convergence, so the wire does too: count_tokens bills a
-  // 0-token request-rate-limit spend (no turn.completed — matches the
-  // subscriber contract); a JSON messages body bills as an all-null-usage
-  // request (proxylab's SSE usage parse over a JSON body yields nulls —
-  // parity over cleverness) and emits turn.completed with empty text.
-  // Body buffered observer-side only, capped; the client stream is
-  // untouched either way.
   _buildJsonTee(turnCtx, contentEncoding, isCount) {
     const { agent, provider, reqId, sessionId, role, sideCall, model, requestId, status } = turnCtx;
     const chunks = [];
@@ -732,11 +576,6 @@ class WireProxy extends EventEmitter {
 
 module.exports = { WireProxy, extractSessionId, detectSse };
 
-// ---------------------------------------------------------------------------
-// Standalone runner — smoke testing without the app shell:
-//   node wire/proxy.js [port]
-// Prints every event; point a CLI at http://127.0.0.1:<port>/agent/<name>.
-// ---------------------------------------------------------------------------
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });

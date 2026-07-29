@@ -1,20 +1,7 @@
-// sandbox.js — one-button local Docker sandbox lifecycle (sandbox-plan.md [internal design doc, not in this repo] M1).
-//
-// A desktop user clicks Start and gets the web-frontend container (docker/web/
-// {Dockerfile,compose.yaml}) running as a LOCAL peer: engine + web frontend +
-// wirescope + peer wire, all published to loopback. The sandbox IS a peer
-// (id `sandbox`) whose lifecycle this module owns; sandbox sessions then appear
-// in the sidebar's peer section like any other peer's.
-//
-// Electron-free, deps-injected like session-manager — so it's unit-testable with
-// spawn/docker mocked and never require()s electron. The pure parts (compose
-// bytes, port-bump, image resolution, ps parsing) are exported directly for the
-// unit suite; createSandbox(deps) wraps them with the stateful config + spawn I/O.
-//
-// Config authoritative, file derived: <userData>/sandbox/compose.yaml is
-// regenerated from the ui-settings `sandbox` config on EVERY Start — never
-// hand-edited, never the source of truth. The M4 auth env_file is a SEPARATE
-// file referenced by path; secrets are NEVER written into the compose bytes.
+// Electron-free and deps-injected: this module must never require('electron'),
+// so the unit suite can drive it with spawn/docker mocked.
+// <userData>/<subdir>/compose.yaml is regenerated from the config on every
+// Start — never hand-edited, never the source of truth.
 'use strict';
 
 const cp = require('child_process');
@@ -26,14 +13,8 @@ const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
 const { createDetectCache } = require('./detect-cache');
 
-// Host-port defaults — Clodex's service neighborhood (web 7810, wirescope 7811,
-// peer wire 7820), matching docker/web/compose.yaml. Collision-bumped at
-// generation time by probing listeners (resolvePorts).
 const DEFAULT_PORTS = { web: 7810, wirescope: 7811, wire: 7820 };
 
-// Full persisted config shape (ui-settings `sandbox`). workDir null = a named
-// volume (work survives `down` but lives inside Docker); a host path = bind mount
-// (work lands on the user's disk). image null = default resolution (resolveImage).
 const DEFAULT_CONFIG = {
   workDir: null,
   webPort: DEFAULT_PORTS.web,
@@ -41,87 +22,47 @@ const DEFAULT_CONFIG = {
   wirePort: DEFAULT_PORTS.wire,
   autoStart: false,
   image: null,
-  // M6a: user-defined extra bind mounts. Each entry is { host, container?, ro? }
-  // — host an absolute host folder, container an optional explicit target
-  // (derived from the host basename when omitted), ro an optional read-only flag
-  // (defaults to read-WRITE: agents are meant to work in mounted folders). These
-  // are ADDITIVE to workDir and the library binds; they attach only at container
-  // create, so a change takes effect on the next Start.
   mounts: [],
 };
 
-// Load-bearing container paths a user mount must never shadow — the box's data
-// volume, work dir, IPC/.clodex tree, and Claude auth. A user target that equals,
-// nests under, or is an ancestor of any of these would break the box, so
-// normalizeMounts refuses it rather than silently generating a broken compose.
 const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.claude'];
-// Where derived mount targets land — beside the work dir, so a mounted project
-// sits next to it in the box's home.
 const MOUNT_TARGET_ROOT = '/home/clodex';
-// Container path the work dir binds to (generateCompose's `/home/clodex/work`
-// literal + placement.js SANDBOX_PLACEMENT_CWD). Named here as the host→container
-// translation authority; the compose bytes keep their pinned literal.
 const WORK_CONTAINER_DIR = '/home/clodex/work';
 
 // Container-side ports — FIXED by the image (docker/web/Dockerfile env), so the
 // host publishes map host<config> → container<these>. Not user-configurable.
 const CONTAINER_PORTS = { web: 8080, wirescope: 7800, wire: 7900 };
 
-// Host library dirs bind-mounted READ-ONLY into the box so its skill/agent/
-// prompt/exec catalogs mirror the host's live (M5, sandbox-plan.md [internal design doc, not in this repo]
-// Decision 7). One `library` bind covers both prompts (library/prompts) and
-// exec (library/exec). These layer ON TOP of the clodex-dot named volume,
-// SHADOWING these subpaths — intended: the box READS host libraries but still
-// WRITES run/, messages/, pending/, registry into the volume underneath, so its
-// own agent IPC is untouched. Libraries are live-read (no boot snapshot), so
-// host edits reach a running box on its next access, no restart.
+// Read-only host binds layered on top of the clodex-dot volume, deliberately
+// SHADOWING these subpaths: the box reads host libraries live while still
+// writing run/, messages/, pending/, registry into the volume underneath.
 const LIBRARY_MOUNT_DIRS = ['skills', 'agents', 'library'];
 
 const GHCR_REPO = 'ghcr.io/avirtual/clodex';
 
-// The managed peer's stable identity — the row the app adds/updates on the peer
-// list. id is what registerPeer keys off (idempotent, never duplicated).
 const SANDBOX_PEER_ID = 'sandbox';
 const SANDBOX_PEER_LABEL = 'sandbox';
 
-// The charset a NEWLY-created box id must satisfy (M6b P2). Tighter than the
-// session-name charset stores.sanitizeBoxes admits: docker derives the compose
-// PROJECT name from the box's compose-dir basename (sandbox-<id>), and project
-// names disallow dots + uppercase (`[a-z0-9][a-z0-9_-]*`) — two ids differing only
-// in case/dots would collapse to one project and share volumes. So creation, the
-// only path minting new ids, is gated here; the sanitizer stays broad so an
-// already-persisted row (or the legacy 'sandbox' id) is never eaten.
+// Docker derives the compose project name from this id, and project names
+// disallow dots and uppercase — two ids differing only in case would collapse
+// to one project and share volumes. Creation is gated here; the store's
+// sanitizer stays broader so a persisted row is never eaten.
 const BOX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-// Reserved box ids (M6b P3). The New Session placement selector carries the box id
-// as its <option> value, with 'host' meaning "this Mac" — so a box literally named
-// 'host' would shadow the host option and make its placement unaddressable. Reject
-// it at create (and drop it in the store's sanitizer) so the two value-spaces never
-// collide. BOX_ID_RE alone WOULD admit 'host'; this is the extra gate.
+// 'host' is the placement selector's value for "this Mac", so a box with that
+// id would be unaddressable. BOX_ID_RE alone would admit it.
 const RESERVED_BOX_IDS = new Set(['host']);
 
-// `docker info` guard — a hung daemon shouldn't wedge detection forever.
 const DETECT_TIMEOUT_MS = 4000;
-// How far past each desired port to probe for a free one when bumping.
 const PORT_SCAN_WINDOW = 40;
 
-// ── Pure helpers (unit-tested; no I/O) ──────────────────────────────────────
 
-// Resolve the compose image directive. Packaged app → a pinned GHCR tag (DMG
-// users have no checkout to `docker compose build` from). Dev (!isPackaged) →
-// a `build:` block from the repo checkout — exactly today's docker/web/
-// compose.yaml, keeping the dev loop free of GHCR. An explicit override always
-// wins, in any state.
 function resolveImage({ isPackaged, appVersion, override, repoRoot }) {
   if (override) return { kind: 'image', image: override };
   if (isPackaged) return { kind: 'image', image: `${GHCR_REPO}:${appVersion}` };
   return { kind: 'build', context: repoRoot, dockerfile: 'docker/web/Dockerfile' };
 }
 
-// First free port at or above `desired`, skipping any a listener already holds
-// (isBusy) AND any an earlier port in the same generation already claimed
-// (taken) — so the three publishes can never collapse onto one number. isBusy
-// is injected so the probe is testable; `taken` accumulates across the three.
 function nextFreePort(desired, isBusy, taken) {
   const claimed = taken || new Set();
   let p = desired;
@@ -130,9 +71,6 @@ function nextFreePort(desired, isBusy, taken) {
   return p;
 }
 
-// Bump all three host ports off collisions, in order (web, wirescope, wire).
-// isBusy(port) is a SYNC predicate — the factory pre-probes into a Set so this
-// stays pure and testable.
 function resolvePorts(config, isBusy) {
   const c = { ...DEFAULT_CONFIG, ...(config || {}) };
   const taken = new Set();
@@ -143,26 +81,14 @@ function resolvePorts(config, isBusy) {
   };
 }
 
-// Default container path for a host folder: /home/clodex/<basename>. Mirrors the
-// work dir's neighborhood so mounted projects sit beside it in the box's home.
 function defaultMountTarget(hostPath) {
   return path.posix.join(MOUNT_TARGET_ROOT, path.basename(hostPath));
 }
 
-// Two container targets conflict when either contains the other (equal, one
-// nested in the other) — a bind at /home/clodex would swallow every reserved
-// subpath, a bind at /home/clodex/.clodex/x sits inside a reserved one.
 function mountTargetsConflict(a, b) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
-// Normalize + validate the user mounts array into resolved { host, container, ro }
-// binds. PURE (no fs — host-existence is a separate on-save check): returns
-// { mounts } on success, or { error } on the first violation. Rules: host and any
-// explicit target must be absolute; a target must not shadow a RESERVED_MOUNT_TARGET
-// (equal/nested/ancestor); explicit duplicate targets are rejected. An omitted
-// target derives from the host basename, with deterministic `-N` suffixes when two
-// hosts share a basename. Blank rows (no host) are skipped — the editor may hold one.
 function normalizeMounts(rawMounts) {
   const out = [];
   const taken = new Set();
@@ -194,12 +120,9 @@ function normalizeMounts(rawMounts) {
   return { mounts: out };
 }
 
-// The docker-compose PROJECT name for a box (M6b P2). Passed explicitly via
-// `-p` so per-box volume/network/container namespaces are keyed off the box id
-// rather than the compose-file's parent-dir basename (which docker would derive
-// otherwise). Compose project names allow only `[a-z0-9][a-z0-9_-]*`, so any junk
-// is lowercased and coerced; box ids are already gated to that charset at create,
-// so this is defensive. Empty/degenerate input falls back to the shared id.
+// Passed explicitly via -p so each box's volume/network namespace keys off the
+// box id rather than the compose file's parent-dir basename, which docker
+// would otherwise derive.
 function composeProjectName(id) {
   const cleaned = String(id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^[^a-z0-9]+/, '');
   return cleaned || SANDBOX_PEER_ID;
@@ -216,14 +139,6 @@ function relUnder(child, parent) {
   return rel.split(path.sep).join('/');
 }
 
-// Translate a HOST folder to its container path IF the box can already see it:
-// under the work dir (→ /home/clodex/work[/rel]) or under any configured mount
-// (→ that mount's container target + rel). normalizeMounts is the derivation
-// authority for mounts without an explicit target (basename + `-N` collisions) —
-// NOT reimplemented here. Longest matching host prefix wins, so a mount nested
-// under workDir maps to the (more specific) mount. Returns { container } when
-// reachable, else { reachable: false } so the caller can offer to add a mount.
-// PURE over an explicit config; the factory method wraps it with getConfig().
 function translatePath({ hostPath, workDir, mounts }) {
   const host = String(hostPath || '').trim();
   if (!host || !path.isAbsolute(host)) return { reachable: false };
@@ -231,7 +146,6 @@ function translatePath({ hostPath, workDir, mounts }) {
   if (workDir) candidates.push({ host: workDir, container: WORK_CONTAINER_DIR });
   const norm = normalizeMounts(mounts);
   if (!norm.error) for (const m of norm.mounts) candidates.push({ host: m.host, container: m.container });
-  // Longest host prefix first — the most specific mount wins over an ancestor.
   candidates.sort((a, b) => b.host.length - a.host.length);
   for (const c of candidates) {
     const rel = relUnder(host, c.host);
@@ -240,12 +154,6 @@ function translatePath({ hostPath, workDir, mounts }) {
   return { reachable: false };
 }
 
-// Generate the compose.yaml bytes from a config. Mirrors docker/web/compose.yaml
-// (hostname sandbox, three loopback publishes, named vols, init, restart:always,
-// healthcheck) with image/ports/work-volume swapped in. `image` is a
-// resolveImage() result, `ports` a resolvePorts() result. authEnvFile (M4) is a
-// path to a SEPARATE env file — referenced via env_file, never inlined; null in
-// M1 so no secrets ever land in these bytes.
 function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname }) {
   // The container hostname IS the engine's SELF_LABEL on the peer wire, so it must
   // be UNIQUE per managed box or two boxes would both self-identify as 'sandbox'
@@ -259,8 +167,6 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('');
   L.push('services:');
   L.push('  clodex:');
-  // Stable hostname = the engine's SELF_LABEL on the peer wire (DM reply routing
-  // breaks without it — docker/web/compose.yaml learned this live, 34dbe31).
   L.push(`    hostname: ${boxHostname}`);
   if (image.kind === 'build') {
     L.push('    build:');
@@ -280,9 +186,6 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('      CLODEX_WEB_TOKEN: "${CLODEX_WEB_TOKEN:-}"');
   L.push('      CLODEX_WORKSPACES: "${CLODEX_WORKSPACES:-default}"');
   L.push(`      CLODEX_WIRESCOPE_PUBLIC_URL: "\${CLODEX_WIRESCOPE_PUBLIC_URL:-http://localhost:${ports.wirescope}}"`);
-  // M4 hook point: reference the auth env_file ONLY when one exists on disk.
-  // Quoted like the workDir bind: userData paths carry spaces ("Application
-  // Support") and an unquoted ` #` would truncate the YAML scalar.
   if (authEnvFile) {
     L.push('    env_file:');
     L.push(`      - "${authEnvFile}"`);
@@ -290,20 +193,12 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('    volumes:');
   L.push('      - clodex-data:/data');
   L.push('      - clodex-dot:/home/clodex/.clodex');
-  // Read-only host library binds layered ON TOP of clodex-dot (see
-  // LIBRARY_MOUNT_DIRS) — they SHADOW those subpaths so box catalogs mirror the
-  // host, live, while the volume underneath keeps the box's own writes (run/,
-  // messages/, pending/, registry). Double-quoted like the workDir bind:
-  // ~/.clodex can sit under a home path with spaces, and an unquoted ` #` would
-  // truncate the YAML scalar.
   if (libDir) {
     for (const d of LIBRARY_MOUNT_DIRS) {
       L.push(`      - "${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro"`);
     }
   }
   L.push('      - claude-auth:/home/clodex/.claude');
-  // A host bind-mount when workDir is set (work lands on the user's disk),
-  // else a named volume (survives `down` but lives inside Docker).
   if (workDir) {
     // Double-quoted: a host path with YAML-special chars (`#` truncates, leading
     // specials can change the node type) must survive verbatim as the source.
@@ -311,12 +206,9 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   } else {
     L.push('      - clodex-work:/home/clodex/work');
   }
-  // M6a: user-defined extra bind mounts, appended after the box's own volumes so
-  // they never precede (and can't be shadowed by) the load-bearing binds above.
-  // normalizeMounts derives targets, refuses reserved-path shadows, and rejects
-  // duplicates — a violation THROWS here so up/rebuild surface it instead of
-  // writing a broken compose. Sources double-quoted like the workDir/lib binds
-  // (a host path with spaces or a ` #` would otherwise truncate the YAML scalar).
+  // Appended AFTER the box's own volumes so a user bind can never precede (and
+  // shadow) the load-bearing ones. A normalizeMounts violation throws rather
+  // than writing a broken compose.
   const resolvedMounts = normalizeMounts(mounts);
   if (resolvedMounts.error) throw new Error(resolvedMounts.error);
   for (const mnt of resolvedMounts.mounts) {
@@ -335,20 +227,15 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('  clodex-data:');
   L.push('  clodex-dot:');
   L.push('  claude-auth:');
-  // The work named volume is only declared when it's actually used (no workDir).
   if (!workDir) L.push('  clodex-work:');
   L.push('');
   return L.join('\n');
 }
 
-// Extract the three host ports an EXISTING generated compose.yaml already
-// publishes — the `127.0.0.1:<host>:<container>` lines. These are OURS: on a
-// re-up (container running, or Start clicked twice, or autoStart with the box
-// up) a live-connect probe would read our own published ports as busy and bump
-// all three, drifting the ports (and the peer url) upward on every Start. The
-// caller subtracts these from the busy set so holding our own ports is never a
-// collision — keeping ports stable across re-ups while still regenerating on
-// every Start. Returns [] for missing/garbage input.
+// The ports an existing generated compose.yaml already publishes are OURS: a
+// live-connect probe would read them as busy and bump all three, drifting the
+// ports (and the peer url) upward on every re-up. Callers subtract these from
+// the busy set.
 function parseOwnPorts(yamlText) {
   const out = [];
   if (!yamlText) return out;
@@ -359,12 +246,6 @@ function parseOwnPorts(yamlText) {
   return out;
 }
 
-// Map an existing generated compose.yaml's published host ports back to their
-// roles by the CONTAINER port each targets — the `127.0.0.1:<host>:<container>`
-// lines. Unlike parseOwnPorts' flat list, this is order-independent (keyed off the
-// fixed CONTAINER_PORTS) so status() can report the EFFECTIVE (possibly bumped)
-// host ports per role. Returns { web?, wirescope?, wire? } with only the roles
-// present; {} for missing/garbage input.
 function parseOwnPortMap(yamlText) {
   const out = {};
   if (!yamlText) return out;
@@ -401,8 +282,6 @@ function parsePsRows(stdout) {
   return rows;
 }
 
-// Reduce compose ps rows to one lifecycle state for the clodex service:
-// 'running' | 'exited' | 'absent'. No rows = never created / fully removed.
 function parseComposeState(stdout) {
   const rows = parsePsRows(stdout);
   if (!rows.length) return 'absent';
@@ -412,14 +291,7 @@ function parseComposeState(stdout) {
   return 'exited';
 }
 
-// ── Docker detection: probe + cache + error mapping ─────────────────────────
 
-// Raw `docker info` probe (the old inline detect body, hoisted so the manager's
-// cache can drive it with one shared `spawn`). `docker info` distinguishes "not
-// installed" (spawn ENOENT → present:false) from "daemon not running" (CLI runs,
-// non-zero exit → present:true, running:false) from healthy (exit 0 →
-// running:true). A hung daemon trips DETECT_TIMEOUT_MS and reads as
-// present-but-not-running. Never rejects.
 function probeDocker(spawn) {
   return new Promise((resolve) => {
     let child;
@@ -447,9 +319,6 @@ function probeDocker(spawn) {
   });
 }
 
-// createDetectCache lives in the shared detect-cache.js leaf now (Task 12) so
-// tool-doctor.js can reuse the same TTL+dedupe without depending on this whole
-// module. Re-exported below so this file's unit suite still imports it from here.
 
 // Operator-facing docker-remedy copy. KEEP IN SYNC with
 // renderer/lib/sandbox-view.js detectNotice — the dialog shows the same two
@@ -458,10 +327,6 @@ function probeDocker(spawn) {
 const DOCKER_ABSENT_MSG = 'Docker isn’t installed — sandboxes need Docker Desktop.';
 const DOCKER_DOWN_MSG = 'Docker daemon isn’t running — start Docker Desktop.';
 
-// Map a compose stderr / spawn-error string to the friendly docker-unavailable
-// copy, or null when the failure is a genuine compose error (which keeps its own
-// stderr). Callers that get a non-null result also invalidate the detect cache so
-// the dialog reflects the daemon that just went away.
 function dockerUnavailableError(stderr) {
   const s = String(stderr || '');
   if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon is not running|error during connect/i.test(s)) {
@@ -473,7 +338,6 @@ function dockerUnavailableError(stderr) {
   return null;
 }
 
-// ── Factory ─────────────────────────────────────────────────────────────────
 
 function createSandbox(deps = {}) {
   // Individual consts (not a destructure-with-defaults) so each dep name is
@@ -488,33 +352,10 @@ function createSandbox(deps = {}) {
   const repoRoot = deps.repoRoot || __dirname;
   const isPortInUse = deps.isPortInUse || defaultIsPortInUse;
   const log = deps.log || { info() {}, error() {} };
-  // Docker detection + cache-invalidation seams. The manager injects the shared
-  // (cached, docker-wide) probe so s.detect() returns the stamped payload and a
-  // late compose failure can invalidate it. A BARE createSandbox() (unit tests,
-  // standalone) falls back to the raw uncached probe and a no-op invalidate.
   const detect = deps.detect || (() => probeDocker(spawn));
   const invalidateDetect = deps.invalidateDetect || (() => {});
-  // Host ~/.clodex root — the source of the read-only library binds. Injected by
-  // engine.js as REGISTRY_DIR; defaults to ~/.clodex for standalone/test use.
   const registryDir = deps.registryDir || path.join(os.homedir(), '.clodex');
 
-  // ── Box identity (M6b P1: N instances, one shape) ───────────────────────────
-  // Every field defaults to the shared box so a bare createSandbox() (and every
-  // existing single-box test) behaves EXACTLY as before. The manager overrides
-  // them per box:
-  //   id/boxLabel — the peer row id/label AND the container hostname (SELF_LABEL
-  //                 on the wire), so each box self-identifies uniquely.
-  //   subdir      — the per-box compose dir under <userData> (isolates each box's
-  //                 generated compose.yaml + auth.env). The compose PROJECT name
-  //                 (which prefixes every named volume, giving per-box volume
-  //                 namespaces) is set EXPLICITLY via -p composeProjectName(id).
-  //   readBoxConfig/writeBoxConfig — the config seam. The manager routes these to
-  //                 the box's row in the `boxes` registry; the bare default here
-  //                 reads/writes a top-level `sandbox` key and exists only for
-  //                 standalone/unit-test use (no production caller constructs a
-  //                 sandbox without the manager's seams).
-  //   serialize   — chains bringUp across instances so N boxes can't race the
-  //                 shared port probe. Default runs inline (no cross-box chain).
   const id = deps.id || SANDBOX_PEER_ID;
   const boxLabel = deps.label || SANDBOX_PEER_LABEL;
   const subdir = deps.subdir || 'sandbox';
@@ -528,11 +369,6 @@ function createSandbox(deps = {}) {
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
   function authEnvPath() { return path.join(sandboxDir(), 'auth.env'); }
 
-  // Config read/write through the ui-settings `sandbox` key, defaults filled.
-  // hasToken is DERIVED from the auth.env file's existence (M4) — never stored:
-  // the token value lives only in that 0600 file, never in ui-settings or any
-  // result payload. getConfig surfaces the boolean so the dialog can show the
-  // "configured" state; setConfig strips it before persisting.
   function getConfig() {
     let s = {};
     try { s = readBoxConfig() || {}; } catch { s = {}; }
@@ -541,10 +377,6 @@ function createSandbox(deps = {}) {
   function setConfig(partial) {
     const next = { ...getConfig(), ...(partial || {}) };
     delete next.hasToken;   // derived, file-backed — never persisted to ui-settings
-    // M6a: when mounts are being set, validate them (structure/shadow/duplicate +
-    // host-folder existence) BEFORE persisting, so the store never holds a mount
-    // that would fail at Start. On a violation nothing is written and the GUI gets
-    // an { ok:false, error } to surface; otherwise the cleaned shape is stored.
     if (partial && 'mounts' in partial) {
       const checked = validateMountsForSave(next.mounts);
       if (checked.error) return { ok: false, error: checked.error };
@@ -554,11 +386,6 @@ function createSandbox(deps = {}) {
     return getConfig();
   }
 
-  // On-save mount validation = the pure normalizeMounts rules PLUS a host-folder
-  // existence check (fs, so it can't live in the pure helper). Returns { error }
-  // on the first failure, else { mounts } cleaned to the persisted shape ({ host,
-  // ro, container? } — the explicit target only when the user set one, so derived
-  // targets stay dynamic across basename collisions).
   function validateMountsForSave(rawMounts) {
     const norm = normalizeMounts(rawMounts);
     if (norm.error) return norm;
@@ -577,28 +404,16 @@ function createSandbox(deps = {}) {
     return { mounts: clean };
   }
 
-  // Translate a host folder (from the New Session picker) to its container path
-  // against the LIVE config (workDir + mounts). { container } when the box already
-  // sees it, else { reachable:false } so the renderer can offer to add a mount.
   function translateHostPath(hostPath) {
     const config = getConfig();
     return translatePath({ hostPath, workDir: config.workDir, mounts: config.mounts });
   }
 
-  // ── Auth env file (M4 + remote-auth chunk 4) ────────────────────────────────
-  // <userData>/sandbox/auth.env (mode 0600) holds a set of KEY=value lines, ALL
-  // referenced by the generated compose via env_file — so their values reach the
+  // <userData>/<subdir>/auth.env (mode 0600), referenced by the generated compose
+  // via env_file — so CLAUDE_CODE_OAUTH_TOKEN and CLODEX_REMOTE_TOKEN reach the
   // container's environment yet never enter the compose bytes, the config store,
-  // logs, or any IPC result. Two keys live here:
-  //   CLAUDE_CODE_OAUTH_TOKEN  — the host's Claude OAuth token (`claude
-  //                              setup-token`), user-seeded, drives hasAuthToken.
-  //   CLODEX_REMOTE_TOKEN      — an auto-generated operator secret for the peer
-  //                              wire (remote.js gate), provisioned on first up;
-  //                              the same value feeds the sandbox peer entry's
-  //                              Bearer (registerPeer), closing the wire end-to-end.
-  // The file is a multi-key set so setting/clearing one token never disturbs the
-  // other. Writes are atomic (tmp + rename); an empty set deletes the file. The
-  // atomic KEY=value primitives are shared with the host's remote.env (env-file.js).
+  // logs, or any IPC result. Multi-key on purpose: setting or clearing one token
+  // must not disturb the other. Writes are atomic; an empty set deletes the file.
   function readAuthEnv() { return readEnvFile(authEnvPath()); }
   function writeAuthEnv(env) { writeEnvFile(authEnvPath(), env); }
 
@@ -631,10 +446,6 @@ function createSandbox(deps = {}) {
     return { ok: true, hasToken: false };
   }
 
-  // The peer-wire operator secret. remoteToken() reads it (null if absent or the
-  // path can't resolve — registerPeer calls this even in settings-only tests with
-  // no userData); ensureRemoteToken() mints one on first up and persists it,
-  // idempotent thereafter so the value (and the peer's Bearer) stay stable.
   function remoteToken() {
     try { return readAuthEnv().CLODEX_REMOTE_TOKEN || null; } catch { return null; }
   }
@@ -648,11 +459,6 @@ function createSandbox(deps = {}) {
     return tok;
   }
 
-  // Probe each desired port (and a small window above it) so resolvePorts' sync
-  // predicate is a plain Set lookup. Best-effort; a probe error reads as free.
-  // `ownPorts` (the ports the existing compose.yaml already publishes) are
-  // subtracted — they're ours, so a live-connect hit on them is not a collision;
-  // subtracting them keeps ports stable across re-ups (see parseOwnPorts).
   async function buildBusySet(config, ownPorts) {
     const own = new Set(ownPorts || []);
     const set = new Set();
@@ -664,21 +470,15 @@ function createSandbox(deps = {}) {
     return set;
   }
 
-  // Regenerate compose.yaml from the authoritative config. Returns the resolved
-  // ports + image so the caller (up) can register the peer at the real wire port.
   async function writeComposeFile() {
     const config = getConfig();
     const image = resolveImage({
       isPackaged: isPackaged(), appVersion, override: config.image, repoRoot,
     });
-    // Our own already-published ports (if a compose.yaml exists) are not
-    // collisions — subtract them so re-up keeps the ports byte-stable.
     let ownPorts = [];
     try { ownPorts = parseOwnPorts(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
     const busy = await buildBusySet(config, ownPorts);
     const ports = resolvePorts(config, (p) => busy.has(p));
-    // M4 hook: reference the auth env_file only when it already exists — secrets
-    // never enter the compose bytes, this only points at a separate file.
     const authFile = fs.existsSync(authEnvPath()) ? authEnvPath() : null;
     // Ensure the host library source dirs exist — docker errors on a bind whose
     // source is missing (a fresh install may not have authored them yet). Cheap
@@ -700,9 +500,6 @@ function createSandbox(deps = {}) {
   // -f points at this box's generated compose file. Both precede the subcommand.
   function composeArgs(extra) { return ['compose', '-p', composeProjectName(id), '-f', composePath(), ...extra]; }
 
-  // Spawn `docker compose …`, buffering stdout/stderr. Never throws — a spawn
-  // failure (ENOENT) resolves as { ok:false } with the message in stderr, the
-  // model peers-ui deploy toasts follow.
   function runCompose(extra) {
     return new Promise((resolve) => {
       let child;
@@ -720,15 +517,6 @@ function createSandbox(deps = {}) {
     });
   }
 
-  // Shared bring-up: provision the peer-wire token, regenerate compose from the
-  // authoritative config, run the caller's compose command(s), then register the
-  // managed peer at the resolved wire port. up() and rebuild() differ ONLY in the
-  // compose invocation between compose-write and register — token provisioning,
-  // compose bytes, error shaping, and peer registration are one path, so a
-  // rebuild that succeeds leaves the peer registered exactly like up(). `runSteps`
-  // gets the writeComposeFile() result (so it can branch on gen.image.kind) and
-  // returns a runCompose() result; a non-ok result skips registration. `label`
-  // names the op in the error/log strings.
   function bringUp(runSteps, label) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
@@ -744,8 +532,6 @@ function createSandbox(deps = {}) {
       }
       const r = await runSteps(gen);
       if (!r.ok) {
-        // Daemon died between the probe and this click → surface the friendly
-        // docker copy (not raw compose stderr) and drop the stale detect cache.
         const gone = dockerUnavailableError(r.stderr);
         if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
         return { ok: false, error: r.stderr.trim() || `docker compose ${label} exited ${r.code}` };
@@ -756,20 +542,10 @@ function createSandbox(deps = {}) {
     });
   }
 
-  // Start (or recreate) the sandbox: regenerate compose from config, `up -d`,
-  // then register the managed peer at the resolved wire port. stderr surfaces on
-  // failure and the peer is NOT registered.
   async function up() {
     return bringUp((_gen) => runCompose(['up', '-d']), 'up');
   }
 
-  // Rebuild the sandbox on the CURRENT code, then recreate the container — the
-  // one-click path for getting tree IPC/prompt changes into a running box. The
-  // mechanic branches on the resolved image kind: a dev checkout (kind 'build')
-  // rebuilds the image from the repo with `up -d --build`; a packaged install
-  // (pinned GHCR tag) has no build context, so it `pull`s the newer image first
-  // and then `up -d`. Same token + compose + register flow as up(); the box
-  // --resumes its sessions at boot, so the recreate is survivable by design.
   async function rebuild() {
     return bringUp(async (gen) => {
       if (gen.image.kind === 'build') return runCompose(['up', '-d', '--build']);
@@ -784,8 +560,6 @@ function createSandbox(deps = {}) {
   async function down() {
     const r = await runCompose(['down']);
     if (!r.ok) {
-      // Stop is never capability-gated, but if it fails because docker is gone we
-      // still give the friendly copy + invalidate the cache (same as up/rebuild).
       const gone = dockerUnavailableError(r.stderr);
       if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
@@ -793,7 +567,6 @@ function createSandbox(deps = {}) {
     return { ok: true };
   }
 
-  // running / exited / absent (compose ps). A spawn failure reads as absent.
   async function status() {
     const r = await runCompose(['ps', '--format', 'json']);
     if (!r.ok && !r.stdout.trim()) {
@@ -801,11 +574,8 @@ function createSandbox(deps = {}) {
     }
     const state = parseComposeState(r.stdout);
     const out = { state };
-    // Effective (last-generated) host ports, keyed by role — for the renderer's
-    // Open-in-browser link + bumped-port hint. Only meaningful while RUNNING: the
-    // compose file persists after Stop, but then its ports describe no live
-    // listener (and Start regenerates them). resolvePorts can bump on collision,
-    // so these can differ from the configured field values (e.g. box 2 on 7812).
+    // Only meaningful while running: the compose file persists after Stop, but its
+    // ports then describe no live listener, and Start regenerates them.
     if (state === 'running') {
       let ports;
       try { ports = parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
@@ -824,10 +594,6 @@ function createSandbox(deps = {}) {
     };
   }
 
-  // Idempotent peer registration through the settings write path — peer-wiring
-  // reconciles off the uiSettings `peers` array (78f65bd shows the offline row
-  // immediately). First up adds the row; a moved wire port updates the url in
-  // place; an unchanged url writes nothing. Never duplicates.
   function registerPeer(wirePort) {
     const url = `http://127.0.0.1:${wirePort}`;
     const token = remoteToken();   // the operator secret this peer authenticates with
@@ -835,7 +601,6 @@ function createSandbox(deps = {}) {
     const peers = (store.get().peers || []).map((p) => ({ ...p }));
     const existing = peers.find((p) => p && p.id === id);
     if (existing) {
-      // Already correct (url AND token) → no write, no reconcile churn.
       if (existing.url === url && (existing.token || null) === (token || null)) return;
       existing.url = url;
       if (token) existing.token = token; else delete existing.token;
@@ -848,10 +613,6 @@ function createSandbox(deps = {}) {
     syncPeerManager();
   }
 
-  // Remove THIS box's peer row (delete path, M6b P2) — the symmetric inverse of
-  // registerPeer. down() only stops the container (the row stays as the restart
-  // affordance); deleting the box drops the row entirely. A no-op (no reconcile
-  // churn) when the row is already absent.
   function unregisterPeer() {
     const store = getUiSettings();
     const peers = store.get().peers || [];
@@ -869,35 +630,17 @@ function createSandbox(deps = {}) {
   };
 }
 
-// ── Manager (M6b P1: own N sandbox instances behind one Map) ──────────────────
-//
-// Lazily instantiates a createSandbox() per box in the ui-settings `boxes`
-// registry, memoizing by id. Every instance shares the injected infra deps
-// (spawn, userData, settings, registryDir, syncPeerManager, …) and gets its
-// identity + config seam bound to its registry row. A single serialize chain is
-// threaded through ALL instances so their bringUp port-probes never race.
-//
-// The shared box is NOT special-cased beyond its migrated id 'sandbox' (which is
-// also get()'s default, so the existing single-box IPC — boxId omitted — resolves
-// to it). Box rows: { id, label, config } where config is the DEFAULT_CONFIG shape.
 function createSandboxManager(deps = {}) {
   const getUiSettings = deps.getUiSettings;
   const listBoxes = deps.listBoxes
     || (() => { try { return getUiSettings().get().boxes || []; } catch { return []; } });
 
-  // One docker-wide detection cache shared by every box (detect is `docker info`
-  // — no per-box state). Warmed once here at launch so the first dialog open /
-  // action gate reads a fresh result without a cold spawn; boxes get its get/
-  // invalidate as seams so s.detect() returns the stamped payload and a late
-  // compose failure invalidates it.
   const managerSpawn = deps.spawn || cp.spawn;
   const now = deps.now || Date.now;
   const detectCache = createDetectCache({ probe: () => probeDocker(managerSpawn), now });
   detectCache.get().catch(() => {});
 
   const instances = new Map();
-  // One promise chain shared by every instance's bringUp — serialized so N boxes
-  // coming up together (e.g. autostart) can't read each other's mid-probe ports.
   let chain = Promise.resolve();
   const serialize = (fn) => {
     const run = chain.then(fn, fn);
@@ -915,11 +658,8 @@ function createSandboxManager(deps = {}) {
       label: box.label || boxId,
       subdir: subdirFor(boxId),
       serialize,
-      // Shared docker-wide detect cache (every box probes the same daemon).
       detect: () => detectCache.get(),
       invalidateDetect: () => detectCache.invalidate(),
-      // Config seam onto this box's row in the registry — read fresh each time so
-      // an external settings write (or another instance) is always reflected.
       readBoxConfig: () => {
         const row = listBoxes().find((b) => b && b.id === boxId);
         return (row && row.config) || {};
@@ -934,8 +674,6 @@ function createSandboxManager(deps = {}) {
     });
   }
 
-  // Resolve a box instance by id (default: the shared box). Memoized; null when no
-  // such box exists in the registry so a caller can 404 an unknown id.
   function get(boxId) {
     const wantId = boxId || SANDBOX_PEER_ID;
     const cached = instances.get(wantId);
@@ -947,19 +685,13 @@ function createSandboxManager(deps = {}) {
     return inst;
   }
 
-  // The registry rows, identity only — for autostart iteration and the P2 list UI.
   function list() {
     return listBoxes().map((b) => ({ id: b.id, label: b.label || b.id }));
   }
 
-  // Create a new box row (M6b P2). id is gated to BOX_ID_RE (the compose
-  // project-name charset — see the const) and the RESERVED_BOX_IDS set ('host'
-  // collides with the placement selector's Mac option — M6b P3), rejected on
-  // collision with an existing box (including the shared 'sandbox'). The row starts from DEFAULT_CONFIG; ports
-  // stay at the shared defaults on purpose — resolvePorts collision-bumps at Start
-  // and the serialize chain keeps concurrent starts from racing the probe, so a
-  // second box on the default ports simply bumps off the first. Returns { ok, box }
-  // or { ok:false, error }. No container is touched; Start is a separate action.
+  // Ports stay at the shared defaults on purpose: resolvePorts collision-bumps at
+  // Start and the serialize chain keeps concurrent starts from racing the probe,
+  // so a second box on the default ports simply bumps off the first.
   function create(rawId, rawLabel) {
     const boxId = String(rawId || '').trim();
     if (!BOX_ID_RE.test(boxId)) {
@@ -976,15 +708,9 @@ function createSandboxManager(deps = {}) {
     return { ok: true, box: { id: boxId, label } };
   }
 
-  // Delete a box (M6b P2): stop its container, drop its peer row, and remove its
-  // registry row + memoized instance. ANY box is deletable — 'sandbox' has no
-  // special status; it's merely the default-created box name, and sanitizeBoxes
-  // does NOT reseed a non-empty (or deliberately emptied) registry, so a delete
-  // sticks. Docker VOLUMES are intentionally left behind (data-preservation
-  // stance, like the restore-failure rule); reclaiming them needs a human
-  // `docker volume rm`. Best-effort down: a stop failure doesn't block the
-  // registry removal (the row shouldn't outlive the user's intent to delete),
-  // but it's surfaced.
+  // Docker VOLUMES are intentionally left behind (data-preservation stance);
+  // reclaiming them needs a human `docker volume rm`. Best-effort down: a stop
+  // failure is surfaced but does not block removal of the registry row.
   async function remove(rawId) {
     const boxId = String(rawId || '').trim();
     const box = listBoxes().find((b) => b && b.id === boxId);
@@ -1000,14 +726,9 @@ function createSandboxManager(deps = {}) {
     return { ok: true, downError };
   }
 
-  // detect/invalidateDetect are docker-wide (not box-scoped) — exposed so a
-  // caller can probe/refresh without resolving a box instance.
   return { get, list, create, remove, detect: () => detectCache.get(), invalidateDetect: () => detectCache.invalidate() };
 }
 
-// Best-effort sync-ish port probe: a 127.0.0.1 connect that succeeds means
-// something is LISTENING (busy); ECONNREFUSED/timeout means free. Async so the
-// factory can await a full scan before the pure resolvePorts runs.
 function defaultIsPortInUse(port) {
   return new Promise((resolve) => {
     const socket = net.connect({ host: '127.0.0.1', port });

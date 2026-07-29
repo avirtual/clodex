@@ -13,15 +13,9 @@ const { writeHostStamp } = require('./host-stamp');
 
 
 
-// Dock/Finder/Launchpad launches on macOS inherit launchd's minimal PATH
-// (/usr/bin:/bin:/usr/sbin:/sbin), so `claude`/`codex` from ~/.local/bin or
-// /opt/homebrew/bin aren't resolvable. Pull PATH from the user's login shell
-// and merge it in. Only needed in packaged builds — dev mode inherits the
-// shell env already.
-// Returns true when the merge was NEEDED but FAILED (the login shell errored /
-// timed out) — recorded into engine diagnostics so a silently-broken PATH (the
-// usual root cause of "claude/codex not on PATH") surfaces as a banner instead of
-// only a console.error. A skipped merge (dev / win32) or a clean merge is false.
+// Packaged macOS launches (Dock/Finder/Launchpad) inherit launchd's minimal PATH,
+// so `claude`/`codex` from ~/.local/bin or /opt/homebrew/bin aren't resolvable.
+// Returns true only when the merge was needed but the login shell failed.
 function fixPathFromLoginShell() {
   if (!app.isPackaged) return false;
   if (process.platform === 'win32') return false;
@@ -42,20 +36,12 @@ function fixPathFromLoginShell() {
     return true;
   }
 }
-// Captured at module load (before the engine exists) and passed into createEngine
-// as the `pathMergeFailed` seam so diagnostics can warn on a silently-broken PATH.
 const pathMergeFailed = fixPathFromLoginShell();
 
-// Env self-decontamination. If Clodex was launched (or relaunched — including
-// app.relaunch() from the remote restart endpoint) from inside a Claude Code
-// session, inherited CLAUDE_* markers make PTY-spawned CLIs behave as nested
-// child sessions. Scrub semantics + survivor list (OAuth token, a user's own
-// ANTHROPIC_BASE_URL) live in claude-env.js; app.relaunch() then carries the
-// clean env forward.
+// Inherited CLAUDE_* markers make PTY-spawned CLIs behave as nested child
+// sessions. app.relaunch() then carries the clean env forward.
 require('./claude-env').scrubInheritedClaudeMarkers(process.env);
 
-// Set once a quit is in flight (before-quit / non-darwin window-all-closed).
-// Used to suppress node-pty's native teardown throws during shutdown.
 let appQuitting = false;
 
 // Last-resort net for node-pty. Its native layer (and internal socket teardown)
@@ -75,36 +61,18 @@ process.on('uncaughtException', (err) => {
   throw err;
 });
 
-// Rejections that reach here are unhandled — record them, but keep Node's
-// default behaviour (don't swallow) so nothing is masked.
 process.on('unhandledRejection', (reason) => {
   try { log.error('crash', `unhandledRejection: ${(reason && reason.stack) || String(reason)}`); } catch {}
 });
 
 
-// Clodex-owned runtime dir: registry, sockets, hook scripts, prompt files,
-// jsonl symlinks, spilled messages. Lives in $HOME (not /tmp) so macOS's
-// 3-day tmp reaper can't delete files under long-running sessions, and kept
-// short because run/{name}/agent.sock must fit the 104-char Unix socket path
-// limit (the per-agent run/ dir grammar — clodex-paths.js — costs ~10 chars more
-// than the old flat {name}.sock; still within budget for a 64-char name under a
-// normal $HOME). Moving here (v0.6.6) ended /tmp/wb-wrap interop with Python
-// wb-wrap. Per-agent runtime artifacts live under run/<name>/ (clodex-paths).
+// Must stay in $HOME, not /tmp: macOS's 3-day tmp reaper would delete files under
+// long-running sessions. Kept short because run/{name}/agent.sock must fit the
+// 104-char Unix socket path limit.
 const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
 
 
 
-// ---------------------------------------------------------------------------
-// Persistent ops/error log — Clodex mostly runs headless (tray, no console),
-// so errors and lifecycle events otherwise vanish. One rolling plain-text file
-// in the (already 0700) runtime dir: `ISO  LEVEL  [tag]  message`. Append-only,
-// no dependency, no framework. Rotation is deliberately trivial: one generation
-// kept, rotated once at startup when the file passes the cap. Only coarse,
-// low-frequency events log here (lifecycle, state-mutating intents, autocompact
-// decisions, peer transitions, uncaught errors) — never per-keystroke or
-// per-telemetry-frame. `initLog()` runs once at startup (rotation + a header);
-// every write self-heals the dir so a call before init still lands.
-// ---------------------------------------------------------------------------
 const LOG_FILE = path.join(REGISTRY_DIR, 'clodex.log');
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
@@ -123,8 +91,6 @@ function writeLog(level, tag, message) {
     const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`;
     fs.appendFileSync(LOG_FILE, line);
   } catch {
-    // Self-heal a missing dir once, then give up — logging must never throw
-    // into a caller (it wraps lifecycle paths, the PTY, and the crash net).
     try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`); } catch {}
   }
 }
@@ -135,55 +101,34 @@ const log = {
   error: (tag, message) => writeLog('ERROR', tag, message),
 };
 
-// ── Engine + the module-scope singletons the retained Electron layer reads ──
-// The engine OWNS these now (built in whenReady). main.js keeps thin mirrors it
-// assigns ONCE from the engine so the retained helpers (createWindow /
-// workspaceOfSender / confirmRestartClodex) and the app-menu getters keep
-// referring to plain module names — the whenReady-getter convention that made
-// this move survivable. Only the STABLE singletons are mirrored (manager +
-// stores, built once); the mutable peer/remote/tunnel singletons are reached
-// through engine.get*() each call so live reconciliation stays visible, and the
-// full teardown funnels through engine.shutdown().
+// Mirror only the STABLE engine singletons (manager + stores, built once); reach
+// mutable peer/remote/tunnel singletons through engine.get*() on every call, or
+// live reconciliation stops being visible here.
 let engine = null;
 let manager = null;
 let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes;
 
 
 
-// ---------------------------------------------------------------------------
-// Update checker — queries GitHub Releases, notifies if newer version
-// ---------------------------------------------------------------------------
 
 const UPDATE_REPO = 'avirtual/clodex';
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
 
-// Update-checker data layer (fetch + semver compare + the sanctioned
-// return-values transform) lives in update-checker.js (M3). main.js keeps the
-// updateInfo / releasesCache state and every electron side effect below.
 const { refreshReleases, fetchLatestUpdate } = require('./update-checker');
 
 let updateInfo = null; // { version, url }
-// Newest-first [{tag, published_at}] from GitHub, refreshed on the update-check
-// cadence. In-memory only (persisting a release list is overkill) — feeds the
-// peer-identity popover's best-effort "released N days ago · N behind" line via
-// the update:releases IPC. Empty until the first successful fetch / when offline.
 let releasesCache = [];
 
 async function checkForUpdate(silent = true) {
-  // Refresh the release list on the same cadence, decoupled from the latest-
-  // version logic (a releases failure must not suppress the banner, and vice
-  // versa). Fire-and-forget; null means keep the prior cache.
   refreshReleases(UPDATE_REPO).then((rels) => { if (rels) releasesCache = rels; });
   try {
     const { updateInfo: latest, current } = await fetchLatestUpdate(UPDATE_REPO, () => app.getVersion());
     if (latest) {
       updateInfo = latest;
-      // Notify the renderer so it can show a banner / menu indicator
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send('update-available', updateInfo);
       }
       if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
-      // Native notification (only the first time per session, unless user manually checks)
       if (silent && Notification.isSupported()) {
         const n = new Notification({
           title: `Clodex ${latest.version} is available`,
@@ -193,7 +138,6 @@ async function checkForUpdate(silent = true) {
         n.show();
       }
     } else if (!silent) {
-      // Manual check — confirm we're on the latest
       if (Notification.isSupported()) {
         new Notification({
           title: 'Clodex is up to date',
@@ -206,19 +150,10 @@ async function checkForUpdate(silent = true) {
   }
 }
 
-// Full app relaunch — the one code path shared by the phone endpoint, the
-// File menu, and the tray. Normal quit lifecycle: sessions --resume on the
-// way back, the managed wirescope survives detached, and the fresh launch's
-// version check applies any pending vendor bump. Boot-time env sanitize
-// keeps the relaunched process clean even when the trigger came from inside
-// an agent session.
 function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-// T32: the busy/idle classifier + sustained-idle waiter live in a pure, injected
-// leaf (restart-waiter.js) so the window logic is unit-tested with a fake clock;
-// this is the thin shell that binds the real dialog / setTimeout / Notification.
 const { classifyRestart, createIdleWaiter } = require('./restart-waiter');
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
@@ -226,7 +161,6 @@ const idleWaiter = createIdleWaiter({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h),
   restart: () => restartClodex(),
-  // Cap reached (30 min never quiet): give up the wait, don't force a restart.
   notify: () => {
     try {
       if (Notification.isSupported()) new Notification({
@@ -237,13 +171,8 @@ const idleWaiter = createIdleWaiter({
   },
 });
 
-// Menu/tray front door. "Running" here means MID-TURN, not merely alive: idle
-// seats --resume cleanly, so only mid-turn agents are counted as interruptions.
-// busy > 0 offers "Restart When Idle" (arm the waiter) alongside "Restart Now".
-// A second invocation while a wait is pending manages that wait instead. The
-// remote page fronts its own confirm; direct callers skip none.
+// "Running" here means MID-TURN, not merely alive: idle seats --resume cleanly.
 async function confirmRestartClodex() {
-  // Already waiting for idle? Manage the pending wait rather than stacking another.
   if (idleWaiter.isArmed()) {
     const { response } = await dialog.showMessageBox({
       type: 'question',
@@ -260,7 +189,6 @@ async function confirmRestartClodex() {
 
   const { busy, idle } = classifyRestart(Array.from(manager.sessions.values()));
 
-  // Nothing mid-turn — restart is immediate; idle seats just resume.
   if (busy === 0) {
     const { response } = await dialog.showMessageBox({
       type: 'question',
@@ -278,7 +206,6 @@ async function confirmRestartClodex() {
     return;
   }
 
-  // Mid-turn work in flight — offer to wait for it to settle.
   const { response } = await dialog.showMessageBox({
     type: 'question',
     buttons: ['Restart When Idle', 'Restart Now', 'Cancel'],
@@ -293,20 +220,12 @@ async function confirmRestartClodex() {
   else if (response === 1) restartClodex();
 }
 
-// ---------------------------------------------------------------------------
-// Menu bar (tray) + app menu — extracted to app-menus.js (M5). createAppMenus
-// returns the tray/menu builders; we destructure them so the ~30 existing call
-// sites below stay byte-identical. Electron-heavy by design (app-menus requires
-// electron directly). The getter deps cross manager/peerManager/stores/
-// updateInfo, none of which are initialized yet at this point in module eval.
-// ---------------------------------------------------------------------------
 const { createAppMenus } = require('./app-menus');
 const {
   buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
   buildAgentsSubmenu, buildSkillsSubmenu, setUiTheme, buildAppMenu,
   refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
 } = createAppMenus({
-  // value deps (hoisted fns / early consts — stable at call time)
   DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
   checkForUpdate, confirmRestartClodex, createWindow,
   // getter deps (TDZ / whenReady-assigned — lazy)
@@ -319,14 +238,11 @@ const {
   getAgentLibrary: () => agentLibrary,
   getSkillLibrary: () => skillLibrary,
   getEnvScopes: () => envScopes,
-  // The Plugins menu's state source (T5). Same lazy engine seam ipc-handlers
-  // gets: null under CLODEX_PLUGINS=0, and the menu is then absent entirely.
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
 });
 
 
 function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
-  // If a window for this workspace already exists, just bring it forward
   const existing = manager.windowForWorkspace(workspaceId);
   if (existing) {
     existing.show();
@@ -334,7 +250,6 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     return existing;
   }
 
-  // Ensure the workspace record exists
   let ws = workspaces.get(workspaceId);
   if (!ws) {
     ws = {
@@ -360,7 +275,6 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
       contextIsolation: false,
-      // Pass the workspaceId to the renderer via an additional preload argument
       additionalArguments: [`--workspace-id=${workspaceId}`],
     },
   });
@@ -385,7 +299,6 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     if (isExternallyOpenable(url)) shell.openExternal(url);
   });
 
-  // Save bounds when the user resizes/moves the window
   const saveBounds = () => {
     if (win.isDestroyed()) return;
     workspaces.setBounds(workspaceId, win.getBounds());
@@ -393,7 +306,6 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
 
-  // Track recency for startup ordering + the open-window set for restore.
   workspaces.touch(workspaceId);
   workspaces.setOpen(workspaceId, true);
   win.on('focus', () => workspaces.touch(workspaceId));
@@ -415,11 +327,8 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     console.log(`[RENDERER ${String(e.level).toUpperCase()}]`, e.message);
   });
 
-  // Restore the workspace's persisted UI zoom (View-menu zoom items). Zoom is
-  // per-webContents and resets on load, so re-apply on every did-finish-load
-  // (covers Cmd+R too); the nudge refits xterm to the new CSS-pixel geometry.
-  // Read fresh from the store — the factor may have changed since `ws` was
-  // snapshotted at window-create time.
+  // Zoom is per-webContents and resets on load, so re-apply on every
+  // did-finish-load (covers Cmd+R); the nudge refits xterm.
   win.webContents.on('did-finish-load', () => {
     const rec = workspaces.get(workspaceId);
     if (rec && typeof rec.zoomFactor === 'number' && rec.zoomFactor !== 1) {
@@ -435,13 +344,8 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   return win;
 }
 
-// A single reusable window that renders a wirescope page (e.g. /_session) with
-// clodex-style chrome — "in the middle" between an inline popover and a system
-// browser tab. The page content is whatever wirescope serves; we only dress the
-// frame (a normal titled title bar so the mac traffic-lights don't float over
-// content + the caller's active theme bg) so it sits like a clodex window.
-// Hardened webPreferences: this loads REMOTE content, so it must
-// NOT inherit the main window's nodeIntegration/contextIsolation:false.
+// Loads REMOTE content: must not inherit the main window's
+// nodeIntegration/contextIsolation:false.
 let wirescopeWindow = null;
 function openWirescopeWindow(url, backgroundColor) {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
@@ -476,7 +380,6 @@ function openWirescopeWindow(url, backgroundColor) {
   wirescopeWindow.loadURL(url);
 }
 
-// Find the workspace ID that owns the renderer that sent an IPC event.
 function workspaceOfSender(e) {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (!win) return DEFAULT_WORKSPACE_ID;
@@ -494,7 +397,6 @@ if (!singleInstance) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // Bring the most-recently-used existing window forward
     const wins = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
     if (wins.length > 0) {
       const w = wins[0];
@@ -506,20 +408,12 @@ if (!singleInstance) {
 }
 
 app.whenReady().then(() => {
-  // Rotate the ops log before the engine writes its first line, then stand the
-  // engine up with the Electron seams. Everything electron-free — stores,
-  // SessionManager, wirescope + watchdog, remote/peer wiring, the reminder
-  // scheduler, message/registry cleanup, the legacy sweep — lives in the engine
-  // now; main.js layers the window / tray / ipc frontend on top.
   initLog();
   engine = createEngine({
     userDataPath: app.getPath('userData'),
     log,
     seams: {
       openPath: (p) => shell.openPath(p),
-      // Peer web view (t30b): the engine pops the operator's browser once, on the
-      // first successful web tunnel. Same shell call the app:openExternal handler
-      // makes; the engine never touches electron itself.
       openExternal: (url) => shell.openExternal(url),
       notifyOS: (opts) => {
         try {
@@ -529,8 +423,6 @@ app.whenReady().then(() => {
       setAppQuitting: (v) => { appQuitting = v; },
       appVersion: app.getVersion(),
       isPackaged: () => app.isPackaged,
-      // Login-shell PATH merge outcome (captured at module load) — diagnostics
-      // promotes a failed merge to a banner (Task 12).
       pathMergeFailed,
       // App-menu refresh hooks SessionManager + peer-wiring fire on change.
       // Late-bound forwarders onto the module consts createAppMenus produced at
@@ -540,8 +432,6 @@ app.whenReady().then(() => {
       scheduleAppMenuRefresh: (...a) => scheduleAppMenuRefresh(...a),
       refreshTrayMenu: (...a) => refreshTrayMenu(...a),
       scheduleTrayRefresh: (...a) => scheduleTrayRefresh(...a),
-      // Phone restart endpoint: full Electron relaunch (headless exits with a
-      // documented code so a supervisor relaunches instead).
       restartHost: () => restartClodex(),
     },
   });
@@ -550,40 +440,22 @@ app.whenReady().then(() => {
 
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
 
-  // Record what code THIS process actually loaded (t93). The main process serves
-  // its modules from boot indefinitely, so a fix merged under a running host is
-  // inert until restart — and nothing said so, which cost a wrongly-premised
-  // ticket filed against already-correct source. Written here, read by the task
-  // reply suffix and by clodex-team, both of which stay silent unless it differs
-  // from disk. Signal only: nothing in this path ever restarts or reloads.
   writeHostStamp(path.join(REGISTRY_DIR, 'run'), __dirname);
 
-  // Update checker — Electron-only surface (renderer banner, tray badge, native
-  // notification), so it stays in the adapter, not the engine.
   checkForUpdate(true);
   setInterval(() => checkForUpdate(true), UPDATE_CHECK_INTERVAL);
 
   initTray();
 
-  // ipc handlers (M5). The engine return is spread in whole — manager,
-  // proxyPoller, wirescope, the helper surface, the store accessors — then the
-  // stores object, then the node-builtin extras the handlers still need. Unused
-  // deps are inert (see ipc-handlers header).
-  //
-  // ipc-handlers.js is now transport-agnostic (web-frontend Phase 1): it holds
-  // NO electron require. The desktop adapter passes the electron-backed transport
-  // + native-GUI seams here (the web host will pass WS/browser versions over the
-  // same handler map). Each GUI wrapper owns its window resolution internally, so
-  // no BrowserWindow crosses the boundary; `e` reaches popupMenu as an opaque
-  // sender token that only this adapter (never ipc-handlers) unwraps.
+  // ipc-handlers.js holds no electron require — the electron-backed transport and
+  // GUI seams are passed from here. No BrowserWindow crosses the boundary; `e` is
+  // an opaque sender token only this adapter unwraps.
   const { registerIpcHandlers } = require('./ipc-handlers');
   registerIpcHandlers({
     ...engine,
     ...engine.stores,
-    // Transport
     handle: (channel, fn) => ipcMain.handle(channel, fn),
     on: (channel, fn) => ipcMain.on(channel, fn),
-    // Native-GUI capabilities (electron-backed; the host resolves the window)
     popupMenu: (template, e) =>
       Menu.buildFromTemplate(template).popup({ window: BrowserWindow.fromWebContents(e.sender) }),
     showMessageBox: (opts) => dialog.showMessageBox(BrowserWindow.getFocusedWindow(), opts),
@@ -606,11 +478,7 @@ app.whenReady().then(() => {
 
 
 
-  // Restore the window SET that was open at quit (the `open` flags survive
-  // quit because the closed handler skips its clear while appQuitting). Open
-  // least-recent first so the most recently focused window ends up on top.
-  // No flags (fresh install / pre-flag upgrade / all windows were explicitly
-  // closed) → IDE-style fallback: just the most recently used workspace.
+  // Open least-recent first so the most recently focused window ends up on top.
   const sortedWorkspaces = workspaces.sortedByRecent();
   const toRestore = sortedWorkspaces.filter((w) => w.open);
   if (toRestore.length > 0) {
@@ -627,9 +495,6 @@ app.whenReady().then(() => {
     }
   });
 
-  // Dev-only hot reload — renderer edits reload windows in place; main-process
-  // edits relaunch the app (sessions --resume on the fresh launch). Gated on
-  // CLODEX_DEV (set by `npm run dev`) and never present in a packaged build.
   if (process.env.CLODEX_DEV && !app.isPackaged) {
     try {
       require('./dev-reload').installDevReload({
@@ -643,8 +508,6 @@ app.whenReady().then(() => {
 });
 
 
-// On macOS, apps stay running when all windows are closed (accessible via tray).
-// Sessions keep running too — reopen a window via the tray to see them again.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     appQuitting = true;
