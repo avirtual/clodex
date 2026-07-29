@@ -1,29 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-// clodex-team.js — teams control plane over the exec intent
-// (teams-design.md [internal design doc, not in this repo], docs/exec-tools.md). Second clodex tool after
-// clodex-monitor; same v1 identity convention (the agent self-supplies its
-// name as `agent`).
-//
-// Verbs (message discipline per exec-tools.md — queries reply, command
-// success is silent, failures are loud):
-//   roster — QUERY. Resolve the team from the requester's cwd (registry
-//            entry, payload override) by scanning ~/.clodex/teams/*/team.json
-//            for the one whose `root` contains cwd; list roles + the live
-//            agents whose registered cwd falls inside that root. One
-//            replyStderr line.
-//   retire — COMMAND. Deliver a `team-retire` envelope to the TARGET's own
-//            socket; the core validates (requester running, same project,
-//            no self-retire), archives (resumable), and confirms PASSIVELY.
-//            Success here is byte-silent — the confirmation DM is the ack.
-//   tickets — QUERY. Ground-truth read of the team's ticket registry
-//            (teams/<team>/tickets.json), one line per ticket (id, state,
-//            assignee, age, title). Mirrors the [agent:task list] intent but as
-//            an on-demand pull (Task 25). One replyStderr line (multi-line body).
-//
-// Spawn deliberately has no verb: [agent:spawn name:X template:Y] already
-// exists and duplicating it here would be ceremony.
 
 const fs = require('fs');
 const net = require('net');
@@ -31,9 +8,6 @@ const path = require('path');
 const os = require('os');
 
 const CLODEX_HOME = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
-// Teams live entirely under ~/.clodex (Bogdan ruling 2026-07-19: zero clodex
-// droppings inside project repos). teams/<name>/team.json carries a REQUIRED
-// absolute `root` — the project it manages. See team-manifest.js for the model.
 const TEAMS_DIR = path.join(CLODEX_HOME, 'teams');
 
 function die(msg) {
@@ -56,10 +30,6 @@ function cwdInProject(cwd, root) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-// Resolve the team owning `cwd`: scan teams/<name>/team.json, keep those whose
-// absolute `root` contains cwd, pick the DEEPEST root. Returns
-// { name, root, manifest } or null. Mirrors team-manifest.resolveTeam but kept
-// dependency-free (exec scripts run standalone; no require() of app modules).
 function resolveTeam(cwd) {
   if (!cwd) return null;
   let names;
@@ -92,11 +62,8 @@ function sendEnvelope(socketPath, envelope) {
   });
 }
 
-// --- verbs ------------------------------------------------------------------
 
 function requesterCwd(payload) {
-  // Prefer the registry (written by core at spawn — authoritative); fall back
-  // to a payload-supplied cwd for old-core registries without the field.
   try {
     const cwd = registryEntry(payload.agent).cwd;
     if (cwd) return cwd;
@@ -110,13 +77,6 @@ function doRoster(payload) {
   const team = resolveTeam(cwd);
   if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
   const manifest = team.manifest;
-  // Per-role annotation so a lead can resolve role → template and spawn it with
-  // the existing [agent:spawn name:X template:Y] intent (spawn stays an intent —
-  // no verb here). Compact: `<role>[*](tmpl=<t>,<instantiate>)`. The lead is
-  // starred. Parens appear only when there's something beyond the session
-  // default — a template and/or a non-session instantiate; a bare session role
-  // with no template is just its name. E.g. `lead* worker(tmpl=hand,session)
-  // reviewer(subagent)`.
   const roles = Object.entries(manifest.roles || {})
     .map(([r, def]) => {
       const star = r === manifest.lead ? '*' : '';
@@ -128,7 +88,6 @@ function doRoster(payload) {
       return `${r}${star}${parts.length ? `(${parts.join(',')})` : ''}`;
     })
     .join(' ') || '(none)';
-  // Live agents in this project: iterate registrations, join by cwd-in-root.
   const live = [];
   let runDirs = [];
   try { runDirs = fs.readdirSync(path.join(CLODEX_HOME, 'run')); } catch {}
@@ -165,34 +124,12 @@ const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 // removed. Overflow folds into the count line.
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
-// Derived, not a literal in the sentence — see session-manager.js.
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
-// ── Stale-host check (t93) ─────────────────────────────────────────────────
-// Duplicated from host-stamp.js for the SAME strict-leaf reason as
-// TICKET_FILTERS above: this file is flat-copied into run/bin/, so `require`ing
-// a repo module would not resolve at run time. Keep the digest grammar in sync
-// with host-stamp.js computeModuleDigest or the two will always disagree and
-// report a permanent false stale.
-//
-// This surface exists SEPARATELY from the task-reply suffix on purpose: this
-// script is a fresh process that reads disk on every invocation, so a host too
-// old to emit the in-host suffix cannot suppress this line.
-//
-// But that is a claim about WHO PRINTS the line, not about what it can know.
-// An earlier version of this comment said this surface "reports correctly even
-// when the running host is itself too old to know this check exists". That was
-// FALSE (t94, observed live): the stamp is written by the host at boot, so a
-// host that predates t93 leaves no stamp, and with no stamp there is nothing to
-// compare — this surface went silent on the exact host whose staleness
-// motivated t93. Silence read as "fresh", which is how the wrong conclusion got
-// drawn in the first place.
-//
-// Hence the stamp-less fallback below: it substantiates what it can from the
-// live process and says plainly when it cannot.
-// Flat top-level *.js only — subdirectories are never descended, so test/,
-// renderer/ and the rest are out by construction. (An ignore list here was dead
-// code: a directory never passes `\.js$`, and `test.js` never equals `test`.)
+    // Digest grammar must stay in sync with host-stamp.js computeModuleDigest —
+    // this file is flat-copied into run/bin/ and cannot require it, and any
+    // divergence reports a permanent false stale. Flat top-level *.js only;
+    // subdirectories are never descended.
 function hostModuleDigest(dir) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return null; }
@@ -207,21 +144,10 @@ function hostModuleDigest(dir) {
   return parts.length ? parts.join('|') : null;
 }
 
-// ── Stamp-less fallback (t94) ──────────────────────────────────────────────
-// Mirrors host-stamp.js bootstrapNotice/changedSince. Duplicated for the same
-// strict-leaf reason as the digest above; keep the two in sync.
-//
-// WHAT THIS MAY AND MAY NOT CLAIM. It is tempting to say a module newer than
-// the process start time cannot be loaded by it. That is FALSE here — require()
-// is lazy and the main process pulls modules inside function bodies all over
-// (session-manager.js's wire/ stack, main.js's ipc-handlers, peer-wiring), so a
-// file edited after boot but before its first require IS live. This reports the
-// weaker fact it can actually stand behind: the bytes changed after the process
-// started, therefore staleness is UNCONFIRMED rather than proven. Do not
-// "tighten" the wording into a claim about what the host loaded.
-//
-// macOS `ps` has no `etimes` and there is no /proc, so `lstart` it is; LC_ALL=C
-// because that format carries month and day NAMES.
+    // macOS `ps` has no `etimes` and there is no /proc, so `lstart` it is; LC_ALL=C
+    // because that format carries month and day NAMES.
+    // A module newer than the process start time may still be live — require() is
+    // lazy — so this evidence means UNCONFIRMED, never proven, staleness.
 function hostProcess(pid) {
   let out;
   try {
@@ -233,10 +159,6 @@ function hostProcess(pid) {
   if (!m) return null;
   const startedAt = new Date(m[1]).getTime();
   if (!Number.isFinite(startedAt)) return null;
-  // The tree the host RUNS FROM, taken from its own argv rather than guessed: a
-  // dev host execs electron out of its own checkout. No match means a PACKAGED
-  // host, whose sources sit in an immutable asar — genuinely never stale, so
-  // the caller stays silent rather than reporting "unknown".
   const root = /^(.*?)\/node_modules\/electron\/dist\//.exec(m[2]);
   return { pid, startedAt, root: root ? root[1] : null, packaged: !root };
 }
@@ -262,12 +184,6 @@ function liveHost() {
   return null;
 }
 
-// One line, or '' when there is nothing to say.
-//
-// SILENCE MEANS FRESH, and only fresh. Before t94 it also meant "no stamp, so
-// no idea", which is how this surface went quiet on the 14h-old host that
-// motivated t93 — the reader took silence as reassurance. The three states are
-// now distinct: stamped-and-stale, unstamped-with-evidence, and cannot-tell.
 function staleHostLine() {
   try {
     let stamp = null;
@@ -287,10 +203,6 @@ function staleHostLine() {
   } catch { return ''; }
 }
 
-// The evidence line for an already-identified host. Split from the discovery
-// above so it can be driven directly against a fixture: with discovery baked
-// in, the only reachable state is whatever the developer's own machine happens
-// to be in, and the speaking path cannot be exercised at all.
 function staleHostLineFor(host) {
   if (!host) return '';           // no running host at all: nothing can be stale
   if (host.packaged) return '';   // asar bytes cannot change post-boot
@@ -366,7 +278,6 @@ function doTickets(payload) {
   const now = Date.now();
   const row = (t) =>
     `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
-  // Sorted by closedAt, so it shows closedAt — see _taskList.
   const closedRow = (t) =>
     `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
   const lines = shown.map(row);
@@ -384,15 +295,8 @@ function doTickets(payload) {
       + ' — ask for filter "done", "cancelled" or "all")'
     : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
-  // The stale notice goes BEFORE the tail, not after it. The exec dispatcher
-  // delivers only the LAST stderr line, so whatever
-  // ends this string is the entire reply the caller sees — and appending the
-  // notice meant a stale host cost them the counts as well.
-  //
-  // KNOWN CONSEQUENCE, and it is a trade rather than a fix: the notice is now
-  // the line that gets dropped instead. Both orderings lose something because
-  // one line cannot carry two messages; only a multi-line reply removes the
-  // choice. doRoster has the identical shape and is deliberately left alone.
+      // Stale notice goes BEFORE the tail: only the last stderr line reaches the
+      // exec caller, and appending the notice cost them the counts instead.
   const stale = staleHostLine();
   if (!shown.length) {
     say(closed.length
@@ -412,8 +316,6 @@ async function doRetire(payload) {
     die(`no live registration for "${target}" — not running (already retired?)`);
   }
   try {
-    // Core validates project membership and confirms passively; a refusal
-    // arrives as a waking DM from clodex-team. Silence here = request sent.
     await sendEnvelope(info.socket, { from: payload.agent, body: '', type: 'team-retire' });
   } catch (e) {
     die(`could not reach "${target}" socket: ${e.message}`);
@@ -421,7 +323,6 @@ async function doRetire(payload) {
   process.exit(0);
 }
 
-// --- main -------------------------------------------------------------------
 
 (async () => {
   let raw = '';
