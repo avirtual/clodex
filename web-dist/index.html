@@ -17686,21 +17686,12 @@ ${i3.join("\n")}
           model: r.model || null,
           title: r.title || null,
           summary: r.summary || null,
-          // `usd` = whole-tree cost (unchanged semantics). `mainUsd` = the main line's
-          // OWN share (wirescope v0.6.22+ cost.main_est_usd, gated on cost_by_line);
-          // null (never 0) on pre-.22. With per-subagent estUsd, this lets the popover
-          // attribute where a fan-out run's cost actually went instead of one opaque
-          // whole-tree number.
           cost: r.cost ? {
             usd: r.cost.est_usd ?? null,
             mainUsd: typeof r.cost.main_est_usd === "number" ? r.cost.main_est_usd : null,
             requests: r.cost.requests ?? null
           } : null,
           turns: typeof r.turns_completed === "number" ? r.turns_completed : null,
-          // Since-compact rollup (wirescope, shape frozen 07-15 per its dm): counters
-          // from the last detected compact boundary — or session start when
-          // `compacted` is false. Whole-tree like cost. Absent (older proxy) === null
-          // (no totals yet); NEVER partial per the contract, so shape all-or-nothing.
           sinceCompact: r.since_compact && typeof r.since_compact === "object" ? {
             turns: typeof r.since_compact.turns === "number" ? r.since_compact.turns : null,
             requests: typeof r.since_compact.requests === "number" ? r.since_compact.requests : null,
@@ -17709,15 +17700,10 @@ ${i3.join("\n")}
             compacted: r.since_compact.compacted === true
           } : null,
           refusals: typeof r.refusals === "number" ? r.refusals : 0,
-          // Armed holds only fire pings once a real turn donates auth + a cache to
-          // replay; pingable=false means "armed but pending the next turn".
           pingable: r.pingable === true,
           context: r.context ? {
             turns: r.context.turns_in_context ?? null,
             messages: r.context.n_messages ?? null,
-            // Live input-token count (cache_read + cache_write + uncached input of the
-            // last turn). null on pre-v0.3.1 proxies — renderer falls back to the CLI
-            // side-channel. The window SIZE stays CLI-sourced (off-wire here).
             inputTokens: typeof r.context.input_tokens === "number" ? r.context.input_tokens : null
           } : null,
           warmth: w ? {
@@ -17725,11 +17711,6 @@ ${i3.join("\n")}
             remaining_s: typeof w.remaining_s === "number" ? w.remaining_s : null,
             ttl_s: typeof w.ttl_s === "number" ? w.ttl_s : null
           } : null,
-          // Proxy-truth strip config (wirescope v0.6.10+). The poller reconciles our
-          // persisted intent against `configuredLevel`/`source` here instead of
-          // fire-once asserting; `source` must be "override" for a level>=1 to be a
-          // durable, recorded intent (a coincidental global-default match isn't).
-          // null on pre-v0.6.10 proxies → poller skips assertion (degrades to off).
           strip: r.strip ? {
             configuredLevel: typeof r.strip.configured_level === "number" ? r.strip.configured_level : null,
             source: r.strip.source || null,
@@ -17737,17 +17718,7 @@ ${i3.join("\n")}
             ridersAvailable: r.strip.riders_available === true
           } : null,
           hold: r.hold || null,
-          // Cache-bust forensics summary (wirescope v0.6.19+ `bust_summary`). Passed
-          // through verbatim — clodex RENDERS, wirescope CLASSIFIES (fault/fix_hint are
-          // its call, never re-derived here). Shape: {total, actionable, by_class,
-          // classes:[{class,count,fault,fix_hint}], last_bust}. `fault` ∈ {environment
-          // (expected cold), content (a real injected-prefix change — model swap, date
-          // rollover, CLAUDE.md edit), self (designed strip cost)}. The chip goes loud
-          // only on a `content` fault. null on pre-v0.6.19 proxies.
           busts: r.busts && typeof r.busts === "object" ? r.busts : null,
-          // Task/background subagents nested under this session (share its session_id
-          // on the wire). Empty until a real subagent makes a wire turn. Sorted
-          // newest-active first to match wirescope's emission order.
           subagents: Array.isArray(r.sub_agents) ? r.sub_agents.map((s) => shapeSubagent(s, now)).filter(Boolean) : []
         };
       }
@@ -23359,9 +23330,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
             const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + // ⓘ identity: version/caps/age + Update. Only when the hello gives us an
-            // identity to show (online + version) — nothing to surface otherwise.
-            (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
+            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
               e.stopPropagation();
               openPeerSelectPopover(id, e.currentTarget);
@@ -23397,12 +23366,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
                 label: peerDisplayHost(st),
                 online: !!st.online,
                 canCreate: peerSupportsCreate(st),
-                // Managed box → the menu offers Rebuild (the strip stays uncrowded; a
-                // minutes-long recreate fits the menu next to Restart/Update).
                 isBox,
-                // sev is in scope from this row's identity block; main gates the Update
-                // item on it (updateApplies) so we don't offer a pointless restart to a
-                // same-version or ahead peer. 'unknown' (offline / unparseable) keeps it.
                 sev
               });
             });
@@ -23430,9 +23394,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
               <span class="session-ctx"></span>
             </span>
           </div>
-        </div>` + // Close (detach) only makes sense for an attached tab; unattached rows
-              // get no X (it was a dead affordance before).
-              (sessions.has(key) ? '<button class="session-close" data-tip="Detach">&times;</button>' : "");
+        </div>` + (sessions.has(key) ? '<button class="session-close" data-tip="Detach">&times;</button>' : "");
               item.addEventListener("click", (e) => {
                 if (e.target.classList.contains("session-close")) return;
                 openPeerSession(id, s.name);
@@ -24102,14 +24064,10 @@ ${detail}` });
                 skillCatalog: sc && sc.ok ? sc : null
               };
             },
-            // The dialog hands us the args patch plus (for a Claude peer) disabledSkills/
-            // injectSkills. Skills are roster-frozen on the box (fixed at conversation
-            // creation), so a plain box-side resume restart wouldn't re-read them — the
-            // exact reason the old Skills popover used a FRESH restart. So when skills ride
-            // along we persist args WITHOUT the box restart, persist skills separately,
-            // and (if the user asked to apply now) do a fresh restart + reattach here,
-            // which re-reads args AND the skill roster. A non-skills peer edit keeps the
-            // box-side resume restart (history-preserving) as before.
+            // Skills are roster-frozen at conversation creation on the box, so a resume
+            // restart never re-reads them. When skills ride along, persist args WITHOUT the
+            // box restart, persist skills separately, and apply with a FRESH restart here.
+            // A non-skills peer edit keeps the history-preserving resume restart.
             save: async (patch) => {
               wasAttached = sessions.has(key);
               const { disabledSkills, injectSkills, restart, ...argsPatch } = patch || {};
@@ -24376,21 +24334,14 @@ ${detail}` });
         // () -> bool
         scheduleSidebarRelayout,
         // () -> void   (the debounced core relayout)
-        // Core capabilities a plugin's renderer half reaches through rhost instead of
-        // window.api (the no-backdoor lint). All three have non-workbench consumers in
-        // core, which is exactly why they are wrapped rather than moved.
         listSessions,
         // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
         openPath,
         // (p) -> void   (window.api.fileOpen — reveal in Finder)
         showToast,
         // (msg, opts) -> void
-        // GETTER-shaped: this window's workspace id is filled ASYNCHRONOUSLY
-        // (renderer.js:353 awaits window.api.currentWorkspace()), so a captured value
-        // would be null forever. Law 1 of §3.3 requires rhost to carry it.
-        // No `= () => null` default: the leak scanner's param matcher cannot cross
-        // nested parens, and a defaulted arrow in this list would hide EVERY dep
-        // above it from the scan (verified — it did).
+        // No `= () => null` default here: the leak scanner's param matcher cannot
+        // cross nested parens, and a defaulted arrow hides every dep above it.
         getWorkspaceId
       } = {}) {
         const statusActions = [];
@@ -24829,20 +24780,10 @@ ${detail}` });
               return getWorkspaceId ? getWorkspaceId() : null;
             },
             invoke: (method, ...args) => invoke(pluginId, method, args),
-            // ── sessions (renderer side) ──
-            // ONE accessor, and it is the SCOPED one. There is deliberately no
-            // `listAll()` here and no unqualified `list()`: the engine half's law 1
-            // exists because conflating the two silently widens a per-window dropdown
-            // into a cross-workspace surface, and `fsScope` would NOT catch it (it
-            // refuses PEERS, not foreign workspaces). `session:list` is already
-            // sender-window-scoped [ipc-handlers.js:387
-            // `manager.listForWorkspace(workspaceOfSender(e))`]; the filter here makes
-            // the scope the CALLER's stated one rather than an implicit property of
-            // which window happened to ask.
+            // Deliberately no unqualified `list()`/`listAll()`: `session:list` is already
+            // scoped to the sender window, and the explicit wsId filter makes the scope
+            // the caller's stated one rather than a property of which window asked.
             sessions: Object.freeze({
-              // The session the user is looking at in THIS window, or null. Same
-              // predicate the status-bar context uses, so a plugin and the bar can
-              // never disagree about what "active" means.
               active: () => getActiveSession ? getActiveSession() : null,
               listWorkspace: async (wsId) => {
                 if (!listSessions) return [];
@@ -24857,13 +24798,9 @@ ${detail}` });
               }
             }),
             ui: Object.freeze({
-              // Reveal a path in the OS file manager. Core's row (window.api.fileOpen)
-              // stays — files-popover.js uses it too.
               openPath: (p) => {
                 if (openPath) openPath(String(p));
               },
-              // Core's toast host, so a plugin's errors look like every other error in
-              // the app instead of an alert().
               showToast: (msg, opts) => {
                 if (showToast) showToast(String(msg), opts || {});
                 else {
@@ -24892,13 +24829,8 @@ ${detail}` });
                 overlay: (s) => surfaces.overlay({ ...s, pluginId })
               })
             }),
-            // Sanctioned shared pure leaves, mirroring the engine host's `lib`.
             lib: Object.freeze({ renderDiffHtml }),
-            // ── Law 3: the teardown surface ──
             onDispose: (fn) => disposable(pluginId, fn),
-            // Wrapped timers/listeners. The plugin writes ordinary code; the host
-            // holds the handles and clears them on disable, so the common leak needs
-            // no discipline from the plugin author.
             setInterval: (fn, ms, ...a) => {
               const h = setInterval(fn, ms, ...a);
               r.intervals.add(h);
@@ -25023,7 +24955,6 @@ ${detail}` });
           for (const id of [...resources.keys()]) dispose(id);
         }
         return {
-          // Core's five seams.
           statusBarHtml,
           hasVisibleContribution,
           handleBarClick,
@@ -25034,17 +24965,14 @@ ${detail}` });
           renderSettingsSections,
           collectSettingsSections,
           settingsSectionOwners,
-          // Lifecycle (the Phase-2 loader and the in-tests fake plugin drive these).
           activate,
           dispose,
           disposeAll,
-          // Direct registry access for core-registered contributions (none in Phase 1).
           statusBar,
           sidebar,
           sessionMenu,
           settings,
           surfaces,
-          // Introspection seams — read-only counts, never the live containers.
           _counts: () => ({
             actions: statusActions.length,
             segments: statusSegments.length,
@@ -25054,7 +24982,6 @@ ${detail}` });
             sections: settingsSections.length,
             overlays: overlays.length
           }),
-          // W9 gate #1 asserts this is zero for a disabled plugin.
           _liveResources: (pluginId) => {
             const r = resources.get(pluginId);
             if (!r) return { timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false };
@@ -25985,8 +25912,6 @@ ${detail}` });
         sidebarView = {
           group: sbGroup.value,
           sort: sbSort.value,
-          // Guarded read: sbStatus is the Active/Archived/All select; the fallback
-          // preserves the current value if the control is ever absent.
           status: sbStatus ? sbStatus.value : sidebarView.status,
           activity: sbActivity.value,
           search: sbSearch.value
@@ -26895,10 +26820,6 @@ ${detail}` });
           disabledSkills: type === "claude" ? collectSkillChecklist(inputSkillsList) : [],
           injectSkills: type === "claude" ? collectInjectChecklist(inputInjectSkillsList) : [],
           stripLevel: type === "claude" ? Number(inputStripLevel && inputStripLevel.value) || 0 : 0,
-          // Prompt refs are library-file references (system replaces, appends compose)
-          // — captured for BOTH agent types so a codex template round-trips. The
-          // legacy inline body is NEVER captured (F2 guard): doCreate passes param-7
-          // systemPromptBody=null, sourced independently of cfg.
           systemPromptFile: agentType ? inputSystemPrompt.value || null : null,
           appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : []
         };
@@ -27315,8 +27236,6 @@ ${detail}` });
         activePeerConfigurable,
         scheduleSidebarRelayout,
         getWorkspaceId: () => currentWorkspaceId,
-        // Core capabilities plugins reach through rhost instead of window.api. Each
-        // has non-workbench consumers in core, which is why it is wrapped, not moved.
         listSessions: () => window.api.listSessions(),
         openPath: (p) => window.api.fileOpen(p),
         showToast
@@ -27956,10 +27875,7 @@ Click for live activity`;
         renderProxyBar,
         openFilePeek,
         isFilesPopoverForKey,
-        // Edit Session on a peer row reuses the local dialog with a peer data source
-        // (hoisted function decl, so referenced above its definition).
         openArgsDialog,
-        // Edit Skills on a peer row reuses the local Skills popover with a peer source.
         openSkillsPopover
       });
       var { openSearch, closeSearch, isSearchOpen, setSearchInfo } = createTermSearch({ sessions, getActiveSession: () => activeSession });
@@ -29999,12 +29915,9 @@ ${res.stderr}` : "");
         const snapBackend = existing ? existing.dataset.backend || null : null;
         closeArgsDialog();
         const res = source ? await source.save({
-          // Peer save NEVER carries execCommands — exec grants are local-only, so the
-          // key is omitted entirely (not even []) so a peer edit can't clear the box's
-          // grants. remote-wiring strips it belt-and-suspenders regardless. Skills DO
-          // travel now (peer-only section): disabledSkills/injectSkills carry the
-          // collected values, and the peer source persists them + fresh-restarts on
-          // apply-now (a resume wouldn't re-read the roster).
+          // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),
+          // so a peer edit cannot clear the box's grants. Skills DO travel, and the peer source
+          // fresh-restarts on apply-now — a resume wouldn't re-read the roster.
           extraArgs: parsed,
           restart,
           proxy,
