@@ -76,7 +76,7 @@ function makeEngine({ manager = makeManager([seatA, seatB]), settings = {} } = {
   const engine = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
-    log: { info: (scope, msg) => logged.push(`${scope} ${msg}`) },
+    log: { info: (scope, msg) => logged.push(`${scope} ${msg}`), error: (scope, msg) => logged.push(`${scope} ${msg}`) },
     userDataPath: dir,
     fs,
     path,
@@ -932,7 +932,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
     engine = createPluginHostEngine({
       manager: m,
       getUiSettings: () => ({ get: () => ({}), set: () => {} }),
-      log: { info: () => {} },
+      log: { info: () => {}, error: () => {} },
       userDataPath: dir,
       fs,
       path,

@@ -68,7 +68,7 @@ function createPluginHostEngine(deps) {
     const scope = `plugin:${pluginId}`;
     return {
       info: (msg) => { try { log.info(scope, String(msg)); } catch {} },
-      error: (msg) => { try { log.info(scope, `ERROR ${msg}`); } catch {} },
+      error: (msg) => { try { log.error(scope, String(msg)); } catch {} },
     };
   }
 
@@ -83,7 +83,7 @@ function createPluginHostEngine(deps) {
       try {
         const r = fn(arg);
         if (r && typeof r.then === 'function') {
-          try { log.info('plugin', `contract violation: ${label} subscriber returned a thenable — the hook is SYNCHRONOUS by definition (plugin-plan.md [internal design doc, not in this repo] §3.2); its result is ignored`); } catch {}
+          try { log.info('plugin', `contract violation: ${label} subscriber returned a thenable — the hook is SYNCHRONOUS by definition; its result is ignored`); } catch {}
         }
       } catch (e) {
         try { log.info('plugin', `${label} subscriber threw (ignored): ${e && e.message}`); } catch {}
@@ -150,9 +150,12 @@ function createPluginHostEngine(deps) {
         return (mine && typeof mine === 'object') ? { ...mine } : {};
       },
       set(patch) {
+        // Spreading a non-object here writes index keys ("0", "1", ...) into the
+        // plugin's namespace, so a string patch silently corrupts settings.
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return false;
         const ui = getUiSettings();
         const all = ui.get().plugins || {};
-        const next = { ...all, [pluginId]: { ...(all[pluginId] || {}), ...(patch || {}) } };
+        const next = { ...all, [pluginId]: { ...(all[pluginId] || {}), ...patch } };
         ui.set({ plugins: next });
         return true;
       },
@@ -252,7 +255,7 @@ function createPluginHostEngine(deps) {
       if (win) win.webContents.send('plugin-event', pluginId, t, payload);
       return true;
     }
-    logFor(pluginId).error(`events.emit('${t}') dropped — scope is REQUIRED and must be 'all', { session }, or { workspace } (plugin-plan.md [internal design doc, not in this repo] §3.3)`);
+    logFor(pluginId).error(`events.emit('${t}') dropped — scope is REQUIRED and must be 'all', { session }, or { workspace }`);
     return false;
   }
 

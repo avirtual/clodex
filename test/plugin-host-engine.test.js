@@ -45,7 +45,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null } = {}
   const engine = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
-    log: { info: (scope, msg) => logged.push(`${scope} ${msg}`) },
+    log: { info: (scope, msg) => logged.push(`${scope} ${msg}`), error: (scope, msg) => logged.push(`${scope} ${msg}`) },
     userDataPath: dir,
     fs, path,
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
@@ -310,7 +310,7 @@ test('t8: telemetry.snapshot returns a deep copy — a plugin cannot edit core\'
   const engine = createPluginHostEngine({
     manager: makeManager(),
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
-    log: { info: () => {} },
+    log: { info: () => {}, error: () => {} },
     userDataPath: dir,
     fs, path,
     gitWorktree: {},
@@ -353,7 +353,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   const engine = createPluginHostEngine({
     manager: makeManager(),
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
-    log: { info: () => {} },
+    log: { info: () => {}, error: () => {} },
     userDataPath: dir,
     fs, path,
     gitWorktree: realLeaf,     // exactly what engine.js injects
