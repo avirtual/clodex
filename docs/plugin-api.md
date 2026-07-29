@@ -316,7 +316,9 @@ The same shape one level into the user's UI settings, at
 `uiSettings.plugins[yourId]`.
 
 - `get()` returns a shallow copy of your settings object, or `{}`.
-- `set(patch)` **shallow-merges** the patch into your object.
+- `set(patch)` **shallow-merges** the patch into your object. `patch` must be a
+  plain object: a string, array, `null` or primitive is refused and returns
+  `false` without writing. Returns `true` when the merge is applied.
 
 Use `settings` for things a user chooses and `storage` for things your plugin
 computes. The practical difference: settings are what a `settings.section` slot
@@ -1449,6 +1451,13 @@ These are not style guidelines. Each is a test that fails the build.
   `window.api` are all refused. Core is reachable **only** through the `host` /
   `rhost` argument. That argument is the versioned surface; reaching around it is
   exactly the coupling this API exists to remove.
+- **Subprocesses are allowed.** An engine half may `require('node:child_process')`
+  and spawn whatever it needs. A plugin owning its own child process is a design
+  goal, not a loophole left open by an under-specified lint — the accepted-module
+  list names `node:child_process` explicitly. Shelling out to a CLI the user has
+  already authenticated (`gh`, `kubectl`, `docker`) is the intended way to reach
+  an external service, and it keeps credentials out of your plugin entirely: the
+  CLI holds the token, you hold none.
 - **No manifest escape.** Entry and style paths must resolve inside your
   directory (§2). The static lint cannot see a path assembled in a manifest, and
   the runtime check cannot see a require buried three files deep — hence both.
