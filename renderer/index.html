@@ -936,13 +936,9 @@
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
-      <!-- No Plugins section here (T5): turning a plugin on or off is not a
-           preference — it tears down live DOM in every open window — so the
-           CHOOSING lives in the top-level Plugins menu and its "Manage
-           Plugins…" dialog. What still belongs here is each plugin's OWN
-           settings (plugin-plan.md [internal design doc, not in this repo] §2.5: "settings organized by plugin,
-           and you chose the plugins"): the host appends those after this point
-           as [data-plugin-section]. -->
+      <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
+           plugin's own settings belong in this dialog. Both live on the
+           "Manage Plugins…" dialog, so there is one place to look. -->
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>
@@ -961,7 +957,7 @@
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
       <h3>Plugins</h3>
-      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
       <div id="plugins-list"></div>
       <!-- The browser frontend's substitute for revealing the folder in Finder:
            host and viewer are different machines there, so a reveal would open

@@ -188,8 +188,8 @@ test('with no plugin registered every seam returns the empty answer', () => {
   assert.deepEqual(host.menuEntriesFor('claude'), [], 'the ⚙ menu is core-only');
   assert.equal(host.handleBarClick('anything', null), false, 'core dispatch falls through');
   assert.equal(host.handleMenuPick('anything', 's', null), false);
-  assert.deepEqual(host.settingsSectionOwners(), [], 'openPrefs issues ZERO plugin invokes');
-  assert.deepEqual(host.collectSettingsSections(), [], 'Save issues zero');
+  assert.deepEqual(host.settingsSectionOwners(), [], 'no plugin row grows a Settings button');
+  assert.equal(host.collectSectionsFrom('demo', el('div')), null, 'Save issues zero');
   assert.deepEqual(host._counts(), {
     actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
   });
@@ -425,12 +425,10 @@ test('malformed menu entries are dropped, not rendered', () => {
 
 // ── §2.5 Settings ───────────────────────────────────────────────────────────
 
-test('settings sections mount before .dialog-actions and round-trip values', () => {
+test('settings sections render into the caller\'s container and round-trip values', () => {
   const { host, dom } = makeHost();
-  const dialog = el('div', 'prefs-dialog');
-  const actions = el('div', null, 'dialog-actions');
-  dialog.appendChild(actions);
-  dom.body.appendChild(dialog);
+  const panel = el('div', null, 'plugin-settings-panel');
+  dom.body.appendChild(panel);
 
   let rendered = null;
   activate(host, 'demo', (rhost) => {
@@ -440,35 +438,79 @@ test('settings sections mount before .dialog-actions and round-trip values', () 
       collect: (container) => ({ n: container.children.length }),
     });
   });
-  assert.deepEqual(host.settingsSectionOwners(), ['demo'], 'openPrefs pulls values for exactly these');
+  assert.deepEqual(host.settingsSectionOwners(), ['demo'], 'the Settings button appears for exactly these');
 
-  host.renderSettingsSections({ demo: { saved: 1 } });
-  const section = dialog.querySelector('[data-plugin-section="demo:prefs"]');
+  host.renderSectionsInto('demo', panel, { saved: 1 });
+  const section = panel.querySelector('[data-plugin-section="demo:prefs"]');
   assert.ok(section, 'a <section data-plugin-section> exists');
-  assert.equal(dialog.children.indexOf(section) < dialog.children.indexOf(actions), true,
-    'mounted BEFORE .dialog-actions, so Save/Cancel stay last');
   assert.deepEqual(rendered, { saved: 1 }, 'the plugin gets its own persisted values, pull-on-open');
-  assert.deepEqual(host.collectSettingsSections(), [{ pluginId: 'demo', patch: { n: 1 } }]);
+  assert.deepEqual(host.collectSectionsFrom('demo', panel), { n: 1 });
 
   // Re-open: the body is rebuilt, not appended to.
-  host.renderSettingsSections({ demo: {} });
-  assert.deepEqual(host.collectSettingsSections(), [{ pluginId: 'demo', patch: { n: 1 } }],
+  host.renderSectionsInto('demo', panel, {});
+  assert.deepEqual(host.collectSectionsFrom('demo', panel), { n: 1 },
     're-render clears the section body first');
+});
+
+test('sections go only into the container they were given, and merge per plugin', () => {
+  const { host, dom } = makeHost();
+  const mine = el('div', null, 'plugin-settings-panel');
+  const theirs = el('div', null, 'plugin-settings-panel');
+  dom.body.appendChild(mine);
+  dom.body.appendChild(theirs);
+
+  activate(host, 'demo', (rhost) => {
+    rhost.ui.settings.section({ id: 'a', render: () => {}, collect: () => ({ a: 1 }) });
+    rhost.ui.settings.section({ id: 'b', render: () => {}, collect: () => ({ b: 2 }) });
+  });
+  activate(host, 'other', (rhost) => {
+    rhost.ui.settings.section({ id: 'c', render: () => {}, collect: () => ({ c: 3 }) });
+  });
+
+  assert.equal(host.renderSectionsInto('demo', mine, {}), 2, 'both of this plugin\'s sections render');
+  assert.equal(theirs.querySelector('[data-plugin-section="demo:a"]'), null,
+    'another row\'s panel is untouched — the host never searches the document for its mount');
+  assert.deepEqual(host.collectSectionsFrom('demo', mine), { a: 1, b: 2 }, 'one merged patch per plugin');
+  assert.equal(host.collectSectionsFrom('other', mine), null,
+    'a plugin whose sections were never rendered here collects nothing');
+});
+
+test('a plugin with no settings section is not an owner, and collects null', () => {
+  const { host, dom } = makeHost();
+  const panel = el('div', null, 'plugin-settings-panel');
+  dom.body.appendChild(panel);
+  activate(host, 'demo', (rhost) => {
+    rhost.ui.sidebar.rowBadge({ id: 'chip', resolve: () => null });
+  });
+  assert.deepEqual(host.settingsSectionOwners(), [], 'no Settings button on that row');
+  assert.equal(host.renderSectionsInto('demo', panel, {}), 0);
+  assert.equal(host.collectSectionsFrom('demo', panel), null);
+});
+
+test('every section returning null yields no patch, so nothing is written', () => {
+  const { host, dom } = makeHost();
+  const panel = el('div', null, 'plugin-settings-panel');
+  dom.body.appendChild(panel);
+  activate(host, 'demo', (rhost) => {
+    rhost.ui.settings.section({ id: 'p', render: () => {}, collect: () => null });
+  });
+  host.renderSectionsInto('demo', panel, {});
+  assert.equal(host.collectSectionsFrom('demo', panel), null,
+    'null, not {} — an empty patch would stamp over the stored values');
 });
 
 test('a disabled plugin\'s settings section does not exist', () => {
   const { host, dom } = makeHost();
-  const dialog = el('div', 'prefs-dialog');
-  dialog.appendChild(el('div', null, 'dialog-actions'));
-  dom.body.appendChild(dialog);
+  const panel = el('div', null, 'plugin-settings-panel');
+  dom.body.appendChild(panel);
   activate(host, 'demo', (rhost) => {
     rhost.ui.settings.section({ id: 'p', title: 'D', render: () => {}, collect: () => ({}) });
   });
-  host.renderSettingsSections({});
-  assert.ok(dialog.querySelector('[data-plugin-section="demo:p"]'));
+  host.renderSectionsInto('demo', panel, {});
+  assert.ok(panel.querySelector('[data-plugin-section="demo:p"]'));
   host.dispose('demo');
-  assert.equal(dialog.querySelector('[data-plugin-section="demo:p"]'), null);
-  assert.deepEqual(host.settingsSectionOwners(), [], 'and Save stops invoking for it');
+  assert.equal(panel.querySelector('[data-plugin-section="demo:p"]'), null);
+  assert.deepEqual(host.settingsSectionOwners(), [], 'and the Settings button goes with it');
 });
 
 // ── §2.6 Surfaces ───────────────────────────────────────────────────────────

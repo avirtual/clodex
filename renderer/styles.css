@@ -2098,16 +2098,18 @@ html, body {
    the dialog does, so a held-back plugin reads as a state, not as decoration. */
 .plugin-row-note.warn { color: var(--warn); opacity: 1; }
 .plugin-row button { align-self: center; }
+/* A plugin's own settings, inline under its row (t109). Not a second overlay:
+   #prefs-overlay and #plugins-overlay are siblings with no stacking manager. */
+.plugin-settings-panel { padding: 4px 4px 10px 26px; border-top: 1px dashed var(--border); }
+.plugin-settings-panel.hidden { display: none; }
+.plugin-settings-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.plugin-settings-panel [data-plugin-section] h3 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 /* The browser frontend's plugins-folder panel (t28) — the path on the HOST plus
    a one-level listing, shown where Electron reveals in Finder. Hidden until the
    button fills it, and it needs its own .hidden rule for the usual reason: the
    element is toggled by class and would otherwise ship always-visible. */
 #plugins-folder { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); word-break: break-all; }
 #plugins-folder.hidden { display: none; }
-/* A plugin's OWN section (§2.5) is appended by the host after core's; it uses an
-   h3 where core's sections use h4, so it is normalized here rather than in every
-   plugin. */
-#prefs-dialog [data-plugin-section] h3 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 
 #dialog {
   background: var(--sidebar-bg);

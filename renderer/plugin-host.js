@@ -293,15 +293,18 @@ function initPluginHost({
     section(spec) { return register(settingsSections, spec, ['render', 'collect']); },
   };
 
-  function renderSettingsSections(valuesByPlugin = {}) {
-    const dialog = document.getElementById('prefs-dialog');
-    if (!dialog) return;
-    for (const el of [...dialog.querySelectorAll('[data-plugin-section]')]) {
-      if (!settingsSections.some((s) => s.id === el.getAttribute('data-plugin-section'))) el.remove();
+  // The container comes from the caller (the plugin's own row in Manage Plugins),
+  // so this must never reach for a fixed dialog id: two rows expanded at once is
+  // an ordinary state, and a document-wide lookup would render one plugin's form
+  // into another row's panel.
+  function renderSectionsInto(pluginId, containerEl, values = {}) {
+    if (!containerEl) return 0;
+    const mine = settingsSections.filter((s) => s.pluginId === pluginId);
+    for (const el of [...containerEl.querySelectorAll('[data-plugin-section]')]) {
+      if (!mine.some((s) => s.id === el.getAttribute('data-plugin-section'))) el.remove();
     }
-    const actions = dialog.querySelector('.dialog-actions');
-    for (const s of settingsSections) {
-      let el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+    for (const s of mine) {
+      let el = containerEl.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
       if (!el) {
         el = document.createElement('section');
         el.setAttribute('data-plugin-section', s.id);
@@ -314,32 +317,36 @@ function initPluginHost({
         const body = document.createElement('div');
         body.className = 'plugin-section-body';
         el.appendChild(body);
-        if (actions) dialog.insertBefore(el, actions); else dialog.appendChild(el);
+        containerEl.appendChild(el);
       }
       const body = el.querySelector('.plugin-section-body');
       body.innerHTML = '';
-      try { s.render(body, valuesByPlugin[s.pluginId] || {}); } catch (e) { warn(s.pluginId, e); }
+      try { s.render(body, values || {}); } catch (e) { warn(s.pluginId, e); }
     }
+    return mine.length;
   }
 
   function settingsSectionOwners() {
     return [...new Set(settingsSections.map((s) => s.pluginId))];
   }
 
-  function collectSettingsSections() {
-    const dialog = document.getElementById('prefs-dialog');
-    if (!dialog) return [];
-    const out = [];
+  // Null, not {}, when nothing was collected: the caller skips the settings.set
+  // entirely, so a plugin that declines to save cannot have an empty patch
+  // stamped over its stored values.
+  function collectSectionsFrom(pluginId, containerEl) {
+    if (!containerEl) return null;
+    let patch = null;
     for (const s of settingsSections) {
-      const el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+      if (s.pluginId !== pluginId) continue;
+      const el = containerEl.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
       if (!el) continue;
       const body = el.querySelector('.plugin-section-body');
       try {
-        const patch = s.collect(body);
-        if (patch && typeof patch === 'object') out.push({ pluginId: s.pluginId, patch });
+        const p = s.collect(body);
+        if (p && typeof p === 'object') patch = { ...(patch || {}), ...p };
       } catch (e) { warn(s.pluginId, e); }
     }
-    return out;
+    return patch;
   }
 
   let openOverlay = null;
@@ -562,7 +569,7 @@ function initPluginHost({
     statusBarHtml, hasVisibleContribution, handleBarClick,
     applyRowBadges, renderFooterButtons,
     menuEntriesFor, handleMenuPick,
-    renderSettingsSections, collectSettingsSections, settingsSectionOwners,
+    renderSectionsInto, collectSectionsFrom, settingsSectionOwners,
     activate, dispose, disposeAll,
     deliverEvent,
     statusBar, sidebar, sessionMenu, settings, surfaces,

@@ -4245,6 +4245,9 @@ async function renderPluginsDialog() {
       row.appendChild(retry);
     }
     pluginsList.appendChild(row);
+    if (pluginBar.settingsSectionOwners().includes(p.id)) {
+      pluginsList.appendChild(makePluginSettingsPanel(p, row));
+    }
   }
   for (const pr of problems) {
     const row = document.createElement('div');
@@ -4304,6 +4307,59 @@ async function renderPluginsDialog() {
     row.appendChild(body);
     pluginsList.appendChild(row);
   }
+}
+
+// A plugin's own settings live with the plugin, not in Preferences. The panel is INLINE under
+// the row rather than a second overlay: #prefs-overlay and #plugins-overlay are siblings with no
+// stacking manager, so a dialog opened over a dialog is a layering bug, and Escape would close
+// the wrong one.
+function makePluginSettingsPanel(p, row) {
+  const panel = document.createElement('div');
+  panel.className = 'plugin-settings-panel hidden';
+  const sections = document.createElement('div');
+  panel.appendChild(sections);
+  const actions = document.createElement('div');
+  actions.className = 'plugin-settings-actions';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.textContent = 'Save';
+  actions.appendChild(save);
+  panel.appendChild(actions);
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'secondary';
+  toggle.textContent = 'Settings';
+  toggle.addEventListener('click', async () => {
+    if (!panel.classList.contains('hidden')) {
+      panel.classList.add('hidden');
+      return;
+    }
+    let values = {};
+    try {
+      const r = await window.api.pluginInvoke('_host', 'settings.get', [p.id]);
+      if (r && r.ok) values = r.values || {};
+    } catch {}
+    pluginBar.renderSectionsInto(p.id, sections, values);
+    panel.classList.remove('hidden');
+  });
+  row.appendChild(toggle);
+
+  save.addEventListener('click', async () => {
+    const patch = pluginBar.collectSectionsFrom(p.id, sections);
+    if (patch) {
+      save.disabled = true;
+      let r = null;
+      try { r = await window.api.pluginInvoke('_host', 'settings.set', [p.id, patch]); } catch {}
+      save.disabled = false;
+      if (!r || !r.ok) {
+        showToast(`Could not save ${p.name || p.id} settings: ${(r && r.error) || 'unknown error'}`, { kind: 'error' });
+        return;
+      }
+    }
+    panel.classList.add('hidden');
+  });
+  return panel;
 }
 
 // On web this is a DIFFERENT action, not a degraded one: revealing in a file manager would
@@ -4821,24 +4877,11 @@ async function openPrefs() {
   refreshPrefsEnv();
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
-  await renderPluginPrefs();
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
   refreshWsLogs();
   if (wsPollTimer) clearInterval(wsPollTimer);
   wsPollTimer = setInterval(refreshWsStatus, 1500);
-}
-
-async function renderPluginPrefs() {
-  const owners = pluginBar.settingsSectionOwners();
-  const values = {};
-  for (const id of owners) {
-    try {
-      const r = await window.api.pluginInvoke('_host', 'settings.get', [id]);
-      if (r && r.ok) values[id] = r.values || {};
-    } catch {}
-  }
-  pluginBar.renderSettingsSections(values);
 }
 
 function closePrefs() {
@@ -4865,9 +4908,6 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     remoteEnabled: prefsRemoteEnabled.checked,
   });
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
-  for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
-    try { await window.api.pluginInvoke('_host', 'settings.set', [pluginId, patch]); } catch {}
-  }
   closePrefs();
 });
 

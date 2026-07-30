@@ -3264,6 +3264,25 @@ body {
 .plugin-row button {
   align-self: center;
 }
+.plugin-settings-panel {
+  padding: 4px 4px 10px 26px;
+  border-top: 1px dashed var(--border);
+}
+.plugin-settings-panel.hidden {
+  display: none;
+}
+.plugin-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.plugin-settings-panel [data-plugin-section] h3 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  opacity: 0.7;
+  letter-spacing: 0.5px;
+}
 #plugins-folder {
   margin-top: 8px;
   padding-top: 6px;
@@ -3272,13 +3291,6 @@ body {
 }
 #plugins-folder.hidden {
   display: none;
-}
-#prefs-dialog [data-plugin-section] h3 {
-  margin: 12px 0 4px;
-  font-size: 13px;
-  text-transform: uppercase;
-  opacity: 0.7;
-  letter-spacing: 0.5px;
 }
 #dialog {
   background: var(--sidebar-bg);
@@ -5781,13 +5793,9 @@ body {
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
       </section>
-      <!-- No Plugins section here (T5): turning a plugin on or off is not a
-           preference — it tears down live DOM in every open window — so the
-           CHOOSING lives in the top-level Plugins menu and its "Manage
-           Plugins…" dialog. What still belongs here is each plugin's OWN
-           settings (plugin-plan.md [internal design doc, not in this repo] §2.5: "settings organized by plugin,
-           and you chose the plugins"): the host appends those after this point
-           as [data-plugin-section]. -->
+      <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
+           plugin's own settings belong in this dialog. Both live on the
+           "Manage Plugins…" dialog, so there is one place to look. -->
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="btn-prefs-cancel" class="secondary">Cancel</button>
@@ -5806,7 +5814,7 @@ body {
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
       <h3>Plugins</h3>
-      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin's own settings live in Preferences. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
       <div id="plugins-list"></div>
       <!-- The browser frontend's substitute for revealing the folder in Finder:
            host and viewer are different machines there, so a reveal would open
@@ -24669,15 +24677,14 @@ ${detail}` });
             return register(settingsSections, spec, ["render", "collect"]);
           }
         };
-        function renderSettingsSections(valuesByPlugin = {}) {
-          const dialog = document.getElementById("prefs-dialog");
-          if (!dialog) return;
-          for (const el of [...dialog.querySelectorAll("[data-plugin-section]")]) {
-            if (!settingsSections.some((s) => s.id === el.getAttribute("data-plugin-section"))) el.remove();
+        function renderSectionsInto(pluginId, containerEl, values = {}) {
+          if (!containerEl) return 0;
+          const mine = settingsSections.filter((s) => s.pluginId === pluginId);
+          for (const el of [...containerEl.querySelectorAll("[data-plugin-section]")]) {
+            if (!mine.some((s) => s.id === el.getAttribute("data-plugin-section"))) el.remove();
           }
-          const actions = dialog.querySelector(".dialog-actions");
-          for (const s of settingsSections) {
-            let el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+          for (const s of mine) {
+            let el = containerEl.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
             if (!el) {
               el = document.createElement("section");
               el.setAttribute("data-plugin-section", s.id);
@@ -24690,37 +24697,37 @@ ${detail}` });
               const body2 = document.createElement("div");
               body2.className = "plugin-section-body";
               el.appendChild(body2);
-              if (actions) dialog.insertBefore(el, actions);
-              else dialog.appendChild(el);
+              containerEl.appendChild(el);
             }
             const body = el.querySelector(".plugin-section-body");
             body.innerHTML = "";
             try {
-              s.render(body, valuesByPlugin[s.pluginId] || {});
+              s.render(body, values || {});
             } catch (e) {
               warn(s.pluginId, e);
             }
           }
+          return mine.length;
         }
         function settingsSectionOwners() {
           return [...new Set(settingsSections.map((s) => s.pluginId))];
         }
-        function collectSettingsSections() {
-          const dialog = document.getElementById("prefs-dialog");
-          if (!dialog) return [];
-          const out = [];
+        function collectSectionsFrom(pluginId, containerEl) {
+          if (!containerEl) return null;
+          let patch = null;
           for (const s of settingsSections) {
-            const el = dialog.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
+            if (s.pluginId !== pluginId) continue;
+            const el = containerEl.querySelector(`[data-plugin-section="${CSS.escape(s.id)}"]`);
             if (!el) continue;
             const body = el.querySelector(".plugin-section-body");
             try {
-              const patch = s.collect(body);
-              if (patch && typeof patch === "object") out.push({ pluginId: s.pluginId, patch });
+              const p = s.collect(body);
+              if (p && typeof p === "object") patch = { ...patch || {}, ...p };
             } catch (e) {
               warn(s.pluginId, e);
             }
           }
-          return out;
+          return patch;
         }
         let openOverlay = null;
         function closeOpenOverlay() {
@@ -24988,8 +24995,8 @@ ${detail}` });
           renderFooterButtons,
           menuEntriesFor,
           handleMenuPick,
-          renderSettingsSections,
-          collectSettingsSections,
+          renderSectionsInto,
+          collectSectionsFrom,
           settingsSectionOwners,
           activate,
           dispose,
@@ -29115,6 +29122,9 @@ ${res.stderr}` : "");
             row.appendChild(retry);
           }
           pluginsList.appendChild(row);
+          if (pluginBar.settingsSectionOwners().includes(p.id)) {
+            pluginsList.appendChild(makePluginSettingsPanel(p, row));
+          }
         }
         for (const pr of problems) {
           const row = document.createElement("div");
@@ -29169,6 +29179,56 @@ ${res.stderr}` : "");
           row.appendChild(body);
           pluginsList.appendChild(row);
         }
+      }
+      function makePluginSettingsPanel(p, row) {
+        const panel = document.createElement("div");
+        panel.className = "plugin-settings-panel hidden";
+        const sections = document.createElement("div");
+        panel.appendChild(sections);
+        const actions = document.createElement("div");
+        actions.className = "plugin-settings-actions";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "Save";
+        actions.appendChild(save);
+        panel.appendChild(actions);
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "secondary";
+        toggle.textContent = "Settings";
+        toggle.addEventListener("click", async () => {
+          if (!panel.classList.contains("hidden")) {
+            panel.classList.add("hidden");
+            return;
+          }
+          let values = {};
+          try {
+            const r = await window.api.pluginInvoke("_host", "settings.get", [p.id]);
+            if (r && r.ok) values = r.values || {};
+          } catch {
+          }
+          pluginBar.renderSectionsInto(p.id, sections, values);
+          panel.classList.remove("hidden");
+        });
+        row.appendChild(toggle);
+        save.addEventListener("click", async () => {
+          const patch = pluginBar.collectSectionsFrom(p.id, sections);
+          if (patch) {
+            save.disabled = true;
+            let r = null;
+            try {
+              r = await window.api.pluginInvoke("_host", "settings.set", [p.id, patch]);
+            } catch {
+            }
+            save.disabled = false;
+            if (!r || !r.ok) {
+              showToast(`Could not save ${p.name || p.id} settings: ${r && r.error || "unknown error"}`, { kind: "error" });
+              return;
+            }
+          }
+          panel.classList.add("hidden");
+        });
+        return panel;
       }
       var pluginsFolderPanel = document.getElementById("plugins-folder");
       async function showPluginsFolderListing() {
@@ -29689,24 +29749,11 @@ ${res.stderr}` : "");
         refreshPrefsEnv();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
-        await renderPluginPrefs();
         prefsOverlay.classList.remove("hidden");
         refreshWsStatus();
         refreshWsLogs();
         if (wsPollTimer) clearInterval(wsPollTimer);
         wsPollTimer = setInterval(refreshWsStatus, 1500);
-      }
-      async function renderPluginPrefs() {
-        const owners = pluginBar.settingsSectionOwners();
-        const values = {};
-        for (const id of owners) {
-          try {
-            const r = await window.api.pluginInvoke("_host", "settings.get", [id]);
-            if (r && r.ok) values[id] = r.values || {};
-          } catch {
-          }
-        }
-        pluginBar.renderSettingsSections(values);
       }
       function closePrefs() {
         prefsOverlay.classList.add("hidden");
@@ -29733,12 +29780,6 @@ ${res.stderr}` : "");
           remoteEnabled: prefsRemoteEnabled.checked
         });
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
-        for (const { pluginId, patch } of pluginBar.collectSettingsSections()) {
-          try {
-            await window.api.pluginInvoke("_host", "settings.set", [pluginId, patch]);
-          } catch {
-          }
-        }
         closePrefs();
       });
       prefsRemoteTokenSave.addEventListener("click", () => {

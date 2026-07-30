@@ -974,7 +974,8 @@ and a `label`. The host namespaces `act` for the DOM and hands it back to
 
 ### 6.6 `rhost.ui.settings.section(spec)`
 
-A section inside the app's Preferences dialog, for your plugin's own settings.
+A section inside your plugin's row on the `Manage Plugins…` dialog, for your
+plugin's own settings.
 
 ```js
 rhost.ui.settings.section({
@@ -993,8 +994,9 @@ rhost.ui.settings.section({
 });
 ```
 
-`render` is called each time Preferences opens, with `values` being your current
-persisted settings (the same object `host.settings.get()` returns engine-side).
+`render` is called each time the user expands your row's `Settings` panel, with
+`values` being your current persisted settings (the same object
+`host.settings.get()` returns engine-side).
 `collect` is called when the user saves; the object you return is
 **shallow-merged** into your settings. Return `null` to save nothing.
 
@@ -1328,7 +1330,8 @@ menu is absent rather than empty.
 
 Enabling and disabling is **not** in Preferences, deliberately: it tears down
 live DOM in every open window, which is not what a preference does. Your own
-settings *are* in Preferences, via the `settings.section` slot (§6.6).
+settings are not in Preferences either — they open from a `Settings` button on
+your row in that same dialog, via the `settings.section` slot (§6.6).
 
 ### Startup
 

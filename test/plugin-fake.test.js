@@ -531,10 +531,12 @@ function installDom() {
   const footer = el('div', 'sidebar-footer');
   body.appendChild(footer);
 
-  const prefs = el('div', 'prefs-dialog');
-  const actions = el('div', null, 'dialog-actions');
-  prefs.appendChild(actions);
-  body.appendChild(prefs);
+  // The inline settings panel under a Manage Plugins row: the host renders into
+  // the container it is handed, and the panel's own Save row must survive a
+  // dispose that removes the plugin's nodes.
+  const settingsPanel = el('div', null, 'plugin-settings-panel');
+  settingsPanel.appendChild(el('div', null, 'plugin-settings-actions'));
+  body.appendChild(settingsPanel);
 
   const row = el('div', null, 'session-item');
   row.dataset.name = 'seat-a';
@@ -557,7 +559,7 @@ function installDom() {
   };
   global.document = doc;
   global.CSS = { escape: (s) => String(s) };
-  return { doc, body, head, footer, prefs, row, badges };
+  return { doc, body, head, footer, settingsPanel, row, badges };
 }
 
 function loadIsland() {
@@ -733,14 +735,13 @@ test('fake plugin (renderer): all six registries fill, namespaced and escaped', 
     assert.deepStrictEqual(host.menuEntriesFor('claude'), [{ act: 'fake:do-thing', label: 'Do Thing' }]);
     assert.deepStrictEqual(host.menuEntriesFor('bash'), [], 'entriesFor() decides, not the host');
 
-    // §2.5 — the section mounts into #prefs-dialog before .dialog-actions.
+    // §2.5 — the section mounts into the panel under the plugin's Manage Plugins row.
     assert.deepStrictEqual(host.settingsSectionOwners(), ['fake']);
-    host.renderSettingsSections({ fake: { mode: 'M' } });
-    const sec = dom.prefs.querySelector('[data-plugin-section="fake:sec"]');
+    host.renderSectionsInto('fake', dom.settingsPanel, { mode: 'M' });
+    const sec = dom.settingsPanel.querySelector('[data-plugin-section="fake:sec"]');
     assert.ok(sec);
-    assert.strictEqual(dom.prefs.children.indexOf(sec), 0, 'mounted BEFORE .dialog-actions');
     assert.match(sec.querySelector('.plugin-section-body').innerHTML, /value="M"/);
-    assert.deepStrictEqual(host.collectSettingsSections(), [{ pluginId: 'fake', patch: { mode: 'collected' } }]);
+    assert.deepStrictEqual(host.collectSectionsFrom('fake', dom.settingsPanel), { mode: 'collected' });
 
     // CSS arrived as a per-plugin <style>, removable as one node.
     assert.ok(dom.head.querySelector('[data-plugin-style="fake"]'));
@@ -812,11 +813,11 @@ test('fake plugin (renderer): dispose() leaves ZERO live resources and an untouc
 
     // Everything painted and live.
     host.applyRowBadges(dom.row);
-    host.renderSettingsSections({ fake: {} });
+    host.renderSectionsInto('fake', dom.settingsPanel, {});
     record.overlay.open();
     assert.ok(dom.footer.querySelector('[data-plugin-footer="fake:foot"]'));
     assert.ok(dom.badges.querySelector('[data-plugin-badge="fake:chip"]'));
-    assert.ok(dom.prefs.querySelector('[data-plugin-section="fake:sec"]'));
+    assert.ok(dom.settingsPanel.querySelector('[data-plugin-section="fake:sec"]'));
     // Eight disposers: one per registry entry (7 — action, segment, footer,
     // badge, menu provider, settings section, overlay) plus the explicit
     // onDispose. Every registration goes through the ledger; that is what makes
@@ -849,16 +850,16 @@ test('fake plugin (renderer): dispose() leaves ZERO live resources and an untouc
     assert.strictEqual(host.hasVisibleContribution(), false);
     assert.deepStrictEqual(host.menuEntriesFor('claude'), []);
     assert.deepStrictEqual(host.settingsSectionOwners(), []);
-    assert.deepStrictEqual(host.collectSettingsSections(), []);
+    assert.strictEqual(host.collectSectionsFrom('fake', dom.settingsPanel), null);
     assert.strictEqual(dom.footer.querySelector('[data-plugin-footer="fake:foot"]'), null);
     assert.strictEqual(dom.badges.querySelector('[data-plugin-badge="fake:chip"]'), null);
-    assert.strictEqual(dom.prefs.querySelector('[data-plugin-section="fake:sec"]'), null);
+    assert.strictEqual(dom.settingsPanel.querySelector('[data-plugin-section="fake:sec"]'), null);
     assert.strictEqual(dom.head.querySelector('[data-plugin-style="fake"]'), null);
     assert.strictEqual(dom.body.querySelector('[data-plugin="fake"]'), null, 'the overlay container too');
 
-    // 5. And the dialog's own children survived — teardown removed the plugin's
+    // 5. And the panel's own children survived — teardown removed the plugin's
     //    nodes, not the container it mounted into.
-    assert.ok(dom.prefs.querySelector('.dialog-actions'));
+    assert.ok(dom.settingsPanel.querySelector('.plugin-settings-actions'));
   });
 });
 
@@ -1118,7 +1119,7 @@ test('kill switch: with no host, every core seam still answers — no plugin, no
     assert.deepStrictEqual(host.menuEntriesFor('claude'), []);
     assert.strictEqual(host.handleBarClick('anything', null), false);
     assert.strictEqual(host.handleMenuPick('anything', 'seat-a', null), false);
-    assert.deepStrictEqual(host.settingsSectionOwners(), [], 'openPrefs issues ZERO invokes');
-    assert.deepStrictEqual(host.collectSettingsSections(), [], 'Save persists nothing');
+    assert.deepStrictEqual(host.settingsSectionOwners(), [], 'no row grows a Settings button');
+    assert.strictEqual(host.collectSectionsFrom('fake', el('div')), null, 'Save persists nothing');
   });
 });
