@@ -661,7 +661,9 @@ The return is always rebuilt as `{ ok: true }` or `{ ok: false, error }` — you
 never receive the handler's own object. Handlers are synchronous; an async one
 is refused rather than handing you a pending promise. `remove` does not throw.
 
-Deletion is **permanent** — no archive, no trash. Confirm with the user first.
+Deletion is **permanent** — no archive, no trash. Confirm with the user first;
+`plugins/memory-viewer` shows the unit's body in its confirmation rather than an
+id nobody can identify, and names a pinned unit's pinned state on its own line.
 
 ### `host.telemetry`
 

@@ -341,8 +341,96 @@ unmodified and core owns the refusal.
 repo's existing controls are plain text glyphs (`◈`, `×`) and an emoji would be
 the only one in the UI. Cosmetic; say the word if you want it different.
 
-**Selection is preserved across a delete**: `renderAgents` keeps `selected`
+**Selection is preserved across a delete** (pre-rework note): `renderAgents` keeps `selected`
 when the agent still exists, so deleting a unit does not bounce the user back
 to the first agent. Deleting an agent's LAST unit leaves the agent row present
 with count 0 (the directory survives), which is existing list behaviour, not
 something this commit changed.
+
+### hand — commit 2 REWORK, done, awaiting second cold review
+
+Suite **3125 pass / 0 fail / escapes 0** (baseline 3115, +10).
+`verify.js plugins/memory-viewer` 16/16. `npm run build:web` re-run.
+
+**MUST-FIX 1 — confirmed real against core before fixing.** `memory-store.js`
+`_file()` resolves `<dir>/<id>.md` and `forget` unlinks exactly that, while
+core's own `list()` at :63 falls back to the basename. The basename IS the
+identity; the `id:` line is only a claim about it.
+
+`parseUnit` now takes the basename as `key` and returns it. `id` falls back to
+`key` (matching core's list()), and a new `idMismatch` flag surfaces the
+disagreement instead of resolving it silently. The renderer deletes by
+`u.key` everywhere, and the button's title/aria-label name `key` too — a unit
+with no `id:` line used to render `Delete `.
+
+A mismatch is marked in the card (`.mv-id-mismatch`, "id≠file (…)") and stated
+in the confirmation, because the delete aims at something other than the id on
+screen and the user must be able to see that.
+
+Verified red both ways: reverting to `meta.id || ''` fails the no-id-line case
+and the accepted-confirmation case; forcing `idMismatch: false` fails the
+mismatch case.
+
+**MUST-FIX 2** — `manifest.json` `announce` rewritten. It is the description in
+the Manage Plugins dialog, i.e. the one sentence a user reads while deciding to
+enable a plugin that now permanently unlinks files.
+
+**MUST-FIX 3** — new `test/memory-viewer-renderer.test.js`. `confirmText` and
+`fmtWhen` hoisted to module scope (`confirmText` exported) so the dialog is
+assertable without a DOM: body present, `(empty)`, pinned line only when
+pinned and on its own line, mismatch note, fence, line+char truncation with the
+trailer surviving. Plus two behavioural cases through a fake rhost and a
+minimal fake DOM: a declined dialog records no `forget` invoke, and an accepted
+one targets the basename.
+
+**Nits, all five taken.** Monotonic `selectSeq` token replacing the
+identity-keyed guard · delete button disabled around the await · line cap
+(12) alongside the char cap (400) · body fenced in `----- memory -----` so it
+cannot impersonate the dialog's own metadata · title/aria-label off `key`.
+
+**Journal note the lead asked for, and it is load-bearing:** core's
+`MEMORY_AGENT_RE` is `/^[a-zA-Z0-9._-]{1,64}$/`, which ADMITS `..` — it is a
+character filter, not a containment check. So this plugin's `agentDir()` is
+currently the ONLY guard preventing a traversal agent name from reaching
+`memoryStore.forget`. The test at `test/memory-viewer-plugin.test.js` covering
+`'..'`, `'.'`, `'../../etc'` etc. is therefore load-bearing rather than
+belt-and-braces. Do not weaken it. Core-side fix is filed separately by the
+lead and is out of scope here.
+
+### hand — commit 2, final nit pass (all seven taken)
+
+Suite **3128 pass / 0 fail / escapes 0** (baseline 3125, +3).
+`verify.js plugins/memory-viewer` 16/16. `npm run build:web` re-run.
+
+- **Nit 1** — the confirm stub now CAPTURES its argument and asserts it equals
+  `confirmText(agent, u)`. The old stubs returned true/false and never looked,
+  so they tested the gate and the function separately and never that the
+  function is what reaches the gate. Verified by making the exact regression
+  (`confirm(\`Delete ${u.id}?\`)`): two cases go red where previously the whole
+  suite stayed green. `global.alert` is now left undefined in the harness, so a
+  revert to the alert path throws rather than passing quietly.
+- **Nit 2** — `flat()` collapses whitespace in agent/key/id/scope before
+  interpolating. These land outside the fence, in the region the fence declares
+  trustworthy, and a filename may legally contain a newline.
+- **Nit 3** — `deleteErrorText()` translates core's `invalid unit id:` into a
+  plain sentence naming `[agent:memory remember]`; anything else passes through
+  unchanged (inventing friendly text for an unknown failure would hide it). The
+  grammar is still NOT mirrored plugin-side. README gained the same statement.
+- **Nit 4** — `rhost.ui.showToast(msg, { kind: 'error' })` replaces `alert`.
+  Verified red by reverting to alert.
+- **Nits 5-7** — `reloadSeq` matching `selectSeq`; `.catch()` on the discarded
+  `deleteUnit` promise; `.mv-delete:disabled` so the re-entrancy guard is
+  visible.
+
+**Two findings recorded and deliberately NOT fixed, per the lead:**
+
+1. The re-derived parser drifts from core's in two omission-only ways: it
+   requires a `\n---\n` terminator, so a file without a trailing newline is
+   invisible here; and it drops a file with no frontmatter at all, which core's
+   `list()` includes by basename. Net effect is that this viewer's count can
+   read LOWER than `[agent:memory list]`. Never mis-targets — omission only.
+   Pre-existing t110 behaviour, not introduced by this task.
+2. `u` is a render-time snapshot, so a unit pinned via `[agent:memory pin]`
+   after the overlay opened is deleted without the PINNED warning. Inherent to
+   the documented "as of open" freshness bound; core exposes no
+   compare-and-delete primitive. Accepted, not unnoticed.

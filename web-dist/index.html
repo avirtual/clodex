@@ -7372,6 +7372,48 @@ body {
   var require_renderer2 = __commonJS({
     "plugins/memory-viewer/renderer.js"(exports, module) {
       "use strict";
+      function fmtWhen(iso) {
+        if (!iso) return "";
+        const t = Date.parse(iso);
+        if (!Number.isFinite(t)) return String(iso);
+        const d = new Date(t);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+      function confirmText(agent, u) {
+        const MAX_CHARS = 400;
+        const MAX_LINES = 12;
+        const flat = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
+        const key = flat(u.key);
+        const id = flat(u.id);
+        let body = String(u.body || "");
+        let clipped = body.length > MAX_CHARS;
+        if (clipped) body = body.slice(0, MAX_CHARS);
+        const lines = body.split("\n");
+        if (lines.length > MAX_LINES) {
+          body = lines.slice(0, MAX_LINES).join("\n");
+          clipped = true;
+        }
+        if (clipped) body += "\n\u2026";
+        const out = [`Delete this memory from ${flat(agent)}?`, ""];
+        if (u.pinned) out.push("THIS UNIT IS PINNED \u2014 it is served in full to every new session of this agent.", "");
+        if (u.idMismatch) out.push(`Note: this unit's id line says "${id}" but its filename is "${key}". The filename is what gets deleted.`, "");
+        out.push("----- memory -----", body || "(empty)", "------------------", "");
+        if (u.scope) out.push(`scope: ${flat(u.scope)}`);
+        out.push(`file: ${key}`);
+        out.push(`saved: ${fmtWhen(u.learned_at) || "unknown"}`, "");
+        out.push("This cannot be undone.");
+        return out.join("\n");
+      }
+      function deleteErrorText(res) {
+        const raw = res && res.error || "unknown error";
+        if (/^invalid unit id\b/.test(raw)) {
+          return "This file was not created by [agent:memory remember], so Clodex will not delete it from here. Remove it by hand if you meant to.";
+        }
+        return `Could not delete: ${raw}`;
+      }
+      module.exports.confirmText = confirmText;
+      module.exports.deleteErrorText = deleteErrorText;
       module.exports.activate = (rhost) => {
         let torn = false;
         const alive = () => !torn;
@@ -7401,20 +7443,12 @@ body {
           if (text !== void 0) e.textContent = text;
           return e;
         }
-        function fmtWhen(iso) {
-          if (!iso) return "";
-          const t = Date.parse(iso);
-          if (!Number.isFinite(t)) return String(iso);
-          const d = new Date(t);
-          const pad = (n) => String(n).padStart(2, "0");
-          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        }
         function wire(rootEl) {
           rootEl.innerHTML = "";
           const modal = el("div", "mv-modal");
           const topbar = el("div", "mv-topbar");
           topbar.appendChild(el("div", "mv-title", "Memories"));
-          topbar.appendChild(el("div", "mv-subtitle", "read-only"));
+          topbar.appendChild(el("div", "mv-subtitle", "bodies on disk \u2014 deleting is permanent"));
           const closeBtn = el("button", "mv-close", "\xD7");
           closeBtn.title = "Close";
           closeBtn.addEventListener("click", () => surface.close());
@@ -7428,6 +7462,30 @@ body {
           modal.appendChild(body);
           rootEl.appendChild(modal);
           let selected = null;
+          let selectSeq = 0;
+          let reloadSeq = 0;
+          async function deleteUnit(agent, u, btn) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            try {
+              if (!confirm(confirmText(agent, u))) return;
+              let res;
+              try {
+                res = await rhost.invoke("forget", { agent, id: u.key });
+              } catch (e) {
+                rhost.log.error("forget failed", e);
+                res = null;
+              }
+              if (!alive()) return;
+              if (!res || res.ok !== true) {
+                rhost.ui.showToast(deleteErrorText(res), { kind: "error" });
+                return;
+              }
+              await reload();
+            } finally {
+              if (alive() && btn.isConnected) btn.disabled = false;
+            }
+          }
           function renderUnits(agent, units) {
             unitsPane.innerHTML = "";
             if (!units.length) {
@@ -7443,12 +7501,25 @@ body {
               if (u.source && u.source !== agent) {
                 head.appendChild(el("span", "mv-source", `from ${u.source}`));
               }
+              if (u.idMismatch) {
+                const warn = el("span", "mv-id-mismatch", `id\u2260file (${u.key})`);
+                warn.title = `The id line says "${u.id}" but the file is "${u.key}". Deleting removes the file.`;
+                head.appendChild(warn);
+              }
+              const del = el("button", "mv-delete", "\u2715");
+              del.title = `Delete ${u.key}`;
+              del.setAttribute("aria-label", `Delete memory ${u.key}`);
+              del.addEventListener("click", () => {
+                deleteUnit(agent, u, del).catch((e) => rhost.log.error("delete failed", e));
+              });
+              head.appendChild(del);
               card.appendChild(head);
               card.appendChild(el("div", "mv-unit-body", u.body));
               unitsPane.appendChild(card);
             }
           }
           async function selectAgent(agent) {
+            const my = ++selectSeq;
             selected = agent;
             for (const row of agentsPane.querySelectorAll(".mv-agent-row")) {
               row.classList.toggle("mv-selected", row.dataset.mvAgent === agent);
@@ -7462,7 +7533,7 @@ body {
               rhost.log.error("units fetch failed", e);
               res = null;
             }
-            if (!alive() || selected !== agent) return;
+            if (!alive() || my !== selectSeq) return;
             if (!res || res.ok !== true) {
               unitsPane.innerHTML = "";
               unitsPane.appendChild(el(
@@ -7503,13 +7574,15 @@ body {
             }
             selectAgent(selected);
           }
-          return async () => {
+          async function reload() {
+            const my = ++reloadSeq;
             agentsPane.innerHTML = "";
             agentsPane.appendChild(el("div", "mv-empty", "Loading\u2026"));
             const agents = await fetchAgents();
-            if (!alive()) return;
+            if (!alive() || my !== reloadSeq) return;
             renderAgents(agents);
-          };
+          }
+          return reload;
         }
         rhost.ui.sidebar.footerButton({
           id: "open",

@@ -1,9 +1,12 @@
 'use strict';
 
 /**
- * memory-viewer — engine half. Read-only: no write path exists here on purpose
- * (writes would couple this plugin to core's digest-refresh timing; see the
- * t110 journal's one-consumer-first rationale before adding one).
+ * memory-viewer — engine half. Exactly one mutation: `forget`. It goes through
+ * host.library.remove, never fs.unlinkSync on the file this module can plainly
+ * see — deleting a unit obliges a boot-digest rewrite for any live claude
+ * session, which is core's to perform and whose timing a plugin cannot know.
+ * That obligation is the whole reason the seam exists; a direct unlink here
+ * would leave live agents serving a memory that no longer exists.
  */
 
 const fs = require('node:fs');
@@ -32,8 +35,14 @@ let host = null;
 /**
  * `---\nkey: value\n---\n\nbody`. `pinned: true` is written only when pinned;
  * absent means unpinned — do not expect `pinned: false` on disk.
+ *
+ * `key` (the caller's, from the filename) is the DELETE TARGET, because core
+ * resolves a unit as `<dir>/<id>.md` — the basename is the real identity and
+ * the `id:` line is only a claim about it. They can disagree: the store is
+ * documented as hand-authorable. Deleting by `meta.id` would unlink a
+ * different file than the one whose body the confirmation shows.
  */
-function parseUnit(text) {
+function parseUnit(text, key) {
   const s = String(text);
   if (!s.startsWith('---\n')) return null;
   const end = s.indexOf('\n---\n', 4);
@@ -47,7 +56,13 @@ function parseUnit(text) {
   }
 
   return {
-    id: meta.id || '',
+    key,
+    // Same fallback core's list() uses, so a unit with no `id:` line displays
+    // its filename rather than an empty string.
+    id: meta.id || key,
+    // A disagreement is shown, not silently resolved: the delete targets `key`,
+    // so the user must be able to see that the id on screen is not it.
+    idMismatch: !!meta.id && meta.id !== key,
     scope: meta.scope || '',
     learned_at: meta.learned_at || '',
     source: meta.source || '',
@@ -100,7 +115,7 @@ function readUnits(agent) {
     } catch (_) {
       continue; // deleted between readdir and read — skip, don't fail the list
     }
-    const u = parseUnit(text);
+    const u = parseUnit(text, f.replace(/\.md$/, ''));
     if (u) units.push(u);
   }
   // Newest first. learned_at is ISO-8601 so a plain string comparison orders
@@ -150,6 +165,18 @@ module.exports.activate = (h) => {
       return { ok: false, error: 'a valid agent name is required' };
     }
     return { ok: true, agent, units: readUnits(agent) };
+  });
+
+  // `agent` arrives over IPC, so it is vetted through agentDir() like every
+  // other renderer-supplied name here — core validates it again, with its own
+  // rules, and neither guard is the other's excuse. The id is NOT vetted here:
+  // core's MEMORY_ID_RE owns that, and a second grammar would drift.
+  host.ipc.handle('forget', (payload) => {
+    const { agent, id } = payload || {};
+    if (agentDir(agent) === null) {
+      return { ok: false, error: 'a valid agent name is required' };
+    }
+    return host.library.remove('memory', { agent, id });
   });
 
   host.log.info('activated');

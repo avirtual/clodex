@@ -152,6 +152,45 @@
   font-style: italic;
 }
 
+/* The `id:` line disagrees with the filename. Shown rather than resolved
+   silently: the delete targets the filename, so the id on screen is not what
+   goes away. */
+.mv-id-mismatch {
+  color: rgb(230, 160, 90);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+/* Pushed to the far edge of the head row, away from the metadata, so a delete
+   is never a mis-click on a scope or a timestamp. */
+.mv-delete {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.35;
+  cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.mv-delete:hover {
+  opacity: 1;
+  color: rgb(255, 120, 120);
+  background: rgba(255, 120, 120, 0.12);
+}
+
+/* The re-entrancy guard disables the button around the await; without this the
+   guard is invisible and a second click looks like the app ignoring the user. */
+.mv-delete:disabled {
+  opacity: 0.15;
+  cursor: default;
+  background: none;
+  color: inherit;
+}
+
 .mv-unit-body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
