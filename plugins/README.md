@@ -59,19 +59,33 @@ where plugins come from.
 
 ## Start from a working one
 
-`git-branches/` is the reference plugin and the recommended starting point: both
-halves, a settings section, a row badge, an intent verb, and a real cache — about
-as small as a plugin can be while still exercising most of the API.
+[`tools/`](./tools/README.md) is the short path — three commands, no reading
+required first:
+
+```bash
+node plugins/tools/build-context.js            # the whole contract as one pack, for an agent
+node plugins/tools/scaffold.js my-plugin       # a valid, empty plugin that already passes
+node plugins/tools/verify.js plugins/my-plugin # does it run against the real host?
+```
+
+`scaffold.js` writes the id and the directory name from one argument because the
+app refuses a manifest whose id and directory disagree, and that mismatch is the
+single most common way a first plugin fails to appear at all. `verify.js` drives
+the real loader and engine, so it answers a question a syntax check cannot: did
+`activate()` actually run.
+
+`git-branches/` is the reference plugin to read and to copy from: both halves, a
+settings section, a row badge, an intent verb, and a real cache — about as small
+as a plugin can be while still exercising most of the API.
 
 ```bash
 cp -R plugins/git-branches ~/.clodex/plugins/my-plugin
 ```
 
-Then edit `manifest.json` so `id` matches the new directory name (`my-plugin`) —
-the app refuses a manifest whose id and directory disagree — and gut the halves.
-Its own [README](./git-branches/README.md) explains what each file does, and
-`NOTES.md` beside it records what the API did and did not tell its author, which
-is worth reading before you hit the same corners.
+Copying by hand means renaming `id` in `manifest.json` to match the new directory
+yourself. Its own [README](./git-branches/README.md) explains what each file does,
+and `NOTES.md` beside it records what the API did and did not tell its author,
+which is worth reading before you hit the same corners.
 
 `workbench/` is the larger example — Files, Source Control and Worktrees in the
 sidebar footer — if you want to see the overlay slot carrying real weight.
@@ -132,3 +146,6 @@ a plugin of your own gets no static checking at all.
 - [`plugin-sources.md`](plugin-sources.md) — where plugins come
   from: the two roots, precedence and shadowing, trust, and what a re-scan can
   and cannot do.
+- [`tools/README.md`](tools/README.md) — the four author tools: generate the
+  context pack, scaffold a valid plugin, verify it against the real host, and
+  check that the verifier can still fail.
