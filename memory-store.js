@@ -127,9 +127,9 @@ function createMemoryStore(rootDir) {
 // body forever is how boot context bloats (live incident: a 79K memory file).
 // Bodies stay on disk, one recall away.
 //
-// Budget: pinned first (oldest first — settled positions read in the order
-// they were settled), then index newest-first; whole units only, overflow is
-// counted, never truncated mid-unit. Empty store → null (no digest at all —
+// Budget: pinned first, then index, both newest-first; whole units only,
+// overflow is counted, never truncated mid-unit. A pin whose body doesn't fit
+// is demoted to an index line, never dropped. Empty store → null (no digest —
 // and main.js leaves the conversation UNMARKED in the digest ledger, so units
 // saved later still reach it via the append-once path).
 
@@ -146,35 +146,79 @@ function fmtAge(iso, now = Date.now()) {
 
 function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {}) {
   if (!Array.isArray(units) || units.length === 0) return null;
-  const pinned = units.filter(u => u.pinned); // list() is learned_at ascending
-  const rest = units.filter(u => !u.pinned).reverse(); // newest first
+  // Both halves newest-first. Pinned used to be ascending, which froze the
+  // served set at the earliest pins once a store crossed the budget — no later
+  // pin could ever displace one. Do not restore ascending order here: a pin is
+  // a claim about what a future session needs, and that claim decays.
+  const pinned = units.filter(u => u.pinned).reverse();
+  const rest = units.filter(u => !u.pinned).reverse();
   const head = `Your persistent memory (${units.length} unit(s), saved across sessions). `
     + 'Recall any unit by id or keyword: [agent:memory recall] <id|query>.';
+  const indexHead = '\nIndex (bodies on disk — recall to read):';
+  const indexLine = (u, mark) => {
+    const first = (u.body.split('\n')[0] || '').slice(0, 80);
+    const age = fmtAge(u.learned_at, now);
+    return `\n- ${mark}${u.id}${u.scope ? ` [${u.scope}]` : ''} ${first}${age ? ` (${age})` : ''}`;
+  };
   const parts = [head];
   let used = head.length;
-  let omitted = 0;
+  let pinnedShown = 0;
+  let pinnedOmitted = 0;
+  let indexOmitted = 0;
+  const demoted = [];
 
   if (pinned.length) {
+    // Every pin's fallback line is reserved before any body is spent. A greedy
+    // body loop eats the budget those lines need, which is how a 97-pin store
+    // served eight bodies and left the other 89 pins in no context at all.
+    const fallback = pinned.map(u => indexLine(u, '[pinned] '));
+    const reserveAfter = new Array(pinned.length + 1).fill(0);
+    for (let i = pinned.length - 1; i >= 0; i--) {
+      reserveAfter[i] = reserveAfter[i + 1] + fallback[i].length;
+    }
     const ph = '\nPinned (full text):';
     parts.push(ph); used += ph.length;
-    for (const u of pinned) {
+    // Lines already demoted are not in `used` yet but still have to be paid
+    // for; leaving them out of the reserve is how the last pin loses its line.
+    let demotedBytes = 0;
+    for (let i = 0; i < pinned.length; i++) {
+      const u = pinned[i];
       const block = `\n## ${u.id}${u.scope ? ` [${u.scope}]` : ''}\n${u.body}`;
-      if (used + block.length > budget) { omitted += 1; continue; }
-      parts.push(block); used += block.length;
+      // A pin that doesn't fit falls through to the index. Dropping it made a
+      // pinned unit LESS reachable than an unpinned one, which at least keeps
+      // a line to recall from.
+      const reserve = demotedBytes + reserveAfter[i + 1] + indexHead.length;
+      if (used + block.length + reserve > budget) {
+        demoted.push(fallback[i]); demotedBytes += fallback[i].length;
+        continue;
+      }
+      parts.push(block); used += block.length; pinnedShown += 1;
     }
   }
-  if (rest.length) {
-    const ih = '\nIndex (bodies on disk — recall to read):';
-    parts.push(ih); used += ih.length;
+  if (demoted.length || rest.length) {
+    parts.push(indexHead); used += indexHead.length;
+    // Demoted pins lead the index, so the pinned set stays visually grouped.
+    for (const line of demoted) {
+      if (used + line.length > budget) { pinnedOmitted += 1; continue; }
+      parts.push(line); used += line.length;
+    }
     for (const u of rest) {
-      const first = (u.body.split('\n')[0] || '').slice(0, 80);
-      const age = fmtAge(u.learned_at, now);
-      const line = `\n- ${u.id}${u.scope ? ` [${u.scope}]` : ''} ${first}${age ? ` (${age})` : ''}`;
-      if (used + line.length > budget) { omitted += 1; continue; }
+      const line = indexLine(u, '');
+      if (used + line.length > budget) { indexOmitted += 1; continue; }
       parts.push(line); used += line.length;
     }
   }
-  if (omitted) parts.push(`\n(+${omitted} more — [agent:memory list])`);
+
+  const pinnedListed = demoted.length - pinnedOmitted;
+  if (pinnedListed || pinnedOmitted || indexOmitted) {
+    const clauses = [];
+    // Only worth stating once some pin did NOT get its body: "5 of 5" is noise.
+    if (pinnedListed || pinnedOmitted) clauses.push(`${pinnedShown} of ${pinned.length} pinned shown in full`);
+    if (pinnedListed) clauses.push(`${pinnedListed} pinned listed by title only`);
+    if (pinnedOmitted) clauses.push(`${pinnedOmitted} pinned omitted`);
+    if (indexOmitted) clauses.push(`+${indexOmitted} more`);
+    parts.push(`\n(${clauses.join('; ')} — [agent:memory list])`);
+  }
   return parts.join('');
 }
 

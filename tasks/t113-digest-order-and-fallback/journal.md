@@ -128,3 +128,72 @@ change the model.
 
 - Spec written by clodex (lead) from a measured store: 179 units / 97 pinned /
   11 served, the served set frozen at 2026-07-08.
+
+### hand, implementation
+
+Source change is in `composeDigest` only. Three fixes as specced (pinned
+reversed with a comment saying why not to restore ascending; non-fitting pin
+demoted to a `[pinned] ` index line grouped ahead of `rest`; three separate
+counters rendered as clauses, each dropped when zero).
+
+**DEVIATION — flagged, load-bearing, lead's call.** The spec prescribes a
+greedy body loop with the fallback line budget-checked afterwards ("if even
+that does not fit, it counts as fully omitted"). That mechanism cannot satisfy
+case 7, and the two requirements are in arithmetic conflict:
+
+- Case 7 fixture: 97 pins x ~900B, budget 8192. Greedy serves ~8 bodies
+  (8 x 917 = 7336), leaving ~690B of index — about 13 lines. 76 of the 97 ids
+  appear nowhere. Case 7 asserts all 97 appear. Greedy fails it by construction,
+  and would fail it on the real store too.
+
+So I reserve every pin's fallback line before spending budget on any body:
+a body is served only if it still leaves room for the fallback lines of all
+pins after it. That makes "every pin is reachable" hold whenever it is
+arithmetically possible, which is the property the lead named as the one that
+matters most ("makes over-pinning survivable rather than silently lossy").
+
+The cost, stated plainly: on a store where the fallback lines alone exceed the
+budget, ZERO bodies are served — lines win over bodies. On the real store
+(97 pins) that depends on first-line lengths: at ~80-char snippets, 97 lines is
+~10.8KB > 8KB, so the real store would serve no full pin bodies and still omit
+some lines. That is worse than today's 11 bodies if you rank body-serving above
+reachability. The tail reports it either way, so it is visible rather than
+silent, but it IS a behaviour change beyond the spec's letter and the lead may
+prefer a floor (e.g. always serve the newest N bodies before reserving). I did
+not add such a knob — unspecified, and a heuristic is the lead's decision.
+
+Also flagged: `test/memory-store.test.js:91` had to change its fixture (30 pins
+-> fewer) as well as its tail assertion. At 30 pins / budget 2000 no body fits
+at all, which would make the kept no-truncation invariant at :99-101 vacuous —
+a loop over zero blocks passes trivially. Fixture sized so bodies are still
+served and the invariant stays live.
+
+`:75` needed no change: its assertions (single pin in full, index newest-first,
+snippet+age format, no index bodies) all still hold verbatim under the new
+code. Left as-is rather than churned; noting it because the spec expected an
+edit there.
+
+**Bug case 7 caught in my own first cut.** The reserve initially counted only
+pins *after* the current one, not the lines of pins already demoted, so on the
+97-pin fixture the last pin lost its line. Case 7 failed on the first run and
+named the missing id. Fixed by carrying `demotedBytes`. Recording it because it
+is the case for writing case 7 the way the lead specified it.
+
+Measured on the 97-pin / 8KB fixture after the fix: 7902 bytes, 3 bodies in
+full, 94 demoted lines, all 97 ids present, tail reads
+`(3 of 97 pinned shown in full; 94 pinned listed by title only — [agent:memory list])`.
+
+### Result
+
+- `memory-store.js` — `composeDigest` only; header comment at :130 updated
+  (it stated the oldest-first order as intent).
+- `test/memory-store.test.js` — 6 new cases (spec cases 1-5 + 7; case 6 is the
+  kept invariant), `:91` fixture and tail assertion updated, `DIGEST_BUDGET`
+  added to the require.
+- Suite: **3099/3099 green** (3093 baseline + 6).
+- Mutation: **11 mutants, 11 killed, 0 survived**, covering cases 1-5 (two or
+  three mutants each) plus one for the reserve/case 7. Harness at
+  scratchpad/mutate-t113.js: asserts each target substring is uniquely present
+  before editing, asserts the suite green before and after every mutant. The
+  all-killed shape was distrusted per the rule and two mutants (1a, 4) were
+  re-run by hand outside the harness — both matched.
