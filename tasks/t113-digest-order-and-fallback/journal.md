@@ -1,5 +1,10 @@
 # t113 — the digest serves the oldest pins and silently drops the rest
 
+> Close this as ticket **t112**, not t113. Artifact directory names and ticket
+> ids are separate sequences and have drifted by one: the lead names the
+> directory when writing the spec, before `[agent:task add]` mints the id. Read
+> the id off `[agent:task list]`, never off the directory name.
+
 Three defects in `composeDigest` (memory-store.js:147). All three are live
 today, measured on a real store, and all three are independent of the larger
 question of how memories should be retrieved.
