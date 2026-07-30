@@ -23,14 +23,7 @@ const MEMORY_ROOT = path.join(os.homedir(), '.clodex', 'library', 'memory');
 // this regex is ever loosened.
 const AGENT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 
-// Bounds the staleness of badge counts, not of the overlay (the overlay
-// re-reads on every open). Nothing notifies a plugin that a memory file
-// changed, so freshness is only ever "how long ago did we look".
-const AGENTS_TTL_MS = 60 * 1000;
-
 let host = null;
-/** { at, rows } — one cache for agents(); units() is never cached. */
-let agentsCache = null;
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -123,6 +116,10 @@ function readUnits(agent) {
   return units;
 }
 
+// Uncached by design. This runs only when the user opens the overlay, so the
+// disk read is paid once per open and the answer is never stale. A cache here
+// would buy nothing and reintroduce the staleness bound the badge removal was
+// meant to delete.
 function computeAgents() {
   return listAgentDirs().map((agent) => {
     const units = readUnits(agent);
@@ -136,15 +133,6 @@ function computeAgents() {
   });
 }
 
-function getAgents(force) {
-  if (!force && agentsCache && Date.now() - agentsCache.at < AGENTS_TTL_MS) {
-    return agentsCache.rows;
-  }
-  const rows = computeAgents();
-  agentsCache = { at: Date.now(), rows };
-  return rows;
-}
-
 // ---------------------------------------------------------------------------
 // Activation
 // ---------------------------------------------------------------------------
@@ -152,12 +140,9 @@ function getAgents(force) {
 module.exports.activate = (h) => {
   // Re-enable reuses this module object; start from zero.
   host = h;
-  agentsCache = null;
 
-  // force:true is the overlay path — it must see the disk as it is now, so it
-  // bypasses the TTL that exists only for badge polls.
-  host.ipc.handle('agents', (opts) => {
-    return { ok: true, agents: getAgents(!!(opts && opts.force)) };
+  host.ipc.handle('agents', () => {
+    return { ok: true, agents: computeAgents() };
   });
 
   host.ipc.handle('units', (agent) => {
@@ -167,20 +152,9 @@ module.exports.activate = (h) => {
     return { ok: true, agent, units: readUnits(agent) };
   });
 
-  host.ipc.handle('settings.get', () => {
-    const s = host.settings.get() || {};
-    return { ok: true, values: { showRowBadge: s.showRowBadge !== false } };
-  });
-
-  // Liveness markers change with the session set; drop the cache so the next
-  // ask recomputes them instead of serving up to 60s of stale `live` flags.
-  host.sessions.onCreate(() => { agentsCache = null; });
-  host.sessions.onExit(() => { agentsCache = null; });
-
   host.log.info('activated');
 };
 
 module.exports.deactivate = () => {
-  agentsCache = null;
   host = null;
 };

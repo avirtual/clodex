@@ -4,11 +4,6 @@
  * elements — nothing that can match core's DOM or another plugin's.
  */
 
-.mv-badge {
-  font-size: 0.85em;
-  opacity: 0.8;
-}
-
 .mv-modal {
   display: flex;
   flex-direction: column;
@@ -169,9 +164,3 @@
   padding: 12px;
 }
 
-.mv-settings-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}

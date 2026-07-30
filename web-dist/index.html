@@ -7373,67 +7373,18 @@ body {
     "plugins/memory-viewer/renderer.js"(exports, module) {
       "use strict";
       module.exports.activate = (rhost) => {
-        const counts = /* @__PURE__ */ new Map();
-        let showRowBadge = true;
-        let inflight = null;
-        let loaded = false;
         let torn = false;
-        const POLL_MS = 60 * 1e3;
         const alive = () => !torn;
-        function applyAgents(agents) {
-          const next = /* @__PURE__ */ new Map();
-          for (const a of agents || []) {
-            if (a && a.agent && a.count > 0) next.set(a.agent, a.count);
-          }
-          let changed = next.size !== counts.size;
-          if (!changed) {
-            for (const [name, n] of next) {
-              if (counts.get(name) !== n) {
-                changed = true;
-                break;
-              }
-            }
-          }
-          counts.clear();
-          for (const [name, n] of next) counts.set(name, n);
-          return changed;
-        }
-        function fetchAgents(force) {
+        function fetchAgents() {
           if (!alive()) return Promise.resolve(null);
-          if (!force) {
-            if (inflight) return inflight;
-          }
-          const p = Promise.resolve().then(() => rhost.invoke("agents", { force: !!force })).then((res) => {
+          return Promise.resolve().then(() => rhost.invoke("agents")).then((res) => {
             if (!alive() || !res || res.ok !== true) return null;
-            loaded = true;
-            if (applyAgents(res.agents)) rhost.ui.sidebar.requestRelayout();
             return Array.isArray(res.agents) ? res.agents : [];
           }).catch((e) => {
             rhost.log.error("agents fetch failed", e);
             return null;
-          }).finally(() => {
-            if (inflight === p) inflight = null;
           });
-          if (!force) inflight = p;
-          return p;
         }
-        rhost.ui.sidebar.rowBadge({
-          id: "count",
-          resolve(sessionName) {
-            try {
-              if (!showRowBadge) return null;
-              if (typeof sessionName !== "string" || !sessionName) return null;
-              const n = counts.get(sessionName);
-              if (n === void 0) {
-                if (!loaded) fetchAgents(false);
-                return null;
-              }
-              return { text: String(n), tip: `${n} saved memories`, cls: "mv-badge" };
-            } catch (_) {
-              return null;
-            }
-          }
-        });
         let refresh = null;
         const surface = rhost.ui.surfaces.overlay({
           id: "main",
@@ -7555,7 +7506,7 @@ body {
           return async () => {
             agentsPane.innerHTML = "";
             agentsPane.appendChild(el("div", "mv-empty", "Loading\u2026"));
-            const agents = await fetchAgents(true);
+            const agents = await fetchAgents();
             if (!alive()) return;
             renderAgents(agents);
           };
@@ -7567,42 +7518,8 @@ body {
           tip: "Browse agents\u2019 saved memories",
           onClick: () => surface.open()
         });
-        rhost.ui.settings.section({
-          id: "prefs",
-          title: "Memory Viewer",
-          render(bodyEl, values) {
-            bodyEl.innerHTML = "";
-            const label = el("label", "mv-settings-row");
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.setAttribute("data-mv-key", "showRowBadge");
-            cb.checked = !values || values.showRowBadge !== false;
-            label.appendChild(cb);
-            label.appendChild(el("span", "mv-settings-label", "Show unit count on session rows"));
-            bodyEl.appendChild(label);
-          },
-          collect(bodyEl) {
-            const cb = bodyEl.querySelector('[data-mv-key="showRowBadge"]');
-            if (!cb) return null;
-            showRowBadge = !!cb.checked;
-            rhost.ui.sidebar.requestRelayout();
-            return { showRowBadge: !!cb.checked };
-          }
-        });
-        rhost.invoke("settings.get").then((res) => {
-          if (!alive()) return;
-          if (res && res.ok) showRowBadge = res.values.showRowBadge !== false;
-        }).catch(() => {
-        });
-        fetchAgents(false);
-        rhost.setInterval(() => {
-          if (typeof document !== "undefined" && document.hidden) return;
-          fetchAgents(false);
-        }, POLL_MS);
-        rhost.ui.sidebar.requestRelayout();
         return () => {
           torn = true;
-          counts.clear();
         };
       };
     }
