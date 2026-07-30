@@ -140,3 +140,140 @@ job is to show what the existing verb already stores.
 ## Journal
 
 (implementer: append findings, deviations and surprises here as you go)
+
+### Implementation (t110-memory-viewer)
+
+- Scaffolded with `node plugins/tools/scaffold.js memory-viewer`; replaced the
+  stub halves. Note the scaffold's renderer stub calls
+  `rhost.statusBar.addAction` — the real path is `rhost.ui.statusBar`; not
+  used here anyway.
+- Engine parsing checked against the real store (`~/.clodex/library/memory/`,
+  15 agent dirs, 369 units): frontmatter parses on all of them, `pinned: true`
+  present only when pinned as the spec says, `learned_at` is ISO-8601 so a
+  string sort gives newest-first. One non-`.md` file exists in the wild
+  (`clodex/tmp`) and is skipped by the `.md` filter — hence clodex counts 177
+  units against 178 directory entries; that is correct behaviour.
+- Path traversal check verified: `units('../evil')` is refused before any
+  join. Unknown-but-valid agent names return an empty list, not an error.
+- IPC method names: `agents`, `units`, `settings.get`. `agents` takes
+  `{ force }` — the overlay passes `force: true` to bypass the engine's 60s
+  TTL (spec: no cache across opens); badge polls take the cached row.
+- Liveness could go stale inside the 60s TTL, so `onCreate`/`onExit` drop the
+  agents cache (invalidation only, synchronous, per §4).
+- Freshness bound as shipped: overlay re-reads on every open; badge counts are
+  renderer 60s poll on top of engine 60s TTL, so up to ~2 min stale — stated
+  in the plugin README.
+- Deviation from the letter of the spec: `agents()` rows are computed by
+  reading every unit of every agent (needed anyway for the pinned count);
+  fine at this store's size (~370 files), noted in case a huge store ever
+  makes the badge poll expensive.
+
+### Gate results
+
+- `node plugins/tools/verify.js plugins/memory-viewer`: 16/16 checks passed
+  (activation through the real loader + engine, all three IPC methods answer,
+  deactivate releases everything).
+- `npm test`: 3081 pass, 0 fail, escapes 0. Baseline was 3078; the +3 are the
+  suite's per-plugin static gates picking up the new directory (2 style-css
+  subtests + 1 boundary subtest for memory-viewer). No pre-existing test moved.
+- `npm run build:web`: registry now bundles git-branches, memory-viewer,
+  workbench; `renderer/web/plugin-registry.js` and `web-dist/index.html`
+  regenerated (web-dist is tracked, so both are part of the change).
+
+### What was and was not exercised
+
+- Exercised: engine handlers against the real on-disk store; renderer half
+  driven end-to-end through a fake rhost with a minimal hand-written DOM stub
+  (not jsdom — the repo has none): activate, badge resolve before/after cache
+  fill, overlay open (mount + onOpen refresh), agent list render (15 rows,
+  live marker on the one live session), unit render (177 cards, 95 pinned),
+  newest-first ordering, agent switch by click, settings toggle hiding the
+  badge, dispose. Script: scratchpad overlay-smoke.js (not committed).
+- NOT exercised: the overlay in a real browser/Electron window — layout, CSS,
+  Escape-to-close, one-overlay-at-a-time are untested; the CSS has only the
+  suite's static checks. Multi-window behaviour and a live enable/disable in
+  the running app were reasoned about (relayout-at-activation is in), not run.
+
+### Rework from cold review
+
+Both MUST-FIXes taken, NITs 1/3/6 taken, 2 and 7 documented, 4 and 5 declined
+per the lead's call.
+
+**MUST-FIX 1 — a background poll no longer starves a forced read.**
+`fetchAgents` now joins an in-flight *unforced* fetch (`inflight`, cleared in a
+`finally`), while a forced one always issues its own invoke. Joining would have
+been wrong for `force`: it would let a poll that started before the user opened
+the overlay — or one that is failing — decide what the overlay paints, which is
+the same lie in a different shape. The `finally` also closes the latch: the old
+code's `fetching = false` sat in the `.then`/`.catch` tails, so a synchronous
+throw out of `invoke` skipped both and killed badge and overlay for the window's
+life. While proving that, found the throw *also* escaped into `activate()` (and
+into a sidebar render pass, via the badge kick) — the invoke is now wrapped in
+`Promise.resolve().then(...)` so it cannot. Not in the review; same defect's
+other half.
+
+**MUST-FIX 2 — containment is now positive.** New `agentDir(agent)` does the
+regex check *and* `path.dirname(path.resolve(MEMORY_ROOT, agent)) === path.resolve(MEMORY_ROOT)`,
+and is the only way a name becomes a path (`units()` and `readUnits()` both go
+through it). Verified against the real store: `.`, `..`, `../..`, `''`,
+`x/../y`, `/etc`, `null`, `42`, a 65-char name all rejected; `clodex` still
+returns its 177 units. Then verified the property the fix exists for — with the
+regex deliberately loosened to admit `/`, `..`, `../..` and `a/../..` are *still*
+rejected. The comment at the regex now says what it is (a character filter, not
+the containment check) and points at `agentDir`.
+
+**NIT 1 — the 5s forever-poll is gone.** Replaced the time-gap guard with a
+`loaded` flag: one `agents` fetch answers for every name at once, so after the
+first success a miss means "this agent has no memories", not "not asked yet",
+and the badge stops kicking. I did not mirror git-branches' `pending` Set —
+that plugin fetches *per name* so it needs per-name bookkeeping; here a single
+boolean is the whole state. Refreshes are the 60s poll's job. `applyAgents` now
+returns whether anything the sidebar renders actually differs, and
+`requestRelayout()` fires only then.
+
+**NIT 3 — `null` (could not read) and `[]` (nothing saved) now render
+differently** in the agents pane: "Could not read the memory store." vs "No
+saved memories.". `fetchAgents` resolves to `[]`, never `null`, on a successful
+but empty read, so the distinction survives the await.
+
+**NIT 6 — plain string comparison** for the ISO sort, as the comment claimed.
+
+**NIT 2 and NIT 7 — README lines, no code.** The hidden-window caveat now
+states the ~2 min bound holds for a *visible* window and that a backgrounded one
+can show an hour-old badge for up to 60s after unhide; settings are documented
+as per-window at runtime.
+
+**NIT 4 and NIT 5 — declined** on the lead's call. No `'no such plugin method'`
+handling (the plugin keeps polling a dead channel; git-branches' precedent
+exists but was not adopted here) and no `lstatSync` symlink refusal on the agent
+directory.
+
+### Rework verification
+
+- Renderer: scratchpad `rework-smoke.js` (not committed), a fake rhost with a
+  gateable `agents` invoke, driving the real renderer half through a hand-built
+  DOM stub. 13 assertions: overlay renders rows with a poll held in flight, does
+  not paint "No saved memories." over a full store, and its read is forced; a
+  sync throw neither escapes nor latches; a failed read renders as a failure and
+  an empty store still renders as empty; 50 resolves of a memory-less agent
+  issue zero extra fetches; five identical polls request zero relayouts.
+- **Mutation-checked, per the gate.** Three mutants built by reverting each fix
+  in a copy: (A) pre-fix `if (inflight) return Promise.resolve(null)` → MUST-FIX
+  1's two assertions fail, overlay renders 0 rows; (B) pre-fix unconditional
+  badge kick + unconditional relayout → NIT 1's two fail (50 fetches, 5
+  relayouts); (C) `renderAgents(agents || [])` → NIT 3's two fail, a failed read
+  reads as "No saved memories.". No assertion here can pass on the old code.
+- Engine: exercised against the real on-disk store as above, plus the
+  loosened-regex mutant.
+- `node plugins/tools/verify.js plugins/memory-viewer`: 16/16.
+- Full suite: **3081 pass, 0 fail, escapes 0.**
+- `npm run build:web` re-run; `renderer/web/plugin-registry.js` and
+  `web-dist/index.html` regenerated.
+
+**Flake worth knowing about, not mine.** The first full-suite run failed one
+test — `_injectRoster: rides PASSIVELY (parked for organic drain…)`,
+session-manager.test.js:1914, `0 !== 1`. It passes when that file runs alone and
+the next clean full run was 3081/3081. It is in the t111 work sitting
+uncommitted in the same tree (session-manager.js, cli-hooks.js, engine.js are
+modified by that task, not by this one), so it is order-dependent, not caused by
+the plugin — but it is real and it did fail once.

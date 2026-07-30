@@ -1,0 +1,13 @@
+{
+  "id": "memory-viewer",
+  "name": "Memory Viewer",
+  "hostApi": "1",
+  "version": "0.1.0",
+  "entry": {
+    "engine": "engine.js",
+    "renderer": "renderer.js"
+  },
+  "style": "style.css",
+  "enabledByDefault": false,
+  "announce": "Browse the memories agents have saved — read-only, per agent, with pinned units marked."
+}

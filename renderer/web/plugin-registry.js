@@ -38,6 +38,7 @@
 const MODULES = {
   // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
   "git-branches": require("../../plugins/git-branches/renderer.js"),
+  "memory-viewer": require("../../plugins/memory-viewer/renderer.js"),
   "workbench": require("../../plugins/workbench/renderer.js"),
   // >>> END BUILD-GENERATED PLUGIN MODULES
 };
