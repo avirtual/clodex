@@ -572,7 +572,14 @@ const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
   cleanupClaudeHook, cleanupCodexHook,
-} = createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath });
+// composeRoster reaches the manager lazily and through a try: createCliHooks
+// runs long before the SessionManager is constructed, and `manager` is a const
+// declared below, so a bare reference during boot is a TDZ throw rather than
+// undefined. A pre-manager digest write simply carries no roster.
+} = createCliHooks({
+  REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath,
+  composeRoster: (name) => { try { return manager.composeRosterFor(name); } catch { return null; } },
+});
 
 const { createJsonlWatcher } = require('./jsonl-watcher');
 const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });

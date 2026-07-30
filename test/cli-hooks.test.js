@@ -352,3 +352,72 @@ test('pending drain (hook): unstamped entries deliver, and an unstamped SETUP de
     'one generation\n\nanother',
     'a hook with no baked stamp must never silently drop mail — the safe default, mirroring drainPending');
 });
+
+// The SessionStart source branch. This was UNPINNED, which is how `compact`
+// silently fell through to the name-only file: a compact keeps its sessionId,
+// so nothing downstream re-delivered what the digest carries, and a seat ran
+// on after a compact with neither memory digest nor team roster. The failure
+// is invisible from inside the seat — an absent roster reads as a team of one.
+function runSessionStart(REGISTRY_DIR, name, source) {
+  const input = JSON.stringify({ transcript_path: path.join(REGISTRY_DIR, 't.jsonl'), source });
+  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'hook')], { input, encoding: 'utf-8' });
+}
+
+test('SessionStart: every context reset serves the DIGEST, an ordinary resume serves the name file', () => {
+  const REGISTRY_DIR = tmp();
+  const h = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore: { list: () => [{ id: 'mem-1-aa', scope: '', learned_at: '', source: 'x', pinned: true, body: 'PINNED-BODY' }] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    composeRoster: () => '[team t] roster (lead: lead)\n- hand (session)',
+  });
+  fs.writeFileSync(path.join(REGISTRY_DIR, 't.jsonl'), '');
+  h.setupClaudeHook('agentS');
+
+  for (const source of ['startup', 'clear', 'compact']) {
+    const ctx = JSON.parse(runSessionStart(REGISTRY_DIR, 'agentS', source)).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /PINNED-BODY/, `${source} must carry the memory digest`);
+    assert.match(ctx, /\[team t\] roster/, `${source} must carry the team roster`);
+  }
+
+  // The contrast that makes the three above meaningful: a source that is NOT a
+  // context reset still gets the cheap name-only file, so this is not "the
+  // digest is served unconditionally".
+  const resume = JSON.parse(runSessionStart(REGISTRY_DIR, 'agentS', 'resume')).hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(resume, /PINNED-BODY/, 'a resume must NOT re-serve the digest');
+  assert.doesNotMatch(resume, /\[team t\] roster/, 'a resume must NOT re-serve the roster');
+});
+
+test('writeClaudeDigestFile: the roster is a THIRD block, and a seat with no team still gets a valid digest', () => {
+  const REGISTRY_DIR = tmp();
+  const withTeam = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore: { list: () => [] },        // no memories: the roster must not depend on them
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    composeRoster: (n) => `[team t] roster for ${n}`,
+  });
+  withTeam.writeClaudeDigestFile('solo');
+  const ctx = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'solo', 'hookDigest'), 'utf-8'))
+    .hookSpecificOutput.additionalContext;
+  assert.match(ctx, /clodex agent named 'solo'/);
+  assert.match(ctx, /\[team t\] roster for solo/, 'an empty memory store must not suppress the roster');
+
+  // A throwing composeRoster is the boot-order case: the digest is written
+  // before the SessionManager exists, so reaching for it is a TDZ throw. The
+  // seat must still get its name, not a crashed spawn.
+  const R2 = tmp();
+  const throwing = createCliHooks({
+    REGISTRY_DIR: R2,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    composeRoster: () => { throw new Error('manager not constructed yet'); },
+  });
+  throwing.writeClaudeDigestFile('early');
+  const early = JSON.parse(fs.readFileSync(pathFor(R2, 'early', 'hookDigest'), 'utf-8'))
+    .hookSpecificOutput.additionalContext;
+  assert.match(early, /clodex agent named 'early'/);
+  assert.doesNotMatch(early, /roster/);
+});

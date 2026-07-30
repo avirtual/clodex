@@ -1305,8 +1305,34 @@ function createSessionManager(deps) {
       return names;
     }
 
+    // The roster body for `name`, or null when the seat is not on a team. Called
+    // by the boot-digest writer BEFORE the session exists in the map, so the cwd
+    // comes from persistence when there is no live session to read it from.
+    composeRosterFor(name) {
+      let cwd = null;
+      const s = this.sessions.get(name);
+      if (s && s.cwd) cwd = s.cwd;
+      else { try { const e = getPersistence().get(name); if (e) cwd = e.cwd; } catch { cwd = null; } }
+      if (!cwd) return null;
+      let team; try { team = resolveTeam(cwd); } catch { return null; }
+      if (!team) return null;
+      return formatRoster(team, this._teamLiveSeats(team.root));
+    }
+
+    _rebakeDigest(name) {
+      try { writeClaudeDigestFile(name); } catch { /* digest is best-effort */ }
+    }
+
     _maybeInjectComposition(session, team, existingEntry) {
-      if (existingEntry && existingEntry.rosterSentAt) return;
+      if (existingEntry && existingEntry.rosterSentAt) {
+        // A resumed seat gets no roster MESSAGE (it may already hold one, and a
+        // duplicate costs a turn), but its digest must still be re-baked: the
+        // pre-spawn write ran before this seat was in the map, so the file on
+        // disk carries no roster at all. Skipping this is the shape of the
+        // original bug — one stamp suppressing delivery for a seat's whole life.
+        if (session.agentType === 'claude') this._rebakeDigest(session.name);
+        return;
+      }
       this._injectRoster(session, team);
       this._notifyComposition(session, 'spawned');
     }
@@ -1353,7 +1379,14 @@ function createSessionManager(deps) {
       try {
         if (session.agentType === 'claude') {
           this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root)), 'dm');
-          this._markRosterSent(session);   // parked = delivered for claude; stamp so a restart won't re-inject
+          // Both paths are needed and neither is redundant. setupClaudeHook
+          // writes the digest BEFORE this seat exists in the map or in
+          // persistence, so a fresh seat's pre-spawn digest cannot contain a
+          // roster — the message above is what its FIRST conversation gets.
+          // Re-baking here is what every conversation AFTER a context reset
+          // gets, since the message will have been discarded with the history.
+          this._rebakeDigest(session.name);
+          this._markRosterSent(session);
         } else {
           session._pendingRoster = team;   // team ref; body recomputed FRESH by _settleBoot at boot-settle
         }
@@ -1403,7 +1436,12 @@ function createSessionManager(deps) {
         if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
         if (ephemeral && s.name !== team.lead) continue;
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
-        if (root && root === team.root) this._deliverPassive(s.name, 'team', body, 'dm');
+        if (!root || root !== team.root) continue;
+        this._deliverPassive(s.name, 'team', body, 'dm');
+        // The delta rides conversation history and dies with the next context
+        // reset; re-baking the digest is what makes this seat's NEXT boot carry
+        // the changed composition instead of the one it was minted with.
+        if (s.agentType === 'claude') this._rebakeDigest(s.name);
       }
     }
 

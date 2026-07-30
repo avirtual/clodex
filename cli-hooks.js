@@ -8,17 +8,34 @@ const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
 
-function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp }) {
+// `composeRoster` is injected rather than imported: this module must stay
+// electron-free and free of session state, and resolving a team needs both a cwd
+// and the live seat list. Absent (or returning null) it simply contributes
+// nothing, which is what a non-team seat gets.
+function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, composeRoster = null }) {
   // The interpreter every generated hook shells out to: the app's own Electron
   // binary run as Node (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`), baked absolute
   // so a Finder/Dock-launched packaged .app never depends on an ambient python3
   // or on launchd's stripped PATH (Task 9). Electron honors the env var;
   // plain node ignores it, so the same bytes run under node in tests.
   const INTERP = `ELECTRON_RUN_AS_NODE=1 "${nodeInterp}"`;
+  // The roster rides HERE, not in the system prompt's team block: composition
+  // changes over a seat's life and that block is cache-stable (team-manifest.js
+  // formatTeamBlock says so). This file is SessionStart additionalContext —
+  // conversation content — so a stale roster is re-baked, never cached.
+  //
+  // Regenerated, not delivered. A roster injected as a message lands in
+  // conversation history, which /compact discards and /clear drops outright; a
+  // seat then runs blind with no signal, because an absent roster is
+  // indistinguishable from a team of one.
   function writeClaudeDigestFile(name) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const digest = composeDigest(memoryStore.list(name));
-    const ctx = `You are the clodex agent named '${name}'.` + (digest ? `\n\n${digest}` : '');
+    let roster = null;
+    try { roster = composeRoster ? composeRoster(name) : null; } catch { roster = null; }
+    const ctx = `You are the clodex agent named '${name}'.`
+      + (digest ? `\n\n${digest}` : '')
+      + (roster ? `\n\n${roster}` : '');
     atomicWriteFileSync(pathFor(REGISTRY_DIR, name, 'hookDigest'), JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }
     }) + '\n');
@@ -84,7 +101,10 @@ try {
 } catch (e) { try { fs.unlinkSync(tmp); } catch (e2) {} }
 RESETEOF
 fi
-if [ "$SRC" = "startup" ] || [ "$SRC" = "clear" ]; then
+# compact belongs with startup/clear: all three are context resets, and the
+# promptcache branch above already treats compact as one. A compact keeps the
+# sessionId, so nothing else re-delivers the digest.
+if [ "$SRC" = "startup" ] || [ "$SRC" = "clear" ] || [ "$SRC" = "compact" ]; then
   cat "${digestPath}"
 else
   cat "${outputPath}"
