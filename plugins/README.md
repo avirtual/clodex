@@ -140,6 +140,9 @@ a plugin of your own gets no static checking at all.
 
 ## Where to read next
 
+- [`what-plugins-can-do.md`](what-plugins-can-do.md) — the reach of a plugin in
+  plain terms: what it can show, what it can alter, what it can do for agents,
+  and what it cannot see. Read this one to decide *whether* to build something.
 - [`plugin-api.md`](plugin-api.md) — the contract. Manifest, both
   host objects, the seven slots, intents, events, lifecycle, boundaries, and what
   is deliberately not exposed.
