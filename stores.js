@@ -14,6 +14,7 @@ const { parseSkillFrontmatter } = require('./skills-util');
 const { validateEntry } = require('./cli/src/contexts');
 const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
+const { confineOrThrow } = require('./path-confine');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
@@ -543,7 +544,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
   ]);
   const templates = {
-    _file(name) { return path.join(TEMPLATES_DIR, `${name}.json`); },
+    // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what
+    // actually becomes a path, and a bare-name check would pass `../evil` only
+    // to have the suffix land it outside anyway.
+    _file(name) { return confineOrThrow(TEMPLATES_DIR, `${name}.json`, 'template name'); },
     _read(name) {
       try { const o = JSON.parse(fs.readFileSync(this._file(name), 'utf-8')); return (o && typeof o === 'object') ? o : null; }
       catch { return null; }
@@ -582,6 +586,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       Object.assign(merged, template);
       this._write(template.name, merged);
       if (template.id && template.id !== template.name) {
+        // Rename cleanup. A refused `id` is swallowed here and that is not the
+        // false-green the other verbs had: _write() confines on the way IN, so
+        // a name-illegal id can never name a file this store wrote, and there
+        // is nothing for a caller to learn from the refusal.
         try { fs.unlinkSync(this._file(template.id)); } catch {}
       }
     },
@@ -603,7 +611,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return { ...template, name: target, id: target };
     },
     remove(id) {
-      try { fs.unlinkSync(this._file(id)); } catch {}
+      const file = this._file(id); // refused id throws; ENOENT does not
+      try { fs.unlinkSync(file); } catch {}
     },
   };
 
@@ -691,8 +700,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // verbatim via --system-prompt-file, so there must be nothing to strip.
   // Identity is the filename stem, and appends apply in filename sort order.
   const promptLibrary = {
-    _dir(kind) { return path.join(PROMPTS_DIR, kind); },
-    _file(kind, stem) { return path.join(this._dir(kind), `${stem}.md`); },
+    // BOTH segments are caller-supplied. `kind` is allow-listed on save()
+    // (PROMPT_KINDS, a closed set — correct, and stronger than a regex), but
+    // list/raw/remove take it unchecked, so the containment has to be here.
+    _dir(kind) { return confineOrThrow(PROMPTS_DIR, kind, 'prompt kind'); },
+    _file(kind, stem) { return confineOrThrow(this._dir(kind), `${stem}.md`, 'prompt name'); },
     list(kind) {
       const kinds = kind ? [kind] : PROMPT_KINDS;
       const out = [];
@@ -723,7 +735,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return this.list();
     },
     remove(kind, stem) {
-      try { fs.unlinkSync(this._file(kind, stem)); } catch {}
+      const file = this._file(kind, stem); // refused kind/name throws; ENOENT does not
+      try { fs.unlinkSync(file); } catch {}
       return this.list();
     },
   };
@@ -818,7 +831,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
 
 
   const agentLibrary = {
-    _file(name) { return path.join(AGENTS_DIR, `${name}.md`); },
+    _file(name) { return confineOrThrow(AGENTS_DIR, `${name}.md`, 'agent name'); },
     list() {
       let files;
       try { files = fs.readdirSync(AGENTS_DIR); }
@@ -863,13 +876,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return this.list();
     },
     remove(name) {
-      try { fs.unlinkSync(this._file(name)); } catch {}
+      // _file() is resolved OUTSIDE the try on purpose: a refused NAME must
+      // propagate, while a missing FILE stays silent (delete is idempotent).
+      // Folding both into one catch is what made a rejected name and a
+      // successful delete return the same value.
+      const file = this._file(name);
+      try { fs.unlinkSync(file); } catch {}
       return this.list();
     },
   };
 
   const skillLibrary = {
-    _file(name) { return path.join(SKILLS_LIB_DIR, `${name}.md`); },
+    _file(name) { return confineOrThrow(SKILLS_LIB_DIR, `${name}.md`, 'skill name'); },
     list() {
       let files;
       try { files = fs.readdirSync(SKILLS_LIB_DIR); }
@@ -899,13 +917,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return this.list();
     },
     remove(name) {
-      try { fs.unlinkSync(this._file(name)); } catch {}
+      // _file() is resolved OUTSIDE the try on purpose: a refused NAME must
+      // propagate, while a missing FILE stays silent (delete is idempotent).
+      // Folding both into one catch is what made a rejected name and a
+      // successful delete return the same value.
+      const file = this._file(name);
+      try { fs.unlinkSync(file); } catch {}
       return this.list();
     },
   };
 
   const execLibrary = {
-    _file(name) { return path.join(EXEC_DIR, `${name}.json`); },
+    _file(name) { return confineOrThrow(EXEC_DIR, `${name}.json`, 'exec command name'); },
     list() {
       let files;
       try { files = fs.readdirSync(EXEC_DIR); }
@@ -937,7 +960,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       return this.list();
     },
     remove(name) {
-      try { fs.unlinkSync(this._file(name)); } catch {}
+      // _file() is resolved OUTSIDE the try on purpose: a refused NAME must
+      // propagate, while a missing FILE stays silent (delete is idempotent).
+      // Folding both into one catch is what made a rejected name and a
+      // successful delete return the same value.
+      const file = this._file(name);
+      try { fs.unlinkSync(file); } catch {}
       return this.list();
     },
   };

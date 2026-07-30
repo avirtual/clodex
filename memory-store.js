@@ -17,7 +17,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const { confine } = require('./path-confine');
 
+// A charset filter, NOT the containment check — it admits `.` and `..`, which
+// are spelled entirely in this charset. Containment is enforced positively in
+// _dir() via confine(); every verb routes through it. Do not reintroduce this
+// regex as a traversal guard if _dir is ever refactored.
 const MEMORY_AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
 // Strict unit-id shape (as minted by remember()). pin/forget resolve ids into
 // file paths, so anything looser would be a traversal vector.
@@ -47,18 +52,29 @@ function parseMemoryUnit(raw) {
 
 function createMemoryStore(rootDir) {
   return {
-    _dir(agent) { return path.join(rootDir, agent); },
+    // The single choke point: list/remember/recall/setPinned/forget all build
+    // their paths from here, so one containment check covers the store rather
+    // than each verb having to remember one.
+    _dir(agent) {
+      const dir = confine(rootDir, agent);
+      if (dir === null) throw new Error(`invalid agent name: ${agent}`);
+      return dir;
+    },
     _file(agent, id) { return path.join(this._dir(agent), `${id}.md`); },
     list(agent) {
       if (!MEMORY_AGENT_RE.test(agent || '')) return [];
+      let dir;
+      // A refused name is not a read error: kept out of the catch below so it
+      // can't be mistaken for "directory absent" by a future edit.
+      try { dir = this._dir(agent); } catch { return []; }
       let files;
-      try { files = fs.readdirSync(this._dir(agent)); }
+      try { files = fs.readdirSync(dir); }
       catch { return []; }
       const out = [];
       for (const f of files) {
         if (!f.endsWith('.md')) continue;
         try {
-          const { meta, body } = parseMemoryUnit(fs.readFileSync(path.join(this._dir(agent), f), 'utf-8'));
+          const { meta, body } = parseMemoryUnit(fs.readFileSync(path.join(dir, f), 'utf-8'));
           out.push({
             id: meta.id || f.replace(/\.md$/, ''),
             scope: meta.scope || '',

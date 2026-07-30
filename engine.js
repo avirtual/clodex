@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
+const { confine } = require('./path-confine');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { materializePotCli, materializeExecScripts } = require('./pot-bin');
 // Module-level, unlike the rest of pending-store's surface (required inside
@@ -328,7 +329,13 @@ function effectiveInjectedSkills(name, injectSkills) {
 function writeSkillPlugin(name, injectSkills) {
   const records = effectiveInjectedSkills(name, injectSkills);
   const plugin = buildSkillPlugin(records.map((s) => s.name), records, SKILL_PLUGIN_NAME);
-  const dir = path.join(SKILL_PLUGINS_DIR, name);
+  // The rmSync below is RECURSIVE and fires on every claude spawn, before the
+  // no-skills bail — so `dir` is the highest-consequence join in the app, and
+  // it must be a confined child of SKILL_PLUGINS_DIR or that delete lands on
+  // ~/.clodex (name `..`) or $HOME (name `../..`). The session-name gates
+  // upstream are charset filters and never established this.
+  const dir = confine(SKILL_PLUGINS_DIR, name);
+  if (dir === null) throw new Error(`invalid session name: ${name}`);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   if (!plugin) return null;
   const manifestDir = path.join(dir, '.claude-plugin');
@@ -343,7 +350,12 @@ function writeSkillPlugin(name, injectSkills) {
 }
 
 function cleanupSkillPlugin(name) {
-  try { fs.rmSync(path.join(SKILL_PLUGINS_DIR, name), { recursive: true, force: true }); } catch {}
+  // Same recursive delete on the teardown path — confined for the same reason.
+  // Silent on a refused name (teardown has no caller to tell), unlike
+  // writeSkillPlugin, where a refusal must abort the spawn.
+  const dir = confine(SKILL_PLUGINS_DIR, name);
+  if (dir === null) return;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
 
@@ -596,7 +608,13 @@ function cleanupOldMessages() {
 
 function spillToFile(sender, body, recipient) {
   // Each recipient gets its own subfolder so two agents never appear to share
-  // an inbox — names are already constrained to [a-zA-Z0-9._-], safe as a path.
+  // an inbox. Names are constrained to [a-zA-Z0-9._-] upstream — which is TRUE
+  // but does not make them safe as a path: `.` and `..` are spelled in that
+  // charset, so the charset alone never established containment here. What
+  // does: t115 made dot-only names unrepresentable at every gate, so no name
+  // reaching this join can traverse. If that guard is ever relaxed, this join
+  // needs confine() from path-confine.js — it writes, so the cost of being
+  // wrong is a stray file, not a delete.
   const dir = path.join(MSG_DIR, recipient);
   ensureDir(dir);
   msgCounter++;
