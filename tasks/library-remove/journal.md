@@ -186,3 +186,163 @@ Journal as you go: this file is what a replacement reads if you are lost.
 Flag deviations rather than silently absorbing them — the spec above names
 call sites, and a spec that names call sites has been wrong about the set
 twice in the last two tasks.
+
+## Journal
+
+### hand — commit 1 (core seam), done, awaiting cold review
+
+Suite **3107 pass / 0 fail / escapes 0** via `npm test` (baseline 3099, +8).
+`node --check` clean on session-manager.js, plugin-host-engine.js, engine.js.
+Nothing committed; commit 2 not started.
+
+**What changed**
+
+- `session-manager.js` — new `removeMemoryUnit(agent, id)` above
+  `_handleMemoryIntent`. Calls `memoryStore.forget` (no second validation
+  layer), rewrites the digest only for a live `agentType === 'claude'` session,
+  assigns `session.digestNonEmpty` from the return value, returns
+  `{ ok }` / `{ ok: false, error }`. The `forget` branch is now four lines and
+  a caller; it keeps its own ack and error text.
+- `plugin-host-engine.js` — `libraryKinds` dep, a `libraryHandlers` bound-wrapper
+  freeze modelled on `libGitWorktree`, and `host.library.remove(kind, ref)`
+  refusing unregistered/non-string kinds with a distinguishable error, refusing
+  non-object refs, forwarding without interpreting, converting a handler throw
+  to an envelope. `HOST_API_VERSION` untouched.
+- `engine.js:1242` — `libraryKinds: { memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id) }`.
+- `plugins/plugin-api.md` — new `### host.library` in §4 before `host.telemetry`;
+  §13's persistence-stores bullet amended to name the one exception.
+- `test/plugin-surface-contract.test.js:35` — `library` row, `members: ['remove']`.
+- `test/plugin-host-engine.test.js` — `makeHost` gained a `libraryKinds` hook and
+  a `removals` log; four new cases (forward, kind refusal, ref refusal + throw
+  conversion, table-repointing refusal).
+- `test/session-manager.test.js` — `mkRemover` harness wiring the REAL
+  `writeClaudeDigestFile` on a temp REGISTRY_DIR, plus four cases.
+
+**DEVIATION 1 — the spec's call-site set was one short (same class as the last
+two tasks).** The spec names `test/plugin-surface-contract.test.js:35` as the
+pin to update. There is a SECOND full-surface pin:
+`test/plugin-host-engine.test.js:455`, "the host deliberately exposes no
+stores, manager, or transport seams", which `deepEqual`s the sorted key list of
+`host`. Adding `library` failed it. That is the pin behaving exactly as its
+comment says it should ("a new key is a one-way door, so it should cost a
+deliberate edit here"), so I made the deliberate edit rather than routing
+around it. Both pins now carry `library`. Nothing else in the tree pins the
+surface — I checked for other `Object.keys(host)` assertions.
+
+**DEVIATION 2 — digest side effect asserted through the real function, not a
+stub.** The spec asks the dead-agent test to "assert the run directory was not
+created". A stubbed `writeClaudeDigestFile` cannot show that: the `ensureDir` is
+inside the real one. So `mkRemover` constructs real `createCliHooks` against a
+temp `REGISTRY_DIR` and the tests assert on `fsReal.existsSync(runDirFor(...))`.
+More setup than a stub, but it pins the actual property; a stub would have
+pinned the call and passed even if `ensureDir` moved.
+
+**Judgement call flagged.** `removeMemoryUnit` wraps the digest rewrite in
+`try/catch` (`/* best-effort */`), matching `_rebakeDigest:1341`. The spec does
+not say. Consequence: a digest write that fails leaves the unit deleted and
+returns `{ ok: true }` — the delete succeeded, which is what the caller asked
+about, and the digest is regenerated on next spawn. Say so if you want the
+failure surfaced instead.
+
+**Not done, deliberately:** `session.digestNonEmpty` is only assigned for
+claude sessions, so a codex session's flag is untouched — the pre-existing
+`refreshDigest` behaviour at what is now :2621. I did not extend it.
+
+### lead verdict on the above (settled — do not re-open)
+
+Both deviations upheld. The try/catch stays best-effort as written, and the
+reason is worth keeping because it is not obvious from the code: returning
+`{ ok: false }` after a successful unlink would be a lie in the direction that
+provokes a retry, and the retry fails with "no unit", which reads as a bug in
+the delete path. The digest failure is self-healing (regenerated on next
+spawn); the delete is permanent and is not.
+
+The stale-flag interaction is safe for a specific reason: if the write throws,
+`hook-digest.json` keeps its OLD contents, so a `digestNonEmpty` left `true`
+still describes a digest that exists — flag and file stay consistent through
+the failure. That is why this catch is safe while `:2595` had to be an
+assignment.
+
+Claude-only `digestNonEmpty` confirmed right: codex has no digest path to keep
+consistent.
+
+Commit 1 is in cold review. Commit 2 does not start until the verdict lands.
+
+### hand — commit 1, nit pass (all seven taken)
+
+Cold review: ACCEPT, zero must-fixes, seven nits, all applied. Suite
+**3110 pass / 0 fail / escapes 0** (baseline 3107, +3).
+
+- **NIT-1** — new session-manager case: forget succeeds, then the digest write
+  throws. Asserts `{ ok: true }`, the unit really deleted, `digestNonEmpty`
+  left as it was. `mkRemover` gained a `digestThrows` option. Verified by
+  applying the reviewer's named edit (hoist the try/catch to wrap the method
+  body): the new case goes red, and it was the only one.
+- **NIT-2** — cut the memory-viewer clause from `plugin-api.md`; it is false
+  until commit 2. Re-add it with commit 2's doc edit.
+- **NIT-3** — `!session._dead` added at what is now :2609.
+- **NIT-4** — envelope rebuilt on the way out (`{ ok: true }` /
+  `{ ok: false, error: String(...) }`). Comment says what it actually buys —
+  no handler object crosses, contract enforced not observed — and does NOT
+  claim it sanitizes the error, which still passes through. New engine case
+  pins that extra handler fields do not cross and the object is not the
+  handler's own.
+- **NIT-5** — chose to REJECT a thenable rather than only document it.
+- **NIT-6** — the freeze test now mutates `table.memory` after `register()` and
+  asserts the repoint is not honoured. Verified by switching the wrappers to a
+  call-time re-read (libGitWorktree's weaker shape): the case goes red.
+- **NIT-7** — "a live *claude* session".
+
+**Commit-1 note:** the lead asked for commit 1 to be committed. I do not
+commit — standing instruction from Bogdan, who owns the commit train. The tree
+is staged-ready and left for the lead. See the report for the suggested message.
+
+**One thing found while writing NIT-5's test.** Refusing the promise is not
+sufficient on its own: by the time `remove` sees it the async handler is
+already running, so its rejection is unattached and takes the process down
+under Node's default `--unhandled-rejections=throw`. The refusal now attaches
+a no-op `.then(() => {}, () => {})` before returning. The test asserts no
+unhandled rejection escapes, which is the half that would otherwise have been
+a latent process-level failure rather than a returned error.
+
+### hand — commit 2 (plugin UI), done, awaiting cold review
+
+Suite **3115 pass / 0 fail / escapes 0** (baseline 3110, +5).
+`verify.js plugins/memory-viewer` **16/16** — it picks up the new `forget` row
+and exercises it. `npm run build:web` run; `web-dist/index.html` regenerated.
+Note `renderer/web/plugin-registry.js` did NOT change — the registry lists
+plugins, and this commit adds no plugin. `plugin-web-parity` is green.
+
+- `plugins/memory-viewer/engine.js` — header rewritten (the read-only claim was
+  false); one `forget` handler vetting the agent through `agentDir()` and
+  calling `host.library.remove('memory', …)`.
+- `plugins/memory-viewer/renderer.js` — `confirmText()` + `deleteUnit()`, a
+  per-card delete control, `reload()` named so a delete refreshes the agent
+  counts too. Subtitle no longer says "read-only".
+- `plugins/memory-viewer/style.css` — `.mv-delete`, pushed to the far edge of
+  the head row so it is not a mis-click on a scope or timestamp.
+- `plugins/memory-viewer/README.md` — read-only section replaced by "Deleting".
+- `plugins/plugin-api.md` — NIT-2 sentence re-added, now that it is true.
+- `test/memory-viewer-plugin.test.js` — NEW, 5 cases through the real host.
+
+**The pin that matters.** `the delete is the SEAM, not an unlink the plugin
+does itself` asserts that when core REFUSES, the file is still on disk. A test
+asserting only "the file is gone" passes for both the right implementation and
+the wrong one, since the plugin holds a readable path to it. Verified by
+replacing the seam call with `fs.unlinkSync` — three cases go red.
+
+**Design note on the id.** The plugin vets the agent (renderer-supplied, and
+`agentDir()` is this module's sanctioned string-to-path conversion) but
+deliberately does NOT vet the unit id: `MEMORY_ID_RE` lives in core's store and
+a second grammar here would drift. One test pins that the id reaches core
+unmodified and core owns the refusal.
+
+**Deviation flagged.** The delete control is `✕`, not a wastebasket glyph — the
+repo's existing controls are plain text glyphs (`◈`, `×`) and an emoji would be
+the only one in the UI. Cosmetic; say the word if you want it different.
+
+**Selection is preserved across a delete**: `renderAgents` keeps `selected`
+when the agent still exists, so deleting a unit does not bounce the user back
+to the first agent. Deleting an agent's LAST unit leaves the agent row present
+with count 0 (the directory survives), which is existing list behaviour, not
+something this commit changed.

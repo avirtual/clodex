@@ -38,10 +38,11 @@ function makeManager(sessions = []) {
   };
 }
 
-function makeHost({ manager = makeManager(), settings = {}, loader = null } = {}) {
+function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
   let ui = { ...settings };
   const logged = [];
+  const removals = [];
   const engine = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
@@ -49,10 +50,11 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null } = {}
     userDataPath: dir,
     fs, path,
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
+    libraryKinds: libraryKinds || { memory: (ref) => { removals.push(ref); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
   });
-  return { engine, manager, dir, logged, uiSettings: () => ui };
+  return { engine, manager, dir, logged, removals, uiSettings: () => ui };
 }
 
 const sessionA = { name: 'a', type: 'claude', cwd: '/repo/a', workspaceId: 'ws-open' };
@@ -283,6 +285,104 @@ test('settings shallow-merge under uiSettings.plugins[id] and never leak across 
   assert.equal(uiSettings().theme, 'dark', 'unrelated uiSettings keys are untouched');
 });
 
+// ── §4 host.library ─────────────────────────────────────────────────────────
+test('library.remove forwards a registered kind to its handler, ref untouched', () => {
+  const { engine, removals } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  const ref = { agent: 'clodex', id: 'mem-1-aaaaaa', extra: 'kept' };
+  assert.deepEqual(host.library.remove('memory', ref), { ok: true });
+  assert.equal(removals.length, 1);
+  // The engine forwards, never interprets: it must not know that a memory ref
+  // carries agent/id, so the handler sees exactly what the plugin passed.
+  assert.deepEqual(removals[0], ref);
+});
+
+test('library.remove REFUSES an unregistered kind, distinguishably from a failed delete', () => {
+  const { engine, removals } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  for (const kind of ['prompts', 'templates', 'exec', '', 'toString', null, 7, {}]) {
+    const res = host.library.remove(kind, { agent: 'a', id: 'b' });
+    assert.equal(res.ok, false, `${String(kind)} must be refused`);
+    // Distinct from a handler failure — a kind that does not exist is a
+    // different bug from a file that would not unlink.
+    assert.match(res.error, /unknown library kind/);
+  }
+  assert.equal(removals.length, 0, 'no handler ran for any refused kind');
+});
+
+test('library.remove republishes the envelope rather than the handler object', () => {
+  // Not sanitization — the error still passes through verbatim. What this pins
+  // is that no handler-owned object crosses into plugin land, so the published
+  // { ok } / { ok, error } shape is enforced rather than merely observed.
+  const cached = { ok: true, internal: { fd: 7 } };
+  const okHost = makeHost({ libraryKinds: { memory: () => cached } });
+  const h1 = okHost.engine.register('demo', { activate() {} });
+  const res = h1.library.remove('memory', {});
+  assert.deepEqual(res, { ok: true }, 'extra handler fields do not cross');
+  assert.notStrictEqual(res, cached, 'the handler keeps its own object');
+
+  const failHost = makeHost({ libraryKinds: { memory: () => ({ ok: false, error: 'no unit mem-9' }) } });
+  const h2 = failHost.engine.register('demo', { activate() {} });
+  assert.deepEqual(h2.library.remove('memory', {}), { ok: false, error: 'no unit mem-9' });
+
+  // An errorless failure still arrives shaped, never as { ok: false } alone.
+  const bare = makeHost({ libraryKinds: { memory: () => ({ ok: false }) } });
+  const h3 = bare.engine.register('demo', { activate() {} });
+  assert.equal(h3.library.remove('memory', {}).ok, false);
+  assert.equal(typeof h3.library.remove('memory', {}).error, 'string');
+});
+
+test('library.remove refuses an ASYNC handler instead of leaking a pending promise', async () => {
+  // A promise passes `typeof res === 'object'`, so returning it verbatim would
+  // hand the plugin a pending value whose rejection escapes as an unhandled
+  // rejection — the process-level failure this refusal exists to prevent.
+  let rejected = null;
+  const { engine } = makeHost({
+    libraryKinds: { memory: async () => { throw new Error('async boom'); } },
+  });
+  process.once('unhandledRejection', (e) => { rejected = e; });
+  const host = engine.register('demo', { activate() {} });
+  const res = host.library.remove('memory', { agent: 'a', id: 'b' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /must be synchronous/);
+  assert.equal(typeof res.then, 'undefined', 'the caller never receives a thenable');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(rejected, null, 'no unhandled rejection escaped the seam');
+});
+
+test('library.remove refuses a non-object ref, and converts a throwing handler', () => {
+  const { engine } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  for (const ref of [null, undefined, 'mem-1', 7]) {
+    const res = host.library.remove('memory', ref);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /ref must be an object/);
+  }
+  // A handler that throws becomes an envelope: the plugin seam never throws.
+  const thrower = makeHost({ libraryKinds: { memory: () => { throw new Error('unlink refused'); } } });
+  const h2 = thrower.engine.register('demo', { activate() {} });
+  assert.deepEqual(h2.library.remove('memory', { agent: 'a', id: 'b' }),
+    { ok: false, error: 'unlink refused' });
+});
+
+test('the library kind table cannot be repointed from plugin land', () => {
+  const ran = [];
+  const table = { memory: () => { ran.push('core'); return { ok: true }; } };
+  const { engine } = makeHost({ libraryKinds: table });
+  const host = engine.register('evil', { activate() {} });
+  assert.throws(() => { host.library.remove = () => ({ ok: true }); }, TypeError);
+  assert.ok(Object.isFrozen(host.library));
+  assert.deepEqual(Object.keys(host.library), ['remove'], 'one member in "1"');
+
+  // The injected table is a live object the façade's freeze does not reach, so
+  // the wrappers close over the handler captured at construction. Mutating the
+  // table afterwards must not redirect the call — this is STRICTER than
+  // libGitWorktree, whose wrappers re-read their leaf at call time.
+  table.memory = () => { ran.push('plugin'); return { ok: true }; };
+  assert.deepEqual(host.library.remove('memory', {}), { ok: true });
+  assert.deepEqual(ran, ['core'], 'core still calls core: the repoint is not honoured');
+});
+
 test('lib and telemetry are frozen read-only passthroughs', () => {
   const { engine } = makeHost({ manager: makeManager([sessionA]) });
   const host = engine.register('demo', { activate() {} });
@@ -407,7 +507,7 @@ test('the host deliberately exposes no stores, manager, or transport seams', () 
   // The whole surface, pinned: a new key is a one-way door (§2 — the taxonomy),
   // so it should cost a deliberate edit here.
   assert.deepEqual(Object.keys(host).sort(), [
-    'events', 'hostApiVersion', 'id', 'intents', 'ipc', 'lib', 'log',
+    'events', 'hostApiVersion', 'id', 'intents', 'ipc', 'lib', 'library', 'log',
     'paths', 'sessions', 'settings', 'storage', 'telemetry',
   ].sort());
 });

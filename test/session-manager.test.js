@@ -217,6 +217,112 @@ test('_wireSessionCorroborated: symlink agrees → true, disagrees → false, ab
   assert.strictEqual(m2._wireSessionCorroborated({ name: 'a' }, 'anything'), true);
 });
 
+// ── removeMemoryUnit: the one delete path (intent + host.library.remove) ────
+// The real writeClaudeDigestFile, on a temp REGISTRY_DIR, because the property
+// under test is a filesystem SIDE EFFECT: it ensureDir's run/<name>/, so a stub
+// would pin the call and miss the directory.
+function mkRemover({ forget = () => {}, units = [], digestThrows = false } = {}) {
+  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-rm-'));
+  const real = require('../cli-hooks').createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => units },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  }).writeClaudeDigestFile;
+  const writeClaudeDigestFile = digestThrows
+    ? () => { throw new Error('ENOSPC writing hook-digest.json'); }
+    : real;
+  const forgotten = [];
+  const m = mk({
+    REGISTRY_DIR: root, fs: fsReal, path: pathReal,
+    pathFor: pathForReal, runDirFor: runDirForReal,
+    memoryStore: { forget: (a, id) => { forgotten.push([a, id]); return forget(a, id); } },
+    writeClaudeDigestFile,
+  });
+  return { m, root, forgotten, runDir: (n) => runDirForReal(root, n) };
+}
+
+test('removeMemoryUnit: a digest write that throws AFTER a successful forget still returns ok', () => {
+  // The settled decision, pinned. The unlink already happened and is permanent,
+  // so { ok: false } here invites a retry that fails with "no unit" and reads as
+  // a bug in the delete path. The edit this catches: hoisting the try/catch to
+  // wrap the whole method body, which flips the return with nothing else red.
+  const { m, forgotten } = mkRemover({ digestThrows: true, units: [{ id: 'u1', pinned: true, body: 'x', learned_at: new Date().toISOString() }] });
+  const session = { name: 'a', agentType: 'claude', digestNonEmpty: true };
+  m.sessions.set('a', session);
+  assert.deepStrictEqual(m.removeMemoryUnit('a', 'mem-1-aaaaaa'), { ok: true },
+    'a failed digest write must not report the delete as failed');
+  assert.deepStrictEqual(forgotten, [['a', 'mem-1-aaaaaa']], 'the unit really was deleted');
+  // The throw leaves the OLD hook-digest.json in place, so an unchanged `true`
+  // still describes a digest that exists — flag and file stay consistent.
+  assert.strictEqual(session.digestNonEmpty, true, 'the flag is left as it was, not cleared');
+});
+
+test('removeMemoryUnit: a live claude session gets its digest rewritten and the flag REASSIGNED', () => {
+  const { m, forgotten, runDir } = mkRemover({ units: [{ id: 'u1', pinned: true, body: 'kept', learned_at: new Date().toISOString() }] });
+  const session = { name: 'a', agentType: 'claude', digestNonEmpty: false };
+  m.sessions.set('a', session);
+  assert.deepStrictEqual(m.removeMemoryUnit('a', 'mem-1-aaaaaa'), { ok: true });
+  assert.deepStrictEqual(forgotten, [['a', 'mem-1-aaaaaa']]);
+  assert.ok(fsReal.existsSync(runDir('a')), 'a live session DOES get the digest rewritten');
+  assert.strictEqual(session.digestNonEmpty, true, 'the flag is assigned from the return value');
+
+  // Emptied to zero: the flag must go false. _noteConversationForDigest gates
+  // markDigested on it, so a stale true marks a conversation as digested that
+  // never received a digest.
+  const empty = mkRemover({ units: [] });
+  const s2 = { name: 'a', agentType: 'claude', digestNonEmpty: true };
+  empty.m.sessions.set('a', s2);
+  empty.m.removeMemoryUnit('a', 'mem-1-aaaaaa');
+  assert.strictEqual(s2.digestNonEmpty, false, 'an emptied store must clear the flag');
+});
+
+test('removeMemoryUnit: a DEAD agent is forgotten without recreating its run directory', () => {
+  const { m, forgotten, runDir } = mkRemover({ units: [{ id: 'u1', pinned: true, body: 'x', learned_at: new Date().toISOString() }] });
+  // No session in the map — memories outlive sessions, so this is the plugin
+  // deleting a dead agent's unit. writeClaudeDigestFile ensureDir's the run
+  // dir, so calling it here would recreate a dead agent's directory as a side
+  // effect of a delete.
+  assert.deepStrictEqual(m.removeMemoryUnit('ghost', 'mem-1-aaaaaa'), { ok: true });
+  assert.deepStrictEqual(forgotten, [['ghost', 'mem-1-aaaaaa']], 'the unit is still deleted');
+  assert.strictEqual(fsReal.existsSync(runDir('ghost')), false,
+    'the delete must not resurrect run/<name>/');
+
+  // A live NON-claude session is the same case: no claude digest to rewrite.
+  const bash = mkRemover({ units: [] });
+  bash.m.sessions.set('b', { name: 'b', agentType: 'codex' });
+  bash.m.removeMemoryUnit('b', 'mem-1-aaaaaa');
+  assert.strictEqual(fsReal.existsSync(bash.runDir('b')), false);
+});
+
+test('removeMemoryUnit: a store throw becomes an envelope, and skips the digest rewrite', () => {
+  const { m, runDir } = mkRemover({ forget: () => { throw new Error('no unit mem-9-zzzzzz'); } });
+  m.sessions.set('a', { name: 'a', agentType: 'claude', digestNonEmpty: true });
+  const res = m.removeMemoryUnit('a', 'mem-9-zzzzzz');
+  assert.deepStrictEqual(res, { ok: false, error: 'no unit mem-9-zzzzzz' });
+  assert.strictEqual(fsReal.existsSync(runDir('a')), false,
+    'a failed delete must not rewrite the digest');
+});
+
+test('[agent:memory forget] routes through removeMemoryUnit rather than a second copy', () => {
+  const { m } = mkRemover({ units: [] });
+  const acked = [];
+  const injected = [];
+  m._memoryAck = (s, line) => acked.push(line);
+  m._injectText = (s, line) => injected.push(line);
+  const calls = [];
+  m.removeMemoryUnit = (agent, id) => { calls.push([agent, id]); return { ok: true }; };
+  const session = { name: 'a', agentType: 'claude' };
+  m._handleMemoryIntent(session, 'forget', ' mem-1-aaaaaa ');
+  assert.deepStrictEqual(calls, [['a', 'mem-1-aaaaaa']], 'the intent is a CALLER, not a twin');
+  assert.deepStrictEqual(acked, ['[agent:memory] removed mem-1-aaaaaa from the store']);
+
+  m.removeMemoryUnit = () => ({ ok: false, error: 'no unit mem-1-aaaaaa' });
+  m._handleMemoryIntent(session, 'forget', 'mem-1-aaaaaa');
+  assert.deepStrictEqual(injected, ['[agent:memory] could not remove: no unit mem-1-aaaaaa'],
+    'the branch keeps its own error text');
+});
+
 test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor marks', () => {
   const marked = [];
   const delivered = [];

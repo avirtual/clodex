@@ -21,6 +21,7 @@ function createPluginHostEngine(deps) {
     userDataPath,     // createEngine's param — host.paths.dataDir derives from it
     fs, path,
     gitWorktree,      // the sanctioned shared leaf exposed as host.lib
+    libraryKinds,     // kind -> handler for host.library.remove; unlisted kinds are REFUSED
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     onPluginStateChanged,
@@ -38,6 +39,15 @@ function createPluginHostEngine(deps) {
     Object.keys(gitWorktree || {})
       .filter((k) => typeof gitWorktree[k] === 'function')
       .map((k) => [k, (...a) => gitWorktree[k](...a)]),
+  ));
+
+// Bound wrappers for the same reason as libGitWorktree: the injected table is a
+// live object the façade's freeze does not reach, so a plugin could repoint the
+// handler core itself calls.
+  const libraryHandlers = Object.freeze(Object.fromEntries(
+    Object.entries(libraryKinds || {})
+      .filter(([, fn]) => typeof fn === 'function')
+      .map(([k, fn]) => [k, (ref) => fn(ref)]),
   ));
 
 // The injected transport has no removeHandler, so a per-plugin channel could
@@ -221,6 +231,52 @@ function createPluginHostEngine(deps) {
 // plugin uses belongs in that plugin's directory. Bound façade, not the module —
 // see libGitWorktree.
       lib: Object.freeze({ gitWorktree: libGitWorktree }),
+
+// Deletion is generic in SHAPE, per-kind in implementation, and an unregistered
+// kind is refused rather than falling back to a path unlink: the four library
+// kinds do not mean the same thing when deleted and three break silently (a
+// memory needs its digest rewritten, a prompt/template/exec is referenced BY
+// NAME elsewhere). The refusal is what forces the next kind's author to answer
+// "what else has to happen when this file goes away?".
+// This engine must stay ignorant of what any kind IS — it forwards refs, never
+// reads them; per-kind ref validation belongs to the handler.
+      library: Object.freeze({
+        remove: (kind, ref) => {
+          if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(libraryHandlers, kind)) {
+            // Distinct from a failed delete on purpose: asking for a kind that
+            // does not exist is a different bug from a file that would not unlink.
+            return { ok: false, error: `unknown library kind: ${String(kind)}` };
+          }
+          if (!ref || typeof ref !== 'object') {
+            return { ok: false, error: 'library.remove: ref must be an object' };
+          }
+          try {
+            const res = libraryHandlers[kind](ref);
+            if (!res || typeof res !== 'object') {
+              return { ok: false, error: 'library.remove: handler returned no result' };
+            }
+            // Handlers are SYNCHRONOUS. A promise passes the object test, so
+            // returning it verbatim would hand the plugin a pending value whose
+            // rejection escapes this catch as an unhandled rejection.
+            if (typeof res.then === 'function') {
+              // Refusing is not enough: the promise is already in flight, and
+              // an unattached rejection takes the process down under Node's
+              // default. Swallow it — the caller is told the handler is invalid.
+              try { res.then(() => {}, () => {}); } catch {}
+              return { ok: false, error: `library.remove: handler for ${kind} must be synchronous` };
+            }
+            // Rebuilt, not forwarded. "Forwards, never interprets" is a rule
+            // about the REF; the envelope is this layer's published contract, so
+            // enforce it rather than observe it. This keeps a handler's cached
+            // or live result object from crossing into plugin land — it does NOT
+            // sanitize the error, which still passes through as the handler
+            // wrote it.
+            return res.ok ? { ok: true } : { ok: false, error: String(res.error ?? 'library.remove failed') };
+          } catch (e) {
+            return { ok: false, error: e && e.message ? e.message : String(e) };
+          }
+        },
+      }),
 
 // The poller hands back its LIVE payload — the same object core rebroadcasts to
 // every window — so copy on the way out. Never throw: null is this API's

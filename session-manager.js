@@ -2589,6 +2589,39 @@ function createSessionManager(deps) {
       this._injectText(session, line);
     }
 
+    // The one delete path for a memory unit — the [agent:memory forget] intent
+    // and host.library.remove both land here. Returns rather than throws: the
+    // plugin seam needs an envelope and the intent needs a message, so the
+    // conversion happens once, here.
+    removeMemoryUnit(agent, id) {
+      try {
+        // forget() validates both arguments (MEMORY_AGENT_RE / MEMORY_ID_RE) and
+        // throws; a second guard here would be a second set of rules to drift.
+        memoryStore.forget(agent, id);
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      // Only for a LIVE session: memories outlive sessions, so this can be a
+      // dead agent's unit, and writeClaudeDigestFile ensureDir's the agent's run
+      // directory — recreating it as a side effect of a delete. The spawn path
+      // rebakes the digest, so a dead agent loses nothing.
+      const session = this.sessions.get(agent);
+      if (session && !session._dead && session.agentType === 'claude') {
+        // Reassigned, not discarded: _noteConversationForDigest markDigests on
+        // this flag, so a store emptied to zero with a stale true marks a
+        // conversation as digested that never received a digest.
+        // Best-effort, and scoped to this statement on purpose: do not hoist it
+        // to wrap the method. The unlink already happened and is permanent, so
+        // a write failure returning { ok: false } invites a retry that fails
+        // with "no unit" and reads as a bug in the delete path. The digest is
+        // regenerated on next spawn; the delete is not. A throw also leaves the
+        // OLD hook-digest.json in place, so a digestNonEmpty left true still
+        // describes a digest that exists.
+        try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
+      }
+      return { ok: true };
+    }
+
     _handleMemoryIntent(session, sub, body) {
       const agent = session.name;
       const refreshDigest = () => {
@@ -2640,13 +2673,9 @@ function createSessionManager(deps) {
         return;
       }
       if (sub === 'forget') {
-        try {
-          memoryStore.forget(agent, body.trim());
-          refreshDigest();
-          this._memoryAck(session, `[agent:memory] removed ${body.trim()} from the store`);
-        } catch (e) {
-          this._injectText(session, `[agent:memory] could not remove: ${e.message}`, { parkable: true });
-        }
+        const res = this.removeMemoryUnit(agent, body.trim());
+        if (res.ok) this._memoryAck(session, `[agent:memory] removed ${body.trim()} from the store`);
+        else this._injectText(session, `[agent:memory] could not remove: ${res.error}`, { parkable: true });
         return;
       }
       this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall|pin|unpin|forget)`, { parkable: true });

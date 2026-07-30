@@ -630,6 +630,39 @@ The membership rule, so you can predict what will and won't appear here: a
 utility that **core also uses** may be lent to plugins. A utility only your
 plugin uses belongs in your own directory — copy it in, don't ask for it here.
 
+### `host.library`
+
+Deletion of a Clodex library file. One member in `"1"`:
+
+```js
+const res = host.library.remove('memory', { agent: 'clodex', id: 'mem-…' });
+// { ok: true } | { ok: false, error: '…' }
+```
+
+Generic in shape, per-kind in implementation. Core owns a `kind -> handler`
+table and **a kind with no registered handler is refused** — there is no
+fallback to a path unlink. `memory` is the only registered kind.
+
+That refusal is the point of the design rather than a limitation of it. The
+library's kinds do not mean the same thing when deleted, and most break
+*silently*: a deleted memory leaves live agents serving a stale boot digest
+unless it is rewritten (which `remove` does, for a live *claude* session only);
+prompts, templates and exec commands are referenced **by name** from `prompt-rails.js`,
+`team.json` and every seat's system prompt respectively, so removing one is
+discovered by the thing that fails later. A uniform unlink would make it equally
+easy to get all four wrong. Adding a kind means answering "what else has to
+happen when this file goes away?" — and registering the handler that does it.
+
+`ref` is forwarded to the handler, never interpreted here, so per-kind ref
+validation is the handler's job. As with `host.lib`, you receive bound wrappers:
+the table cannot be repointed from plugin land.
+
+The return is always rebuilt as `{ ok: true }` or `{ ok: false, error }` — you
+never receive the handler's own object. Handlers are synchronous; an async one
+is refused rather than handing you a pending promise. `remove` does not throw.
+
+Deletion is **permanent** — no archive, no trash. Confirm with the user first.
+
 ### `host.telemetry`
 
 `snapshot(sessionName)` returns a read-only telemetry snapshot for a session
@@ -1494,9 +1527,12 @@ it is a plugin that breaks on the next refactor and takes the blame with it.
 Each of these is a decision, not an oversight. If you have a real use case for
 one, it is a conversation about extending the host, not a gap to route around.
 
-- **Clodex's persistence stores.** Sessions, workspaces, peers, teams, the
-  library — none of it. You get `storage` (your own file) and `settings` (your
-  own key). A plugin cannot corrupt `sessions.json` because it cannot reach it.
+- **Clodex's persistence stores.** Sessions, workspaces, peers, teams — none of
+  it. You get `storage` (your own file) and `settings` (your own key). A plugin
+  cannot corrupt `sessions.json` because it cannot reach it. The one exception
+  is `host.library.remove` (§4): deletion only, for registered kinds only, and
+  every kind's side effects are core's to perform. There is still no read, no
+  write and no create against the library.
 - **`fs` beyond `storage`.** Your engine half is plain Node and *can* `require('node:fs')`
   — nothing stops you, and the workbench pilot does exactly that. What the host
   does not do is hand you a filesystem helper that has already decided which
