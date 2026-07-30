@@ -22,3 +22,5 @@ vendor/wirescope/warmth.sqlite*
 
 # local design scratch (T44 etc.) — review protocol never commits docs/design/
 docs/design/
+plugin-context.md
+plugin-context.lean.md

@@ -35,7 +35,7 @@
 // WHAT THIS IS NOT: a security control. It must never be described as one, in a
 // comment here or a line in the published contract. Clodex runs with
 // `contextIsolation: false` and `nodeIntegration: true`; a plugin is in-process
-// code with the full authority of the app, and docs/plugin-api.md says so
+// code with the full authority of the app, and plugins/plugin-api.md says so
 // plainly — the host API is a CONTRACT, not a containment boundary. Anyone who
 // wants past this lint gets past it, and no amount of regex changes that. What
 // it catches is ACCIDENTS AND DRIFT: an author reaching for core in the obvious
@@ -180,10 +180,16 @@ function scanPlugin(pluginId) {
   return out;
 }
 
+// A plugin is a directory with a manifest.json — the same test the loader
+// applies. Scanning every subdirectory instead would put author-facing tooling
+// (plugins/tools/) under the no-backdoor rules, where reaching into core by
+// absolute path is the whole job; the lint would then be pressuring a tool to
+// stop being able to load the real loader.
 function pluginIds() {
   try {
     return fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })
       .filter((d) => d.isDirectory())
+      .filter((d) => fs.existsSync(path.join(PLUGINS_DIR, d.name, 'manifest.json')))
       .map((d) => d.name)
       .sort();
   } catch { return []; }
