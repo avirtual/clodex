@@ -1,5 +1,11 @@
 # t112 — what the roster CONTAINS
 
+> Close this as ticket **t111**, not t112. The registry numbered it t111; this
+> directory is named t112 because the earlier roster-*delivery* fix
+> (`tasks/t111-roster-survives-context-reset/`) was done by the lead directly
+> and never took a ticket number. Artifact names and ticket ids are not the
+> same sequence.
+
 t111 fixed *delivery*: the roster now rides `hook-digest.json` and is
 regenerated on every context reset. This task fixes *content*. A roster that
 arrives reliably and still leaves the lead guessing has moved the failure, not
