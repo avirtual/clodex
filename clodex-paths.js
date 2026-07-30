@@ -39,7 +39,7 @@
 // ~/.clodex/promptcache/<name>/; this dir MUST outlive the run dir, which is
 // rm -rf'd on every exit, or the resume it exists to serve would find it gone),
 // agents/, skills/, library/,
-// plugins/ (the BYO plugin root — docs/plugin-sources.md §3; deliberately NOT a
+// plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
 // wire-shadow.jsonl (global wire log), codex-session-hook.sh (the one shared

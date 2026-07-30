@@ -1,9 +1,9 @@
 'use strict';
 // plugin-surface-contract.test.js — the PUBLISHED plugin surface, pinned
-// (docs/plugin-api.md; T6 / plan §6 Phase 3).
+// (plugins/plugin-api.md; T6 / plan §6 Phase 3).
 //
 // Same job api-contract.test.js does for window.api, and for the same reason:
-// `docs/plugin-api.md` is a one-way door. It tells an out-of-tree author, who
+// `plugins/plugin-api.md` is a one-way door. It tells an out-of-tree author, who
 // cannot read this repo, exactly what `host` and `rhost` carry — so a member
 // that quietly appears, disappears, or changes kind makes the published document
 // wrong for every reader at once, and the only signal today would be someone's
@@ -28,7 +28,7 @@ const path = require('node:path');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 
-const DOCS = path.join(__dirname, '..', 'docs', 'plugin-api.md');
+const DOCS = path.join(__dirname, '..', 'plugins', 'plugin-api.md');
 
 // ── The engine `host` contract ──────────────────────────────────────────────
 // One row per member a plugin's activate(host) may touch. `kind` is what the
@@ -84,7 +84,7 @@ const RHOST_CONTRACT = [
 ];
 
 // The seven UI slots, as `rhost.ui.<area>.<method>` paths. This is the list
-// docs/plugin-api.md §6 enumerates one section each; "seven" is a number the
+// plugins/plugin-api.md §6 enumerates one section each; "seven" is a number the
 // document states in prose, so it is pinned as a number too.
 const UI_SLOTS = [
   ['statusBar', 'addAction'],
@@ -281,7 +281,7 @@ test('rhost exposes the seven UI slots and nothing that reaches window.api', () 
     assert.strictEqual(typeof rhost.ui[area][method], 'function',
       `rhost.ui.${area}.${method} is published`);
   }
-  assert.strictEqual(UI_SLOTS.length, 7, 'docs/plugin-api.md §6 says SEVEN slots in prose');
+  assert.strictEqual(UI_SLOTS.length, 7, 'plugins/plugin-api.md §6 says SEVEN slots in prose');
   // The no-backdoor rule as a SHAPE, complementing the static lint in
   // plugin-boundary.test.js: even a plugin that ignored the lint has nothing on
   // its own surface to reach core with.
@@ -321,7 +321,7 @@ test('the _host pseudo-plugin serves exactly five methods, and no plugin can rea
 // ── The intent handler's CALL SHAPE (t10) ───────────────────────────────────
 // ARGUMENT ORDER IS CONTRACT. `handler(handle, intent)` — the SessionHandle
 // FIRST, the parsed intent second. This file pinned the surface's MEMBERS and
-// missed the one shape a member is called with, and docs/plugin-api.md §7 then
+// missed the one shape a member is called with, and plugins/plugin-api.md §7 then
 // published the order backwards for a full release: an author following it reads
 // the intent's fields off a handle and the handle's off an intent, both objects,
 // neither throwing, and the verb silently does nothing or the wrong thing. A
@@ -398,7 +398,7 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
 
 // ── The document ────────────────────────────────────────────────────────────
 
-test('docs/plugin-api.md exists, is frozen at this version, and names every published member', () => {
+test('plugins/plugin-api.md exists, is frozen at this version, and names every published member', () => {
   // The contract is only real if it is PUBLISHED. This is the cheap half of that:
   // every member in the tables above must at least appear in the document, so a
   // member cannot be added to the surface and silently left undocumented.
@@ -429,10 +429,10 @@ test('docs/plugin-api.md exists, is frozen at this version, and names every publ
   }
   for (const [area, method] of [...UI_SLOTS, ...UI_EXTRA]) wantExact(`rhost.ui.${area}.${method}`);
   for (const f of SESSION_HANDLE_CONTRACT.fns) wantWord(f, `SessionHandle.${f}`);
-  assert.deepStrictEqual(missing, [], 'every published member must appear in docs/plugin-api.md');
+  assert.deepStrictEqual(missing, [], 'every published member must appear in plugins/plugin-api.md');
 });
 
-test('docs/plugin-api.md covers the sections the freeze promised', () => {
+test('plugins/plugin-api.md covers the sections the freeze promised', () => {
   // T6's minimum contents, as a checklist. Prose can rot; a missing SECTION is
   // the failure mode that leaves an out-of-tree author guessing, and it is
   // mechanically checkable.
@@ -448,7 +448,7 @@ test('docs/plugin-api.md covers the sections the freeze promised', () => {
     '## 14. Known gaps and unspecified behaviour',
     '## 15. Versioning',
   ]) {
-    assert.ok(doc.includes(heading), `docs/plugin-api.md must keep the section "${heading}"`);
+    assert.ok(doc.includes(heading), `plugins/plugin-api.md must keep the section "${heading}"`);
   }
   // The two shape findings T6 resolved as DOCUMENT-ONLY. Both are load-bearing
   // for the freeze: ordering documented as unspecified is what makes a v1.1

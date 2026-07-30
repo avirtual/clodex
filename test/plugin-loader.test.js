@@ -524,7 +524,7 @@ test('the in-repo workbench plugin is discovered and loads its engine half', () 
   assert.ok(loader.rendererInfo('workbench').rendererPath.endsWith('renderer.js'));
 });
 
-// ── Multi-root discovery (docs/plugin-sources.md §3-§5) ─────────────────────
+// ── Multi-root discovery (plugins/plugin-sources.md §3-§5) ──────────────────
 //
 // The user root exists because a PACKAGED install cannot accept a plugin at all:
 // `pluginsDir` resolves inside app.asar, which is read-only and replaced
@@ -646,7 +646,7 @@ test('a shadowed copy is SURFACED, never silently dropped', () => {
   assert.strictEqual(st.shadowed[0].dir, path.join(user, 'alpha'));
 });
 
-// ── Version-aware precedence (t21, docs/plugin-sources.md §4) ───────────────
+// ── Version-aware precedence (t21, plugins/plugin-sources.md §4) ────────────
 // The bundled copy is a FLOOR, not a ceiling. Plugins ship inside app.asar,
 // which is read-only and replaced wholesale by every update, so without this a
 // packaged user could never run a newer plugin than the one their DMG shipped.

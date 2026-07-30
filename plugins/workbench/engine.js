@@ -15,7 +15,7 @@
 // plugin's own safeResolve, which is lexical and follows a symlink inside the
 // cwd pointing out. An earlier version of this comment claimed a careless
 // plugin "cannot widen locality"; it can. The engine half is unsandboxed
-// in-process Node holding a cwd and require('fs'), and docs/plugin-api.md says
+// in-process Node holding a cwd and require('fs'), and plugins/plugin-api.md says
 // so outright: the host API is a contract, not a containment boundary.
 //
 // W5 moved git-scm.js and fs-explorer.js OUT of the core root and into this

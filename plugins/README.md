@@ -4,7 +4,7 @@ Clodex is extensible. A plugin adds UI, behaviour, or an `[agent:…]` verb, in
 process, without a fork — and it can live entirely outside this repo.
 
 This page is the orientation. The contract is
-[`docs/plugin-api.md`](../docs/plugin-api.md), frozen at `hostApi "1"`, and it is
+[`plugin-api.md`](plugin-api.md), frozen at `hostApi "1"`, and it is
 the authority on everything a plugin can reach. Nothing here restates it.
 
 ## What a plugin is
@@ -54,7 +54,7 @@ Two copies of one id do not merge — the shipped copy wins unless yours declare
 strictly higher `version`, and the loser gets a visible row in Manage Plugins
 saying so. That rule, symlinking a plugin out of a working checkout, and the
 limits of a re-scan are all in
-[`docs/plugin-sources.md`](../docs/plugin-sources.md), which is the authority on
+[`plugin-sources.md`](plugin-sources.md), which is the authority on
 where plugins come from.
 
 ## Start from a working one
@@ -126,9 +126,9 @@ a plugin of your own gets no static checking at all.
 
 ## Where to read next
 
-- [`docs/plugin-api.md`](../docs/plugin-api.md) — the contract. Manifest, both
+- [`plugin-api.md`](plugin-api.md) — the contract. Manifest, both
   host objects, the seven slots, intents, events, lifecycle, boundaries, and what
   is deliberately not exposed.
-- [`docs/plugin-sources.md`](../docs/plugin-sources.md) — where plugins come
+- [`plugin-sources.md`](plugin-sources.md) — where plugins come
   from: the two roots, precedence and shadowing, trust, and what a re-scan can
   and cannot do.

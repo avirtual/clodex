@@ -1,6 +1,6 @@
 # git-branches — build notes against `plugin-api.md` (hostApi "1")
 
-Kept while building. § references are to `docs/plugin-api.md`.
+Kept while building. § references are to `plugin-api.md`.
 
 > **Placement note.** The brief said "in `NOTES.md` beside the plugin" and also
 > that everything I write must be inside `plugins/git-branches/` ("absolute").

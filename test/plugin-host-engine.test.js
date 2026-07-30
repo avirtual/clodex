@@ -249,7 +249,7 @@ test('a hostApi mismatch refuses to load with a named error', () => {
     'a manifest predating the surface must not half-activate',
   );
   // THE freeze pin, and deliberately the only literal one in the suite (T6). The
-  // published version is a one-way door: docs/plugin-api.md documents "1", every
+  // published version is a one-way door: plugins/plugin-api.md documents "1", every
   // out-of-tree plugin writes "1" in its manifest, and a change here silently
   // refuses all of them. Changing this line is the decision, not a consequence
   // of one — see plugin-api.js on what does and does not warrant a bump.
@@ -381,7 +381,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // same derivation would silently WIDEN it the day someone adds an unrelated
   // export to git-worktree.js, with no diff anywhere saying plugins can now
   // reach it. So adding an export is a deliberate act with a visible failure
-  // here, and this list must be updated in company with docs/plugin-api.md §4.
+  // here, and this list must be updated in company with plugins/plugin-api.md §4.
   assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), [
     'createWorktree', 'defaultBranch', 'defaultWorktreePath', 'listWorktrees',
     'removeWorktree', 'repoInfo', 'repoToplevel',

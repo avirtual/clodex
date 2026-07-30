@@ -1,7 +1,7 @@
 'use strict';
-// plugin-api-doc-snippets.test.js — the CODE in docs/plugin-api.md, executed.
+// plugin-api-doc-snippets.test.js — the CODE in plugins/plugin-api.md, executed.
 //
-// WHY THIS FILE EXISTS (t91). `docs/plugin-api.md` is a one-way door: an
+// WHY THIS FILE EXISTS (t91). `plugins/plugin-api.md` is a one-way door: an
 // out-of-tree author reads it and cannot read this repo. When it states a
 // constraint it must also show how to discharge one, and the showing has to be
 // correct — three clean-room trials all UNDERSTOOD the no-newline rule at §
@@ -25,7 +25,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const DOCS = path.join(__dirname, '..', 'docs', 'plugin-api.md');
+const DOCS = path.join(__dirname, '..', 'plugins', 'plugin-api.md');
 
 // Pull the fenced ```js block that defines oneLine out of the document, then
 // evaluate it and hand back the function. Anchored on the DEFINITION, not on a
@@ -35,7 +35,7 @@ function loadOneLineFromDocs() {
   const blocks = doc.match(/```js\n[\s\S]*?\n```/g) || [];
   const hits = blocks.filter((b) => /function\s+oneLine\s*\(/.test(b));
   assert.strictEqual(hits.length, 1,
-    'docs/plugin-api.md must define oneLine() in exactly one fenced js block');
+    'plugins/plugin-api.md must define oneLine() in exactly one fenced js block');
   const src = hits[0].replace(/^```js\n/, '').replace(/\n```$/, '');
   // new Function, not require: the snippet is documentation, has no module
   // wrapper, and must run exactly as an author would paste it.

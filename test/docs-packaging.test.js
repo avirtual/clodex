@@ -4,8 +4,10 @@
 // Same allowlist trap as `cli-packaging.test.js`, arrived at from the opposite
 // direction. `build.files` lists directories explicitly (`"*.js"` matches ROOT
 // files only), and `docs/` was absent — so every shipped DMG through v4.3.1
-// contained ZERO files from `docs/`, including `docs/plugin-api.md`, the frozen
-// `hostApi "1"` contract a third-party plugin author writes against. Unlike the
+// contained ZERO files from `docs/`, including the frozen `hostApi "1"` plugin
+// contract a third-party author writes against (it lived at `docs/plugin-api.md`
+// then; it is `plugins/plugin-api.md` now, shipped under `plugins/**/*`, so BOTH
+// patterns are pinned below). Unlike the
 // `cli/` case this threw nothing and broke nothing: an absent doc has no
 // MODULE_NOT_FOUND to announce it, which is why it survived four phases of
 // plugin work.
@@ -32,10 +34,12 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 
-test('electron-builder SHIPS docs/ — the plugin contract must be in the artifact', () => {
+test('electron-builder SHIPS docs/ and plugins/ — the plugin contract must be in the artifact', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.ok(pkg.build.files.includes('docs/**/*'),
     'package.json build.files must list docs/**/* or the shipped DMG contains no documentation at all');
+  assert.ok(pkg.build.files.includes('plugins/**/*'),
+    'package.json build.files must list plugins/**/* — the frozen plugin contract lives there');
 });
 
 test('the docs the plugin surfacing points at exist at the paths it names', () => {
@@ -43,7 +47,7 @@ test('the docs the plugin surfacing points at exist at the paths it names', () =
   // moved without updating them leaves the launchpad pointing at a 404, which
   // is the same failure as not linking it at all — and harder to notice,
   // because the link looks like it works.
-  for (const rel of ['docs/plugin-api.md', 'docs/plugin-sources.md']) {
+  for (const rel of ['plugins/plugin-api.md', 'plugins/plugin-sources.md']) {
     assert.ok(fs.existsSync(path.join(ROOT, rel)), `${rel} must exist — the plugin docs link to it by this path`);
   }
 });

@@ -10,6 +10,9 @@
 //   2. `docs/`    — the frozen `hostApi "1"` plugin contract never reached the
 //                   artifact. Nothing threw: an absent doc has no error to
 //                   announce it, so it survived four phases of plugin work.
+//                   (That contract now lives under `plugins/`; `docs/` still
+//                   ships human-facing docs and the reasoning below is unchanged
+//                   — both trees are covered, neither is derivable.)
 //   3. `peering/` — `ipc-handlers.js` reads `peering/clodex-deploy.sh` at
 //                   runtime with no packaged-path branch. This one SHIPPED: the
 //                   Test & Set Up wizard's install step failed with

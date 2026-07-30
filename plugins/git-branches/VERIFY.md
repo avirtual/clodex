@@ -176,7 +176,7 @@ correct as written, and no prefixed form was ever going to appear. Note the
 asymmetry on the same element: the badge **`id`** *is* namespaced
 (`data-plugin-badge="git-branches:branch"`, `:258`/`:265`). Both halves are now
 pinned as a deliberate pair in `test/plugin-host.test.js`, and
-`docs/plugin-api.md` §6 states the rule scoped to `id` rather than as a general
+`plugin-api.md` §6 states the rule scoped to `id` rather than as a general
 one.
 
 **`style.css` is not scoped.** `renderer/plugin-host.js:583-592` creates one
@@ -184,7 +184,7 @@ one.
 `textContent = String(css)` — verbatim, never rewritten or wrapped. A plugin's
 CSS matches anywhere in the window, including core's DOM. The
 `data-plugin-style` attribute exists so the sheet can be removed wholesale at
-disable, not to confine it. Now stated in `docs/plugin-api.md` §14 as a limit,
+disable, not to confine it. Now stated in `plugin-api.md` §14 as a limit,
 in the same "contract, not containment" register as the rest of the posture.
 
 **Once per line, not once per feed.** Three independent legs: `intentSource` is

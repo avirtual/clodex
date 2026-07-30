@@ -50,7 +50,7 @@ function createPluginLoader(deps) {
   const {
     fs, path,
     pluginsDir,        // legacy single-root form; equivalent to roots: [{ dir }]
-    roots: rootsIn,    // [{ id, dir, label }] in PRECEDENCE order — docs/plugin-sources.md §3
+    roots: rootsIn,    // [{ id, dir, label }] in PRECEDENCE order — plugins/plugin-sources.md §3
     getUiSettings,     // getter: the store seam, assigned in the bootstrap
     log,
     requireModule,     // seam: node's require, injectable so tests load fakes

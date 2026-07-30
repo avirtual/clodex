@@ -332,9 +332,10 @@ test('rowBadge paints, updates and removes a chip in .session-badges', () => {
   // badge's `id` IS namespaced into data-plugin-badge, and its `cls` is NOT —
   // it reaches className verbatim. Both facts live on this one element, which
   // is exactly why a future reader would "tidy" cls into matching id. Doing so
-  // would silently break every plugin stylesheet in existence (docs/plugin-api
-  // .md §6 tells authors to write their bare class name), with nothing else in
-  // the suite going red. A doc sentence is a claim no execution passes through.
+  // would silently break every plugin stylesheet in existence
+  // (plugins/plugin-api.md §6 tells authors to write their bare class name),
+  // with nothing else in the suite going red. A doc sentence is a claim no
+  // execution passes through.
   badgeState.set('seat-a', { text: '3', cls: 'gb-branch gb-detached' });
   host.applyRowBadges(row);
   const classed = badges.querySelector('[data-plugin-badge="demo:count"]');
