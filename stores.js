@@ -20,7 +20,7 @@ const {
 } = require('./catalogs');
 
 const PROMPT_KINDS = ['system', 'append'];
-const PROMPT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
+const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
 
 const DEFAULT_SANDBOX_CONFIG = {
   workDir: null,
@@ -198,7 +198,7 @@ function sanitizePeerNameMap(raw, { keepEmpty }) {
   const out = {};
   for (const [id, names] of Object.entries(raw)) {
     if (!Array.isArray(names)) continue;
-    const clean = names.filter((n) => typeof n === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(n));
+    const clean = names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
     if (clean.length || keepEmpty) out[id] = clean;
   }
   return out;

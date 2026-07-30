@@ -218,7 +218,7 @@ async function attach({ client, ctx, flags, args, io = {} }) {
   return done;
 }
 
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 function requireAttachName(name) {
   if (name == null || name === '') throw new CliError(EXIT.USAGE, 'attach needs a session name');
   if (!NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad session name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars`);

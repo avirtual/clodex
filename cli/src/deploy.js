@@ -21,7 +21,7 @@ const DEFAULT_REPO = 'https://github.com/avirtual/clodex';
 const DEFAULT_BRANCH = 'master';
 const DEFAULT_PORT = 7900;
 const DEPLOY_TIMEOUT_MS = 15 * 60 * 1000;   // a cold clone+install+rebuild is minutes
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 // A strict git-ref / repo-URL charset for values interpolated into the SSM
 // wrapper. Covers https + git@ URLs and normal branch/tag names; REJECTS
 // whitespace, newlines and shell/heredoc metachars — the single-quote escaping

@@ -266,7 +266,13 @@ function registerIpcHandlers(deps) {
     const t = templates.saveByName(template);
     return { ok: true, template: t, templates: templates.list() };
   });
-  handle('templates:remove', (_e, id) => { templates.remove(id); return templates.list(); });
+  handle('templates:remove', (_e, id) => {
+    // A refused name now throws (stores.js confines at _file). Caught here so
+    // it reads like every other refusal on this surface instead of rejecting
+    // the invoke, and so the caller can tell it apart from a real delete.
+    try { templates.remove(id); } catch { /* refused name — nothing was deleted */ }
+    return templates.list();
+  });
   handle('templates:exportFromSession', (_e, name, templateName) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: `no session "${name}"` };
@@ -304,7 +310,8 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
   handle('prompts:remove', (_e, kind, name) => {
-    return { ok: true, prompts: promptLibrary.remove(kind, name) };
+    try { return { ok: true, prompts: promptLibrary.remove(kind, name) }; }
+    catch (err) { return { ok: false, error: err.message, prompts: promptLibrary.list() }; }
   });
 
   handle('agents:list', () => agentLibrary.list());
@@ -317,7 +324,9 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
   handle('agents:remove', (_e, name) => {
-    const agents = agentLibrary.remove(name);
+    let agents;
+    try { agents = agentLibrary.remove(name); }
+    catch (err) { return { ok: false, error: err.message, agents: agentLibrary.list() }; }
     refreshAppMenu();
     return { ok: true, agents };
   });
@@ -332,7 +341,9 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
   handle('skilllib:remove', (_e, name) => {
-    const skills = skillLibrary.remove(name);
+    let skills;
+    try { skills = skillLibrary.remove(name); }
+    catch (err) { return { ok: false, error: err.message, skills: skillLibrary.list() }; }
     refreshAppMenu();
     return { ok: true, skills };
   });
@@ -355,7 +366,8 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
   handle('exec:remove', (_e, name) => {
-    return { ok: true, commands: execLibrary.remove(name) };
+    try { return { ok: true, commands: execLibrary.remove(name) }; }
+    catch (err) { return { ok: false, error: err.message, commands: execLibrary.list() }; }
   });
 
   handle('notifications:list', () => notifications.list());
@@ -923,7 +935,7 @@ function registerIpcHandlers(deps) {
     if (names === null || names === undefined) {
       delete map[id];
     } else if (Array.isArray(names)) {
-      map[id] = names.filter((n) => typeof n === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(n));
+      map[id] = names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
     } else {
       return { ok: false, error: 'names must be an array or null' };
     }

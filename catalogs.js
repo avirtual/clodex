@@ -117,7 +117,7 @@ const CLAUDE_SKILLS = [
 const SKILL_REENABLE_CONFIRMED = false;
 
 const DEFAULT_WORKSPACE_ID = 'default';
-const AGENT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
+const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
 const THEME_KEYS = ['midnight', 'claude', 'paper', 'light'];
 
 module.exports = {

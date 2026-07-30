@@ -585,7 +585,7 @@ function entryTarget(e) {
   return '';
 }
 
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 function requireName(v, verb) {
   if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a session name`);
   if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad session name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);

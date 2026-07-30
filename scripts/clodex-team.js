@@ -308,7 +308,7 @@ function doTickets(payload) {
 
 async function doRetire(payload) {
   const target = payload.target;
-  if (!target || !/^[a-zA-Z0-9._-]{1,64}$/.test(target)) die('retire needs "target": a session name');
+  if (!target || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(target)) die('retire needs "target": a session name');
   let info;
   try {
     info = registryEntry(target);
@@ -334,7 +334,7 @@ async function doRetire(payload) {
     die(`payload is not JSON: ${e.message}`);
   }
   const { action, agent } = payload;
-  if (!agent || !/^[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('payload needs "agent": your session name');
+  if (!agent || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('payload needs "agent": your session name');
   if (action === 'roster') return doRoster(payload);
   if (action === 'tickets') return doTickets(payload);
   if (action === 'retire') return doRetire(payload);

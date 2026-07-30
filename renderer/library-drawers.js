@@ -162,7 +162,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const name = promptName.value.trim();
     const body = promptBody.value;
     if (!name || !body.trim()) return;
-    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
       promptName.style.borderColor = '#e94560';
       return;
     }
@@ -277,7 +277,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   agentSave.addEventListener('click', async () => {
     const name = agentNameInput.value.trim();
     const content = agentContent.value;
-    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
       agentNameInput.style.borderColor = '#e94560';
       return;
     }
@@ -396,7 +396,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   skillSave.addEventListener('click', async () => {
     const name = skillNameInput.value.trim();
     const content = skillContent.value;
-    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
       skillNameInput.style.borderColor = '#e94560';
       return;
     }
@@ -521,7 +521,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   execSave.addEventListener('click', async () => {
     const name = execNameInput.value.trim();
     const content = execContent.value;
-    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
       execNameInput.style.borderColor = '#e94560';
       return;
     }

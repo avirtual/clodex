@@ -18,7 +18,7 @@ function isLoopbackHost(h) {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
 }
 
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;

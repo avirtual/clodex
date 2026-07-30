@@ -24,7 +24,7 @@ const MEMORY_ROOT = path.join(os.homedir(), '.clodex', 'library', 'memory');
 // NOT the containment check: `.` is in the class, so '.' and '..' both match
 // it. Confinement is enforced positively in agentDir(); keep it that way if
 // this regex is ever loosened.
-const AGENT_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 let host = null;
 

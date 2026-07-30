@@ -11,7 +11,7 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 // Team names and seat names share the session-name grammar (CLAUDE.md): a team
 // name is BOTH a directory under ~/.clodex/teams/ AND the `<team>-` seat-name
 // prefix, so it must be name-legal; top-level `lead` is a seat name.
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const INSTANTIATE = new Set(['session', 'subagent']);
 
 // team.json is agent-writable and these role keys are trusted downstream, so the

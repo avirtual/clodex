@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEMORY_AGENT_RE = /^[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
+const MEMORY_AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
 // Strict unit-id shape (as minted by remember()). pin/forget resolve ids into
 // file paths, so anything looser would be a traversal vector.
 const MEMORY_ID_RE = /^mem-\d+-[a-z0-9]+$/;

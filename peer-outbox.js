@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const ORIGIN_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const ORIGIN_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // A wire-supplied origin is safe as a single path segment only if it matches the
 // name charset AND isn't a dot-entry (`.`/`..` pass the charset but would escape

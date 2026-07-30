@@ -632,7 +632,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
       promptText(`Export "${name}" as a template`, name).then((tn) => {
         if (!tn) return;
         tn = tn.trim();
-        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(tn)) {
+        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(tn)) {
           alert('Template name must be 1–64 chars: letters, digits, . _ -');
           return;
         }
@@ -1824,7 +1824,7 @@ btnSaveTemplate.addEventListener('click', async () => {
   const templateName = await promptText('Save as Template', '');
   if (!templateName) return;
   const name = templateName.trim();
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     alert('Template name must be 1–64 chars: letters, digits, . _ -');
     return;
   }
@@ -1901,7 +1901,7 @@ async function doCreate() {
   const systemPromptBody = null;
 
   if (!name) return;
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     inputName.style.borderColor = '#e94560';
     return;
   }
@@ -2092,7 +2092,7 @@ async function openTemplateEditor(tpl = null) {
 
 async function saveTemplateFromForm() {
   const name = inputName.value.trim();
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     inputName.style.borderColor = '#e94560';
     return;
   }

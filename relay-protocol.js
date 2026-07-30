@@ -36,7 +36,7 @@
 // Session/label charset — a wire-supplied name/origin/label is only usable as a
 // dm target or a path segment if it matches this (mirrors the box's NAME_RE and
 // the outbox ORIGIN_RE). Kept local so this leaf stays dependency-free.
-const RELAY_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const RELAY_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // How long a spoke trusts a cached relay roster after its last refresh. The hub
 // re-pushes every hello tick (~15s), so a roster not refreshed within this window

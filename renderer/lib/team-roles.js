@@ -17,7 +17,7 @@ const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 // are for EARLY client-side feedback only — the backend re-validates via the real
 // regexes on every write regardless.
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
-const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // One display row-model per role in a loaded manifest, in the manifest's key
 // order. `readOnly` marks the operator-owned keys (lead/reviewer). Missing

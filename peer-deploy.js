@@ -102,7 +102,10 @@ function parseDeployLine(rawLine) {
 }
 
 
-const FIX_NAME_MAX = 64; // mirrors the session-name regex ceiling [a-zA-Z0-9._-]{1,64}
+// Mirrors the session-name regex ceiling (?!\.+$)[a-zA-Z0-9._-]{1,64}. The
+// dot-only half needs no mirroring here: every name minted below is prefixed
+// `fix-`, so none can be dots.
+const FIX_NAME_MAX = 64;
 
 function fixSessionName(label, taken = new Set()) {
   const has = (n) => (taken instanceof Set ? taken.has(n) : Array.isArray(taken) && taken.includes(n));

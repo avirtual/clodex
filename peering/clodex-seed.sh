@@ -73,7 +73,9 @@ mkdir -p "$CFG"
 if [[ "${1:-}" == "remove" || "${1:-}" == "--remove" || "${1:-}" == "-r" ]]; then
   NAME="${2:-}"
   if [[ -z "$NAME" ]]; then echo "usage: $0 remove <name>" >&2; exit 1; fi
-  if [[ ! "$NAME" =~ ^[a-zA-Z0-9._-]{1,64}$ ]]; then
+  # Two tests, not one: bash =~ is ERE and has no lookahead, so the dot-only
+  # rejection the JS regexes fold in as (?!\.+$) has to be its own clause here.
+  if [[ ! "$NAME" =~ ^[a-zA-Z0-9._-]{1,64}$ || "$NAME" =~ ^\.+$ ]]; then
     echo "error: bad name" >&2; exit 1
   fi
   node - "$SESSIONS" "$NAME" <<'NODE'
@@ -110,8 +112,8 @@ if [[ "$TYPE" != "claude" && "$TYPE" != "codex" ]]; then
   echo "error: type must be 'claude' or 'codex' (got '$TYPE')" >&2
   exit 1
 fi
-if [[ ! "$NAME" =~ ^[a-zA-Z0-9._-]{1,64}$ ]]; then
-  echo "error: name must match [a-zA-Z0-9._-]{1,64}" >&2
+if [[ ! "$NAME" =~ ^[a-zA-Z0-9._-]{1,64}$ || "$NAME" =~ ^\.+$ ]]; then
+  echo "error: name must match [a-zA-Z0-9._-]{1,64} and not be dots only" >&2
   exit 1
 fi
 if [[ "$CWD" == "$HOME" ]]; then

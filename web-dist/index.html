@@ -20121,7 +20121,7 @@ helper=${d.helperPath}`;
           const name = promptName.value.trim();
           const body = promptBody.value;
           if (!name || !body.trim()) return;
-          if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             promptName.style.borderColor = "#e94560";
             return;
           }
@@ -20223,7 +20223,7 @@ helper=${d.helperPath}`;
         agentSave.addEventListener("click", async () => {
           const name = agentNameInput.value.trim();
           const content = agentContent.value;
-          if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             agentNameInput.style.borderColor = "#e94560";
             return;
           }
@@ -20328,7 +20328,7 @@ helper=${d.helperPath}`;
         skillSave.addEventListener("click", async () => {
           const name = skillNameInput.value.trim();
           const content = skillContent.value;
-          if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             skillNameInput.style.borderColor = "#e94560";
             return;
           }
@@ -20439,7 +20439,7 @@ helper=${d.helperPath}`;
         execSave.addEventListener("click", async () => {
           const name = execNameInput.value.trim();
           const content = execContent.value;
-          if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             execNameInput.style.borderColor = "#e94560";
             return;
           }
@@ -22028,7 +22028,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       "use strict";
       var RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["lead", "reviewer"]);
       var ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
-      var NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+      var NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       function teamRoleRows(manifest) {
         const roles = manifest && manifest.roles || {};
         return Object.entries(roles).map(([key, def]) => ({
@@ -25877,7 +25877,7 @@ ${detail}` });
             promptText(`Export "${name}" as a template`, name).then((tn) => {
               if (!tn) return;
               tn = tn.trim();
-              if (!/^[a-zA-Z0-9._-]{1,64}$/.test(tn)) {
+              if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(tn)) {
                 alert("Template name must be 1\u201364 chars: letters, digits, . _ -");
                 return;
               }
@@ -27040,7 +27040,7 @@ ${detail}` });
         const templateName = await promptText("Save as Template", "");
         if (!templateName) return;
         const name = templateName.trim();
-        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
           alert("Template name must be 1\u201364 chars: letters, digits, . _ -");
           return;
         }
@@ -27117,7 +27117,7 @@ ${detail}` });
         const supportsPrompts = type === "claude" || type === "codex";
         const systemPromptBody = null;
         if (!name) return;
-        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
           inputName.style.borderColor = "#e94560";
           return;
         }
@@ -27299,7 +27299,7 @@ ${detail}` });
       }
       async function saveTemplateFromForm() {
         const name = inputName.value.trim();
-        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
           inputName.style.borderColor = "#e94560";
           return;
         }
