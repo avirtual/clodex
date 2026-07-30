@@ -1295,14 +1295,32 @@ function createSessionManager(deps) {
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
     }
 
+    // `{ name, label }` — the warmth label is computed here, not in
+    // team-manifest: that module is a pure leaf and warmth is a wire-layer
+    // property (proxy snapshot + activity state), so it crosses as data.
     _teamLiveSeats(teamRoot) {
-      const names = [];
+      const seats = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
-        if (root && root === teamRoot) names.push(s.name);
+        if (!root || root !== teamRoot) continue;
+        let label = null;
+        try {
+          label = peerStatusLabel({
+            state: s.activityState || 'idle',
+            idleMs: Date.now() - (s.activityTs || Date.now()),
+            payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
+            attention: s.needsAttention ? s.needsAttention.kind : null,
+            agentType: s.agentType,
+          });
+        } catch { label = null; }
+        seats.push({ name: s.name, label });
       }
-      return names;
+      return seats;
+    }
+
+    _teamLiveSeatNames(teamRoot) {
+      return this._teamLiveSeats(teamRoot).map((s) => s.name);
     }
 
     // The roster body for `name`, or null when the seat is not on a team. Called
@@ -1316,7 +1334,7 @@ function createSessionManager(deps) {
       if (!cwd) return null;
       let team; try { team = resolveTeam(cwd); } catch { return null; }
       if (!team) return null;
-      return formatRoster(team, this._teamLiveSeats(team.root));
+      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name });
     }
 
     _rebakeDigest(name) {
@@ -1378,7 +1396,7 @@ function createSessionManager(deps) {
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root)), 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
           // Both paths are needed and neither is redundant. setupClaudeHook
           // writes the digest BEFORE this seat exists in the map or in
           // persistence, so a fresh seat's pre-spawn digest cannot contain a
@@ -1414,7 +1432,7 @@ function createSessionManager(deps) {
       if (!team || session._dead) return;
       session._pendingRoster = null;
       try {
-        this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root)), 'dm');
+        this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
         this._markRosterSent(session);   // delivered now → stamp so a restart won't re-inject
       } catch (e) {
         log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
@@ -3072,7 +3090,7 @@ function createSessionManager(deps) {
     _resolveAssignee(team, who) {
       if (!who) return null;
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who; // role-addressed
-      if (this._teamLiveSeats(team.root).includes(who)) return who; // name-addressed (live seat)
+      if (this._teamLiveSeatNames(team.root).includes(who)) return who; // name-addressed (live seat)
       return null;
     }
 
@@ -3080,12 +3098,12 @@ function createSessionManager(deps) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, a)) {
-        for (const name of this._teamLiveSeats(team.root)) {
+        for (const name of this._teamLiveSeatNames(team.root)) {
           if (matchSeatRole(team, name) === a) return name;
         }
         return null;
       }
-      return this._teamLiveSeats(team.root).includes(a) ? a : null;
+      return this._teamLiveSeatNames(team.root).includes(a) ? a : null;
     }
 
     _deliverTicketSpec(team, ticket, specText, fromName, urgent = false) {
@@ -3319,7 +3337,7 @@ function createSessionManager(deps) {
 
     _reconcileTickets(team, teamDir) {
       const tickets = ticketsStore.load(teamDir);
-      for (const name of this._teamLiveSeats(team.root)) {
+      for (const name of this._teamLiveSeatNames(team.root)) {
         const role = matchSeatRole(team, name);
         const open = tickets.find((t) => t.state === 'open' && t.assignee != null
           && (t.assignee === name || t.assignee === role));

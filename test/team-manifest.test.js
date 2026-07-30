@@ -252,7 +252,7 @@ test('formatTeamBlock: shrunk identity block with role match (lead seat)', () =>
   const block = formatTeamBlock(teamFixture(), 'boss');
   assert.match(block, /^# Team$/m);
   assert.match(block, /You are seat boss on team shop \(root \/Users\/me\/shop\)\. Your role: lead\./);
-  assert.match(block, /Team composition arrives in your context; ground truth: \[agent:exec clodex-team\] roster\./);
+  assert.match(block, /Team composition arrives in your context; ground truth: \[agent:exec clodex-team\] \{"action":"roster","agent":"boss"\}/);
   // The roster listing moved OUT — no "Roles:" line in the invariant block.
   assert.ok(!/Roles:/.test(block), 'roster listing no longer in the system-prompt block');
 });
@@ -627,22 +627,136 @@ test('setTeamWatchdog writes a finite ms, clears on null, rejects non-finite, ro
 });
 
 // --- formatRoster: the initial-roster message ------------------------------
+
+// The roster's exec line is only worth printing if it actually runs, so the
+// tests below validate it against the real schema rather than a copy of it:
+// the day clodex-team.json gains a required key, these fail instead of
+// shipping a line that bounces at the decision point.
+const EXEC_SCHEMA = JSON.parse(fs.readFileSync(
+  path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-team.json'), 'utf-8')).schema;
+
+/** The payload object an `[agent:exec clodex-team] {...}` line carries. */
+function execPayloadFrom(text) {
+  const m = text.match(/\[agent:exec clodex-team\]\s*(\{.*\})/);
+  return m ? JSON.parse(m[1]) : null;
+}
+
+/** Minimal check against the subset of JSON Schema clodex-team.json uses. */
+function schemaViolations(payload, schema) {
+  const bad = [];
+  if (payload === null || typeof payload !== 'object') return ['payload is not an object'];
+  for (const key of schema.required || []) {
+    if (!(key in payload)) bad.push(`missing required key "${key}"`);
+  }
+  for (const [key, val] of Object.entries(payload)) {
+    const prop = (schema.properties || {})[key];
+    if (!prop) { if (schema.additionalProperties === false) bad.push(`unknown key "${key}"`); continue; }
+    if (prop.type === 'string' && typeof val !== 'string') bad.push(`"${key}" must be a string`);
+    if (prop.enum && !prop.enum.includes(val)) bad.push(`"${key}" must be one of ${prop.enum.join('|')}`);
+    if (prop.maxLength != null && String(val).length > prop.maxLength) bad.push(`"${key}" too long`);
+  }
+  return bad;
+}
+
+const ROLES = () => ({
+  lead: { instantiate: 'session', brief: 'the lead', prompt: null, template: null, standing: null, ephemeral: false },
+  hand: { instantiate: 'session', brief: 'the hand', prompt: null, template: 'clodex-team-hand', standing: null, ephemeral: false },
+  reviewer: { instantiate: 'subagent', brief: 'the reviewer', prompt: null, template: null, standing: null, ephemeral: false },
+});
+const TEAM = () => ({ name: 'shop', root: '/r', lead: 'clodex', roles: ROLES() });
+
 test('formatRoster lists roles, briefs, class, and live seats per role', () => {
-  const team = {
-    name: 'shop', root: '/r', lead: 'clodex',
-    roles: {
-      lead: { instantiate: 'session', brief: 'the lead', prompt: null, template: null, standing: null, ephemeral: false },
-      hand: { instantiate: 'session', brief: 'the hand', prompt: null, template: null, standing: null, ephemeral: false },
-      reviewer: { instantiate: 'subagent', brief: 'the reviewer', prompt: null, template: null, standing: null, ephemeral: false },
-    },
-  };
-  const roster = formatRoster(team, ['clodex', 'shop-hand', 'shop-hand-2']);
+  const roster = formatRoster(TEAM(), ['clodex', 'shop-hand', 'shop-hand-2']);
   assert.match(roster, /^\[team shop\] roster \(lead: clodex\)/m);
   assert.match(roster, /- lead \(session\) — the lead · live: clodex/);
-  assert.match(roster, /- hand \(session\) — the hand · live: shop-hand, shop-hand-2/);
+  assert.match(roster, /- hand \(session, tmpl clodex-team-hand\) — the hand · live: shop-hand, shop-hand-2/);
   // reviewer is subagent-class and has no live seat → listed, no "live:" tail.
   assert.match(roster, /- reviewer \(subagent\) — the reviewer$/m);
-  assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\] roster\./);
+  assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\]/);
+});
+
+test('formatRoster: the exec line carries the reading seat name in a schema-valid payload', () => {
+  const payload = execPayloadFrom(formatRoster(TEAM(), ['clodex'], { seat: 'shop-hand' }));
+  assert.ok(payload, 'the exec line carries a JSON payload, not a bare word');
+  assert.deepStrictEqual(payload, { action: 'roster', agent: 'shop-hand' });
+  assert.deepStrictEqual(schemaViolations(payload, EXEC_SCHEMA), [],
+    'the rendered payload satisfies resources/library/exec/clodex-team.json');
+  // schemaViolations is the only thing standing between us and a payload that
+  // has drifted from the schema, so prove it can actually reject: a checker
+  // that accepts everything is the same false green in a new place.
+  assert.notDeepStrictEqual(schemaViolations({ action: 'roster' }, EXEC_SCHEMA), [], 'missing a required key is caught');
+  assert.notDeepStrictEqual(schemaViolations({ action: 'nope', agent: 'x' }, EXEC_SCHEMA), [], 'an out-of-enum action is caught');
+  assert.notDeepStrictEqual(schemaViolations({ action: 'roster', agent: 'x', stray: 1 }, EXEC_SCHEMA), [], 'an unknown key is caught');
+  // No seat: a placeholder, still the payload FORM, never the bare word.
+  const generic = execPayloadFrom(formatRoster(TEAM(), []));
+  assert.deepStrictEqual(generic, { action: 'roster', agent: '<your name>' },
+    'the seatless fallback names the placeholder explicitly, not an empty or omitted agent');
+  assert.deepStrictEqual(schemaViolations(generic, EXEC_SCHEMA), [],
+    'the seatless fallback is still a schema-valid shape');
+});
+
+test('formatRoster: a role renders `tmpl <name>` only when its def has a template', () => {
+  const roster = formatRoster(TEAM(), []);
+  assert.match(roster, /- hand \(session, tmpl clodex-team-hand\)/, 'a templated role names its template');
+  assert.match(roster, /- lead \(session\) —/, 'a template-less role renders no tmpl token');
+  assert.ok(!/lead \(session, tmpl/.test(roster), 'never "tmpl none" for a null template');
+  assert.strictEqual((roster.match(/tmpl /g) || []).length, 1, 'exactly one tmpl token, for the one templated role');
+});
+
+test('formatRoster: a live seat carries its label verbatim, and the reading seat reads `(you)`', () => {
+  const roster = formatRoster(TEAM(), [
+    { name: 'clodex', label: 'working' },
+    { name: 'shop-hand', label: 'idle 12m, warm' },
+    { name: 'shop-hand-2', label: null },
+  ], { seat: 'clodex' });
+  assert.match(roster, /live: clodex \(you\)/, 'the reading seat is marked, not labelled');
+  assert.ok(!/clodex \(working\)/.test(roster), 'the reading seat never renders its own label');
+  assert.match(roster, /shop-hand \(idle 12m, warm\)/, 'a label is rendered verbatim');
+  assert.match(roster, /shop-hand-2(?!\s*\()/, 'a null label renders the bare name, no empty parens');
+});
+
+test('formatRoster: live seats matching no role are listed, and the line is absent when none are', () => {
+  const withStray = formatRoster(TEAM(), [
+    { name: 'clodex', label: 'working' },
+    { name: 'scratch-seat', label: 'working' },
+  ], { seat: 'clodex' });
+  assert.match(withStray, /^also live, no role: scratch-seat \(working\)$/m,
+    'an off-convention live seat is warm and DM-able — it must not vanish from a liveness listing');
+  const allMatched = formatRoster(TEAM(), [{ name: 'clodex', label: 'working' }], { seat: 'clodex' });
+  assert.ok(!/also live, no role/.test(allMatched), 'no stray seats → no line');
+});
+
+test('formatRoster: the action line is rendered for the lead seat only', () => {
+  const forLead = formatRoster(TEAM(), [], { seat: 'clodex' });
+  assert.match(forLead, /Dispatch: \[agent:task add <role>\] <spec>\./);
+  assert.match(forLead, /Review: \[agent:team-review\] <scope>\./,
+    'a reviewer is reached by intent, not by spawning a seat');
+  assert.match(forLead, /New session seat: \[agent:spawn name:shop-<role> template:<tmpl>\]\./);
+  // A hand does not dispatch, and this text is regenerated into every context
+  // reset of every seat — non-leads pay nothing for it.
+  const forHand = formatRoster(TEAM(), [], { seat: 'shop-hand' });
+  assert.ok(!/Dispatch:/.test(forHand), 'a non-lead seat gets no action line');
+  assert.ok(!/team-review/.test(forHand));
+  const seatless = formatRoster(TEAM(), []);
+  assert.ok(!/Dispatch:/.test(seatless), 'no seat → the generic form, no action line');
+});
+
+test('formatRoster: the action line keys off the role name, never the lead SEAT name', () => {
+  // team.lead is a seat name (see the `lead` field's contract), so a team whose
+  // lead seat is named after an unrelated role must still list that role.
+  const team = { name: 'shop', root: '/r', lead: 'hand', roles: ROLES() };
+  const roster = formatRoster(team, [], { seat: 'hand' });
+  assert.match(roster, /New session seat: \[agent:spawn name:shop-<role>/,
+    'the hand role survives a lead seat that happens to be called "hand"');
+  assert.match(roster, /Dispatch: \[agent:task add <role>\] <spec>\./);
+});
+
+test('formatTeamBlock: its ground-truth invocation is concrete and schema-valid', () => {
+  const payload = execPayloadFrom(formatTeamBlock(TEAM(), 'shop-hand'));
+  assert.ok(payload, 'the block carries a JSON payload, not the bare word "roster"');
+  assert.deepStrictEqual(payload, { action: 'roster', agent: 'shop-hand' });
+  assert.deepStrictEqual(schemaViolations(payload, EXEC_SCHEMA), [],
+    'the rendered payload satisfies resources/library/exec/clodex-team.json');
 });
 
 // --- formatCompositionDelta: the passive one-liner -------------------------

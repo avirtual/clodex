@@ -1900,7 +1900,7 @@ test('_notifyComposition: teamless / dep-less session is a no-op, never throws i
 });
 
 test('_injectRoster: rides PASSIVELY (parked for organic drain, no active PTY typing at boot)', () => {
-  const { m } = mkPark(teamDeps);
+  const { m } = mkPark({ ...teamDeps, peerStatusLabel: () => 'idle 12m, warm' });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
   const passive = [];
@@ -1916,8 +1916,14 @@ test('_injectRoster: rides PASSIVELY (parked for organic drain, no active PTY ty
   assert.strictEqual(passive[0].s, 'team');
   assert.strictEqual(passive[0].mt, 'dm');
   assert.match(passive[0].b, /\[team team\] roster \(lead: lead\)/);
-  assert.match(passive[0].b, /- lead \(session\) — the lead · live: lead/);
-  assert.match(passive[0].b, /- dev \(session\) — the dev · live: team-dev/);
+  // Anchored past the name: an unanchored `live: lead` matches `live: lead (you)`
+  // equally, so it pins neither the seat arg nor the label seam.
+  assert.match(passive[0].b, /- lead \(session\) — the lead · live: lead \(you\)/,
+    'the reading seat is marked — proves the call site passes { seat: session.name }');
+  assert.match(passive[0].b, /- dev \(session\) — the dev · live: team-dev \(idle 12m, warm\)/,
+    'a live seat carries the label _teamLiveSeats computed via peerStatusLabel');
+  assert.match(passive[0].b, /"agent":"lead"/,
+    'the exec line names the reading seat — without the seat arg it reverts to the always-bouncing placeholder');
 });
 
 // Codex has no passive park store, so _deliverPassive there falls back to an
@@ -1958,6 +1964,8 @@ test('_settleBoot: recomputes the roster FRESH at delivery — a boot-time-spawn
   assert.match(active[0].b, /\[team team\] roster \(lead: lead\)/);
   assert.match(active[0].b, /- dev \(session\) — the dev · live: team-dev/,
     'the teammate that spawned during boot appears in the fresh-at-delivery roster');
+  assert.match(active[0].b, /"agent":"team-cx"/,
+    'this call site passes the seat too — a roster reaching a seat under a placeholder name is the bug the concrete exec line exists to close');
   assert.strictEqual(s._pendingRoster, null, 'pending cleared');
   assert.strictEqual(s._bootSettling, false, 'boot window closed');
   m._settleBoot(s);                         // a late/second settle
@@ -1966,6 +1974,33 @@ test('_settleBoot: recomputes the roster FRESH at delivery — a boot-time-spawn
   m._settleBoot(dead);
   assert.strictEqual(active.length, 1, 'no delivery into a dead session');
   assert.strictEqual(dead._bootSettling, false, 'a dead seat still has its window closed (state clean)');
+});
+
+// composeRosterFor is the DIGEST path (t111): it renders the roster baked into
+// every context reset, for a seat that may not be in the map yet. It is the
+// third formatRoster call site and the longest-lived one — a placeholder name
+// here is served to a seat on every compact, forever.
+test('composeRosterFor: renders for the NAMED seat, live or persistence-only', () => {
+  const { m } = mkPark({
+    ...teamDeps,
+    peerStatusLabel: () => 'idle 12m, warm',
+    getPersistence: () => ({ get: (n) => (n === 'team-gone' ? { cwd: '/proj/z' } : null) }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+
+  const forLead = m.composeRosterFor('lead');
+  assert.match(forLead, /"agent":"lead"/, 'the exec line names the seat the digest is for');
+  assert.match(forLead, /live: lead \(you\)/, 'the reading seat is marked in its own digest');
+  assert.match(forLead, /live: team-dev \(idle 12m, warm\)/, 'teammates carry their warmth label');
+  assert.match(forLead, /Dispatch: \[agent:task add <role>\]/, 'the lead seat gets the action line');
+
+  // Not in the map: the cwd comes from persistence, and the seat name must
+  // still reach formatRoster.
+  const forGone = m.composeRosterFor('team-gone');
+  assert.match(forGone, /"agent":"team-gone"/, 'a persistence-only seat is still named in its own digest');
+  assert.ok(!/Dispatch:/.test(forGone), 'a non-lead seat gets no action line');
+  assert.strictEqual(m.composeRosterFor('nowhere'), null, 'no cwd anywhere → no roster');
 });
 
 // MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes
@@ -2830,6 +2865,31 @@ test('task add (assigned): mints t1, delivers spec to the assignee seat, confirm
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] build the widget\ndetail' }],
     'spec delivered to the live seat holding the role, id-prefixed');
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)), 'lead confirmed');
+});
+
+// _teamLiveSeats returns { name, label } for the roster's warmth column, while
+// _resolveAssignee and _ticketAssigneeSeat match a SEAT NAME against that list
+// through _teamLiveSeatNames. Two shapes over one walk: a consumer wired to the
+// wrong one silently resolves nothing, and the role-addressed path above would
+// stay green throughout. This is the name-addressed path, which nothing else
+// covers.
+test('task add (name-addressed): a live seat name resolves as an assignee and receives the spec', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand', id: null, body: 'name-addressed work' });
+  const t = f.one('t1');
+  assert.ok(t, 'ticket persisted');
+  assert.strictEqual(t.assignee, 'team-hand', 'the seat NAME is stored as the assignee, not a role');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] name-addressed work' }],
+    'the spec reaches the named seat — _ticketAssigneeSeat resolved it by name');
+});
+
+test('task add (name-addressed): a name that is neither a role nor a live seat is refused', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-ghost', id: null, body: 'work' });
+  assert.strictEqual(f.load().length, 0, 'no ticket minted for an unresolvable assignee');
+  assert.deepStrictEqual(f.gated, [], 'nothing delivered');
 });
 
 test('task add records a taskDir when the spec first line names one', () => {

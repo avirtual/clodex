@@ -359,6 +359,17 @@ function matchSeatRole(team, seatName) {
   return key in team.roles ? key : null;
 }
 
+// The exec runner requires a payload on every call and this schema requires
+// both keys (resources/library/exec/clodex-team.json), so the bare word
+// `roster` bounces. Rendered concrete, with the reader's own name, so the line
+// can be copied rather than reconstructed.
+function rosterExecPayload(seatName) {
+  // Serialized, not interpolated: a seat name reaching here unvalidated would
+  // otherwise be able to break the JSON, and this pure leaf cannot see the
+  // caller's name grammar to know it never does.
+  return `[agent:exec clodex-team] ${JSON.stringify({ action: 'roster', agent: seatName || '<your name>' })}`;
+}
+
 // Per-seat invariants ONLY — the roster listing must stay OUT: composition
 // changes over a seat's life and this text is part of the cache-stable system
 // prompt. Live composition arrives as data.
@@ -368,26 +379,76 @@ function formatTeamBlock(team, seatName) {
   return [
     '# Team',
     `You are seat ${seatName} on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
-    'Team composition arrives in your context; ground truth: [agent:exec clodex-team] roster.',
+    `Team composition arrives in your context; ground truth: ${rosterExecPayload(seatName)}`,
   ].join('\n');
 }
 
-function formatRoster(team, liveSeats = []) {
+// How the lead reaches each class of role. Derived from the manifest rather
+// than stored on the def: a role's reachability is a consequence of its
+// instantiate class plus the reserved `reviewer` key, and a stored copy would
+// drift from the code that actually routes the spawn.
+function leadActionLine(team) {
+  const sessionRoles = [];
+  const subagentRoles = [];
+  let hasReviewer = false;
+  for (const [role, def] of Object.entries(team.roles || {})) {
+    // `team.lead` is a SEAT name, not a role key — comparing against it here
+    // would drop an unrelated role from a team whose lead seat happens to
+    // share its name.
+    if (role === 'lead') continue;
+    if (role === 'reviewer') { hasReviewer = true; continue; }
+    if (def && def.instantiate === 'subagent') subagentRoles.push(role);
+    else sessionRoles.push(role);
+  }
+  const parts = [];
+  if (sessionRoles.length) parts.push('Dispatch: [agent:task add <role>] <spec>.');
+  if (hasReviewer) parts.push('Review: [agent:team-review] <scope>.');
+  if (subagentRoles.length) {
+    parts.push(`Subagent roles (${subagentRoles.join(', ')}): your harness subagent tool, not a seat spawn.`);
+  }
+  if (sessionRoles.length) {
+    parts.push(`New session seat: [agent:spawn name:${team.name}-<role> template:<tmpl>].`);
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
+/**
+ * `liveSeats` entries are `{ name, label }`; bare strings are accepted as a
+ * label-less form. The label is never computed here — team-manifest is a pure
+ * leaf and warmth is a wire-layer property, so it arrives as data from
+ * session-manager's peerStatusLabel.
+ */
+function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   const byRole = new Map();
-  for (const seat of liveSeats) {
-    const role = matchSeatRole(team, seat);
-    if (!role) continue;
+  const roleless = [];
+  for (const entry of liveSeats) {
+    const name = typeof entry === 'string' ? entry : (entry && entry.name);
+    if (!name) continue;
+    const label = typeof entry === 'string' ? null : (entry && entry.label) || null;
+    // The reading seat knows its own warmth; `(you)` is the useful thing to
+    // say in that slot instead.
+    const suffix = name === seat ? ' (you)' : (label ? ` (${label})` : '');
+    const role = matchSeatRole(team, name);
+    if (!role) { roleless.push(`${name}${suffix}`); continue; }
     if (!byRole.has(role)) byRole.set(role, []);
-    byRole.get(role).push(seat);
+    byRole.get(role).push(`${name}${suffix}`);
   }
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
   for (const [role, def] of Object.entries(team.roles)) {
-    const brief = def.brief ? ` — ${def.brief}` : '';
+    const tmpl = def && typeof def.template === 'string' && def.template ? `, tmpl ${def.template}` : '';
+    const brief = def && def.brief ? ` — ${def.brief}` : '';
     const live = byRole.get(role);
     const liveStr = live && live.length ? ` · live: ${live.join(', ')}` : '';
-    lines.push(`- ${role} (${def.instantiate})${brief}${liveStr}`);
+    lines.push(`- ${role} (${def.instantiate}${tmpl})${brief}${liveStr}`);
   }
-  lines.push('Ground truth on demand: [agent:exec clodex-team] roster.');
+  // A live seat off the naming convention is still warm and still DM-able;
+  // dropping it defeats the point of a listing of who is live.
+  if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
+  if (seat && seat === team.lead) {
+    const action = leadActionLine(team);
+    if (action) lines.push(action);
+  }
+  lines.push(`Ground truth on demand: ${rosterExecPayload(seat)}`);
   return lines.join('\n');
 }
 
