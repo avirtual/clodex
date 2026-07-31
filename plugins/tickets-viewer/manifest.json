@@ -1,0 +1,13 @@
+{
+  "id": "tickets-viewer",
+  "name": "Tickets",
+  "hostApi": "1",
+  "version": "0.1.0",
+  "entry": {
+    "engine": "engine.js",
+    "renderer": "renderer.js"
+  },
+  "style": "style.css",
+  "enabledByDefault": false,
+  "announce": "Read-only board of a team's tickets: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Closing and reassigning stay with [agent:task …]."
+}

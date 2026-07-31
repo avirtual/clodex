@@ -7598,8 +7598,257 @@ body {
     }
   });
 
-  // plugins/workbench/renderer.js
+  // plugins/tickets-viewer/renderer.js
   var require_renderer3 = __commonJS({
+    "plugins/tickets-viewer/renderer.js"(exports, module) {
+      "use strict";
+      function humanizeAge(ms) {
+        const s = Math.max(0, Math.round(ms / 1e3));
+        if (s < 60) return `${s}s`;
+        const m = Math.round(s / 60);
+        if (m < 60) return `${m}m`;
+        const h = Math.round(m / 60);
+        if (h < 24) return `${h}h`;
+        return `${Math.round(h / 24)}d`;
+      }
+      function ageLine(t) {
+        const parts = [];
+        parts.push(t.ageMs === null ? "opened: unknown" : `open ${humanizeAge(t.ageMs)}`);
+        if (t.quietMs !== null) parts.push(`quiet ${humanizeAge(t.quietMs)}`);
+        return parts.join(" \xB7 ");
+      }
+      function summaryText(counts) {
+        if (!counts) return "";
+        const parts = [];
+        if (counts.done) parts.push(`${counts.done} done`);
+        if (counts.cancelled) parts.push(`${counts.cancelled} cancelled`);
+        if (counts.unknownState) parts.push(`${counts.unknownState} in an unrecognised state`);
+        if (counts.malformed) parts.push(`${counts.malformed} unreadable record(s)`);
+        return parts.join(" \xB7 ");
+      }
+      module.exports.humanizeAge = humanizeAge;
+      module.exports.ageLine = ageLine;
+      module.exports.summaryText = summaryText;
+      module.exports.activate = (rhost) => {
+        let torn = false;
+        const alive = () => !torn;
+        function ask(method, arg) {
+          if (!alive()) return Promise.resolve({ ok: false, error: "closed" });
+          return Promise.resolve().then(() => rhost.invoke(method, arg)).then((res) => {
+            if (!res || typeof res !== "object") return { ok: false, error: "no response from the tickets engine" };
+            return res;
+          }).catch((e) => {
+            rhost.log.error(`${method} failed`, e);
+            return { ok: false, error: e && e.message || "the tickets engine did not answer" };
+          });
+        }
+        let refresh = null;
+        const surface = rhost.ui.surfaces.overlay({
+          id: "main",
+          mount(rootEl) {
+            refresh = wire(rootEl);
+          },
+          onOpen() {
+            if (refresh) refresh();
+          }
+        });
+        function el(tag, cls, text) {
+          const e = document.createElement(tag);
+          if (cls) e.className = cls;
+          if (text !== void 0) e.textContent = text;
+          return e;
+        }
+        function wire(rootEl) {
+          rootEl.innerHTML = "";
+          const modal = el("div", "tv-modal");
+          const topbar = el("div", "tv-topbar");
+          topbar.appendChild(el("div", "tv-title", "Tickets"));
+          topbar.appendChild(el("div", "tv-subtitle", "read-only \u2014 open, assign and close with [agent:task \u2026]"));
+          const closeBtn = el("button", "tv-close", "\xD7");
+          closeBtn.title = "Close";
+          closeBtn.addEventListener("click", () => surface.close());
+          topbar.appendChild(closeBtn);
+          const body = el("div", "tv-body");
+          const teamsPane = el("div", "tv-teams");
+          const boardPane = el("div", "tv-board");
+          body.appendChild(teamsPane);
+          body.appendChild(boardPane);
+          modal.appendChild(topbar);
+          modal.appendChild(body);
+          rootEl.appendChild(modal);
+          let selected = null;
+          let selectSeq = 0;
+          let reloadSeq = 0;
+          function ticketRow(t, opts) {
+            const row = el("div", t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
+            const head = el("div", "tv-ticket-head");
+            head.appendChild(el("span", "tv-id", t.id));
+            head.appendChild(el("span", "tv-ticket-title", t.title));
+            row.appendChild(head);
+            const meta = el("div", "tv-meta");
+            const who = el(
+              "span",
+              t.assignee ? "tv-assignee" : "tv-assignee tv-unassigned",
+              t.assignee || "unassigned"
+            );
+            meta.appendChild(who);
+            meta.appendChild(el("span", "tv-age", opts && opts.closed ? `closed ${t.closedAt === null ? "at an unknown time" : `${humanizeAge(t.now - t.closedAt)} ago`}` : ageLine(t)));
+            if (opts && opts.closed && t.closedBy) meta.appendChild(el("span", "tv-closed-by", `by ${t.closedBy}`));
+            if (t.stalled) {
+              const flag = el("span", "tv-stall-flag", t.nudged ? "stalled \xB7 nudged" : "stalled");
+              flag.title = t.nudged ? "Quiet past the team\u2019s stall threshold; the watchdog has already nudged the seat once." : "Quiet past the team\u2019s stall threshold.";
+              meta.appendChild(flag);
+            } else if (t.backlog && !(opts && opts.closed)) {
+              const flag = el("span", "tv-backlog-flag", "backlog");
+              flag.title = "Unassigned, so the watchdog never nudges it. Assign it or close it.";
+              meta.appendChild(flag);
+            }
+            row.appendChild(meta);
+            const art = el(
+              "div",
+              t.taskDir ? "tv-artifact" : "tv-artifact tv-no-artifact",
+              t.taskDir || "no task directory in the spec"
+            );
+            if (t.taskDir) art.title = t.taskDir;
+            row.appendChild(art);
+            return row;
+          }
+          function renderBoard(res) {
+            boardPane.innerHTML = "";
+            if (!res.ok) {
+              boardPane.appendChild(el("div", "tv-error", `Could not read this team's tickets: ${res.error || "unknown error"}`));
+              return;
+            }
+            if (res.warning) {
+              boardPane.appendChild(el("div", "tv-warning", `This team\u2019s manifest is unusable: ${res.warning}`));
+            }
+            const openHead = el("div", "tv-section-head", `Open (${res.open.length})`);
+            boardPane.appendChild(openHead);
+            if (!res.open.length) {
+              boardPane.appendChild(el("div", "tv-empty", "No open tickets."));
+            } else {
+              const stalledCount = res.open.filter((t) => t.stalled).length;
+              if (stalledCount) {
+                openHead.appendChild(el(
+                  "span",
+                  "tv-stall-count",
+                  `${stalledCount} quiet longer than ${humanizeAge(res.stallMs)}`
+                ));
+              }
+              const backlogCount = res.open.filter((t) => t.backlog).length;
+              if (backlogCount) {
+                openHead.appendChild(el("span", "tv-backlog-count", `${backlogCount} unassigned`));
+              }
+              for (const t of res.open) boardPane.appendChild(ticketRow({ ...t, now: res.now }));
+            }
+            const summary = summaryText(res.counts);
+            if (summary) boardPane.appendChild(el("div", "tv-summary", summary));
+            if (res.recent.length) {
+              const head = el(
+                "div",
+                "tv-section-head tv-section-quiet",
+                `Recently closed (last ${humanizeAge(res.counts.recentWindowMs)})`
+              );
+              if (res.counts.recentOver > 0) {
+                head.appendChild(el("span", "tv-stall-count", `+${res.counts.recentOver} more`));
+              }
+              boardPane.appendChild(head);
+              for (const t of res.recent) {
+                boardPane.appendChild(ticketRow({ ...t, now: res.now }, { closed: true }));
+              }
+            }
+          }
+          async function selectTeam(team) {
+            const my = ++selectSeq;
+            const myReload = reloadSeq;
+            selected = team;
+            for (const row of teamsPane.querySelectorAll(".tv-team-row")) {
+              row.classList.toggle("tv-selected", row.dataset.tvTeam === team);
+            }
+            boardPane.innerHTML = "";
+            boardPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            const res = await ask("board", team);
+            if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
+            renderBoard(res);
+          }
+          function renderTeams(res) {
+            teamsPane.innerHTML = "";
+            if (!res.ok) {
+              teamsPane.appendChild(el("div", "tv-error", `Could not read the teams directory: ${res.error || "unknown error"}`));
+              boardPane.innerHTML = "";
+              return;
+            }
+            const list = Array.isArray(res.teams) ? res.teams : [];
+            if (!list.length) {
+              teamsPane.appendChild(el("div", "tv-empty", "No teams yet."));
+              boardPane.innerHTML = "";
+              boardPane.appendChild(el("div", "tv-empty", "A team is created with [agent:team \u2026]; tickets follow it."));
+              return;
+            }
+            for (const t of list) {
+              const row = el("div", "tv-team-row");
+              row.dataset.tvTeam = t.team;
+              row.appendChild(el("span", "tv-team-name", t.team));
+              if (t.error) {
+                const bad = el("span", "tv-team-error", "!");
+                bad.title = t.error;
+                row.appendChild(bad);
+              } else {
+                if (t.warning) {
+                  const warn = el("span", "tv-team-warning", "\u26A0");
+                  warn.title = t.warning;
+                  row.appendChild(warn);
+                }
+                if (t.stalled) {
+                  const s = el("span", "tv-team-stalled", String(t.stalled));
+                  s.title = `${t.stalled} open ticket(s) quiet past this team's stall threshold`;
+                  row.appendChild(s);
+                }
+                if (t.backlog) {
+                  const b = el("span", "tv-team-backlog", String(t.backlog));
+                  b.title = `${t.backlog} open ticket(s) with no assignee \u2014 the watchdog never nudges these`;
+                  row.appendChild(b);
+                }
+                row.appendChild(el("span", "tv-team-count", `${t.open} open`));
+              }
+              row.addEventListener("click", () => {
+                selectTeam(t.team).catch((e) => rhost.log.error("select failed", e));
+              });
+              teamsPane.appendChild(row);
+            }
+            if (!selected || !list.some((t) => t.team === selected)) {
+              selected = list[0].team;
+            }
+            selectTeam(selected).catch((e) => rhost.log.error("select failed", e));
+          }
+          async function reload() {
+            const my = ++reloadSeq;
+            teamsPane.innerHTML = "";
+            teamsPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            const res = await ask("teams");
+            if (!alive() || my !== reloadSeq) return;
+            renderTeams(res);
+          }
+          return () => {
+            reload().catch((e) => rhost.log.error("reload failed", e));
+          };
+        }
+        rhost.ui.sidebar.footerButton({
+          id: "open",
+          glyph: "\u25A4",
+          label: "Tickets",
+          tip: "The team ticket board",
+          onClick: () => surface.open()
+        });
+        return () => {
+          torn = true;
+        };
+      };
+    }
+  });
+
+  // plugins/workbench/renderer.js
+  var require_renderer4 = __commonJS({
     "plugins/workbench/renderer.js"(exports, module) {
       "use strict";
       var WORKBENCH_HTML = `
@@ -8358,7 +8607,8 @@ body {
         // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
         "git-branches": require_renderer(),
         "memory-viewer": require_renderer2(),
-        "workbench": require_renderer3()
+        "tickets-viewer": require_renderer3(),
+        "workbench": require_renderer4()
         // >>> END BUILD-GENERATED PLUGIN MODULES
       };
       var registry = {
@@ -25266,7 +25516,7 @@ ${detail}` });
   });
 
   // renderer/renderer.js
-  var require_renderer4 = __commonJS({
+  var require_renderer5 = __commonJS({
     "renderer/renderer.js"() {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
@@ -30339,7 +30589,7 @@ ${res.stderr}` : "");
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
     window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
-    require_renderer4();
+    require_renderer5();
     menubar.mount(shim);
     mountVersion();
   }).catch((err) => {

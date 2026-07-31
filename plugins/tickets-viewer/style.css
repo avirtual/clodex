@@ -1,0 +1,271 @@
+/*
+ * tickets-viewer. Plugin CSS is injected verbatim and unscoped, so every
+ * selector here is a `tv-`-prefixed class this plugin puts on its own
+ * elements — nothing that can match core's DOM or another plugin's.
+ */
+
+.tv-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(900px, 92vw);
+  height: min(620px, 84vh);
+  margin: 6vh auto 0;
+  background: var(--bg, #1e1e1e);
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tv-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.tv-title {
+  font-weight: 600;
+}
+
+.tv-subtitle {
+  opacity: 0.55;
+  font-size: 0.85em;
+}
+
+.tv-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tv-close:hover {
+  opacity: 1;
+}
+
+.tv-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.tv-teams {
+  width: 200px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  padding: 6px 0;
+}
+
+.tv-team-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.tv-team-row:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.tv-team-row.tv-selected {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.tv-team-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-team-count {
+  opacity: 0.6;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.tv-team-stalled {
+  background: rgba(230, 160, 90, 0.18);
+  color: rgb(230, 160, 90);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 0.8em;
+}
+
+/* A team whose registry could not be read. Coloured like an error, never like
+   a count: the failure mode this plugin exists to avoid is a broken team
+   looking like a quiet one. */
+.tv-team-error {
+  color: rgb(230, 110, 110);
+  font-weight: 700;
+}
+
+/* A team whose TICKETS read fine but whose manifest core would refuse. Amber,
+   not red: the count beside it is real, which is not true of .tv-team-error. */
+.tv-team-warning {
+  color: rgb(230, 190, 90);
+}
+
+/* Unassigned open tickets. Neutral, never the stall amber — nothing is wrong
+   with a backlog ticket, it is just waiting on a decision. */
+.tv-team-backlog {
+  opacity: 0.55;
+  font-size: 0.8em;
+}
+
+.tv-board {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 16px 16px;
+}
+
+.tv-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.75;
+  margin: 10px 0 8px;
+}
+
+/* Recently-closed is present but subordinate — it must not compete with open
+   work for attention. */
+.tv-section-quiet {
+  opacity: 0.45;
+  margin-top: 22px;
+}
+
+.tv-stall-count {
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.8;
+  font-size: 0.95em;
+}
+
+.tv-ticket {
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.tv-ticket.tv-stalled {
+  border-left-color: rgb(230, 160, 90);
+  background: rgba(230, 160, 90, 0.06);
+}
+
+.tv-ticket-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.tv-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.tv-ticket-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85em;
+  margin-top: 4px;
+}
+
+.tv-assignee {
+  font-weight: 600;
+}
+
+.tv-unassigned {
+  font-weight: 400;
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.tv-age,
+.tv-closed-by {
+  opacity: 0.55;
+}
+
+.tv-stall-flag {
+  color: rgb(230, 160, 90);
+  font-weight: 600;
+}
+
+/* Deliberately NOT the stall amber. A backlog ticket is not a problem to chase,
+   it is a decision nobody has made, and painting the two alike is this
+   plugin's own failure mode pointed backwards. */
+.tv-backlog-flag,
+.tv-backlog-count {
+  opacity: 0.55;
+}
+
+.tv-backlog-count {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.95em;
+}
+
+/* Amber, between .tv-empty and .tv-error: the rows below it are real, but the
+   team they belong to is one core would refuse to load. */
+.tv-warning {
+  color: rgb(230, 190, 90);
+  padding: 8px 0 4px;
+  font-size: 0.9em;
+}
+
+.tv-artifact {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Dimmer still, and italic, so "there is no spec on disk" reads as a stated
+   fact rather than a path that failed to render. */
+.tv-no-artifact {
+  font-family: inherit;
+  font-style: italic;
+  opacity: 0.35;
+}
+
+.tv-summary {
+  font-size: 0.8em;
+  opacity: 0.5;
+  margin-top: 10px;
+}
+
+.tv-empty {
+  opacity: 0.6;
+  padding: 12px;
+}
+
+/* Never styled like .tv-empty: an unreadable board and an empty one must not
+   look the same, and colour is the fastest way a user tells them apart. */
+.tv-error {
+  color: rgb(230, 110, 110);
+  padding: 12px;
+  line-height: 1.45;
+}
