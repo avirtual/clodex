@@ -144,8 +144,10 @@ function createMemoryStore(rootDir) {
 // Bodies stay on disk, one recall away.
 //
 // Budget: pinned first, then index, both newest-first; whole units only,
-// overflow is counted, never truncated mid-unit. A pin whose body doesn't fit
-// is demoted to an index line, never dropped. Empty store → null (no digest —
+// overflow is counted, never truncated mid-unit. Bodies get half the budget and
+// no more; a pin whose body doesn't fit is demoted to an index line, and if the
+// index overflows too, the tail is what keeps it countable. Empty store → null
+// (no digest —
 // and main.js leaves the conversation UNMARKED in the digest ledger, so units
 // saved later still reach it via the append-once path).
 
@@ -176,6 +178,19 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
     const age = fmtAge(u.learned_at, now);
     return `\n- ${mark}${u.id}${u.scope ? ` [${u.scope}]` : ''} ${first}${age ? ` (${age})` : ''}`;
   };
+  // Every withheld unit is counted here, which is what makes withholding safe:
+  // this tail, not a per-pin reserve, is the guarantee that nothing becomes
+  // invisible. Built by a function because its own length has to be reserved
+  // before the numbers going into it are known.
+  const tailText = (shown, listed, omitted, more) => {
+    const clauses = [];
+    // Only worth stating once some pin did NOT get its body: "5 of 5" is noise.
+    if (listed || omitted) clauses.push(`${shown} of ${pinned.length} pinned shown in full`);
+    if (listed) clauses.push(`${listed} pinned listed by title only`);
+    if (omitted) clauses.push(`${omitted} pinned omitted`);
+    if (more) clauses.push(`+${more} more`);
+    return clauses.length ? `\n(${clauses.join('; ')} — [agent:memory list])` : '';
+  };
   const parts = [head];
   let used = head.length;
   let pinnedShown = 0;
@@ -184,57 +199,55 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
   const demoted = [];
 
   if (pinned.length) {
-    // Every pin's fallback line is reserved before any body is spent. A greedy
-    // body loop eats the budget those lines need, which is how a 97-pin store
-    // served eight bodies and left the other 89 pins in no context at all.
-    const fallback = pinned.map(u => indexLine(u, '[pinned] '));
-    const reserveAfter = new Array(pinned.length + 1).fill(0);
-    for (let i = pinned.length - 1; i >= 0; i--) {
-      reserveAfter[i] = reserveAfter[i + 1] + fallback[i].length;
-    }
+    // Bodies get half the budget and stop. The rule this replaces reserved a
+    // fallback index line for EVERY remaining pin before spending anything on
+    // bodies — a reserve unbounded in the number of pins against a fixed
+    // budget, so past roughly sixty pins it exceeded the budget by itself and
+    // the digest served zero bodies (measured: 108 pins, 0 bodies, and no test
+    // caught it because an empty digest satisfies every size assertion). Do not
+    // reintroduce a per-pin reserve to protect reachability; that is the tail's
+    // job, and the tail costs one line instead of one line per pin.
+    const bodyBudget = Math.floor(budget / 2);
     const ph = '\nPinned (full text):';
-    parts.push(ph); used += ph.length;
-    // Lines already demoted are not in `used` yet but still have to be paid
-    // for; leaving them out of the reserve is how the last pin loses its line.
-    let demotedBytes = 0;
+    let bodyBytes = 0;
     for (let i = 0; i < pinned.length; i++) {
       const u = pinned[i];
       const block = `\n## ${u.id}${u.scope ? ` [${u.scope}]` : ''}\n${u.body}`;
       // A pin that doesn't fit falls through to the index. Dropping it made a
       // pinned unit LESS reachable than an unpinned one, which at least keeps
       // a line to recall from.
-      const reserve = demotedBytes + reserveAfter[i + 1] + indexHead.length;
-      if (used + block.length + reserve > budget) {
-        demoted.push(fallback[i]); demotedBytes += fallback[i].length;
+      if (bodyBytes + block.length > bodyBudget) {
+        demoted.push(indexLine(u, '[pinned] '));
         continue;
       }
-      parts.push(block); used += block.length; pinnedShown += 1;
+      // Header emitted with the first body, not before it: one oversized pin is
+      // enough to demote everything, and a "Pinned (full text):" heading over an
+      // empty section reads as a store that lost its pins.
+      if (!pinnedShown) { parts.push(ph); used += ph.length; }
+      parts.push(block); used += block.length; bodyBytes += block.length; pinnedShown += 1;
     }
   }
   if (demoted.length || rest.length) {
+    // Worst-case tail, every clause at its largest number. The exact tail can't
+    // be reserved (its numbers come out of the loops below) and an unreserved
+    // one is how a full index pushed the digest past the budget it was sized
+    // against. Over-reserving costs an index line; under-reserving costs the
+    // byte bound the whole function exists to hold.
+    const limit = budget - tailText(pinned.length, pinned.length, pinned.length, rest.length).length;
     parts.push(indexHead); used += indexHead.length;
     // Demoted pins lead the index, so the pinned set stays visually grouped.
     for (const line of demoted) {
-      if (used + line.length > budget) { pinnedOmitted += 1; continue; }
+      if (used + line.length > limit) { pinnedOmitted += 1; continue; }
       parts.push(line); used += line.length;
     }
     for (const u of rest) {
       const line = indexLine(u, '');
-      if (used + line.length > budget) { indexOmitted += 1; continue; }
+      if (used + line.length > limit) { indexOmitted += 1; continue; }
       parts.push(line); used += line.length;
     }
   }
 
-  const pinnedListed = demoted.length - pinnedOmitted;
-  if (pinnedListed || pinnedOmitted || indexOmitted) {
-    const clauses = [];
-    // Only worth stating once some pin did NOT get its body: "5 of 5" is noise.
-    if (pinnedListed || pinnedOmitted) clauses.push(`${pinnedShown} of ${pinned.length} pinned shown in full`);
-    if (pinnedListed) clauses.push(`${pinnedListed} pinned listed by title only`);
-    if (pinnedOmitted) clauses.push(`${pinnedOmitted} pinned omitted`);
-    if (indexOmitted) clauses.push(`+${indexOmitted} more`);
-    parts.push(`\n(${clauses.join('; ')} — [agent:memory list])`);
-  }
+  parts.push(tailText(pinnedShown, demoted.length - pinnedOmitted, pinnedOmitted, indexOmitted));
   return parts.join('');
 }
 

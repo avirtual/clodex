@@ -67,8 +67,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
 
     // The CLI RE-FIRES SessionStart with source=compact, so this hook's
     // additionalContext is re-emitted, not preserved across compaction — which is
-    // why the baseline reset below hangs off this event. Digest ships only to
-    // conversations being born (startup/clear); anything else gets name-only.
+    // why the baseline reset below hangs off this event.
     const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"

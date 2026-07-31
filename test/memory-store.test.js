@@ -110,7 +110,9 @@ test('composeDigest: pinned units are served newest-first', () => {
     unit('mem-1-oldest', { pinned: true, daysAgo: 9, body: 'x'.repeat(300) }),
     unit('mem-2-middle', { pinned: true, daysAgo: 5, body: 'y'.repeat(300) }),
     unit('mem-3-newest', { pinned: true, daysAgo: 1, body: 'z'.repeat(300) }),
-  ], { budget: 1000, now: NOW });
+  // Two bodies must fit and the third must not, or "newest-first" has nothing
+  // to order. Bodies get HALF the budget, so this is 1600 where it was 1000.
+  ], { budget: 1600, now: NOW });
   assert.match(d, /## mem-3-newest\nz{300}/);
   assert.match(d, /## mem-2-middle\ny{300}/);
   assert.doesNotMatch(d, /## mem-1-oldest/); // oldest loses its body, not the newest
@@ -181,21 +183,56 @@ test('composeDigest: the tail counts the three cases separately, omitting empty 
   assert.doesNotMatch(di, /pinned omitted/);
 });
 
-test('composeDigest: 97 pins against the real budget leaves every id reachable', () => {
-  // The measured failure: 179 units / 97 pinned / 11 bodies served / 0 lines
-  // for the other 86. Every pinned id must appear — in full or as a line.
+// The store this function actually runs against, not a toy one. Sized from the
+// lead's live store (191 units, 108 pinned, ~1175-byte mean body).
+function pinnedStore(n, { bytes = 1200 } = {}) {
   const units = [];
-  for (let i = 0; i < 97; i++) {
+  for (let i = 0; i < n; i++) {
     units.push(unit(`mem-${100 + i}-aaaaaa`, {
       pinned: true,
-      daysAgo: 97 - i,
-      body: `settled position ${i}\n${'x'.repeat(880)}`,
+      daysAgo: n - i,
+      body: `settled position ${i}\n${'x'.repeat(bytes)}`,
     }));
   }
-  const d = composeDigest(units, { budget: DIGEST_BUDGET, now: NOW });
-  for (let i = 0; i < 97; i++) {
-    assert.ok(d.includes(`mem-${100 + i}-aaaaaa`), `mem-${100 + i}-aaaaaa missing from digest`);
-  }
-  // some pins still arrive in full — reachability does not cost every body
-  assert.ok((d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length > 0);
+  return units;
+}
+
+test('composeDigest: 110 pins against the real budget still serve bodies', () => {
+  // THE regression case. A 108-pin store served ZERO bodies for months because
+  // the per-pin reserve exceeded the budget by itself, and no test noticed: an
+  // empty digest satisfies every size bound, so the size half of this test is
+  // the half that cannot fail. The body count is the assertion that bites.
+  const d = composeDigest(pinnedStore(110), { budget: DIGEST_BUDGET, now: NOW });
+  const bodies = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
+  assert.ok(bodies >= 3, `expected at least 3 bodies at scale, got ${bodies}`);
+  assert.ok(d.length <= DIGEST_BUDGET, `digest is ${d.length} bytes, over the ${DIGEST_BUDGET} budget`);
+  // The other half of the policy, and the only thing separating this fix from
+  // simply deleting the reserve. A greedy body loop passes both assertions
+  // above (measured: 6 bodies, 8 index lines) while starving the index — which
+  // is the ORIGINAL bug, pins reachable from nowhere, arrived at from the other
+  // side. Bodies are capped at half the budget so the rest can be listed: 3
+  // bodies and 80 lines account for 83 of the 110 pins, against greedy's 14.
+  const bodyBytes = (d.match(/\n## mem-\d+-aaaaaa\n[^\n]*\nx+/g) || [])
+    .reduce((n, b) => n + b.length, 0);
+  assert.ok(bodyBytes <= DIGEST_BUDGET / 2, `bodies took ${bodyBytes} of ${DIGEST_BUDGET}, starving the index`);
+});
+
+test('composeDigest: 97 pins against the real budget leaves every withheld pin counted', () => {
+  // Was: every pinned id appears in full or as a line, guaranteed by reserving
+  // a line per pin. That reserve is what starved the bodies. The property it
+  // bought survives on the tail instead — nothing withheld goes unaccounted —
+  // so the arithmetic below must close over all 97 with none unexplained.
+  const d = composeDigest(pinnedStore(97, { bytes: 880 }), { budget: DIGEST_BUDGET, now: NOW });
+  const shown = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
+  const listed = (d.match(/\n- \[pinned\] mem-\d+-aaaaaa /g) || []).length;
+  const tail = d.match(/\((.+) — \[agent:memory list\]\)$/);
+  assert.ok(tail, 'pins were withheld, so the tail must be there to account for them');
+
+  // Read back from the tail's own words, not recomputed: the tail is the only
+  // thing a reader of the digest has, so it is the tail that must be true.
+  const say = re => { const m = tail[1].match(re); return m ? Number(m[1]) : 0; };
+  assert.strictEqual(say(/(\d+) of 97 pinned shown in full/), shown);
+  assert.strictEqual(say(/(\d+) pinned listed by title only/), listed);
+  assert.strictEqual(shown + listed + say(/(\d+) pinned omitted/), 97, 'every pin is served, listed or counted');
+  assert.ok(shown > 0, 'reachability must not cost every body — that was the bug');
 });
