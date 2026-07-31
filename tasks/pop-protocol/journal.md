@@ -34,12 +34,33 @@ Capture on the first attempt, whatever the outcome:
   has something to disagree with.
 
 Cheapest disambiguator, and the reason to decide now rather than mid-incident:
-**register a trivial standing hint alongside the first pop as a positive
-control.** If the standing hint arrives and the pop does not, the delivery path
-is live and the fault is in the one-shot half; if neither arrives, the fault is
-upstream of both and nothing about pops has been tested. Without the control, a
-silent failure is indistinguishable from a proxy that never saw the
-registration.
+**`GET /_hints?session=<id>` immediately after the POST, before any request
+goes out.** `armed:true` (with `armed_age_s`, derived at read time so it cannot
+go stale) means the registration was accepted and the payload is sitting there.
+
+- **armed true, nothing delivered** — registration is fine; the fault is
+  placement or delivery. `declined:"marker_downstream"` then carries
+  `deepest_marker`, `insert_at` and `fallback_available`; the last says
+  directly whether `SYSTEM_TAIL_FALLBACK` would have served it.
+- **armed absent** — the proxy never accepted it, and the POST response plus
+  `/_identity` are what matter.
+
+Also pull explicitly: `declined:"pop_ineligible"`, whose per-hint reason map
+(`subagent` / `session_mismatch`) is what explains a `main_line_only` or
+`expect_session` rejection — the guard firing and nothing happening are already
+distinct upstream. And `pop_reserved` alongside `tail_hint_pops`: reserved with
+no commit is the shed-storm case, where the payload correctly stays armed for
+the retry. That is the two-phase design working, not a fault.
+
+A standing hint registered alongside as a positive control does NOT work here,
+and the reason generalises. Placement runs once per request, after resolution:
+if a `cache_control` marker sits at or after the insert point the whole
+injection declines before anything is written. So `marker_downstream` — the
+named suspect — kills the standing control and the pop identically, and
+"neither arrived" would read as "fault is upstream of both" when delivery and
+both halves are in fact fine. **The control shares a failure mode with its
+subject, so under the suspect hypothesis it cannot separate them.** Same error
+as asserting a proxy that is entailed by the subject's own precondition.
 
 Boring is the wanted outcome. Send wirescope the record either way — a
 confirming record is worth more to it than silence, since its corpus cannot
