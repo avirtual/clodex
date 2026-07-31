@@ -128,8 +128,30 @@ module.exports.activate = (rhost) => {
 
       const head = el('div', 'tv-ticket-head');
       head.appendChild(el('span', 'tv-id', t.id));
-      head.appendChild(el('span', 'tv-ticket-title', t.title));
+      const titleSpan = el('span', 'tv-ticket-title', t.title);
+      // .tv-ticket-title ellipsizes, so hover is the only way back to a long
+      // title. Set on the span and not just the head: the nearer element wins,
+      // and head's own title is the click hint.
+      titleSpan.title = t.title;
+      head.appendChild(titleSpan);
       row.appendChild(head);
+
+      // Collapsed by default and built lazily: the board's strength is that
+      // twenty-one rows fit on one screen, and a spec runs to a couple of KB.
+      // Expanding is the reader asking for one of them, not the default view.
+      let specEl = null;
+      head.title = 'Click to show the ticket spec';
+      head.addEventListener('click', () => {
+        if (specEl) { row.removeChild(specEl); specEl = null; return; }
+        // Tested TRIMMED, rendered WHOLE: a spec of "\n\n" is truthy and would
+        // open a blank box, which is the rendering gap the no-spec branch
+        // exists to prevent. The height cap lives in CSS, not in a substring
+        // here, so nothing is silently dropped.
+        specEl = t.spec && t.spec.trim()
+          ? el('pre', 'tv-spec', t.spec)
+          : el('div', 'tv-spec tv-no-spec', 'no spec recorded for this ticket');
+        row.appendChild(specEl);
+      });
 
       const meta = el('div', 'tv-meta');
       // An unassigned open ticket is backlog, not an unlabelled row: it is a

@@ -164,10 +164,18 @@
   background: rgba(230, 160, 90, 0.06);
 }
 
+/* Carries the spec toggle, so it gets .tv-team-row's affordance: without a
+   cursor and a hover the feature is discoverable only through a tooltip that
+   takes a second to appear. */
 .tv-ticket-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  cursor: pointer;
+}
+
+.tv-ticket-head:hover {
+  background: rgba(128, 128, 128, 0.12);
 }
 
 .tv-id {
@@ -246,6 +254,31 @@
 /* Dimmer still, and italic, so "there is no spec on disk" reads as a stated
    fact rather than a path that failed to render. */
 .tv-no-artifact {
+  font-family: inherit;
+  font-style: italic;
+  opacity: 0.35;
+}
+
+/* The display limit for a spec body, and the only one there is: the engine
+   hands the text over uncapped, so a long spec must scroll here rather than be
+   truncated anywhere upstream where the reader could not tell. pre-wrap because
+   specs are markdown-ish — blank lines and list indentation carry meaning. */
+.tv-spec {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+  line-height: 1.5;
+  background: rgba(128, 128, 128, 0.08);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.tv-no-spec {
   font-family: inherit;
   font-style: italic;
   opacity: 0.35;

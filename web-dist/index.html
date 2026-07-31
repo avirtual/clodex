@@ -7683,8 +7683,21 @@ body {
             const row = el("div", t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
             const head = el("div", "tv-ticket-head");
             head.appendChild(el("span", "tv-id", t.id));
-            head.appendChild(el("span", "tv-ticket-title", t.title));
+            const titleSpan = el("span", "tv-ticket-title", t.title);
+            titleSpan.title = t.title;
+            head.appendChild(titleSpan);
             row.appendChild(head);
+            let specEl = null;
+            head.title = "Click to show the ticket spec";
+            head.addEventListener("click", () => {
+              if (specEl) {
+                row.removeChild(specEl);
+                specEl = null;
+                return;
+              }
+              specEl = t.spec && t.spec.trim() ? el("pre", "tv-spec", t.spec) : el("div", "tv-spec tv-no-spec", "no spec recorded for this ticket");
+              row.appendChild(specEl);
+            });
             const meta = el("div", "tv-meta");
             const who = el(
               "span",

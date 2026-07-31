@@ -209,6 +209,10 @@ function shape(t, now, stallMs) {
   return {
     id: str(t.id) || '(no id)',
     title: str(t.title) || '(untitled)',
+    // Uncapped on purpose. A length limit here drops the tail of a spec with
+    // nothing on screen to say so; the renderer caps the HEIGHT in CSS, where
+    // the rest of the body is a scroll away rather than gone.
+    spec: str(t.spec),
     state: str(t.state) || '(no state)',
     assignee,
     taskDir: str(t.taskDir),

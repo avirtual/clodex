@@ -67,12 +67,48 @@ function fakeDom() {
       isConnected: true, title: '', _text: '',
       set textContent(v) { this._text = String(v); this.children.length = 0; },
       get textContent() { return this._text; },
-      set innerHTML(_v) { this.children.length = 0; },
+      // A non-EMPTY assignment is modelled, crudely, as what a browser would do
+      // with it: markup becomes elements. Without that, an innerHTML
+      // implementation would be indistinguishable from a textContent one here
+      // and the "never became an element" assertion would have nothing to fail
+      // against. Empty clears the text too — a pane the renderer wiped must not
+      // keep reporting content through textOf.
+      //
+      // _text keeps the RAW string, tags and all, deliberately: the
+      // doesNotMatch assertions below (t-stale, `0 open`, "Could not read")
+      // stay sensitive precisely because nothing here strips markup out of it.
+      // Stripping for browser parity would blunt three live assertions to
+      // sharpen none.
+      set innerHTML(v) {
+        this.children.length = 0;
+        const s = v == null ? '' : String(v);
+        this._text = s;
+        if (!s) return;
+        for (const m of s.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)/g)) this.children.push(make(m[1].toLowerCase()));
+      },
       appendChild(c) { this.children.push(c); return c; },
+      removeChild(c) {
+        const i = this.children.indexOf(c);
+        // Throws like the real DOM: a renderer removing a node it does not own
+        // is a bug, and a silent no-op here would hide it.
+        if (i < 0) throw new Error('removeChild: node is not a child of this node');
+        this.children.splice(i, 1);
+        return c;
+      },
       addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
       setAttribute() {},
       classList: { toggle: () => {}, add: () => {}, remove: () => {} },
       querySelectorAll: () => [],
+      // Bare tag selectors only — the one question asked of it is whether a tag
+      // in agent-authored text ever became a node.
+      querySelector(sel) {
+        for (const c of this.children) {
+          if (c.tag === sel) return c;
+          const hit = c.querySelector(sel);
+          if (hit) return hit;
+        }
+        return null;
+      },
       click() { for (const fn of this.listeners.click || []) fn(); },
     };
     return node;
@@ -98,7 +134,7 @@ function classesOf(node, out = []) {
 
 function shaped(id, over = {}) {
   return {
-    id, title: `title ${id}`, state: 'open', assignee: 'hand', taskDir: '',
+    id, title: `title ${id}`, spec: `spec of ${id}`, state: 'open', assignee: 'hand', taskDir: '',
     opener: 'lead', closedBy: '', openedAt: 1, closedAt: null, lastActivityAt: 1,
     ageMs: HOUR, quietMs: HOUR, nudged: false, stalled: false, backlog: false, ...over,
   };
@@ -304,6 +340,105 @@ test('a manifest core would reject is WARNED about while the tickets still rende
     assert.match(classes, /tv-team-warning/);
     assert.doesNotMatch(classes, /tv-team-error/, 'a bad manifest is not an unreadable registry');
   });
+});
+
+// ── the spec body ───────────────────────────────────────────────────────────
+
+// The row whose head carries `id`. Every expand assertion goes through the head
+// the user would actually click, not through a hand-picked node.
+function headOf(root, id) {
+  let found = null;
+  (function walk(n) {
+    if (String(n.className).includes('tv-ticket-head') && textOf(n).includes(id)) found = n;
+    n.children.forEach(walk);
+  })(root);
+  return found;
+}
+
+test('a ticket\'s spec is COLLAPSED by default and expands on click', async () => {
+  await withDom({
+    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    board: boardRes({
+      open: [shaped('t1', { spec: 'line one\n\n- a bullet\n- another' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    // Scan-density is the board's strength: twenty-one rows each opening with a
+    // couple of KB of spec is a different, worse surface.
+    assert.doesNotMatch(textOf(root).join('\n'), /a bullet/, 'collapsed by default');
+
+    headOf(root, 't1').click();
+
+    const text = textOf(root).join('\n');
+    assert.match(text, /line one/);
+    assert.match(text, /a bullet/, 'the whole body, not a first line');
+    // classesOf SPLITS className into tokens, so the no-spec branch contributes
+    // both `tv-spec` and `tv-no-spec` and an anchored /tv-spec/ still matches
+    // it. The absence is what tells the two branches apart.
+    const specClasses = classesOf(root).join(' ');
+    assert.match(specClasses, /(^|\s)tv-spec(\s|$)/);
+    assert.doesNotMatch(specClasses, /tv-no-spec/, 'the body branch, not the placeholder one');
+
+    // And back: a toggle that only opens turns the board into the wall of text
+    // the collapse exists to prevent.
+    headOf(root, 't1').click();
+    assert.doesNotMatch(textOf(root).join('\n'), /a bullet/, 'clicking again collapses it');
+  });
+});
+
+test('a long title stays recoverable on hover after the head took a click hint', async () => {
+  // .tv-ticket-title ellipsizes, so its own hover is the only way back to the
+  // full text. The head now carries the expand hint; if the title span does not
+  // carry its own, the nearer-element rule hands the reader the hint instead.
+  const long = 'a title far too long for the row to show without ellipsizing it somewhere';
+  await withDom({
+    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    board: boardRes({ open: [shaped('t1', { title: long })], counts: { ...boardRes().counts, open: 1 } }),
+  }, ({ root }) => {
+    let titleNode = null;
+    (function walk(n) {
+      if (String(n.className).includes('tv-ticket-title')) titleNode = n;
+      n.children.forEach(walk);
+    })(root);
+    assert.equal(titleNode.title, long);
+  });
+});
+
+test('a spec containing markup renders as TEXT, never as elements', async () => {
+  // Spec bodies are agent-authored and are the strongest untrusted-input case on
+  // this surface. The text assertion alone is satisfied by an innerHTML
+  // implementation too — the querySelector half is the one that can fail.
+  await withDom({
+    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    board: boardRes({
+      open: [shaped('t1', { spec: 'before <img src=x onerror="boom()"> after' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    headOf(root, 't1').click();
+    assert.match(textOf(root).join('\n'), /<img src=x onerror="boom\(\)">/,
+      'the markup is shown to the reader, as the characters it is');
+    assert.equal(root.querySelector('img'), null, 'and never became an element');
+  });
+});
+
+test('a ticket with NO spec says so rather than expanding to a blank', async () => {
+  // Whitespace belongs here and not in a case of its own: "\n  \n" is truthy,
+  // so a presence test passes it through to an empty <pre> — the same blank box
+  // an absent spec would give, which is exactly what this branch exists to
+  // prevent.
+  for (const spec of ['', '\n  \n']) {
+    await withDom({
+      teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+      board: boardRes({ open: [shaped('t1', { spec })], counts: { ...boardRes().counts, open: 1 } }),
+    }, ({ root }) => {
+      headOf(root, 't1').click();
+      // Same rule the artifact path follows: an empty body reads as a rendering
+      // gap, and "there is nothing recorded" is the actionable half of the answer.
+      assert.match(textOf(root).join('\n'), /no spec recorded/, `spec ${JSON.stringify(spec)}`);
+      assert.match(classesOf(root).join(' '), /tv-no-spec/, `spec ${JSON.stringify(spec)}`);
+    });
+  }
 });
 
 test('recently-closed renders below the open list and is capped-marked', async () => {

@@ -485,6 +485,24 @@ test('tickets-viewer: the artifact path crosses, and its ABSENCE is representabl
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: the spec body crosses whole, and its absence is representable', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    // Long enough that any "reasonable" engine-side cap would bite: a real spec
+    // runs to a couple of KB of implementation detail.
+    const long = `tasks/deep-work — do the thing\n\n- step one\n- step two\n\n${'x'.repeat(4000)}`;
+    writeTickets(dir, [ticket('t1', { spec: long }), ticket('t2', { spec: null })]);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    // Deliberately NOT truncated here. A JS-side cap drops content with nothing
+    // on screen to say so; the display limit belongs in CSS, where the rest of
+    // the body is a scroll away rather than gone.
+    assert.equal(byId.t1.spec, long);
+    assert.equal(byId.t2.spec, '', 'an absent spec is an empty string, never undefined');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: an unassigned ticket keeps an empty assignee rather than a placeholder', async () => {
   const { host, teams, cleanup } = boot();
   try {
