@@ -475,18 +475,34 @@ def _turn_clock(session_id, render_ts=None):
     LINEAGE SCOPING is load-bearing: /clear and compact restart the message
     count on a stable session_id, so a bare {n: ts} map has the same n pointing
     at two different times and reads NON-MONOTONIC (measured: 23.4% of sessions,
-    one with 135 inversions). Taking the latest sidecar at-or-before the rendered
-    request's own ts and then walking backward — dropping any entry that would
-    postdate the boundary after it — scopes the map to the lineage being
-    rendered. Measured 0 inversions across 421 sessions after scoping.
+    one with 135 inversions). Scoping walks BACKWARD IN TIME from the rendered
+    request: within one lineage n grows with time, so going back through the
+    captures n must strictly DECREASE — any sidecar whose n is >= one already
+    seen belongs to an older, longer lineage and is dropped.
 
-    Coverage on MAIN-LINE conversational turns is 98.56% (34,464/34,968); the
-    misses are tiny sessions and side-calls, which have no turn structure anyway.
+    ANCHOR ON TIME, NOT ON LENGTH (fixed 2026-07-31; the original walked
+    `sorted(best, reverse=True)`, i.e. from the largest message count). After a
+    compact the current lineage is SHORTER than the one it replaced, so the
+    longest-n anchor sits in the discarded past and every current entry, being
+    later than it, was dropped as "stale" — the map came back full of dead
+    lineages and the page rendered no stamps at all (live: a 5-lineage session
+    keyed at n=1..29 got a map of n=2..286). The old validation (0 inversions
+    over 421 sessions) could not catch this: an emptied map is trivially
+    monotonic, so the metric scored a CORRELATE of correctness that discarding
+    everything maximises. Coverage is the property; test_turn_clock.py asserts
+    it directly.
+
+    Measured over 645 rendered sessions: stamps on multi-lineage sessions
+    37.7% -> 49.0% of turn headers, single-lineage unchanged (371/371, no
+    regression), still 0 inversions. The remaining misses are a SEPARATE,
+    unfixed cause: 31.7% of single-lineage turn keys are off by exactly +1
+    (the opening request hashed one more message than the rendered history
+    holds — a message the transform chain later dropped). Not guessed at here.
     Returns {} when the capture dir is absent — callers render without stamps."""
     d = core_mod._session_dir(session_id)
     if not d.is_dir():
         return {}
-    best = {}
+    seen = []
     for wf in d.glob("*.warmth.json"):
         try:
             w = json.loads(wf.read_text())
@@ -495,14 +511,13 @@ def _turn_clock(session_id, render_ts=None):
         n, ts = w.get("n_messages_hashed"), w.get("ts")
         if not (n and ts) or (render_ts and ts > render_ts):
             continue
-        if n not in best or ts > best[n]:
-            best[n] = ts
-    out, cap = {}, None
-    for n in sorted(best, reverse=True):     # newest-first; enforce monotonic
-        if cap is not None and best[n] > cap:
+        seen.append((ts, n))
+    out, low = {}, None
+    for ts, n in sorted(seen, reverse=True):  # newest FIRST: walk back in time
+        if low is not None and n >= low:
             continue                          # stale lineage (pre-/clear) entry
-        cap = best[n]
-        out[n] = best[n]
+        low = n
+        out.setdefault(n, ts)
     return out
 
 
