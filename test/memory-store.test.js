@@ -46,6 +46,65 @@ test('memoryStore: pin survives the file roundtrip and preserves meta', () => {
   assert.strictEqual(parseMemoryUnit(raw).meta.pinned, undefined);
 });
 
+test('memoryStore: an unknown frontmatter key survives the setPinned ROUND TRIP', () => {
+  // Round trip is the whole test. parse was never the broken half — it read
+  // every key already — so a test that writes tags and reads them back through
+  // parseMemoryUnit alone PASSES against the allowlist serializer that drops
+  // them. Only serialize(parse(x)), which is what setPinned does, can fail.
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'unit with curation metadata' });
+  const file = path.join(dir, 'alpha', `${u.id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace(
+    `source: alpha`, `source: alpha\ntags: plugins,ipc\nsuperseded_by: mem-9-zzz`));
+
+  store.setPinned('alpha', u.id, true);
+
+  const after = parseMemoryUnit(fs.readFileSync(file, 'utf-8')).meta;
+  assert.strictEqual(after.tags, 'plugins,ipc', 'pin deleted the tags key');
+  assert.strictEqual(after.superseded_by, 'mem-9-zzz', 'pin deleted an unknown key');
+  assert.strictEqual(after.pinned, 'true');
+  // pinned stays LAST: unpin removes that line, and any key emitted after it
+  // would leave the pre-pin byte shape unrecoverable.
+  const keys = fs.readFileSync(file, 'utf-8').split('\n---')[0].split('\n')
+    .map(l => (l.match(/^(\w+):/) || [])[1]).filter(Boolean);
+  assert.deepStrictEqual(keys, ['id', 'scope', 'learned_at', 'source', 'tags', 'superseded_by', 'pinned']);
+});
+
+test('memoryStore: a unit with no unknown keys is byte-identical after pin+unpin', () => {
+  // The property the passthrough must not cost: a pre-tag file on disk today
+  // must not be rewritten into a new shape by this change.
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { scope: 'ops', text: 'plain pre-tag unit' });
+  const file = path.join(dir, 'alpha', `${u.id}.md`);
+  const before = fs.readFileSync(file, 'utf-8');
+  store.setPinned('alpha', u.id, true);
+  store.setPinned('alpha', u.id, false);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});
+
+test('memoryStore: recall matches a tag, and not an id or timestamp', () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'a unit whose body never says the word' });
+  const file = path.join(dir, 'alpha', `${u.id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace(
+    'source: alpha', 'source: alpha\ntags: plugins,ipc'));
+
+  // Read the unit out BEFORE dereferencing it: a miss returns null, so
+  // `.id` inline would fail by TypeError instead of by message.
+  const byTag = store.recall('alpha', 'plugins');
+  assert.ok(byTag, 'a tag in the frontmatter was not searchable');
+  assert.strictEqual(byTag.id, u.id);
+  const byUpper = store.recall('alpha', 'IPC');
+  assert.ok(byUpper, 'tag match is not case-insensitive like the body match');
+  assert.strictEqual(byUpper.id, u.id);
+  // The rest of the frontmatter stays OUT of the haystack: `learned_at` is an
+  // ISO timestamp and the id is digits, so admitting them would make short
+  // numeric queries match everything. Both substrings below are really present
+  // in the file and must still miss.
+  assert.strictEqual(store.recall('alpha', u.learned_at.slice(0, 4)), null, 'a year matched — frontmatter leaked into the haystack');
+  assert.strictEqual(store.recall('alpha', 'mem-'), null, 'an id prefix matched — frontmatter leaked into the haystack');
+});
+
 test('memoryStore: forget deletes, and pin/forget reject non-id shapes (traversal guard)', () => {
   const { store } = tmpStore();
   const u = store.remember('alpha', { text: 'ephemeral' });

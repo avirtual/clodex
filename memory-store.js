@@ -28,9 +28,19 @@ const MEMORY_AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session nam
 // file paths, so anything looser would be a traversal vector.
 const MEMORY_ID_RE = /^mem-\d+-[a-z0-9]+$/;
 
+const CORE_META_KEYS = ['id', 'scope', 'learned_at', 'source'];
+
 function serializeMemoryUnit(meta, body) {
   const lines = ['---'];
-  for (const k of ['id', 'scope', 'learned_at', 'source']) {
+  for (const k of CORE_META_KEYS) {
+    lines.push(`${k}: ${meta[k] != null ? String(meta[k]) : ''}`);
+  }
+  // Anything parse read that this function doesn't name. setPinned round-trips
+  // parse -> serialize, so a key omitted here is a key that PIN DELETES —
+  // silently, on a file the user never asked to edit. Emitted after the core
+  // keys and before `pinned` so the core order stays byte-stable.
+  for (const k of Object.keys(meta)) {
+    if (CORE_META_KEYS.includes(k) || k === 'pinned') continue;
     lines.push(`${k}: ${meta[k] != null ? String(meta[k]) : ''}`);
   }
   // Written only when set — pre-pin files stay byte-identical on disk.
@@ -81,6 +91,10 @@ function createMemoryStore(rootDir) {
             learned_at: meta.learned_at || '',
             source: meta.source || '',
             pinned: meta.pinned === 'true',
+            // Carried for recall's haystack. Every other frontmatter key stays
+            // on disk only; this one is surfaced because it is meant to be
+            // searched, which is the whole point of writing it.
+            tags: meta.tags || '',
             body,
           });
         } catch { /* skip garbled */ }
@@ -99,7 +113,10 @@ function createMemoryStore(rootDir) {
       return { id, ...meta, pinned: !!pinned, body };
     },
     // Resolve a recall arg: exact id first, else a case-insensitive substring
-    // match against scope+body (first by learned_at). Returns the unit or null.
+    // match against scope+tags+body (first by learned_at). Returns the unit or
+    // null. Tags are in the haystack because a tag nobody can search for is not
+    // worth writing; the REST of the frontmatter stays out on purpose — ids and
+    // ISO timestamps make short queries match on digits.
     recall(agent, arg) {
       const units = this.list(agent);
       const q = String(arg || '').trim();
@@ -107,10 +124,10 @@ function createMemoryStore(rootDir) {
       const exact = units.find(u => u.id === q);
       if (exact) return exact;
       const ql = q.toLowerCase();
-      return units.find(u => (u.scope + '\n' + u.body).toLowerCase().includes(ql)) || null;
+      return units.find(u => (u.scope + '\n' + u.tags + '\n' + u.body).toLowerCase().includes(ql)) || null;
     },
     // Pin/unpin: pinned units ride the boot digest in FULL (unpinned ones only
-    // as index lines). Rewrites the unit file preserving all other meta.
+    // as index lines).
     setPinned(agent, id, on) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
       if (!MEMORY_ID_RE.test(String(id || ''))) throw new Error(`invalid unit id: ${id}`);
