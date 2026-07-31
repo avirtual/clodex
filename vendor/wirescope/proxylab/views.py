@@ -29,6 +29,23 @@ def _fmt_ago(ts, now=None):
     return f"{d / 86400:.1f}d ago"
 
 
+def _fmt_clock(ts):
+    """Wall-clock for a turn boundary: HH:MM, with the date prefixed once the
+    turn is older than today (a bare 14:22 on a 3-day-old session is a lie you
+    can't see). Local time — these are read next to the operator's own clock."""
+    if not ts:
+        return "—"
+    lt = time.localtime(ts)
+    return (time.strftime("%H:%M", lt)
+            if time.strftime("%Y%j", lt) == time.strftime("%Y%j", time.localtime())
+            else time.strftime("%b %d %H:%M", lt))
+
+
+def _fmt_when(ts):
+    """Full local timestamp for a hover title (the exact second, unabbreviated)."""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
+
+
 def _fmt_dur(s):
     if s is None:
         return "?"
@@ -292,6 +309,7 @@ pre{white-space:pre-wrap;word-break:break-word;color:#aab2c0;margin:.3em 0;
 details>summary{cursor:pointer;color:#6ab0de}
 .turnhdr{margin:1.2em 0 .35em;padding-bottom:.15em;color:#9aa3b2;
          font-weight:bold;border-bottom:1px solid #2a2e36}
+.tstamp{float:right;color:#69707d;font-weight:normal;font-size:12px}
 pre.pv{margin-bottom:0}
 details.more>pre{margin-top:0}
 details.more>summary{color:#69707d;font-size:12px}
@@ -313,6 +331,9 @@ details.more>summary{color:#69707d;font-size:12px}
 .naventry a{color:#e5c07b;text-decoration:none;border:1px solid #3a3320;
         border-radius:4px;padding:.15em .5em;background:#1a1710}
 .naventry a:hover{text-decoration:underline}
+.crumb{margin:0 0 .4em;font-size:12px}
+.crumb a{color:#6ab0de;text-decoration:none}
+.crumb a:hover{text-decoration:underline}
 .bustp{border-left-color:#e5c07b}
 .bustp pre.diff{font-size:12px;max-height:14em}
 .bustp pre.diff{color:#aab2c0}
@@ -434,6 +455,54 @@ def _main_line_turns(session_id):
             continue
         out.append({"stem": p["stem"], "seq": report_mod._seq_of(p["stem"]),
                     "ts": report_mod._epoch(p["ts"])})
+    return out
+
+
+def _turn_clock(session_id, render_ts=None):
+    """{message_count -> epoch} for a session's turn boundaries, read ONLY from
+    the tiny `*.warmth.json` sidecars (~480 B each vs ~275 KB for a request body,
+    measured 587x) — the request bodies are never opened.
+
+    WHY THIS WORKS AT ALL: a captured request's messages carry no timestamps of
+    their own, and consecutive requests are near-identical, so there is nothing
+    per-message to read. But every capture records `n_messages_hashed` (verified
+    == len(messages), 211/211 on a full session) alongside its `ts` — so the
+    LENGTH of the conversation at capture time is a key into when that turn
+    started. Boundaries only exist where a request actually began; interior
+    assistant/tool messages have no time of their own and get none (median 44%
+    of messages carry a stamp — that IS the turn-boundary set, not a gap).
+
+    LINEAGE SCOPING is load-bearing: /clear and compact restart the message
+    count on a stable session_id, so a bare {n: ts} map has the same n pointing
+    at two different times and reads NON-MONOTONIC (measured: 23.4% of sessions,
+    one with 135 inversions). Taking the latest sidecar at-or-before the rendered
+    request's own ts and then walking backward — dropping any entry that would
+    postdate the boundary after it — scopes the map to the lineage being
+    rendered. Measured 0 inversions across 421 sessions after scoping.
+
+    Coverage on MAIN-LINE conversational turns is 98.56% (34,464/34,968); the
+    misses are tiny sessions and side-calls, which have no turn structure anyway.
+    Returns {} when the capture dir is absent — callers render without stamps."""
+    d = core_mod._session_dir(session_id)
+    if not d.is_dir():
+        return {}
+    best = {}
+    for wf in d.glob("*.warmth.json"):
+        try:
+            w = json.loads(wf.read_text())
+        except Exception:
+            continue
+        n, ts = w.get("n_messages_hashed"), w.get("ts")
+        if not (n and ts) or (render_ts and ts > render_ts):
+            continue
+        if n not in best or ts > best[n]:
+            best[n] = ts
+    out, cap = {}, None
+    for n in sorted(best, reverse=True):     # newest-first; enforce monotonic
+        if cap is not None and best[n] > cap:
+            continue                          # stale lineage (pre-/clear) entry
+        cap = best[n]
+        out[n] = best[n]
     return out
 
 
@@ -742,6 +811,10 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
     e = html.escape
     s = (snap.get("sessions") or [{}])[0]
     nav_html = _session_nav_html(sid, nav, bust_t) if nav else ""
+    # Top-of-page way back to /_admin. The footer link is the same destination,
+    # but a session page is as long as its transcript, so reaching it means
+    # scrolling past everything you were done reading.
+    crumb = f'<p class="crumb"><a href="/_admin">&larr; sessions</a></p>'
     if subrole:
         # Per-role subagent view: same session_id as the parent, but its own
         # model/activity. The parent's warmth/cwd belong to the parent line, so
@@ -776,6 +849,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 f'<span>model <b>{e(writer_mod._short_model(s.get("model")))}</b></span>'
                 f'<span>cwd <b>{e(s.get("cwd") or "?")}</b></span>'
                 f'<span class="dim">last seen {e(_fmt_ago(s.get("last_seen")))}</span></p>')
+    head = crumb + head                    # breadcrumb above the title, both branches
     head += nav_html                       # turn navigator arrows + bust panel (nav mode)
     if not nav and not subrole:
         # TOP-of-page entry into the turn navigator, so the forensic controls
@@ -917,6 +991,10 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 sb.append(_cmark(mark_n, cc, cum_ch))
         rows = []
         turn = 0
+        # when each turn STARTED, from the warmth sidecars only (see _turn_clock:
+        # no request bodies are opened). A turn's boundary is keyed by the message
+        # count at capture time, so msgs[:i] is the prefix that existed then.
+        clock = _turn_clock(sid, render_ts=entry.get("ts"))
         for i, mm in enumerate(msgs):
             # group the timeline by turn: a divider before each prompt-bearing
             # user message (same predicate as turns_in_context — one source)
@@ -924,8 +1002,14 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 turn += 1
                 cur = (' · <span class="warm">current</span>'
                        if turn == n_turns else '')
+                # the request that OPENED this turn carried messages[0..i], i.e.
+                # a message count of i+1. Absent (side-call, swept, pre-sidecar
+                # capture) -> render the header exactly as before, no filler.
+                tts = clock.get(i + 1)
+                stamp = (f' <span class="tstamp" title="{e(_fmt_when(tts))}">'
+                         f'{e(_fmt_clock(tts))}</span>' if tts else '')
                 rows.append(f'<div class="turnhdr" id="turn-{turn}">'
-                            f'turn {turn}{cur}</div>')
+                            f'turn {turn}{cur}{stamp}</div>')
             cum_ch += len(json.dumps(mm)) if isinstance(mm, dict) else 0
             role = mm.get("role", "?")
             content = mm.get("content")
@@ -1069,10 +1153,11 @@ def _render_timeline_html(session, report):
     foot = (f'<p class="dim"><a href="/_admin">&larr; sessions</a> · '
             f'<a href="/_report?session={e(session)}&detail=1">raw json</a> · '
             f'<a href="/_session?session={e(session)}">context</a></p>')
+    crumb = '<p class="crumb"><a href="/_admin">&larr; sessions</a></p>'
     if not reqs:
         return ('<!doctype html><html><head><meta charset="utf-8">'
                 f'<title>wirescope · timeline</title><style>{_TL_CSS}</style></head>'
-                f'<body><h1>Cost over time · {e(session)}</h1>'
+                f'<body>{crumb}<h1>Cost over time · {e(session)}</h1>'
                 '<p class="dim">No priced main-line requests captured for this '
                 'session yet.</p>' + foot + '</body></html>')
     n = len(reqs)
@@ -1122,6 +1207,7 @@ def _render_timeline_html(session, report):
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>wirescope · cost over time</title><style>{_TL_CSS}</style></head><body>
+{crumb}
 <h1>Where the money went · {e(session)}</h1>
 <div class="sub">{n} main-line requests · total {m(total)} · main line only (subagents in /_report)</div>
 <div class="card"><svg viewBox="0 0 940 320">{pie_spine}{pie_content}</svg>
@@ -1145,4 +1231,7 @@ _TL_CSS = """
   .cap b{color:#cfd6df;font-weight:600}
   a{color:#5b8def}
   .dim{color:#6b7480}
+  .crumb{margin:0 0 8px;font-size:12px}
+  .crumb a{color:#5b8def;text-decoration:none}
+  .crumb a:hover{text-decoration:underline}
 """

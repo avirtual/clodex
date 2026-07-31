@@ -1603,7 +1603,11 @@ async def handler(request: Request) -> Response:
             if upstream_path.split("?")[0].endswith("/v1/messages"):
                 th = hints_mod.inject(
                     obj, agent=agent,
-                    session_id=(writer_mod._session_ids(obj) or [None])[0])
+                    session_id=(writer_mod._session_ids(obj) or [None])[0],
+                    # agent_id + req_id carry the pop protocol: the raw subagent
+                    # signal for the eligibility gate, and the key that lets
+                    # receipts commit-or-roll-back this request's reservation.
+                    agent_id=agent_id, req_id=n)
                 if th:
                     record["tail_hints"] = th
                     if th.get("hint_ids"):

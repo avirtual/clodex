@@ -149,6 +149,21 @@ def _identity():
             "hints": {"available": True,
                       "enabled": hints_mod.HINTS,
                       "system_tail_fallback": hints_mod.SYSTEM_TAIL_FALLBACK,
+                      # per-hint `turn_start_only`: ride only the FIRST request of
+                      # a turn. Hint tokens are uncached (1x on EVERY request), and
+                      # a turn is N requests — so a hint answering "what did the
+                      # user just type" is carriage by round 14. Feature-detectable
+                      # because a consumer posting the field to an older proxy
+                      # would get silent per-request billing instead.
+                      "turn_start_gate": True,
+                      # one-shot payloads: `once` + `main_line_only` +
+                      # `expect_session`, popped on a CONFIRMED 200 (reserve at
+                      # injection, commit at the receipt, roll back otherwise).
+                      # MUST be feature-detected: a proxy without it accepts the
+                      # keys silently and ignores them, so the payload would ride
+                      # EVERY request forever instead of once — the expensive
+                      # failure, and invisible from the consumer side.
+                      "pop": True,
                       "native": sorted(hints_native_mod.PROVIDERS),
                       "caps": {"total_chars": hints_mod.HINTS_MAX_CHARS,
                                "per_hint_chars": hints_mod.HINTS_MAX_ONE,

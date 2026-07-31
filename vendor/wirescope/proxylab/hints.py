@@ -75,9 +75,15 @@ HINTS = os.environ.get("HINTS", "1") not in ("0", "no", "off", "false")
 # Total budget across all hints on one request. The cap DECLINES an oversized
 # set rather than truncating it: a silently truncated hint reads as present and
 # isn't, which is the same false-green class as an underpowered null.
-HINTS_MAX_CHARS = int(os.environ.get("HINTS_MAX_CHARS", "2000"))
+HINTS_MAX_CHARS = int(os.environ.get("HINTS_MAX_CHARS", "3500"))
 # Per-hint ceiling, so one pathological string can't eat the whole budget.
-HINTS_MAX_ONE = int(os.environ.get("HINTS_MAX_ONE", "800"))
+# INVARIANT: keep this meaningfully BELOW HINTS_MAX_CHARS. The two caps are
+# checked in different places, so a per-hint value at or above the total makes a
+# hint pass one gate and die at the next — a limit that says yes and means no.
+# The headroom is deliberate: the total must fit the largest single hint PLUS a
+# standing prohibition riding alongside it. test_hints asserts the RELATIONSHIP,
+# never the two numbers separately.
+HINTS_MAX_ONE = int(os.environ.get("HINTS_MAX_ONE", "2500"))
 # Hard ceiling on registered hints per scope (registry hygiene, not wire cost).
 HINTS_MAX_PER_SCOPE = int(os.environ.get("HINTS_MAX_PER_SCOPE", "16"))
 # When a cache marker sits on the trailing role:"system" roster message, the last
@@ -117,19 +123,32 @@ store_mod.register_schema(
     "CREATE TABLE IF NOT EXISTS agent_hints ("
     "owner TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL, "
     "text TEXT NOT NULL, set_at REAL NOT NULL, ttl_s REAL, "
-    "PRIMARY KEY (owner, agent, id))")
+    "PRIMARY KEY (owner, agent, id))",
+    # additive migration: the turn-start gate (see _at_turn_start)
+    "ALTER TABLE agent_hints ADD COLUMN turn_start_only INTEGER")
 
 
 def _persist_agent(agent, hint):
+    # ONE-SHOT PAYLOADS ARE NEVER PERSISTED, even in agent scope (which otherwise
+    # survives restart). Same reasoning as session facts: an armed catalogue that
+    # outlives the proxy describes a decision that has probably already been made,
+    # and its `expect_session` very likely names a conversation that is gone. The
+    # required ttl bounds the staleness; not persisting removes it. A consumer
+    # re-posts — which it must be able to do anyway, since a pop can be declined.
+    if hint.get("once"):
+        return
     try:
         con = store_mod.db()
         with store_mod.LOCK:
             con.execute(
-                "INSERT INTO agent_hints(owner, agent, id, text, set_at, ttl_s) "
-                "VALUES(?,?,?,?,?,?) ON CONFLICT(owner, agent, id) DO UPDATE SET "
-                "text=excluded.text, set_at=excluded.set_at, ttl_s=excluded.ttl_s",
+                "INSERT INTO agent_hints(owner, agent, id, text, set_at, ttl_s, "
+                "turn_start_only) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(owner, agent, id) DO UPDATE SET "
+                "text=excluded.text, set_at=excluded.set_at, ttl_s=excluded.ttl_s, "
+                "turn_start_only=excluded.turn_start_only",
                 (store_mod.OWNER, agent, hint["id"], hint["text"],
-                 hint["set_at"], hint.get("ttl_s")))
+                 hint["set_at"], hint.get("ttl_s"),
+                 1 if hint.get("turn_start_only") else 0))
             con.commit()
     except Exception as e:
         print(f"[hints] persist failed for {agent}/{hint['id']}: {e}", flush=True)
@@ -157,15 +176,15 @@ def load_agent_hints():
         con = store_mod.db()
         with store_mod.LOCK:
             rows = con.execute(
-                "SELECT agent, id, text, set_at, ttl_s FROM agent_hints "
-                "WHERE owner=?", (store_mod.OWNER,)).fetchall()
+                "SELECT agent, id, text, set_at, ttl_s, turn_start_only "
+                "FROM agent_hints WHERE owner=?", (store_mod.OWNER,)).fetchall()
     except Exception as e:
         print(f"[hints] load failed: {e}", flush=True)
         return 0
-    for agent, hid, text, set_at, ttl_s in rows:
+    for agent, hid, text, set_at, ttl_s, tso in rows:
         _AGENT_HINTS.setdefault(agent, {})[hid] = {
             "id": hid, "text": text, "set_at": set_at, "ttl_s": ttl_s,
-            "source": "agent"}
+            "turn_start_only": bool(tso), "source": "agent"}
     if rows:
         print(f"[hints] restored {len(rows)} agent hint(s) across "
               f"{len(_AGENT_HINTS)} route(s)", flush=True)
@@ -207,13 +226,50 @@ def _validate(payload, *, require_ttl):
         elif require_ttl:
             return (f"hint {hid!r}: ttl_s is REQUIRED for session-scoped facts "
                     "(a fact with no expiry keeps shipping and reads as current)"), None
+        tso = it.get("turn_start_only", False)
+        if not isinstance(tso, bool):
+            return f"hint {hid!r}: turn_start_only must be true or false", None
+        once = it.get("once", False)
+        if not isinstance(once, bool):
+            return f"hint {hid!r}: once must be true or false", None
+        mlo = it.get("main_line_only", False)
+        if not isinstance(mlo, bool):
+            return f"hint {hid!r}: main_line_only must be true or false", None
+        xs = it.get("expect_session")
+        if xs is not None and (not isinstance(xs, str) or not xs.strip()):
+            return f"hint {hid!r}: expect_session must be a non-empty string", None
+        if once and ttl is None:
+            # REQUIRED in BOTH scopes (agent scope otherwise allows ttl_s:null).
+            # A one-shot with no expiry waits forever for an eligible request and
+            # then describes a decision that already happened — a stale catalogue
+            # is worse than none.
+            return (f"hint {hid!r}: ttl_s is REQUIRED for once:true "
+                    "(an armed payload with no expiry goes stale, not away)"), None
         total += len(text)
-        out.append({"id": hid, "text": text.strip(), "ttl_s": ttl,
-                    "set_at": time.time(),
-                    "source": "session" if require_ttl else "agent"})
+        entry = {"id": hid, "text": text.strip(), "ttl_s": ttl,
+                 "set_at": time.time(), "turn_start_only": tso,
+                 "source": "session" if require_ttl else "agent"}
+        # Pop fields exist ONLY on one-shot entries. Keeping them off ordinary
+        # hints preserves the exact-key-set invariant that proves the injector
+        # writes no per-request state onto a registry entry — an assertion worth
+        # more than the tidiness of a uniform schema.
+        if once or mlo or xs:
+            entry.update({"once": once, "main_line_only": mlo,
+                          "expect_session": xs.strip() if xs else None})
+        if once:
+            entry["armed_at"] = time.time()
+        out.append(entry)
     if total > HINTS_MAX_CHARS:
-        return (f"hint set is {total}ch, over the {HINTS_MAX_CHARS}ch total cap "
-                "(declined, not truncated)"), None
+        # NAME THE CULPRIT. The total is shared across scopes, so one oversized
+        # hint can decline an unrelated standing prohibition; a bare "over cap"
+        # attributes that to the injection rather than to the hint that ate the
+        # budget — the loud failure masking the silent one.
+        biggest = max(out, key=lambda h: len(h["text"]))
+        dropped = [h["id"] for h in out if h["id"] != biggest["id"]]
+        return {"reason": (f"hint set is {total}ch, over the {HINTS_MAX_CHARS}ch "
+                           "total cap (declined, not truncated)"),
+                "offender": biggest["id"], "offender_chars": len(biggest["text"]),
+                "dropped": dropped}, None
     ids = [h["id"] for h in out]
     if len(set(ids)) != len(ids):
         return "duplicate hint ids in one request", None
@@ -227,7 +283,10 @@ def set_hints(payload, *, agent=None, session=None, mode="merge"):
         return 400, {"ok": False, "reason": "need ?agent= or ?session="}
     err, hints = _validate(payload, require_ttl=session is not None)
     if err:
-        return 400, {"ok": False, "reason": err}
+        # an over-total decline carries attribution (offender/dropped); the rest
+        # are plain strings.
+        return 400, ({"ok": False, **err} if isinstance(err, dict)
+                     else {"ok": False, "reason": err})
     reg = _AGENT_HINTS if agent is not None else _SESSION_HINTS
     key = agent if agent is not None else session
     cur = {} if mode == "replace" else dict(reg.get(key) or {})
@@ -310,6 +369,67 @@ def last_injection(session_id):
 # from "exercised and worked" (clodex's ask; the same absent-effect-reads-as-
 # verified-negative trap as an underpowered null).
 _MODE_TALLY = {}
+
+
+# ---- one-shot pop: RESERVE at injection, COMMIT on a 200 --------------------
+# request-id -> [(scope_kind, scope_key, hint_id, session_id), ...]
+# WHY TWO PHASES: 5.9% of forwarded requests never reach a 200 (3.60% no response
+# at all, 1.19% 404, 0.86% 429, 0.21% 529), and failures CLUSTER — 1,160 failure
+# runs, median 1 but p90 6 and max 38 CONSECUTIVE. Popping at injection would
+# silently discard a payload through an entire shed storm, and the consumer could
+# not tell that from delivered-and-ignored. So injection only RESERVES; the pop
+# commits at receipts.anthropic on a 200 and ROLLS BACK otherwise, leaving the
+# entry armed to ride the retry with no re-POST.
+_RESERVED = {}
+_RESERVED_MAX = 512
+
+
+def _reserve_pops(req_id, hints, session_id):
+    """Note which one-shot entries rode this request (called at injection)."""
+    if not req_id:
+        return
+    items = [h for h in hints if h.get("once")]
+    if not items:
+        return
+    if len(_RESERVED) > _RESERVED_MAX:
+        _RESERVED.clear()            # bound; an orphaned reservation just re-arms
+    _RESERVED[req_id] = [(h.get("source"), h.get("_scope"), h["id"], session_id)
+                         for h in items]
+
+
+def commit_pops(req_id, status_code, session_id=None):
+    """COMMIT (200) or ROLL BACK (anything else) the pops reserved for a request.
+    Called from receipts.anthropic — the single turn-finalize convergence both
+    wires already call, which has status_code/session_id/role/agent_header_id in
+    scope. Returns a small log dict for the receipt, or None."""
+    items = _RESERVED.pop(req_id, None)
+    if not items:
+        return None
+    if status_code != 200:
+        # ROLLBACK is a no-op by construction: the entry was never removed. Said
+        # out loud anyway so "rolled back" is a visible third state next to
+        # never-delivered and delivered-unused.
+        return {"popped": [], "rolled_back": [i[2] for i in items],
+                "status_code": status_code}
+    popped = []
+    for kind, scope, hid, sid in items:
+        reg = _AGENT_HINTS if kind == "agent" else _SESSION_HINTS
+        key = scope if kind == "agent" else sid
+        entry = (reg.get(key) or {}).get(hid)
+        if entry is None:
+            continue
+        entry["delivered_session"] = session_id or sid
+        entry["delivered_at"] = time.time()
+        reg[key].pop(hid, None)
+        if kind == "agent":
+            _unpersist_agent(key, hid)
+        if not reg.get(key):
+            reg.pop(key, None)
+        popped.append(hid)
+        print(f"[hints] POP {hid} delivered to session="
+              f"{str(session_id or sid)[:12]}… (200)", flush=True)
+    return {"popped": popped, "rolled_back": [], "status_code": status_code,
+            "delivered_session": session_id}
 
 
 def _note_injection(session_id, log):
@@ -401,6 +521,16 @@ def read_scope(*, agent=None, session=None):
                                  "age_s": round(now - h["set_at"], 1)}
                                 for h in (_SESSION_HINTS.get(session) or {}).values()]
         out["native_enabled"] = sorted(_NATIVE_ON.get(session) or ())
+    # ARMED READBACK: a one-shot still in the registry has not been delivered.
+    # POSTED-BUT-NEVER-SERVED must be distinguishable from NEVER-POSTED — the
+    # consumer's only other evidence is the model's behavior, which reads the
+    # same either way. `armed` is derived, never stored, so it cannot go stale.
+    for k in ("agent_hints", "session_hints"):
+        for h in out.get(k) or []:
+            if h.get("once"):
+                h["armed"] = True
+                h["armed_age_s"] = (round(now - h["armed_at"], 1)
+                                    if h.get("armed_at") else None)
     out["caps"] = {"total_chars": HINTS_MAX_CHARS, "per_hint_chars": HINTS_MAX_ONE,
                    "per_scope": HINTS_MAX_PER_SCOPE}
     out["enabled"] = HINTS
@@ -429,7 +559,86 @@ def _matching_agent_scopes(agent):
     return out
 
 
-def effective(session, agent, obj=None):
+def _at_turn_start(msgs):
+    """True iff this request is the FIRST of its turn — the user's message is the
+    newest thing in the window and the model has not yet acted on it.
+
+    WHY THIS GATE EXISTS (clodex's use case, and the billing shape behind it):
+    hint tokens ride UNCACHED at 1x on EVERY request that carries them, and a
+    turn is not one request — a tool loop is N. A hint that answers "what did the
+    user just type" (a retrieved memory, a task fact) is relevant on request 1 and
+    is pure carriage by round 14, re-billed each round with no cache discount. A
+    constant behavioral prohibition is the opposite: it must be present at the
+    moment the model reaches for the forbidden action, which is exactly those
+    later rounds. So the gate is PER HINT, not a global mode, and defaults OFF
+    (every existing hint keeps riding every request).
+
+    Detection reuses the SHARED settled boundary — never inline it (transforms.py
+    is explicit about this: the strips and the pin must agree on where the current
+    turn starts). At turn start nothing after that boundary is an assistant
+    message; once the model emits its first tool_use, one is, and stays for the
+    rest of the turn. Scanning for `assistant` rather than comparing against
+    len(msgs)-1 is what makes this correct on the opus-4-8 wire shape, where a
+    trailing role:"system" roster message sits AFTER the user's turn."""
+    try:
+        from . import transforms as transforms_mod
+        boundary = transforms_mod._settled_boundary(msgs)
+    except Exception:
+        return None                    # can't judge -> caller declines to gate
+    if boundary < 0:
+        return None                    # no real user turn in the window at all
+    return not any(isinstance(m, dict) and m.get("role") == "assistant"
+                   for m in msgs[boundary + 1:])
+
+
+def _is_raw_subagent(obj, agent_id=None):
+    """The POP predicate: does this request carry a RAW subagent signal?
+
+    Deliberately NOT `writer._classify_role(...) == "parent"` and NOT
+    `_genuine_subagent`. Those apply a fingerprint backstop that files a
+    raw-signalled request as parent when its content fingerprint matches the
+    session's main line — correct for BILLING (keeps a leaked/forked turn out of a
+    subagent bucket) and wrong HERE, where the same request must be refused.
+    Measured: 979 requests (2.75% of parent-classified traffic) carry a live raw
+    signal and are still classified parent; lineage-hash testing puts 676 of them
+    as GENUINE subagents misfiled, only 303 as the fork/leak pattern.
+
+    ONE FIELD, TWO CONSUMERS, OPPOSITE CORRECTNESS CRITERIA — so read the signals,
+    never the verdict. Fails CLOSED: on either signal, or on any error, the answer
+    is "treat as subagent" and the payload stays armed. An unserved payload is
+    recoverable (the consumer re-posts / the next request takes it); a mis-served
+    one is consumed by something that cannot act on it and is indistinguishable at
+    the consumer from "the model ignored it", which corrupts the only instrument
+    available for tuning retrieval."""
+    if agent_id:
+        return True
+    try:
+        from . import writer as writer_mod
+        return bool(writer_mod._billing_is_subagent(obj or {}))
+    except Exception:
+        return True                    # can't judge -> fail closed
+
+
+def _pop_eligible(h, obj, session, agent_id):
+    """(ok, reason) — may this request CONSUME this one-shot payload?"""
+    if h.get("main_line_only") and _is_raw_subagent(obj, agent_id):
+        return False, "subagent"
+    want = h.get("expect_session")
+    if want and want != session:
+        # The guard that matters. A route name does NOT identify a conversation:
+        # 516 route-level session switches on main-line traffic, 53 of them TRUE
+        # interleaves where a conversation resumed on a route after another ran.
+        # The strays are not subagents (strict predicate removes 0 of the 53) but
+        # separate top-level CLI processes — one-shot `hi` probes sharing a live
+        # route, which pass main_line_only honestly. Without this assertion the
+        # catalogue lands in a two-message throwaway and the receipt reads
+        # DELIVERED. Available at all only because the wire session_id IS the
+        # CLI's sessionId (758/788 = 96.2% match transcript filenames).
+        return False, "session_mismatch"
+    return True, None
+
+
+def effective(session, agent, obj=None, gate_info=None):
     """The resolved hint list for a request, most-specific-last (session facts
     read after agent prohibitions). Union by id: a narrower scope re-declaring an
     id SUPPRESSES the inherited one. Expiry is evaluated HERE, per request — so a
@@ -438,6 +647,11 @@ def effective(session, agent, obj=None):
     fact like `upstream is shedding` changes)."""
     now = time.time()
     merged = {}
+    # hid -> the scope the winning entry came from, so a committed pop can find
+    # its registry row again. Tracked SEPARATELY because the merged values ARE
+    # the registry entries and must never be annotated (a per-request note
+    # written there would persist into every later request).
+    origin = {}
     if agent:
         # exact scope first, then glob scopes (later wins on id collision, so a
         # more specific exact registration is applied last = takes precedence)
@@ -445,10 +659,12 @@ def effective(session, agent, obj=None):
             _expire(_AGENT_HINTS, scope, now)
             for hid, h in (_AGENT_HINTS.get(scope) or {}).items():
                 merged[hid] = h
+                origin[hid] = ("agent", scope)
     if session:
         _expire(_SESSION_HINTS, session, now)
         for hid, h in (_SESSION_HINTS.get(session) or {}).items():
             merged[hid] = h
+            origin[hid] = ("session", session)
         names = _NATIVE_ON.get(session)
         if names:
             from . import hints_native as native_mod
@@ -456,7 +672,47 @@ def effective(session, agent, obj=None):
                 nh = native_mod.render(name, session=session, obj=obj)
                 if nh:                       # a provider with nothing to say
                     merged[nh["id"]] = nh    # declines rather than shipping noise
-    return [merged[k] for k in sorted(merged)]
+    hints = [merged[k] for k in sorted(merged)]
+    # ONE-SHOT ELIGIBILITY. Filter before the turn-start gate so a declined pop is
+    # never mistaken for a gated one. Non-once hints are untouched.
+    if any(h.get("once") for h in hints):
+        agent_id = (gate_info or {}).get("agent_id")
+        keep, declined, armed = [], {}, []
+        for h in hints:
+            if not h.get("once"):
+                keep.append(h)
+                continue
+            ok, why = _pop_eligible(h, obj, session, agent_id)
+            if ok:
+                kind, scope = origin.get(h["id"], (h.get("source"), None))
+                # a SHALLOW COPY carries the scope to the reserver without
+                # touching the registry entry itself.
+                keep.append({**h, "_scope": scope, "source": kind})
+                armed.append(h["id"])
+            else:
+                declined[h["id"]] = why
+        hints = keep
+        if gate_info is not None:
+            if declined:
+                gate_info["pop_declined"] = declined
+            if armed:
+                gate_info["pop_reserved"] = armed
+    gated = [h["id"] for h in hints if h.get("turn_start_only")]
+    if gated and obj is not None:
+        # FAIL OPEN on can't-judge (None): the gate is a COST optimization, not a
+        # safety property, so an unjudgeable shape should still deliver. Silently
+        # never firing is the worse failure (same reasoning as SYSTEM_TAIL_FALLBACK)
+        # and costs the one thing the gate was saving. Never annotate the hint
+        # dicts themselves — they ARE the registry entries, so a per-request note
+        # written there would persist into every later request.
+        at_start = _at_turn_start((obj or {}).get("messages") or [])
+        if gate_info is not None:
+            gate_info.update({"at_turn_start": at_start, "gated_ids": gated})
+        if at_start is False:
+            hints = [h for h in hints if not h.get("turn_start_only")]
+            if gate_info is not None:
+                gate_info["withheld"] = gated
+    return hints
 
 
 # ---- the wire transform ----------------------------------------------------
@@ -509,7 +765,7 @@ def _note_unmatched(session_id, agent):
     t["_seen_agent"] = agent          # the name that actually arrived on the wire
 
 
-def inject(obj, agent=None, session_id=None):
+def inject(obj, agent=None, session_id=None, agent_id=None, req_id=None):
     """Append the effective hint set as a NEW trailing text block on the last
     user message. Returns a log dict (for the request record) or None.
 
@@ -525,8 +781,17 @@ def inject(obj, agent=None, session_id=None):
         return None
     if session_id is None:
         session_id = (writer_mod._session_ids(obj) or [None])[0]
-    hints = effective(session_id, agent, obj=obj)
+    gate = {"agent_id": agent_id}
+    hints = effective(session_id, agent, obj=obj, gate_info=gate)
     if not hints:
+        if gate.get("pop_declined"):
+            # a refused pop is the GUARD WORKING — never let it read as an
+            # unmatched-scope misconfiguration (or as silence).
+            return {"declined": "pop_ineligible", "pop_declined": gate["pop_declined"]}
+        # A turn-start-gated hint withheld mid-loop is the gate WORKING, not a
+        # misconfiguration — don't let it masquerade as an unmatched-scope error.
+        if gate.get("withheld"):
+            return {"declined": "turn_start_gate", "withheld": gate["withheld"]}
         # Registry non-empty but nothing resolved -> misconfiguration, not rest.
         if _AGENT_HINTS or _SESSION_HINTS or _NATIVE_ON:
             _note_unmatched(session_id, agent)
@@ -585,5 +850,17 @@ def inject(obj, agent=None, session_id=None):
            "msg_idx": ui, "block_idx": len(c) - 1, "mode": mode,
            "deepest_marker": list(deepest) if deepest else None,
            "uncached": True}
+    if gate.get("gated_ids"):
+        log["turn_start_gate"] = {k: gate[k] for k in
+                                  ("at_turn_start", "gated_ids", "withheld")
+                                  if k in gate}
+    if gate.get("pop_declined"):
+        log["pop_declined"] = gate["pop_declined"]
+    if gate.get("pop_reserved"):
+        # RESERVED, not popped: the entry stays armed until receipts.anthropic
+        # sees a 200. Only reserve once the payload is actually ON the request —
+        # every decline path above returns before this point.
+        log["pop_reserved"] = gate["pop_reserved"]
+        _reserve_pops(req_id, hints, session_id)
     _note_injection(session_id, log)
     return log
