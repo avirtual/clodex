@@ -22,7 +22,7 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/tickets-viewer/engine');
 
-const { DEFAULT_STALL_MS } = viewerEngine._internals;
+const { DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
 function boot() {
@@ -348,7 +348,14 @@ test('tickets-viewer: the stall threshold is the TEAM\'s watchdogMs, not a numbe
 
     const def = mkTeam(teams, 'default-team');
     writeTickets(def, [ticket('t1', quiet)]);
-    const slow = mkTeam(teams, 'slow-team', { watchdogMs: 4 * HOUR });
+    // Precondition, not decoration: this case proves watchdogMs passes THROUGH,
+    // so its fixture has to sit inside the clamp window. Widen the window (or
+    // narrow this number) and the case would still pass while testing the clamp
+    // instead of the pass-through.
+    const wide = 4 * HOUR;
+    assert.ok(wide > WATCHDOG_MIN_MS && wide < WATCHDOG_MAX_MS,
+      'fixture must be unclamped for this case to be about pass-through');
+    const slow = mkTeam(teams, 'slow-team', { watchdogMs: wide });
     writeTickets(slow, [ticket('t1', quiet)]);
 
     const a = await host.dispatch('tickets-viewer', 'board', ['default-team']);
@@ -369,18 +376,26 @@ test('tickets-viewer: watchdogMs is CLAMPED as core clamps it, in both direction
     // team.json is agent-writable. This plugin does not go through that loader,
     // so an unclamped board would disagree with the watchdog about the exact
     // number the whole surface is organised around.
-    const tiny = mkTeam(teams, 'tiny', { watchdogMs: 1000 });
-    writeTickets(tiny, [ticket('t1', { lastActivityAt: now - 2 * 60 * 1000 })]);
-    const huge = mkTeam(teams, 'huge', { watchdogMs: 365 * 24 * HOUR });
-    writeTickets(huge, [ticket('t1', { lastActivityAt: now - 30 * 24 * HOUR })]);
+    // Both fixtures are derived from the bounds rather than written beside
+    // them: a hardcoded pair stops straddling the window the moment either
+    // bound moves, and the case then passes without exercising a clamp.
+    const below = WATCHDOG_MIN_MS / 300;
+    const above = WATCHDOG_MAX_MS * 52;
+    assert.ok(below < WATCHDOG_MIN_MS && above > WATCHDOG_MAX_MS,
+      'fixtures must straddle the clamp window for this case to mean anything');
+    // Quiet times likewise straddle the CLAMPED thresholds, not the raw ones.
+    const tiny = mkTeam(teams, 'tiny', { watchdogMs: below });
+    writeTickets(tiny, [ticket('t1', { lastActivityAt: now - WATCHDOG_MIN_MS / 2 })]);
+    const huge = mkTeam(teams, 'huge', { watchdogMs: above });
+    writeTickets(huge, [ticket('t1', { lastActivityAt: now - WATCHDOG_MAX_MS * 4 })]);
 
     const a = await host.dispatch('tickets-viewer', 'board', ['tiny']);
-    assert.equal(a.stallMs, 5 * 60 * 1000, 'below the floor reads as the floor');
-    assert.equal(a.open[0].stalled, false, '2m quiet is not stalled once the 1s threshold is floored to 5m');
+    assert.equal(a.stallMs, WATCHDOG_MIN_MS, 'below the floor reads as the floor');
+    assert.equal(a.open[0].stalled, false, 'quiet under the FLOORED threshold is not stalled');
 
     const b = await host.dispatch('tickets-viewer', 'board', ['huge']);
-    assert.equal(b.stallMs, 7 * 24 * HOUR, 'above the ceiling reads as the ceiling');
-    assert.equal(b.open[0].stalled, true, '30d quiet is stalled once the 1y threshold is capped at 7d');
+    assert.equal(b.stallMs, WATCHDOG_MAX_MS, 'above the ceiling reads as the ceiling');
+    assert.equal(b.open[0].stalled, true, 'quiet past the CAPPED threshold is stalled');
   } finally { cleanup(); }
 });
 
