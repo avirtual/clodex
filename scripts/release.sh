@@ -161,6 +161,11 @@ case "$DMG" in
 esac
 
 # --- commit, tag, push -----------------------------------------------------
+# The tag must name the commit built above, never a named ref like origin/master.
+# Every check upstream — the web-dist rebuild, the smoke test, the deploy pins,
+# the DMG — validates the WORKING TREE. Tagging anything else would leave all of
+# them reading bytes that are not the ones shipping, and they would read green
+# precisely when the two disagree.
 step "Commit + tag + push"
 git commit -am "$TAG" || die "commit failed"
 git tag "$TAG"
