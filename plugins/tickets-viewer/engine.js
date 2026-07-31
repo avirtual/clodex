@@ -13,11 +13,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// CLODEX_HOME is honoured because core's team layer honours it
-// (team-manifest.js defaultClodexHome). A bare homedir join would make this
-// plugin report on a different tree than the app it is reporting on.
+// Written ONLY by _internals.setTeamsRootForTest at the bottom of this file;
+// nothing on the plugin's own code path assigns it, so in the app it is always
+// null and teamsRoot() is the expression below it.
+let teamsRootOverride = null;
+
+// A bare homedir join, byte-identical to engine.js:133's REGISTRY_DIR. Reading
+// CLODEX_HOME here would make the board report on a different teams tree than
+// the app hosting it: core's root does not honour the variable.
 function teamsRoot() {
-  return path.join(process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex'), 'teams');
+  return teamsRootOverride || path.join(os.homedir(), '.clodex', 'teams');
 }
 
 const TICKETS_FILE = 'tickets.json';
@@ -387,4 +392,9 @@ module.exports.deactivate = () => {
 module.exports._internals = {
   confine, readTickets, readManifest, stallMsFor, shape, board, teams, teamsRoot,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
+  // The teams tree is no longer env-derived, so a test needs a seam that is not
+  // an environment variable. Deliberately NOT on the host surface: hostApi is
+  // frozen at "1", and a plugin able to ask core where the teams live is a
+  // contract change. Pass null to restore the real root.
+  setTeamsRootForTest(dir) { teamsRootOverride = dir || null; },
 };

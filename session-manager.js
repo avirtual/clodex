@@ -2477,6 +2477,12 @@ function createSessionManager(deps) {
           // atomic writes with no grandchildren; keep it plain.
           child = childProcess.spawn(argv[0], argv.slice(1), {
             cwd: runCwd,
+            // CLODEX_HOME is set EXPLICITLY rather than inherited: the child is
+            // a registered exec script (clodex-team, clodex-monitor), whose only
+            // channel to the app's root is this variable — there is no --home
+            // flag. Inheriting would let a CLODEX_HOME set in the app's
+            // environment point the child at a different tree than the app uses.
+            env: { ...process.env, CLODEX_HOME: REGISTRY_DIR },
             stdio: ['pipe', 'ignore', 'pipe'],
           });
         } catch (e) {

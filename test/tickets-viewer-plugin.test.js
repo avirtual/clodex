@@ -9,8 +9,10 @@
 // a corrupt registry, fatal for a viewer. Most cases below are that distinction
 // from one side or the other.
 //
-// The engine reads CLODEX_HOME on every call (not at require time), so these
-// tests point it at a temp tree and need no module-cache surgery.
+// The engine derives its teams root from a bare homedir join, matching core's
+// REGISTRY_DIR — it deliberately does NOT read CLODEX_HOME, or the board would
+// report on a different tree than the app hosting it. So the seam here is
+// _internals.setTeamsRootForTest, not an environment variable.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -22,15 +24,14 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/tickets-viewer/engine');
 
-const { DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS } = viewerEngine._internals;
+const { DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, setTeamsRootForTest } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
 function boot() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-home-'));
   const teams = path.join(home, 'teams');
   fs.mkdirSync(teams, { recursive: true });
-  const prev = process.env.CLODEX_HOME;
-  process.env.CLODEX_HOME = home;
+  setTeamsRootForTest(teams);
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-data-'));
   const removals = [];
@@ -53,7 +54,7 @@ function boot() {
   host.register('tickets-viewer', viewerEngine, { hostApi: HOST_API_VERSION });
 
   const cleanup = () => {
-    if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
+    setTeamsRootForTest(null);
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(dataDir, { recursive: true, force: true });
   };
@@ -88,6 +89,24 @@ function ticket(id, over = {}) {
     lastActivityAt: now - HOUR, nudgedAt: null, ...over,
   };
 }
+
+// ── the teams root follows the app, not the environment ─────────────────────
+
+test('tickets-viewer: the teams root ignores CLODEX_HOME and matches core\'s', () => {
+  // The board must report on the tree the app hosting it uses. Core's root is
+  // engine.js:133's bare homedir join; if this plugin read CLODEX_HOME, a set
+  // variable would point the two at different trees. Asserted with the variable
+  // SET to something else, because with it unset the two agree whatever the
+  // code does.
+  const prev = process.env.CLODEX_HOME;
+  process.env.CLODEX_HOME = path.join(os.tmpdir(), 'clodex-tv-decoy-home');
+  try {
+    setTeamsRootForTest(null);
+    assert.equal(viewerEngine._internals.teamsRoot(), path.join(os.homedir(), '.clodex', 'teams'));
+  } finally {
+    if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
+  }
+});
 
 // ── empty is not broken ─────────────────────────────────────────────────────
 
