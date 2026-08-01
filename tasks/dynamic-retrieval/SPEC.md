@@ -161,3 +161,50 @@ in t139/t140's seams that did not match this spec.
 Do not commit, tag or push. Leave the tree dirty for review. No secret values
 in argv, logs, markers or errors. No emojis. Comments earn their place by
 naming a wrong change they prevent.
+
+## Two defects measured live, 2026-08-01 (file these before starting)
+
+Both observed on the first day contextual hints ran against a real store,
+with `DEBUG [hint]` lines as evidence rather than inference.
+
+### 1. Rapid re-arms race the outgoing request
+
+Log, on one draft typed at normal speed:
+
+```
+10:17:19.827  DEBUG [hint]  armed clodex-clodex-889de1bd mem-1785567875731-84h5o9
+10:17:21.970  DEBUG [hint]  armed clodex-clodex-889de1bd mem-1785108288839-wcwl77
+10:17:22.220  DEBUG [hint]  armed clodex-clodex-889de1bd mem-1783524813485-l7u6nx
+```
+
+Three arms in 2.4s as the draft grew. The LAST one was the best match. The
+hint that actually popped was from an EARLIER arm — the request left while a
+stale winner was registered.
+
+t139's memo correctly suppresses a re-POST when the winner is unchanged. It
+does not address a CHANGED winner arriving after the CLI has already read the
+slot. One-shot semantics make this lossy rather than merely late: the early
+hint pops and the better one never gets a turn.
+
+Do not "fix" this by deferring the final pass to the next turn — that is the
+misfire t139's disarm path exists to prevent (see `tasks/hint-injector/`
+JOURNAL). The tractable direction is making a late-arriving better winner
+replace an unread hint, which needs a read/unread signal the registry may not
+expose. Establish whether it does before designing around it.
+
+### 2. Lexical scoring has no notion of aboutness
+
+Draft: "lets see if it surfaces the memory about product-philosophy".
+
+Top result at confidence 1.00 was `mem-1785527290407-z3leb7` — a unit about
+MEMORY CONSOLIDATION OBSOLESCENCE CLASSES that merely contains the words
+"product" and "philosophy" incidentally. The units actually about product
+philosophy (`mem-1784070616457-tvfire`, "Sandbox integration vision";
+`mem-1783524813485-l7u6nx`) ranked lower.
+
+The threshold is not at fault — `hits >= 2` and the `log(1+N)` floor both
+behaved correctly, and 4-5 distinct terms matched. Term overlap simply does
+not measure subject. This is the concrete, reproducible case for the local
+embed tier (nomic-embed-text, 16ms warm, measured) rather than an argued one:
+use it as the acceptance fixture. A semantic tier that cannot rank tvfire
+above z3leb7 on this draft has not earned its latency.

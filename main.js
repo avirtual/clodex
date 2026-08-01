@@ -99,6 +99,11 @@ const log = {
   info: (tag, message) => writeLog('INFO', tag, message),
   warn: (tag, message) => writeLog('WARN', tag, message),
   error: (tag, message) => writeLog('ERROR', tag, message),
+  // Callers guard with `log.debug && log.debug(...)`, so omitting this does not
+  // throw — it silently discards the diagnostic. hint-arm's entire trace was a
+  // no-op in production because of that: armed, failed-to-arm and
+  // never-attempted all wrote nothing and read identically.
+  debug: (tag, message) => writeLog('DEBUG', tag, message),
 };
 
 // Mirror only the STABLE engine singletons (manager + stores, built once); reach
