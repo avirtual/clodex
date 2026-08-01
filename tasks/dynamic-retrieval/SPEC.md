@@ -167,7 +167,7 @@ naming a wrong change they prevent.
 Both observed on the first day contextual hints ran against a real store,
 with `DEBUG [hint]` lines as evidence rather than inference.
 
-### 1. Rapid re-arms race the outgoing request
+### 1. Rapid re-arms race the outgoing request — FIXED, confirmed in production
 
 Log, on one draft typed at normal speed:
 
@@ -188,9 +188,17 @@ hint pops and the better one never gets a turn.
 
 Do not "fix" this by deferring the final pass to the next turn — that is the
 misfire t139's disarm path exists to prevent (see `tasks/hint-injector/`
-JOURNAL). The tractable direction is making a late-arriving better winner
-replace an unread hint, which needs a read/unread signal the registry may not
-expose. Establish whether it does before designing around it.
+JOURNAL).
+
+The fix shipped in e9b1781: arming is Enter-only. The race the continuous
+design existed to beat was never real — session-manager folds the draft
+inline BEFORE `pty.write`, so the Enter byte has not reached the CLI when the
+POST is issued. One arm per submit means there is no second winner to go
+stale.
+
+Confirmed against the same log, across the 10:24:34Z restart onto the new
+build: 22 arms in 38s before, exactly one arm per submitted draft after. No
+read/unread signal from the registry was needed, so do not design around one.
 
 ### 2. Lexical scoring has no notion of aboutness
 

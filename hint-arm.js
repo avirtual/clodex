@@ -1,13 +1,14 @@
-// Automatic contextual hint arming: watch the draft the user is typing, rank the
-// agent's memory against it, and register the best match as a one-shot tail hint
-// so it is already in place when Enter is pressed.
+// Automatic contextual hint arming: accumulate the draft the user is typing,
+// and on Enter rank the agent's memory against it and register the best match as
+// a one-shot tail hint.
 //
-// WHY ARM WHILE TYPING RATHER THAN ON ENTER. The CLI builds and sends the
-// request within tens of milliseconds of the Enter keystroke, so a hint armed at
-// Enter loses a race it cannot see losing: it lands after the request has left
-// and pops on the NEXT turn, attached to the wrong question. Ranking is 0.14ms
-// in-process, so arming continuously as the draft grows removes the race instead
-// of managing it. Enter's pass is a correction, not the first attempt.
+// WHY ENTER AND NOT WHILE TYPING. Arming continuously looks like it beats a race
+// against the outgoing request, but session-manager folds the draft inline
+// BEFORE `pty.write`, so the Enter byte has not reached the CLI when the POST is
+// issued — there is no race to beat. What continuous arming did produce was up
+// to 22 POSTs in 38s, each overwriting the last on a fixed hint id; with
+// one-shot hints an early worse match can pop before the better final one
+// replaces it.
 //
 // ARMING MAY NEVER AFFECT THE KEYSTROKE. Every entry point here is fire and
 // forget: no caller awaits, a proxy failure is logged at debug and swallowed.
@@ -193,14 +194,6 @@ function createHintArm({
     // Called on every human keystroke with the session's accumulated draft, but
     // only Enter (`final`) arms. Mid-draft keystrokes exist to keep the timer
     // cancelled and the gate honoured, nothing more.
-    //
-    // Arming while typing was built to beat a race that does not exist:
-    // session-manager calls this inline BEFORE `pty.write`, so the Enter byte
-    // has not reached the CLI when the POST is issued. What continuous arming
-    // did produce was three POSTs in 2.4s on one draft, each overwriting the
-    // last on a fixed hint id — and because the hints are one-shot, an early
-    // worse match could pop before the final better one replaced it. Measured
-    // 2026-08-01; see tasks/dynamic-retrieval/SPEC.md.
     onDraft(key, draft, ctx = {}, { final = false, overflow = false } = {}) {
       cancelTimer(key);
       if (enabled && !enabled()) return;
