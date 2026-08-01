@@ -118,12 +118,29 @@ function createMemoryRetriever({ listUnits }) {
 }
 
 // Two shapes by size. A short record rides in full because reading it costs less
-// than the round trip to fetch it; a long one is offered by title so the model
-// spends the tokens only if it wants them.
+// than the round trip to fetch it; a long one is offered as a preview so the
+// model spends the rest of the tokens only if it wants them.
 const FULL_BODY_CAP = 700;
+
+// The preview has to be long enough to judge relevance from. At 180 chars it cut
+// mid-sentence and read as a stub, so the pitch lost to its own truncation and
+// no recall was worth spending. The proxy caps a single hint at 2500 chars, so
+// this stays well inside the budget even with several results.
+const PREVIEW_CAP = 900;
 
 // A line that is nothing but `key=value` pairs from the remember directive.
 const DIRECTIVE_LINE = /^(?:(?:scope|tags|tags_v|pinned|source|id|learned_at)=\S*\s*)+$/i;
+
+// Tags and scope are curated topic labels, and they carry relevance the excerpt
+// can miss — a unit whose preview reads off-topic may still be exactly right for
+// the tag it carries. Cheap to include, so always include them.
+function labelOf(r) {
+  const tags = String(r.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+  const bits = [];
+  if (r.scope) bits.push(`scope=${r.scope}`);
+  if (tags.length) bits.push(`tags=${tags.join(',')}`);
+  return bits.length ? `  [${bits.join(' ')}]` : '';
+}
 
 function compose(results) {
   if (!results || !results.length) return null;
@@ -132,17 +149,18 @@ function compose(results) {
     const b = String(r.text || '').trim();
     if (!b) continue;
     if (b.length <= FULL_BODY_CAP) {
-      parts.push(`\n${r.id}:\n${b}`);
+      parts.push(`\n${r.id}:${labelOf(r)}\n${b}`);
     } else {
       // A unit saved via `[agent:memory remember] scope=x tags=y pinned=true`
       // keeps that directive as its first line, so the naive first line pitches
       // the unit by its metadata and gives the model no reason to spend a
       // recall. Skip leading directive-only lines; fall back to the first line
       // if every line looks like one.
-      const title = (b.split('\n').find((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim()))
-        || b.split('\n')[0]).trim().slice(0, 180);
-      parts.push(`\n${r.id}: ${title}...`
-        + `\n(truncated — emit [agent:memory recall] ${r.id} on its own line to load it in full)`);
+      const prose = b.split('\n').filter((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim())).join('\n');
+      const preview = (prose || b).trim().slice(0, PREVIEW_CAP);
+      parts.push(`\n${r.id}:${labelOf(r)}\n${preview}...`
+        + `\n(truncated at ${preview.length} of ${b.length} chars — emit [agent:memory recall] `
+        + `${r.id} on its own line to load it in full)`);
     }
   }
   return parts.length > 1 ? parts.join('\n') : null;

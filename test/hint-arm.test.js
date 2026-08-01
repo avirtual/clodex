@@ -237,24 +237,29 @@ const DRAFT = 'how does the wirescope tail hint registry expire a slot';
 const CTX = { agent: 'a', base: 'http://127.0.0.1:1', route: 'clodex-a-deadbeef' };
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-test('arm: N keystrokes inside the debounce produce exactly one POST', async () => {
+test('arm: typing arms nothing — only Enter does', async () => {
   const h = mkArm();
   // Every prefix of the same draft, as the user would actually type it.
   for (let i = 1; i <= DRAFT.length; i++) h.arm.onDraft('s', DRAFT.slice(0, i), CTX);
   await settle();
-  assert.strictEqual(h.posts.length, 1,
-    `${DRAFT.length} keystrokes produced ${h.posts.length} POSTs — the debounce exists to bound POST `
-    + 'volume, and one per keystroke is the failure it prevents');
+  assert.strictEqual(h.posts.length, 0,
+    `${DRAFT.length} keystrokes produced ${h.posts.length} POSTs — mid-draft arming overwrites a `
+    + 'fixed hint id repeatedly, and one-shot semantics let an early worse match pop before the '
+    + 'final better one replaces it');
+  // The submitted draft is the only thing ranked, and it arms exactly once.
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'Enter arms the draft the user actually submitted');
 });
 
 test('arm: a draft that grows without changing the winner does not re-POST', async () => {
   const h = mkArm();
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'ENTER: the first draft must actually arm');
   // More words, same winner. The registered text is a function of the RESULT
   // SET, so nothing changed and nothing should be sent.
-  h.arm.onDraft('s', `${DRAFT} please tell me`, CTX);
+  h.arm.onDraft('s', `${DRAFT} please tell me`, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'the winner did not change, so no second POST');
 
@@ -277,7 +282,7 @@ test('arm: a draft that grows without changing the winner does not re-POST', asy
     clearHints: () => Promise.resolve({ status: 200 }),
     debounceMs: 5,
   });
-  inflight.onDraft('s', DRAFT, CTX);
+  inflight.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(posts.length, 1, 'ENTER: the debounced pass must have fired');
   // Enter, before the first POST has resolved. The cooldown cannot help here.
@@ -302,7 +307,7 @@ test('arm: a draft below the term floor never arms', async () => {
     1, 'ENTER: this draft DOES rank, so only the term floor can be what withholds it');
 
   const h = mkArm();
-  h.arm.onDraft('s', 'wirescope registry', CTX);
+  h.arm.onDraft('s', 'wirescope registry', CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0,
     'below the minimum term count a draft is not yet a question — two words rank against something, '
@@ -322,14 +327,14 @@ test('arm: the suppression matrix — FULL suppresses, TITLE and ABSENT do not, 
 
   // ABSENT — the ordinary case.
   let h = mkArm({ loadState: () => 'absent' });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'ABSENT must offer');
 
   // TITLE — an index line rode, so the model knows the unit exists and cannot
   // read it. This is the single best hint case, not a suppression case.
   h = mkArm({ loadState: () => 'title' });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1,
     'TITLE must NOT suppress: the model knows the unit exists and cannot read it, so suppressing '
@@ -338,14 +343,14 @@ test('arm: the suppression matrix — FULL suppresses, TITLE and ABSENT do not, 
 
   // FULL — the body is already in context; the hint would be a duplicate.
   h = mkArm({ loadState: () => 'full' });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0, 'FULL suppresses — the body is already there');
 
   // A lookup that THROWS resolves to ABSENT. The asymmetry is the whole design:
   // resolving an error toward FULL would silently withhold with no trace.
   h = mkArm({ loadState: () => { throw new Error('tracker exploded'); } });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1,
     'a loadState that THROWS must resolve to ABSENT and still offer — a false ABSENT costs a few '
@@ -353,7 +358,7 @@ test('arm: the suppression matrix — FULL suppresses, TITLE and ABSENT do not, 
 
   // A suppressed winner must not eat the slot a live runner-up could fill.
   h = mkArm({ loadState: (agent, id) => (id === winner(h) ? 'full' : 'absent') });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   if (h.posts.length) {
     assert.ok(!h.posts[0].text.includes(winner(h)),
@@ -363,21 +368,21 @@ test('arm: the suppression matrix — FULL suppresses, TITLE and ABSENT do not, 
 
 test('arm: the same unit is not re-offered inside the cooldown, and a compact ends it early', async () => {
   const h = mkArm();
-  h.arm.onDraft('s1', DRAFT, CTX);
+  h.arm.onDraft('s1', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'ENTER: the first offer must land');
 
   // A different session key, so the per-session "winner unchanged" memo cannot
   // be what suppresses this — the cooldown ledger has to be doing the work.
   h.tick(60_000);
-  h.arm.onDraft('s2', DRAFT, CTX);
+  h.arm.onDraft('s2', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'a second offer of the same unit inside 10min is suppressed');
 
   // Cleared/compacted context: whatever was offered is no longer in front of the
   // model, so the cooldown ends early — the "whichever comes first" half.
   h.arm.onContextReset('a');
-  h.arm.onDraft('s3', DRAFT, CTX);
+  h.arm.onDraft('s3', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 2,
     'after a context reset the unit must be offerable again — the offer it was suppressed against '
@@ -385,30 +390,30 @@ test('arm: the same unit is not re-offered inside the cooldown, and a compact en
 
   // And the window does expire on its own.
   const h2 = mkArm();
-  h2.arm.onDraft('s1', DRAFT, CTX);
+  h2.arm.onDraft('s1', DRAFT, CTX, { final: true });
   await settle();
   h2.tick(11 * 60 * 1000);
-  h2.arm.onDraft('s2', DRAFT, CTX);
+  h2.arm.onDraft('s2', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h2.posts.length, 2, 'past 10 minutes the same unit may be offered again');
 });
 
 test('arm: a failed POST does not burn the cooldown', async () => {
   const h = mkArm({ armStatus: 503 });
-  h.arm.onDraft('s1', DRAFT, CTX);
+  h.arm.onDraft('s1', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'ENTER: the POST must have been attempted');
   assert.strictEqual(h.arm._offered('a').size, 0,
     'the cooldown is recorded on a SUCCESSFUL post, not on the rank — a unit the proxy never '
     + 'accepted has not been offered, and burning its cooldown suppresses the retry');
-  h.arm.onDraft('s2', DRAFT, CTX);
+  h.arm.onDraft('s2', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 2, 'so the next draft retries it');
 });
 
 test('arm: an abandoned draft DELETES the registered hint', async () => {
   const h = mkArm();
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'ENTER: something must be armed before disarm means anything');
   h.arm.disarm('s', CTX);
@@ -426,7 +431,7 @@ test('arm: an abandoned draft DELETES the registered hint', async () => {
 test('arm: a proxy that throws synchronously is swallowed and does not poison the next attempt', async () => {
   const h = mkArm({ armThrows: true });
   await assert.doesNotReject(async () => {
-    h.arm.onDraft('s', DRAFT, CTX);
+    h.arm.onDraft('s', DRAFT, CTX, { final: true });
     await settle();
   }, 'an arm failure must never surface — the keystroke path is what matters');
   // The memo must not latch on a throw, or a transient proxy failure disables
@@ -436,7 +441,7 @@ test('arm: a proxy that throws synchronously is swallowed and does not poison th
 
 test('arm: with no proxy base nothing is attempted', async () => {
   const h = mkArm();
-  h.arm.onDraft('s', DRAFT, { agent: 'a', base: null, route: 'clodex-a-x' });
+  h.arm.onDraft('s', DRAFT, { agent: 'a', base: null, route: 'clodex-a-x' }, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0, 'no base, no POST');
 });
@@ -514,7 +519,7 @@ test('once: the stored record reads back once === true', async () => {
       debounceMs: 5,
     });
     const ctx = { agent: 'a', base, route: 'clodex-a-deadbeef' };
-    arm.onDraft('s', DRAFT, ctx);
+    arm.onDraft('s', DRAFT, ctx, { final: true });
     // The arm is fire-and-forget; wait for the POST to have actually landed
     // rather than asserting on a race.
     for (let i = 0; i < 100 && !stored.size; i++) await settle(10);
@@ -866,7 +871,7 @@ test('write: an arm that throws does not stop the keystroke', async () => {
 test('arm: the enabled gate suppresses the POST while off', async () => {
   let on = false;
   const h = mkArm({ enabled: () => on });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0, 'the checkbox was off and a hint was armed anyway');
 });
@@ -874,31 +879,59 @@ test('arm: the enabled gate suppresses the POST while off', async () => {
 test('arm: turning the gate on takes effect without reconstructing the arm', async () => {
   let on = false;
   const h = mkArm({ enabled: () => on });
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0);
   on = true;
-  h.arm.onDraft('s', `${DRAFT} today`, CTX);
+  h.arm.onDraft('s', `${DRAFT} today`, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1,
     'the gate was sampled at construction — a live checkbox would need an app restart to take effect');
 });
 
-test('arm: turning the gate off cancels an already-pending arm', async () => {
+test('arm: unchecking the box between typing and Enter suppresses that submit', async () => {
   let on = true;
   const h = mkArm({ enabled: () => on });
-  h.arm.onDraft('s', DRAFT, CTX);   // schedules the debounced fire
-  on = false;
-  h.arm.onDraft('s', `${DRAFT} x`, CTX);  // must cancel, not re-schedule
+  h.arm.onDraft('s', DRAFT, CTX);           // typing — arms nothing either way
+  on = false;                                // box unticked before submitting
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 0,
-    'unchecking mid-draft left a pending timer that fired after the feature was off');
+    'the gate is read at Enter, so a box unticked mid-draft must suppress that submit rather than '
+    + 'arm from a decision the user already reversed');
 });
 
 test('arm: an absent gate leaves the arm enabled', async () => {
   const h = mkArm();  // no `enabled` dep at all
-  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1,
     'omitting the gate must not silently disable arming — the null object is the off switch');
+});
+
+// The pitch has to be judgeable on its own. A 180-char cut read as a stub and
+// argued against spending the recall it was asking for.
+test('compose: a truncated unit is pitched with its labels and a substantial preview', () => {
+  const long = `${'x'.repeat(40)} SUBJECT LINE THAT MATTERS\n${'body '.repeat(600)}`;
+  const text = compose([{ id: 'mem-1-a', text: long, tags: 'security,hints', scope: 'clodex' }]);
+  assert.ok(text.includes('scope=clodex'), 'scope is a curated topic label and belongs in the pitch');
+  assert.ok(text.includes('tags=security,hints'),
+    'the tag can read as relevant even when the excerpt does not — it is the cheapest signal there is');
+  assert.ok(text.includes('SUBJECT LINE THAT MATTERS'), 'the preview must carry real prose');
+  // The preview spans lines, so measure the block between the label and the
+  // truncation notice rather than a single line.
+  const preview = text.split('...\n(truncated')[0].split(']\n')[1] || '';
+  assert.ok(preview.length > 500,
+    `preview was ${preview.length} chars — too short to judge relevance from, which is what made the `
+    + 'model ignore its own recall offer');
+  assert.ok(text.length <= 2500, 'the proxy caps a single hint at 2500 chars');
+  assert.ok(/truncated at \d+ of \d+ chars/.test(text),
+    'naming both sizes tells the model how much it is NOT seeing, which is the recall decision');
+});
+
+test('compose: a short unit rides in full and still carries its labels', () => {
+  const text = compose([{ id: 'mem-2-b', text: 'a short durable fact', tags: 'method', scope: '' }]);
+  assert.ok(text.includes('tags=method'));
+  assert.ok(text.includes('a short durable fact'));
+  assert.ok(!text.includes('truncated'), 'a short body is not truncated');
 });

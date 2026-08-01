@@ -19,10 +19,6 @@ const { draftChunkSignal } = require('./proxy-util');
 // growing, which makes the overflow state sticky until the draft is reset.
 const DRAFT_CAP = 4096;
 
-// Bounds POST volume, not compute. The embed tier (16ms warm, measured) fits
-// inside this same window unchanged, which is why the number is where it is.
-const DEBOUNCE_MS = 120;
-
 // Below this many content-bearing terms a draft is not yet a question, and
 // whatever it ranks against is noise.
 const MIN_TERMS = 3;
@@ -108,7 +104,7 @@ function createHintArm({
   // Read per call, never captured: the setting is a live checkbox, so a value
   // sampled at construction would need an app restart to take effect.
   enabled = null,
-  debounceMs = DEBOUNCE_MS, cooldownMs = COOLDOWN_MS, minTerms = MIN_TERMS,
+  cooldownMs = COOLDOWN_MS, minTerms = MIN_TERMS,
 } = {}) {
   // agent -> Map(unit id -> offered-at ms). Deliberately NOT shared with
   // memory-load's live set: "already in context" and "already offered" are
@@ -140,6 +136,8 @@ function createHintArm({
     return armed.get(key);
   };
 
+  // No timer remains (arming is Enter-only), but the state map still holds the
+  // winner memo per session, so the reset points below stay meaningful.
   const cancelTimer = (key) => {
     const st = armed.get(key);
     if (st && st.timer) { clearTimeout(st.timer); st.timer = null; }
@@ -192,20 +190,24 @@ function createHintArm({
   }
 
   return {
-    // Called on every human keystroke with the session's accumulated draft.
-    // `final` (Enter) skips the debounce — the draft will not grow again.
+    // Called on every human keystroke with the session's accumulated draft, but
+    // only Enter (`final`) arms. Mid-draft keystrokes exist to keep the timer
+    // cancelled and the gate honoured, nothing more.
+    //
+    // Arming while typing was built to beat a race that does not exist:
+    // session-manager calls this inline BEFORE `pty.write`, so the Enter byte
+    // has not reached the CLI when the POST is issued. What continuous arming
+    // did produce was three POSTs in 2.4s on one draft, each overwriting the
+    // last on a fixed hint id — and because the hints are one-shot, an early
+    // worse match could pop before the final better one replaced it. Measured
+    // 2026-08-01; see tasks/dynamic-retrieval/SPEC.md.
     onDraft(key, draft, ctx = {}, { final = false, overflow = false } = {}) {
       cancelTimer(key);
-      // Gate AFTER cancelTimer: unchecking mid-draft must kill a pending arm,
-      // not leave it queued to fire once the box is off.
       if (enabled && !enabled()) return;
+      if (!final) return;
       if (overflow) return;
       if (countTerms(draft, terms) < minTerms) return;
-      if (final) { fire(key, draft, ctx); return; }
-      const st = stateFor(key);
-      st.timer = setTimeout(() => { st.timer = null; fire(key, draft, ctx); }, debounceMs);
-      // A pending arm must never be the reason the process stays alive.
-      if (st.timer.unref) st.timer.unref();
+      fire(key, draft, ctx);
     },
 
     // The draft was abandoned (Ctrl-C / Ctrl-U) or submitted. On abandon the
@@ -249,5 +251,5 @@ function createHintArm({
 
 module.exports = {
   foldDraft, createHintArm,
-  DRAFT_CAP, DEBOUNCE_MS, MIN_TERMS, COOLDOWN_MS, HINT_ID, TTL_S,
+  DRAFT_CAP, MIN_TERMS, COOLDOWN_MS, HINT_ID, TTL_S,
 };
