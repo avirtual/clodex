@@ -84,12 +84,34 @@ function keyOf(rec) {
   return `${rec.id}:${h.digest('hex').slice(0, 12)}`;
 }
 
+// A document longer than the model's context makes the request FAIL, not
+// degrade — measured against the real basket, where 7 of 13,926 records came
+// back null while the corpus median is 664 chars. Dropping them is a silent
+// hole in the index, so they are truncated instead.
+//
+// NO CHARACTER CAP IS CORRECT FOR BOTH KINDS OF TEXT, which is why the retry
+// below exists rather than a bigger constant. The limit is 8192 TOKENS, and
+// tokenization varies by a factor of ~2.5 with content: prose runs ~4 chars per
+// token, while the CLI transcripts and JSON that fill long operator messages run
+// ~1.6. Measured: a 6,114-char record failed where 8,000-char prose succeeded,
+// and its largest embeddable prefix was 5,010.
+const MAX_DOC_CHARS = 8000;
+
+// Successive halvings on failure. Four steps reach 1,000 chars, below the
+// worst measured tokenization for any record in the corpus.
+const TRUNCATE_RETRIES = 4;
+
 function docTextOf(rec) {
   // Tags and scope lead the document text so a unit's curated topic labels are
   // inside the embedded span. They are the shortest statement of what a unit is
-  // about, and the body often never says it outright.
+  // about, and the body often never says it outright. They also lead so that
+  // truncation eats the BODY's tail rather than the labels.
   const label = [rec.scope || '', rec.tags || ''].filter(Boolean).join(' ');
-  return `${DOC_PREFIX}${label}\n${rec.text || ''}`;
+  const body = String(rec.text || '');
+  const head = `${DOC_PREFIX}${label}\n`;
+  return body.length > MAX_DOC_CHARS
+    ? head + body.slice(0, MAX_DOC_CHARS)
+    : head + body;
 }
 
 // `fetch` is injected so the tests never depend on a daemon being installed, and
@@ -123,9 +145,28 @@ function createEmbedder({
     }
   }
 
+  // Halve and retry rather than give up: a null here is a permanent hole in the
+  // index, and an over-long document is the ONE failure mode a shorter prompt
+  // actually fixes. A down daemon fails identically at every length, so this
+  // costs at most TRUNCATE_RETRIES extra requests on a record that was never
+  // going to work — bounded, and only on the ingestion path.
+  async function embedDoc(rec) {
+    let text = docTextOf(rec);
+    for (let i = 0; i <= TRUNCATE_RETRIES; i++) {
+      const v = await embed(text, DOC_TIMEOUT_MS);
+      if (v) return v;
+      // The task prefix has to survive every truncation — a document embedded
+      // without it lands in the wrong space, which is worse than a short one.
+      const body = text.slice(DOC_PREFIX.length);
+      if (body.length <= 500) return null;
+      text = DOC_PREFIX + body.slice(0, Math.floor(body.length / 2));
+    }
+    return null;
+  }
+
   return {
     embedQuery: (text) => embed(`${QUERY_PREFIX}${text}`, QUERY_TIMEOUT_MS),
-    embedDoc: (rec) => embed(docTextOf(rec), DOC_TIMEOUT_MS),
+    embedDoc,
   };
 }
 
@@ -273,5 +314,5 @@ module.exports = {
   createEmbedder, createVectorCache, createSemanticRanker,
   cosine, keyOf, docTextOf,
   DOC_PREFIX, QUERY_PREFIX, DEFAULT_MODEL, DEFAULT_BASE,
-  QUERY_TIMEOUT_MS, DOC_TIMEOUT_MS, BACKFILL_BATCH,
+  QUERY_TIMEOUT_MS, DOC_TIMEOUT_MS, BACKFILL_BATCH, MAX_DOC_CHARS,
 };
