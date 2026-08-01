@@ -210,7 +210,7 @@ test('compose: a long body is offered by title with a recall pointer, a short on
 
 // --- the arm: debounce, suppression, cooldown ------------------------------
 
-function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false } = {}) {
+function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false, enabled = null } = {}) {
   const { store } = mkStore(CORPUS);
   const posts = [];
   const clears = [];
@@ -228,6 +228,7 @@ function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false 
     clearHints: (p) => { clears.push(p); return Promise.resolve({ status: 200 }); },
     now: () => clock,
     debounceMs: 5,
+    ...(enabled ? { enabled } : {}),
   });
   return { arm: a, posts, clears, store, tick: (ms) => { clock += ms; } };
 }
@@ -857,4 +858,47 @@ test('write: an arm that throws does not stop the keystroke', async () => {
       'a hint is worth nothing next to the user\'s byte reaching the PTY — every arm call site is '
       + 'inside a catch for exactly this');
   } finally { h.stop('a'); }
+});
+
+// The setting is a Preferences checkbox, not an env var read at construction:
+// these pin that the gate is consulted per call, so toggling it takes effect on
+// the next keystroke rather than the next launch.
+test('arm: the enabled gate suppresses the POST while off', async () => {
+  let on = false;
+  const h = mkArm({ enabled: () => on });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 0, 'the checkbox was off and a hint was armed anyway');
+});
+
+test('arm: turning the gate on takes effect without reconstructing the arm', async () => {
+  let on = false;
+  const h = mkArm({ enabled: () => on });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 0);
+  on = true;
+  h.arm.onDraft('s', `${DRAFT} today`, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1,
+    'the gate was sampled at construction — a live checkbox would need an app restart to take effect');
+});
+
+test('arm: turning the gate off cancels an already-pending arm', async () => {
+  let on = true;
+  const h = mkArm({ enabled: () => on });
+  h.arm.onDraft('s', DRAFT, CTX);   // schedules the debounced fire
+  on = false;
+  h.arm.onDraft('s', `${DRAFT} x`, CTX);  // must cancel, not re-schedule
+  await settle();
+  assert.strictEqual(h.posts.length, 0,
+    'unchecking mid-draft left a pending timer that fired after the feature was off');
+});
+
+test('arm: an absent gate leaves the arm enabled', async () => {
+  const h = mkArm();  // no `enabled` dep at all
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1,
+    'omitting the gate must not silently disable arming — the null object is the off switch');
 });

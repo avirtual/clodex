@@ -105,6 +105,9 @@ function createHintArm({
   // every dep above would stop counting as defined here and the scan would
   // report them as leaks from main.js scope.
   log = null, now = Date.now,
+  // Read per call, never captured: the setting is a live checkbox, so a value
+  // sampled at construction would need an app restart to take effect.
+  enabled = null,
   debounceMs = DEBOUNCE_MS, cooldownMs = COOLDOWN_MS, minTerms = MIN_TERMS,
 } = {}) {
   // agent -> Map(unit id -> offered-at ms). Deliberately NOT shared with
@@ -193,6 +196,9 @@ function createHintArm({
     // `final` (Enter) skips the debounce — the draft will not grow again.
     onDraft(key, draft, ctx = {}, { final = false, overflow = false } = {}) {
       cancelTimer(key);
+      // Gate AFTER cancelTimer: unchecking mid-draft must kill a pending arm,
+      // not leave it queued to fire once the box is off.
+      if (enabled && !enabled()) return;
       if (overflow) return;
       if (countTerms(draft, terms) < minTerms) return;
       if (final) { fire(key, draft, ctx); return; }

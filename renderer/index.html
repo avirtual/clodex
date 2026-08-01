@@ -854,6 +854,12 @@
           <input type="checkbox" id="prefs-compact-on-resume" style="margin: 0;">
           <span>Bake transcripts on resume</span>
         </label>
+        <p class="hint-text" style="margin: 14px 0 2px;">Contextual memory hints</p>
+        <p class="hint-text">As you type, match the draft against the agent's own memories and attach the best match to the turn as an ephemeral hint the agent may ignore. Units already in the agent's context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
+          <span>Arm contextual hints from memory</span>
+        </label>
         <div id="ws-logs-block" style="display: none;">
           <p class="hint-text" style="margin: 14px 0 2px;">Capture logs</p>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>

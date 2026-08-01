@@ -311,13 +311,13 @@ const memoryStore = createMemoryStore(MEMORY_DIR);
 const { createMemoryLoad } = require('./memory-load');
 const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library', 'memory-loadlog') });
 
-// Automatic contextual hint arming — OFF unless CLODEX_HINT_ARM=1. Absent the
-// flag session-manager gets no arm at all, so the whole path (rank, POST,
-// cooldown) is unreachable rather than merely inert.
-const HINT_ARM_ENABLED = process.env.CLODEX_HINT_ARM === '1';
+// Automatic contextual hint arming — off by default, toggled by the Preferences
+// checkbox. `enabled` is a getter rather than a construction-time value so the
+// checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
 const { createMemoryRetriever, compose: composeHint, terms: hintTerms } = require('./hint-retrieve');
-const hintArm = HINT_ARM_ENABLED ? createHintArm({
+const hintArm = createHintArm({
+  enabled: () => !!uiSettings.get().contextHints,
   retriever: createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
   compose: composeHint,
   terms: hintTerms,
@@ -326,7 +326,7 @@ const hintArm = HINT_ARM_ENABLED ? createHintArm({
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
   clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
   log,
-}) : null;
+});
 
 
 

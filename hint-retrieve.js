@@ -122,6 +122,9 @@ function createMemoryRetriever({ listUnits }) {
 // spends the tokens only if it wants them.
 const FULL_BODY_CAP = 700;
 
+// A line that is nothing but `key=value` pairs from the remember directive.
+const DIRECTIVE_LINE = /^(?:(?:scope|tags|tags_v|pinned|source|id|learned_at)=\S*\s*)+$/i;
+
 function compose(results) {
   if (!results || !results.length) return null;
   const parts = ['This may relate to what the user is asking. If it does not, ignore it.'];
@@ -131,7 +134,13 @@ function compose(results) {
     if (b.length <= FULL_BODY_CAP) {
       parts.push(`\n${r.id}:\n${b}`);
     } else {
-      const title = b.split('\n')[0].slice(0, 180);
+      // A unit saved via `[agent:memory remember] scope=x tags=y pinned=true`
+      // keeps that directive as its first line, so the naive first line pitches
+      // the unit by its metadata and gives the model no reason to spend a
+      // recall. Skip leading directive-only lines; fall back to the first line
+      // if every line looks like one.
+      const title = (b.split('\n').find((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim()))
+        || b.split('\n')[0]).trim().slice(0, 180);
       parts.push(`\n${r.id}: ${title}...`
         + `\n(truncated — emit [agent:memory recall] ${r.id} on its own line to load it in full)`);
     }

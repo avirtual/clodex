@@ -654,6 +654,7 @@ function registerIpcHandlers(deps) {
       wirescopePort: s.wirescopePort,
       disableClaudeDesignMcp: s.disableClaudeDesignMcp,
       compactOnResume: s.compactOnResume,
+      contextHints: s.contextHints,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       sidebarWidth: s.sidebarWidth,
