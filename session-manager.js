@@ -2621,9 +2621,21 @@ function createSessionManager(deps) {
       }
 
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
+      // ${TEAM_ROOT} is what makes an exec def PORTABLE ACROSS TEAMS. A def that
+      // hardcodes an absolute project path runs that project's script for every
+      // team that holds the grant — a second team asking for its own test digest
+      // silently got THIS repo's, which is worse than a missing command because
+      // the green result looks like its own. Resolved per CALLING SESSION, so one
+      // def serves every team. Empty when the seat's cwd is in no team's root:
+      // substituting a wrong root would reintroduce exactly the bug, so a def
+      // using the token fails loudly instead (spawn ENOENT on a relative path).
+      const teamRoot = (() => {
+        try { return resolveTeam(session.cwd)?.root || ''; } catch { return ''; }
+      })();
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
-        .split('${CLODEX_HOME}').join(REGISTRY_DIR);
+        .split('${CLODEX_HOME}').join(REGISTRY_DIR)
+        .split('${TEAM_ROOT}').join(teamRoot);
       const argv = entry.argv.map(expandVars);
       const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());
       const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
