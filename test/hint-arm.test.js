@@ -31,7 +31,7 @@ const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
 } = require('../hint-arm');
 const {
-  rank, compose, terms, createMemoryRetriever, minScoreFor, confidenceOf, MIN_HITS,
+  rank, compose, terms, createMemoryRetriever, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
 } = require('../hint-retrieve');
 const { ProxyClient } = require('../wirescope-proxy');
 const { createMemoryStore } = require('../memory-store');
@@ -172,6 +172,60 @@ test('rank: one lucky rare term does not arm, several matching terms do', () => 
   assert.strictEqual(many[0].id, ids[0], 'and the winner is the unit those terms came from');
   assert.ok(many[0].evidence.hits.length >= MIN_HITS, 'the winner cleared the hit floor');
   assert.ok(many[0].evidence.score >= many[0].evidence.floor, 'and the score floor');
+});
+
+// The floor cannot see query length: a long draft accumulates matched weight for
+// free and clears it on volume. Every stray hint observed in production on
+// 2026-08-01 was a long message. Coverage is scale-free — the winner's score
+// over the most any record COULD have scored on this query.
+test('rank: padding a draft with unrelated words must not manufacture a match', () => {
+  const { store, ids } = mkStore(CORPUS);
+  const recs = require('../hint-retrieve').unitsAsRecords(store.list('a'));
+
+  const real = rank(recs, 'how does the wirescope tail hint registry expire a slot', { limit: 1 });
+  assert.strictEqual(real.length, 1, 'the honest draft must still arm');
+  assert.strictEqual(real[0].id, ids[0]);
+  assert.ok(real[0].evidence.coverage >= MIN_COVERAGE,
+    `a draft that is mostly ABOUT the winner must cover it: ${real[0].evidence.coverage}`);
+
+  // The same two matching terms, buried in a message about something else. The
+  // absolute score is IDENTICAL — only the denominator moved — so a test that
+  // asserted on score alone could not tell these two cases apart.
+  const padded = rank(recs, 'i was reading about ad-hoc signing in afterpack while '
+    + 'planning dinner reservations downtown for saturday evening with the whole family '
+    + 'and wondering whether the restaurant takes bookings by telephone', { limit: 1 });
+  assert.deepStrictEqual(padded, [],
+    'a couple of matching terms adrift in an unrelated message must not arm — this is the '
+    + 'stray-hint shape measured in production, where every false arm came from a long draft');
+});
+
+test('rank: coverage reaches 1.0 for a draft made only of the winner terms', () => {
+  const { store } = mkStore(CORPUS);
+  const recs = require('../hint-retrieve').unitsAsRecords(store.list('a'));
+  // selfScore and score must apply the SAME discrimination cut. If the
+  // denominator counts terms the numerator discards, a perfect match tops out
+  // below 1.0 and every threshold derived from coverage silently shifts.
+  const r = rank(recs, 'wirescope tail hint registry slot expires ttl', { limit: 1 });
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].evidence.coverage.toFixed(2), '1.00',
+    'a draft whose every discriminating term is in the winner must cover it fully — a lower '
+    + 'number means the two cuts have drifted apart');
+});
+
+test('rank: coverage rejects on the ratio, not on the absolute score', () => {
+  const { store } = mkStore(CORPUS);
+  const recs = require('../hint-retrieve').unitsAsRecords(store.list('a'));
+  const core = 'ad-hoc signing afterpack';
+  const bare = rank(recs, core, { limit: 1 });
+  assert.strictEqual(bare.length, 1, 'the bare terms arm on their own');
+
+  // Pad until it fails, then prove WHY: the winner's raw score never dropped.
+  const padded = rank(recs, `${core} dinner reservations downtown saturday evening telephone `
+    + 'bicycle brake pads portuguese translation nephew birthday', { limit: 1 });
+  assert.deepStrictEqual(padded, [], 'the same terms in a long unrelated draft do not arm');
+  assert.ok(bare[0].evidence.score >= bare[0].evidence.floor,
+    'and the score that WOULD have armed still clears the old floor — the floor did not reject '
+    + 'this, coverage did, which is why both cuts have to exist');
 });
 
 test('rank: confidence is a documented 0-1 band, floor maps to 0.5', () => {

@@ -42,9 +42,12 @@ function score(queryTerms, rec, df, total) {
   for (const q of new Set(queryTerms)) {
     if (!body.has(q)) continue;
     const n = df.get(q) || 1;
-    const w = Math.log(1 + total / n);
-    if (w < 0.35) continue; // present in most records — no discrimination
-    s += w;
+    // No "too common to matter" cut here, and adding one back needs a different
+    // weight function to mean anything: log(1 + total/df) bottoms out at log(2)
+    // = 0.693 for a term in EVERY record, so any threshold below that is
+    // unreachable by construction. A term that common still cannot arm on its
+    // own — MIN_HITS and the floor stop it.
+    s += Math.log(1 + total / n);
     hits.push(q);
   }
   return { score: s, hits };
@@ -66,6 +69,37 @@ function score(queryTerms, rec, df, total) {
 const MIN_HITS = 2;
 function minScoreFor(total) { return Math.log(1 + Math.max(1, total)); }
 
+// AN ABSOLUTE FLOOR CANNOT SEE QUERY LENGTH, AND THAT IS THE SECOND HALF OF THE
+// PRECISION PROBLEM. A long draft accumulates matched weight for free: every
+// stray hint observed in production on 2026-08-01 came from a long message
+// whose winner cleared the floor on volume alone. Measured over the live store,
+// absolute score does NOT separate them (a good short draft scored 13.40, a
+// stray 10.20, an unrelated draft 7.42 — all clear of a 5.2 floor).
+//
+// Coverage does: the winner's score as a fraction of the total weight the query
+// could possibly match. It asks "how much of what you said does this record
+// actually account for", which is scale-free in query length.
+//
+//   related drafts (7):    42% .. 100%
+//   unrelated drafts (9):  19% ..  32%   (4 of them arm nothing at all)
+//
+// 0.35 sits in the gap with margin on both sides. Small sample by construction
+// — it is 16 drafts against one agent's store, not a benchmark — so treat the
+// number as re-derivable, and re-measure it before trusting it on a store with
+// a different shape.
+const MIN_COVERAGE = 0.35;
+
+// The most any record could score against this query. MUST WEIGH TERMS EXACTLY
+// AS `score` DOES — it is the denominator of that numerator, and any divergence
+// makes a perfect match land somewhere other than 1.0, silently shifting every
+// threshold derived from coverage. Zero when a draft is all stop words, which is
+// why callers guard the division.
+function selfScore(queryTerms, df, total) {
+  let s = 0;
+  for (const q of new Set(queryTerms)) s += Math.log(1 + total / (df.get(q) || 1));
+  return s;
+}
+
 // Lexical IDF has no upper bound, so normalising needs a saturation point
 // rather than a max: the floor maps to 0.5 and twice the floor to 1.0. The band
 // is 0-1 for every retriever; the mapping onto it is each retriever's own.
@@ -84,16 +118,27 @@ function rank(records, draft, { exclude = new Set(), limit = 1 } = {}) {
   // df is built over the WHOLE corpus, then candidates are excluded — a term's
   // rarity is a property of the store, not of who is still in the running.
   const floor = minScoreFor(records.length);
+  const self = selfScore(q, df, records.length);
   return records
     .filter((r) => !exclude.has(r.id))
     .map((r) => ({ rec: r, ...score(q, r, df, records.length) }))
-    .filter((r) => r.hits.length >= MIN_HITS && r.score >= floor)
+    // Both cuts are needed and neither subsumes the other: the floor rejects a
+    // weak match on a short draft, coverage rejects a weak match that a long
+    // draft inflated past the floor.
+    .filter((r) => r.hits.length >= MIN_HITS && r.score >= floor
+      && (self > 0 ? r.score / self : 0) >= MIN_COVERAGE)
     .sort((a, b) => (b.score - a.score) || String(a.rec.id).localeCompare(String(b.rec.id)))
     .slice(0, limit)
     .map((r) => ({
       ...r.rec,
       confidence: confidenceOf(r.score, floor),
-      evidence: { score: r.score, hits: r.hits, corpus: records.length, floor },
+      evidence: {
+        score: r.score,
+        hits: r.hits,
+        corpus: records.length,
+        floor,
+        coverage: self > 0 ? r.score / self : 0,
+      },
     }));
 }
 
@@ -174,5 +219,5 @@ function compose(results) {
 
 module.exports = {
   terms, haystack, rank, compose, unitsAsRecords, createMemoryRetriever,
-  minScoreFor, confidenceOf, MIN_HITS, FULL_BODY_CAP, STOP,
+  minScoreFor, confidenceOf, selfScore, MIN_HITS, MIN_COVERAGE, FULL_BODY_CAP, STOP,
 };

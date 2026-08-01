@@ -89,7 +89,8 @@ function whyOf(r) {
   const ev = (r && r.evidence) || {};
   const hits = Array.isArray(ev.hits) ? ev.hits.join(',') : '';
   const s = typeof ev.score === 'number' ? ev.score.toFixed(2) : '?';
-  return `${r.id} on=${hits || '?'} score=${s}`;
+  const c = typeof ev.coverage === 'number' ? ` cov=${(ev.coverage * 100).toFixed(0)}%` : '';
+  return `${r.id} on=${hits || '?'} score=${s}${c}`;
 }
 
 function countTerms(draft, terms) {
