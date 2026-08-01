@@ -109,6 +109,37 @@ semantic tier is the gate, not a refinement. Acceptance fixture for it:
 rank the env-vars ruling above all five records that currently tie at
 100% on "do we touch user project files".
 
+## Storage for continuous ingestion (2026-08-01)
+
+The basket is not a fixed corpus — it grew 13,926 records over 127 days and
+takes ~97/day. The vector store therefore has to make APPENDS cheap, not
+just reads. Measured at 13,926 records x 768 dims:
+
+| | size | write all | append one | load |
+|---|---|---|---|---|
+| json blob (hint-embed.js's cache) | 212MB | 594ms | **1114ms** | - |
+| binary float32 (`vector-store.js`) | 43MB | 223ms | **0ms** | 4ms |
+
+Appending to the JSON blob costs 1.1s because the whole file is parsed,
+mutated and re-serialised. That is the operation the basket does every day,
+so it is the one that had to be cheap.
+
+int8 quantization was measured and REJECTED: it would cut 43MB to 11MB with
+negligible self-similarity error (1.07e-4), but over 50 sample queries it
+reordered the top-5 on 4 of them. A store that changes the answer to save
+disk is a different store, not a cheaper one.
+
+`vector-store.js` is append-only: a changed record gets a NEW row and the
+sidecar repoints, so the old row becomes garbage that `compact()` collects.
+That is what keeps an append O(1) and a crash mid-write survivable — a torn
+tail is discarded on load rather than read as a plausible direction built
+from whatever bytes landed.
+
+`scripts/embed-basket.js` is resumable by construction (every record already
+in the store is skipped, sidecar flushed every 200), because the first pass
+is ~4 minutes and a job that restarts from zero never finishes on a laptop.
+Re-running after a day of new messages embeds only the delta: ~2 seconds.
+
 ## Confinement is not hypothetical
 
 153 distinct `cwd` values; 651 records touch crypto/trader/stocks, including

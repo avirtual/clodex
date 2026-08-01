@@ -80,6 +80,10 @@ const SCANNED_MODULES = [
   // the no-daemon path is testable without one installed; hint-arm.js holds it
   // as an optional dep and must keep working with it absent.
   'hint-embed.js',
+  // The append-only vector store behind continuous ingestion. A pure leaf over
+  // node:fs with its fs seams injected, so it stays testable without a daemon
+  // and without a real corpus.
+  'vector-store.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',
