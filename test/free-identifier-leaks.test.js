@@ -65,6 +65,12 @@ const SCANNED_MODULES = [
   // object — so the forward scan says something real: a name it reached for in
   // session-manager's scope instead of taking by injection would show up here.
   'ipc-prompt-cache.js',
+  // Contextual hint arming (t139). hint-arm.js takes its retriever, composer,
+  // load lookup and proxy calls by injection, and session-manager reaches for
+  // none of its internals — the reverse scan is what keeps the retriever seam
+  // real, since a second retriever must slot in without hint-arm.js changing.
+  'hint-arm.js',
+  'hint-retrieve.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',

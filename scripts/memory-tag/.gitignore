@@ -1,0 +1,5 @@
+corpus.*.md
+vocab-proposal.*.md
+proposal.*.log
+tags.*.txt
+buckets.*/

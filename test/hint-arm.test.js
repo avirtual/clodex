@@ -1,0 +1,860 @@
+// Run: node --test
+// t139 — automatic contextual hint arming: accumulate the user's draft, rank the
+// agent's memory against it, and register the winner as a ONE-SHOT tail hint
+// before Enter is pressed.
+//
+// TWO ASYMMETRIES DRIVE EVERY CASE BELOW.
+//
+// (1) Suppression. A false ABSENT costs a few hundred redundant tail tokens; a
+// false FULL silently withholds something the model needed and leaves no trace
+// in any log. So TITLE is asserted to NOT suppress (the model knows the unit
+// exists and cannot read it — the single best hint case), and a loadState that
+// THROWS is asserted to still offer.
+//
+// (2) The keystroke. A hint is worth nothing next to the user's byte reaching
+// the PTY, so the proxy-down case asserts delivery, not just absence of throw.
+//
+// THE `once` TRAP, which the ticket calls out and which cost the lead hours: the
+// server accepts unknown keys, drops them silently and returns 200 — posting
+// `pop:true` registers a STANDING hint whose logs read exactly like a pop. A 200
+// and a registry echo are NOT evidence. The one-shot case here runs a real HTTP
+// server that stores what it was actually sent and reads `once` back off the
+// stored record.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+
+const {
+  foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
+} = require('../hint-arm');
+const {
+  rank, compose, terms, createMemoryRetriever, minScoreFor, confidenceOf, MIN_HITS,
+} = require('../hint-retrieve');
+const { ProxyClient } = require('../wirescope-proxy');
+const { createMemoryStore } = require('../memory-store');
+const { createMemoryLoad } = require('../memory-load');
+const { createSessionManager } = require('../session-manager');
+const { pathFor, runDirFor } = require('../clodex-paths');
+
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+// --- draft accumulation ----------------------------------------------------
+
+test('fold: printable bytes accumulate and backspace truncates', () => {
+  let d = '';
+  for (const c of 'wirescope') d = foldDraft(d, c).draft;
+  assert.strictEqual(d, 'wirescope');
+  d = foldDraft(d, '\x7f').draft;
+  assert.strictEqual(d, 'wirescop', 'DEL truncates by one');
+  d = foldDraft(d, '\b\b').draft;
+  assert.strictEqual(d, 'wiresc', 'backspace truncates too, once per byte');
+  // Backspacing past the start must not produce a negative-length artefact.
+  d = foldDraft('ab', '\x7f\x7f\x7f\x7f').draft;
+  assert.strictEqual(d, '', 'over-backspacing empties rather than underflowing');
+});
+
+test('fold: a bracketed paste accumulates and its interior \\r does NOT close', () => {
+  const r = foldDraft('', `${PASTE_START}alpha beta\rgamma delta${PASTE_END}`);
+  // The \r is KEPT as a literal pasted byte, not swallowed: dropping it would
+  // fuse "beta" and "gamma" into `betagamma`, a token the user never typed and
+  // that the ranker would then treat as a rare, highly-weighted term.
+  assert.strictEqual(r.draft, 'alpha beta\rgamma delta',
+    'every pasted byte accumulates, interior \\r included — treating it as Enter would arm off half '
+    + 'a paste and reset the accumulator mid-paste');
+  assert.deepStrictEqual(terms(r.draft), ['alpha', 'beta', 'gamma', 'delta'],
+    'the tokenizer must see four words, not a fabricated compound');
+  assert.strictEqual(r.closes, false,
+    'the CLI treats an interior \\r as literal — a paste does not submit, so treating it as Enter '
+    + 'would arm off half a draft and reset the accumulator mid-paste');
+  assert.strictEqual(r.inPaste, false, 'the region closed');
+  // node-pty splits large pastes across reads, so the region must survive a
+  // chunk boundary — a paste that "ends" at the boundary would let the next
+  // chunk's \r submit.
+  const a = foldDraft('', `${PASTE_START}first half\r`);
+  assert.strictEqual(a.inPaste, true, 'an unterminated region stays open across chunks');
+  assert.strictEqual(a.closes, false);
+  const b = foldDraft(a.draft, `second half\r${PASTE_END}`, a.inPaste);
+  assert.strictEqual(b.draft, 'first half\rsecond half\r');
+  assert.strictEqual(b.closes, false, 'still inside the region on the second chunk');
+});
+
+test('fold: Ctrl-C and Ctrl-U clear the draft and report `cleared`, not `closes`', () => {
+  for (const key of ['\x03', '\x15']) {
+    const r = foldDraft('half a question', key);
+    assert.strictEqual(r.draft, '', `${JSON.stringify(key)} empties the accumulator`);
+    assert.strictEqual(r.cleared, true, `${JSON.stringify(key)} must report cleared`);
+    assert.strictEqual(r.closes, false,
+      'abandon and submit are DIFFERENT outcomes even though draftChunkSignal reports \\x03 as a '
+      + 'close: a submit does a final arm pass, an abandon must DELETE the armed hint. Conflating '
+      + 'them arms a hint off a draft the user threw away, which then pops on whatever they type next');
+  }
+  // \x03 inside a paste region is a literal pasted byte, not an abort.
+  const p = foldDraft('', `${PASTE_START}a\x03b${PASTE_END}`);
+  assert.strictEqual(p.cleared, false, 'a pasted \\x03 must not clear the draft');
+  assert.strictEqual(p.draft, 'a\x03b');
+});
+
+test('fold: Enter closes and the draft survives the call for a final pass', () => {
+  const r = foldDraft('why did the mutant escape', '\r');
+  assert.strictEqual(r.closes, true);
+  assert.strictEqual(r.cleared, false);
+  assert.strictEqual(r.draft, 'why did the mutant escape',
+    'the reset is the CALLER\'s job, after the final arm — clearing here would rank an empty draft');
+});
+
+test('fold: the 4KB cap stops accumulation and reports overflow', () => {
+  const r = foldDraft('', 'x'.repeat(DRAFT_CAP + 500));
+  assert.strictEqual(r.draft.length, DRAFT_CAP, 'accumulation stops at the cap');
+  assert.strictEqual(r.overflow, true, 'and says so — a pasted wall of text is not a question');
+  // Sticky: still overflowed on the next keystroke, so the arm stays off until
+  // the draft is reset rather than flapping.
+  const next = foldDraft(r.draft, 'y');
+  assert.strictEqual(next.overflow, true, 'overflow persists while the draft is still at the cap');
+  assert.strictEqual(next.draft.length, DRAFT_CAP, 'and nothing more is appended');
+});
+
+test('fold: a CSI escape sequence is dropped, not folded in as content', () => {
+  // Arrow keys arrive as ESC [ A. Without a CSI skip the '[' and 'A' land in the
+  // draft as text and poison the ranking with letters the user never typed.
+  const r = foldDraft('memory', '\x1b[A\x1b[D\x1b[3~');
+  assert.strictEqual(r.draft, 'memory', 'no escape-sequence bytes reached the draft');
+  assert.strictEqual(r.closes, false);
+});
+
+// --- ranking ---------------------------------------------------------------
+
+function mkStore(units) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-hintarm-'));
+  const store = createMemoryStore(path.join(root, 'library', 'memory'));
+  const ids = units.map((u) => store.remember('a', { text: u.text, scope: u.scope || '' }).id);
+  return { root, store, ids };
+}
+
+const CORPUS = [
+  { text: 'The wirescope tail hint registry keeps one slot per route and expires it by ttl.' },
+  { text: 'Release is one command: scripts/release.sh bumps, builds the dmg and tags.' },
+  { text: 'Sessions are keyed by name globally, so two windows cannot share a name.' },
+  { text: 'Bash sessions are private: no registry, no socket, invisible to who.' },
+  { text: 'Ad-hoc signing must happen in afterPack or node-pty dies on Apple Silicon.' },
+  { text: 'The digest budget reserves half its bytes for index lines so pins cannot starve them.' },
+];
+
+test('rank: the floor is DERIVED from corpus size, not a constant', () => {
+  // hint-probe's MIN_SCORE=2 was tuned at N=4 and does not transfer: at N=179 a
+  // single df=1 term is worth log(1+179)=5.19 on its own, so any absolute floor
+  // at or below that is cleared by one coincidental rare word.
+  assert.ok(minScoreFor(4) < minScoreFor(179),
+    'the floor must MOVE with N — a constant is exactly the bug this replaces');
+  assert.strictEqual(minScoreFor(179).toFixed(2), '5.19',
+    'the floor is the weight of one maximally-rare term: log(1+N)');
+  assert.strictEqual(minScoreFor(4).toFixed(2), '1.61');
+});
+
+test('rank: one lucky rare term does not arm, several matching terms do', () => {
+  const { store, ids } = mkStore(CORPUS);
+  const recs = require('../hint-retrieve').unitsAsRecords(store.list('a'));
+
+  // "afterpack" is df=1 here and clears the score floor ALONE. It is the shape
+  // of a coincidence — a draft about packing a suitcase should not surface the
+  // signing gotcha — and it is why MIN_HITS exists alongside the floor.
+  const oneTerm = rank(recs, 'afterpack', { limit: 3 });
+  assert.deepStrictEqual(oneTerm, [],
+    `a single-term match must not arm even when it clears the score floor (MIN_HITS=${MIN_HITS}); `
+    + 'the two populations OVERLAP on score alone — measured against the live store, unrelated '
+    + 'drafts topped out at 5.59 and related ones bottomed at 5.19, so a bigger number is not the fix');
+
+  const many = rank(recs, 'how does the wirescope tail hint registry expire a slot', { limit: 3 });
+  assert.ok(many.length >= 1, 'a draft sharing several rare terms must arm');
+  assert.strictEqual(many[0].id, ids[0], 'and the winner is the unit those terms came from');
+  assert.ok(many[0].evidence.hits.length >= MIN_HITS, 'the winner cleared the hit floor');
+  assert.ok(many[0].evidence.score >= many[0].evidence.floor, 'and the score floor');
+});
+
+test('rank: confidence is a documented 0-1 band, floor maps to 0.5', () => {
+  // Scores from different retrievers are not comparable (lexical IDF reaches 12
+  // on the real corpus, cosine tops out at 1), so each retriever normalises. IDF
+  // is unbounded above, hence a saturation point rather than a max.
+  const floor = minScoreFor(100);
+  assert.strictEqual(confidenceOf(floor, floor), 0.5, 'the floor is the midpoint of the band');
+  assert.strictEqual(confidenceOf(2 * floor, floor), 1, 'twice the floor saturates');
+  assert.strictEqual(confidenceOf(50 * floor, floor), 1, 'and never exceeds 1');
+  const { store } = mkStore(CORPUS);
+  for (const r of rank(require('../hint-retrieve').unitsAsRecords(store.list('a')),
+    'the wirescope tail hint registry slot ttl', { limit: 3 })) {
+    assert.ok(r.confidence > 0 && r.confidence <= 1, `confidence ${r.confidence} is outside 0-1`);
+  }
+});
+
+test('compose: a long body is offered by title with a recall pointer, a short one rides whole', () => {
+  const short = compose([{ id: 'mem-1-a', text: 'a short claim' }]);
+  assert.ok(short.includes('a short claim'), 'a short body rides in full');
+  const long = compose([{ id: 'mem-2-b', text: `A title line\n${'x'.repeat(900)}` }]);
+  assert.ok(!long.includes('x'.repeat(900)), 'a long body does NOT ride in full');
+  assert.ok(long.includes('[agent:memory recall] mem-2-b'),
+    'a truncated offer must carry the way to load it, or the model is told a unit exists and given '
+    + 'no way to read it');
+  assert.strictEqual(compose([]), null, 'nothing to offer composes to null, never an empty hint');
+  // A non-empty result whose bodies are all blank is a DIFFERENT branch from
+  // the empty-list guard above, and it is the one that matters: composing here
+  // would register a hint that is nothing but the preamble — tail budget spent
+  // telling the model "this may relate to what you are asking" about nothing.
+  assert.strictEqual(compose([{ id: 'mem-3-c', text: '   ' }]), null,
+    'a result set whose bodies are all blank must compose to null, not to a bare preamble');
+  assert.strictEqual(compose([{ id: 'mem-4-d', text: '' }, { id: 'mem-5-e', text: null }]), null,
+    'and that holds for several blank records, not just one');
+});
+
+// --- the arm: debounce, suppression, cooldown ------------------------------
+
+function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false } = {}) {
+  const { store } = mkStore(CORPUS);
+  const posts = [];
+  const clears = [];
+  let clock = 1_000_000;
+  const a = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+    compose,
+    terms,
+    loadState,
+    armHints: (p) => {
+      if (armThrows) throw new Error('proxy is down');
+      posts.push(p);
+      return Promise.resolve({ status: armStatus, json: { ok: armStatus < 400 } });
+    },
+    clearHints: (p) => { clears.push(p); return Promise.resolve({ status: 200 }); },
+    now: () => clock,
+    debounceMs: 5,
+  });
+  return { arm: a, posts, clears, store, tick: (ms) => { clock += ms; } };
+}
+
+const DRAFT = 'how does the wirescope tail hint registry expire a slot';
+const CTX = { agent: 'a', base: 'http://127.0.0.1:1', route: 'clodex-a-deadbeef' };
+const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+test('arm: N keystrokes inside the debounce produce exactly one POST', async () => {
+  const h = mkArm();
+  // Every prefix of the same draft, as the user would actually type it.
+  for (let i = 1; i <= DRAFT.length; i++) h.arm.onDraft('s', DRAFT.slice(0, i), CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1,
+    `${DRAFT.length} keystrokes produced ${h.posts.length} POSTs — the debounce exists to bound POST `
+    + 'volume, and one per keystroke is the failure it prevents');
+});
+
+test('arm: a draft that grows without changing the winner does not re-POST', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: the first draft must actually arm');
+  // More words, same winner. The registered text is a function of the RESULT
+  // SET, so nothing changed and nothing should be sent.
+  h.arm.onDraft('s', `${DRAFT} please tell me`, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'the winner did not change, so no second POST');
+
+  // THE ABOVE IS SATISFIED BY THE COOLDOWN ALONE — verified by mutant: deleting
+  // the winner memo entirely leaves it green, because a unit whose winner has
+  // not changed is by then already in the offer ledger. The memo's real job is
+  // the window BEFORE the POST resolves, where the ledger does not yet know
+  // about it: a debounced fire and the Enter pass landing back to back would
+  // otherwise both rank the same unit and both POST it.
+  const slow = mkArm();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const posts = [];
+  const inflight = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (agent) => slow.store.list(agent) }),
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: (p) => { posts.push(p); return gate.then(() => ({ status: 200 })); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+    debounceMs: 5,
+  });
+  inflight.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(posts.length, 1, 'ENTER: the debounced pass must have fired');
+  // Enter, before the first POST has resolved. The cooldown cannot help here.
+  inflight.onDraft('s', DRAFT, CTX, { final: true });
+  assert.strictEqual(posts.length, 1,
+    'a second pass while the first POST is still in flight must not re-POST the same winner — the '
+    + 'offer ledger is written in the .then(), so at this instant it is empty and the memo is the '
+    + 'only thing standing between one hint and two');
+  release();
+  await settle();
+});
+
+test('arm: a draft below the term floor never arms', async () => {
+  // "wirescope registry" is TWO content terms and DOES rank — verified below —
+  // so the ranker's own MIN_HITS cannot be what stops it. That matters: with a
+  // one-term draft this case passed even with the term floor deleted, because
+  // MIN_HITS was quietly doing the work and the assertion proved nothing.
+  const probe = mkArm();
+  assert.strictEqual(terms('wirescope registry').length, 2, 'ENTER: two content terms');
+  assert.strictEqual(
+    rank(require('../hint-retrieve').unitsAsRecords(probe.store.list('a')), 'wirescope registry', { limit: 1 }).length,
+    1, 'ENTER: this draft DOES rank, so only the term floor can be what withholds it');
+
+  const h = mkArm();
+  h.arm.onDraft('s', 'wirescope registry', CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 0,
+    'below the minimum term count a draft is not yet a question — two words rank against something, '
+    + 'but a hint costs tail budget on a request the user is already paying for');
+});
+
+test('arm: an overflowed draft never arms', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', `${DRAFT} ${'x'.repeat(DRAFT_CAP)}`, CTX, { overflow: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 0, 'a pasted wall of text is not a question');
+});
+
+test('arm: the suppression matrix — FULL suppresses, TITLE and ABSENT do not, a throw does not', async () => {
+  const winner = (h) => rank(require('../hint-retrieve').unitsAsRecords(h.store.list('a')),
+    DRAFT, { limit: 1 })[0].id;
+
+  // ABSENT — the ordinary case.
+  let h = mkArm({ loadState: () => 'absent' });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ABSENT must offer');
+
+  // TITLE — an index line rode, so the model knows the unit exists and cannot
+  // read it. This is the single best hint case, not a suppression case.
+  h = mkArm({ loadState: () => 'title' });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1,
+    'TITLE must NOT suppress: the model knows the unit exists and cannot read it, so suppressing '
+    + 'here withholds exactly the unit most worth sending. A boolean "is it known" collapses this '
+    + 'into the wrong answer');
+
+  // FULL — the body is already in context; the hint would be a duplicate.
+  h = mkArm({ loadState: () => 'full' });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 0, 'FULL suppresses — the body is already there');
+
+  // A lookup that THROWS resolves to ABSENT. The asymmetry is the whole design:
+  // resolving an error toward FULL would silently withhold with no trace.
+  h = mkArm({ loadState: () => { throw new Error('tracker exploded'); } });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1,
+    'a loadState that THROWS must resolve to ABSENT and still offer — a false ABSENT costs a few '
+    + 'hundred tail tokens, a false FULL withholds silently and leaves nothing in any log');
+
+  // A suppressed winner must not eat the slot a live runner-up could fill.
+  h = mkArm({ loadState: (agent, id) => (id === winner(h) ? 'full' : 'absent') });
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  if (h.posts.length) {
+    assert.ok(!h.posts[0].text.includes(winner(h)),
+      'the suppressed winner must not appear in the hint text');
+  }
+});
+
+test('arm: the same unit is not re-offered inside the cooldown, and a compact ends it early', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s1', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: the first offer must land');
+
+  // A different session key, so the per-session "winner unchanged" memo cannot
+  // be what suppresses this — the cooldown ledger has to be doing the work.
+  h.tick(60_000);
+  h.arm.onDraft('s2', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'a second offer of the same unit inside 10min is suppressed');
+
+  // Cleared/compacted context: whatever was offered is no longer in front of the
+  // model, so the cooldown ends early — the "whichever comes first" half.
+  h.arm.onContextReset('a');
+  h.arm.onDraft('s3', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 2,
+    'after a context reset the unit must be offerable again — the offer it was suppressed against '
+    + 'is no longer in front of the model');
+
+  // And the window does expire on its own.
+  const h2 = mkArm();
+  h2.arm.onDraft('s1', DRAFT, CTX);
+  await settle();
+  h2.tick(11 * 60 * 1000);
+  h2.arm.onDraft('s2', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h2.posts.length, 2, 'past 10 minutes the same unit may be offered again');
+});
+
+test('arm: a failed POST does not burn the cooldown', async () => {
+  const h = mkArm({ armStatus: 503 });
+  h.arm.onDraft('s1', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: the POST must have been attempted');
+  assert.strictEqual(h.arm._offered('a').size, 0,
+    'the cooldown is recorded on a SUCCESSFUL post, not on the rank — a unit the proxy never '
+    + 'accepted has not been offered, and burning its cooldown suppresses the retry');
+  h.arm.onDraft('s2', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 2, 'so the next draft retries it');
+});
+
+test('arm: an abandoned draft DELETES the registered hint', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: something must be armed before disarm means anything');
+  h.arm.disarm('s', CTX);
+  assert.strictEqual(h.clears.length, 1,
+    'an armed hint from a discarded draft would ride its TTL and pop on whatever the user types next');
+  assert.strictEqual(h.clears[0].id, HINT_ID, 'and it clears the hint it armed, by id');
+
+  // Nothing armed -> nothing to delete. Not a correctness issue (the proxy is
+  // idempotent) but a POST per Ctrl-C on an empty prompt is pure noise.
+  const h2 = mkArm();
+  h2.arm.disarm('s', CTX);
+  assert.strictEqual(h2.clears.length, 0, 'disarming when nothing was armed sends nothing');
+});
+
+test('arm: a proxy that throws synchronously is swallowed and does not poison the next attempt', async () => {
+  const h = mkArm({ armThrows: true });
+  await assert.doesNotReject(async () => {
+    h.arm.onDraft('s', DRAFT, CTX);
+    await settle();
+  }, 'an arm failure must never surface — the keystroke path is what matters');
+  // The memo must not latch on a throw, or a transient proxy failure disables
+  // arming for the rest of the draft.
+  assert.strictEqual(h.arm._armedIds('s'), null, 'a throw clears the winner memo so the next pass retries');
+});
+
+test('arm: with no proxy base nothing is attempted', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, { agent: 'a', base: null, route: 'clodex-a-x' });
+  await settle();
+  assert.strictEqual(h.posts.length, 0, 'no base, no POST');
+});
+
+// --- the one-shot field, against a server that stores what it was sent -----
+
+test('once: the stored record reads back once === true', async () => {
+  // A 200 and a registry echo are NOT evidence: the server accepts unknown keys,
+  // drops them silently and returns 200, so posting `pop:true` registers a
+  // STANDING hint whose logs are indistinguishable from a pop. This server keeps
+  // ONLY the keys the real one validates, so a wrong field name cannot survive
+  // the round trip.
+  const KNOWN = ['id', 'text', 'ttl_s', 'turn_start_only', 'once'];
+  const stored = new Map();
+  let rejected = null;
+  const srv = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    const route = u.searchParams.get('agent');
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, agent: route, agent_hints: [...(stored.get(route) || new Map()).values()] }));
+      return;
+    }
+    if (req.method === 'DELETE') {
+      const id = u.searchParams.get('id');
+      const m = stored.get(route);
+      const removed = m && id ? (m.delete(id) ? 1 : 0) : (stored.delete(route) ? 1 : 0);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, removed }));
+      return;
+    }
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      let p = null;
+      try { p = JSON.parse(body); } catch {}
+      const hints = (p && p.hints) || [];
+      // The real server 400s a once:true with no ttl_s (proxylab/hints.py) —
+      // the coupling is not optional, so a post that omits it must fail here too
+      // rather than quietly registering a standing hint.
+      for (const hint of hints) {
+        if (hint.once && (typeof hint.ttl_s !== 'number' || !(hint.ttl_s > 0))) {
+          rejected = 'once:true requires ttl_s';
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, reason: rejected }));
+          return;
+        }
+      }
+      if (!stored.has(route)) stored.set(route, new Map());
+      for (const hint of hints) {
+        // Unknown keys are DROPPED, exactly as the real server drops them.
+        const kept = {};
+        for (const k of KNOWN) if (hint[k] !== undefined) kept[k] = hint[k];
+        stored.get(route).set(kept.id, kept);
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    // The REAL ProxyClient, wired exactly as engine.js wires it. A stubbed
+    // sender here would prove only that this file can build a payload — the
+    // claim under test is what survives the wire and lands in the registry.
+    const { store } = mkStore(CORPUS);
+    const arm = createHintArm({
+      retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+      compose,
+      terms,
+      loadState: () => 'absent',
+      armHints: (p) => ProxyClient.armHints(p.base, p.route,
+        [{ id: p.id, text: p.text, ttl_s: p.ttl_s, turn_start_only: p.turn_start_only, once: p.once }]),
+      clearHints: (p) => ProxyClient.clearHints(p.base, p.route, p.id),
+      debounceMs: 5,
+    });
+    const ctx = { agent: 'a', base, route: 'clodex-a-deadbeef' };
+    arm.onDraft('s', DRAFT, ctx);
+    // The arm is fire-and-forget; wait for the POST to have actually landed
+    // rather than asserting on a race.
+    for (let i = 0; i < 100 && !stored.size; i++) await settle(10);
+    assert.strictEqual(rejected, null, `the server rejected the post: ${rejected}`);
+
+    const read = await ProxyClient.readHints(base, 'clodex-a-deadbeef');
+    assert.strictEqual(read.status, 200, 'ENTER: the registry must be readable');
+    const rec = (read.json.agent_hints || []).find((x) => x.id === HINT_ID);
+    assert.ok(rec, `no record stored under id ${HINT_ID} — nothing was armed`);
+    assert.strictEqual(rec.once, true,
+      'the STORED record must carry once === true. A 200 plus a registry echo is not evidence: the '
+      + 'server drops unknown keys silently, so posting `pop: true` returns 200, echoes back, and '
+      + 'registers a STANDING hint whose logs are indistinguishable from a pop');
+    assert.strictEqual(rec.ttl_s, TTL_S, 'and a ttl, which once:true REQUIRES');
+    assert.strictEqual(rec.turn_start_only, true, 'and turn_start_only, so it lands at a turn boundary');
+    assert.ok(rec.text && rec.text.length, 'with text');
+
+    // A re-arm OVERWRITES rather than accreting: the fixed id is the mechanism.
+    arm.onContextReset('a');
+    arm.onDraft('s2', `${DRAFT} and how does the digest budget reserve index lines`, ctx);
+    for (let i = 0; i < 100 && stored.get('clodex-a-deadbeef').size < 1; i++) await settle(10);
+    assert.strictEqual(stored.get('clodex-a-deadbeef').size, 1,
+      'a re-arm must overwrite — a per-draft id would accrete entries until the scope cap declines them');
+
+    // And the delete really removes it.
+    await ProxyClient.clearHints(base, 'clodex-a-deadbeef', HINT_ID);
+    const after = await ProxyClient.readHints(base, 'clodex-a-deadbeef');
+    assert.deepStrictEqual((after.json.agent_hints || []).filter((x) => x.id === HINT_ID), [],
+      'clearHints must actually remove the record');
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+});
+
+// --- the real write() seam -------------------------------------------------
+
+// A real create() with the claude arm's seams stubbed, matching
+// test/memory-load.test.js — the draft fold and the arm calls are the product's
+// own code; the stubs stand only between create()'s entry and the session map.
+function mkManager({ hintArm = null, extraDeps = {} } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-hintwire-'));
+  const store = createMemoryStore(path.join(root, 'library', 'memory'));
+  const persisted = new Map();
+  const watchers = [];
+  const written = [];
+
+  const SessionManager = createSessionManager({
+    REGISTRY_DIR: root,
+    fs, path, pathFor, runDirFor,
+    PENDING_DIR: path.join(root, 'pending'),
+    MSG_DIR: path.join(root, 'messages'),
+    ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
+    getPersistence: () => ({
+      list: () => [...persisted.values()],
+      get: (n) => persisted.get(n) || null,
+      upsert: (e) => persisted.set(e.name, { ...(persisted.get(e.name) || {}), ...e }),
+      remove: (n) => persisted.delete(n),
+      setSessionId: () => {},
+      markDigested: () => {},
+    }),
+    getRemoteServer: () => null,
+    getUiSettings: () => ({ get: () => ({}) }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getAgentLibrary: () => ({ list: () => [], get: () => null }),
+    getPromptLibrary: () => ({ list: () => [], get: () => null }),
+    getPluginHooks: () => null,
+    getPeerManager: () => null,
+    getRemindScheduler: () => null,
+    getNotifications: () => null,
+    getTemplates: () => ({ list: () => [] }),
+    getUserDataPath: () => os.tmpdir(),
+    resolveProxyBase: () => 'http://127.0.0.1:1',
+    resolveProxyAgentId: ({ name }) => `clodex-${name}-deadbeef`,
+    normalizeProxyBase: (v) => v,
+    lastTranscriptWrite: () => null,
+    memoryStore: store,
+    memoryLoad: createMemoryLoad({}),
+    composeDigest: require('../memory-store').composeDigest,
+    digestTiers: require('../memory-store').digestTiers,
+    hintArm,
+    isDigested: () => true,   // no digest delivery — this file is about the draft seam
+    registry: { register: () => {}, unregister: () => {} },
+    Transport: class { static async isSocketLive() { return false; } start() {} stop() {} },
+    JsonlWatcher: class {
+      constructor(name, onText, onSessionId, onActivity, onCompactSummary) {
+        watchers.push({ name, onSessionId, onCompactSummary });
+      }
+      start() {} stop() {}
+    },
+    pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999, write: (b) => written.push(b) }) },
+    os,
+    notifyOS: () => {},
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    setupClaudeHook: () => path.join(root, 'settings.json'),
+    setupCodexHook: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    writeClaudeDigestFile: () => true,
+    buildIpcPrompt: () => '',
+    bakePrompt: () => '',
+    teeBlindBackend: () => null,
+    readEffectiveClaudeEnv: () => ({}),
+    mergeSessionEnv: () => ({ ...process.env }),
+    resolveTeam: () => null,
+    strictMcpReason: () => null,
+    scrubInheritedClaudeMarkers: (e) => e,
+    resolveSystemPromptFile: () => null,
+    mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
+    readAppendBodies: () => [],
+    pluginGrammarLines: () => [],
+    buildAgentsArg: () => [],
+    effectiveInjectedSkills: () => [],
+    unresolvedSubagentRefs: () => [],
+    unionEnabled: require('../scope-util').unionEnabled,
+    intentEnabled: require('../intent-catalog').intentEnabled,
+    withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,
+    bodyModeFor: require('../intent-registry').bodyModeFor,
+    intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    pluginRowFor: require('../intent-registry').pluginRowFor,
+    validIntentNames: require('../intent-registry').validIntentNames,
+    fencedLines: require('../intent-scanner').fencedLines,
+    // The REAL gate and the REAL paste tracker. isHumanPtyInput is the whole
+    // guarantee that injected text never reaches the accumulator — stubbing it
+    // would leave the injected-writes case asserting against the stub.
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput,
+    draftChunkSignal: require('../proxy-util').draftChunkSignal,
+    // Every inject wait driven to 0: the boot-readiness gate polls until a real
+    // mode-2004 byte from a real CLI latches `_bootReadySeen`, so with the
+    // production caps this file prints green and then HANGS.
+    INJECT_BOOT_MAXWAIT: 0,
+    INJECT_QUIET_MAXWAIT: 0,
+    INJECT_QUIET_MS: 0,
+    SHORT_TEXT_DELAY: 0,
+    LONG_TEXT_DELAY: 0,
+    LONG_TEXT_THRESHOLD: 1e9,
+    COMPACT_CONTINUATION_DELAY: 0,
+    INJECT_HOLD_TIMEOUT: 0,
+    InjectQueue: require('../inject-queue').InjectQueue,
+    isInjectInFlight: require('../inject-queue').isInjectInFlight,
+    canFireCompact: require('../inject-queue').canFireCompact,
+    writeSkillPlugin: () => {},
+    whichBin: () => null,
+    codexStatusLineArg: () => [],
+    mergeCodexInstructions: (a) => ({ cleaned: [...a], append: null }),
+    randBase36: () => 'abc123',
+    spillToFile: () => null,
+    enqueueOutbox: () => {},
+    drainPending: () => [],
+    countPending: () => 0,
+    peekPending: () => [],
+    hasActivePending: () => false,
+    isAlive: () => false,
+    scheduleTrayRefresh: () => {},
+    refreshAppMenu: () => {},
+    refreshTrayMenu: () => {},
+    findProjectRoot: () => null,
+    execBodyCap: () => 4096,
+    ...extraDeps,
+  });
+  const m = new SessionManager();
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  const stop = (name) => {
+    const s = m.sessions.get(name);
+    if (!s) return;
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    try { if (s.watcher) s.watcher.stop(); } catch {}
+    try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
+    clearTimeout(s._bootDrainTimer);
+    clearTimeout(s._injectFlushRetry);
+    clearTimeout(s._compactValveTimer);
+  };
+  return { m, root, store, watchers, written, stop };
+}
+
+// A recording arm rather than the real one: this half of the file is about what
+// the SEAM feeds the arm, and a real ranker between the two would let a wiring
+// bug hide behind an empty result set.
+function recorder() {
+  const calls = [];
+  return {
+    calls,
+    onDraft: (key, draft, ctx, opts) => calls.push({ fn: 'onDraft', key, draft, ctx, opts }),
+    disarm: (key, ctx) => calls.push({ fn: 'disarm', key, ctx }),
+    onSubmit: (key) => calls.push({ fn: 'onSubmit', key }),
+    onContextReset: (agent) => calls.push({ fn: 'onContextReset', agent }),
+    forget: (key) => calls.push({ fn: 'forget', key }),
+  };
+}
+
+async function spawned(h, name) {
+  try {
+    await h.m.create(name, 'claude', os.tmpdir(), [], null, 'ws');
+  } catch (e) {
+    assert.fail(`create() did not reach the session map: ${e && e.message}`);
+  }
+  assert.ok(h.m.sessions.get(name), 'ENTER: create() must have put a session in the map');
+  return h.m.sessions.get(name);
+}
+
+test('write: human keystrokes accumulate on the session and reach the arm', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const s = await spawned(h, 'a');
+  try {
+    for (const c of 'wirescope hints') h.m.write('a', c);
+    assert.strictEqual(s._draft, 'wirescope hints', 'the session carries the accumulated draft');
+    const drafts = rec.calls.filter((c) => c.fn === 'onDraft');
+    assert.strictEqual(drafts.length, 'wirescope hints'.length, 'every keystroke offers the draft to the arm');
+    assert.strictEqual(drafts[drafts.length - 1].draft, 'wirescope hints');
+    assert.strictEqual(drafts[0].ctx.agent, 'a');
+    // The EXACT route, not a glob. The proxy matches globs with fnmatchcase, so
+    // `clodex-a-*` also matches `clodex-a-hand-4f2a` — arming for one agent
+    // would arm every agent whose name extends it.
+    assert.strictEqual(drafts[0].ctx.route, 'clodex-a-deadbeef',
+      'the route must be the minted proxyAgent; a glob would arm every agent whose name extends this one');
+    assert.ok(!drafts[0].ctx.route.includes('*'), 'and must not be a glob when the exact id is known');
+    // The keystrokes still reached the PTY — the whole point of the fire-and-forget shape.
+    assert.strictEqual(h.written.join(''), 'wirescope hints', 'every byte reached the PTY');
+  } finally { h.stop('a'); }
+});
+
+test('write: injected (non-human) writes never reach the accumulator', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const s = await spawned(h, 'a');
+  try {
+    for (const c of 'real typing') h.m.write('a', c);
+    const before = s._draft;
+    const drafts = () => rec.calls.filter((c) => c.fn === 'onDraft').length;
+    const armCallsBefore = drafts();
+    // A focus report and a mouse report: these arrive down the SAME onData path
+    // as keystrokes, and isHumanPtyInput is what tells them apart. Reusing that
+    // gate is the guarantee — a second predicate here could drift from it.
+    h.m.write('a', '\x1b[I');
+    h.m.write('a', '\x1b[<0;10;20M');
+    assert.strictEqual(s._draft, before,
+      'terminal auto-replies must not reach the accumulator — they arrive on the same path as '
+      + 'keystrokes and would poison the ranking with bytes the user never typed');
+    assert.strictEqual(drafts(), armCallsBefore, 'and must not trigger an arm pass');
+
+    // A real injection writes straight to the pty, bypassing write() entirely.
+    s.pty.write('an injected dm body\r');
+    assert.strictEqual(s._draft, before,
+      'injected text (dm delivery, nudges, ticket bodies) must never be folded into the draft');
+  } finally { h.stop('a'); }
+});
+
+test('write: Enter does a final pass, then resets the draft', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const s = await spawned(h, 'a');
+  try {
+    for (const c of 'why did the mutant escape') h.m.write('a', c);
+    rec.calls.length = 0;
+    h.m.write('a', '\r');
+    const final = rec.calls.find((c) => c.fn === 'onDraft');
+    assert.ok(final, 'Enter must do one last arm pass');
+    assert.strictEqual(final.opts.final, true, 'and it must skip the debounce — the draft will not grow again');
+    assert.strictEqual(final.draft, 'why did the mutant escape',
+      'the final pass ranks the draft the user SUBMITTED; ranking after the reset ranks an empty string');
+    assert.ok(rec.calls.some((c) => c.fn === 'onSubmit'), 'and the per-session memo resets');
+    assert.strictEqual(s._draft, '', 'the accumulator resets after the final pass');
+  } finally { h.stop('a'); }
+});
+
+test('write: Ctrl-C disarms rather than arming', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const s = await spawned(h, 'a');
+  try {
+    for (const c of 'abandoned question here') h.m.write('a', c);
+    rec.calls.length = 0;
+    h.m.write('a', '\x03');
+    assert.ok(rec.calls.some((c) => c.fn === 'disarm'),
+      'an abandoned draft must DELETE the registered hint — left to ride its TTL it pops on '
+      + 'whatever the user types next');
+    assert.ok(!rec.calls.some((c) => c.fn === 'onDraft'), 'and must not arm off the draft being thrown away');
+    assert.strictEqual(s._draft, '', 'the accumulator is empty');
+  } finally { h.stop('a'); }
+});
+
+test('write: a clear (new sessionId) and a compact both end the offer cooldown', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  await spawned(h, 'a');
+  try {
+    const w = h.watchers.find((x) => x.name === 'a');
+    assert.ok(w, 'ENTER: the watcher callbacks must have been captured');
+    // First id is an attach, NOT a clear — resetting here would drop a cooldown
+    // recorded microseconds earlier by the very session it belongs to.
+    w.onSessionId('sid-1');
+    assert.strictEqual(rec.calls.filter((c) => c.fn === 'onContextReset').length, 0,
+      'the FIRST session id is an attach or resume, not a clear');
+    // A CHANGED id is /clear.
+    w.onSessionId('sid-2');
+    assert.strictEqual(rec.calls.filter((c) => c.fn === 'onContextReset').length, 1,
+      'a changed session id is /clear — whatever was offered is no longer in front of the model');
+    assert.strictEqual(rec.calls.filter((c) => c.fn === 'onContextReset').pop().agent, 'a');
+    // The same id again is not a transition.
+    w.onSessionId('sid-2');
+    assert.strictEqual(rec.calls.filter((c) => c.fn === 'onContextReset').length, 1,
+      'the same id repeated is not a transition');
+
+    h.m._fireCompactContinuation(h.m.sessions.get('a'));
+    assert.strictEqual(rec.calls.filter((c) => c.fn === 'onContextReset').length, 2,
+      'compaction ends the cooldown too — this fires for the CLI\'s own auto-compact, because the '
+      + 'watcher reads the transcript rather than only knowing about compactions Clodex triggered');
+  } finally { h.stop('a'); }
+});
+
+test('write: with no arm injected the seam still tracks and never throws', async () => {
+  // The feature is OFF by default (CLODEX_HINT_ARM), so this is the shipped
+  // configuration — it must be the one that cannot break a keystroke.
+  const h = mkManager({ hintArm: null });
+  const s = await spawned(h, 'a');
+  try {
+    for (const c of 'typing with the feature off\r') h.m.write('a', c);
+    assert.strictEqual(s._draft, '', 'Enter still reset the accumulator');
+    assert.strictEqual(h.written.join(''), 'typing with the feature off\r',
+      'and every byte still reached the PTY');
+  } finally { h.stop('a'); }
+});
+
+test('write: an arm that throws does not stop the keystroke', async () => {
+  const boom = {
+    onDraft() { throw new Error('arm exploded'); },
+    disarm() { throw new Error('arm exploded'); },
+    onSubmit() { throw new Error('arm exploded'); },
+    onContextReset() {}, forget() {},
+  };
+  const h = mkManager({ hintArm: boom });
+  await spawned(h, 'a');
+  try {
+    // Wrapped, so the red NAMES the invariant. Left bare, an arm exception
+    // propagates out of write() and the case dies on a raw "arm exploded" stack
+    // before reaching any assertion — a red that does not say what broke.
+    assert.doesNotThrow(() => {
+      for (const c of 'still typing\r') h.m.write('a', c);
+    }, 'an arm exception must never escape write() — it would take the keystroke with it');
+    assert.strictEqual(h.written.join(''), 'still typing\r',
+      'a hint is worth nothing next to the user\'s byte reaching the PTY — every arm call site is '
+      + 'inside a catch for exactly this');
+  } finally { h.stop('a'); }
+});

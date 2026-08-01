@@ -179,8 +179,15 @@ function fmtAge(iso, now = Date.now()) {
   return h >= 1 ? `${h}h` : '<1h';
 }
 
-function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {}) {
-  if (!Array.isArray(units) || units.length === 0) return null;
+// The tiering this function computes is also a consumer-facing fact: a unit
+// whose BODY rode is in context, a unit that only got an index line is NOT —
+// the model knows it exists and cannot read it. digestTiers reports both the
+// string and the three id sets from ONE pass, so the tiers cannot drift from
+// the bytes actually served. composeDigest keeps its string-or-null shape
+// because callers branch on it (session-manager.js digestNonEmpty, cli-hooks).
+function digestTiers(units, { budget = DIGEST_BUDGET, now = Date.now() } = {}) {
+  const empty = { text: null, full: [], title: [], absent: [] };
+  if (!Array.isArray(units) || units.length === 0) return empty;
   // Both halves newest-first. Pinned used to be ascending, which froze the
   // served set at the earliest pins once a store crossed the budget — no later
   // pin could ever displace one. Do not restore ascending order here: a pin is
@@ -213,7 +220,12 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
   let pinnedShown = 0;
   let pinnedOmitted = 0;
   let indexOmitted = 0;
+  // { id, line } rather than bare lines: the tier sets are built from whatever
+  // actually gets pushed below, so a line that overflows cannot be counted as
+  // served.
   const demoted = [];
+  const full = [];
+  const title = [];
 
   if (pinned.length) {
     // Bodies get half the budget and stop. The rule this replaces reserved a
@@ -234,7 +246,7 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
       // pinned unit LESS reachable than an unpinned one, which at least keeps
       // a line to recall from.
       if (bodyBytes + block.length > bodyBudget) {
-        demoted.push(indexLine(u, '[pinned] '));
+        demoted.push({ id: u.id, line: indexLine(u, '[pinned] ') });
         continue;
       }
       // Header emitted with the first body, not before it: one oversized pin is
@@ -242,6 +254,7 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
       // empty section reads as a store that lost its pins.
       if (!pinnedShown) { parts.push(ph); used += ph.length; }
       parts.push(block); used += block.length; bodyBytes += block.length; pinnedShown += 1;
+      full.push(u.id);
     }
   }
   if (demoted.length || rest.length) {
@@ -253,22 +266,37 @@ function composeDigest(units, { budget = DIGEST_BUDGET, now = Date.now() } = {})
     const limit = budget - tailText(pinned.length, pinned.length, pinned.length, rest.length).length;
     parts.push(indexHead); used += indexHead.length;
     // Demoted pins lead the index, so the pinned set stays visually grouped.
-    for (const line of demoted) {
-      if (used + line.length > limit) { pinnedOmitted += 1; continue; }
-      parts.push(line); used += line.length;
+    for (const d of demoted) {
+      if (used + d.line.length > limit) { pinnedOmitted += 1; continue; }
+      parts.push(d.line); used += d.line.length;
+      title.push(d.id);
     }
     for (const u of rest) {
       const line = indexLine(u, '');
       if (used + line.length > limit) { indexOmitted += 1; continue; }
       parts.push(line); used += line.length;
+      title.push(u.id);
     }
   }
 
   parts.push(tailText(pinnedShown, demoted.length - pinnedOmitted, pinnedOmitted, indexOmitted));
-  return parts.join('');
+  const served = new Set([...full, ...title]);
+  return {
+    text: parts.join(''),
+    full,
+    title,
+    // Everything the digest counted but did not serve. Derived from `units`
+    // rather than from the omitted counters so a unit dropped by any future
+    // branch lands here by default — absent is the safe tier.
+    absent: units.map(u => u.id).filter(id => !served.has(id)),
+  };
+}
+
+function composeDigest(units, opts) {
+  return digestTiers(units, opts).text;
 }
 
 module.exports = {
-  createMemoryStore, composeDigest, serializeMemoryUnit, parseMemoryUnit,
+  createMemoryStore, composeDigest, digestTiers, serializeMemoryUnit, parseMemoryUnit,
   MEMORY_ID_RE, DIGEST_BUDGET,
 };

@@ -304,8 +304,29 @@ function readAppendBodies(stems) {
 
 
 const MEMORY_DIR = path.join(REGISTRY_DIR, 'library', 'memory');
-const { createMemoryStore, composeDigest } = require('./memory-store');
+const { createMemoryStore, composeDigest, digestTiers } = require('./memory-store');
 const memoryStore = createMemoryStore(MEMORY_DIR);
+// A SIBLING of library/memory, not a child: that directory's entries are the
+// set of agents, so a log dir inside it would enumerate as an agent.
+const { createMemoryLoad } = require('./memory-load');
+const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library', 'memory-loadlog') });
+
+// Automatic contextual hint arming — OFF unless CLODEX_HINT_ARM=1. Absent the
+// flag session-manager gets no arm at all, so the whole path (rank, POST,
+// cooldown) is unreachable rather than merely inert.
+const HINT_ARM_ENABLED = process.env.CLODEX_HINT_ARM === '1';
+const { createHintArm } = require('./hint-arm');
+const { createMemoryRetriever, compose: composeHint, terms: hintTerms } = require('./hint-retrieve');
+const hintArm = HINT_ARM_ENABLED ? createHintArm({
+  retriever: createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
+  compose: composeHint,
+  terms: hintTerms,
+  loadState: (agent, id) => memoryLoad.stateOf(agent, id),
+  armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
+    ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
+  clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
+  log,
+}) : null;
 
 
 
@@ -685,6 +706,7 @@ const SessionManager = createSessionManager({
     codexStatusLineArg,
     collectSystemDiagnostics,
     composeDigest,
+    digestTiers,
     ctxReminderFor,
     bakePrompt,
     promptCacheDir,
@@ -725,6 +747,8 @@ const SessionManager = createSessionManager({
     lastTranscriptWrite,
     log,
     memoryStore,
+    memoryLoad,
+    hintArm,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,

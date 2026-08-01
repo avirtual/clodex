@@ -39,6 +39,61 @@ const ProxyClient = {
   },
   _getJson(base, pathname, timeout) { return this._req(base, pathname, 'GET', timeout); },
 
+  // Every other call on this client is querystring-only; /_hints is the first
+  // endpoint that takes a JSON body, hence a separate sender rather than another
+  // parameter on _req.
+  _reqJson(base, pathname, method, payload, timeout = PROXY_HTTP_TIMEOUT) {
+    return new Promise((resolve, reject) => {
+      let url;
+      try { url = new URL(base + pathname); } catch (e) { return reject(e); }
+      const lib = url.protocol === 'https:' ? https : http;
+      const buf = Buffer.from(JSON.stringify(payload));
+      const req = lib.request(url, {
+        method,
+        timeout,
+        headers: { 'content-type': 'application/json', 'content-length': buf.length },
+      }, (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          let json = null;
+          try { json = JSON.parse(body); } catch {}
+          resolve({ status: res.statusCode, json });
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.end(buf);
+    });
+  },
+
+  // Register tail hints on an agent-scoped route (globs allowed — a route name
+  // is `clodex-<agent>-<hash>` and the hash is unknowable before the agent's
+  // first request).
+  //
+  // `once` is THE one-shot field, and the only way to verify it. The server
+  // accepts unknown keys, drops them silently and returns 200, so posting
+  // `pop:true` registers a STANDING hint whose logs are indistinguishable from a
+  // pop. `ttl_s` is REQUIRED alongside once:true (proxylab/hints.py) — omitting
+  // it is a 400, not a silent standing hint.
+  async armHints(base, route, hints, { mode = 'merge', timeout = 2000 } = {}) {
+    const qs = new URLSearchParams({ agent: route });
+    return this._reqJson(base, `/_hints?${qs.toString()}`, 'POST', { mode, hints }, timeout);
+  },
+
+  // Idempotent on the proxy side: clearing an absent hint is a 200, so a caller
+  // may clear unconditionally without a read-modify-write.
+  async clearHints(base, route, hintId) {
+    const qs = new URLSearchParams({ agent: route });
+    if (hintId) qs.set('id', hintId);
+    return this._req(base, `/_hints?${qs.toString()}`, 'DELETE', 2000);
+  },
+
+  async readHints(base, route) {
+    const qs = new URLSearchParams({ agent: route });
+    return this._getJson(base, `/_hints?${qs.toString()}`, 2000);
+  },
+
   // Arm/disarm a cache hold. hours=0 disarms. The proxy may decline a cold
   // prefix (200 with armed:false, skipped:<state>) unless force=1. HTTP status
   // reflects request validity, not the side-effect — branch on the body.

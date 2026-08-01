@@ -7,7 +7,7 @@ const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
-const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -52,6 +52,8 @@ const REVIEWER_FALLBACK = {
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
 const { hostNotice } = require('./host-stamp');
+const { createMemoryLoad } = require('./memory-load');
+const { foldDraft } = require('./hint-arm');
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
@@ -191,6 +193,7 @@ function createSessionManager(deps) {
     codexStatusLineArg,
     collectSystemDiagnostics,
     composeDigest,
+    digestTiers,
     ctxReminderFor,
     bakePrompt,
     promptCacheDir,
@@ -231,6 +234,8 @@ function createSessionManager(deps) {
     fencedLines,
     looksLikeIntent,
     memoryStore,
+    memoryLoad,
+    hintArm,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,
@@ -272,6 +277,24 @@ function createSessionManager(deps) {
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
+
+  // Which memory units are live in each agent's context. Every call site below
+  // is observer-grade, and partial deps objects (tests, the plugin harness)
+  // omit it — so an absent tracker must contribute nothing rather than throw
+  // inside a turn handler. An in-memory-only instance (no logDir, so no recall
+  // log) is the cheapest null object and keeps the read API's shape honest.
+  const memLoad = memoryLoad || createMemoryLoad();
+  // Partial deps objects inject composeDigest without its sibling. No tiering
+  // means nothing is recorded as loaded, which is the safe direction of the
+  // asymmetry — never the reverse.
+  const tiersOf = digestTiers || (() => null);
+
+  // Contextual hint arming, off unless engine.js built one (feature-gated).
+  // A no-op stand-in rather than a null check at each call site: the draft fold
+  // still runs and s._draft still tracks, so turning the flag on mid-life needs
+  // no state that only exists when armed.
+  const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {} };
+  const arm = hintArm || NO_ARM;
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
@@ -1019,6 +1042,17 @@ function createSessionManager(deps) {
       };
       this.sessions.set(name, session);
 
+      // Which units this spawn's digest actually puts in context. Recomposed
+      // here rather than reported from writeClaudeDigestFile: the hook cats the
+      // digest only for source=startup|clear|compact (see the script in
+      // cli-hooks.js), so a RESUMED session receives none — the bake happens
+      // either way, and recording it would claim FULL for units the model never
+      // saw. That is the suppressing direction of the asymmetry, so a resume
+      // records nothing and the units stay ABSENT.
+      if (agentType === 'claude' && !resumeId) {
+        try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
+      }
+
       getPersistence().upsert({
         name, type, cwd,
         extraArgs,
@@ -1064,8 +1098,21 @@ function createSessionManager(deps) {
       });
 
       const onSessionId = (sessionId) => {
+        const priorSid = session.sessionId;
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
+        // A CHANGED id is /clear — whatever was offered is no longer in front of
+        // the model, so the offer cooldown ends early. Read before noteSession,
+        // which owns the same transition but reports nothing back. The first id
+        // (attach, resume) is not a clear and must not reset.
+        if (priorSid && sessionId && priorSid !== sessionId) {
+          try { arm.onContextReset(name); } catch { /* observer-grade */ }
+        }
+        // /clear mints a new conversation id, which is how the transcript
+        // symlink repoint reports it. noteSession only resets on a CHANGE — the
+        // first id (attach, resume) adopts, or the digest recorded microseconds
+        // earlier in create() would be wiped by the very event that carried it.
+        try { memLoad.noteSession(name, sessionId); } catch { /* observer-grade */ }
         this._noteConversationForDigest(session, sessionId);
       };
       if (agentType && session.intentSource === 'wire') {
@@ -1217,14 +1264,64 @@ function createSessionManager(deps) {
       if (!s || s._dead) return;
       if (isHumanPtyInput(data)) {
         s.lastUserInputTs = Date.now();
+        const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
         s._inPaste = sig.inPaste;
         if (sig.closes) s.lastUserSubmitTs = s.lastUserInputTs;
         s.lastMainStop = null;
         if (s.needsAttention) this._setAttention(s, null);
+        // Draft accumulation for hint arming. Inside the isHumanPtyInput gate on
+        // purpose: injected text (dm delivery, nudges, ticket bodies) must never
+        // reach the accumulator, and reusing this gate is what guarantees it
+        // rather than a second predicate that can drift from this one.
+        this._foldDraft(s, data, wasInPaste);
       }
       try { s.pty.write(data); } catch {}
     }
+
+    // Accumulate the draft and arm a hint against it. Never awaited and never
+    // able to throw into write(): a hint is worth nothing next to the user's
+    // keystroke reaching the PTY.
+    _foldDraft(s, data, wasInPaste) {
+      try {
+        const r = foldDraft(s._draft || '', data, wasInPaste);
+        s._draft = r.draft;
+        const key = s.name;
+        if (r.cleared) { arm.disarm(key, this._armCtx(s)); return; }
+        if (r.closes) {
+          // The final pass runs BEFORE the reset, on the draft the user actually
+          // submitted — after the reset there is nothing left to rank.
+          arm.onDraft(key, s._draft, this._armCtx(s), { final: true, overflow: r.overflow });
+          s._draft = '';
+          arm.onSubmit(key);
+          return;
+        }
+        arm.onDraft(key, s._draft, this._armCtx(s), { overflow: r.overflow });
+      } catch (e) { log.debug('hint', `draft fold failed for ${s.name}: ${e.message}`); }
+    }
+
+    // The EXACT route when we have it, a glob only as a fallback. A glob is
+    // fnmatchcase on the proxy side (proxylab/hints.py _matching_agent_scopes),
+    // so `clodex-clodex-*` also matches `clodex-clodex-hand-4f2a` — arming for
+    // one agent would arm every agent whose name extends it. Clodex mints
+    // proxyAgent itself, so the hash is known here even though it is not
+    // knowable from outside.
+    _armCtx(s) {
+      return {
+        agent: s.name,
+        base: s.proxyBase || null,
+        route: s.proxyAgent || `${PROXY_AGENT_PREFIX}${s.name}-*`,
+      };
+    }
+
+    // The read API for the contextual-hint injector: 'full' (body is in
+    // context — skip the hint), 'title' (an index line rode, so the model knows
+    // the unit exists and cannot read it — the BEST hint candidate), 'absent'.
+    // Never a boolean: collapsing the three states loses whichever answer the
+    // caller needed.
+    memoryLoadState(agent, id) { return memLoad.stateOf(agent, id); }
+    memoryLiveSet(agent) { return memLoad.liveSet(agent); }
+    memoryRecallLog(agent) { return memLoad.recallLog(agent); }
 
     resize(name, cols, rows, requester = 'owner') {
       const s = this.sessions.get(name);
@@ -1585,6 +1682,9 @@ function createSessionManager(deps) {
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
+      // Drops the pending debounce timer with it — a hint armed after the PTY
+      // died would ride the next session under the same name.
+      try { arm.forget(name); } catch {}
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are
       // deliberately NOT dropped here, under any gate. _userKilled is not a "going
@@ -1750,6 +1850,16 @@ function createSessionManager(deps) {
     }
 
     _fireCompactContinuation(session) {
+      // The live set resets to EMPTY — no attempt to model what the summarizer
+      // kept. "Possibly evicted" resolving to "not loaded" is the correct
+      // answer for a dedup consumer, and this fires for the CLI's own
+      // auto-compact too, because the watcher reads the transcript rather than
+      // only knowing about compactions Clodex triggered.
+      try { memLoad.noteCompact(session.name); } catch { /* observer-grade */ }
+      // Same transition, different ledger. "Already in context" and "already
+      // offered" are separate questions on purpose, so they reset side by side
+      // here rather than one reading the other.
+      try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
       this._clearCompactValve(session);
       const sched = getRemindScheduler && getRemindScheduler();
       if (sched) { try { sched.fireCompactFor(session.name); } catch {} }
@@ -2577,9 +2687,18 @@ function createSessionManager(deps) {
         if (s.needsAttention) return; // injection would answer the dialog
         if (sid !== s.sessionId) return;
         if (isDigested(getPersistence().get(s.name), sid)) return;
-        const digest = composeDigest(memoryStore.list(s.name));
+        const units = memoryStore.list(s.name);
+        const tiers = tiersOf(units);
+        // DELIVERY MUST NOT DEPEND ON THE TRACKER. Taking the text from `tiers`
+        // alone made a deps object carrying composeDigest without its sibling
+        // stop delivering the digest at all — load tracking is an observer, and
+        // an observer that can suppress the thing it observes is a defect.
+        const digest = tiers ? tiers.text : composeDigest(units);
         if (!digest) return; // empty store — stay unmarked, try again when units exist
         getPersistence().markDigested(s.name, sid);
+        // After the session reset that brought us here, so it re-seeds the live
+        // set rather than being cleared by it.
+        if (tiers) { try { memLoad.noteDigest(s.name, tiers); } catch { /* observer-grade */ } }
         this._deliverMessage(s.name, 'memory',
           `boot digest (this conversation started before it could ride the first turn)\n\n${digest}`, 'memory');
       } catch { /* observer-grade — never break the turn handler */ }
@@ -2665,6 +2784,10 @@ function createSessionManager(deps) {
           this._injectText(session, `[agent:memory] no match for "${body.trim().slice(0, 60)}"`, { parkable: true });
           return;
         }
+        // The highest-signal event in the scheme: one body delivered into the
+        // transcript, where it survives until clear/compact. Also the evidence
+        // base for evidence-driven archival, which is why this one persists.
+        try { memLoad.noteRecall(agent, unit.id, session.sessionId); } catch { /* observer-grade */ }
         this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}`, 'memory');
         return;
       }
