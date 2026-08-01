@@ -82,6 +82,55 @@ test('fold: a bracketed paste accumulates and its interior \\r does NOT close', 
   assert.strictEqual(b.closes, false, 'still inside the region on the second chunk');
 });
 
+// An append-only accumulator desyncs from the screen on any edit that is not
+// the backspace key, and the divergence survives until Enter — which is exactly
+// when it gets ranked. Each row is what the TERMINAL shows after those bytes.
+test('fold: line edits track what the terminal actually shows', () => {
+  const type = (chunks) => {
+    let st = '';
+    for (const c of chunks) st = foldDraft(st, c);
+    return st;
+  };
+  const cases = [
+    ['backspace', ['deploy the helm chart', '\x7f\x7f\x7f\x7f\x7f'], 'deploy the helm '],
+    ['Ctrl-W kills the word before the cursor', ['deploy the helm chart', '\x17'], 'deploy the helm '],
+    ['Ctrl-A then Ctrl-K clears the line', ['deploy the helm chart', '\x01\x0b'], ''],
+    ['left arrows then typing inserts mid-line', ['helm chart', '\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D', 'BIG '], 'helm BIG chart'],
+    ['Home then typing prepends', ['chart', '\x1b[H', 'helm '], 'helm chart'],
+    ['End returns to the tail', ['chart', '\x1b[H', '\x1b[F', 's'], 'charts'],
+    ['Delete removes forward', ['helm chart', '\x1b[H', '\x1b[3~'], 'elm chart'],
+    ['Alt-B jumps a word back', ['helm chart', '\x1bb', 'BIG '], 'helm BIG chart'],
+    ['Ctrl-D deletes forward', ['helm chart', '\x01\x04'], 'elm chart'],
+  ];
+  for (const [what, chunks, expected] of cases) {
+    const r = type(chunks);
+    assert.strictEqual(r.draft, expected,
+      `${what}: the ranker would see ${JSON.stringify(r.draft)} while the screen shows `
+      + `${JSON.stringify(expected)} — every word in the gap is ranked but no longer on screen`);
+    assert.strictEqual(r.desync, false, `${what} is fully modelable and must not set desync`);
+  }
+});
+
+test('fold: an unmodelable edit sets desync rather than guessing', () => {
+  // History recall and tab completion replace the line with text that never
+  // passed through foldDraft. There is no recovery, so the flag is sticky and
+  // the caller must not arm.
+  for (const [what, keys] of [
+    ['history up', '\x1b[A'], ['history down', '\x1b[B'],
+    ['tab completion', '\t'], ['Ctrl-Y yank', '\x19'], ['Ctrl-T transpose', '\x14'],
+  ]) {
+    const r = foldDraft(foldDraft('', 'deploy the helm chart'), keys);
+    assert.strictEqual(r.desync, true,
+      `${what} rewrites the line invisibly — arming on the stale text would rank a question the `
+      + 'user never asked, with full confidence');
+  }
+  // Sticky: a later keystroke must not clear it.
+  const stuck = foldDraft(foldDraft(foldDraft('', 'helm'), '\t'), ' chart');
+  assert.strictEqual(stuck.desync, true, 'desync survives further typing — there is no way back');
+  // Ctrl-U starts over, which IS a way back.
+  assert.strictEqual(foldDraft(stuck, '\x15').desync, false, 'clearing the line restores a known state');
+});
+
 test('fold: Ctrl-C and Ctrl-U clear the draft and report `cleared`, not `closes`', () => {
   for (const key of ['\x03', '\x15']) {
     const r = foldDraft('half a question', key);
@@ -117,12 +166,22 @@ test('fold: the 4KB cap stops accumulation and reports overflow', () => {
   assert.strictEqual(next.draft.length, DRAFT_CAP, 'and nothing more is appended');
 });
 
-test('fold: a CSI escape sequence is dropped, not folded in as content', () => {
+test('fold: CSI bytes never land in the draft as content', () => {
   // Arrow keys arrive as ESC [ A. Without a CSI skip the '[' and 'A' land in the
   // draft as text and poison the ranking with letters the user never typed.
-  const r = foldDraft('memory', '\x1b[A\x1b[D\x1b[3~');
-  assert.strictEqual(r.draft, 'memory', 'no escape-sequence bytes reached the draft');
+  // These sequences MOVE the cursor rather than being discarded (see the
+  // line-edit test), so assert on the bytes, not on the text being untouched.
+  const r = foldDraft('memory', '\x1b[D\x1b[C\x1b[H\x1b[F');
+  assert.strictEqual(r.draft, 'memory', 'pure cursor motion leaves the text alone');
+  assert.ok(!/[[\x1b]|3~|OD/.test(r.draft), 'no escape-sequence bytes reached the draft');
   assert.strictEqual(r.closes, false);
+
+  // A sequence split across a node-pty read boundary cannot be completed, and
+  // its tail would arrive next chunk as bare content ("D", "3~").
+  const split = foldDraft('memory', '\x1b[');
+  assert.strictEqual(split.draft, 'memory', 'the partial sequence contributes nothing');
+  assert.strictEqual(split.desync, true,
+    'an unterminated CSI means the next chunk starts mid-sequence — its tail would be read as text');
 });
 
 // --- ranking ---------------------------------------------------------------
@@ -329,6 +388,22 @@ test('arm: the debug line carries the matched terms and score, never the draft',
   assert.ok(!armed[0].includes(secret),
     `the draft leaked into the log: ${armed[0]} — evidence must be the ranker's tokens, not the input`);
   assert.ok(!armed[0].includes('how does'), 'stop words from the draft imply the draft itself was logged');
+});
+
+test('arm: a desynced draft must not arm', async () => {
+  const h = mkArm();
+  // Same submitted draft, twice, differing only in whether the accumulator is
+  // known to match the screen. The text is a perfect match either way, so only
+  // the flag can be responsible for the difference.
+  h.arm.onDraft('s', DRAFT, CTX, { final: true, desync: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 0,
+    'the accumulator no longer matches the screen, so this text is not what the user asked — '
+    + 'ranking it would answer a different question with full confidence');
+
+  h.arm.onDraft('s2', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'and the identical draft DOES arm once it is trustworthy');
 });
 
 test('arm: a draft that grows without changing the winner does not re-POST', async () => {
@@ -817,6 +892,35 @@ test('write: human keystrokes accumulate on the session and reach the arm', asyn
     assert.ok(!drafts[0].ctx.route.includes('*'), 'and must not be a glob when the exact id is known');
     // The keystrokes still reached the PTY — the whole point of the fire-and-forget shape.
     assert.strictEqual(h.written.join(''), 'wirescope hints', 'every byte reached the PTY');
+  } finally { h.stop('a'); }
+});
+
+test('write: line edits across separate keystrokes track the terminal', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const s = await spawned(h, 'a');
+  try {
+    // node-pty delivers each keypress as its own write. The cursor and the
+    // desync flag therefore have to SURVIVE between calls on the session — if
+    // only the text carries forward, the cursor resets to the end every
+    // keystroke and mid-line editing silently reverts to append-only.
+    for (const c of 'helm chart') h.m.write('a', c);
+    for (let i = 0; i < 5; i++) h.m.write('a', '\x1b[D');
+    for (const c of 'BIG ') h.m.write('a', c);
+    assert.strictEqual(s._draft, 'helm BIG chart',
+      'the terminal shows "helm BIG chart"; anything else is text the ranker sees but the user cannot');
+
+    h.m.write('a', '\x17');
+    assert.strictEqual(s._draft, 'helm chart',
+      'Ctrl-W killed "BIG " at the cursor, not the trailing word');
+
+    // And the desync flag survives the same way.
+    h.m.write('a', '\t');
+    h.m.write('a', '\r');
+    const final = rec.calls.filter((c) => c.fn === 'onDraft' && c.opts && c.opts.final).pop();
+    assert.ok(final, 'Enter must still reach the arm');
+    assert.strictEqual(final.opts.desync, true,
+      'tab completion rewrote the line invisibly and the arm must be told, not handed stale text');
   } finally { h.stop('a'); }
 });
 

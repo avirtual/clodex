@@ -40,17 +40,57 @@ const PASTE_END = '\x1b[201~';
 // nudges, ticket bodies) must never be folded, and there is deliberately no
 // second gate in this module to disagree with the first one.
 //
+// THE ACCUMULATOR MODELS A LINE EDITOR, NOT A TYPEWRITER. An append-only
+// accumulator desynchronises from the screen the moment the user edits by any
+// means other than the backspace key: Ctrl-W, Ctrl-K and cursor-then-type all
+// leave words in the ranked draft that the user has already removed, and the
+// divergence survives until Enter, which is exactly when it gets ranked. That
+// is a silent corruption of every query it touches.
+//
+// What CANNOT be modelled from the input byte stream is marked `desync` instead
+// of guessed at: history recall (up/down arrow) and tab completion both replace
+// the line with text that never came through this function, so no amount of
+// key handling recovers them. The caller must not arm on a desynced draft — a
+// wrong draft ranks confidently against the wrong thing, which is worse than
+// not arming at all. Sticky until the draft is reset, because there is no way
+// back to a known state short of starting over.
+//
 // Returns `cleared` for Ctrl-C/Ctrl-U (abandoned: the caller must disarm) and
 // `closes` for Enter (submitted: one final arm pass, then reset). They are
 // different outcomes even though draftChunkSignal reports \x03 as a close.
-function foldDraft(draft, chunk, inPaste = false) {
+//
+// `prev` is the previous return value; a bare string is accepted as the
+// cursor-at-end state so a caller with only the text can still fold.
+function foldDraft(prev, chunk, inPaste = false) {
   const s = chunk == null ? '' : String(chunk);
-  let out = String(draft || '');
+  const st = (prev && typeof prev === 'object') ? prev : { draft: String(prev || '') };
+  let out = String(st.draft || '');
+  let cur = Number.isInteger(st.cursor) ? Math.min(Math.max(st.cursor, 0), out.length) : out.length;
+  let desync = !!st.desync;
   let paste = !!inPaste;
   let closes = false;
   let cleared = false;
   let i = 0;
-  const push = (c) => { if (out.length < DRAFT_CAP) out += c; };
+
+  const insert = (text) => {
+    if (out.length >= DRAFT_CAP) return;
+    out = out.slice(0, cur) + text + out.slice(cur);
+    cur += text.length;
+  };
+  const reset = () => { out = ''; cur = 0; desync = false; };
+  // Backwards over whitespace, then over the word itself — readline's Ctrl-W.
+  const wordStart = () => {
+    let j = cur;
+    while (j > 0 && /\s/.test(out[j - 1])) j--;
+    while (j > 0 && !/\s/.test(out[j - 1])) j--;
+    return j;
+  };
+  const wordEnd = () => {
+    let j = cur;
+    while (j < out.length && /\s/.test(out[j])) j++;
+    while (j < out.length && !/\s/.test(out[j])) j++;
+    return j;
+  };
 
   while (i < s.length) {
     if (!paste && s.startsWith(PASTE_START, i)) { paste = true; i += PASTE_START.length; continue; }
@@ -59,29 +99,77 @@ function foldDraft(draft, chunk, inPaste = false) {
     if (paste) {
       // Inside a bracketed paste the CLI treats \r as literal — the paste does
       // not submit — so paste bytes accumulate without ever closing the draft.
-      push(c);
+      insert(c);
       i++;
       continue;
     }
     if (c === '\x1b') {
-      // Arrow keys and other CSI sequences arrive as ESC [ A. Without this the
-      // '[' and 'A' land in the draft as content and poison the ranking.
       i++;
       if (s[i] === '[' || s[i] === 'O') {
+        const introducer = i;
         i++;
         while (i < s.length && !(s.charCodeAt(i) >= 0x40 && s.charCodeAt(i) <= 0x7e)) i++;
+        const seq = s.slice(introducer + 1, i + 1);
+        const final = s[i];
         i++;
+        // An unterminated sequence means the chunk boundary split it. Nothing
+        // is desynced yet — but the tail arrives as a bare fragment next chunk
+        // and would be read as content, so treat it as unmodelable.
+        if (final === undefined) { desync = true; continue; }
+        if (seq === 'D' || seq === 'OD') cur = Math.max(0, cur - 1);
+        else if (seq === 'C' || seq === 'OC') cur = Math.min(out.length, cur + 1);
+        else if (seq === 'H' || seq === '1~' || seq === 'OH') cur = 0;
+        else if (seq === 'F' || seq === '4~' || seq === 'OF') cur = out.length;
+        else if (seq === '3~') out = out.slice(0, cur) + out.slice(cur + 1); // Delete
+        // Up/down recall a history entry, replacing the line with text that
+        // never passed through here. Unrecoverable by construction.
+        else if (seq === 'A' || seq === 'B' || seq === 'OA' || seq === 'OB') desync = true;
+        continue;
       }
+      // ESC-prefixed word motions (Alt-B / Alt-F / Alt-D). Without these the
+      // letter lands in the draft as content.
+      const k = s[i];
+      i++;
+      if (k === 'b' || k === 'B') { cur = wordStart(); continue; }
+      if (k === 'f' || k === 'F') { cur = wordEnd(); continue; }
+      if (k === 'd' || k === 'D') { out = out.slice(0, cur) + out.slice(wordEnd()); continue; }
+      if (k === undefined) { desync = true; continue; }
+      // A bare ESC (or an unknown meta key) may open a mode this function does
+      // not model. Do not silently drop it.
+      desync = true;
       continue;
     }
-    if (c === '\x03' || c === '\x15') { out = ''; cleared = true; i++; continue; }
-    if (c === '\x7f' || c === '\b') { out = out.slice(0, -1); i++; continue; }
+    if (c === '\x03' || c === '\x15') { reset(); cleared = true; i++; continue; }
+    if (c === '\x7f' || c === '\b') {
+      if (cur > 0) { out = out.slice(0, cur - 1) + out.slice(cur); cur--; }
+      i++;
+      continue;
+    }
     if (c === '\r' || c === '\n') { closes = true; i++; continue; }
+    if (c === '\x01') { cur = 0; i++; continue; }                                  // Ctrl-A
+    if (c === '\x05') { cur = out.length; i++; continue; }                         // Ctrl-E
+    if (c === '\x02') { cur = Math.max(0, cur - 1); i++; continue; }               // Ctrl-B
+    if (c === '\x06') { cur = Math.min(out.length, cur + 1); i++; continue; }      // Ctrl-F
+    if (c === '\x0b') { out = out.slice(0, cur); i++; continue; }                  // Ctrl-K
+    if (c === '\x04') { out = out.slice(0, cur) + out.slice(cur + 1); i++; continue; } // Ctrl-D
+    if (c === '\x17') {                                                           // Ctrl-W
+      const j = wordStart();
+      out = out.slice(0, j) + out.slice(cur);
+      cur = j;
+      i++;
+      continue;
+    }
     const code = s.charCodeAt(i);
-    if (code >= 0x20) push(c);
+    if (code >= 0x20) { insert(c); i++; continue; }
+    // Tab completion, Ctrl-P/N history, Ctrl-Y yank, Ctrl-T transpose: each
+    // changes the line in ways the byte stream alone does not describe. Ctrl-L
+    // (redraw) is harmless but not worth a special case — a redraw during
+    // typing is rare and losing one hint costs nothing.
+    if (code !== 0x0c) desync = true;
     i++;
   }
-  return { draft: out, closes, cleared, inPaste: paste, overflow: out.length >= DRAFT_CAP };
+  cur = Math.min(Math.max(cur, 0), out.length);
+  return { draft: out, cursor: cur, closes, cleared, desync, inPaste: paste, overflow: out.length >= DRAFT_CAP };
 }
 
 // `id on=term,term score=N.NN` — the audit line for one armed unit.
@@ -208,11 +296,15 @@ function createHintArm({
     // Called on every human keystroke with the session's accumulated draft, but
     // only Enter (`final`) arms. Mid-draft keystrokes exist to keep the timer
     // cancelled and the gate honoured, nothing more.
-    onDraft(key, draft, ctx = {}, { final = false, overflow = false } = {}) {
+    onDraft(key, draft, ctx = {}, { final = false, overflow = false, desync = false } = {}) {
       cancelTimer(key);
       if (enabled && !enabled()) return;
       if (!final) return;
       if (overflow) return;
+      // The accumulator no longer matches the screen (history recall, tab
+      // completion). Ranking it would answer a question the user never asked,
+      // and would do it with full confidence.
+      if (desync) return;
       if (countTerms(draft, terms) < minTerms) return;
       fire(key, draft, ctx);
     },

@@ -1284,19 +1284,25 @@ function createSessionManager(deps) {
     // keystroke reaching the PTY.
     _foldDraft(s, data, wasInPaste) {
       try {
-        const r = foldDraft(s._draft || '', data, wasInPaste);
+        // The WHOLE previous result carries forward, not just the text: the
+        // cursor and the desync flag are what make this a line editor rather
+        // than an append-only buffer.
+        const r = foldDraft(s._draftState || s._draft || '', data, wasInPaste);
+        s._draftState = r;
         s._draft = r.draft;
         const key = s.name;
         if (r.cleared) { arm.disarm(key, this._armCtx(s)); return; }
         if (r.closes) {
           // The final pass runs BEFORE the reset, on the draft the user actually
           // submitted — after the reset there is nothing left to rank.
-          arm.onDraft(key, s._draft, this._armCtx(s), { final: true, overflow: r.overflow });
+          arm.onDraft(key, s._draft, this._armCtx(s),
+            { final: true, overflow: r.overflow, desync: r.desync });
           s._draft = '';
+          s._draftState = null;
           arm.onSubmit(key);
           return;
         }
-        arm.onDraft(key, s._draft, this._armCtx(s), { overflow: r.overflow });
+        arm.onDraft(key, s._draft, this._armCtx(s), { overflow: r.overflow, desync: r.desync });
       } catch (e) { log.debug('hint', `draft fold failed for ${s.name}: ${e.message}`); }
     }
 
