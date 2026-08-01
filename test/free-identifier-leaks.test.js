@@ -71,6 +71,11 @@ const SCANNED_MODULES = [
   // real, since a second retriever must slot in without hint-arm.js changing.
   'hint-arm.js',
   'hint-retrieve.js',
+  // The second retriever the seam above was built for. It shares only the
+  // tokenizer with hint-retrieve.js; its thresholds are deliberately its own,
+  // because the ones derived on the memory store do not transfer to a corpus
+  // three orders of magnitude larger.
+  'basket-retrieve.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',
