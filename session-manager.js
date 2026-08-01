@@ -2950,6 +2950,24 @@ function createSessionManager(deps) {
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
+      // A template's `env` was read ONLY on the cold-reviewer path, so an
+      // agent-initiated spawn silently dropped it — a seat whose whole point was
+      // CLODEX_DISABLE_IPC_PROMPT booted with the full protocol prompt anyway,
+      // and nothing said so. Honored here through the SAME allowlist the reviewer
+      // uses, not a wider one: env is an authority surface (base-url, credential
+      // and model redirects) and a template is agent-writable, so this stays a
+      // fixed code-level ceiling. Keys outside it are dropped and named in the
+      // reply, because a silently ignored env key is the bug being fixed.
+      const tplEnv = (tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) ? tpl.env : null;
+      const envDropped = [];
+      let sessionEnv = null;
+      if (tplEnv) {
+        for (const [k, v] of Object.entries(tplEnv)) {
+          if (!REVIEWER_ENV_ALLOWLIST.has(k)) { envDropped.push(k); continue; }
+          if (typeof v !== 'string') { envDropped.push(k); continue; }
+          (sessionEnv || (sessionEnv = {}))[k] = v;
+        }
+      }
 
       setImmediate(async () => {
         try {
@@ -2966,7 +2984,7 @@ function createSessionManager(deps) {
             // template) can't self-grant the capability — only an operator's local
             // GUI create/edit may. null passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
-            null, true,
+            sessionEnv, true,
           );
           if (tpl) {
             if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
@@ -2979,7 +2997,8 @@ function createSessionManager(deps) {
             type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}` + (tpl ? ` (template ${tplLabel})` : ''),
           });
           log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${cwd}` + (tpl ? ` via template "${tplLabel}"` : ''));
-          reply(`ok: spawned "${name}" (${type}) @ ${cwd}` + (tpl ? ` via template "${tplLabel}"` : ''));
+          reply(`ok: spawned "${name}" (${type}) @ ${cwd}` + (tpl ? ` via template "${tplLabel}"` : '')
+            + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
           reply(`error: ${err.message}`);
