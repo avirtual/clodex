@@ -935,3 +935,13 @@ test('compose: a short unit rides in full and still carries its labels', () => {
   assert.ok(text.includes('a short durable fact'));
   assert.ok(!text.includes('truncated'), 'a short body is not truncated');
 });
+
+test('compose: a body that fits the preview is not advertised as truncated', () => {
+  // Between FULL_BODY_CAP (700) and PREVIEW_CAP (900): takes the preview branch
+  // but nothing is actually cut.
+  const body = `SUBJECT\n${'w '.repeat(400)}`.slice(0, 850);
+  const text = compose([{ id: 'mem-3-c', text: body, tags: 'method', scope: '' }]);
+  assert.ok(!text.includes('truncated'),
+    'nothing was cut, so a recall offer here buys the model nothing it does not already have');
+  assert.ok(!/emit \[agent:memory recall\]/.test(text), 'and no recall is offered');
+});

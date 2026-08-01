@@ -157,10 +157,16 @@ function compose(results) {
       // recall. Skip leading directive-only lines; fall back to the first line
       // if every line looks like one.
       const prose = b.split('\n').filter((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim())).join('\n');
-      const preview = (prose || b).trim().slice(0, PREVIEW_CAP);
-      parts.push(`\n${r.id}:${labelOf(r)}\n${preview}...`
-        + `\n(truncated at ${preview.length} of ${b.length} chars — emit [agent:memory recall] `
-        + `${r.id} on its own line to load it in full)`);
+      const full = (prose || b).trim();
+      const preview = full.slice(0, PREVIEW_CAP);
+      // A body between FULL_BODY_CAP and PREVIEW_CAP fits entirely, so claiming
+      // truncation would offer a recall that returns nothing the model already
+      // has — the offer has to be conditional on something actually being cut.
+      parts.push(preview.length < full.length
+        ? `\n${r.id}:${labelOf(r)}\n${preview}...`
+          + `\n(truncated at ${preview.length} of ${full.length} chars — emit [agent:memory recall] `
+          + `${r.id} on its own line to load it in full)`
+        : `\n${r.id}:${labelOf(r)}\n${preview}`);
     }
   }
   return parts.length > 1 ? parts.join('\n') : null;
