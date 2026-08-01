@@ -14,6 +14,37 @@ cd "$(dirname "$0")/.." || exit 1
 # Drain the exec payload (stdin) so the dispatcher's write can't EPIPE.
 cat >/dev/null 2>/dev/null
 
+# ONE SUITE AT A TIME, ENFORCED RATHER THAN ASKED FOR. Parts of this suite bind
+# real ports and spawn real children (cli/test/attach.test.js), so two
+# concurrent runs deadlock: both sit at 0% CPU and neither finishes. That
+# failure is indistinguishable from a slow suite, and the wrong lesson —
+# "raise the timeout" — makes the next collision longer instead of impossible.
+# The suite takes ~24s; anything past this wait is a wedge, not contention.
+#
+# mkdir is the atomic test-and-set on every POSIX filesystem. A lock holding a
+# DEAD pid is stale (a killed runner never cleans up) and is reclaimed, or the
+# first crash would wedge every later run forever.
+LOCK=".test-digest.lock"
+waited=0
+while ! mkdir "$LOCK" 2>/dev/null; do
+  holder=$(cat "$LOCK/pid" 2>/dev/null)
+  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    rm -rf "$LOCK"
+    continue
+  fi
+  if [ "$waited" -ge 120 ]; then
+    printf 'another suite run is still going (pid %s) after %ss - not starting a second\n' \
+      "${holder:-unknown}" "$waited" 1>&2
+    exit 1
+  fi
+  waited=$((waited + 2))
+  sleep 2
+done
+echo $$ > "$LOCK/pid"
+# Covers the normal exit and the common signals; without this a Ctrl-C leaves a
+# lock whose pid IS alive for a moment and the next run waits on a ghost.
+trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
+
 out=$(node --test --test-reporter=tap 2>&1)
 code=$?
 

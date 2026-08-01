@@ -24,3 +24,4 @@ vendor/wirescope/warmth.sqlite*
 docs/design/
 plugin-context.md
 plugin-context.lean.md
+.test-digest.lock/
