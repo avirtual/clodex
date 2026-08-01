@@ -84,6 +84,14 @@ function foldDraft(draft, chunk, inPaste = false) {
   return { draft: out, closes, cleared, inPaste: paste, overflow: out.length >= DRAFT_CAP };
 }
 
+// `id on=term,term score=N.NN` — the audit line for one armed unit.
+function whyOf(r) {
+  const ev = (r && r.evidence) || {};
+  const hits = Array.isArray(ev.hits) ? ev.hits.join(',') : '';
+  const s = typeof ev.score === 'number' ? ev.score.toFixed(2) : '?';
+  return `${r.id} on=${hits || '?'} score=${s}`;
+}
+
 function countTerms(draft, terms) {
   try { return terms(draft).length; } catch { return 0; }
 }
@@ -186,7 +194,12 @@ function createHintArm({
       if (!offered.has(agent)) offered.set(agent, new Map());
       const m = offered.get(agent);
       for (const r of results) m.set(r.id, now());
-      debug(`armed ${route} ${ids}`);
+      // The matched TERMS and score, never the draft itself: precision is
+      // unauditable without knowing why a unit won, but a draft is raw operator
+      // text and may carry a secret, so only the ranker's own filtered tokens
+      // are safe to write. Dropping this is what made every judgement about
+      // hint quality a guess.
+      debug(`armed ${route} ${results.map(whyOf).join(' | ')}`);
     }).catch((e) => { st.lastIds = null; debug(`arm failed for ${route}: ${e.message}`); });
   }
 

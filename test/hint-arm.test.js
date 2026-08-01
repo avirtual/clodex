@@ -214,8 +214,10 @@ function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false,
   const { store } = mkStore(CORPUS);
   const posts = [];
   const clears = [];
+  const logged = [];
   let clock = 1_000_000;
   const a = createHintArm({
+    log: { debug: (tag, msg) => logged.push(`${tag} ${msg}`) },
     retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
     compose,
     terms,
@@ -230,7 +232,7 @@ function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false,
     debounceMs: 5,
     ...(enabled ? { enabled } : {}),
   });
-  return { arm: a, posts, clears, store, tick: (ms) => { clock += ms; } };
+  return { arm: a, posts, clears, store, logged, tick: (ms) => { clock += ms; } };
 }
 
 const DRAFT = 'how does the wirescope tail hint registry expire a slot';
@@ -250,6 +252,29 @@ test('arm: typing arms nothing — only Enter does', async () => {
   h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
   assert.strictEqual(h.posts.length, 1, 'Enter arms the draft the user actually submitted');
+});
+
+// Precision is the open question for this feature, and it cannot be answered
+// from a log that records only WHICH unit won. Two arms observed in production
+// on 2026-08-01 both looked wrong and neither could be diagnosed, because the
+// matched terms were computed and discarded.
+test('arm: the debug line carries the matched terms and score, never the draft', async () => {
+  const h = mkArm();
+  const secret = 'hunter2';
+  h.arm.onDraft('s', `${DRAFT} ${secret}`, CTX, { final: true });
+  await settle();
+  const armed = h.logged.filter((l) => l.startsWith('hint armed'));
+  assert.strictEqual(armed.length, 1, 'the successful arm must log exactly one audit line');
+  assert.match(armed[0], /on=[a-z0-9,]+ score=\d+\.\d\d/,
+    `an audit line without the matched terms cannot distinguish a good hint from a lucky one: ${armed[0]}`);
+  for (const t of ['wirescope', 'registry']) {
+    assert.ok(armed[0].includes(t), `the term "${t}" won the match and must appear as evidence`);
+  }
+  // A draft is raw operator text. The ranker's filtered tokens are safe to
+  // write; the draft itself may carry a secret and must never reach the log.
+  assert.ok(!armed[0].includes(secret),
+    `the draft leaked into the log: ${armed[0]} — evidence must be the ranker's tokens, not the input`);
+  assert.ok(!armed[0].includes('how does'), 'stop words from the draft imply the draft itself was logged');
 });
 
 test('arm: a draft that grows without changing the winner does not re-POST', async () => {
