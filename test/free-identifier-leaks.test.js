@@ -76,6 +76,10 @@ const SCANNED_MODULES = [
   // because the ones derived on the memory store do not transfer to a corpus
   // three orders of magnitude larger.
   'basket-retrieve.js',
+  // The semantic re-ranker. Takes its fetch, cache and corpus by injection so
+  // the no-daemon path is testable without one installed; hint-arm.js holds it
+  // as an optional dep and must keep working with it absent.
+  'hint-embed.js',
   'engine.js',
   'headless-main.js',
   'sandbox.js',

@@ -175,6 +175,10 @@ function foldDraft(prev, chunk, inPaste = false) {
 // `id on=term,term score=N.NN` — the audit line for one armed unit.
 function whyOf(r) {
   const ev = (r && r.evidence) || {};
+  // A semantically ranked unit has no matched terms — the audit line must say
+  // WHICH ranker chose it, or a wrong hint cannot be attributed to the half that
+  // produced it.
+  if (typeof ev.sim === 'number') return `${r.id} by=semantic sim=${ev.sim.toFixed(3)}`;
   const hits = Array.isArray(ev.hits) ? ev.hits.join(',') : '';
   const s = typeof ev.score === 'number' ? ev.score.toFixed(2) : '?';
   const c = typeof ev.coverage === 'number' ? ` cov=${(ev.coverage * 100).toFixed(0)}%` : '';
@@ -187,13 +191,14 @@ function countTerms(draft, terms) {
 
 // deps:
 //   retriever   { retrieve(draft, {agent, limit, exclude}) -> [record] }
+//   semantic    { rank(draft, {agent, limit}) -> Promise<[record]|null> }  optional
 //   compose     (records) -> string|null
 //   terms       (text) -> [string]        (the ranker's own tokenizer)
 //   loadState   (agent, id) -> 'full'|'title'|'absent'
 //   armHints    ({base, route, id, text, ttl_s}) -> Promise
 //   clearHints  ({base, route, id}) -> Promise
 function createHintArm({
-  retriever, compose, terms, loadState, armHints, clearHints,
+  retriever, semantic = null, compose, terms, loadState, armHints, clearHints,
   // `Date.now` unbound rather than an arrow: a nested paren in a default value
   // makes free-identifier-leaks.test.js fail to parse THIS WHOLE PARAM LIST, so
   // every dep above would stop counting as defined here and the scan would
@@ -241,13 +246,13 @@ function createHintArm({
     if (st && st.timer) { clearTimeout(st.timer); st.timer = null; }
   };
 
-  function pick(draft, agent, limit) {
-    // Over-fetch, then apply the two ledgers per result: the suppression matrix
-    // is a property of each candidate, so filtering after the rank is what keeps
-    // a suppressed winner from taking the slot a live runner-up could fill.
-    const pool = retriever.retrieve(draft, { agent, limit: Math.max(limit * 4, 8) }) || [];
+  // The two ledgers, applied per candidate AFTER whichever ranker produced it:
+  // the suppression matrix is a property of the record, not of the ranking, so
+  // filtering last is what keeps a suppressed winner from taking the slot a live
+  // runner-up could fill.
+  function admissible(pool, agent, limit) {
     const out = [];
-    for (const r of pool) {
+    for (const r of pool || []) {
       if (stateOf(agent, r.id) === 'full') continue; // the body is already there
       if (inCooldown(agent, r.id)) continue;
       out.push(r);
@@ -256,11 +261,47 @@ function createHintArm({
     return out;
   }
 
-  function fire(key, draft, ctx) {
+  function pick(draft, agent, limit) {
+    const pool = retriever.retrieve(draft, { agent, limit: Math.max(limit * 4, 8) }) || [];
+    return admissible(pool, agent, limit);
+  }
+
+  // THE GATE IS LEXICAL, THE ORDER IS SEMANTIC, AND THE HALVES ARE NOT
+  // INTERCHANGEABLE. Measured over 28 paraphrase queries against the curated
+  // tags: embedding ranks better (precision@1 0.636 vs 0.409, winning 5 and
+  // losing 0) but CANNOT abstain — top cosine for junk drafts (0.490-0.600)
+  // overlaps real ones (0.536-0.708), so no threshold separates them. Lexical
+  // abstains correctly because a draft sharing no rare terms with any record
+  // cannot clear MIN_HITS.
+  //
+  // So the semantic ranker is consulted only once `pick` has already decided
+  // something is worth arming, and it re-ranks the WHOLE corpus rather than the
+  // survivors: lexical's cuts leave too few records to reorder (measured: no
+  // change at all, 0.500 -> 0.500).
+  async function refine(lexical, draft, agent, limit) {
+    if (!semantic) return lexical;
+    let ranked;
+    // A null return means "no opinion" (daemon down, corpus not embedded yet)
+    // and MUST fall through to the lexical order — the whole point is that the
+    // embedding is optional infrastructure.
+    try { ranked = await semantic.rank(draft, { agent, limit: Math.max(limit * 4, 8) }); } catch (e) {
+      debug(`semantic rank failed for ${agent}: ${e.message}`);
+      return lexical;
+    }
+    if (!ranked || !ranked.length) return lexical;
+    const out = admissible(ranked, agent, limit);
+    return out.length ? out : lexical;
+  }
+
+  async function fire(key, draft, ctx) {
     const { agent, base, route, limit = 1 } = ctx || {};
     if (!base || !route || !agent) return;
     let results;
     try { results = pick(draft, agent, limit); } catch (e) { debug(`rank failed for ${agent}: ${e.message}`); return; }
+    if (!results.length) return;
+    try { results = await refine(results, draft, agent, limit); } catch (e) {
+      debug(`refine failed for ${agent}: ${e.message}`);
+    }
     if (!results.length) return;
     const ids = results.map((r) => r.id).join(',');
     const st = stateFor(key);
@@ -306,7 +347,11 @@ function createHintArm({
       // and would do it with full confidence.
       if (desync) return;
       if (countTerms(draft, terms) < minTerms) return;
-      fire(key, draft, ctx);
+      // Deliberately NOT awaited, and the rejection is swallowed here rather
+      // than left to bubble: `fire` became async when the semantic ranker landed
+      // and an unhandled rejection on the keystroke path would crash the main
+      // process on a daemon hiccup.
+      Promise.resolve(fire(key, draft, ctx)).catch((e) => debug(`fire failed: ${e && e.message}`));
     },
 
     // The draft was abandoned (Ctrl-C / Ctrl-U) or submitted. On abandon the

@@ -1128,3 +1128,170 @@ test('compose: a body that fits the preview is not advertised as truncated', () 
     'nothing was cut, so a recall offer here buys the model nothing it does not already have');
   assert.ok(!/emit \[agent:memory recall\]/.test(text), 'and no recall is offered');
 });
+
+// --- the semantic tier: gate stays lexical, order becomes semantic ----------
+
+// A stand-in ranker. Returning a FIXED winner regardless of the draft is the
+// point: it makes "did the semantic order actually replace the lexical one"
+// observable, which a realistic ranker agreeing with lexical would hide.
+function fakeSemantic({ winner = null, returns = undefined, throws = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async rank(draft, opts) {
+      calls.push({ draft, opts });
+      if (throws) throw new Error('daemon exploded');
+      if (returns !== undefined) return returns;
+      return [{ id: winner, text: 'the semantically chosen unit body', tags: '', scope: '',
+        source: 'memory', confidence: 0.7, evidence: { sim: 0.7, ranker: 'semantic' } }];
+    },
+  };
+}
+
+function mkArmWith(semantic, { loadState = () => 'absent' } = {}) {
+  const { store, ids } = mkStore(CORPUS);
+  const posts = [];
+  const logged = [];
+  const a = createHintArm({
+    log: { debug: (tag, msg) => logged.push(`${tag} ${msg}`) },
+    retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+    semantic,
+    compose,
+    terms,
+    loadState,
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  return { arm: a, posts, logged, ids, store };
+}
+
+test('semantic: a draft the lexical gate rejects never reaches the ranker', async () => {
+  // THE GATE IS LEXICAL AND THE RANKER CANNOT OVERRIDE IT. Measured on the real
+  // store, top cosine for junk drafts (0.490-0.600) overlaps real ones
+  // (0.536-0.708), so a semantic tier that got to vote on WHETHER to arm would
+  // arm on "the cat knocked the plant over". Consulting it only after the gate
+  // has fired is what makes that impossible rather than unlikely.
+  const sem = fakeSemantic({ winner: 'mem-x' });
+  const { arm, posts } = mkArmWith(sem);
+  arm.onDraft('s', 'what should i have for dinner tonight please', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 0, 'an unrelated draft must not arm');
+  assert.strictEqual(sem.calls.length, 0,
+    'and the semantic ranker must not even be consulted — it cannot abstain, so asking it is the bug');
+});
+
+test('semantic: when the gate fires, the semantic order replaces the lexical one', async () => {
+  const { store, ids } = mkStore(CORPUS);
+  const posts = [];
+  const logged = [];
+  // The unit lexical would NOT pick for this draft.
+  const other = ids[5];
+  const arm = createHintArm({
+    log: { debug: (tag, msg) => logged.push(`${tag} ${msg}`) },
+    retriever: createMemoryRetriever({ listUnits: (a) => store.list(a) }),
+    semantic: {
+      async rank() {
+        return [{ id: other, text: 'the digest budget reserves half its bytes for index lines',
+          tags: '', scope: '', source: 'memory', confidence: 0.71,
+          evidence: { sim: 0.712, ranker: 'semantic' } }];
+      },
+    },
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'the gate fired, so something must be armed');
+  assert.ok(posts[0].text.includes(other),
+    'the armed unit must be the semantically chosen one, not the lexical winner');
+
+  const line = logged.find((l) => l.includes('armed'));
+  assert.ok(/by=semantic sim=0\.71/.test(line),
+    `the audit line must attribute the choice to the ranker that made it: ${line}`);
+});
+
+test('semantic: no opinion falls back to the lexical winner', async () => {
+  // null is "the daemon is down / the corpus is not embedded yet" and MUST NOT
+  // suppress the hint — Ollama is not installed on users' machines and this
+  // feature has to work without it.
+  for (const [label, sem] of [
+    ['null', fakeSemantic({ returns: null })],
+    ['empty', fakeSemantic({ returns: [] })],
+    ['throws', fakeSemantic({ throws: true })],
+  ]) {
+    const { arm, posts } = mkArmWith(sem);
+    arm.onDraft('s', DRAFT, CTX, { final: true });
+    await settle();
+    assert.strictEqual(posts.length, 1, `${label}: the lexical hint must still arm`);
+    assert.ok(posts[0].text.includes('wirescope'),
+      `${label}: and it must be the lexical winner, unchanged`);
+  }
+});
+
+test('semantic: absent entirely, arming is exactly what it was', async () => {
+  const { arm, posts } = mkArmWith(undefined);
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'no semantic dep at all must not change behaviour');
+  assert.ok(posts[0].text.includes('wirescope'));
+});
+
+test('semantic: the cooldown and in-context ledgers still apply to its winner', async () => {
+  // The suppression matrix is a property of the RECORD, not of the ranking that
+  // produced it. A semantic winner that is already in context would otherwise
+  // be re-offered forever, since the ledgers were only ever applied to the
+  // lexical pool.
+  const { store, ids } = mkStore(CORPUS);
+  const inContext = ids[5];
+  const posts = [];
+  const arm = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (a) => store.list(a) }),
+    semantic: {
+      async rank() {
+        return [{ id: inContext, text: 'already in the model context', tags: '', scope: '',
+          source: 'memory', confidence: 0.9, evidence: { sim: 0.9, ranker: 'semantic' } }];
+      },
+    },
+    compose,
+    terms,
+    loadState: (agent, id) => (id === inContext ? 'full' : 'absent'),
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'the pass still arms');
+  assert.ok(!posts[0].text.includes(inContext),
+    'a semantically chosen unit whose body is already in context must be filtered like any other');
+  assert.ok(posts[0].text.includes('wirescope'),
+    'and with nothing admissible left, the lexical winner takes the slot');
+});
+
+test('semantic: a slow ranker never blocks the keystroke path', async () => {
+  // Arming is fire-and-forget by contract. onDraft became a caller of an async
+  // ranker, so this asserts the contract survived that change.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { store } = mkStore(CORPUS);
+  const posts = [];
+  const arm = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (a) => store.list(a) }),
+    semantic: { async rank() { await gate; return null; } },
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  const t0 = Date.now();
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 50, `onDraft returned in ${elapsed}ms — it must not await the ranker`);
+  assert.strictEqual(posts.length, 0, 'and nothing has been armed yet');
+  release();
+  await settle();
+  assert.strictEqual(posts.length, 1, 'once the ranker settles the lexical fallback arms');
+});

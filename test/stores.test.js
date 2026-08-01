@@ -1830,3 +1830,47 @@ test('envScopes: the store file is written 0600 (secret store)', () => {
     assert.strictEqual(st.mode & 0o777, 0o600, 'env-scopes.json is 0600');
   } finally { cleanup(); }
 });
+
+test('uiSettings: the hint toggles default off and round-trip independently', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    // Both OFF by default. semanticHints in particular reaches a local Ollama
+    // that users do not have installed, so shipping it on would mean every
+    // submit attempting a connection that cannot succeed.
+    assert.strictEqual(uiSettings.get().contextHints, false);
+    assert.strictEqual(uiSettings.get().semanticHints, false);
+
+    // Independent, not one checkbox: semantic ranking only reorders what the
+    // lexical gate admitted, so enabling it alone must not start arming.
+    uiSettings.set({ semanticHints: true });
+    assert.strictEqual(uiSettings.get().semanticHints, true);
+    assert.strictEqual(uiSettings.get().contextHints, false,
+      'the semantic toggle must not imply the arming toggle');
+
+    uiSettings.set({ contextHints: true });
+    assert.strictEqual(uiSettings.get().contextHints, true);
+    assert.strictEqual(uiSettings.get().semanticHints, true, 'and the other survives an unrelated write');
+
+    uiSettings.set({ theme: uiSettings.get().theme });
+    assert.strictEqual(uiSettings.get().semanticHints, true,
+      'a partial write must not reset a flag it did not mention');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a non-boolean hint flag falls back to the default', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    stores.uiSettings.set({ semanticHints: true });
+    // Hand-corrupt the file the way a bad merge or an older build would.
+    const f = path.join(userData, 'ui-settings.json');
+    const raw = JSON.parse(fs.readFileSync(f, 'utf-8'));
+    raw.semanticHints = 'yes';
+    fs.writeFileSync(f, JSON.stringify(raw));
+    const again = initStores(userData, { log: console,
+      registryDir: fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-')),
+      resourcesDir: path.join(userData, '__no_seed__') });
+    assert.strictEqual(again.uiSettings.get().semanticHints, false,
+      'a truthy non-boolean must not read as enabled');
+  } finally { cleanup(); }
+});

@@ -655,6 +655,7 @@ function registerIpcHandlers(deps) {
       disableClaudeDesignMcp: s.disableClaudeDesignMcp,
       compactOnResume: s.compactOnResume,
       contextHints: s.contextHints,
+      semanticHints: s.semanticHints,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       sidebarWidth: s.sidebarWidth,

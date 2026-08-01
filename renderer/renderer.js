@@ -3297,6 +3297,7 @@ const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
+const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
@@ -4867,6 +4868,7 @@ async function openPrefs() {
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
+  if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsRemoteToken.value = '';
@@ -4907,6 +4909,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
+    semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });

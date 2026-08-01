@@ -855,10 +855,15 @@
           <span>Bake transcripts on resume</span>
         </label>
         <p class="hint-text" style="margin: 14px 0 2px;">Contextual memory hints</p>
-        <p class="hint-text">As you type, match the draft against the agent's own memories and attach the best match to the turn as an ephemeral hint the agent may ignore. Units already in the agent's context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
+        <p class="hint-text">When you submit a message, match it against the agent's own memories and attach the best match to the turn as an ephemeral hint the agent may ignore. Units already in the agent's context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
           <span>Arm contextual hints from memory</span>
+        </label>
+        <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It only reorders candidates — whether to hint at all is still decided by word matching, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching.</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-semantic-hints" style="margin: 0;">
+          <span>Rank hints with a local embedding model</span>
         </label>
         <div id="ws-logs-block" style="display: none;">
           <p class="hint-text" style="margin: 14px 0 2px;">Capture logs</p>

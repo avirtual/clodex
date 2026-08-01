@@ -200,19 +200,53 @@ Confirmed against the same log, across the 10:24:34Z restart onto the new
 build: 22 arms in 38s before, exactly one arm per submitted draft after. No
 read/unread signal from the registry was needed, so do not design around one.
 
-### 2. Lexical scoring has no notion of aboutness
+### 2. Lexical scoring has no notion of aboutness — FIXED (hint-embed.js)
 
 Draft: "lets see if it surfaces the memory about product-philosophy".
 
 Top result at confidence 1.00 was `mem-1785527290407-z3leb7` — a unit about
 MEMORY CONSOLIDATION OBSOLESCENCE CLASSES that merely contains the words
-"product" and "philosophy" incidentally. The units actually about product
-philosophy (`mem-1784070616457-tvfire`, "Sandbox integration vision";
-`mem-1783524813485-l7u6nx`) ranked lower.
+"product" and "philosophy" incidentally. The threshold was not at fault:
+`hits >= 2` and the `log(1+N)` floor both behaved correctly and 4-5 distinct
+terms matched. Term overlap simply does not measure subject.
 
-The threshold is not at fault — `hits >= 2` and the `log(1+N)` floor both
-behaved correctly, and 4-5 distinct terms matched. Term overlap simply does
-not measure subject. This is the concrete, reproducible case for the local
-embed tier (nomic-embed-text, 16ms warm, measured) rather than an argued one:
-use it as the acceptance fixture. A semantic tier that cannot rank tvfire
-above z3leb7 on this draft has not earned its latency.
+**The fixture as originally written here was wrong, and re-deriving it is
+what produced the real result.** It named two units as the right answers;
+14 units carry the `product-philosophy` tag, so "rank tvfire above z3leb7"
+picked an arbitrary member of a large class. `z3leb7` is not even tagged —
+it only contains the string in its body.
+
+Rebuilt as a measurement over the curated `tags` field, which is an
+INDEPENDENT ground truth: the tag was written when each unit was saved, by
+neither retriever, so it cannot be gamed by either. 28 paraphrase queries
+across 14 tags, each deliberately avoiding the tag string itself (a query
+containing it is a gimme for lexical, whose haystack includes tags):
+
+```
+                     precision@1   precision@3
+lexical                  0.409         0.326
+embedding                0.636         0.424      wins 5, loses 0, ties 17
+```
+
+**The finding that shaped the design: embedding ranks better but cannot
+abstain.** Top cosine over 28 real drafts spans 0.536-0.708; over 12 junk
+drafts ("the cat knocked the plant over") it spans 0.490-0.600. The bands
+OVERLAP, so no cosine threshold both admits the real drafts and rejects the
+junk. Lexical rejects 11 of 12 junk drafts, because a query sharing no rare
+terms with any record cannot clear MIN_HITS — a different question from
+similarity, and the reason both halves ship.
+
+So: **lexical gates, embedding ranks the whole corpus.** Re-ranking only the
+lexical survivors was measured too and gained exactly nothing (0.500 ->
+0.500 @1) — lexical's cuts leave 0-7 records, so there is no order left to
+fix.
+
+End to end through the shipped modules against the real 184-unit store and a
+real Ollama: 5/5 real drafts arm, 4/4 junk drafts stay silent, and the
+semantic winner differs from the lexical one on 4 of 5. Warm cost 22.3ms
+median (p90 26.9ms) off the keystroke path; corpus embed 4.8s once, cached
+to disk and pruned on delete.
+
+Ollama is NOT a dependency — it is not on users' machines. Every failure path
+returns null, which the arm reads as "no opinion" and falls back to the
+lexical order. Off unless `semanticHints` is checked.

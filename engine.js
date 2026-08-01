@@ -315,10 +315,37 @@ const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library',
 // checkbox. `enabled` is a getter rather than a construction-time value so the
 // checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
-const { createMemoryRetriever, compose: composeHint, terms: hintTerms } = require('./hint-retrieve');
+const { createMemoryRetriever, compose: composeHint, terms: hintTerms, unitsAsRecords } = require('./hint-retrieve');
+
+// Semantic re-ranking. Its own checkbox because it needs a local Ollama, which
+// users do not have — with the daemon absent every path returns "no opinion" and
+// arming is exactly the lexical behaviour it was before.
+//
+// The gate stays lexical. This only reorders what the lexical pass already
+// decided was worth arming; see hint-embed.js for the measurement that split
+// those two jobs.
+const {
+  createEmbedder, createVectorCache, createSemanticRanker,
+} = require('./hint-embed');
+const semanticRanker = createSemanticRanker({
+  listRecords: (agent) => unitsAsRecords(memoryStore.list(agent)),
+  embedder: createEmbedder({ log }),
+  // A SIBLING of library/memory for the same reason memory-loadlog is: entries
+  // under that directory enumerate as agents.
+  cache: createVectorCache({ file: path.join(REGISTRY_DIR, 'library', 'memory-vectors.json') }),
+  log,
+});
+
 const hintArm = createHintArm({
   enabled: () => !!uiSettings.get().contextHints,
   retriever: createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
+  // Read per call, never captured: the checkbox must take effect on the next
+  // submit rather than the next launch, same as `enabled`.
+  semantic: {
+    rank: (draft, opts) => (uiSettings.get().semanticHints
+      ? semanticRanker.rank(draft, opts)
+      : Promise.resolve(null)),
+  },
   compose: composeHint,
   terms: hintTerms,
   loadState: (agent, id) => memoryLoad.stateOf(agent, id),
