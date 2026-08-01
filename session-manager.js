@@ -1107,6 +1107,7 @@ function createSessionManager(deps) {
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
+          this._firePostClearContinuation(session);
         }
         // /clear mints a new conversation id, which is how the transcript
         // symlink repoint reports it. noteSession only resets on a CHANGE — the
@@ -1685,6 +1686,7 @@ function createSessionManager(deps) {
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._compactValveTimer);
+      clearTimeout(s._postClearValveTimer);
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
@@ -1692,6 +1694,7 @@ function createSessionManager(deps) {
       // died would ride the next session under the same name.
       try { arm.forget(name); } catch {}
       s._compactPending = null; // no timer, but null for symmetry with the valve state
+      s._postClearContinuation = null;
       // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are
       // deliberately NOT dropped here, under any gate. _userKilled is not a "going
       // away for good" signal — restart routes through kill() too — so gating an rm
@@ -1933,6 +1936,49 @@ function createSessionManager(deps) {
 
     _clearCompactValve(session) {
       if (session._compactValveTimer) { clearTimeout(session._compactValveTimer); session._compactValveTimer = null; }
+    }
+
+    // Turn-one briefing for a self-cleared agent, fired from the sessionId-CHANGE
+    // edge in create()'s onSessionId. That edge is the only reliable "the clear
+    // actually landed" signal — /clear mints a new conversation id and the
+    // transcript symlink repoints, /compact is in-place and keeps the id. A timer
+    // ("probably done by now") would inject into whatever conversation happened to
+    // be in front of the model. Named for the phase, not as a sibling of
+    // _clearCompactValve, which means "clear the compact valve" — the opposite of
+    // what a _clearValve here would mean.
+    _firePostClearContinuation(session) {
+      const cont = session._postClearContinuation;
+      if (!cont) return;
+      session._postClearContinuation = null;
+      this._clearPostClearValve(session);
+      setTimeout(() => {
+        if (session._dead) return;
+        this._injectText(session, cont);
+      }, COMPACT_CONTINUATION_DELAY);
+    }
+
+    // A continuation whose clear never landed must EXPIRE rather than wait: the
+    // next sessionId change could be an operator's manual /clear minutes later,
+    // and a stale briefing injected into an unrelated conversation is worse than
+    // a lost one. No retry — the clear it belonged to is gone.
+    _armPostClearValve(session) {
+      this._clearPostClearValve(session);
+      session._postClearValveTimer = setTimeout(() => {
+        session._postClearValveTimer = null;
+        const dropped = session._postClearContinuation;
+        session._postClearContinuation = null;
+        if (dropped) {
+          log.warn('intent', `clear ${session.name} release valve fired — clear never landed, dropped the continuation (${dropped.length} chars, no retry)`);
+          this._broadcast('ipc-message', {
+            type: 'context', from: session.name, to: session.name,
+            body: 'context clear → continuation dropped (clear never landed)',
+          });
+        }
+      }, COMPACT_INFLIGHT_TIMEOUT);
+    }
+
+    _clearPostClearValve(session) {
+      if (session._postClearValveTimer) { clearTimeout(session._postClearValveTimer); session._postClearValveTimer = null; }
     }
 
     _maybeFlushInjectQueue(session, force = false) {
@@ -3674,12 +3720,29 @@ function createSessionManager(deps) {
         this._executeCompact(session, cmd, cont);
         return;
       }
-      // Non-compact context command (clear): inject immediately — no continuation,
-      // no guard, no latch. bypassHold: the intent often lands before the sender's
-      // own idle event, and a queued bare slash command must never '\n'-join into a
-      // flush batch (the command line would swallow the rest as garbage).
+      if (sub === 'clear' && session._postClearContinuation) {
+        this._broadcast('ipc-message', {
+          type: 'context', from: session.name, to: session.name,
+          body: 'context clear → dropped (already in flight)',
+        });
+        log.warn('intent', `clear ${session.name} dropped — already in flight`);
+        return;
+      }
+      // Non-compact context command (clear): inject immediately — no guard, no
+      // latch. bypassHold: the intent often lands before the sender's own idle
+      // event, and a queued bare slash command must never '\n'-join into a flush
+      // batch (the command line would swallow the rest as garbage).
       this._injectText(session, cmd, { bypassHold: true });
-      log.info('intent', `${sub} ${session.name} → ${cmd}`);
+      // The body is optional and only stored here — a bare clear stays exactly
+      // what it was. Storing BEFORE the edge can fire is not a race worth
+      // guarding: _injectText is asynchronous and the watcher polls the symlink
+      // at 250ms, but the store is synchronous with the intent.
+      const cont = sub === 'clear' && body ? body.trim() : '';
+      if (cont) {
+        session._postClearContinuation = cont;
+        this._armPostClearValve(session);
+      }
+      log.info('intent', `${sub} ${session.name} → ${cmd}${cont ? ' (+continuation)' : ''}`);
       this._broadcast('ipc-message', {
         type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${cmd}`,
       });

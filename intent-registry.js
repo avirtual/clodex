@@ -128,7 +128,7 @@ const CORE_ROWS = [
   { type: 'resend', parse: parseResend, bodyMode: NONE },
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
-  { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' ? 'greedy' : 'none') },
+  { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },

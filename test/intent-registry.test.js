@@ -276,7 +276,7 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory recall] q')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context compact]')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context reload]')), 'greedy');
-  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'greedy');
 });
 
 test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent', () => {
@@ -293,6 +293,11 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'memory' && i.sub === 'remember')
     || (i.type === 'context' && (i.sub === 'compact' || i.sub === 'reload'))
   );
+  // The ONE deliberate widening since: `context clear` gained an optional
+  // continuation body, so it captures where the legacy set did not. Listed
+  // explicitly rather than folded into legacyGreedy above, so the legacy record
+  // stays a record and a second silent widening still fails here.
+  const deliberatelyWidened = (i) => i.type === 'context' && i.sub === 'clear';
   for (const line of CORPUS) {
     const i = parseIntent(line);
     if (!i || i.type === 'escape' || i.type === 'end') continue;
@@ -301,7 +306,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     // greedy capture (it terminates at the complete JSON value); it was in the
     // allow-set then and still captures now.
     const capturesNow = mode === 'greedy' || mode === 'json';
-    assert.strictEqual(capturesNow, legacyGreedy(i), `body capture differs for ${JSON.stringify(line)}`);
+    assert.strictEqual(capturesNow, legacyGreedy(i) || deliberatelyWidened(i), `body capture differs for ${JSON.stringify(line)}`);
   }
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
 });

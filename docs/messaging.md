@@ -63,6 +63,22 @@ wedge. **Non-wire sessions (codex, jsonl-fallback Claude) keep the immediate
 inject** — no wire terminal-stop receipt exists to fire a latch off, so a mid-turn
 compact there can still be dropped by the CLI (documented degradation).
 
+**Clear continuation.** `[agent:context clear] <body>` stores the body on
+`session._postClearContinuation` and arms `_armPostClearValve` (same 5-min
+timeout as compact's); the `/clear` itself injects immediately as before, and a
+BODYLESS clear stores nothing and behaves exactly as it always did. The
+continuation fires from the sessionId-CHANGE edge in `create()`'s `onSessionId`
+— `/clear` mints a new conversation id and repoints the transcript symlink,
+`/compact` is in-place and keeps the id, so a changed id is the only reliable
+"the clear landed" signal (a timer would inject into whatever conversation was
+in front of the model). The valve exists because a clear that never lands would
+otherwise leave the body armed for the NEXT id change, which could be an
+operator's manual `/clear` minutes later. A second clear while one is armed
+drops with a warn + `ipc-message`, mirroring compact. Applies to codex too: a
+codex `/clear` produces the same edge (verified against the real CLI), though
+the new rollout is minted lazily, so the edge can arrive well after the
+keystroke.
+
 ## 2. Grammar (intent-scanner.js — pure, electron-free)
 
 - `cleanLine` strips ANSI, then a leading run of decorator chars

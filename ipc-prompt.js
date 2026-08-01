@@ -39,7 +39,7 @@ A warm-up no-op tool call first (e.g. Bash(true)) does nothing but bill a full r
   [agent:who]                      List online peers with reachability: (working), (idle 12m, warm), (idle 5h, cache cold), (blocked on a permission dialog). Prefer warm/working peers for non-urgent traffic; blocked peers can't respond until their human answers.
   [agent:name]                     Your own wrapper name
   [agent:context compact]          Compact your own context window when it's getting long. Optionally follow with text on the same or following lines — it's injected as your first turn after the compact so you keep working; omit it for a generic continue nudge.
-  [agent:context clear]            Clear your own history, keeping the session (drops the conversation)
+  [agent:context clear]            Clear your own history, keeping the session (drops the conversation). Optionally follow with text on the same or following lines — it's injected as your first turn in the fresh conversation, so write your next self a briefing (a clear is amnesiac; anything you don't pass is gone). If that text mentions a file you wrote as @/abs/path.md, you'll read it back attached. Omit it and the clear is silent, as before.
   [agent:memory list]              List your own saved memories
   [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag> and/or pinned=true); persists across sessions
   [agent:memory recall] <id|query> Surface a saved memory back into your input
@@ -115,7 +115,7 @@ const GRAMMAR_LINES = [
   { type: 'who', text: `  [agent:who]                      List online peers with reachability: (working), (idle 12m, warm), (idle 5h, cache cold), (blocked on a permission dialog). Prefer warm/working peers for non-urgent traffic; blocked peers can't respond until their human answers.` },
   { type: 'name', text: `  [agent:name]                     Your own wrapper name` },
   { type: 'context', text: `  [agent:context compact]          Compact your own context window when it's getting long. Optionally follow with text on the same or following lines — it's injected as your first turn after the compact so you keep working; omit it for a generic continue nudge.
-  [agent:context clear]            Clear your own history, keeping the session (drops the conversation)` },
+  [agent:context clear]            Clear your own history, keeping the session (drops the conversation). Optionally follow with text on the same or following lines — it's injected as your first turn in the fresh conversation, so write your next self a briefing (a clear is amnesiac; anything you don't pass is gone). If that text mentions a file you wrote as @/abs/path.md, you'll read it back attached. Omit it and the clear is silent, as before.` },
   { type: 'memory', text: `  [agent:memory list]              List your own saved memories
   [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag> and/or pinned=true); persists across sessions
   [agent:memory recall] <id|query> Surface a saved memory back into your input
