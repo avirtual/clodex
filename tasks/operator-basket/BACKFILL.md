@@ -65,18 +65,49 @@ Ranked with the shipped lexical retriever over operator text + reply:
   -> "that file must NOT be touched. it busts the context of all agents in your cwd"
 ```
 
-## Two blockers for t141 — measured, not predicted
+## Speed: SOLVED (`basket-retrieve.js`)
 
-1. **Coverage saturates.** MIN_COVERAGE=0.35 was derived on a 182-unit memory
-   store. Document frequencies over 13,926 short messages are far flatter, and
-   several unrelated records tie at 100% coverage. The threshold does not
-   transfer; the basket retriever needs its own calibration, measured on this
-   corpus. This is exactly why the spec says a retriever that cannot state its
-   confidence band gets its own tier rather than being merged.
+Per-query rebuild was 330ms, of which 230ms was tokenizing all 13,926
+records. An inverted index built once and cached against the file's
+mtime+size makes a query touch only the records containing its terms:
 
-2. **330ms per query** vs 9.6ms for the memory store — 34x, and the Enter path
-   is synchronous before `pty.write`. The basket cannot be ranked the same way
-   the memory store is. Needs a persisted index, not a per-query rebuild.
+| | before | after |
+|---|---|---|
+| index build | per query | 285-580ms, once |
+| query | 330ms | **0.2-9.7ms** |
+
+Cache invalidates on write, so a message captured seconds ago is
+retrievable — verified by test, not by inspection.
+
+## Precision: NOT SOLVED, and not by tuning
+
+MIN_COVERAGE=0.35 was derived on a 182-unit store where it separated
+related from unrelated cleanly (42-100% vs 19-32%). On 13,926 records it
+collapses, and so does every alternative tried:
+
+```
+query                                    top mass   coverage
+"env vars clodex settings checkbox"        17.3       85%    <- good hit
+"claude.md busts cache on every change"    10.3      100%    <- good hit
+"never commit tag or push tree dirty"      25.1      100%    <- WRONG record
+"do we touch user project files"            9.8      100%    <- WRONG record
+"what is the plan for today"                6.2      100%    <- WRONG record
+```
+
+Coverage cannot separate them (100% on both sides). Absolute mass cannot
+either — the worst vague query outscores the best good one. Rare-term
+floors from 4.5 to 5.5 either admit the wrong records or reject the right
+ones.
+
+The cause is corpus size, not the constants: with 14k records averaging
+200 tokens, some record contains every term of any short query. This is
+the same aboutness gap as the memory store's `z3leb7` case, made
+unavoidable by scale.
+
+**Therefore the basket retriever is built but NOT wired into arming.** The
+semantic tier is the gate, not a refinement. Acceptance fixture for it:
+rank the env-vars ruling above all five records that currently tie at
+100% on "do we touch user project files".
 
 ## Confinement is not hypothetical
 
