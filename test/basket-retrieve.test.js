@@ -70,6 +70,33 @@ test('basket: a corrupt line does not lose the rest of the basket', () => {
   assert.strictEqual(recs.length, 2, 'the intact records survive a truncated tail line');
 });
 
+test('basket: one message journalled per destination is ONE document', () => {
+  // Measured on the live basket: 802 ids span 2-4 worktrees, 983 of 13,926
+  // lines (7%). Left as separate documents they inflate df — duplicate mass
+  // alone pushed `self`, `load`, `tickets` and `forge` over MAX_DF_RATIO — and
+  // hand one exchange several independent shots at a single ranked list.
+  const line = (cwd) => JSON.stringify({ id: 'bcast', text: 'we had an issue overnight. there?', cwd, ts: '2026-08-01T00:00:00Z' });
+  const recs = parseBasket([
+    line('/w/tl'), line('/w/tl-clone-1'), line('/w/tl-clone-2'),
+    JSON.stringify(CORPUS[0]),
+  ].join('\n'));
+  const b = recs.filter((r) => r.id === 'bcast');
+  assert.strictEqual(b.length, 1, 'three deliveries of one message collapse to one document');
+  assert.deepStrictEqual(b[0].cwds, ['/w/tl', '/w/tl-clone-1', '/w/tl-clone-2'],
+    'and EVERY origin is carried — keeping only the first silently confines the '
+    + 'record to one worktree, so a session in tl-clone-2 stops seeing a message it was sent');
+});
+
+test('basket: two different messages from one session stay distinct', () => {
+  // The collapse key is id+text, not id. A cwd-only difference is a duplicate
+  // delivery; different text is not, however it was journalled.
+  const recs = parseBasket([
+    JSON.stringify({ id: 'a', text: 'first thing', cwd: '/w/x' }),
+    JSON.stringify({ id: 'a', text: 'second thing', cwd: '/w/x' }),
+  ].join('\n'));
+  assert.strictEqual(recs.length, 2, 'a shared id does not merge distinct exchanges');
+});
+
 test('basket: the index is reused until the file changes', () => {
   const file = mkBasket(CORPUS);
   let reads = 0;
