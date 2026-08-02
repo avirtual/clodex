@@ -24,6 +24,16 @@ const DRAFT_CAP = 4096;
 // whatever it ranks against is noise.
 const MIN_TERMS = 3;
 
+// Cosine floor for the personal path, measured 2026-08-03 over the live 2,220
+// unit corpus. It is NOT a general junk threshold — that experiment is in
+// hint-embed.js and failed, because junk and real drafts overlap on cosine.
+// Admission there happens on question SHAPE first, so this only has to separate
+// a weak personal match from a strong one. At 0.55: 7 right, 2 wrong, 1 silent
+// over 10 questions, with 0 false arms over 14 work drafts. Raising it to 0.58
+// drops recall to 4 right and buys nothing, since the shape test already
+// rejected everything the threshold would have caught.
+const PERSONAL_MIN_SIM = 0.55;
+
 // Do not re-offer the same unit to the same agent inside this window. Cleared
 // early by a context clear/compact, which is the other half of the rule.
 const COOLDOWN_MS = 10 * 60 * 1000;
@@ -199,6 +209,9 @@ function countTerms(draft, terms) {
 //   clearHints  ({base, route, id}) -> Promise
 function createHintArm({
   retriever, semantic = null, compose, terms, loadState, armHints, clearHints,
+  // Injected like `terms` so this module keeps no opinion about the tokenizer or
+  // the admission grammar; absent, the personal path is simply off.
+  personalAsk = null,
   // `Date.now` unbound rather than an arrow: a nested paren in a default value
   // makes free-identifier-leaks.test.js fail to parse THIS WHOLE PARAM LIST, so
   // every dep above would stop counting as defined here and the scan would
@@ -293,11 +306,50 @@ function createHintArm({
     return out.length ? out : lexical;
   }
 
+  // A question about the USER, admitted by shape because the lexical gate
+  // structurally cannot rank it (see personalAsk in hint-retrieve.js: a one-term
+  // query ties every match). This is the ONE path where the embedding decides
+  // whether to arm and not merely in what order — so it is gated on the semantic
+  // ranker having an actual opinion, and a null (no daemon, corpus not embedded)
+  // returns empty and leaves the lexical outcome untouched. Without Ollama this
+  // whole branch is inert and arming is bit-identical to what it was before.
+  async function personal(draft, agent, limit) {
+    if (!semantic || !personalAsk || !personalAsk(draft)) return [];
+    let ranked;
+    try { ranked = await semantic.rank(draft, { agent, limit: Math.max(limit * 4, 8) }); } catch (e) {
+      debug(`personal rank failed for ${agent}: ${e.message}`);
+      return [];
+    }
+    if (!ranked || !ranked.length) return [];
+    // The cosine floor is the abstain the embedding cannot do on its own. It is
+    // only defensible here because admission already happened on shape: measured
+    // over 14 work drafts (incl. "why is my test failing", "where is my config
+    // file") the shape test admitted none of them, so this threshold never has
+    // to separate junk from real — only a weak personal match from a strong one.
+    const top = ranked.filter((r) => !(typeof r.evidence?.sim === 'number')
+      || r.evidence.sim >= PERSONAL_MIN_SIM);
+    return top.length ? admissible(top, agent, limit) : [];
+  }
+
   async function fire(key, draft, ctx) {
     const { agent, base, route, limit = 1 } = ctx || {};
     if (!base || !route || !agent) return;
+    // YIELD BEFORE THE RANK. `async` only defers a body from its first await
+    // onward, and `pick` is synchronous — measured at 60ms over the live 2,220
+    // record corpus, which onDraft's caller would otherwise eat on the keystroke
+    // path. setImmediate rather than a microtask: a microtask still runs before
+    // the loop gets to pending I/O, which is the thing being protected.
+    await new Promise((r) => setImmediate(r));
     let results;
     try { results = pick(draft, agent, limit); } catch (e) { debug(`rank failed for ${agent}: ${e.message}`); return; }
+    // Only when lexical found nothing: a draft the normal gate can serve is
+    // served by it, so this cannot regress any existing arm.
+    if (!results.length) {
+      try { results = await personal(draft, agent, limit); } catch (e) {
+        debug(`personal failed for ${agent}: ${e.message}`);
+        results = [];
+      }
+    }
     if (!results.length) return;
     try { results = await refine(results, draft, agent, limit); } catch (e) {
       debug(`refine failed for ${agent}: ${e.message}`);
@@ -346,7 +398,13 @@ function createHintArm({
       // completion). Ranking it would answer a question the user never asked,
       // and would do it with full confidence.
       if (desync) return;
-      if (countTerms(draft, terms) < minTerms) return;
+      // MIN_TERMS assumes a short draft is not yet a question. That holds for
+      // prose, but "do i have kids" reduces to ONE content term and is a
+      // complete question — so a draft the shape test recognises skips the
+      // length floor. It is not a weaker gate: personalAsk is strictly narrower
+      // than "has three terms", and its branch still needs a semantic opinion.
+      const short = countTerms(draft, terms) < minTerms;
+      if (short && !(personalAsk && semantic && personalAsk(draft))) return;
       // Deliberately NOT awaited, and the rejection is swallowed here rather
       // than left to bubble: `fire` became async when the semantic ranker landed
       // and an unhandled rejection on the keystroke path would crash the main

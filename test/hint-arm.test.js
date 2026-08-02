@@ -31,7 +31,7 @@ const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
 } = require('../hint-arm');
 const {
-  rank, compose, terms, haystack, selfScore,
+  rank, compose, terms, haystack, selfScore, personalAsk,
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   unitsAsRecords, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
 } = require('../hint-retrieve');
@@ -1214,7 +1214,7 @@ function fakeSemantic({ winner = null, returns = undefined, throws = false } = {
   };
 }
 
-function mkArmWith(semantic, { loadState = () => 'absent' } = {}) {
+function mkArmWith(semantic, { loadState = () => 'absent', personalAsk: pa = null } = {}) {
   const { store, ids } = mkStore(CORPUS);
   const posts = [];
   const logged = [];
@@ -1222,6 +1222,7 @@ function mkArmWith(semantic, { loadState = () => 'absent' } = {}) {
     log: { debug: (tag, msg) => logged.push(`${tag} ${msg}`) },
     retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
     semantic,
+    personalAsk: pa,
     compose,
     terms,
     loadState,
@@ -1237,6 +1238,9 @@ test('semantic: a draft the lexical gate rejects never reaches the ranker', asyn
   // (0.536-0.708), so a semantic tier that got to vote on WHETHER to arm would
   // arm on "the cat knocked the plant over". Consulting it only after the gate
   // has fired is what makes that impossible rather than unlikely.
+  // The personal path (below) is the ONE narrow exception, and it does not
+  // weaken this: it is reached only when lexical armed NOTHING, only for a
+  // first-person question, and it still needs a semantic opinion above a floor.
   const sem = fakeSemantic({ winner: 'mem-x' });
   const { arm, posts } = mkArmWith(sem);
   arm.onDraft('s', 'what should i have for dinner tonight please', CTX, { final: true });
@@ -1244,6 +1248,110 @@ test('semantic: a draft the lexical gate rejects never reaches the ranker', asyn
   assert.strictEqual(posts.length, 0, 'an unrelated draft must not arm');
   assert.strictEqual(sem.calls.length, 0,
     'and the semantic ranker must not even be consulted — it cannot abstain, so asking it is the bug');
+});
+
+// A one-term query ties every lexical match (see the tie test above), so short
+// personal questions cannot be RANKED lexically at all. They are admitted by
+// question SHAPE instead and ranked semantically — the only path where the
+// embedding decides whether to arm rather than merely in what order.
+test('personal: a first-person question the lexical gate cannot rank is served semantically', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', 'where do i live', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1,
+    'a short first-person question must arm even though it is under MIN_TERMS and lexically unrankable');
+  assert.ok(posts[0].text.includes('mem-x'), 'and the winner is the semantic one');
+});
+
+// THE WHOLE POINT OF THE FEATURE BEING OPTIONAL. Ollama is not installed on
+// users' machines; without it this branch must be inert, not broken.
+test('personal: with no semantic ranker the path is inert, not broken', async () => {
+  for (const [label, sem] of [
+    ['absent', undefined],
+    ['null (daemon down)', fakeSemantic({ returns: null })],
+    ['throws', fakeSemantic({ throws: true })],
+  ]) {
+    const { arm, posts } = mkArmWith(sem, { personalAsk });
+    arm.onDraft('s', 'where do i live', CTX, { final: true });
+    await settle();
+    assert.strictEqual(posts.length, 0,
+      `${label}: no daemon means silence — the same thing that happened before this path existed`);
+  }
+});
+
+// Admission is on shape, but shape alone cannot tell "where do i live" from
+// "where did i put my keys". Measured over the live 2,220-unit corpus, 9 of 10
+// such drafts fall below PERSONAL_MIN_SIM; the floor is what stops them.
+test('personal: an admitted draft still needs a semantic opinion above the floor', async () => {
+  const weak = {
+    async rank() {
+      return [{ id: 'mem-x', text: 'a weakly related unit', tags: '', scope: '',
+        source: 'memory', confidence: 0.4, evidence: { sim: 0.49, ranker: 'semantic' } }];
+    },
+  };
+  const { arm, posts } = mkArmWith(weak, { personalAsk });
+  arm.onDraft('s', 'what should i cook', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 0,
+    'a shape-admitted draft whose best match is weak must stay silent');
+});
+
+// The personal path is a FALLBACK, so it can never take a slot lexical earned.
+// Counted rather than inspected: when lexical arms, the ranker is consulted
+// exactly once (by `refine`, which reorders). A second call would mean the
+// personal branch ran too and was racing the normal path for the slot.
+test('personal: a draft lexical can serve never reaches the personal branch', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  // DRAFT is the long wirescope draft the lexical gate arms on.
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'lexical armed');
+  assert.strictEqual(sem.calls.length, 1,
+    'and the ranker was consulted once, by refine — the personal branch must not have run');
+});
+
+// `async` defers a function body only from its first await onward, so a
+// synchronous rank sitting above one runs on the CALLER's stack. Measured over
+// the live 2,220-record corpus that was 100-200ms of blocking per submit.
+test('arm: onDraft returns immediately — the rank never runs on the caller stack', () => {
+  let ranked = false;
+  const arm = createHintArm({
+    retriever: { retrieve() { ranked = true; const t = Date.now();
+      while (Date.now() - t < 50); return []; } },
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: () => Promise.resolve({ status: 200 }),
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  const t0 = Date.now();
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  const sync = Date.now() - t0;
+  assert.strictEqual(ranked, false,
+    'the retriever must not have been consulted yet when onDraft returned');
+  assert.ok(sync < 20, `onDraft blocked the caller for ${sync}ms — it must yield before ranking`);
+});
+
+test('personalAsk: admits questions about the person, rejects questions about the work', () => {
+  for (const d of ['where do i live', 'what is my job', 'do i have kids',
+    'how old is my son', 'tell me about my family', "what's my nationality"]) {
+    assert.ok(personalAsk(d), `must admit: ${d}`);
+  }
+  for (const d of [
+    'why is my test failing',      // first-person, but about the repo
+    'where is my config file',     // the veto's reason for existing
+    'fix my lint error',
+    'what does this function do',  // interrogative, but not first-person
+    'run the tests',
+    'commit this',
+    // Long enough that the lexical gate can do its own job; shape stops meaning
+    // anything once there is real content to match on.
+    'what is my position on the peering design and how should i explain the tunnel tradeoffs to the team',
+  ]) {
+    assert.ok(!personalAsk(d), `must reject: ${d}`);
+  }
 });
 
 test('semantic: when the gate fires, the semantic order replaces the lexical one', async () => {

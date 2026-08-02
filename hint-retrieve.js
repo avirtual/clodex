@@ -142,6 +142,36 @@ function rank(records, draft, { exclude = new Set(), limit = 1 } = {}) {
     }));
 }
 
+// A QUESTION ABOUT THE USER, which the lexical gate structurally cannot serve.
+// Measured 2026-08-03 against the live stores: `score` sums log(1 + N/df) over
+// matched terms, and every term in that sum is a property of the corpus, not of
+// the record — so for a one-term query every match scores IDENTICALLY ("live"
+// tied 28 records at 4.09) and coverage is 1.0 for all of them. There is no
+// order to pick a winner from, which is why the answer here is a different
+// admission signal rather than a lower threshold.
+//
+// The shape is deliberately narrow, and each half earns its place: the
+// interrogative opener alone admits "what does this function do", the
+// first-person marker alone admits "fix my lint error". The work-vocabulary veto
+// is what separates "where do i live" from "where is my config file" — both are
+// first-person questions, and only one is about the person.
+const ASK_RE = /^\s*(?:who|what|what's|whats|where|when|which|how|do|does|did|is|are|am|tell|remind)\b/i;
+const SELF_RE = /\b(?:my|mine|myself|i|me|i'm|im)\b/i;
+const WORK_RE = new RegExp('\\b(?:test|tests|lint|commit|diff|branch|rebase|merge|build|builds|deploy'
+  + '|bug|bugs|error|errors|code|file|files|function|repo|pr|ci|log|logs|patch|stack|dependency'
+  + '|npm|git|api|server|script|config|typecheck|suite|release)\\b', 'i');
+
+// Long drafts are excluded: this admits on SHAPE, not content, and a shape test
+// stops meaning anything once a message carries enough text for the lexical gate
+// to do its job properly.
+const PERSONAL_MAX_TERMS = 6;
+
+function personalAsk(draft) {
+  const d = String(draft || '');
+  if (!ASK_RE.test(d) || !SELF_RE.test(d) || WORK_RE.test(d)) return false;
+  return terms(d).length <= PERSONAL_MAX_TERMS;
+}
+
 function unitsAsRecords(units, source = 'memory') {
   return (units || []).map((u) => ({
     id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source,
@@ -270,6 +300,6 @@ function compose(results) {
 
 module.exports = {
   terms, haystack, rank, compose, unitsAsRecords, createMemoryRetriever,
-  createCommonRetriever, createCompositeRetriever,
+  createCommonRetriever, createCompositeRetriever, personalAsk,
   minScoreFor, confidenceOf, selfScore, MIN_HITS, MIN_COVERAGE, FULL_BODY_CAP, STOP,
 };

@@ -860,7 +860,7 @@
           <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
           <span>Arm contextual hints from memory</span>
         </label>
-        <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It only reorders candidates — whether to hint at all is still decided by word matching, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching.</p>
+        <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It reorders candidates, and it is also the only thing that can answer a short question about you ("where do i live") — word matching scores every record identically on a one-word query, so it has no way to pick. Whether to hint at all is still decided by word matching everywhere else, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching, and short personal questions simply stay quiet.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-semantic-hints" style="margin: 0;">
           <span>Rank hints with a local embedding model</span>

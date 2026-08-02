@@ -317,7 +317,7 @@ const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library',
 const { createHintArm } = require('./hint-arm');
 const {
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
-  compose: composeHint, terms: hintTerms, unitsAsRecords,
+  compose: composeHint, terms: hintTerms, unitsAsRecords, personalAsk,
 } = require('./hint-retrieve');
 
 // Shared memory every agent can match against — imported sets, not anything an
@@ -337,7 +337,14 @@ const {
   createEmbedder, createVectorCache, createSemanticRanker,
 } = require('./hint-embed');
 const semanticRanker = createSemanticRanker({
-  listRecords: (agent) => unitsAsRecords(memoryStore.list(agent)),
+  // Both stores, ranked as ONE list — the opposite of the lexical retriever,
+  // which must keep them separate because its floor and coverage are
+  // corpus-relative. Cosine is not: a similarity is a property of the pair, so
+  // pooling here cannot let one store's size silence the other's hits.
+  listRecords: (agent) => [
+    ...unitsAsRecords(memoryStore.list(agent)),
+    ...unitsAsRecords(commonMemoryStore.list('chat-extract'), 'common'),
+  ],
   embedder: createEmbedder({ log }),
   // A SIBLING of library/memory for the same reason memory-loadlog is: entries
   // under that directory enumerate as agents.
@@ -360,6 +367,7 @@ const hintArm = createHintArm({
   },
   compose: composeHint,
   terms: hintTerms,
+  personalAsk,
   loadState: (agent, id) => memoryLoad.stateOf(agent, id),
   armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
