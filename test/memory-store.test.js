@@ -32,6 +32,18 @@ test('memoryStore: remember with pinned=true saves pinned in one write', () => {
   assert.strictEqual(parseMemoryUnit(raw).meta.pinned, 'true');
 });
 
+test('memoryStore: remember persists tags, and omits the key entirely when empty', () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { scope: 'ops', tags: 'hints,security', text: 'tagged fact' });
+  assert.strictEqual(store.list('alpha')[0].tags, 'hints,security');
+  // Untagged units keep the pre-tags byte shape, the same contract `pinned` has.
+  const bare = store.remember('beta', { text: 'untagged fact' });
+  const raw = fs.readFileSync(path.join(dir, 'beta', `${bare.id}.md`), 'utf-8');
+  assert.strictEqual(parseMemoryUnit(raw).meta.tags, undefined);
+  assert.ok(!raw.includes('tags:'), 'no empty tags key on an untagged unit');
+  assert.strictEqual(u.id.startsWith('mem-'), true);
+});
+
 test('memoryStore: pin survives the file roundtrip and preserves meta', () => {
   const { store, dir } = tmpStore();
   const u = store.remember('alpha', { scope: 'ops', text: 'Never flap wire-strip on a warm cache.' });

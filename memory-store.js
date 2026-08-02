@@ -101,13 +101,16 @@ function createMemoryStore(rootDir) {
       }
       return out.sort((a, b) => String(a.learned_at).localeCompare(String(b.learned_at)));
     },
-    remember(agent, { scope = '', text, source = '', pinned = false }) {
+    remember(agent, { scope = '', tags = '', text, source = '', pinned = false }) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
       const body = String(text ?? '').trim();
       if (!body) throw new Error('empty memory text');
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
       const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const meta = { id, scope: String(scope || '').trim(), learned_at: new Date().toISOString(), source: source || agent };
+      // Omitted when empty so untagged units keep the pre-tags byte shape on
+      // disk, matching how `pinned` is written only when set.
+      if (String(tags || '').trim()) meta.tags = String(tags).trim();
       if (pinned) meta.pinned = 'true';
       fs.writeFileSync(this._file(agent, id), serializeMemoryUnit(meta, body), { mode: 0o600 });
       return { id, ...meta, pinned: !!pinned, body };

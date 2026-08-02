@@ -323,6 +323,29 @@ test('[agent:memory forget] routes through removeMemoryUnit rather than a second
     'the branch keeps its own error text');
 });
 
+test('[agent:memory remember] parses tags=, and a pin BEHIND tags= still lands', () => {
+  // The regression: the prefix loop halted on the first unrecognised key, so
+  // `tags=a,b pinned=true` set neither — the pin was stranded in the body as
+  // literal text. Four live units lost their pin this way. Order matters here:
+  // pinned must come AFTER tags, or the test passes against the broken loop.
+  const saved = [];
+  const m = mk({
+    memoryStore: { remember: (agent, opts) => { saved.push([agent, opts]); return { id: 'mem-1-aaaaaa' }; } },
+    getPersistence: () => ({ markDigested: () => {} }),
+    writeClaudeDigestFile: () => true,
+  });
+  const failed = [];
+  m._memoryAck = () => {};
+  m._injectText = (s, line) => failed.push(line);
+  m._handleMemoryIntent({ name: 'a', agentType: 'claude' }, 'remember',
+    'scope=ops tags=hints,security pinned=true the durable fact');
+  assert.deepStrictEqual(failed, [], 'the save must not have taken the error path');
+  assert.deepStrictEqual(saved, [['a', {
+    scope: 'ops', tags: 'hints,security', text: 'the durable fact',
+    source: 'a', pinned: true,
+  }]], 'every directive is consumed and none leaks into the body');
+});
+
 test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor marks', () => {
   const marked = [];
   const delivered = [];

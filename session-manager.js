@@ -2826,14 +2826,22 @@ function createSessionManager(deps) {
       }
       if (sub === 'remember') {
         let scope = '';
+        let tags = '';
         let pinned = false;
         let text = body.trim();
-        for (let m; (m = text.match(/^(scope|pinned)=(\S+)\s+([\s\S]+)$/));) {
-          if (m[1] === 'scope') scope = m[2]; else pinned = m[2] === 'true';
+        // The loop stops at the first unrecognised key, so an omitted key here
+        // strands EVERY directive behind it in the body too. `tags` was missing
+        // while the store, the digest and hint-retrieve all read it: four units
+        // saved `tags=... pinned=true` and lost the pin, because the parse
+        // halted on `tags` before it ever reached `pinned`.
+        for (let m; (m = text.match(/^(scope|tags|pinned)=(\S+)\s+([\s\S]+)$/));) {
+          if (m[1] === 'scope') scope = m[2];
+          else if (m[1] === 'tags') tags = m[2];
+          else pinned = m[2] === 'true';
           text = m[3];
         }
         try {
-          const unit = memoryStore.remember(agent, { scope, text, source: agent, pinned });
+          const unit = memoryStore.remember(agent, { scope, tags, text, source: agent, pinned });
           refreshDigest();
           getPersistence().markDigested(agent, session.sessionId);
           this._memoryAck(session, `[agent:memory] remembered ${unit.id}${scope ? ` [${scope}]` : ''}${pinned ? ' (pinned)' : ''}`);
