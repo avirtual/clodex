@@ -31,7 +31,8 @@ const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
 } = require('../hint-arm');
 const {
-  rank, compose, terms, createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
+  rank, compose, terms, haystack, selfScore,
+  createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   unitsAsRecords, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
 } = require('../hint-retrieve');
 const { ProxyClient } = require('../wirescope-proxy');
@@ -232,6 +233,53 @@ test('rank: one lucky rare term does not arm, several matching terms do', () => 
   assert.strictEqual(many[0].id, ids[0], 'and the winner is the unit those terms came from');
   assert.ok(many[0].evidence.hits.length >= MIN_HITS, 'the winner cleared the hit floor');
   assert.ok(many[0].evidence.score >= many[0].evidence.floor, 'and the score floor');
+});
+
+// WHY MIN_HITS CANNOT SIMPLY BE LOWERED TO 1, measured 2026-08-03 while trying
+// to make short personal questions ("where do i live") arm against the common
+// store. `score` sums log(1 + N/df) over MATCHED TERMS ONLY, and every term in
+// that sum is a property of the CORPUS, not of the record. So for a one-term
+// query every matching record scores IDENTICALLY and the ranker has no
+// discriminator left — the winner is decided by the id tiebreak in the sort.
+// Against the live 1650-unit store "live" tied 28 records at 4.09 and the
+// id-winner was a Terraform note, not anything about where the user lives.
+//
+// A single-term query also defeats the coverage cut by construction: score ==
+// selfScore, so coverage is exactly 1.0 for every candidate. MIN_HITS is the
+// only surviving check, which is why relaxing it turns arming into a coin flip
+// rather than a retrieval improvement. Fixing short queries needs a per-record
+// signal (term frequency, length normalisation, or embeddings), not a lower bar.
+test('rank: a one-term query cannot be ranked — every match ties, so MIN_HITS is load-bearing', () => {
+  const recs = [
+    { id: 'r1', text: 'the cadence of a release train', tags: '', scope: '' },
+    { id: 'r2', text: 'cadence cadence cadence cadence — entirely about cadence', tags: '', scope: '' },
+    { id: 'r3', text: 'unrelated note that also says cadence once', tags: '', scope: '' },
+  ];
+  for (let i = 0; i < 60; i += 1) {
+    recs.push({ id: `f${i}`, text: `filler ${i} about archives, tabs and worktrees`, tags: '', scope: '' });
+  }
+
+  // r2 is overwhelmingly the most ON-TOPIC record for "cadence", but the scorer
+  // cannot express that: it counts the term once per record regardless of how
+  // often it appears or how long the record is.
+  const df = new Map();
+  for (const r of recs) for (const t of new Set(terms(haystack(r)))) df.set(t, (df.get(t) || 0) + 1);
+  const scoreOf = (r) => (new Set(terms(haystack(r))).has('cadence')
+    ? Math.log(1 + recs.length / df.get('cadence')) : 0);
+  assert.strictEqual(scoreOf(recs[0]), scoreOf(recs[1]),
+    'a record mentioning the term once scores the same as one entirely about it');
+  assert.strictEqual(scoreOf(recs[1]), scoreOf(recs[2]),
+    'and the same as an unrelated record that happens to contain it — no discriminator exists');
+
+  // Coverage cannot break the tie either: with one query term it is 1.0 for all.
+  const self = selfScore(['cadence'], df, recs.length);
+  assert.strictEqual(scoreOf(recs[2]) / self, 1,
+    'a one-term query makes coverage exactly 1.0, so that cut is inert here');
+
+  // Hence: silent. Arming would mean picking one of three indistinguishable
+  // records by id, which is what MIN_HITS prevents.
+  assert.deepStrictEqual(rank(recs, 'cadence', { limit: 1 }), [],
+    'a one-term query must stay silent rather than arm on an arbitrary tie member');
 });
 
 // The floor cannot see query length: a long draft accumulates matched weight for
