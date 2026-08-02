@@ -77,6 +77,17 @@ function createMemoryStore(rootDir) {
       return dir;
     },
     _file(agent, id) { return path.join(this._dir(agent), `${id}.md`); },
+    // Every agent with a store, for callers that must reason about the WHOLE
+    // store rather than one agent's slice — a shared cache keyed across agents
+    // cannot garbage-collect correctly from a single agent's key set.
+    agents() {
+      let entries;
+      try { entries = fs.readdirSync(rootDir, { withFileTypes: true }); }
+      catch { return []; }
+      return entries
+        .filter((e) => e.isDirectory() && MEMORY_AGENT_RE.test(e.name))
+        .map((e) => e.name);
+    },
     list(agent) {
       if (!MEMORY_AGENT_RE.test(agent || '')) return [];
       let dir;

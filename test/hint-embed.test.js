@@ -191,6 +191,7 @@ test('embed: a deleted unit does not accumulate in the cache file', async () => 
   const cache = createVectorCache({ file });
   const ranker = createSemanticRanker({
     listRecords: () => RECORDS, embedder: createEmbedder({ fetchImpl }), cache,
+    liveKeys: () => new Set(RECORDS.map(keyOf)),
   });
   await ranker.warm('clodex');
   assert.strictEqual(cache.size(), 3);
@@ -199,11 +200,42 @@ test('embed: a deleted unit does not accumulate in the cache file', async () => 
   const cache2 = createVectorCache({ file });
   const r2 = createSemanticRanker({
     listRecords: () => fewer, embedder: createEmbedder({ fetchImpl }), cache: cache2,
+    liveKeys: () => new Set(fewer.map(keyOf)),
   });
   await r2.warm('clodex');
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.ok(!Object.keys(onDisk).some((k) => k.startsWith('u3:')),
     'a vector for a unit that no longer exists must be pruned, not carried forever');
+});
+
+// ONE CACHE FILE, MANY AGENTS. Pruning to the records of whichever agent
+// triggered the pass evicts every other agent's vectors — measured on the live
+// cache, warming a second agent took it 29.7MB -> 23.4MB and left the first at
+// 0 of 570 units cached, so each agent then re-embedded the others' work on
+// every pass and no agent was ever fully covered.
+test('embed: warming one agent does not evict another agent\'s vectors', async () => {
+  const fetchImpl = axisFetch({ pick: 0 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const file = path.join(dir, 'vec.json');
+
+  const A = [{ id: 'a1', text: 'agent A unit one', tags: '', scope: '' }];
+  const B = [{ id: 'b1', text: 'agent B unit one', tags: '', scope: '' }];
+  // The GC universe is every agent's keys, which is what engine.js supplies.
+  const union = () => new Set([...A, ...B].map(keyOf));
+
+  const mk = (recs) => createSemanticRanker({
+    listRecords: () => recs, embedder: createEmbedder({ fetchImpl }),
+    cache: createVectorCache({ file }), liveKeys: union,
+  });
+
+  await mk(A).warm('agent-a');
+  await mk(B).warm('agent-b');
+
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(Object.keys(onDisk).some((k) => k.startsWith('a1:')),
+    "agent A's vector must survive agent B's backfill");
+  assert.ok(Object.keys(onDisk).some((k) => k.startsWith('b1:')),
+    "and agent B's must be there too");
 });
 
 test('embed: a backfill pass is bounded', async () => {

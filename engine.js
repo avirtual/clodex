@@ -334,7 +334,7 @@ const commonMemoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'library', '
 // decided was worth arming; see hint-embed.js for the measurement that split
 // those two jobs.
 const {
-  createEmbedder, createVectorCache, createSemanticRanker,
+  createEmbedder, createVectorCache, createSemanticRanker, keyOf: embedKeyOf,
 } = require('./hint-embed');
 const semanticRanker = createSemanticRanker({
   // Both stores, ranked as ONE list — the opposite of the lexical retriever,
@@ -349,6 +349,12 @@ const semanticRanker = createSemanticRanker({
   // A SIBLING of library/memory for the same reason memory-loadlog is: entries
   // under that directory enumerate as agents.
   cache: createVectorCache({ file: path.join(REGISTRY_DIR, 'library', 'memory-vectors.json') }),
+  // One cache file serves every agent, so the GC needs every agent's keys.
+  liveKeys: () => {
+    const all = [...unitsAsRecords(commonMemoryStore.list('chat-extract'), 'common')];
+    for (const a of memoryStore.agents()) all.push(...unitsAsRecords(memoryStore.list(a)));
+    return new Set(all.map(embedKeyOf));
+  },
   log,
 });
 

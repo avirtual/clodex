@@ -214,8 +214,12 @@ function createVectorCache({ file, readFile = fs.readFileSync, writeFile = fs.wr
 // `listRecords(agent) -> [{id, text, tags, scope, ...}]` supplies the corpus in
 // the same record shape the lexical retriever returns, so a re-ranked result is
 // substitutable for a lexical one at the arming site.
+// `liveKeys() -> Set` is the union of cache keys across EVERY agent, used only
+// for garbage collection. Injected separately from listRecords because that one
+// is per-agent by design and cannot answer "what is still referenced anywhere".
 function createSemanticRanker({
   listRecords, embedder, cache, log = null, backfillBatch = BACKFILL_BATCH,
+  liveKeys = null,
 } = {}) {
   const debug = (m) => { try { if (log && log.debug) log.debug('hint', m); } catch {} };
   let backfilling = false;
@@ -238,9 +242,14 @@ function createSemanticRanker({
         cache.set(k, v);
         done++;
       }
-      // Unconditional: this is also where vectors for deleted units get
-      // collected, and that pass embeds nothing.
-      cache.flush(new Set(records.map(keyOf)));
+      // GC ONLY AGAINST THE WHOLE KEY UNIVERSE, NEVER ONE AGENT'S SLICE. The
+      // cache file is shared by every agent, so pruning to the records of the
+      // agent that happened to trigger this pass evicts everyone else's vectors
+      // — measured: warming a second agent took the file 29.7MB -> 23.4MB and
+      // left the first agent at 0 of 570 units cached, so the two agents then
+      // re-embedded each other's work forever. `liveKeys` supplies the union;
+      // without it the prune is skipped rather than done wrongly.
+      cache.flush(liveKeys ? liveKeys() : null);
       if (done) debug(`embedded ${done} unit(s), cache=${cache.size()}`);
     } catch (e) {
       debug(`backfill failed: ${e && e.message}`);
