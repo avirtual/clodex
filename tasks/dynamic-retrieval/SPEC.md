@@ -8,6 +8,27 @@ decision.
 both have landed** — this ticket is the merge layer between them and has
 nothing to build on its own if either is missing.
 
+## Read `tasks/memory-retrieval-design/FINDINGS.md` first (added 2026-08-02)
+
+An overnight measurement run settled several things this spec assumes. Two bear
+on it directly.
+
+**The destination boost must read `cwds`, not `cwd`.** One operator message
+delivered to several sessions is journalled once per destination — measured on
+the live basket, 802 ids across 2-4 worktrees, 7% of lines. `parseBasket` now
+collapses them on id+text and carries EVERY origin as `cwds`. A boost reading
+the singular sees only the first worktree the message was journalled to, which
+silently narrows exactly the standing rulings the "boost, do not filter" section
+below exists to protect.
+
+**Calibrate the ambition.** Ranking, not gating, is the binding constraint: an
+oracle picking the better of a lexical and a semantic channel per query ranks
+the right record first only 55% of the time, and a perfect reranker caps at 66%
+@3. Merging two lexical sources will not beat that. Queries whose every term is
+corpus-common have no signal to rank on at all. The merge layer is still worth
+building — but its value is a coherent interface for a later semantic tier, not
+a jump in hint quality, and the tuning constants are not where the wins are.
+
 ## The problem this exists to solve
 
 Scores from different retrievers are NOT comparable. Measured 2026-08-01 on
