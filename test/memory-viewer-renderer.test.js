@@ -41,7 +41,11 @@ test('confirmText: the pinned line appears ONLY when pinned, on its own line', (
   const plain = confirmText('clodex', unit());
   assert.doesNotMatch(plain, /PINNED/);
 
-  const pinned = confirmText('clodex', unit({ pinned: true }));
+  // The AGENT's flag guarantees no delivery, so it must not raise a warning
+  // that says the unit is served in full to every session.
+  assert.doesNotMatch(confirmText('clodex', unit({ pinned: true })), /PINNED/);
+
+  const pinned = confirmText('clodex', unit({ operatorPinned: true }));
   assert.match(pinned, /THIS UNIT IS PINNED/);
   // Its own line, never folded into the body text: a pinned unit is served in
   // full to every new session, so it has to be readable at a glance.

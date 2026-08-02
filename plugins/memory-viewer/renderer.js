@@ -49,7 +49,7 @@ function confirmText(agent, u) {
   if (clipped) body += '\n…';
 
   const out = [`Delete this memory from ${flat(agent)}?`, ''];
-  if (u.pinned) out.push('THIS UNIT IS PINNED — it is served in full to every new session of this agent.', '');
+  if (u.operatorPinned) out.push('THIS UNIT IS PINNED — it is served in full to every new session of this agent.', '');
   if (u.idMismatch) out.push(`Note: this unit's id line says "${id}" but its filename is "${key}". The filename is what gets deleted.`, '');
   // Fenced: an unfenced body ending in `saved: …` or `This cannot be undone.`
   // would impersonate the dialog's own metadata, and the user cannot tell which
@@ -186,6 +186,35 @@ module.exports.activate = (rhost) => {
       }
     }
 
+    // No confirmation: a pin is cheap and reversible by the same button, and a
+    // dialog on every toggle would make curating a store tedious enough not to
+    // do. The delete path keeps its confirmation because it is terminal.
+    async function togglePin(agent, u, btn) {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        let res;
+        try {
+          // u.key for the same reason delete uses it: core resolves a unit as
+          // `<dir>/<key>.md`, so the basename is the real identity.
+          res = await rhost.invoke('setPin', { agent, id: u.key, on: !u.operatorPinned });
+        } catch (e) {
+          rhost.log.error('setPin failed', e);
+          res = null;
+        }
+        if (!alive()) return;
+        if (!res || res.ok !== true) {
+          // The cap refusal names its own limit and the remedy, so it is shown
+          // verbatim rather than reworded into something vaguer.
+          rhost.ui.showToast((res && res.error) || 'Could not change the pin', { kind: 'error' });
+          return;
+        }
+        await reload();
+      } finally {
+        if (alive() && btn.isConnected) btn.disabled = false;
+      }
+    }
+
     function renderUnits(agent, units) {
       unitsPane.innerHTML = '';
       if (!units.length) {
@@ -193,9 +222,12 @@ module.exports.activate = (rhost) => {
         return;
       }
       for (const u of units) {
-        const card = el('div', u.pinned ? 'mv-unit mv-pinned' : 'mv-unit');
+        const card = el('div', u.operatorPinned ? 'mv-unit mv-pinned' : 'mv-unit');
         const head = el('div', 'mv-unit-head');
-        if (u.pinned) head.appendChild(el('span', 'mv-pin-mark', 'pinned'));
+        // Only the operator's pin gets the badge. The agent's own `pinned` is a
+        // recency boost that guarantees nothing, so badging it here would
+        // promise a delivery the digest does not make.
+        if (u.operatorPinned) head.appendChild(el('span', 'mv-pin-mark', 'pinned'));
         if (u.scope) head.appendChild(el('span', 'mv-scope', u.scope));
         head.appendChild(el('span', 'mv-when', fmtWhen(u.learned_at)));
         if (u.source && u.source !== agent) {
@@ -206,6 +238,15 @@ module.exports.activate = (rhost) => {
           warn.title = `The id line says "${u.id}" but the file is "${u.key}". Deleting removes the file.`;
           head.appendChild(warn);
         }
+        const pin = el('button', u.operatorPinned ? 'mv-pin mv-pin-on' : 'mv-pin', '📌');
+        pin.title = u.operatorPinned
+          ? `Unpin ${u.key} — it will stop being served in full at session start`
+          : `Pin ${u.key} — serve it in full to every new session of this agent`;
+        pin.setAttribute('aria-label', pin.title);
+        pin.addEventListener('click', () => {
+          togglePin(agent, u, pin).catch((e) => rhost.log.error('pin failed', e));
+        });
+        head.appendChild(pin);
         const del = el('button', 'mv-delete', '✕');
         // u.key, never u.id: a unit with no `id:` line would otherwise label
         // itself `Delete ` — and the label must name what actually gets deleted.

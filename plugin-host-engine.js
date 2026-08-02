@@ -22,6 +22,7 @@ function createPluginHostEngine(deps) {
     fs, path,
     gitWorktree,      // the sanctioned shared leaf exposed as host.lib
     libraryKinds,     // kind -> handler for host.library.remove; unlisted kinds are REFUSED
+    libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     onPluginStateChanged,
@@ -48,6 +49,12 @@ function createPluginHostEngine(deps) {
     Object.entries(libraryKinds || {})
       .filter(([, fn]) => typeof fn === 'function')
       .map(([k, fn]) => [k, (ref) => fn(ref)]),
+  ));
+
+  const libraryPinHandlers = Object.freeze(Object.fromEntries(
+    Object.entries(libraryPinKinds || {})
+      .filter(([, fn]) => typeof fn === 'function')
+      .map(([k, fn]) => [k, (ref, on) => fn(ref, on)]),
   ));
 
 // The injected transport has no removeHandler, so a per-plugin channel could
@@ -272,6 +279,33 @@ function createPluginHostEngine(deps) {
             // sanitize the error, which still passes through as the handler
             // wrote it.
             return res.ok ? { ok: true } : { ok: false, error: String(res.error ?? 'library.remove failed') };
+          } catch (e) {
+            return { ok: false, error: e && e.message ? e.message : String(e) };
+          }
+        },
+        // Separate verb rather than a flag on remove: the two obligations
+        // differ. A remove is terminal and its handler must rewrite the digest
+        // for a unit that no longer exists; a pin changes WHICH units ride and
+        // is refusable (the cap), so it has an error path remove does not.
+        setPin: (kind, ref, on) => {
+          if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(libraryPinHandlers, kind)) {
+            return { ok: false, error: `unknown library kind: ${String(kind)}` };
+          }
+          if (!ref || typeof ref !== 'object') {
+            return { ok: false, error: 'library.setPin: ref must be an object' };
+          }
+          try {
+            const res = libraryPinHandlers[kind](ref, !!on);
+            if (!res || typeof res !== 'object') {
+              return { ok: false, error: 'library.setPin: handler returned no result' };
+            }
+            if (typeof res.then === 'function') {
+              try { res.then(() => {}, () => {}); } catch {}
+              return { ok: false, error: `library.setPin: handler for ${kind} must be synchronous` };
+            }
+            // The cap refusal has to survive as TEXT — it names the limit and
+            // tells the operator to unpin one first, which a boolean cannot.
+            return res.ok ? { ok: true } : { ok: false, error: String(res.error ?? 'library.setPin failed') };
           } catch (e) {
             return { ok: false, error: e && e.message ? e.message : String(e) };
           }

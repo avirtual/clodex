@@ -4,7 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createMemoryStore, composeDigest, parseMemoryUnit, DIGEST_BUDGET } = require('../memory-store');
+const { createMemoryStore, composeDigest, parseMemoryUnit, DIGEST_BUDGET,
+  OPERATOR_PIN_CAP, RECENT_BODY_CAP } = require('../memory-store');
 
 function tmpStore() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mem-'));
@@ -127,12 +128,53 @@ test('memoryStore: forget deletes, and pin/forget reject non-id shapes (traversa
   assert.throws(() => store.forget('alpha', u.id), /no unit/); // already gone
 });
 
+test('memoryStore: the operator pin is capped, and REFUSES rather than evicting', () => {
+  const { store } = tmpStore();
+  const ids = [];
+  for (let i = 0; i < OPERATOR_PIN_CAP + 1; i++) {
+    ids.push(store.remember('alpha', { text: `unit ${i}` }).id);
+  }
+  for (let i = 0; i < OPERATOR_PIN_CAP; i++) store.setOperatorPinned('alpha', ids[i], true);
+  // Silently evicting the oldest would look like the pin simply not working;
+  // the operator set both deliberately, so the choice is theirs.
+  assert.throws(() => store.setOperatorPinned('alpha', ids[OPERATOR_PIN_CAP], true),
+    /operator pin limit reached/);
+  assert.strictEqual(store.list('alpha').filter(u => u.operatorPinned).length, OPERATOR_PIN_CAP);
+  // Re-pinning an ALREADY pinned unit is a no-op, not a cap violation — the
+  // count excludes the unit under edit, or a UI that re-asserts state breaks.
+  assert.doesNotThrow(() => store.setOperatorPinned('alpha', ids[0], true));
+  // Unpin frees a slot.
+  store.setOperatorPinned('alpha', ids[0], false);
+  assert.doesNotThrow(() => store.setOperatorPinned('alpha', ids[OPERATOR_PIN_CAP], true));
+});
+
+test('memoryStore: agent pin and operator pin are INDEPENDENT flags', () => {
+  // Collapsing them would erase which one a store's history came from the
+  // moment either is written, and the digest treats them as different claims.
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'both flags', pinned: true });
+  store.setOperatorPinned('alpha', u.id, true);
+  let unit = store.list('alpha')[0];
+  assert.strictEqual(unit.pinned, true);
+  assert.strictEqual(unit.operatorPinned, true);
+  const raw = fs.readFileSync(path.join(dir, 'alpha', `${u.id}.md`), 'utf-8');
+  assert.match(raw, /^pinned: true$/m);
+  assert.match(raw, /^operator_pinned: true$/m);
+  // Clearing one leaves the other standing.
+  store.setOperatorPinned('alpha', u.id, false);
+  unit = store.list('alpha')[0];
+  assert.strictEqual(unit.pinned, true, 'unpinning the operator flag must not clear the agent flag');
+  assert.strictEqual(unit.operatorPinned, false);
+  store.setPinned('alpha', u.id, false);
+  assert.strictEqual(store.list('alpha')[0].pinned, false);
+});
+
 // --- digest ---------------------------------------------------------------
 
 const NOW = Date.parse('2026-07-08T12:00:00Z');
-function unit(id, { pinned = false, scope = '', body = 'body of ' + id, daysAgo = 1 } = {}) {
+function unit(id, { pinned = false, operatorPinned = false, scope = '', body = 'body of ' + id, daysAgo = 1 } = {}) {
   return {
-    id, scope, pinned, body,
+    id, scope, pinned, operatorPinned, body,
     learned_at: new Date(NOW - daysAgo * 86_400_000).toISOString(),
     source: 'test',
   };
@@ -143,123 +185,157 @@ test('composeDigest: empty store is null (no digest, conversation stays unmarked
   assert.strictEqual(composeDigest(null), null);
 });
 
-test('composeDigest: pinned in full, rest as index lines newest-first', () => {
+test('composeDigest: operator pins in full, then recent short bodies, rest as index', () => {
   const d = composeDigest([
-    unit('mem-1-aaaaaa', { pinned: true, body: 'Settled: no auto-sweep.\nSecond line rides too.' }),
+    unit('mem-1-aaaaaa', { operatorPinned: true, daysAgo: 40, body: 'Settled: no auto-sweep.\nSecond line rides too.' }),
     unit('mem-2-bbbbbb', { daysAgo: 3, scope: 'proj', body: 'Older index item' }),
     unit('mem-3-cccccc', { daysAgo: 1, body: 'Newer index item' }),
   ], { now: NOW });
+  // The operator pin rides in full DESPITE being the oldest unit here — that is
+  // the whole difference between the two tiers.
   assert.match(d, /## mem-1-aaaaaa\nSettled: no auto-sweep\.\nSecond line rides too\./);
-  // index shows first line + age, newer before older
   const newer = d.indexOf('mem-3-cccccc');
   const older = d.indexOf('mem-2-bbbbbb');
-  assert.ok(newer !== -1 && older !== -1 && newer < older);
-  assert.match(d, /mem-2-bbbbbb \[proj\] Older index item \(3d\)/);
-  // index bodies are NOT included
-  assert.doesNotMatch(d, /## mem-3-cccccc/);
+  assert.ok(newer !== -1 && older !== -1 && newer < older, 'recent tier is newest-first');
+});
+
+test('composeDigest: a long unit is NEVER served in full, however recent', () => {
+  // The cap is what converts the budget from 2 bodies into several. A unit over
+  // RECENT_BODY_CAP falls to an index line even when it is the newest thing in
+  // the store and the budget is untouched.
+  const d = composeDigest([
+    unit('mem-1-longone', { daysAgo: 0, body: 'L'.repeat(RECENT_BODY_CAP + 1) }),
+    unit('mem-2-shorter', { daysAgo: 5, body: 'S'.repeat(100) }),
+  ], { now: NOW });
+  assert.doesNotMatch(d, /## mem-1-longone/, 'over the cap must not ride in full');
+  assert.ok(d.includes('mem-1-longone'), 'but it must still be reachable as a line');
+  assert.match(d, /## mem-2-shorter\nS{100}/, 'the older SHORT unit rides instead');
+});
+
+test('composeDigest: an operator pin bypasses the per-unit cap', () => {
+  // The operator asserted this text is worth its bytes. Silently demoting it
+  // would make the one deliberate human signal unreliable.
+  const big = 'B'.repeat(RECENT_BODY_CAP * 2);
+  const d = composeDigest([
+    unit('mem-1-opinned', { operatorPinned: true, body: big }),
+  ], { now: NOW });
+  assert.match(d, new RegExp(`## mem-1-opinned\\nB{${RECENT_BODY_CAP * 2}}`));
+});
+
+test('composeDigest: the operator cap bounds what the digest serves in full', () => {
+  // Belt-and-braces against the store's own refusal: even if more than the cap
+  // reach the composer (hand-edited files, a store written by an older build),
+  // only OPERATOR_PIN_CAP of them ride, newest first.
+  const units = [];
+  for (let i = 0; i < OPERATOR_PIN_CAP + 3; i++) {
+    units.push(unit(`mem-${100 + i}-opinned`, { operatorPinned: true, daysAgo: 50 - i, body: `pin ${i}` }));
+  }
+  const d = composeDigest(units, { now: NOW });
+  // Count the OPERATOR section alone: units past the cap are not privileged, but
+  // they are not banished either — they fall back into the recent tier and ride
+  // on their own merits, which is why the whole-digest body count is not the
+  // measure here.
+  const opSection = d.slice(d.indexOf('Pinned by the operator'), d.indexOf('Most recent'));
+  const bodies = (opSection.match(/\n## mem-\d+-opinned\n/g) || []).length;
+  assert.strictEqual(bodies, OPERATOR_PIN_CAP);
+  // Newest wins the scarce slots.
+  assert.match(opSection, new RegExp(`## mem-${100 + OPERATOR_PIN_CAP + 2}-opinned`));
+});
+
+test('composeDigest: the agent pin ORDERS the recent tier but never gates it', () => {
+  // Same timestamp, so only the flag can break the tie — and an unpinned unit
+  // must still be served, which is what makes it a boost rather than a gate.
+  const d = composeDigest([
+    unit('mem-1-plainer', { daysAgo: 2, body: 'p'.repeat(80) }),
+    unit('mem-2-boosted', { daysAgo: 2, pinned: true, body: 'b'.repeat(80) }),
+  ], { now: NOW });
+  assert.ok(d.indexOf('## mem-2-boosted') < d.indexOf('## mem-1-plainer'), 'pinned wins the tie');
+  assert.match(d, /## mem-1-plainer/, 'unpinned is still served — the flag is not a gate');
+});
+
+test('composeDigest: a NEWER unpinned unit still beats an older agent-pinned one', () => {
+  // Recency is the primary key. If the flag could outrank it the tier would
+  // drift back into the stale-pin failure this design exists to remove.
+  const d = composeDigest([
+    unit('mem-1-oldpin', { daysAgo: 30, pinned: true, body: 'o'.repeat(80) }),
+    unit('mem-2-newest', { daysAgo: 1, body: 'n'.repeat(80) }),
+  ], { now: NOW });
+  assert.ok(d.indexOf('## mem-2-newest') < d.indexOf('## mem-1-oldpin'));
 });
 
 test('composeDigest: budget drops whole units and counts the overflow', () => {
-  // Sized so bodies are still served: at 30 pins the fallback lines alone
-  // exceed the budget, no body fits, and the no-truncation check below would
-  // pass over an empty block list.
   const units = [];
   for (let i = 0; i < 6; i++) {
-    units.push(unit(`mem-${100 + i}-aaaaaa`, { pinned: true, body: 'x'.repeat(400) }));
+    units.push(unit(`mem-${100 + i}-aaaaaa`, { daysAgo: 10 - i, body: 'x'.repeat(400) }));
   }
   const d = composeDigest(units, { budget: 2000, now: NOW });
   assert.ok(d.length < 2200); // header may nudge past, never a whole extra unit
-  assert.match(d, /\(\d+ of 6 pinned shown in full;[^)]*— \[agent:memory list\]\)/);
+  assert.match(d, /— \[agent:memory list\]\)/);
   // no unit is truncated mid-body: every included block ends with its full body
   const blocks = d.match(/## mem-\d+-aaaaaa\nx+/g) || [];
   assert.ok(blocks.length > 0);
   for (const b of blocks) assert.strictEqual(b.split('\n')[1].length, 400);
 });
 
-test('composeDigest: pinned units are served newest-first', () => {
+test('composeDigest: a unit whose body does not fit is listed, never dropped', () => {
   const d = composeDigest([
-    unit('mem-1-oldest', { pinned: true, daysAgo: 9, body: 'x'.repeat(300) }),
-    unit('mem-2-middle', { pinned: true, daysAgo: 5, body: 'y'.repeat(300) }),
-    unit('mem-3-newest', { pinned: true, daysAgo: 1, body: 'z'.repeat(300) }),
-  // Two bodies must fit and the third must not, or "newest-first" has nothing
-  // to order. Bodies get HALF the budget, so this is 1600 where it was 1000.
-  ], { budget: 1600, now: NOW });
-  assert.match(d, /## mem-3-newest\nz{300}/);
-  assert.match(d, /## mem-2-middle\ny{300}/);
-  assert.doesNotMatch(d, /## mem-1-oldest/); // oldest loses its body, not the newest
-  // and the newest body precedes the older one
-  assert.ok(d.indexOf('## mem-3-newest') < d.indexOf('## mem-2-middle'));
-});
-
-test('composeDigest: a pinned unit that does not fit is listed, never dropped', () => {
-  const d = composeDigest([
-    unit('mem-1-oldest', { pinned: true, daysAgo: 9, body: 'x'.repeat(300) }),
-    unit('mem-2-middle', { pinned: true, daysAgo: 5, body: 'y'.repeat(300) }),
-    unit('mem-3-newest', { pinned: true, daysAgo: 1, body: 'z'.repeat(300) }),
+    unit('mem-1-oldest', { daysAgo: 9, body: 'x'.repeat(300) }),
+    unit('mem-2-middle', { daysAgo: 5, body: 'y'.repeat(300) }),
+    unit('mem-3-newest', { daysAgo: 1, body: 'z'.repeat(300) }),
   ], { budget: 1000, now: NOW });
   assert.doesNotMatch(d, /## mem-1-oldest/);
   assert.ok(d.includes('mem-1-oldest')); // the id is still reachable
 });
 
-test('composeDigest: a demoted pin is marked, an ordinary index entry is not', () => {
+test('composeDigest: a demoted OPERATOR pin is marked, an ordinary index entry is not', () => {
+  // Two oversized operator pins against a budget that fits one: the loser keeps
+  // its [pinned] marker in the index so the operator can see the pin exists and
+  // did not ride, rather than concluding the pin was lost.
   const d = composeDigest([
-    unit('mem-1-oldest', { pinned: true, daysAgo: 9, body: 'x'.repeat(300) }),
-    unit('mem-2-middle', { pinned: true, daysAgo: 5, body: 'y'.repeat(300) }),
-    unit('mem-3-newest', { pinned: true, daysAgo: 1, body: 'z'.repeat(300) }),
-    unit('mem-4-plainer', { daysAgo: 2, body: 'plain index item' }),
-  ], { budget: 1100, now: NOW });
-  assert.match(d, /\n- \[pinned\] mem-1-oldest /);
+    unit('mem-1-opinned', { operatorPinned: true, daysAgo: 9, body: 'x'.repeat(600) }),
+    unit('mem-2-opinned', { operatorPinned: true, daysAgo: 1, body: 'z'.repeat(600) }),
+    // Over the per-unit cap, so it lands in the index rather than riding —
+    // which is what puts it beside the demoted pin for the ordering check.
+    unit('mem-4-plainer', { daysAgo: 2, body: 'p'.repeat(RECENT_BODY_CAP + 1) }),
+  ], { budget: 1500, now: NOW });
+  assert.match(d, /\n- \[pinned\] mem-1-opinned /);
   assert.match(d, /\n- mem-4-plainer /);
-});
-
-test('composeDigest: demoted pins sort before unpinned index entries', () => {
-  const d = composeDigest([
-    unit('mem-1-oldest', { pinned: true, daysAgo: 9, body: 'x'.repeat(300) }),
-    unit('mem-2-middle', { pinned: true, daysAgo: 5, body: 'y'.repeat(300) }),
-    unit('mem-3-newest', { pinned: true, daysAgo: 1, body: 'z'.repeat(300) }),
-    unit('mem-4-plainer', { daysAgo: 2, body: 'plain index item' }),
-  ], { budget: 1100, now: NOW });
-  assert.ok(d.indexOf('mem-1-oldest [') !== -1 || d.indexOf('[pinned] mem-1-oldest') !== -1);
-  assert.ok(d.indexOf('[pinned] mem-1-oldest') < d.indexOf('- mem-4-plainer'));
+  assert.ok(d.indexOf('[pinned] mem-1-opinned') < d.indexOf('- mem-4-plainer'),
+    'demoted pins lead the index');
 });
 
 test('composeDigest: the tail counts the three cases separately, omitting empty clauses', () => {
   // everything fits: no tail at all
   const small = composeDigest([
-    unit('mem-1-aaaaaa', { pinned: true, body: 'short pin' }),
+    unit('mem-1-aaaaaa', { operatorPinned: true, body: 'short pin' }),
     unit('mem-2-bbbbbb', { body: 'short index' }),
   ], { now: NOW });
   assert.doesNotMatch(small, /\[agent:memory list\]/);
 
-  // pins demoted, but every demoted line fits and nothing else overflows
-  const demotedOnly = [];
-  for (let i = 0; i < 6; i++) {
-    demotedOnly.push(unit(`mem-${100 + i}-aaaaaa`, { pinned: true, body: 'x'.repeat(400) }));
-  }
-  const dd = composeDigest(demotedOnly, { budget: 2100, now: NOW });
-  assert.match(dd, /\d+ of 6 pinned shown in full/);
-  assert.match(dd, /\d+ pinned listed by title only/);
-  assert.doesNotMatch(dd, /pinned omitted/);
-  assert.doesNotMatch(dd, /\+\d+ more/);
-
-  // unpinned overflow only: no pinned clause at all
-  const indexOnly = [unit('mem-1-aaaaaa', { pinned: true, body: 'tiny pin' })];
+  // overflow only: the "+N more" clause, no full/title clauses
+  const indexOnly = [];
   for (let i = 0; i < 40; i++) {
-    indexOnly.push(unit(`mem-${200 + i}-bbbbbb`, { body: `index item ${i}` }));
+    indexOnly.push(unit(`mem-${200 + i}-bbbbbb`, { daysAgo: i + 1, body: `index item ${i}` }));
   }
   const di = composeDigest(indexOnly, { budget: 700, now: NOW });
-  assert.match(di, /\(\+\d+ more — \[agent:memory list\]\)/);
-  assert.doesNotMatch(di, /pinned shown in full/);
-  assert.doesNotMatch(di, /pinned listed by title/);
-  assert.doesNotMatch(di, /pinned omitted/);
+  assert.match(di, /— \[agent:memory list\]\)$/);
+  // Which clause fires depends on where the budget ran out, and that is not the
+  // property under test — the tail existing and naming a nonzero withheld count
+  // is. Asserting a specific clause here pins an implementation detail of the
+  // fill order rather than the guarantee.
+  assert.match(di, /(\d+) (?:listed by title only|omitted)|\+\d+ more/);
 });
 
 // The store this function actually runs against, not a toy one. Sized from the
-// lead's live store (191 units, 108 pinned, ~1175-byte mean body).
-function pinnedStore(n, { bytes = 1200 } = {}) {
+// lead's live store measured 2026-08-02: 207 units, ~1175-byte mean body — the
+// shape that made the OLD policy serve two bodies out of 130 pins.
+function bigStore(n, { bytes = 1200 } = {}) {
   const units = [];
   for (let i = 0; i < n; i++) {
     units.push(unit(`mem-${100 + i}-aaaaaa`, {
+      // Agent-pinned, as the live store is: under this policy the flag orders
+      // but does not admit, so a store where EVERY unit carries it must behave
+      // exactly like a store where none does.
       pinned: true,
       daysAgo: n - i,
       body: `settled position ${i}\n${'x'.repeat(bytes)}`,
@@ -268,42 +344,67 @@ function pinnedStore(n, { bytes = 1200 } = {}) {
   return units;
 }
 
-test('composeDigest: 110 pins against the real budget still serve bodies', () => {
-  // THE regression case. A 108-pin store served ZERO bodies for months because
-  // the per-pin reserve exceeded the budget by itself, and no test noticed: an
-  // empty digest satisfies every size bound, so the size half of this test is
-  // the half that cannot fail. The body count is the assertion that bites.
-  const d = composeDigest(pinnedStore(110), { budget: DIGEST_BUDGET, now: NOW });
+test('composeDigest: a 110-unit store of LONG bodies serves none of them in full', () => {
+  // THE regression this policy exists to fix, stated as the composer sees it.
+  // The live store served 2 bodies from 130 pins and reported nothing wrong; a
+  // store of over-cap units must now serve ZERO bodies and say so, rather than
+  // spending the whole body budget on two arbitrary essays.
+  const d = composeDigest(bigStore(110), { budget: DIGEST_BUDGET, now: NOW });
   const bodies = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
-  assert.ok(bodies >= 3, `expected at least 3 bodies at scale, got ${bodies}`);
+  assert.strictEqual(bodies, 0, 'every body is over RECENT_BODY_CAP, so none rides');
   assert.ok(d.length <= DIGEST_BUDGET, `digest is ${d.length} bytes, over the ${DIGEST_BUDGET} budget`);
-  // The other half of the policy, and the only thing separating this fix from
-  // simply deleting the reserve. A greedy body loop passes both assertions
-  // above (measured: 6 bodies, 8 index lines) while starving the index — which
-  // is the ORIGINAL bug, pins reachable from nowhere, arrived at from the other
-  // side. Bodies are capped at half the budget so the rest can be listed: 3
-  // bodies and 80 lines account for 83 of the 110 pins, against greedy's 14.
-  const bodyBytes = (d.match(/\n## mem-\d+-aaaaaa\n[^\n]*\nx+/g) || [])
-    .reduce((n, b) => n + b.length, 0);
-  assert.ok(bodyBytes <= DIGEST_BUDGET / 2, `bodies took ${bodyBytes} of ${DIGEST_BUDGET}, starving the index`);
+  // The bytes go to reachability instead: index lines for as many as fit.
+  const lines = (d.match(/\n- mem-\d+-aaaaaa /g) || []).length;
+  assert.ok(lines > 40, `expected the budget to buy index lines, got ${lines}`);
 });
 
-test('composeDigest: 97 pins against the real budget leaves every withheld pin counted', () => {
-  // Was: every pinned id appears in full or as a line, guaranteed by reserving
-  // a line per pin. That reserve is what starved the bodies. The property it
-  // bought survives on the tail instead — nothing withheld goes unaccounted —
-  // so the arithmetic below must close over all 97 with none unexplained.
-  const d = composeDigest(pinnedStore(97, { bytes: 880 }), { budget: DIGEST_BUDGET, now: NOW });
-  const shown = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
-  const listed = (d.match(/\n- \[pinned\] mem-\d+-aaaaaa /g) || []).length;
-  const tail = d.match(/\((.+) — \[agent:memory list\]\)$/);
-  assert.ok(tail, 'pins were withheld, so the tail must be there to account for them');
+test('composeDigest: SHORT units at scale get many bodies from the same budget', () => {
+  // The other side of the cap, and the reason it is an incentive rather than a
+  // bound: the identical budget that served 0 long bodies above serves a dozen
+  // short ones. This is what the write-time guidance is asking agents to earn.
+  const d = composeDigest(bigStore(110, { bytes: 200 }), { budget: DIGEST_BUDGET, now: NOW });
+  const bodies = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
+  assert.ok(bodies >= 10, `expected short units to ride in bulk, got ${bodies}`);
+  assert.ok(d.length <= DIGEST_BUDGET, `digest is ${d.length} bytes, over budget`);
+  const bodyBytes = (d.match(/\n## mem-\d+-aaaaaa\n[^\n]*\nx+/g) || [])
+    .reduce((n, b) => n + b.length, 0);
+  assert.ok(bodyBytes <= DIGEST_BUDGET / 2, `bodies took ${bodyBytes}, starving the index`);
+});
 
-  // Read back from the tail's own words, not recomputed: the tail is the only
-  // thing a reader of the digest has, so it is the tail that must be true.
-  const say = re => { const m = tail[1].match(re); return m ? Number(m[1]) : 0; };
-  assert.strictEqual(say(/(\d+) of 97 pinned shown in full/), shown);
-  assert.strictEqual(say(/(\d+) pinned listed by title only/), listed);
-  assert.strictEqual(shown + listed + say(/(\d+) pinned omitted/), 97, 'every pin is served, listed or counted');
-  assert.ok(shown > 0, 'reachability must not cost every body — that was the bug');
+test('composeDigest: at scale every withheld unit is still counted', () => {
+  // The reachability guarantee, unchanged by the rewrite: nothing withheld goes
+  // unaccounted. The tail is the only thing a reader of the digest has, so the
+  // arithmetic is read back from the tail's own words rather than recomputed.
+  const units = bigStore(97, { bytes: 880 });
+  const d = composeDigest(units, { budget: DIGEST_BUDGET, now: NOW });
+  const shown = (d.match(/\n## mem-\d+-aaaaaa\n/g) || []).length;
+  const listed = (d.match(/\n- (?:\[pinned\] )?mem-\d+-aaaaaa /g) || []).length;
+  // No tail when nothing was withheld — every unit got at least a line, which is
+  // itself the guarantee. Treat the absent tail as zeros rather than requiring
+  // one, or the test fails on the BEST outcome.
+  const tail = d.match(/\((.+) — \[agent:memory list\]\)$/);
+  const say = re => {
+    if (!tail) return 0;
+    const m = tail[1].match(re);
+    return m ? Number(m[1]) : 0;
+  };
+  assert.strictEqual(shown + listed + say(/\+(\d+) more/) + say(/(\d+) omitted/), 97,
+    'every unit is served, listed or counted');
+  assert.ok(listed > 0, 'long units must still be reachable by line');
+});
+
+test('composeDigest: the digest never exceeds its budget, whatever the mix', () => {
+  // One bound that must hold across the tier interactions, since three fills now
+  // share the budget and each was individually bounded before the rewrite.
+  for (const bytes of [80, 300, 601, 1200, 4000]) {
+    for (const n of [1, 5, 60, 200]) {
+      const units = bigStore(n, { bytes });
+      // Salt in operator pins, which bypass the per-unit cap and so are the most
+      // likely thing to push a mixed store over.
+      for (let i = 0; i < Math.min(OPERATOR_PIN_CAP, units.length); i++) units[i].operatorPinned = true;
+      const d = composeDigest(units, { budget: DIGEST_BUDGET, now: NOW });
+      assert.ok(d === null || d.length <= DIGEST_BUDGET,
+        `n=${n} bytes=${bytes}: digest is ${d && d.length} bytes, over ${DIGEST_BUDGET}`);
+    }
+  }
 });

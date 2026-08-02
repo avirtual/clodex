@@ -38,11 +38,12 @@ function makeManager(sessions = []) {
   };
 }
 
-function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds } = {}) {
+function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
   let ui = { ...settings };
   const logged = [];
   const removals = [];
+  const pins = [];
   const engine = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
@@ -51,10 +52,11 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     fs, path,
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
     libraryKinds: libraryKinds || { memory: (ref) => { removals.push(ref); return { ok: true }; } },
+    libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
   });
-  return { engine, manager, dir, logged, removals, uiSettings: () => ui };
+  return { engine, manager, dir, logged, removals, pins, uiSettings: () => ui };
 }
 
 const sessionA = { name: 'a', type: 'claude', cwd: '/repo/a', workspaceId: 'ws-open' };
@@ -332,6 +334,36 @@ test('library.remove republishes the envelope rather than the handler object', (
   assert.equal(typeof h3.library.remove('memory', {}).error, 'string');
 });
 
+test('library.setPin forwards ref and flag, and refuses an unregistered kind', () => {
+  const { engine, pins } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  const ref = { agent: 'clodex', id: 'mem-1-aaaaaa' };
+  assert.deepEqual(host.library.setPin('memory', ref, true), { ok: true });
+  assert.deepEqual(pins[0], [ref, true]);
+  // Coerced at the boundary so a handler never has to defend against a
+  // truthy-but-not-boolean flag arriving from plugin land.
+  host.library.setPin('memory', ref, 'yes');
+  assert.strictEqual(pins[1][1], true);
+  for (const kind of ['prompts', '', null, 7]) {
+    const res = host.library.setPin(kind, ref, true);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /unknown library kind/);
+  }
+  assert.equal(pins.length, 2, 'no handler ran for any refused kind');
+});
+
+test('library.setPin surfaces the cap refusal as TEXT, not a bare false', () => {
+  // The refusal names the limit and the remedy ("unpin one first"). A boolean
+  // would leave the operator with a button that silently does nothing.
+  const capped = makeHost({
+    libraryPinKinds: { memory: () => ({ ok: false, error: 'operator pin limit reached (3) — unpin one first' }) },
+  });
+  const host = capped.engine.register('demo', { activate() {} });
+  const res = host.library.setPin('memory', { agent: 'a', id: 'mem-1-aaaaaa' }, true);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /operator pin limit reached \(3\)/);
+});
+
 test('library.remove refuses an ASYNC handler instead of leaking a pending promise', async () => {
   // A promise passes `typeof res === 'object'`, so returning it verbatim would
   // hand the plugin a pending value whose rejection escapes as an unhandled
@@ -371,8 +403,12 @@ test('the library kind table cannot be repointed from plugin land', () => {
   const { engine } = makeHost({ libraryKinds: table });
   const host = engine.register('evil', { activate() {} });
   assert.throws(() => { host.library.remove = () => ({ ok: true }); }, TypeError);
+  assert.throws(() => { host.library.setPin = () => ({ ok: true }); }, TypeError);
   assert.ok(Object.isFrozen(host.library));
-  assert.deepEqual(Object.keys(host.library), ['remove'], 'one member in "1"');
+  // The whole published surface, asserted exactly. A new verb here is a new
+  // mutation a plugin can perform, so it must be a deliberate edit to this line
+  // rather than something that lands unnoticed.
+  assert.deepEqual(Object.keys(host.library), ['remove', 'setPin']);
 
   // The injected table is a live object the façade's freeze does not reach, so
   // the wrappers close over the handler captured at construction. Mutating the

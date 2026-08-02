@@ -161,10 +161,44 @@
   font-size: 0.9em;
 }
 
+/* Takes the margin-left:auto so it leads the button group; .mv-delete then sits
+   to its right without a second auto margin splitting the pair apart. */
+.mv-pin {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.3;
+  cursor: pointer;
+  font-size: 0.95em;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  filter: grayscale(1);
+}
+
+.mv-pin:hover {
+  opacity: 1;
+  filter: none;
+  background: rgba(255, 200, 80, 0.16);
+}
+
+/* An active pin is a state, not a hover affordance: it stays lit with no
+   grayscale so a pinned unit is identifiable without reading the badge. */
+.mv-pin-on {
+  opacity: 1;
+  filter: none;
+}
+
+.mv-pin:disabled {
+  opacity: 0.15;
+  cursor: default;
+  background: none;
+}
+
 /* Pushed to the far edge of the head row, away from the metadata, so a delete
    is never a mis-click on a scope or a timestamp. */
 .mv-delete {
-  margin-left: auto;
   background: none;
   border: none;
   color: inherit;

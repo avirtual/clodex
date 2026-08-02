@@ -632,12 +632,25 @@ plugin uses belongs in your own directory — copy it in, don't ask for it here.
 
 ### `host.library`
 
-Deletion of a Clodex library file. One member in `"1"`:
+Mutation of a Clodex library file. Two members in `"1"`:
 
 ```js
 const res = host.library.remove('memory', { agent: 'clodex', id: 'mem-…' });
 // { ok: true } | { ok: false, error: '…' }
+
+const p = host.library.setPin('memory', { agent: 'clodex', id: 'mem-…' }, true);
+// { ok: true } | { ok: false, error: 'operator pin limit reached (3) — unpin one first' }
 ```
+
+`setPin` sets the **operator** pin, which is what guarantees a unit rides the
+boot digest in full. It is capped, and past the cap it REFUSES rather than
+evicting: the operator set every existing pin deliberately, so which one to drop
+is theirs to choose. Show that error text verbatim — it names the limit and the
+remedy, which a boolean cannot. The agent's own `pinned` flag is a different
+field and is not settable from here; it only orders the recent tier.
+
+Two verbs rather than one flagged verb because the obligations differ: a remove
+is terminal, while a pin is refusable and reversible.
 
 Generic in shape, per-kind in implementation. Core owns a `kind -> handler`
 table and **a kind with no registered handler is refused** — there is no

@@ -48,7 +48,7 @@ const HOST_CONTRACT = [
   { name: 'intents', kind: 'ns', members: ['register'] },
   { name: 'events', kind: 'ns', members: ['emit'] },
   { name: 'lib', kind: 'ns', members: ['gitWorktree'] },
-  { name: 'library', kind: 'ns', members: ['remove'] },
+  { name: 'library', kind: 'ns', members: ['remove', 'setPin'] },
   { name: 'telemetry', kind: 'ns', members: ['snapshot'] },
 ];
 

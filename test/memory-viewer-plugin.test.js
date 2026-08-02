@@ -205,11 +205,13 @@ test('memory-viewer: a unit with NO id line is still deletable', async () => {
   } finally { cleanup(); }
 });
 
-test('memory-viewer: the engine registers exactly three rows, forget among them', async () => {
+test('memory-viewer: the engine registers exactly four rows, its two mutations among them', async () => {
   const { host, cleanup } = boot();
   try {
+    // Asserted exactly: each row is a channel the renderer can call, and the two
+    // mutations (forget, setPin) are the plugin's whole write surface.
     assert.deepEqual(host._dispatchKeys().sort(), [
-      'memory-viewer:agents', 'memory-viewer:forget', 'memory-viewer:units',
+      'memory-viewer:agents', 'memory-viewer:forget', 'memory-viewer:setPin', 'memory-viewer:units',
     ]);
   } finally { cleanup(); }
 });

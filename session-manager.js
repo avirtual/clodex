@@ -2811,6 +2811,25 @@ function createSessionManager(deps) {
       return { ok: true };
     }
 
+    // The one operator-pin path. Same shape and same obligation as
+    // removeMemoryUnit: changing which units ride the boot digest is only real
+    // once the digest is rewritten, and a plugin cannot know when to do that.
+    setOperatorPin(agent, id, on) {
+      try {
+        memoryStore.setOperatorPinned(agent, id, !!on);
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      const session = this.sessions.get(agent);
+      if (session && !session._dead && session.agentType === 'claude') {
+        // Best-effort for the reasons the delete path documents: the pin is
+        // already written and permanent, so reporting failure here would invite
+        // a retry against a store that is already correct.
+        try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
+      }
+      return { ok: true };
+    }
+
     _handleMemoryIntent(session, sub, body) {
       const agent = session.name;
       const refreshDigest = () => {

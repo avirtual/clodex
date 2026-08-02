@@ -67,6 +67,9 @@ function parseUnit(text, key) {
     learned_at: meta.learned_at || '',
     source: meta.source || '',
     pinned: meta.pinned === 'true',
+    // The operator's own flag, distinct from the agent's `pinned`. Only this
+    // one guarantees a full body in the boot digest.
+    operatorPinned: meta.operator_pinned === 'true',
     body: s.slice(end + 5).replace(/^\n+/, '').replace(/\s+$/, ''),
   };
 }
@@ -141,7 +144,7 @@ function computeAgents() {
     return {
       agent,
       count: units.length,
-      pinned: units.filter((u) => u.pinned).length,
+      pinned: units.filter((u) => u.operatorPinned).length,
       // Memories outlive sessions: dead agents stay in the list, marked.
       live: host.sessions.get(agent) !== null,
     };
@@ -177,6 +180,17 @@ module.exports.activate = (h) => {
       return { ok: false, error: 'a valid agent name is required' };
     }
     return host.library.remove('memory', { agent, id });
+  });
+
+  // The cap is core's to enforce, not this plugin's: a plugin-side count would
+  // be advisory (another window, or the store edited by hand, moves it) and
+  // would disagree with the refusal the operator actually gets.
+  host.ipc.handle('setPin', (payload) => {
+    const { agent, id, on } = payload || {};
+    if (agentDir(agent) === null) {
+      return { ok: false, error: 'a valid agent name is required' };
+    }
+    return host.library.setPin('memory', { agent, id }, !!on);
   });
 
   host.log.info('activated');

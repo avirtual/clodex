@@ -21,7 +21,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { digestTiers, composeDigest, createMemoryStore, DIGEST_BUDGET } = require('../memory-store');
+const { digestTiers, composeDigest, createMemoryStore, DIGEST_BUDGET,
+  RECENT_BODY_CAP } = require('../memory-store');
 const { createMemoryLoad } = require('../memory-load');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
@@ -30,10 +31,14 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 
 test('digestTiers: the tiers describe the bytes actually served, all three populated', () => {
   const now = Date.parse('2026-07-31T00:00:00Z');
+  // The index units carry OVER-CAP bodies on purpose: a short unit now rides in
+  // full on recency alone, so a fixture of short unpinned units cannot produce a
+  // title tier at all, and this test needs all three tiers populated.
+  const long = 'x'.repeat(RECENT_BODY_CAP + 1);
   const units = [
-    { id: 'mem-1-p', scope: '', learned_at: '2026-07-01T00:00:00Z', pinned: true, body: 'PINNED BODY' },
-    { id: 'mem-2-a', scope: '', learned_at: '2026-07-02T00:00:00Z', pinned: false, body: 'index a' },
-    { id: 'mem-3-b', scope: '', learned_at: '2026-07-03T00:00:00Z', pinned: false, body: 'index b' },
+    { id: 'mem-1-p', scope: '', learned_at: '2026-07-01T00:00:00Z', operatorPinned: true, body: 'PINNED BODY' },
+    { id: 'mem-2-a', scope: '', learned_at: '2026-07-02T00:00:00Z', pinned: false, body: `index a\n${long}` },
+    { id: 'mem-3-b', scope: '', learned_at: '2026-07-03T00:00:00Z', pinned: false, body: `index b\n${long}` },
   ];
   // Budget sized so the pin's body fits, one index line fits, and the second
   // does not: without the squeeze every unit lands in a served tier and the
@@ -43,10 +48,10 @@ test('digestTiers: the tiers describe the bytes actually served, all three popul
   assert.deepStrictEqual(wide.title.sort(), ['mem-2-a', 'mem-3-b']);
   assert.deepStrictEqual(wide.absent, [], 'nothing is withheld at the real budget');
 
-  // 360 measured, not guessed: below ~350 BOTH index lines are withheld (which
+  // 344 measured, not guessed: below ~336 BOTH index lines are withheld (which
   // would leave the title tier empty and prove nothing about the split), and at
-  // 380 both fit. This is the one budget that straddles the three tiers.
-  const tight = digestTiers(units, { now, budget: 360 });
+  // 356 both fit. This is the band that straddles the three tiers.
+  const tight = digestTiers(units, { now, budget: 344 });
   assert.deepStrictEqual(tight.full, ['mem-1-p'], 'the pin still fits in half of 360');
   assert.deepStrictEqual(tight.title, ['mem-3-b'], 'the newest index line fits');
   assert.deepStrictEqual(tight.absent, ['mem-2-a'],
@@ -101,7 +106,11 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
   const memRoot = path.join(root, 'library', 'memory');
   const store = createMemoryStore(memRoot);
   const ids = [];
-  for (const u of units) ids.push(store.remember('a', { text: u.text, pinned: !!u.pinned }).id);
+  for (const u of units) {
+    const { id } = store.remember('a', { text: u.text, pinned: !!u.pinned });
+    if (u.operatorPinned) store.setOperatorPinned('a', id, true);
+    ids.push(id);
+  }
 
   const logDir = path.join(root, 'library', 'memory-loadlog');
   const memoryLoad = createMemoryLoad({ logDir });
@@ -256,7 +265,13 @@ async function spawned(h, name, resumeId = null) {
 }
 
 test('load: a fresh spawn records the digest — pinned body FULL, index line TITLE', async () => {
-  const h = mkManager({ units: [{ text: 'a pinned claim', pinned: true }, { text: 'an unpinned claim' }] });
+  // The plain unit's body must exceed RECENT_BODY_CAP or it now rides in full on
+  // recency alone — a short unpinned unit can no longer produce a TITLE tier,
+  // which is the state this test exists to pin.
+  const h = mkManager({ units: [
+    { text: 'a pinned claim', operatorPinned: true },
+    { text: `an unpinned claim\n${'x'.repeat(RECENT_BODY_CAP + 1)}` },
+  ] });
   const [pin, plain] = h.ids;
   try {
     await spawned(h, 'a');
@@ -274,7 +289,7 @@ test('load: a fresh spawn records the digest — pinned body FULL, index line TI
 });
 
 test('load: a RESUMED spawn records nothing — the hook cats no digest for source=resume', async () => {
-  const h = mkManager({ units: [{ text: 'a pinned claim', pinned: true }] });
+  const h = mkManager({ units: [{ text: 'a pinned claim', operatorPinned: true }] });
   const [pin] = h.ids;
   try {
     await spawned(h, 'a', 'prior-conversation-id');
@@ -286,7 +301,10 @@ test('load: a RESUMED spawn records nothing — the hook cats no digest for sour
 });
 
 test('load: compaction empties the live set, fired from the watcher callback create() built', async () => {
-  const h = mkManager({ units: [{ text: 'a pinned claim', pinned: true }, { text: 'an unpinned claim' }] });
+  const h = mkManager({ units: [
+    { text: 'a pinned claim', operatorPinned: true },
+    { text: `an unpinned claim\n${'x'.repeat(RECENT_BODY_CAP + 1)}` },
+  ] });
   const [pin, plain] = h.ids;
   try {
     await spawned(h, 'a');
@@ -306,7 +324,7 @@ test('load: compaction empties the live set, fired from the watcher callback cre
 });
 
 test('load: a NEW session id resets, the SAME id does not', async () => {
-  const h = mkManager({ units: [{ text: 'a pinned claim', pinned: true }] });
+  const h = mkManager({ units: [{ text: 'a pinned claim', operatorPinned: true }] });
   const [pin] = h.ids;
   try {
     await spawned(h, 'a');
@@ -331,7 +349,9 @@ test('load: a NEW session id resets, the SAME id does not', async () => {
 });
 
 test('load: a recall reports FULL and appends to the persisted log', async () => {
-  const h = mkManager({ units: [{ text: 'the recalled claim' }] });
+  // Over the cap for the same reason: it must ENTER as an index line, or the
+  // title -> full transition this test measures has no starting point.
+  const h = mkManager({ units: [{ text: `the recalled claim\n${'x'.repeat(RECENT_BODY_CAP + 1)}` }] });
   const [plain] = h.ids;
   try {
     const s = await spawned(h, 'a');
@@ -367,7 +387,9 @@ test('load: a recall that matches nothing records nothing', async () => {
 });
 
 test('load: the recall log survives a store round-trip', async () => {
-  const h = mkManager({ units: [{ text: 'the recalled claim' }] });
+  // Over the cap for the same reason: it must ENTER as an index line, or the
+  // title -> full transition this test measures has no starting point.
+  const h = mkManager({ units: [{ text: `the recalled claim\n${'x'.repeat(RECENT_BODY_CAP + 1)}` }] });
   const [plain] = h.ids;
   try {
     const s = await spawned(h, 'a');

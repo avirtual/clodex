@@ -1311,6 +1311,7 @@ const toolCache = createToolCache({ whichBin });
         fs, path,
         gitWorktree,
         libraryKinds: { memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id) },
+        libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
