@@ -189,7 +189,17 @@ function labelOf(r) {
 
 function compose(results) {
   if (!results || !results.length) return null;
-  const parts = ['This may relate to what the user is asking. If it does not, ignore it.'];
+  // The second sentence is load-bearing and must not be dropped as verbosity.
+  // Hints ride uncached at 1x on every request carrying them, so this one is
+  // armed `turn_start_only` and the proxy pops it after one delivery — a model
+  // that judges it useful but defers acting until after a tool call finds it
+  // gone, and reaching for a tool first is the default behaviour. Naming the
+  // deadline is what converts a one-shot delivery into something the model can
+  // preserve for itself. It stays silent on WHY delivery is one-shot: the
+  // billing reason is not the model's to reason about.
+  const parts = ['This may relate to what the user is asking. If it does not, ignore it.'
+    + '\nIt is attached to this request only and will not be repeated. If it is useful,'
+    + ' act on it or restate what matters in your reply now — do not defer it to a later step.'];
   for (const r of results) {
     const b = String(r.text || '').trim();
     if (!b) continue;

@@ -1129,6 +1129,23 @@ test('compose: a body that fits the preview is not advertised as truncated', () 
   assert.ok(!/emit \[agent:memory recall\]/.test(text), 'and no recall is offered');
 });
 
+test('compose: the preamble tells the model the delivery is one-shot', () => {
+  // Pinned because the sentence reads like padding and is the first thing a
+  // later edit would trim. hint-arm arms with `turn_start_only: true` and the
+  // proxy pops the entry after one delivery, so a model that defers acting on
+  // a useful hint until after a tool call loses it outright. Both halves of the
+  // instruction earn their place: `act on it` is free when the model answers
+  // directly, `restate` costs output tokens but is the only thing that carries
+  // the fact into a tool loop.
+  const text = compose([{ id: 'mem-1-a', text: 'a short durable fact', tags: 'method', scope: '' }]);
+  assert.ok(/will not be repeated/.test(text), 'the hint must say it is not coming back');
+  assert.ok(/act on it or restate/.test(text), 'and name both ways to preserve it');
+  assert.ok(/do not defer it to a later step/.test(text),
+    'deferring past a tool call is the exact failure this sentence prevents');
+  assert.ok(!/cache|token|cost|billing/i.test(text),
+    'the billing reason for one-shot delivery is not the model\'s to reason about');
+});
+
 // --- the semantic tier: gate stays lexical, order becomes semantic ----------
 
 // A stand-in ranker. Returning a FIXED winner regardless of the draft is the
