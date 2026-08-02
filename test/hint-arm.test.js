@@ -31,7 +31,8 @@ const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
 } = require('../hint-arm');
 const {
-  rank, compose, terms, createMemoryRetriever, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
+  rank, compose, terms, createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
+  unitsAsRecords, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
 } = require('../hint-retrieve');
 const { ProxyClient } = require('../wirescope-proxy');
 const { createMemoryStore } = require('../memory-store');
@@ -1311,4 +1312,102 @@ test('semantic: a slow ranker never blocks the keystroke path', async () => {
   release();
   await settle();
   assert.strictEqual(posts.length, 1, 'once the ranker settles the lexical fallback arms');
+});
+
+// --- common memory + composite ranking -------------------------------------
+
+function mkCommonStore(units, set = 'chat-extract') {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-common-'));
+  const store = createMemoryStore(path.join(root, 'library', 'common-memory'));
+  units.forEach((u) => store.remember(set, { text: u.text, scope: u.scope || '', tags: u.tags || '' }));
+  return store;
+}
+
+test('common: the retriever reads a SET, not an agent', () => {
+  const store = mkCommonStore([{ text: 'Bogdan prefers arm64-only releases since v0.14, intel builds from source.' }]);
+  const r = createCommonRetriever({ listUnits: (set) => store.list(set), set: 'chat-extract' });
+  // No agent is passed at all — these units belong to no one.
+  const hit = r.retrieve('what is the policy on intel builds and arm64 releases', { limit: 1 })[0];
+  assert.ok(hit, 'a set-scoped store must be matchable without an agent');
+  assert.strictEqual(hit.source, 'common', 'the source label distinguishes it from the agent store');
+});
+
+test('composite: pooling lets a big corpus SILENCE a small one, merging does not', () => {
+  // The measured regression this retriever exists to prevent: concatenating a
+  // 1650-unit store into a 570-unit one raised the floor log(1+N) 6.35 -> 7.71
+  // and dropped a live memory hit that scored 6.88. Both of rank's cuts are
+  // corpus-relative, so SIZE alone moves them.
+  // The squeeze is arithmetic: score sums log(1 + N/df) while the floor is
+  // log(1+N), so a term whose df grows in step with N holds its score while the
+  // bar rises past it. Sized to that — 2 terms at df=1 in memory (score 7.48,
+  // floor 3.74) which reach df=41 once common is pooled (score 6.14, floor
+  // 6.74). A fixture that merely adds records does NOT reproduce it.
+  const memStore = mkStore([{ text: 'cadence screenplay' }]).store;
+  for (let i = 0; i < 40; i += 1) {
+    memStore.remember('a', { text: `Memory filler ${i} about archive rotation, tab dimming and worktree removal.` });
+  }
+  const filler = [];
+  for (let i = 0; i < 760; i += 1) filler.push({ text: `Shared ${i}: deployment topology, cluster sizing, billing envelope.` });
+  for (let i = 0; i < 40; i += 1) filler.push({ text: `Common ${i} cadence screenplay noted.` });
+  const commonStore = mkCommonStore(filler);
+
+  const draft = 'cadence screenplay';
+  const memR = createMemoryRetriever({ listUnits: (a) => memStore.list(a) });
+  const comR = createCommonRetriever({ listUnits: (s) => commonStore.list(s) });
+
+  const alone = memR.retrieve(draft, { agent: 'a', limit: 1 });
+  assert.strictEqual(alone.length, 1, 'the memory hit arms against its own store');
+
+  const pooled = rank(
+    unitsAsRecords(memStore.list('a')).concat(unitsAsRecords(commonStore.list('chat-extract'), 'common')),
+    draft, { limit: 1 },
+  );
+  assert.strictEqual(pooled.length, 0, 'pooled, the bigger corpus raises the floor past that hit');
+
+  const composite = createCompositeRetriever([memR, comR]).retrieve(draft, { agent: 'a', limit: 1 });
+  assert.strictEqual(composite.length, 1, 'ranked separately, the hit survives');
+  assert.strictEqual(composite[0].source, 'memory');
+});
+
+test('composite: one source throwing does not silence the others', () => {
+  const memStore = mkStore([{ text: 'Ad-hoc signing must happen in afterPack or node-pty dies on Apple Silicon.' }]).store;
+  const boom = { source: 'common', retrieve() { throw new Error('store unreadable'); } };
+  const r = createCompositeRetriever([
+    createMemoryRetriever({ listUnits: (a) => memStore.list(a) }),
+    boom,
+  ]);
+  const hit = r.retrieve('why does node-pty die on apple silicon without ad-hoc signing', { agent: 'a', limit: 1 });
+  assert.strictEqual(hit.length, 1, 'a broken source must not take the working one down with it');
+});
+
+test('composite: merges by confidence, which is corpus-normalised on both sides', () => {
+  const memStore = mkStore([{ text: 'Sessions are keyed by name globally, so two windows cannot share a name.' }]).store;
+  const commonStore = mkCommonStore([{ text: 'Bogdan ruled that sessions keyed by name globally is deliberate, not a bug.' }]);
+  const r = createCompositeRetriever([
+    createMemoryRetriever({ listUnits: (a) => memStore.list(a) }),
+    createCommonRetriever({ listUnits: (s) => commonStore.list(s) }),
+  ]);
+  const out = r.retrieve('are sessions keyed by name globally across windows', { agent: 'a', limit: 2 });
+  assert.strictEqual(out.length, 2, 'both sources contribute');
+  assert.ok(out[0].confidence >= out[1].confidence, 'sorted by confidence across sources');
+});
+
+test('common: extra frontmatter (kind, volatility, quote-in-body) survives the store', () => {
+  // The import writes kind/authority/confidence/volatility/refs as frontmatter
+  // the parser preserves, and puts the quote in the BODY — frontmatter is
+  // line-based, so a multi-line quote truncates at the first newline.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-commonmeta-'));
+  const dir = path.join(root, 'library', 'common-memory', 'chat-extract');
+  fs.mkdirSync(dir, { recursive: true });
+  const body = 'Bogdan measured 57% of tokens as thinking.\n\n> i analyzed\n> tens of thousands of sessions';
+  fs.writeFileSync(path.join(dir, 'mem-1700000000000-c0.md'), [
+    '---', 'id: mem-1700000000000-c0', 'scope: memory-system',
+    'learned_at: 2026-05-25T12:00:00.000Z', 'source: chat-extract',
+    'tags: fact-project,point-in-time,operator-stated', 'kind: fact-project',
+    'volatility: point-in-time', 'refs: 37,39', '---', '', body, '',
+  ].join('\n'));
+  const u = createMemoryStore(path.join(root, 'library', 'common-memory')).list('chat-extract')[0];
+  assert.strictEqual(u.tags, 'fact-project,point-in-time,operator-stated');
+  assert.ok(u.body.includes('> i analyzed\n> tens of thousands of sessions'),
+    'a multi-line quote must survive — in the body, where newlines are free');
 });

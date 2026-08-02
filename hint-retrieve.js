@@ -142,9 +142,9 @@ function rank(records, draft, { exclude = new Set(), limit = 1 } = {}) {
     }));
 }
 
-function unitsAsRecords(units) {
+function unitsAsRecords(units, source = 'memory') {
   return (units || []).map((u) => ({
-    id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source: 'memory',
+    id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source,
   }));
 }
 
@@ -158,6 +158,47 @@ function createMemoryRetriever({ listUnits }) {
       let units;
       try { units = listUnits(agent); } catch { return []; }
       return rank(unitsAsRecords(units), draft, { limit, exclude: exclude || new Set() });
+    },
+  };
+}
+
+// A shared store every agent can match against, ranked as its OWN corpus.
+// `listUnits` takes the set name, not an agent: these units belong to no one.
+function createCommonRetriever({ listUnits, set = 'chat-extract' }) {
+  return {
+    source: 'common',
+    retrieve(draft, { limit = 1, exclude } = {}) {
+      let units;
+      try { units = listUnits(set); } catch { return []; }
+      return rank(unitsAsRecords(units, 'common'), draft, { limit, exclude: exclude || new Set() });
+    },
+  };
+}
+
+// Ranks each source over its own corpus and merges the winners, rather than
+// concatenating records into one pool. Both cuts in `rank` are corpus-relative
+// — the floor is log(1+N) and coverage divides by a df built over the whole
+// store — so pooling lets one source's SIZE silence the other's hits: merging
+// a 1650-unit store into a 570-unit one raised the floor 6.35 -> 7.71 and
+// dropped a memory hit that scored 6.88. Measured, not hypothetical.
+//
+// Confidence is comparable across sources by construction (each is normalised
+// against its own floor in confidenceOf), which is what makes the merge sort
+// meaningful.
+function createCompositeRetriever(retrievers) {
+  const live = (retrievers || []).filter(Boolean);
+  return {
+    source: 'composite',
+    retrieve(draft, opts = {}) {
+      const { limit = 1 } = opts;
+      const out = [];
+      for (const r of live) {
+        // One source throwing must not silence the others.
+        try { out.push(...(r.retrieve(draft, { ...opts, limit }) || [])); } catch { /* skip */ }
+      }
+      return out
+        .sort((a, b) => (b.confidence - a.confidence) || String(a.id).localeCompare(String(b.id)))
+        .slice(0, limit);
     },
   };
 }
@@ -229,5 +270,6 @@ function compose(results) {
 
 module.exports = {
   terms, haystack, rank, compose, unitsAsRecords, createMemoryRetriever,
+  createCommonRetriever, createCompositeRetriever,
   minScoreFor, confidenceOf, selfScore, MIN_HITS, MIN_COVERAGE, FULL_BODY_CAP, STOP,
 };

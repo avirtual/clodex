@@ -315,7 +315,16 @@ const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library',
 // checkbox. `enabled` is a getter rather than a construction-time value so the
 // checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
-const { createMemoryRetriever, compose: composeHint, terms: hintTerms, unitsAsRecords } = require('./hint-retrieve');
+const {
+  createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
+  compose: composeHint, terms: hintTerms, unitsAsRecords,
+} = require('./hint-retrieve');
+
+// Shared memory every agent can match against — imported sets, not anything an
+// agent wrote. A SIBLING of library/memory for the same reason memory-loadlog
+// is: entries under that directory enumerate as agents. Its subdirectories are
+// SETS (by provenance), so `list(set)` reads one of them.
+const commonMemoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'library', 'common-memory'));
 
 // Semantic re-ranking. Its own checkbox because it needs a local Ollama, which
 // users do not have — with the daemon absent every path returns "no opinion" and
@@ -338,7 +347,10 @@ const semanticRanker = createSemanticRanker({
 
 const hintArm = createHintArm({
   enabled: () => !!uiSettings.get().contextHints,
-  retriever: createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
+  retriever: createCompositeRetriever([
+    createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
+    createCommonRetriever({ listUnits: (set) => commonMemoryStore.list(set) }),
+  ]),
   // Read per call, never captured: the checkbox must take effect on the next
   // submit rather than the next launch, same as `enabled`.
   semantic: {
