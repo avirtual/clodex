@@ -2241,3 +2241,63 @@ test('compose: an irrelevant hint is to be dropped SILENTLY, not narrated', () =
   assert.ok(text.indexOf('ignore it silently') < text.indexOf('restate what'),
     'the silence qualifier must reach the model before the instruction it bounds');
 });
+
+// ── Prompt refresh at the two free boundaries ────────────────────────────────
+// These pin the ORDER ONLY, and they stub refreshPrompt to do it — which is
+// exactly how the recipe divergence once survived a green suite. The method's
+// BODY is covered against real deps in test/ipc-prompt-cache-rework.test.js;
+// do not let this file's green stand in for that.
+// The CLI watches append-prompt.md and busts its prompt cache when it changes —
+// that watch is the whole reason the three-file freeze exists. So the refresh is
+// pinned by WHERE it fires, not that it fires: at a clear and at a compact the
+// bust is already paid, and anywhere else it re-bills the context (111k-139k
+// measured). Both call sites are ordered BEFORE the continuation injection,
+// because that injection is the fresh conversation's first turn and a rewrite
+// after it would bust exactly what it seeded.
+test('write: the prompt refresh fires at a clear, before the continuation', async () => {
+  const h = mkManager();
+  await spawned(h, 'a');
+  try {
+    const order = [];
+    h.m.refreshPrompt = (name, why) => { order.push(`refresh:${why}`); return true; };
+    h.m._firePostClearContinuation = () => { order.push('continuation'); };
+    const w = h.watchers.find((x) => x.name === 'a');
+    w.onSessionId('sid-1');
+    assert.deepStrictEqual(order, [],
+      'the FIRST session id is an attach, not a clear — refreshing here would rewrite the prompt of a live conversation with a warm cache');
+    w.onSessionId('sid-2');
+    assert.deepStrictEqual(order, ['refresh:clear', 'continuation'],
+      'a changed session id is /clear: the prompt must be re-baked BEFORE the continuation, or the fresh conversation starts on the frozen bytes and the rewrite lands after its first turn');
+  } finally { h.stop('a'); }
+});
+
+test('write: the prompt refresh fires at a compact, before the continuation', async () => {
+  const h = mkManager();
+  await spawned(h, 'a');
+  try {
+    const order = [];
+    h.m.refreshPrompt = (name, why) => { order.push(`refresh:${why}`); return true; };
+    const s = h.m.sessions.get('a');
+    s._compactContinuation = 'keep going';
+    h.m._injectText = () => { order.push('continuation'); };
+    h.m._fireCompactContinuation(s);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.deepStrictEqual(order, ['refresh:compact', 'continuation'],
+      'the compact already discarded everything after the system block, so the rewrite is free HERE — and only here: after the continuation it re-bills the context that turn just built');
+  } finally { h.stop('a'); }
+});
+
+test('write: a refresh that throws never blocks the continuation', async () => {
+  const h = mkManager();
+  await spawned(h, 'a');
+  try {
+    let fired = false;
+    h.m.refreshPrompt = () => { throw new Error('disk full'); };
+    h.m._firePostClearContinuation = () => { fired = true; };
+    const w = h.watchers.find((x) => x.name === 'a');
+    w.onSessionId('sid-1');
+    w.onSessionId('sid-2');
+    assert.ok(fired,
+      'a stale prompt is recoverable at the next spawn; a dropped continuation is not — the refresh is best-effort and must never take the handoff down with it');
+  } finally { h.stop('a'); }
+});

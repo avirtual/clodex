@@ -36,6 +36,12 @@ const PRICES = {
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-7': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-8': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
+  // opus-5 needs its OWN row: longest-prefix matching cannot reach it from any
+  // "claude-opus-4*" entry, so without this it is UNPRICED — billing() returns
+  // est_usd null and bump() adds zero while still ticking requests, which reads
+  // as a real-but-tiny cost rather than as a gap. Measured 2026-08-03: a live
+  // seat logged 160 requests at $0.07 against a true ~$10.83.
+  'claude-opus-5':   { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   // legacy opus 4.0 / 4.1 (also catches their dated full ids)
   'claude-opus-4':   { in: 15.0, out: 75.0, cache_write_5m: 18.75, cache_write_1h: 30.0, cache_read: 1.50 },
   'claude-sonnet-4': { in: 3.0,  out: 15.0, cache_write_5m: 3.75,  cache_write_1h: 6.0,  cache_read: 0.30 },
@@ -54,9 +60,26 @@ const PRICES_OPENAI = {
   'gpt-5.3-codex': { in: 1.75, cached_in: 0.175, out: 14.0 },
 };
 
+// FAST MODE (research preview, beta `fast-mode-2026-02-01`): opus-5 / opus-4-8
+// run at a PREMIUM — $10/$50 vs $5/$25 — across the full context window. The
+// universal cache multipliers still apply on top (5m 1.25x, 1h 2x, read 0.1x),
+// so the effective row equals fable-5's. Taken from `usage.speed` on the
+// RESPONSE, which is authoritative for BILLING: the request's `speed:"fast"` is
+// only an ASK — opus-4-6 silently downgrades and a 429/529 can refuse it, and
+// in both cases usage.speed says "standard" and standard rates are charged.
+// Absent field (every non-beta request) => standard, the base PRICES row.
+// Mirrors proxylab billing.py PRICES_SPEED_FAST; keep the two in lock-step.
+const PRICES_SPEED_FAST = {
+  'claude-opus-5':   { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
+  'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
+};
+
 // Longest-prefix match (a first-hit walk silently shadowed
 // "claude-opus-4-8" with the legacy "claude-opus-4" entry). null = unpriced.
-function priceFor(model, table) {
+// `speed==='fast'` overlays the premium row on the SAME winning prefix, so a
+// fast-mode request against a model with no fast entry keeps standard rates
+// rather than falling through to some shorter prefix's premium.
+function priceFor(model, table, speed) {
   if (!model) return null;
   let best = null;
   for (const [pfx, p] of Object.entries(table || PRICES)) {
@@ -64,7 +87,14 @@ function priceFor(model, table) {
       best = [pfx, p];
     }
   }
-  return best ? best[1] : null;
+  if (best === null) return null;
+  // Only for the DEFAULT table: an explicit table is the caller's own axis
+  // (openai), and overlaying anthropic premiums onto it would be nonsense.
+  // Belt-and-braces today — PRICES_SPEED_FAST holds only claude-* keys, so no
+  // openai id can match one — but it is what keeps that true if either table
+  // grows a colliding prefix. Mirrors the vendor's `table is None and`.
+  if (!table && speed === 'fast' && PRICES_SPEED_FAST[best[0]]) return PRICES_SPEED_FAST[best[0]];
+  return best[1];
 }
 
 const _unpricedWarned = new Set();
@@ -150,8 +180,10 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     cache_write_flat_tokens: norm(getOr(uf, 'cache_creation_input_tokens', us.cache_creation_input_tokens)),
     thinking_tokens: norm((uf.output_tokens_details || {}).thinking_tokens),
     service_tier: norm(us.service_tier),
+    // fast mode (premium rates); final wins, absent => standard
+    speed: norm(getOr(uf, 'speed', us.speed)),
   };
-  const p = priceFor(modelResolved);
+  const p = priceFor(modelResolved, null, tokens.speed);
   let est = null;
   let unpriced = false;
   let basis = 'approx public list USD/1M; edit PRICES';
@@ -163,6 +195,12 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
       // the flat total at the cheaper 5m premium and say so in the basis.
       w5 = tokens.cache_write_flat_tokens;
       basis += '; cache_creation split absent, flat total priced at 5m rate';
+    }
+    // Identity check against the standard row, not `speed === 'fast'` alone: a
+    // fast request on a model with no premium entry is billed standard, and
+    // saying otherwise in the basis would misreport what was actually charged.
+    if (tokens.speed === 'fast' && p !== priceFor(modelResolved)) {
+      basis += '; FAST MODE premium rates (usage.speed=fast)';
     }
     est = round6(usd(tokens.input_tokens, p.in)
       + usd(tokens.output_tokens, p.out)
@@ -302,6 +340,6 @@ class Ledger {
 }
 
 module.exports = {
-  PRICES, PRICES_OPENAI, priceFor, usd, round6,
+  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, priceFor, usd, round6,
   billing, billingOpenai, newTotals, bump, Ledger,
 };

@@ -389,21 +389,58 @@ test('MF1: the reset does NOT re-deliver the last delta — it resets the baseli
   const born = stagedSession(root, name);
   runSessionStart(root, name, 'compact');
 
-  // The next spawn re-stages against the reset baseline. The delta the agent is
-  // owed is now born→v3 — it covers BOTH the change that was delivered before
-  // the compact (and summarized away with it) and the one that was still staged.
-  // That is larger than either delta that existed before, and is exactly why the
-  // baseline is reset rather than the last delta replayed.
+  // The agent is owed BOTH changes — the one delivered before the compact (and
+  // summarized away with it) and the one still staged when it fired. The baseline
+  // is reset to session.md and the machinery re-stages whatever is now missing,
+  // which covers both. Replaying the last delta would have covered only the
+  // second, which is why the baseline is reset rather than the delta replayed.
   const v3 = promptV('[agent:newverb] shipped since\n[agent:another] and another\n');
   bakeAs(root, name, v3, { reuse: true });
-  const delta = readCache(root, name, 'delta');
-  assert.ok(delta, 'ENTER: a delta must have been re-staged, or there is nothing to make a claim about');
-  assert.ok(delta.includes('+[agent:newverb] shipped since'),
-    'the regenerated delta must carry the change whose delivery the compact destroyed');
-  assert.ok(delta.includes('+[agent:another] and another'),
-    'AND the change that landed afterwards: the agent is missing both, and resetting the baseline to session.md is what makes the machinery say so in one diff');
-  assert.strictEqual(readCache(root, name, 'session'), born,
-    'while the baked prompt itself stays frozen — a compact is not a conversation boundary');
+  const staged = readCache(root, name, 'delta');
+  assert.ok(staged, 'a delta must be staged: the reset re-anchored the baseline to session.md, so BOTH changes are now missing relative to it');
+  assert.ok(staged.includes('[agent:newverb]') && staged.includes('[agent:another]'),
+    'and it must carry both changes — the one summarized away AND the one staged when the compact fired. Re-delivering only the last staged delta would silently drop the first');
+});
+
+// session.md has EXACTLY ONE WRITER, and this hook is not it.
+//
+// The regenerate-at-a-reset property is real and load-bearing: bakePrompt's
+// `baked == null` branch is that one writer, so a session that keeps the file is
+// served its first-ever bake forever — every ordinary restart passes a resumeId
+// (reuse=true), which reads it and hands it back unchanged. A live seat ran six
+// days on a frozen prompt this way. But the regeneration is session-manager's
+// refreshPrompt, which re-bakes AND rewrites append-prompt.md in one step while
+// the seat is live. Dropping the file here instead raced that refresh and lost:
+// the refresh commonly runs first, early-returns at its already-current guard,
+// and then this unlink lands — leaving a LIVE seat with no session.md until its
+// next ordinary resume re-bakes under a conversation 100k+ tokens deep, which is
+// the exact bust the module exists to prevent.
+for (const source of ['clear', 'compact']) {
+  test(`MF1: source=${source} does NOT touch session.md — refreshPrompt is its sole writer`, () => {
+    const root = tmp(), name = `rebake-${source}`;
+    const born = stagedSession(root, name);
+    assert.strictEqual(readCache(root, name, 'session'), born,
+      'ENTER: session.md must exist going in, or "it was left alone" is true because it was never there');
+
+    runSessionStart(root, name, source);
+
+    assert.strictEqual(readCache(root, name, 'session'), born,
+      `a ${source} hook must leave session.md exactly as it found it. Unlinking it here cannot be coordinated with the in-process refresh that fires at the same edge, and the losing ordering strands a live seat with no frozen prompt at all — a deferred, unbounded rewrite of a warm conversation`);
+    assert.strictEqual(readCache(root, name, 'notified'), born,
+      'the baseline IS reset to it though — that half is this hook\'s job and needs no coordination: after a context reset, what the agent has been told is exactly what its surviving system prompt says');
+  });
+}
+
+// The generated script is byte-pinned elsewhere in this file; this pins the one
+// absence that a future edit is most likely to "restore" as a fix.
+test('MF1: the SessionStart reset never unlinks session.md', () => {
+  const root = tmp(), name = 'nounlink';
+  hooks(root).setupClaudeHook(name);
+  const body = fs.readFileSync(pathFor(root, name, 'hook'), 'utf8');
+  const reset = body.slice(body.indexOf('RESETEOF'), body.lastIndexOf('RESETEOF'));
+  assert.ok(reset.length > 0, 'ENTER: the reset block must be found, or the assertion below is vacuous');
+  assert.ok(!/unlinkSync\([^)]*session\.md/.test(reset),
+    'the reset must not unlink session.md: a second writer racing refreshPrompt is how a live seat ends up with none');
 });
 
 for (const source of ['startup', 'resume']) {
@@ -418,6 +455,8 @@ for (const source of ['startup', 'resume']) {
       `${source} is not a context reset: the conversation's delivered history is intact, so resetting the baseline here would re-deliver a diff the agent already absorbed on every GUI restart`);
     assert.ok(fs.existsSync(cachePathFor(root, name, 'delta')),
       'and a delta staged by this very spawn must survive to be drained on the first submit — clearing it here would drop the change entirely');
+    assert.ok(fs.existsSync(cachePathFor(root, name, 'session')),
+      `nor may ${source} drop session.md: this is a LIVE conversation with a warm prefix cache, and re-baking it is the 111k-139k bust the freeze exists to prevent. Only a context reset earns the re-bake`);
   });
 }
 

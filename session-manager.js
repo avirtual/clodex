@@ -104,6 +104,12 @@ const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
+// Fields _preserveAcrossRestart carries whether or not a caller asks. Only
+// APPEND-ONLY history belongs here — a field a restart can legitimately reset
+// (rosterSentAt on a fresh restart) must stay caller-controlled.
+// test/preserve-across-restart.test.js pins that every caller gets these.
+const ALWAYS_PRESERVE = ['sessionIds'];
+
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
 // pid for a session this process isn't running. The latter is the deterministic-
@@ -197,6 +203,7 @@ function createSessionManager(deps) {
     ctxReminderFor,
     bakePrompt,
     promptCacheDir,
+    readCache,
     diagSummary,
     diagWarning,
     draftChunkSignal,
@@ -655,6 +662,10 @@ function createSessionManager(deps) {
       const agentType = (type === 'claude') ? 'claude' : (type === 'codex') ? 'codex' : null;
       let intentSource = 'jsonl';
       let wireRouted = false;
+      // Claude-arm only; stays null for codex/bash, which have no baked prompt
+      // and so no refresh path. Stashed on the session below so refreshPrompt()
+      // replays the SAME inputs (see _realIpcFor).
+      let promptRecipe = null;
       const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: mergedEnv })) : null;
       if (backend && proxyBase) {
         this._shadowLog({ type: 'proxy-off-tee-blind', agent: name, backend });
@@ -693,29 +704,7 @@ function createSessionManager(deps) {
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
-      let teamBlock = '';
-      let teamName = null;
-      let resolvedTeam = null; // kept for the post-spawn roster/delta wiring below
-      if (agentType) {
-        try {
-          const team = resolveTeam(cwd);
-          if (team) {
-            resolvedTeam = team;
-            teamName = team.name;
-            teamBlock = formatTeamBlock(team, name);
-            const role = matchSeatRole(team, name);
-            const def = role ? team.roles[role] : null;
-            const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
-            if (def && def.prompt && !promptRidesAsSystem) {
-              try {
-                const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
-                const rolePrompt = fs.readFileSync(promptFile, 'utf-8');
-                if (rolePrompt) teamBlock = `${teamBlock}\n\n${rolePrompt}`;
-              } catch { /* missing/unreadable role prompt — skip, team block still stands */ }
-            }
-          }
-        } catch { /* resolution is best-effort — never block a spawn on it */ }
-      }
+      const { teamBlock, teamName, resolvedTeam } = this._teamBlockFor(name, cwd, agentType, systemPromptFile);
 
       switch (type) {
         case 'claude': {
@@ -724,11 +713,21 @@ function createSessionManager(deps) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile);
-          const appendBodies = readAppendBodies(appendPromptFiles);
-          const ipcPrompt = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1' ? '' : buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents));
-          const { cleaned, append } = mergeClaudeSystemPrompt(extraArgs, ipcPrompt, {
-            appendBodies, inlineBody: systemPromptBody || null, hasSystemFile: !!sysFile,
-          });
+          // Captured, not re-derived: refreshPrompt replays THIS object through
+          // the same _realIpcFor, which is what keeps the two paths byte-equal.
+          promptRecipe = {
+            extraArgs,
+            intents,
+            execCommands,
+            appendPromptFiles,
+            inlineBody: systemPromptBody || null,
+            hasSystemFile: !!sysFile,
+            ipcDisabled: mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1',
+          };
+          // ONE call, both outputs. Not two calls at their respective use sites:
+          // readAppendBodies hits the disk, so a second call could legitimately
+          // read different bytes and put `args` and the baked prompt out of sync.
+          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock);
           args = cleaned;
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
@@ -828,7 +827,6 @@ function createSessionManager(deps) {
             args.push('--system-prompt-file', sysFile);
           }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-          const realIpc = teamBlock ? `${append}\n\n${teamBlock}\n` : append;
           // FREEZE on resume (see ipc-prompt-cache.js). create() runs on
           // restore-with---resume too, so writing `realIpc` unconditionally here
           // is what changed the system prompt under continuing conversations and
@@ -1048,6 +1046,10 @@ function createSessionManager(deps) {
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
         bootResumeId: resumeId || null,
+        // The append-prompt recipe as SPAWNED (null for non-claude). refreshPrompt
+        // replays it; nothing else reads it. It dies with the session, which is
+        // correct — the next spawn captures its own.
+        promptRecipe,
         // Recompute rather than re-write: setupClaudeHook already wrote the
         // digest file pre-spawn, and rewriting here would race the CLI's
         // SessionStart hook cat-ing it (writeFileSync isn't atomic).
@@ -1120,6 +1122,12 @@ function createSessionManager(deps) {
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
+          // BEFORE the continuation: a clear discarded the conversation, so the
+          // prompt-file rewrite has no warm cache left to bust and the fresh
+          // conversation should start on current bytes rather than inherit the
+          // freeze. Ordering matters — the continuation is this conversation's
+          // first turn, and a rewrite after it would bust what it just seeded.
+          try { this.refreshPrompt(name, 'clear'); } catch { /* never block the continuation on a refresh */ }
           this._firePostClearContinuation(session);
         }
         // /clear mints a new conversation id, which is how the transcript
@@ -1421,6 +1429,139 @@ function createSessionManager(deps) {
       return swept;
     }
 
+    // The team half of realIpc. Extracted from create() so refreshPrompt() can
+    // rebuild the SAME bytes: a second copy of this assembly would drift, and the
+    // drift would show up as a permanent phantom delta (refresh bakes A, the next
+    // create() bakes B, every spawn diffs them forever).
+    //
+    // Deliberately NOT cached across calls, even though refreshPrompt re-resolves
+    // the whole team on every clear/compact. That re-resolution BUYS something: an
+    // edit to team.json or to a role prompt lands at the seat's next context reset
+    // instead of waiting for a respawn. A later "optimization" that memoizes this
+    // per session is trading that property for a few ms of disk reads.
+    _teamBlockFor(name, cwd, agentType, systemPromptFile) {
+      let teamBlock = '';
+      let teamName = null;
+      let resolvedTeam = null;
+      if (agentType) {
+        try {
+          const team = resolveTeam(cwd);
+          if (team) {
+            resolvedTeam = team;
+            teamName = team.name;
+            teamBlock = formatTeamBlock(team, name);
+            const role = matchSeatRole(team, name);
+            const def = role ? team.roles[role] : null;
+            const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
+            if (def && def.prompt && !promptRidesAsSystem) {
+              try {
+                const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+                const rolePrompt = fs.readFileSync(promptFile, 'utf-8');
+                if (rolePrompt) teamBlock = `${teamBlock}\n\n${rolePrompt}`;
+              } catch { /* missing/unreadable role prompt — skip, team block still stands */ }
+            }
+          }
+        } catch { /* resolution is best-effort — never block a spawn on it */ }
+      }
+      return { teamBlock, teamName, resolvedTeam };
+    }
+
+    // The bytes that BECOME run/<name>/append-prompt.md, from ONE recipe.
+    //
+    // create() and refreshPrompt() must agree byte-for-byte, and a second copy of
+    // this assembly does not merely risk drift — it PERMANENTLY corrupts the
+    // cache. refreshPrompt bakes with reuse=false, which writes its result into
+    // session.md; if those bytes differ from what create() would build, every
+    // later spawn diffs recipe-against-recipe and stages a delta describing a
+    // change that never happened. It also disarms the `realIpc === session.md`
+    // no-op guard, so a --fork-session (mint ⇒ reuse=false, already fresh-baked,
+    // inheriting the parent's warm cache) eats a full rewrite instead of a no-op.
+    //
+    // The recipe is CAPTURED at create() onto the live session rather than
+    // re-derived from the persistence entry: `extraArgs` and the resolved
+    // `CLODEX_DISABLE_IPC_PROMPT` decision are spawn-time inputs that the entry
+    // does not carry in the form used here, and re-deriving them is how the two
+    // halves diverged in the first place. Only `teamBlock` is passed separately,
+    // because it is the ONE part that is deliberately re-resolved per refresh
+    // (see _teamBlockFor) and create() already computed it for other uses.
+    _realIpcFor(recipe, teamBlock) {
+      const ipcPrompt = recipe.ipcDisabled
+        ? ''
+        : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands), pluginGrammarLines(recipe.intents));
+      const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
+        appendBodies: readAppendBodies(recipe.appendPromptFiles),
+        inlineBody: recipe.inlineBody,
+        hasSystemFile: recipe.hasSystemFile,
+      });
+      return { cleaned, realIpc: teamBlock ? `${append}\n\n${teamBlock}\n` : append };
+    }
+
+    // Rewrite a LIVE session's append-prompt.md from current truth, at a moment
+    // where doing so is free. The CLI watches this file and busts its prompt cache
+    // when it changes — which is the whole reason the three-file freeze exists — so
+    // this may ONLY be called where there is no warm cache left to lose:
+    //   * clear  — the conversation is gone; nothing to protect.
+    //   * compact — called AFTER the summary lands and BEFORE the continuation is
+    //               injected, so the rewrite rides the bust the compact already paid.
+    // Calling it anywhere else re-bills the whole context (measured 111k-139k).
+    //
+    // --fork-session reaches the clear site warm (a fork mints a sid), and is safe
+    // only because mint=true baked seconds earlier, so the no-op guard holds. That
+    // guard is load-bearing, not redundant.
+    //
+    // Writing the file is only half: session.md must advance with it or the next
+    // spawn re-bakes the OLD bytes and stages a phantom delta, and notified.md must
+    // advance too or the agent is handed a diff describing what it is already
+    // reading. bakePrompt(reuse=false) does all three in one atomic-enough step,
+    // which is why this reuses it rather than writing the file directly.
+    refreshPrompt(name, why) {
+      const session = this.sessions.get(name);
+      if (!session || session._dead || session.agentType !== 'claude') return false;
+      const entry = getPersistence().get(name);
+      if (!entry) return false;
+      // No captured recipe = this session predates the capture (spawned by an
+      // older build and still live across an app upgrade). Refusing is the only
+      // safe answer: rebuilding from the persistence entry is exactly the second
+      // recipe _realIpcFor exists to delete, and it would write divergent bytes
+      // into session.md permanently. The seat keeps its frozen prompt until its
+      // next respawn, which captures one.
+      if (!session.promptRecipe) {
+        this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-recipe' });
+        return false;
+      }
+      try {
+        const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
+        if (!fs.existsSync(promptPath)) { // no baked prompt = nothing this seat reads
+          this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-prompt-file' });
+          return false;
+        }
+        const { teamBlock } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
+        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock);
+        if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current
+        const baked = bakePrompt(REGISTRY_DIR, name, realIpc, false);
+        // tmp + rename: create() writes this path before the PTY exists, but here
+        // the CLI is live and watching it. A partial read bakes a truncated system
+        // prompt that no later refresh repairs (the guard above sees session.md
+        // already current).
+        const tmp = `${promptPath}.tmp.${process.pid}.${Date.now()}`;
+        try {
+          fs.writeFileSync(tmp, baked, { mode: 0o600 });
+          fs.renameSync(tmp, promptPath);
+        } catch (e) {
+          try { fs.unlinkSync(tmp); } catch {}
+          throw e;
+        }
+        log.info('prompt', `refreshed ${name} (${why}) — ${baked.length} bytes`);
+        this._broadcast('ipc-message', {
+          type: 'context', from: name, to: name, body: `prompt refreshed (${why})`,
+        });
+        return true;
+      } catch (e) {
+        this._shadowLog({ type: 'prompt-refresh-error', agent: name, error: e.message });
+        return false;
+      }
+    }
+
     teamNameFor(cwd) {
       if (!cwd) return null;
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
@@ -1506,11 +1647,21 @@ function createSessionManager(deps) {
     // fields present on the prior entry, and create's own upsert then spread-merges
     // the full record over this stub, preserving them. A prior entry lacking a
     // field seeds nothing for it (a genuinely fresh seat gets its roster).
+    //
+    // ALWAYS_PRESERVE is carried whether or not a caller names it, and that is
+    // deliberate rather than a shortcut: `sessionIds` is the seat's session_id
+    // HISTORY, which is what the cost panel sums a name's whole spend over
+    // (session-info trackedSessionIds → sumAgentCost). Only setSessionId appends
+    // to it, and only on a CHANGE, so an array dropped here never regrows — the
+    // seat's lifetime cost silently restarts from the current id and reads as
+    // "agent total below session total". All three callers omitted it and none
+    // had a reason to; an opt-in field list makes a fourth caller repeat the
+    // same omission, so the invariant lives in the helper, not in its callers.
     _preserveAcrossRestart(name, priorEntry, fields) {
-      if (!priorEntry || !Array.isArray(fields) || !fields.length) return;
+      if (!priorEntry || !Array.isArray(fields)) return;
       const seed = { name };
       let any = false;
-      for (const f of fields) {
+      for (const f of [...fields, ...ALWAYS_PRESERVE]) {
         if (priorEntry[f] !== undefined) { seed[f] = priorEntry[f]; any = true; }
       }
       if (!any) return;
@@ -1890,14 +2041,28 @@ function createSessionManager(deps) {
     _fireCompactContinuation(session) {
       // The live set resets to EMPTY — no attempt to model what the summarizer
       // kept. "Possibly evicted" resolving to "not loaded" is the correct
-      // answer for a dedup consumer, and this fires for the CLI's own
-      // auto-compact too, because the watcher reads the transcript rather than
-      // only knowing about compactions Clodex triggered.
+      // answer for a dedup consumer, and on the jsonl-intent path this fires for
+      // the CLI's own auto-compact too, because the watcher reads the transcript
+      // rather than only knowing about compactions Clodex triggered. A wire-routed
+      // seat reaches here only via _executeCompact's armCompact, so a CLI-initiated
+      // auto-compact there does NOT land here.
       try { memLoad.noteCompact(session.name); } catch { /* observer-grade */ }
       // Same transition, different ledger. "Already in context" and "already
       // offered" are separate questions on purpose, so they reset side by side
       // here rather than one reading the other.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
+      // The compact has landed and the continuation has NOT been injected yet:
+      // this is the one instant where rewriting the prompt file is CHEAP — not
+      // free, and the distinction bounds where this call may be copied to. The
+      // cache breakpoint sits BEFORE the system block, so the rewrite still turns
+      // a read hit on that whole segment into a write; it is ~10-20% of a
+      // mid-conversation bust, affordable only because the compaction already
+      // discarded everything after it. Later is not equivalent — the continuation
+      // is the new conversation's first turn, and rewriting after it re-bills the
+      // context it just built. This fires for the CLI's own auto-compact too (the
+      // watcher reads the transcript, not only Clodex-triggered compactions),
+      // which is exactly when a seat would otherwise never refresh at all.
+      try { this.refreshPrompt(session.name, 'compact'); } catch { /* never block the continuation on a refresh */ }
       this._clearCompactValve(session);
       const sched = getRemindScheduler && getRemindScheduler();
       if (sched) { try { sched.fireCompactFor(session.name); } catch {} }

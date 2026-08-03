@@ -98,6 +98,18 @@ try {
   fs.writeFileSync(tmp, session, { mode: 0o600 });
   fs.renameSync(tmp, path.join(d, 'notified.md'));
 } catch (e) { try { fs.unlinkSync(tmp); } catch (e2) {} }
+// This hook does NOT touch session.md, and must not start. Regenerating the
+// frozen prompt at this same edge is session-manager's refreshPrompt, which is
+// the SOLE writer of that file: it re-bakes and rewrites append-prompt.md in one
+// step, while the seat is live and the reset has already destroyed the cache the
+// freeze protects. A second writer here cannot coordinate with it — this script
+// and the refresh observe the same reset through different channels and race.
+// Unlinking here lost that race in the common ordering: refresh runs first and
+// early-returns at its already-current guard, the unlink then lands, and the seat
+// carries on with NO session.md until its next ordinary resume re-bakes
+// append-prompt.md under a conversation 100k+ tokens deep — precisely the
+// 111k-139k bust ipc-prompt-cache.js exists to prevent, aimed at the longest-lived
+// seats, since those are the ones that compact.
 RESETEOF
 fi
 # compact belongs with startup/clear: all three are context resets, and the

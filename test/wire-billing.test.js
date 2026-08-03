@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { PRICES, PRICES_OPENAI, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
+const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
 
 test('round6 matches Python round(): ties-to-even on the exact binary value', () => {
   // exact dyadic ties — toFixed would give ...63 / ...25; Python gives even.
@@ -30,6 +30,98 @@ test('priceFor: longest prefix wins (opus-4-8 must not hit legacy opus-4)', () =
   assert.equal(priceFor(null), null);
   assert.equal(priceFor('gpt-5.4-mini', PRICES_OPENAI).out, 4.5);
   assert.equal(priceFor('gpt-5.4-turbo', PRICES_OPENAI).out, 15.0); // prefix of 5.4
+});
+
+// FAST MODE — the premium row was missing from this port entirely while the
+// vendor had carried it since 2026-07-25, so every fast-mode turn under-billed
+// by exactly 2x. Silent by construction: the model IS priced, so nothing takes
+// the unpriced branch and no warning fires — the totals just come out half.
+test('priceFor: speed=fast overlays the premium row, and only where one exists', () => {
+  assert.equal(priceFor('claude-opus-5', null, 'fast').in, 10.0);
+  assert.equal(priceFor('claude-opus-5', null, 'fast').out, 50.0);
+  assert.equal(priceFor('claude-opus-5').in, 5.0, 'absent speed is standard');
+  assert.equal(priceFor('claude-opus-5', null, 'standard').in, 5.0, 'explicit standard is standard');
+  // Matched on the SAME winning prefix: opus-4-6 has no premium entry, so a
+  // fast ASK that the model silently downgraded keeps standard rates rather
+  // than falling through to a shorter prefix's premium.
+  assert.equal(priceFor('claude-opus-4-6-20260101', null, 'fast').in, 5.0);
+  assert.equal(priceFor('claude-sonnet-5', null, 'fast').in, 2.0);
+  // Dated ids must reach it too — that is what actually arrives on the wire.
+  assert.equal(priceFor('claude-opus-4-8-20260115', null, 'fast').in, 10.0);
+  // An explicit table is the caller's own axis; anthropic premiums must not
+  // leak onto it. NOTE this assertion is currently VACUOUS — PRICES_SPEED_FAST
+  // holds only claude-* keys, so no openai id can match one even with the
+  // `!table` guard removed (mutation-verified). Kept as a live example of the
+  // intended contract, and because the guard is what keeps it true if either
+  // table ever grows a colliding prefix. Do not read its green as coverage.
+  assert.equal(priceFor('gpt-5.4-mini', PRICES_OPENAI, 'fast').out, 4.5);
+  // The premium equals fable-5's row (universal cache multipliers on top).
+  assert.deepEqual(PRICES_SPEED_FAST['claude-opus-5'], PRICES['claude-fable-5']);
+});
+
+test('billing: usage.speed=fast bills at premium and says so in the basis', () => {
+  const args = {
+    modelResolved: 'claude-opus-5',
+    usageStart: { input_tokens: 1000, cache_read_input_tokens: 100000 },
+    usageFinal: { output_tokens: 2000, speed: 'fast',
+      cache_creation: { ephemeral_5m_input_tokens: 5000 } },
+  };
+  const fast = billing('messages', args);
+  assert.equal(fast.tokens.speed, 'fast');
+  // 1000*10 + 2000*50 + 100000*1.00 + 5000*12.5, per 1M
+  assert.equal(fast.est_usd, 0.2725);
+  assert.match(fast.price_basis, /FAST MODE premium rates/);
+
+  // The same tokens at standard rates — exactly half, which is the whole point.
+  const std = billing('messages', { ...args,
+    usageFinal: { ...args.usageFinal, speed: 'standard' } });
+  assert.equal(std.est_usd, 0.13625);
+  assert.equal(round6(fast.est_usd / std.est_usd), 2, 'fast mode is exactly 2x');
+  assert.ok(!std.price_basis.includes('FAST MODE'));
+});
+
+test('billing: speed is read from the RESPONSE, final winning over start', () => {
+  // The request's speed is only an ASK — a 429/529 can refuse it and opus-4-6
+  // silently downgrades, and in both cases usage.speed says standard and
+  // standard rates are what is charged. Billing the ask would over-report.
+  const refused = billing('messages', {
+    modelResolved: 'claude-opus-5',
+    usageStart: { input_tokens: 1000, speed: 'fast' },
+    usageFinal: { output_tokens: 2000, speed: 'standard' },
+  });
+  assert.equal(refused.tokens.speed, 'standard', 'final wins over start');
+  assert.equal(refused.est_usd, 0.055);   // 1000*5 + 2000*25, per 1M
+  assert.ok(!refused.price_basis.includes('FAST MODE'));
+
+  // Absent on final falls back to start (py getOr semantics, as elsewhere here).
+  const fromStart = billing('messages', {
+    modelResolved: 'claude-opus-5',
+    usageStart: { input_tokens: 1000, speed: 'fast' },
+    usageFinal: { output_tokens: 2000 },
+  });
+  assert.equal(fromStart.tokens.speed, 'fast');
+  assert.equal(fromStart.est_usd, 0.11);  // 1000*10 + 2000*50, per 1M
+
+  // Absent everywhere => standard. Every non-beta request looks like this, so
+  // this is the case that must not regress.
+  const plain = billing('messages', {
+    modelResolved: 'claude-opus-5',
+    usageStart: { input_tokens: 1000 },
+    usageFinal: { output_tokens: 2000 },
+  });
+  assert.equal(plain.tokens.speed, null);
+  assert.equal(plain.est_usd, 0.055);
+});
+
+test('billing: a fast request on a model with NO premium row is billed standard, and the basis does not claim otherwise', () => {
+  const b = billing('messages', {
+    modelResolved: 'claude-opus-4-6-20260101',
+    usageStart: { input_tokens: 1000 },
+    usageFinal: { output_tokens: 2000, speed: 'fast' },
+  });
+  assert.equal(b.est_usd, 0.055, 'standard rates');
+  assert.ok(!b.price_basis.includes('FAST MODE'),
+    'the basis must report what was CHARGED, not what was asked for');
 });
 
 test('billing: TTL-correct pricing, asymmetric start/final fallbacks', () => {

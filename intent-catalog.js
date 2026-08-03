@@ -24,7 +24,7 @@
 const GATEABLE_INTENTS = [
   { type: 'dm', label: 'Direct messages (dm)' },
   { type: 'who', label: 'List peers (who)' },
-  { type: 'context', label: 'Self context control (compact/clear)' },
+  { type: 'context', label: 'Self context control (compact/clear/reload)' },
   { type: 'memory', label: 'Memory management (remember/recall)' },
   { type: 'spawn', label: 'Spawn peer sessions (spawn)' },
   { type: 'file', label: 'Surface files on screen (file)' },
