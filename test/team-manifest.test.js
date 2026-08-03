@@ -674,9 +674,31 @@ test('formatRoster lists roles, briefs, class, and live seats per role', () => {
   // printing "(subagent)" next to it sent a lead to its harness subagent tool,
   // which produces an uncapped reviewer with no [agent:review-done] channel and no
   // seat the operator can see. No live seat → listed, no "live:" tail.
-  assert.match(roster, /- reviewer \(lead-only\) — the reviewer$/m);
+  assert.match(roster, /- reviewer \(lead-only\) — the reviewer · no live seat/m);
   assert.ok(!/reviewer \(subagent\)/.test(roster), 'the reviewer must never read as a harness subagent');
   assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\]/);
+});
+
+// A definition row and a live row used to differ only by the ABSENCE of a
+// `· live:` tail, so a reader scanning for teammates read the role key as an
+// addressable name and dm'd a seat that did not exist. Liveness must be stated
+// in that slot, not inferred from what is missing.
+test('formatRoster: a role with no live seat says so; it never reads as a teammate', () => {
+  const roster = formatRoster(TEAM(), ['shop-hand'], { seat: 'clodex' });
+  assert.match(roster, /- hand \(session, tmpl clodex-team-hand\) — the hand · live: shop-hand$/m,
+    'a role WITH a seat names the seat');
+  assert.match(roster, /- lead \(session\) — the lead · no live seat — role definition only, not addressable$/m,
+    'a role WITHOUT a seat states that, in the same slot the live names would occupy');
+
+  // Every role row carries exactly one liveness verdict — the property that
+  // makes the two cases distinguishable without knowing the mechanism.
+  const roleRows = roster.split('\n').filter((l) => /^- /.test(l));
+  assert.strictEqual(roleRows.length, 3, 'three roles, three rows');
+  for (const row of roleRows) {
+    const live = / · live: /.test(row);
+    const dead = / · no live seat /.test(row);
+    assert.ok(live !== dead, `exactly one liveness verdict per row, never both or neither: ${row}`);
+  }
 });
 
 test('formatRoster: the exec line carries the reading seat name in a schema-valid payload', () => {

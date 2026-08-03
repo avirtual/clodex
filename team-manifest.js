@@ -451,8 +451,16 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
     // itself, so printing one invites the hand-spawn the row exists to prevent.
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
     const brief = def && def.brief ? ` — ${def.brief}` : '';
+    // Liveness is STATED in this slot, never left to be inferred from a missing
+    // tail: a definition row and a live row were otherwise identical in shape,
+    // and a reader scanning for teammates read the role key as an addressable
+    // name and dm'd a seat that did not exist. The two branches are mutually
+    // exclusive text in one position, so absence of evidence can't read as a
+    // teammate. Wording tracks formatCompositionDelta's `(no seat)`.
     const live = byRole.get(role);
-    const liveStr = live && live.length ? ` · live: ${live.join(', ')}` : '';
+    const liveStr = live && live.length
+      ? ` · live: ${live.join(', ')}`
+      : ' · no live seat — role definition only, not addressable';
     lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
   }
   // A live seat off the naming convention is still warm and still DM-able;
