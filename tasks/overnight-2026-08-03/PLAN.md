@@ -11,6 +11,10 @@ reverted three plausible fixes in one day. Nothing lands on plausibility alone.
 Starting state: tree clean, `ef75bd7`, six unreleased commits on v4.12.0, suite
 3462 pass / 0 fail.
 
+**Final state (08:30):** tree clean, `e16e84b`, 20 unreleased commits, 3472 pass
+/ 0 fail, electron-smoke green. Three things shipped, seven measured and
+rejected, three handed back. Read "Where this landed" at the bottom first.
+
 ## Threads
 
 ### A — Settings dialog (his named example)
@@ -296,3 +300,54 @@ split the published notes into two lists.
 3. The dialog is 9 sections / 27 controls. If it gets reorganized, the
    markup-contract test in `test/prefs-gate.test.js` is what stops a
    reorganization silently dropping a gated control.
+
+## Where this landed
+
+### Shipped (3)
+
+1. **Preferences: a toggle that cannot act says so** (`83f98de`, `2024526`,
+   `24d136b`, `2d2ad01`). Three checkboxes were inert whenever the proxy was off
+   — they saved, survived a relaunch, and did nothing. Cold-reviewed SHIP.
+2. **Hints carry the month they were learned** (`23b13ea`, `1862bf7`).
+   Cold-reviewed ACCEPT, six nits taken.
+3. **Docs point at the test that exists** (`dfbed31`).
+
+### Measured and REJECTED (7)
+
+Every one of these was plausible, and six were about the same symptom. Recorded
+so nobody pays to rediscover them:
+
+1. Hint cooldown starving same-topic follow-ups — 0/20 turns starved.
+2. `selfScore()` OOV inconsistency — real, but 0/8 drafts changed, false arms
+   11 -> 11.
+3. Score / coverage / confidence thresholds — populations fully overlap.
+4. minDfHit and band rules — 13-14/16 noise survives.
+5. Corpus-size-scaled MIN_HITS — excellent on two stores, killed good recall
+   7/10 -> 4/10 on a third of the same size class.
+6. Topical support (does the corpus have a REGION about this?) — separates
+   cleanly on common, interleaves end to end on agent stores.
+7. Restyling the settings dialog — declined, not measured: invisible to every
+   test here and I cannot see it render.
+
+### The finding worth more than any of the fixes
+
+Three independent variables each separate the good and bad hint populations
+cleanly on the COMMON store and collapse on the AGENT stores. That is one fact,
+not three coincidences: **an agent's own memory store is genuinely about the
+work the operator is typing about, so "irrelevant" is not a property the
+retriever can see.** Usefulness is not similarity. The tractable problem is
+narrower than the symptom — the common store should abstain on drafts about the
+code, where the match is pure vocabulary collision. A per-SOURCE threshold is
+the one candidate that survived the night. It is a SPEC, not a patch, and it is
+deliberately unshipped because it touches selection, which Bogdan is live-testing.
+
+### Method lessons (both cost me something tonight)
+
+- **A threshold fitted to two corpora is fitted to two points.** Run any
+  corpus-derived constant against EVERY store on disk before believing it.
+- **Mutation testing only probes mutations you think of.** A fixture whose value
+  equals the wrong answer hides a whole class: `mkStore` stamps
+  `learned_at = now`, so a shape-only assertion passed green under a regression
+  dating every unit from the clock — the exact inversion of the change's point.
+  A cold reviewer found it by reading the fixture. Build fixtures whose value
+  differs from every plausible wrong source, and assert the value, not the shape.
