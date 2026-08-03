@@ -9,6 +9,7 @@ from proxylab import core as core_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import store as store_mod
+from proxylab import tokest as tokest_mod
 from proxylab import writer as writer_mod
 
 # --- /_admin: the /_status snapshot rendered for humans ------------------------
@@ -540,40 +541,62 @@ def _turn_weights(items, is_start):
     asking "where did this session get heavy": one 40k-char tool_result in turn
     6 is not a one-off, it is 40k re-read on turns 7..n.
 
-    Returns {turn: {"ch": added, "cum": context through the END of that turn}}.
-    Messages only — tools+system are the fixed preamble, priced in the bar
-    above. Anything before turn 1 (a leading bundle) lands in turn 1's `cum`
-    but is attributed to no turn, which is honest: no turn added it."""
+    Returns {turn: {"ch": added, "cum": context through the END of that turn,
+    "i": index of the last message in the turn}}. `i` lets the caller price
+    `cum` on the calibrated token curve (which includes the tools+system
+    preamble) instead of re-deriving it from chars.
+
+    `ch` is messages only — tools+system are the fixed preamble, priced in the
+    bar above, and no turn "added" them. Anything before turn 1 (a leading
+    bundle) lands in turn 1's `cum` but is attributed to no turn, which is
+    honest: no turn added it."""
     out, turn, cum = {}, 0, 0
-    for it in items:
+    for i, it in enumerate(items):
         if is_start(it):
             turn += 1
-            out[turn] = {"ch": 0, "cum": cum}
+            out[turn] = {"ch": 0, "cum": cum, "i": i}
         ch = len(json.dumps(it, ensure_ascii=False)) if isinstance(it, dict) else 0
         cum += ch
         if turn:
             out[turn]["ch"] += ch
             out[turn]["cum"] = cum
+            out[turn]["i"] = i
     return out
 
 
-def _turn_weight_html(w, peak):
+def _turn_weight_html(w, peak, msg_cum=None, cpt=None):
     """The per-turn-header weight chip: `+N tok` added, a share-of-the-heaviest
     bar (relative, so it reads on any session size), and the running window
-    total. Amber once a turn is at least half the heaviest one — the scan
-    target. tok ≈ ch/4, same convention as the bar above."""
+    total.  Amber once a turn is at least half the heaviest one — the scan
+    target.
+
+    Token figures are calibrated (see _prefix_tokens / tokest), not ch/4. `Σ` is
+    read off the cumulative curve at this turn's last message, so it includes
+    the tools+system preamble and converges on the receipt at the final turn —
+    the old version summed messages alone at ch/4 and read ~40% under the
+    header on the same page.
+
+    `cpt` overrides the chars-per-token divisor for callers on a DIFFERENT
+    tokenizer: the codex/openai view passes 4.0 to keep its long-standing
+    behaviour, since tokest's constants were measured on the anthropic wire and
+    that wire's receipts (server-side cache) can't anchor anything."""
     if not w:
         return ""
     ch = w["ch"]
     share = (ch / peak) if peak else 0.0
     hot = " hot" if share >= 0.5 else ""
-    return (f'<span class="tw{hot}" title="{ch:,} chars added by this turn '
-            f'(tok &approx; ch/4)">+{_fmt_tok(ch // 4)} tok</span>'
+    div = cpt or tokest_mod.MESSAGE_CHARS_PER_TOK
+    added = int(round(ch / div))
+    cum = (msg_cum or {}).get(w.get("i"))
+    if cum is None:
+        cum = int(round(w["cum"] / div))
+    return (f'<span class="tw{hot}" title="{ch:,} chars added by this turn">'
+            f'+{_fmt_tok(added)} tok</span>'
             f'<span class="twbar"><i style="width:{min(100, round(share * 100))}%">'
             f'</i></span>'
-            f'<span class="twc" title="context through the end of this turn: '
-            f'{w["cum"]:,} chars of messages">&Sigma;&thinsp;'
-            f'{_fmt_tok(w["cum"] // 4)}</span>')
+            f'<span class="twc" title="context through the end of this turn '
+            f'(tools + system + messages, calibrated to the turn receipt)">'
+            f'&Sigma;&thinsp;{_fmt_tok(cum)}</span>')
 
 
 def _load_request_by_index(session_id, i):
@@ -646,17 +669,108 @@ def _tline(cls, label, what, body, cap=2000):
             f'{_prevu(t, cap=cap)}</details></div>')
 
 
+def _prefix_tokens(obj, usage):
+    """Receipt-calibrated token sizing for one captured anthropic-wire request.
+
+    Walks the canonical cache order (tools -> system -> messages) ONCE and
+    returns everything the page needs to price it:
+
+        {"tools","system","messages": segment token totals,
+         "cum": {marker_ordinal: calibrated cumulative tokens},
+         "last_marker": ordinal of the final marker (its `cum` is MEASURED),
+         "msg_cum": {message index: cumulative tokens through that message},
+         "anchor": the receipt anchor, or None}
+
+    The last marker's cumulative value is the receipt anchor itself, so it is
+    exact by construction; every other number is that same curve scaled to fit
+    it. See tokest for the measurement behind the constants."""
+    tools = obj.get("tools") or []
+    sysv = obj.get("system")
+    sysb = ([{"type": "text", "text": sysv}] if isinstance(sysv, str)
+            else [b for b in (sysv or []) if isinstance(b, dict)])
+    msgs = obj.get("messages") or []
+    t_ch = len(json.dumps(tools, ensure_ascii=False)) if tools else 0
+    has_tools = bool(tools)
+
+    # cumulative (chars, fixed image tokens) at each marker, in canonical order
+    marks = []                                  # [(ordinal, s_ch, m_ch, fixed)]
+    n = 0
+    s_ch = m_ch = fixed = 0
+    if any(isinstance(t, dict) and t.get("cache_control") for t in tools):
+        n += 1
+        marks.append((n, 0, 0, 0))
+    for b in sysb:
+        s_ch += len(b.get("text") or "")
+        if b.get("cache_control"):
+            n += 1
+            marks.append((n, s_ch, 0, 0))
+    sys_total = s_ch
+    msg_cum_raw = {}
+    for i, mm in enumerate(msgs):
+        if isinstance(mm, dict):
+            ch, fx = tokest_mod.message_cost(mm)
+            m_ch += ch
+            fixed += fx
+        msg_cum_raw[i] = (m_ch, fixed)
+        content = mm.get("content") if isinstance(mm, dict) else None
+        blocks = content if isinstance(content, list) else []
+        if any(isinstance(b, dict) and b.get("cache_control") for b in blocks):
+            n += 1
+            marks.append((n, sys_total, m_ch, fixed))
+
+    def raw_at(sc, mc, fx):
+        return tokest_mod.raw_tokens(tools_ch=t_ch, system_ch=sc, message_ch=mc,
+                                     fixed_tokens=fx, has_tools=has_tools)
+
+    anchor = tokest_mod.anchor_tokens(usage)
+    k = None
+    if anchor and marks:
+        _, a_s, a_m, a_fx = marks[-1]
+        k = tokest_mod.calibrate(anchor, raw_at(a_s, a_m, a_fx), a_fx)
+
+    cum = {}
+    for ordinal, sc, mc, fx in marks:
+        cum[ordinal] = tokest_mod.apply(raw_at(sc, mc, fx), fx, k)
+    if anchor and marks:
+        cum[marks[-1][0]] = anchor        # measured, not fitted
+    msg_cum = {i: tokest_mod.apply(raw_at(sys_total, mc, fx), fx, k)
+               for i, (mc, fx) in msg_cum_raw.items()}
+
+    # segment totals, on the same calibrated scale (differences of the curve, so
+    # they sum to the whole rather than being three independent estimates)
+    tools_tok = tokest_mod.apply(raw_at(0, 0, 0), 0, k)
+    sys_tok = tokest_mod.apply(raw_at(sys_total, 0, 0), 0, k) - tools_tok
+    msg_tok = (tokest_mod.apply(raw_at(sys_total, m_ch, fixed), fixed, k)
+               - tools_tok - sys_tok)
+    return {"tools": max(0, tools_tok), "system": max(0, sys_tok),
+            "messages": max(0, msg_tok), "cum": cum,
+            "last_marker": marks[-1][0] if marks else None,
+            "msg_cum": msg_cum, "anchor": anchor}
+
+
 def _cc_ttl(cc):
     return (cc.get("ttl") or "5m") if isinstance(cc, dict) else "5m"
 
 
-def _cmark(n, cc, cum_ch):
+def _cmark(n, cc, cum_tok, exact=False):
     """The cache-boundary divider: everything ABOVE this line is one cached
     prefix unit (breakpoints cache cumulatively in canonical order
-    tools -> system -> messages). cum_ch = canonical-order chars so far."""
+    tools -> system -> messages).
+
+    `cum_tok` is receipt-calibrated (see tokest) rather than the old chars//4,
+    which read ~33% low and made the last breakpoint imply a huge uncached tail
+    that did not exist. The LAST marker's figure is measured, not estimated —
+    it is the receipt anchor itself — so it renders without the `≈`."""
+    tok = html.escape(_fmt_tok(cum_tok))
+    if exact:
+        return (f'<div class="cmark">&#9986; cache breakpoint {n} · '
+                f'ttl {html.escape(_cc_ttl(cc))} · prefix above '
+                f'<b title="measured: cache_read + cache_creation from this '
+                f'turn\'s receipt">{tok} tok</b> '
+                f'<span class="dim">measured</span></div>')
     return (f'<div class="cmark">&#9986; cache breakpoint {n} · '
             f'ttl {html.escape(_cc_ttl(cc))} · prefix above '
-            f'&approx;{html.escape(_fmt_tok(cum_ch // 4))} tok</div>')
+            f'&approx;{tok} tok</div>')
 
 
 def _render_session_openai_body(entry, resp=None):
@@ -714,7 +828,8 @@ def _render_session_openai_body(entry, resp=None):
                    if turn == n_turns else '')
             rows.append(f'<div class="turnhdr" id="turn-{turn}">'
                         f'turn {turn}{cur}'
-                        f'{_turn_weight_html(weights.get(turn), peak)}</div>')
+                        f'{_turn_weight_html(weights.get(turn), peak, cpt=4.0)}'
+                        f'</div>')
         if t == "message":
             role = it.get("role", "?")
             for c in (it.get("content") or []):
@@ -1018,21 +1133,26 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         n_turns = meta_mod._turn_stats(obj)["turns_in_context"]
         turns_link = (f'<span>turns <b><a href="#turn-{n_turns}">{n_turns}'
                       f'</a></b></span>' if n_turns else '')
+        # Token sizing is receipt-calibrated (tokest): per-segment densities,
+        # image blocks priced by pixel area, level fitted to this turn's
+        # cache_read+cache_write anchor. The old flat ch/4 ran ~33% under and
+        # disagreed with the header receipt on the same page.
+        cal = _prefix_tokens(obj, usage)
         bar = (f'<p class="kv"><span>captured <b>{e(_fmt_ago(entry.get("ts")))}'
                f'</b>{auth_badge}</span>'
-               f'<span>tools <b>{len(tools)}</b> &approx;{e(_fmt_tok(t_ch // 4))} tok</span>'
-               f'<span>system <b>{len(sysb)}</b> blocks &approx;{e(_fmt_tok(s_ch // 4))} tok</span>'
-               f'<span>messages <b>{len(msgs)}</b> &approx;{e(_fmt_tok(m_ch // 4))} tok</span>'
+               f'<span>tools <b>{len(tools)}</b> &approx;{e(_fmt_tok(cal["tools"]))} tok</span>'
+               f'<span>system <b>{len(sysb)}</b> blocks &approx;{e(_fmt_tok(cal["system"]))} tok</span>'
+               f'<span>messages <b>{len(msgs)}</b> &approx;{e(_fmt_tok(cal["messages"]))} tok</span>'
                f'{turns_link}'
-               f'<span class="dim">sizes are chars; tok &approx; ch/4</span></p>')
+               f'<span class="dim">tok {"calibrated to this turn&rsquo;s receipt" if cal["anchor"] else "estimated (no receipt yet)"}</span></p>')
         # post-reset (`/clear`/slash-command) snapshot note — keeps a fresh
         # boundary turn from reading as a render bug (esp. on the sub-view).
         bar += _session_boundary_note(obj)
         # cache breakpoints number through the CANONICAL prefix order
-        # tools -> system -> messages; cum_ch tracks chars in that order so
-        # each divider can price the prefix it closes (tok ≈ ch/4).
+        # tools -> system -> messages; _prefix_tokens priced each one against
+        # this turn's receipt, so `cal["cum"][n]` is the prefix that divider
+        # closes (and the LAST one is measured, not estimated).
         mark_n = 0
-        cum_ch = t_ch
         if tools:
             trs = "".join(
                 f'<tr><td><b>{e(t.get("name", "?"))}</b></td>'
@@ -1040,19 +1160,19 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 f'<td class="dim">{e((t.get("description") or "")[:120])}</td></tr>'
                 for t in sorted(tools, key=lambda t: -len(json.dumps(t))))
             tools_html = (f'<details><summary>tools · {len(tools)} · '
-                          f'&approx;{e(_fmt_tok(t_ch // 4))} tok</summary>'
+                          f'&approx;{e(_fmt_tok(cal["tools"]))} tok</summary>'
                           f'<table>{trs}</table></details>')
             tcc = next((t.get("cache_control") for t in tools
                         if isinstance(t, dict) and t.get("cache_control")), None)
             if tcc:
                 mark_n += 1
-                tools_html += _cmark(mark_n, tcc, cum_ch)
+                tools_html += _cmark(mark_n, tcc, cal["cum"].get(mark_n, 0),
+                                     exact=mark_n == cal["last_marker"])
         else:
             tools_html = '<p class="dim">no tools</p>'
         sb = []
         for i, b in enumerate(sysb):
             txt = b.get("text") or ""
-            cum_ch += len(txt)
             cc = b.get("cache_control")
             badge = (f'<span class="badge on">cache {e(_cc_ttl(cc))}</span>'
                      if cc else "")
@@ -1063,7 +1183,8 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                       f'<span class="dim">{hl}</span>{_prevu(txt, cap=160)}</div>')
             if cc:
                 mark_n += 1
-                sb.append(_cmark(mark_n, cc, cum_ch))
+                sb.append(_cmark(mark_n, cc, cal["cum"].get(mark_n, 0),
+                                 exact=mark_n == cal["last_marker"]))
         rows = []
         turn = 0
         # when each turn STARTED, from the warmth sidecars only (see _turn_clock:
@@ -1089,9 +1210,8 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                          f'{e(_fmt_clock(tts))}</span>' if tts else '')
                 rows.append(f'<div class="turnhdr" id="turn-{turn}">'
                             f'turn {turn}{cur}'
-                            f'{_turn_weight_html(weights.get(turn), peak)}'
+                            f'{_turn_weight_html(weights.get(turn), peak, cal["msg_cum"])}'
                             f'{stamp}</div>')
-            cum_ch += len(json.dumps(mm)) if isinstance(mm, dict) else 0
             role = mm.get("role", "?")
             content = mm.get("content")
             blocks = (content if isinstance(content, list)
@@ -1129,7 +1249,8 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                                 f'<span class="dim">{e(str(bt))}</span></div>')
             if mcc:
                 mark_n += 1
-                rows.append(_cmark(mark_n, mcc, cum_ch))
+                rows.append(_cmark(mark_n, mcc, cal["cum"].get(mark_n, 0),
+                                   exact=mark_n == cal["last_marker"]))
         # The answer to the FINAL user message lives only in the response until
         # the next turn re-ships it as input — a request-only view always
         # lagged one answer. Append it when fresher than the captured request.

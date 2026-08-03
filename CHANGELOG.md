@@ -13,6 +13,35 @@ blocks a release.
 
 ## Unreleased
 
+- **Preferences is seven collapsible groups instead of one long scroll.** Every
+  setting was expanded at once, so finding one meant scrolling past eight others
+  and their explanations. Groups now start collapsed, each with a one-line
+  summary of what is inside, and the ones you open are remembered. The settings
+  themselves were regrouped rather than just folded: the two statusline sections
+  are one "Statusline" group, and default tools and Claude MCP — both of which
+  only affect sessions you create from now on — are one "New session defaults"
+  group that says so once instead of twice. Traffic optimization now names
+  wirescope as its first entry, since the transcript bake and the memory hints
+  under it are things wirescope does — none of them exist without it, and the
+  dialog never said so. Nothing moved out of the dialog and nothing changed what
+  it does; a collapsed group still saves exactly as before.
+- **Turning off traffic optimization now actually stops contextual hints.**
+  Sessions already running kept the proxy address they were given when they
+  started, so unticking the setting stopped wirescope but left those sessions
+  still matching your drafts against memory and posting hints at a port with
+  nothing on it. Each failed post also held that session's incoming messages for
+  up to 30 seconds, so a DM sent right after you changed the setting arrived
+  late. Sessions you routed to a proxy explicitly are unaffected — they keep
+  their hints, as they always should have.
+- Vendored wirescope v0.6.47.
+- **An agent that gets an irrelevant memory now drops it without telling you.**
+  Retrieval matches on words, so it misses — and when it did, agents announced
+  the miss: one idle seat was handed a memory about an unrelated project,
+  correctly declined to act on it, then summarized it back to you "so it isn't
+  lost". The hint said to ignore it if unrelated, but said more loudly that it
+  would not be repeated, so agents preserved it rather than dropping it. An
+  unrelated memory is now dropped in silence, which is what it cost you nothing
+  to receive.
 - **A memory attached to a turn now says when you said it.** Hints arrived
   undated, so a claim from two years ago read as current — "your branching
   strategy is main/qa/devel" asserted flatly, with nothing to tell the agent it
@@ -23,7 +52,7 @@ blocks a release.
   matched.
 - **A Preferences toggle that cannot act now says so.** Three checkboxes — the
   resume-time transcript bake and both hint settings — did nothing unless
-  "Optimize agent API traffic" was on, but you could still tick them, save, and
+  wirescope was on, but you could still tick them, save, and
   relaunch to find them still ticked and still inert. They are now greyed with
   the reason underneath, and semantic ranking greys the same way when hints
   themselves are off. Your choices are remembered, not discarded: turn the proxy
