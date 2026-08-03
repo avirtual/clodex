@@ -243,6 +243,30 @@ mutation-tested: dropping the date from the label fails 1 test, leaking
 Why this is safe to ship while Bogdan live-tests retrieval: it changes WHAT a
 hint says, never WHICH hint arrives. The measurement above is the claim.
 
+Cold review (clodex-reviewer-1): ACCEPT, no must-fix. Six nits taken (`1862bf7`),
+one declined as cosmetic (UTC month boundary on a store that stamps UTC itself).
+**The reviewer found a hole my own mutation probe could not reach**, and it is
+the lesson from this thread: `mkStore` stamps `learned_at = now`, so my
+shape-only `assert.match(/learned=\d{4}-\d{2}/)` passed green under a regression
+dating every unit from `Date.now()` — i.e. asserting every stale claim is FRESH,
+the exact inversion of the change's purpose. Mutation testing only probes
+mutations you think of; a fixture whose value equals the wrong answer hides a
+whole class. Now pinned with a fixed old stamp, plus an undated-unit guard
+(`learned_at: ''` must emit no date, not `learned=Invalid Date`) and a
+non-vacuity assert on the parity test (two empty arrays are deepStrictEqual).
+Four mutations now caught where two were before.
+
+Also from the review, verified independently: the CHANGELOG claimed the date
+sits "next to the tag saying whether it is the kind of fact that changes" — true
+only for imported `chat-extract` units, where the importer duplicates
+`volatility` into `tags`. **0 of 581 units in my own store carry a volatility
+marker.** Clause dropped rather than reworded.
+
+The reviewer's cost answer is worth keeping: the `compose()` "billed uncached"
+rule tests whether something could have ridden the CACHED system prompt instead.
+A per-unit stamp does not exist until a unit is selected, so it has nowhere
+cheaper to live — 16 chars against a 150-1150 char block, ≤48 per armed request.
+
 ### Observations for Bogdan — NOT acted on, deliberately
 
 1. **Theme and env vars bypass Save/Cancel.** `themes.js:50` persists on
