@@ -267,6 +267,17 @@ rule tests whether something could have ridden the CACHED system prompt instead.
 A per-unit stamp does not exist until a unit is selected, so it has nowhere
 cheaper to live — 16 chars against a 150-1150 char block, ≤48 per armed request.
 
+### Step 10 — Stale doc pointer (dfbed31)
+
+CLAUDE.md named `test/changelog-release-notes.test.js` as pinning the release-
+notes extraction. **That file does not exist.** The coverage is real and lives in
+`test/release-script.test.js`, running the script's own awk/sed against fixtures.
+The doc also claimed it "runs only during a release" — it runs in the normal
+suite. Both corrected. Worth the commit because a pointer to a missing test
+invites the next agent to conclude the coverage is absent and write it again.
+Also removed a stray blank line mid-list in `## Unreleased`, which would have
+split the published notes into two lists.
+
 ### Observations for Bogdan — NOT acted on, deliberately
 
 1. **Theme and env vars bypass Save/Cancel.** `themes.js:50` persists on
