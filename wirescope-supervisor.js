@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const { isEnvTruthy, teeBlindBackend } = require('./claude-env');
 
 function wirescopeBindHost(env = process.env) {
@@ -217,7 +217,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       const probe = await ProxyClient.probe(base).catch(() => null);
       if (probe) {
         this.lastError = null;
-        const ours = !!this._survivorPid();
+        const ours = !!(this._survivorPid() || this._reclaimPidFile(port));
 // The _upgradeTried latch is once per app launch — without it an unexpected
 // version string restart-loops. Adopted external instances are never touched.
         if (ours && !this._upgradeTried) {
@@ -263,6 +263,37 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         if (!rec || !rec.pid || rec.port !== (s.wirescopePort || 7800)) return null;
         process.kill(rec.pid, 0); // throws if gone
         return rec.pid;
+      } catch { return null; }
+    }
+
+    // Re-adopt a managed proxy whose pidfile was lost (pre-fix orphans, a wiped
+    // userData). Identity is OBSERVED from outside, never asked for: /_identity
+    // carries no pid, and trusting a self-reported one would let any listener on
+    // the port talk Clodex into a record that `stop()` then kills. What is checked
+    // instead is that the process holding our port was launched the way _spawn
+    // launches one — cwd is the resolved source dir, argv is uvicorn on logproxy:app
+    // at that port. Clodex sets that cwd itself, so it is a fingerprint of its own
+    // spawn rather than a claim by the process.
+    // The venv python is deliberately NOT part of the check: it symlinks out to the
+    // system interpreter, so the executable path is shared with every other python.
+    // Callers must have probed the port first — this only establishes ownership.
+    _reclaimPidFile(port) {
+      const dir = this._source().dir;
+      if (!dir) return null;
+      try {
+        if (this._survivorPid()) return null;          // a valid record already exists
+        const run = (args) => execFileSync('lsof', args, { encoding: 'utf8', timeout: 2000 });
+        const pid = parseInt(run(['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']).trim().split('\n')[0], 10);
+        if (!pid) return null;
+        const cwd = (run(['-a', '-p', String(pid), '-d', 'cwd', '-Fn'])
+          .split('\n').find((l) => l.startsWith('n')) || '').slice(1);
+        if (fs.realpathSync(cwd) !== fs.realpathSync(dir)) return null;
+        const argv = execFileSync('ps', ['-o', 'command=', '-p', String(pid)],
+          { encoding: 'utf8', timeout: 2000 });
+        if (!argv.includes('logproxy:app') || !new RegExp(`--port ${port}(\\s|$)`).test(argv)) return null;
+        fs.mkdirSync(path.dirname(this._pidFile()), { recursive: true });
+        fs.writeFileSync(this._pidFile(), JSON.stringify({ pid, port }));
+        return pid;
       } catch { return null; }
     }
 
