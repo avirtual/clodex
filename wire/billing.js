@@ -27,10 +27,9 @@
 // NOTE: opus REPRICED at 4.5 — $15/$75 is 4.0/4.1 ONLY; 4.5+ is $5/$25.
 const PRICES = {
   'claude-fable-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
-  // ⚠️ FLIP ON 2026-09-01 (lock-step with proxylab billing.py — same
-  // commit day, or the golden gate breaks on the cutover): sonnet-5 intro
-  // pricing ends 2026-08-31; standard = in 3.0, out 15.0, w5m 3.75,
-  // w1h 6.0, read 0.30. Date-aware schedule (option 2) planned before then.
+  // Intro rate, superseded on 2026-09-01 by PRICES_DATED — no hand-edit due on
+  // the flip day, and editing this row instead would retro-reprice traffic
+  // billed before it.
   'claude-sonnet-5': { in: 2.0,  out: 10.0, cache_write_5m: 2.50,  cache_write_1h: 4.0,  cache_read: 0.20 },
   'claude-opus-4-5': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
@@ -74,12 +73,44 @@ const PRICES_SPEED_FAST = {
   'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
 };
 
+// Scheduled repricings: prefix -> [(effective_from "YYYY-MM-DD", row)], later
+// dates LAST (the walk keeps the last row whose date has been reached). Live
+// traffic is priced at receipt time, so no hand-edit is needed on the flip day —
+// and a receipt already billed under the old rate is never retro-repriced, which
+// is correct: it records what was charged.
+// Mirrors proxylab billing.py PRICES_DATED; keep the two in lock-step.
+const PRICES_DATED = {
+  // sonnet-5 intro rate ends 2026-08-31; standard (== sonnet-4) after.
+  'claude-sonnet-5': [['2026-09-01', { in: 3.0, out: 15.0, cache_write_5m: 3.75, cache_write_1h: 6.0, cache_read: 0.30 }]],
+};
+
+// Local calendar date, mirroring the vendor's time.strftime("%Y-%m-%d",
+// time.localtime(now)). LOCAL, not UTC: toISOString would flip the schedule up
+// to a day early or late depending on the offset's sign, and the two ports must
+// agree on which side of midnight a receipt falls.
+function localDay(now) {
+  const d = now instanceof Date ? now : (now == null ? new Date() : new Date(now));
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 // Longest-prefix match (a first-hit walk silently shadowed
 // "claude-opus-4-8" with the legacy "claude-opus-4" entry). null = unpriced.
-// `speed==='fast'` overlays the premium row on the SAME winning prefix, so a
-// fast-mode request against a model with no fast entry keeps standard rates
-// rather than falling through to some shorter prefix's premium.
-function priceFor(model, table, speed) {
+//
+// Options are an OBJECT, deliberately unlike the vendor's positional
+// `_price_for(model, table=None, now=None, speed=None)`: a port of a now-taking
+// call site onto a positional JS signature lands `now` in `speed` and fails
+// OPEN — no throw, just wrong rates, the same shape as the missing opus-5 row
+// that billed live turns at zero. Named keys cannot be mis-ordered.
+//
+// `now` is a Date or epoch MILLISECONDS (JS convention); the vendor's takes
+// epoch SECONDS. Only tests inject it — production reads the wall clock.
+//
+// Overlay order mirrors the vendor: dated first, then fast on the SAME winning
+// prefix, so fast wins where both could apply. Matching on the winning prefix
+// (not re-walking) is what keeps a fast request against a model with no premium
+// entry on standard rates instead of falling through to a shorter prefix's.
+function priceFor(model, { table = null, now = null, speed = null } = {}) {
   if (!model) return null;
   let best = null;
   for (const [pfx, p] of Object.entries(table || PRICES)) {
@@ -88,13 +119,20 @@ function priceFor(model, table, speed) {
     }
   }
   if (best === null) return null;
-  // Only for the DEFAULT table: an explicit table is the caller's own axis
-  // (openai), and overlaying anthropic premiums onto it would be nonsense.
-  // Belt-and-braces today — PRICES_SPEED_FAST holds only claude-* keys, so no
-  // openai id can match one — but it is what keeps that true if either table
-  // grows a colliding prefix. Mirrors the vendor's `table is None and`.
-  if (!table && speed === 'fast' && PRICES_SPEED_FAST[best[0]]) return PRICES_SPEED_FAST[best[0]];
-  return best[1];
+  // Both overlays are for the DEFAULT table only: an explicit table is the
+  // caller's own axis (openai), and overlaying anthropic rows onto it would be
+  // nonsense. Belt-and-braces today — both overlay tables hold only claude-*
+  // keys, so no openai id can match one — but it is what keeps that true if
+  // either table grows a colliding prefix. Mirrors the vendor's `table is None`.
+  let row = best[1];
+  if (!table && PRICES_DATED[best[0]]) {
+    const today = localDay(now);
+    for (const [eff, dated] of PRICES_DATED[best[0]]) {
+      if (today >= eff) row = dated;
+    }
+  }
+  if (!table && speed === 'fast' && PRICES_SPEED_FAST[best[0]]) row = PRICES_SPEED_FAST[best[0]];
+  return row;
 }
 
 const _unpricedWarned = new Set();
@@ -183,7 +221,7 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     // fast mode (premium rates); final wins, absent => standard
     speed: norm(getOr(uf, 'speed', us.speed)),
   };
-  const p = priceFor(modelResolved, null, tokens.speed);
+  const p = priceFor(modelResolved, { speed: tokens.speed });
   let est = null;
   let unpriced = false;
   let basis = 'approx public list USD/1M; edit PRICES';
@@ -199,7 +237,7 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     // Identity check against the standard row, not `speed === 'fast'` alone: a
     // fast request on a model with no premium entry is billed standard, and
     // saying otherwise in the basis would misreport what was actually charged.
-    if (tokens.speed === 'fast' && p !== priceFor(modelResolved)) {
+    if (tokens.speed === 'fast' && p !== priceFor(modelResolved, {})) {
       basis += '; FAST MODE premium rates (usage.speed=fast)';
     }
     est = round6(usd(tokens.input_tokens, p.in)
@@ -235,7 +273,7 @@ function billingOpenai(modelResolved, usage) {
     thinking_tokens: norm((u.output_tokens_details || {}).reasoning_tokens),
     service_tier: null,
   };
-  const p = priceFor(modelResolved, PRICES_OPENAI);
+  const p = priceFor(modelResolved, { table: PRICES_OPENAI });
   let est = null;
   let unpriced = false;
   const basis = 'API-equivalent USD/1M (chatgpt-plan traffic is never ' +
@@ -340,6 +378,6 @@ class Ledger {
 }
 
 module.exports = {
-  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, priceFor, usd, round6,
+  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, priceFor, usd, round6,
   billing, billingOpenai, newTotals, bump, Ledger,
 };

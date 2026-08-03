@@ -99,8 +99,17 @@ from one that died with its process, so it re-runs.
 - Full reviews: `tasks/prompt-refresh/review.md`, `tasks/cost-ledger-audit/journal.md`.
 - The CLI WATCHES append-prompt.md and busts cache on change — that watch is WHY
   the freeze exists. Refresh is only affordable at clear/compact/cold-cache.
-- This seat is STILL on the Jul 28 frozen prompt. A `/clear` is the end-to-end
-  test of the whole fix — Bogdan does it, deliberately, later.
+- ~~This seat is on the Jul 28 frozen prompt~~ — no longer true as of 08-04.
+  `session.md` regenerated at the 23:47 respawn (absence-as-regenerate-signal
+  working), and the 00:05 restart on `d3d0bdc` re-baked identical bytes with
+  NO delta staged, which per `ipc-prompt-cache.js:214` means real IPC already
+  equals `session.md`.
+  Consequence: **a `/clear` on this seat is no longer an end-to-end test** —
+  it hits the `realIpc === session.md` guard (`session-manager.js:1530`) and
+  returns false, exercising the guard rather than the rewrite. Testing the
+  rewrite needs a seat whose real IPC genuinely differs: one spawned before a
+  prompt-affecting change, then cleared. Do not manufacture drift on a healthy
+  seat to watch it heal.
 - Use the `[agent:exec clodex-run-tests]` INTENT for the full suite (Bogdan's
   correction). The Bash tool's 120s cap is shorter than the suite. Never two at
   once — shared `.test-digest.lock`, deadlocks at 0% CPU.

@@ -2,7 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
+const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
+
+// Both sides of the sonnet-5 flip, as LOCAL noon so no timezone offset can
+// carry either across the boundary. Every dated assertion injects one of these:
+// reading the real clock would make this file's verdict change on 2026-09-01.
+const BEFORE_FLIP = new Date(2026, 7, 31, 12, 0, 0);  // 2026-08-31
+const AFTER_FLIP  = new Date(2026, 8, 1, 12, 0, 0);   // 2026-09-01
 
 test('round6 matches Python round(): ties-to-even on the exact binary value', () => {
   // exact dyadic ties — toFixed would give ...63 / ...25; Python gives even.
@@ -21,15 +27,16 @@ test('priceFor: longest prefix wins (opus-4-8 must not hit legacy opus-4)', () =
   assert.equal(priceFor('claude-opus-4-8-20260115').in, 5.0);
   assert.equal(priceFor('claude-opus-4-1-20250805').in, 15.0); // legacy pricing
   assert.equal(priceFor('claude-fable-5').in, 10.0);
-  // sonnet-5 INTRO rate (through 2026-08-31; wirescope msg-88121-2);
+  // sonnet-5 INTRO rate (through 2026-08-31; wirescope msg-88121-2) — clock
+  // injected, or this assertion silently becomes a different one on 2026-09-01.
   // sonnet-4.x must still fall through to the sonnet-4 entry.
-  assert.equal(priceFor('claude-sonnet-5').in, 2.0);
-  assert.equal(priceFor('claude-sonnet-5-20260601').cache_read, 0.20);
+  assert.equal(priceFor('claude-sonnet-5', { now: BEFORE_FLIP }).in, 2.0);
+  assert.equal(priceFor('claude-sonnet-5-20260601', { now: BEFORE_FLIP }).cache_read, 0.20);
   assert.equal(priceFor('claude-sonnet-4-5-20250929').in, 3.0);
   assert.equal(priceFor('unknown-model'), null);
   assert.equal(priceFor(null), null);
-  assert.equal(priceFor('gpt-5.4-mini', PRICES_OPENAI).out, 4.5);
-  assert.equal(priceFor('gpt-5.4-turbo', PRICES_OPENAI).out, 15.0); // prefix of 5.4
+  assert.equal(priceFor('gpt-5.4-mini', { table: PRICES_OPENAI }).out, 4.5);
+  assert.equal(priceFor('gpt-5.4-turbo', { table: PRICES_OPENAI }).out, 15.0); // prefix of 5.4
 });
 
 // FAST MODE — the premium row was missing from this port entirely while the
@@ -37,26 +44,124 @@ test('priceFor: longest prefix wins (opus-4-8 must not hit legacy opus-4)', () =
 // by exactly 2x. Silent by construction: the model IS priced, so nothing takes
 // the unpriced branch and no warning fires — the totals just come out half.
 test('priceFor: speed=fast overlays the premium row, and only where one exists', () => {
-  assert.equal(priceFor('claude-opus-5', null, 'fast').in, 10.0);
-  assert.equal(priceFor('claude-opus-5', null, 'fast').out, 50.0);
+  assert.equal(priceFor('claude-opus-5', { speed: 'fast' }).in, 10.0);
+  assert.equal(priceFor('claude-opus-5', { speed: 'fast' }).out, 50.0);
   assert.equal(priceFor('claude-opus-5').in, 5.0, 'absent speed is standard');
-  assert.equal(priceFor('claude-opus-5', null, 'standard').in, 5.0, 'explicit standard is standard');
+  assert.equal(priceFor('claude-opus-5', { speed: 'standard' }).in, 5.0, 'explicit standard is standard');
   // Matched on the SAME winning prefix: opus-4-6 has no premium entry, so a
   // fast ASK that the model silently downgraded keeps standard rates rather
   // than falling through to a shorter prefix's premium.
-  assert.equal(priceFor('claude-opus-4-6-20260101', null, 'fast').in, 5.0);
-  assert.equal(priceFor('claude-sonnet-5', null, 'fast').in, 2.0);
+  assert.equal(priceFor('claude-opus-4-6-20260101', { speed: 'fast' }).in, 5.0);
+  assert.equal(priceFor('claude-sonnet-5', { speed: 'fast', now: BEFORE_FLIP }).in, 2.0);
   // Dated ids must reach it too — that is what actually arrives on the wire.
-  assert.equal(priceFor('claude-opus-4-8-20260115', null, 'fast').in, 10.0);
+  assert.equal(priceFor('claude-opus-4-8-20260115', { speed: 'fast' }).in, 10.0);
   // An explicit table is the caller's own axis; anthropic premiums must not
   // leak onto it. NOTE this assertion is currently VACUOUS — PRICES_SPEED_FAST
   // holds only claude-* keys, so no openai id can match one even with the
   // `!table` guard removed (mutation-verified). Kept as a live example of the
   // intended contract, and because the guard is what keeps it true if either
   // table ever grows a colliding prefix. Do not read its green as coverage.
-  assert.equal(priceFor('gpt-5.4-mini', PRICES_OPENAI, 'fast').out, 4.5);
+  assert.equal(priceFor('gpt-5.4-mini', { table: PRICES_OPENAI, speed: 'fast' }).out, 4.5);
   // The premium equals fable-5's row (universal cache multipliers on top).
   assert.deepEqual(PRICES_SPEED_FAST['claude-opus-5'], PRICES['claude-fable-5']);
+});
+
+// SCHEDULED REPRICING — the JS port had no dated table at all while the vendor
+// carried one, so from 2026-09-01 it would bill sonnet-5 at the expired intro
+// rate with nothing signalling it: priced, no warning, totals just 33% light.
+test('priceFor: PRICES_DATED flips sonnet-5 on 2026-09-01, both sides of the boundary', () => {
+  // The day BEFORE is still intro. 2026-08-31 is the last such day.
+  assert.equal(priceFor('claude-sonnet-5', { now: BEFORE_FLIP }).in, 2.0);
+  assert.equal(priceFor('claude-sonnet-5', { now: BEFORE_FLIP }).out, 10.0);
+  assert.equal(priceFor('claude-sonnet-5', { now: BEFORE_FLIP }).cache_read, 0.20);
+
+  // ON the effective date the standard row applies (>=, not >).
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).in, 3.0);
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).out, 15.0);
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).cache_write_5m, 3.75);
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).cache_write_1h, 6.0);
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).cache_read, 0.30);
+
+  // Dated model ids reach the schedule too — that is what arrives on the wire.
+  assert.equal(priceFor('claude-sonnet-5-20260601', { now: AFTER_FLIP }).in, 3.0);
+
+  // Post-flip sonnet-5 == sonnet-4, which is the substance of the repricing.
+  assert.deepEqual(priceFor('claude-sonnet-5', { now: AFTER_FLIP }), PRICES['claude-sonnet-4']);
+
+  // Epoch ms is accepted as well as a Date (only tests inject either).
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP.getTime() }).in, 3.0);
+
+  // Models with no schedule are untouched by the date.
+  assert.equal(priceFor('claude-opus-5', { now: AFTER_FLIP }).in, 5.0);
+  assert.equal(priceFor('claude-fable-5', { now: AFTER_FLIP }).in, 10.0);
+
+  // The base row must stay the INTRO rate: editing it in place instead of
+  // scheduling would retro-reprice every receipt billed before the flip.
+  assert.equal(PRICES['claude-sonnet-5'].in, 2.0);
+  assert.equal(PRICES_DATED['claude-sonnet-5'][0][0], '2026-09-01');
+});
+
+// The boundary is the LOCAL calendar day, mirroring the vendor's
+// time.localtime(now). A UTC comparison (toISOString().slice(0,10)) flips up to
+// a day early or late depending on the offset's sign, and the two ports would
+// then disagree about which side of midnight a receipt falls on. Asserting BOTH
+// edges catches that for every nonzero offset: west of UTC the last minute of
+// 2026-08-31 is already Sep 1 in UTC, east of it the first minute of Sep 1 is
+// still Aug 31. At TZ=UTC exactly the two are identical and this test is
+// vacuous by construction — run it under TZ=America/Los_Angeles to see it bite.
+test('priceFor: the dated boundary is the LOCAL day, not UTC', () => {
+  assert.equal(priceFor('claude-sonnet-5', { now: new Date(2026, 7, 31, 23, 59, 30) }).in, 2.0,
+    'last local minute of 2026-08-31 is still the intro rate');
+  assert.equal(priceFor('claude-sonnet-5', { now: new Date(2026, 8, 1, 0, 0, 30) }).in, 3.0,
+    'first local minute of 2026-09-01 is already the standard rate');
+});
+
+// Overlay ORDER, pinned because it is invisible in the output otherwise: the
+// vendor applies dated first, then fast on the same winning prefix, so fast
+// wins where both could apply. Swapping them changes nothing for today's tables
+// (no model has both) — this is a live example that fails only once one does.
+test('priceFor: dated overlay applies before fast, per the vendor order', () => {
+  // A model carrying BOTH a schedule and a premium row does not exist yet, so
+  // assert the two independently and the invariant that keeps them separable.
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP, speed: 'fast' }).in, 3.0,
+    'sonnet-5 has no premium row: fast leaves the dated row standing');
+  assert.equal(priceFor('claude-opus-5', { now: AFTER_FLIP, speed: 'fast' }).in, 10.0,
+    'opus-5 has no schedule: the premium row applies unmodified');
+  const overlap = Object.keys(PRICES_DATED).filter((k) => k in PRICES_SPEED_FAST);
+  assert.deepEqual(overlap, [],
+    'once a model appears in BOTH tables, add a direct order assertion here — ' +
+    'until then fast-wins-over-dated is unobservable from outside');
+});
+
+// The signature is an OBJECT and must stay one: the vendor is positional
+// (`_price_for(model, table, now, speed)`) and a port that lands `now` in a
+// positional `speed` slot fails OPEN — wrong rates, no throw. A stray second
+// positional must not be silently read as a table.
+test('priceFor: options are named — a positional table/speed cannot be mis-ordered', () => {
+  assert.equal(priceFor('gpt-5.4-mini', { table: PRICES_OPENAI }).out, 4.5);
+  // The old positional call shape now yields the DEFAULT table, not the openai
+  // one, and an openai id matches nothing there => null rather than wrong rates.
+  assert.equal(priceFor('gpt-5.4-mini', PRICES_OPENAI), null);
+  // A Date passed where a table used to go does not become a table either.
+  assert.equal(priceFor('claude-sonnet-5', { now: AFTER_FLIP }).in, 3.0);
+  assert.equal(priceFor('claude-opus-5', {}).in, 5.0, 'empty options == defaults');
+  assert.equal(priceFor('claude-opus-5').in, 5.0, 'omitted options == defaults');
+});
+
+test('billing: prices at receipt time — sonnet-5 traffic after the flip is not intro-rated', () => {
+  // billing() reads the wall clock (no now seam by design: production prices at
+  // receipt time). Pin the rate arithmetic through priceFor, then assert
+  // billing() consumes THAT row rather than a hardcoded one.
+  const row = priceFor('claude-sonnet-5', { now: AFTER_FLIP });
+  const b = billing('messages', {
+    modelResolved: 'claude-sonnet-5',
+    usageStart: { input_tokens: 1000 },
+    usageFinal: { output_tokens: 2000 },
+  });
+  const today = priceFor('claude-sonnet-5');
+  assert.equal(b.est_usd, round6((1000 * today.in + 2000 * today.out) / 1e6));
+  // And the post-flip row differs from the intro one, so the flip is material.
+  assert.notEqual(row.in, PRICES['claude-sonnet-5'].in);
 });
 
 test('billing: usage.speed=fast bills at premium and says so in the basis', () => {
