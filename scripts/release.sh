@@ -128,10 +128,35 @@ FOOTER=$'\n\n---\n\n**Apple Silicon (arm64) build.** Intel (x64) users can build
 
 # release title: tag, plus the notes-file's first heading as a subtitle when given
 TITLE="$TAG"
+CHANGELOG="CHANGELOG.md"
+CHANGELOG_BODY=""
+# The Unreleased section, when it has content, IS the release notes — that is
+# what makes the changelog the thing people maintain rather than a file that
+# quietly rots next to auto-generated notes. Empty (or absent) falls through to
+# the commit-subject default, so this never blocks a release.
+if [ -z "$NOTES_FILE" ] && [ -f "$CHANGELOG" ]; then
+  CHANGELOG_BODY="$(awk '/^## +\[?Unreleased\]?/{f=1;next} /^## /{f=0} f' "$CHANGELOG")"
+  [ -n "$(printf '%s' "$CHANGELOG_BODY" | tr -d '[:space:]')" ] || CHANGELOG_BODY=""
+fi
+
 if [ -n "$NOTES_FILE" ]; then
   SUBTITLE="$(grep -m1 -E '^#+ +' "$NOTES_FILE" | sed -E 's/^#+ +//' || true)"
   [ -n "$SUBTITLE" ] && TITLE="$TAG — $SUBTITLE"
   cat "$NOTES_FILE" > "$NOTES"
+elif [ -n "$CHANGELOG_BODY" ]; then
+  # An optional subtitle rides the heading: `## Unreleased — Some theme`.
+  SUBTITLE="$(grep -m1 -E '^## +\[?Unreleased\]?' "$CHANGELOG" | sed -E 's/^## +\[?Unreleased\]?[[:space:]]*(—|-)?[[:space:]]*//' || true)"
+  [ -n "$SUBTITLE" ] && TITLE="$TAG — $SUBTITLE"
+  printf '%s\n' "$CHANGELOG_BODY" > "$NOTES"
+  # Stamp the section and open a fresh empty one ABOVE it, so the next cycle has
+  # somewhere to write. Done before the commit below, which picks the file up.
+  STAMP="## $NEW_VERSION — $(date +%Y-%m-%d)${SUBTITLE:+ — $SUBTITLE}"
+  awk -v stamp="$STAMP" '
+    !done && /^## +\[?Unreleased\]?/ { print "## Unreleased"; print ""; print stamp; done=1; next }
+    { print }
+  ' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+  grep -qF "$STAMP" "$CHANGELOG" || die "changelog stamp failed — $STAMP is not in $CHANGELOG"
+  echo "  changelog: stamped $STAMP"
 else
   {
     echo "## What's changed"
