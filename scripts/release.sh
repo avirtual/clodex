@@ -39,8 +39,13 @@ BRANCH="$(git branch --show-current)"
 [ "$BRANCH" = "master" ] || die "not on master (on '$BRANCH'); release from master only"
 
 git fetch --quiet origin master || die "git fetch failed"
-[ "$(git rev-parse HEAD)" = "$(git rev-parse @{u})" ] \
-  || die "local master is not in sync with origin/master — pull/push first"
+# BEHIND is the failure; AHEAD is the normal case. Requiring equality here
+# blocked releasing unpushed work — which is most releases, since the script
+# pushes master itself further down. Only commits on the remote that we do not
+# have can make the build disagree with what ships, so that is what this tests.
+BEHIND="$(git rev-list --count HEAD..@{u})" || die "could not compare with origin/master"
+[ "$BEHIND" = "0" ] \
+  || die "local master is $BEHIND commit(s) BEHIND origin/master — pull first, or the release would ship without them"
 
 # web-dist staleness guard (T42): the prebuilt browser bundle is TRACKED, so a
 # release must ship a bundle built from the current sources. Rebuild it here —

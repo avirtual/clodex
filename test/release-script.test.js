@@ -1,7 +1,8 @@
-// The changelog -> release-notes extraction in scripts/release.sh runs exactly
-// once per release, mid-flight, after the version bump and before the push.
-// A bug there is discovered at the worst possible moment, so the awk/sed is
-// pinned here by running the same expressions the script runs.
+// Pins for scripts/release.sh, which has no other test coverage. Everything
+// here runs exactly once per release, mid-flight — the changelog extraction
+// between the version bump and the push, the preflight before either. A bug in
+// them is discovered at the worst possible moment, so they are pinned here by
+// running the same expressions the script runs.
 //
 // These tests shell out to the SAME expressions rather than reimplementing
 // them in JS: a reimplementation would pass while the script broke.
@@ -91,4 +92,17 @@ test('changelog: the real CHANGELOG.md parses with the shipped expressions', () 
   const src = fs.readFileSync(file, 'utf-8');
   assert.strictEqual((src.match(/^## +\[?Unreleased\]?/gm) || []).length, 1,
     'exactly one Unreleased heading, or the extraction takes the wrong one');
+});
+
+// The preflight sync check. It rejected a release that was 37 commits AHEAD of
+// origin and 0 behind — a pure fast-forward the script pushes itself a few
+// steps later. Equality here blocks releasing any unpushed work, which is the
+// normal case, so the direction of this comparison is the whole point.
+test('release preflight: rejects BEHIND, permits AHEAD', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  assert.match(src, /BEHIND="\$\(git rev-list --count HEAD\.\.@\{u\}\)"/,
+    'the sync check must count commits we are MISSING, not compare revisions for equality — '
+    + 'equality also fails on AHEAD, which blocks every release carrying unpushed commits');
+  assert.ok(!/\[ "\$\(git rev-parse HEAD\)" = "\$\(git rev-parse @\{u\}\)" \]/.test(src),
+    'the old equality check is back: it cannot tell "ahead" (fine) from "behind" (unsafe)');
 });
