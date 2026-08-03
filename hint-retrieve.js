@@ -260,14 +260,6 @@ function labelOf(r) {
 
 function compose(results) {
   if (!results || !results.length) return null;
-  // The second sentence is load-bearing and must not be dropped as verbosity.
-  // Hints ride uncached at 1x on every request carrying them, so this one is
-  // armed `turn_start_only` and the proxy pops it after one delivery — a model
-  // that judges it useful but defers acting until after a tool call finds it
-  // gone, and reaching for a tool first is the default behaviour. Naming the
-  // deadline is what converts a one-shot delivery into something the model can
-  // preserve for itself. It stays silent on WHY delivery is one-shot: the
-  // billing reason is not the model's to reason about.
   // EVERY WORD HERE IS BILLED UNCACHED ON EVERY REQUEST THAT CARRIES A HINT, so
   // only what is USELESS ONE SESSION EARLIER lives here. The standing rules —
   // including the retraction guard for the turn after this one — are in
