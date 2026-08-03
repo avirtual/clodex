@@ -276,10 +276,21 @@ test('t81 typeToken: every leaf type the validator supports has a token', () => 
   assert.strictEqual(typeToken({ type: 'string', enum: ['a', 'b'] }), '"a|b"');
 });
 
-test('t81 commandLines: a bare id string degrades to the id-only line', () => {
+test('t81 commandLines: an unreadable def still carries a callable payload form', () => {
   // session-manager passes resolved summaries, but a def that cannot be read
   // falls back to the string — the grant is real, so the command must still list.
-  assert.strictEqual(commandLines('clodex-run-tests'), '  [agent:exec clodex-run-tests]');
+  //
+  // It must NOT list as a bare id. parseAndValidate rejects an empty body before
+  // any schema is consulted, so a seat that calls the bare form gets "payload:
+  // empty", reads the grant as broken, and falls back to the raw shell command
+  // the grant exists to replace. Measured: two bounced calls, then a hand-run
+  // `npm test` straight past the suite lock.
+  const line = commandLines('clodex-run-tests');
+  assert.ok(line.startsWith('  [agent:exec clodex-run-tests] {}'), `callable form missing: ${line}`);
+  // And it must be distinguishable from a healthy no-field command, or the seat
+  // cannot tell "takes nothing" from "we could not read the fields".
+  assert.notStrictEqual(line, commandLines({ name: 'clodex-run-tests', schema: { type: 'object' } }));
+  assert.match(line, /unreadable/);
 });
 
 test('t81 commandLines: a description renders on its own line; absent = no line', () => {

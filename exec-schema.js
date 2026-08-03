@@ -255,14 +255,23 @@ function payloadForm(schema) {
 }
 
 // One prompt line for one granted command. `def` may be:
-//   - a string id            -> id only (no def could be read; degrade, never throw)
+//   - a string id            -> id + `{}` and a note that the def was unreadable
 //   - { name, description?, schema? } -> id + derived payload form, and the
 //     description on a continuation line when the def carries one.
 // A def with no description renders WITHOUT a description line rather than with
 // an invented one: descriptions are operator-authored, and guessing what an
 // unknown command does is worse than saying nothing.
+//
+// The string branch still prints a payload form. Rendering the id ALONE made the
+// degraded line indistinguishable from a healthy no-field command, and a seat
+// reading a bare id calls it bare — which bounces with "payload: empty", looks
+// like the grant is broken, and sends the seat to the raw shell command the
+// grant exists to replace (observed: two bounced calls, then a hand-run
+// `npm test` past the suite lock). `{}` is the right guess whatever the schema
+// turns out to be: it is the minimum every command accepts, and the note says
+// the field list is missing rather than implying there are none.
 function commandLines(def) {
-  if (typeof def === 'string') return `  [agent:exec ${def}]`;
+  if (typeof def === 'string') return `  [agent:exec ${def}] {}\n      (definition unreadable — payload fields unknown; {} is the minimum, add fields if it reports missing ones)`;
   if (!def || typeof def !== 'object' || !def.name) return '';
   const head = `  [agent:exec ${def.name}] ${payloadForm(def.schema)}`;
   const desc = typeof def.description === 'string' ? def.description.trim() : '';

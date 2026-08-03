@@ -262,7 +262,12 @@ test('t81: the three false statements are GONE from the section', () => {
 
 test('t81: bare id strings still render (a def that cannot be read never blocks a spawn)', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests', { name: 'clodex-team', schema: { type: 'object' } }]);
-  assert.ok(p.includes('  [agent:exec clodex-run-tests]\n'), 'string entry degrades to the id-only line');
+  // Degraded, but still CALLABLE: the id alone bounces with "payload: empty"
+  // and reads to the seat as a broken grant. It must also stay distinguishable
+  // from the healthy no-field form on the next line, or "fields unknown" and
+  // "no fields" look identical in the prompt.
+  assert.ok(p.includes('  [agent:exec clodex-run-tests] {}\n'), 'string entry degrades to a callable line');
+  assert.match(p, /clodex-run-tests\] \{\}\n {6}\(definition unreadable/);
   assert.ok(p.includes('  [agent:exec clodex-team] {}'), 'resolved entry alongside it still renders its form');
 });
 
