@@ -167,6 +167,33 @@ test('exec section states that a granted command BEATS the equivalent shell line
     'the rule must precede the listing it governs');
 });
 
+// Placement, not wording. The EXEC section is read ONCE at session start; the
+// decision to run something happens many turns later, with attention on SHELL
+// COMMANDS. A rule that lives only in the section being skipped is not a rule.
+test('a seat with exec grants is pointed back at them from SHELL COMMANDS', () => {
+  const granted = buildIpcPrompt(null, ['clodex-run-tests']);
+  const shellAt = granted.indexOf('SHELL COMMANDS:');
+  assert.ok(shellAt > 0, 'the shell section exists');
+  assert.match(granted.slice(shellAt), /check your EXEC COMMANDS list above/,
+    'the pointer must sit in the shell section, where the decision is actually made');
+  assert.ok(granted.indexOf('EXEC COMMANDS:') < shellAt, 'and point BACKWARD, at text already read');
+  // A seat with no grants must not be told to consult a list it does not have —
+  // and this is also what keeps both byte-pins equal to IPC_PROMPT.
+  assert.ok(!buildIpcPrompt(null, []).includes('check your EXEC COMMANDS list'),
+    'no grants, no pointer');
+});
+
+// The harness ships tools whose names collide with granted commands (a Monitor
+// tool vs clodex-monitor); they are unrelated and do not touch this registry.
+// A seat matching on NAME reaches the wrong one and never learns why.
+test('exec section says to match a command by what it DOES, not by its name', () => {
+  const p = buildIpcPrompt(null, ['clodex-monitor']);
+  assert.match(p, /similar NAME is a different thing that does not use this registry/);
+  assert.match(p, /Never sit blocking on slow work a granted command would run for you/,
+    'the blocking-wait default is the specific behaviour a monitor grant exists to replace');
+  assert.match(p, /BEFORE you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
+});
+
 test('exec section renders the granted command ids, and only when granted', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests', 'clodex-team']);
   assert.ok(/\nEXEC COMMANDS:\n/.test(p), 'EXEC COMMANDS section present when granted');

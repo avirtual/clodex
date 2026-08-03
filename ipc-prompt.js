@@ -174,8 +174,10 @@ function execSection(execCommands) {
   if (!lines) return '';
   return `EXEC COMMANDS:
 Your operator granted this seat a set of named shell commands, listed below with the JSON payload each takes: \`[agent:exec <name>] {"key":value}\` on one line. The name selects a pre-registered command — you never write the command line itself, and your payload never becomes part of it, but most commands DO take arguments through that JSON. A payload is always required: even a command with no fields needs a literal \`{}\`, or it bounces with "payload: empty (expected JSON)". Values shown as \`a|b|c\` are the only ones accepted.
+Success is SILENT — nothing returns and no news is good news. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you.
 A granted command is your operator's PREFERRED route for the job it names, not an alternative to keep in reserve: it was registered because the equivalent shell command is long, easy to get wrong, or returns far more output than you need. When a listed command covers what you are about to do, use it INSTEAD of assembling the same thing with your shell tool — reaching past it is a mistake even when your version works, and running both is strictly worse than either.
-Success is SILENT — nothing returns and no news is good news. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you. Yours:
+Read the list BEFORE you plan a job, not after your own version disappoints — the value of a grant is the turn you never spend. Never sit blocking on slow work a granted command would run for you and report back on. A tool in your own harness with a similar NAME is a different thing that does not use this registry, so match on what a command DOES, never on what it is called.
+Yours:
 ${lines}`;
 }
 
@@ -189,13 +191,18 @@ Never: narrate what you did; save what the code or docs already say (it rots the
 Saves, pins and deletes succeed silently: the confirmation (with the unit id) arrives attached to your NEXT turn's context rather than waking you, so don't wait for it — only failures come back immediately.
 Clodex may also attach a relevant memory to a single request, inside a system-reminder that says so. It is not repeated, and a later turn will not show where it came from — so if you cannot source something you said earlier, that is expected and is NOT a reason to retract it as confabulation. It is retrieved, not verified, and some are extracted from old conversations — where one conflicts with what the user just told you, the user is right. Retrieval is lexical and often misses: when an attached memory has nothing to do with the work in front of you, drop it in silence — do not mention it, summarize it, or explain why you are not using it. Reporting the miss costs the operator more attention than the miss did.`;
 
-const TRAILER = `RULES:
+// The SHELL COMMANDS section is where a seat's attention IS at the moment it
+// decides to run something — the EXEC section was read once at session start and
+// is long past. So a seat holding exec grants gets one line pointing back at
+// them, rendered HERE rather than only up there. Empty for a seat with no
+// grants, which is what keeps the two byte-pins equal to IPC_PROMPT.
+const TRAILER_FOR = (execNudge = '') => `RULES:
 - An intent must start on its own line. Leading whitespace and list decoration are stripped before matching, so an INDENTED intent still fires — indentation is not a quote. Mid-line intents (prose before the bracket) never fire. To quote an intent literally, put it inside a fenced code block (\`\`\` ... \`\`\` — fenced lines never fire and never end a body) or use the backslash escape: \`\\[agent:...]\` (works indented too).
 - A dm or memory-remember body runs from its intent line until a bare \`[agent:end]\` line or the next \`[agent:...]\` intent line; a body you leave open runs to the very end of your reply. So ALWAYS close every body with \`[agent:end]\` on its own line — it is the body's closing bracket, not an optional extra. Write it even when nothing follows: an open body silently swallows any operator-facing prose you add after it into the message. You may emit several intents in one reply, each on its own line, in order; anything meant for your operator goes above the intents or after an \`[agent:end]\`.
 - Messages are plain text, max 64KB.
 
 SHELL COMMANDS:
-Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.`;
+Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.${execNudge}`;
 
 // Assemble the append blob for a seat whose persisted intent allowlist is
 // `intentsList` (array | null; null/absent = all enabled — the interpretation
@@ -222,7 +229,9 @@ function buildIpcPrompt(intentsList, execCommands, extraGrammarLines) {
   const exec = execSection(execCommands);
   if (exec) blocks.push(exec);
   if (intentEnabled('memory', intentsList)) blocks.push(MEMORY_SECTION);
-  blocks.push(TRAILER);
+  blocks.push(TRAILER_FOR(exec
+    ? '\nBefore a shell command that is slow, long, or fiddly, check your EXEC COMMANDS list above for one that already does it — that is the point of the grant.'
+    : ''));
   return blocks.join('\n\n');
 }
 

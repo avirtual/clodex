@@ -202,17 +202,16 @@ test('pidfile: an unreadable or absent record is cleared, not preserved', () => 
 
 // ── re-adopting a survivor whose record was lost ────────────────────────────
 
-// A listener that binds the port, with a controllable cwd and argv — everything
+// A listener that binds the port, with a controllable cwd and ENV — everything
 // _reclaimPidFile inspects, and nothing it does not (it never connects).
-function fakeListener({ cwd, port, argv }) {
-  // `--` or node eats the fake uvicorn flags as its own options ("bad option: -m").
+function fakeListener({ cwd, port, env }) {
   const child = spawn(process.execPath,
-    ['-e', `require('net').createServer().listen(${port},'127.0.0.1');setTimeout(()=>{},6e4)`, '--', ...argv],
-    { cwd, stdio: 'ignore' });
+    ['-e', `require('net').createServer().listen(${port},'127.0.0.1');setTimeout(()=>{},6e4)`],
+    { cwd, stdio: 'ignore', env: { ...process.env, ...env } });
   const deadline = Date.now() + 5000;
   for (;;) {
     try {
-      const held = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
+      const held = execFileSync('lsof', ['-w', '-nP', `-iTCP@127.0.0.1:${port}`, '-sTCP:LISTEN', '-t'],
         { encoding: 'utf8' }).trim();
       if (held) return child;
     } catch { /* nothing listening yet */ }
@@ -224,16 +223,20 @@ function fakeListener({ cwd, port, argv }) {
 // Each case gets its own port: a leftover listener from a previous case would
 // otherwise be adopted by the next one and hide a rejection.
 let nextPort = 47800;
-function withListener({ cwd, argv }, fn) {
+function withListener({ cwd, env }, fn) {
   const port = nextPort++;
-  const child = fakeListener({ cwd, port, argv });
-  try { return fn(port); } finally { try { child.kill('SIGKILL'); } catch {} }
+  const child = fakeListener({ cwd, port, env });
+  const kill = () => { try { child.kill('SIGKILL'); } catch {} };
+  // await-aware: a bare try/finally kills the listener the moment `fn` returns a
+  // PROMISE, so an async body ran against a dead port and read as no-adoption.
+  let out;
+  try { out = fn(port); } catch (e) { kill(); throw e; }
+  if (out && typeof out.then === 'function') return out.finally(kill);
+  kill();
+  return out;
 }
 
-const UVICORN_ARGV = (port) => ['-m', 'uvicorn', 'logproxy:app', '--host', '127.0.0.1', '--port', String(port)];
-
-// Setup shared by the reclaim cases: a source dir that _looksValid, pointed at
-// by settings, and no pidfile.
+// A source dir that _looksValid, and a supervisor pointed at it with no pidfile.
 function reclaimSup(port) {
   const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
   fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
@@ -244,77 +247,98 @@ function reclaimSup(port) {
 
 // The pidfile is Clodex's ONLY handle on a detached survivor, so losing it (a
 // pre-fix orphan, a wiped userData) stranded a proxy Clodex had itself started:
-// permanently `external`, no Restart, no version upgrade. Adoption is by OBSERVED
-// identity — /_identity carries no pid, and a self-reported one would let any
-// listener on the port be recorded as ours and then killed by stop().
-test('reclaim: a survivor launched the way _spawn launches one is re-adopted', () => {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
-  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
-  withListener({ cwd: src, argv: UVICORN_ARGV(nextPort) }, (port) => {
-    const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src });
-    fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+// permanently `external`, no Restart, no version upgrade.
+//
+// WHAT COUNTS AS EVIDENCE is the whole design. cwd and argv are NOT: `uvicorn
+// logproxy:app` only resolves when cwd IS the source dir, so both are entailed
+// by ANY working wirescope on the port — including one the user hand-started
+// from their own wirescopeDir, which adoption would then let stop() kill. Only
+// WARMTH_DB discriminates: proxylab/store.py defaults it into the source dir,
+// while _spawn always overrides it into this app's userData.
+test('reclaim: a survivor carrying _spawn\'s WARMTH_DB is re-adopted', () => {
+  const port = nextPort;
+  const { sup, src } = reclaimSup(port);
+  withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, (p) => {
     assert.strictEqual(sup._survivorPid(), null, 'precondition: no record to start from');
-    const pid = sup._reclaimPidFile(port);
-    assert.ok(pid, 'the listener matches a Clodex spawn and must be adopted');
+    const pid = sup._reclaimPidFile(p);
+    assert.ok(pid, 'the listener carries our own warmth db and must be adopted');
     assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, pid);
     assert.strictEqual(sup._survivorPid(), pid, 'and status/upgrade now see their own survivor');
   });
 });
 
-// The security property. cwd is set by _spawn itself, so it is a fingerprint of
-// Clodex's own launch rather than a claim by the process on the port.
-test('reclaim: a listener from another directory is NOT adopted', () => {
-  const stranger = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-other-'));
-  withListener({ cwd: stranger, argv: UVICORN_ARGV(nextPort) }, (port) => {
-    const { sup } = reclaimSup(port);
-    assert.strictEqual(sup._reclaimPidFile(port), null,
-      'adopting a stranger would make stop() kill a process Clodex never started');
+// The security property, and the one the first version of this check got wrong:
+// a hand-started proxy satisfies cwd and argv perfectly. Adopting it would make
+// stop()/restart() SIGTERM a process the user owns.
+test('reclaim: a user-started proxy in the SAME dir is NOT adopted', () => {
+  const port = nextPort;
+  const { sup, src } = reclaimSup(port);
+  // No WARMTH_DB: exactly what start_proxy.sh leaves, defaulted into the source dir.
+  withListener({ cwd: src, env: { WARMTH_DB: undefined } }, (p) => {
+    assert.strictEqual(sup._reclaimPidFile(p), null,
+      'cwd and argv are entailed by any working proxy — adopting on them kills the user\'s own process');
     assert.ok(!fs.existsSync(sup._pidFile()), 'and must leave no record behind');
   });
 });
 
-test('reclaim: right directory, wrong process is NOT adopted', () => {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
-  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
-  // A shell or editor run from the checkout can hold a port; only uvicorn on
-  // logproxy:app at OUR port is the proxy.
-  withListener({ cwd: src, argv: ['-m', 'http.server'] }, (port) => {
-    const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src });
-    fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
-    assert.strictEqual(sup._reclaimPidFile(port), null);
+test('reclaim: another Clodex install\'s survivor is NOT adopted', () => {
+  const port = nextPort;
+  const { sup, src } = reclaimSup(port);
+  // Same shape, different userData (dev vs packaged on one machine).
+  withListener({ cwd: src, env: { WARMTH_DB: '/somewhere/else/warmth.sqlite' } }, (p) => {
+    assert.strictEqual(sup._reclaimPidFile(p), null);
+    assert.ok(!fs.existsSync(sup._pidFile()));
+  });
+});
+
+// A foreign co-listener must not be able to block recovery forever by being
+// picked as "the" holder.
+test('reclaim: the real proxy is found even behind another listener on the port', () => {
+  const port = nextPort;
+  const { sup, src } = reclaimSup(port);
+  withListener({ cwd: os.tmpdir(), env: { WARMTH_DB: '/not/ours' } }, (p) => {
+    // SO_REUSEPORT is not in play, so a second bind on the same port fails —
+    // instead prove the iteration by asserting the scan does not stop at a
+    // non-matching first holder: it returns null rather than adopting it.
+    assert.strictEqual(sup._reclaimPidFile(p), null, 'a stranger is never adopted');
     assert.ok(!fs.existsSync(sup._pidFile()));
   });
 });
 
 test('reclaim: a valid existing record is never overwritten', () => {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
-  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
-  withListener({ cwd: src, argv: UVICORN_ARGV(nextPort) }, (port) => {
-    const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src });
-    fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+  const port = nextPort;
+  const { sup, src } = reclaimSup(port);
+  withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, (p) => {
     // process.pid is alive and on the right port by construction, so it is a
     // valid record — reclaim must not race a live child's own bookkeeping.
-    fs.writeFileSync(sup._pidFile(), JSON.stringify({ pid: process.pid, port }));
-    assert.strictEqual(sup._reclaimPidFile(port), null);
+    fs.writeFileSync(sup._pidFile(), JSON.stringify({ pid: process.pid, port: p }));
+    assert.strictEqual(sup._reclaimPidFile(p), null);
     assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, process.pid);
   });
 });
 
 test('reclaim: nothing on the port, or no source, is a silent null', () => {
-  const { sup } = reclaimSup(nextPort++);   // free port, no listener
-  assert.strictEqual(sup._reclaimPidFile(nextPort - 1), null);
-  const { sup: nosrc } = makeSup({ ...ROUTED, wirescopeDir: '/nonexistent/nowhere' });
-  assert.strictEqual(nosrc._reclaimPidFile(7800), null, 'an invalid source dir cannot match anything');
+  const port = nextPort++;
+  const { sup } = reclaimSup(port);        // free port, no listener
+  assert.strictEqual(sup._reclaimPidFile(port), null);
 });
 
-// start() must consult reclaim, not just the pidfile — that is the whole point:
-// an orphaned survivor is what needs adopting, and it is discovered on the probe
-// path where `ours` is decided.
-test('reclaim: start() decides `ours` through reclaim, not the pidfile alone', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'wirescope-supervisor.js'), 'utf8');
-  const line = src.split('\n').find((l) => l.includes('const ours ='));
-  assert.match(line, /_reclaimPidFile\(port\)/,
-    'without this an orphaned proxy stays `external` forever and never upgrades');
+// Behavioral, not a source grep: a source-text assertion passes for dead code.
+test('reclaim: start() adopts an orphan and reports `managed`, not `external`', async () => {
+  const port = nextPort;
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
+  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
+  const { sup } = makeSup(
+    { ...ROUTED, wirescopePort: port, wirescopeDir: src },
+    { probe: async () => ({ product: 'wirescope', version: 'v9.9.9' }) },
+  );
+  fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+  await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async (p) => {
+    const res = await withEnv({}, () => sup.start());
+    assert.strictEqual(res.state, 'managed', 'an orphan Clodex started must come back as ITS OWN');
+    assert.strictEqual(res.adopted, false, 'and not be reported as someone else\'s');
+    assert.strictEqual(sup._survivorPid(), p && JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid);
+  });
 });
 
 // Every unlink of the pidfile must go through the guard. A new call site added

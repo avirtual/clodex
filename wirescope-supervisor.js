@@ -269,32 +269,72 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     // Re-adopt a managed proxy whose pidfile was lost (pre-fix orphans, a wiped
     // userData). Identity is OBSERVED from outside, never asked for: /_identity
     // carries no pid, and trusting a self-reported one would let any listener on
-    // the port talk Clodex into a record that `stop()` then kills. What is checked
-    // instead is that the process holding our port was launched the way _spawn
-    // launches one — cwd is the resolved source dir, argv is uvicorn on logproxy:app
-    // at that port. Clodex sets that cwd itself, so it is a fingerprint of its own
-    // spawn rather than a claim by the process.
-    // The venv python is deliberately NOT part of the check: it symlinks out to the
-    // system interpreter, so the executable path is shared with every other python.
+    // the port talk Clodex into a record that `stop()` then kills.
+    //
+    // The evidence is WARMTH_DB in the process env, and only that. cwd and argv
+    // are NOT evidence: `uvicorn logproxy:app` resolves the module only when cwd
+    // IS the source dir, so both are entailed by any working wirescope on that
+    // port — including one the USER hand-started from their own wirescopeDir,
+    // which adoption would then let stop()/restart() kill. WARMTH_DB discriminates
+    // because proxylab/store.py defaults it INTO the source dir when unset, while
+    // _spawn always overrides it to this app's userData; it is fixed at exec, so
+    // nothing outside the process can forge it, and every pre-fix orphan carries
+    // it (the var predates the pidfile — see _spawn's env).
+    // Compared against _dirs() rather than a pattern: that is the same function
+    // that produced the value, so a dev-vs-packaged userData correctly does NOT
+    // adopt the other's survivor.
     // Callers must have probed the port first — this only establishes ownership.
     _reclaimPidFile(port) {
-      const dir = this._source().dir;
-      if (!dir) return null;
+      if (this._survivorPid()) return null;            // a valid record already exists
+      // start() runs on every launch and every settings:set, so an unfixable
+      // environment must not log on a loop. `log` is a bare fn in some hosts —
+      // never assume the tagged-method shape here.
+      const warnOnce = (tool) => {
+        if (this._missingTool === tool) return;
+        this._missingTool = tool;
+        const msg = `${tool} not found — cannot re-adopt an orphaned wirescope`;
+        try { (log && typeof log.warn === 'function') ? log.warn('wirescope', msg) : (typeof log === 'function' && log(msg)); } catch {}
+      };
+      const wantDb = this._dirs().warmthDb;
+      const host = wirescopeBindHost(process.env);
+      let pids;
       try {
-        if (this._survivorPid()) return null;          // a valid record already exists
-        const run = (args) => execFileSync('lsof', args, { encoding: 'utf8', timeout: 2000 });
-        const pid = parseInt(run(['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']).trim().split('\n')[0], 10);
-        if (!pid) return null;
-        const cwd = (run(['-a', '-p', String(pid), '-d', 'cwd', '-Fn'])
-          .split('\n').find((l) => l.startsWith('n')) || '').slice(1);
-        if (fs.realpathSync(cwd) !== fs.realpathSync(dir)) return null;
-        const argv = execFileSync('ps', ['-o', 'command=', '-p', String(pid)],
-          { encoding: 'utf8', timeout: 2000 });
-        if (!argv.includes('logproxy:app') || !new RegExp(`--port ${port}(\\s|$)`).test(argv)) return null;
-        fs.mkdirSync(path.dirname(this._pidFile()), { recursive: true });
-        fs.writeFileSync(this._pidFile(), JSON.stringify({ pid, port }));
+        // -w: lsof exits nonzero on any warning, which would discard a good read.
+        // Address-scoped and ALL holders, not [0]: a foreign co-listener picked
+        // arbitrarily would block recovery forever.
+        pids = execFileSync('lsof', ['-w', '-nP', `-iTCP@${host}:${port}`, '-sTCP:LISTEN', '-t'],
+          { encoding: 'utf8', timeout: 2000 })
+          .split('\n').map((l) => parseInt(l.trim(), 10)).filter(Boolean);
+      } catch (e) {
+        // ENOENT here means lsof is absent (common in Linux containers) and the
+        // feature can never work — silent failure would leave no way to diagnose
+        // a proxy that never re-adopts.
+        if (e && e.code === 'ENOENT') warnOnce('lsof');
+        return null;
+      }
+      for (const pid of pids) {
+        let env;
+        try {
+          env = execFileSync('ps', ['-Eww', '-o', 'command=', '-p', String(pid)],
+            { encoding: 'utf8', timeout: 2000 });
+        } catch (e) {
+          if (e && e.code === 'ENOENT') warnOnce('ps');
+          return null;
+        }
+        // Bounded by the NEXT VAR= token, not by whitespace: these are userData
+        // paths and "Application Support" has a space in it. The alternation must
+        // include \n — ps ends its line with one, `.` never crosses it, and a
+        // bare `$` (no /m) does not match before it, so the LAST var on the line
+        // silently failed to parse.
+        const m = env.match(/WARMTH_DB=(.*?)(?= [A-Za-z_][A-Za-z0-9_]*=|\n|$)/);
+        if (!m || m[1] !== wantDb) continue;
+        try {
+          fs.mkdirSync(path.dirname(this._pidFile()), { recursive: true });
+          fs.writeFileSync(this._pidFile(), JSON.stringify({ pid, port }));
+        } catch { return null; }
         return pid;
-      } catch { return null; }
+      }
+      return null;
     }
 
     // Drop the pidfile only when it still names `pid`. A restart's outgoing child

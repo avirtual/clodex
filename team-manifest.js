@@ -447,7 +447,9 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
     // bounces a non-lead, so advertising it to a hand invites a wasted turn.
     const cls = role !== 'reviewer' ? def.instantiate
       : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
-    const tmpl = def && typeof def.template === 'string' && def.template ? `, tmpl ${def.template}` : '';
+    // Suppressed on the reviewer: [agent:team-review] resolves the template
+    // itself, so printing one invites the hand-spawn the row exists to prevent.
+    const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
     const brief = def && def.brief ? ` — ${def.brief}` : '';
     const live = byRole.get(role);
     const liveStr = live && live.length ? ` · live: ${live.join(', ')}` : '';

@@ -46,9 +46,11 @@ blocks a release.
   some proxies already orphaned, and nothing recovered them: Preferences kept
   saying "not running", the Restart button stayed hidden, and a vendored update
   was never picked up no matter how many times you relaunched. Clodex now
-  re-adopts a proxy on the expected port after checking it was started the way
-  Clodex starts one — where it is running from and what it is running. A proxy
-  you started yourself is still left alone, and still never stopped by Clodex.
+  re-adopts a proxy on the expected port only when it carries a private setting
+  that Clodex itself sets at launch and nothing else supplies. A proxy you
+  started by hand is left alone even when it runs from the same directory, and
+  so is one belonging to another Clodex install on the same machine — neither is
+  ever stopped or restarted by this one.
 - **An agent now reaches for the tools you gave it.** Agents were told which
   commands you had granted them and how to call them, but not that those were
   the intended way to do the job — so they noticed the command and then wrote
