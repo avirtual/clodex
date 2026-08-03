@@ -203,6 +203,46 @@ this dependency" for semantic-hints) without being told the fix existed, and
 found no dead markup — consistent with my finding, which was about controls
 that are fully wired but INERT at runtime. Different failure, same dialog.
 
+### Step 8 — Dead-control sweep: the three were the only ones
+
+Swept every remaining Preferences control for the same class of defect (persists,
+survives relaunch, never acts). `disableClaudeDesignMcp` is live and in fact acts
+HARDER with the proxy off (`strictMcpReason` returns `'unrouted'`, which is a
+reason to push `--strict-mcp-config`, not to skip). `discoverOnStartup` is read
+at `renderer.js:5231` with no proxy dependency. The statusline components render
+into a shell script that never consults the proxy. So the three I shipped were
+the whole population — a negative result, recorded so nobody re-runs the sweep.
+
+### Step 9 — Hint dating: SHIPPED (23b13ea)
+
+The one extraction-quality thread that turned out to be measurable. Chasing the
+"visionary" unit found the extraction FAITHFUL — the quote genuinely says "i am
+the man with the vision", so a useful preference is wrapped in a joke's framing.
+Not mechanically detectable, and not the real problem.
+
+The real one, measured: **a delivered hint carried no date.** The store is 26.4%
+`evolving` + `confidence: high` + older than a year (`stale.js`). Of 22 units
+delivered across 30 personal drafts (`hintage.js`), 15 were >1y old, median 627d.
+The extractor sometimes hedges in-body ("As of August 2024...") — but only
+sometimes: `dated.js` measured 10/22 carrying a recoverable date in the SHIPPED
+text, leaving **7/22 riding as present tense at up to 727 days old**, including a
+2-year-old branching strategy asserted flatly as current.
+
+This is not a new policy. `composeDigest` already ages every unit via `fmtAge`
+(memory-store.js:273); `unitsAsRecords` simply dropped `learned_at` before it
+could reach the hint path. Fix carries the field and appends `learned=YYYY-MM` to
+the existing scope/tags label.
+
+Kept off the ranking on purpose: `haystack()` reads text/tags/scope only, so a
+date cannot make a unit win for containing a year. **Verified, not assumed** —
+`baseline.js` before/after gives byte-identical selection (same 21 ids, same
+drafts silent), cost +336 chars over 21 units (~16/unit). Both halves
+mutation-tested: dropping the date from the label fails 1 test, leaking
+`learned_at` into `haystack` fails 1. 3472 pass / 0 fail, electron-smoke green.
+
+Why this is safe to ship while Bogdan live-tests retrieval: it changes WHAT a
+hint says, never WHICH hint arrives. The measurement above is the claim.
+
 ### Observations for Bogdan — NOT acted on, deliberately
 
 1. **Theme and env vars bypass Save/Cancel.** `themes.js:50` persists on
