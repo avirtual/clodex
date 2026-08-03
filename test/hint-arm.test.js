@@ -2149,7 +2149,14 @@ test('a delivered hint carries WHEN it was learned', () => {
   const { store } = mkStore([{ text: 'Bogdan deploys infrastructure with Terragrunt on top of Terraform.' }]);
   const rec = unitsAsRecords(store.list('a'))[0];
   assert.ok(rec.learned_at, 'the record must carry the date at all');
-  assert.match(blockFor(rec), /learned=\d{4}-\d{2}/, 'and the shipped block must show it');
+  // An OLD stamp, because mkStore writes learned_at = now: a regression dating
+  // every unit from the clock instead of from the record would assert that
+  // every stale claim is fresh, and a shape-only assertion passes it green.
+  const old = { ...rec, learned_at: '2024-08-01T00:00:00.000Z' };
+  assert.ok(blockFor(old).includes('learned=2024-08'), 'the block shows the unit date, not today');
+  // learned_at defaults to '' (memory-store list()), so the bit must vanish
+  // rather than emit `learned=Invalid Date`.
+  assert.ok(!blockFor({ ...rec, learned_at: '' }).includes('learned='), 'an undated unit shows no date');
 });
 
 test('dating a hint does not change which hint wins', () => {
@@ -2160,6 +2167,9 @@ test('dating a hint does not change which hint wins', () => {
   const recs = unitsAsRecords(mkStore(CORPUS).store.list('a'));
   const withDates = rank(recs, 'wirescope tail hint registry', { limit: 3 });
   const stripped = rank(recs.map(({ learned_at, ...r }) => r), 'wirescope tail hint registry', { limit: 3 });
+  // Two empty arrays are deepStrictEqual: without this the parity assert passes
+  // vacuously the day the fixture stops arming.
+  assert.ok(withDates.length, 'fixture must actually arm');
   assert.deepStrictEqual(withDates.map((r) => r.text), stripped.map((r) => r.text),
     'identical ranking with and without dates');
 });

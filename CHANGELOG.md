@@ -19,8 +19,8 @@ blocks a release.
   described work from 2024. Measured over the live stores: of 22 memories
   delivered across 30 questions, 15 were over a year old and 7 of those had no
   date recoverable from their own wording. Each memory now carries the month it
-  was learned, next to the tag saying whether it is the kind of fact that
-  changes. Which memory rides is unaffected — the date is shown, never matched.
+  was learned. Which memory rides is unaffected — the date is shown, never
+  matched.
 - **A Preferences toggle that cannot act now says so.** Three checkboxes — the
   resume-time transcript bake and both hint settings — did nothing unless
   "Optimize agent API traffic" was on, but you could still tick them, save, and

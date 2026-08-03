@@ -30,7 +30,9 @@ function terms(text) {
 
 // scope and tags are the curated topic labels — the shortest path from a
 // question's subject to a record about it. Omitting them made "tell me about
-// the family" miss a record whose scope is literally `family`.
+// the family" miss a record whose scope is literally `family`. NOT learned_at,
+// which the record also carries: a date must not make a unit win for
+// containing a year.
 function haystack(rec) {
   return `${rec.text} ${rec.tags || ''} ${rec.scope || ''}`;
 }
@@ -292,10 +294,9 @@ const DIRECTIVE_LINE = /^(?:(?:scope|tags|tags_v|pinned|source|id|learned_at)=\S
 // the tag it carries. Cheap to include, so always include them.
 // Undated, a memory reads as present tense: measured over the live stores, 7 of
 // 22 delivered units were >1y old with no date recoverable from their own text,
-// and the oldest asserted a 2-year-old branching strategy as current. The
-// session-start digest already ages every unit; this is the same fact on the
-// hint path. Year-month, not fmtAge's day count — the reader should not have to
-// subtract to know whether a claim predates the work in front of it.
+// and the oldest asserted a 2-year-old branching strategy as current.
+// Year-month, not fmtAge's day count — the reader should not have to subtract
+// to know whether a claim predates the work in front of it.
 function labelOf(r) {
   const tags = String(r.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
   const bits = [];
