@@ -187,7 +187,33 @@ Bogdan.
 
 ### Subagents
 
-Dispatched two (settings inventory, cold reviewer); NEITHER reported back. I
-verified the reviewer's three deciding questions myself before committing rather
-than blocking on it. Noting the pattern: that is 2/2 background subagents silent
-tonight — if it repeats, the dispatch path is the suspect, not the tasks.
+Dispatched two (settings inventory, cold reviewer). The inventory DID report,
+late — after I had already shipped. The cold reviewer never did; I verified its
+three deciding questions myself before committing rather than blocking. So 1/2,
+not 2/2 as first recorded here. Delivery is late rather than lost, which means
+a dispatch is worth a longer wait than I gave it — but not worth blocking a
+verifiable change on.
+
+The inventory independently confirmed the shipped defect ("UI does NOT express
+this dependency" for semantic-hints) without being told the fix existed, and
+found no dead markup — consistent with my finding, which was about controls
+that are fully wired but INERT at runtime. Different failure, same dialog.
+
+### Observations for Bogdan — NOT acted on, deliberately
+
+1. **Theme and env vars bypass Save/Cancel.** `themes.js:50` persists on
+   `change`; `renderer.js:3406` commits on the "Set" button. Everything else in
+   the dialog batches into Save, so Cancel does not undo either. Verified, but I
+   do not think it is a defect: theme says "applies immediately" in its own
+   prose, and env vars are a live list editor that answers "Saved KEY." and
+   shows the new row. Making them batch would be a bigger change (delete/edit
+   semantics) and is a taste call about rendered appearance. Bogdan's to make.
+2. **The actual cause of "busy" is layout, not content.** Nearly every row below
+   the statusline sections reinvents `display:flex; align-items:center; gap:8px`
+   as an inline `style=` attribute; there is no `.prefs-row` class. A pure
+   CSS-consolidation refactor would likely fix the feel — but it is invisible to
+   every test in this repo and I cannot see it render, so I am not doing it
+   blind. This is the one to hand back with "here is where to look".
+3. The dialog is 9 sections / 27 controls. If it gets reorganized, the
+   markup-contract test in `test/prefs-gate.test.js` is what stops a
+   reorganization silently dropping a gated control.
