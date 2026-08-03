@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **A Preferences toggle that cannot act now says so.** Three checkboxes — the
+  resume-time transcript bake and both hint settings — did nothing unless
+  "Optimize agent API traffic" was on, but you could still tick them, save, and
+  relaunch to find them still ticked and still inert. They are now greyed with
+  the reason underneath, and semantic ranking greys the same way when hints
+  themselves are off. Your choices are remembered, not discarded: turn the proxy
+  back on and they return as you left them.
 - **The semantic pass no longer throws away the memory your question matched.**
   It was meant to reorder what the word-matching gate found; it was instead
   re-ranking the whole store and replacing that result outright. Asking "any
