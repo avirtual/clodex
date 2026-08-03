@@ -1655,6 +1655,43 @@ test('semantic: a draft the lexical gate rejects never reaches the ranker', asyn
     'and the semantic ranker must not even be consulted — it cannot abstain, so asking it is the bug');
 });
 
+// REFINE REORDERS, IT DOES NOT REPLACE. Ranking the whole corpus and taking its
+// top N discards the units the gate actually matched — measured over 11 drafts
+// the gate fired on, only 41% of shipped units were lexical matches, and 6 of
+// the 11 lost every one. Live: "any other colleagues in my orbit?" matched a
+// list of the operator's colleagues on two terms at coverage 0.79 and shipped
+// three units about an assistant project, LinkedIn and parenting instead.
+test('refine: the semantic pass reorders the lexical survivors, never replaces them', async () => {
+  const sem = fakeSemantic({ winner: 'mem-not-in-the-lexical-result' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'the lexical gate armed');
+  assert.ok(!posts[0].text.includes('mem-not-in-the-lexical-result'),
+    'a unit the gate never matched cannot ride just because cosine liked it');
+  assert.ok(sem.calls[0].opts.only instanceof Set && sem.calls[0].opts.only.size > 0,
+    'and the ranker is told which ids it may score');
+});
+
+// Belt and braces: a ranker that ignores `only` (an older build, a stub) must
+// not be able to smuggle the whole corpus back in.
+test('refine: a ranker that ignores the restriction still cannot widen the result', async () => {
+  const rogue = {
+    calls: [],
+    async rank(draft, opts) {
+      this.calls.push({ draft, opts });
+      return [{ id: 'mem-outsider', text: 'a unit the gate never matched', tags: '', scope: '',
+        source: 'memory', confidence: 0.99, evidence: { sim: 0.99, ranker: 'semantic' } }];
+    },
+  };
+  const { arm, posts } = mkArmWith(rogue, { personalAsk });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1);
+  assert.ok(!posts[0].text.includes('mem-outsider'),
+    'the restriction is re-applied to the ranker output, not merely requested');
+});
+
 // A one-term query ties every lexical match (see the tie test above), so short
 // personal questions cannot be RANKED lexically at all. They are admitted by
 // question SHAPE instead and ranked semantically — the only path where the
@@ -1882,33 +1919,42 @@ test('personalAsk: admits questions about the person, rejects questions about th
   }
 });
 
-test('semantic: when the gate fires, the semantic order replaces the lexical one', async () => {
+// The semantic order still wins — but AMONG THE SURVIVORS. This draft matches
+// two units lexically, with ids[2] ahead; the ranker prefers ids[3] and that
+// preference is what must ride. (Before, this was demonstrated with a unit the
+// gate never matched at all, which is the behaviour that shipped three
+// irrelevant memories in production.)
+test('semantic: when the gate fires, the semantic order wins among the survivors', async () => {
   const { store, ids } = mkStore(CORPUS);
   const posts = [];
   const logged = [];
-  // The unit lexical would NOT pick for this draft.
-  const other = ids[5];
+  const draft = 'a session keyed by name has no registry or socket';
   const arm = createHintArm({
     log: { debug: (tag, msg) => logged.push(`${tag} ${msg}`) },
     retriever: createMemoryRetriever({ listUnits: (a) => store.list(a) }),
     semantic: {
       async rank() {
-        return [{ id: other, text: 'the digest budget reserves half its bytes for index lines',
+        return [{ id: ids[3], text: 'bash sessions are private: no registry, no socket',
           tags: '', scope: '', source: 'memory', confidence: 0.71,
           evidence: { sim: 0.712, ranker: 'semantic' } }];
       },
     },
     compose,
     terms,
+    // Without this the arm asks for ONE unit, and a single survivor cannot show
+    // an ordering — the assertion below would pass on an absent id.
+    selectWithinBudget,
     loadState: () => 'absent',
     armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
     clearHints: () => Promise.resolve({ status: 200 }),
   });
-  arm.onDraft('s', DRAFT, CTX, { final: true });
+  arm.onDraft('s', draft, CTX, { final: true });
   await settle();
   assert.strictEqual(posts.length, 1, 'the gate fired, so something must be armed');
-  assert.ok(posts[0].text.includes(other),
-    'the armed unit must be the semantically chosen one, not the lexical winner');
+  const at = (id) => posts[0].text.indexOf(id);
+  assert.ok(at(ids[3]) >= 0 && at(ids[2]) >= 0, 'both survivors ride');
+  assert.ok(at(ids[3]) < at(ids[2]),
+    'the semantically preferred survivor must lead, ahead of the lexical winner');
 
   const line = logged.find((l) => l.includes('armed'));
   assert.ok(/by=semantic sim=0\.71/.test(line),

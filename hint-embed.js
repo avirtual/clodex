@@ -265,25 +265,35 @@ function createSemanticRanker({
     // nothing embedded yet, query embed failed). The distinction is the whole
     // fallback contract: [] would mean "ranked, found nothing" and suppress the
     // lexical result the caller should be using instead.
-    async rank(draft, { agent, limit = 1 } = {}) {
+    // `only` restricts scoring to a caller-supplied id set. Coverage is still
+    // measured over the WHOLE corpus: an unembedded store must report "no
+    // opinion" rather than confidently ordering the handful inside the set.
+    async rank(draft, { agent, limit = 1, only = null } = {}) {
       let records;
       try { records = listRecords(agent) || []; } catch { return null; }
       if (!records.length) return null;
 
       const vectors = [];
+      let total = 0;
       for (const r of records) {
         const v = cache.get(keyOf(r));
+        if (v) total++;
+        if (only && !only.has(r.id)) continue;
         if (v) vectors.push({ rec: r, vec: v });
       }
       // Ranking a corpus that is mostly unembedded would silently restrict the
       // answer to whatever happened to be cached, which reads as a confident
       // result over a fraction of the store. Better to defer to lexical and let
       // the backfill catch up.
-      const coverage = vectors.length / records.length;
+      const coverage = total / records.length;
       if (coverage < 0.9) {
         Promise.resolve(backfill(records)).catch(() => {});
         return null;
       }
+
+      // A restriction that matched nothing embedded is not an opinion — falling
+      // through would let the caller read [] as "ranked, found nothing".
+      if (!vectors.length) return null;
 
       const qv = await embedder.embedQuery(draft);
       if (!qv) return null;

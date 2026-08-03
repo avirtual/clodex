@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **The semantic pass no longer throws away the memory your question matched.**
+  It was meant to reorder what the word-matching gate found; it was instead
+  re-ranking the whole store and replacing that result outright. Asking "any
+  other colleagues in my orbit?" matched a memory listing your colleagues on two
+  words — and delivered three about an assistant project, LinkedIn posts and
+  parenting, because they scored a hundredth of a point higher in a range the
+  whole store fits inside. Measured over 12 questions: 41% of delivered memories
+  were ones the question had actually matched, and on half of them every match
+  was discarded. Now 100%.
 - **A personal question now retrieves memories that actually mention it.** In a
   memory store about one person, every unit is similar to every question about
   that person — "who are my colleagues?" spanned 0.600 to 0.584 across its whole

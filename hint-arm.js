@@ -330,22 +330,41 @@ function createHintArm({
   // abstains correctly because a draft sharing no rare terms with any record
   // cannot clear MIN_HITS.
   //
-  // So the semantic ranker is consulted only once `pick` has already decided
-  // something is worth arming, and it re-ranks the WHOLE corpus rather than the
-  // survivors: lexical's cuts leave too few records to reorder (measured: no
-  // change at all, 0.500 -> 0.500).
+  // REFINE REORDERS THE SURVIVORS; IT MUST NOT RE-OPEN THE GATE'S DECISION.
+  // Ranking the whole corpus here and taking its top N does not reorder the
+  // lexical result, it REPLACES it — and on a store of this size the replacement
+  // is cosine noise. Measured over 11 drafts the gate fired on: 41% of shipped
+  // units were lexical matches, and on 6 of the 11 every single match was
+  // discarded. Live example: "any other colleagues in my orbit?" matched a unit
+  // on `colleagues`+`orbit` at coverage 0.79 — literally a list of the
+  // operator's colleagues — and shipped three units about an assistant project,
+  // LinkedIn articles and parenting, because those sat 0.01 higher in a spread
+  // of 0.02 across the corpus. Restricting to survivors: 100%.
+  //
+  // This does not contradict the whole-corpus finding above, it bounds it. That
+  // measurement was precision@1 over 184 units, where "replace" and "reorder"
+  // differ only in which single unit rides. At 1,711 units and three slots the
+  // difference is the whole hint.
   async function refine(lexical, draft, agent, limit) {
     if (!semantic) return lexical;
     let ranked;
     // A null return means "no opinion" (daemon down, corpus not embedded yet)
     // and MUST fall through to the lexical order — the whole point is that the
     // embedding is optional infrastructure.
-    try { ranked = await semantic.rank(draft, { agent, limit: Math.max(limit * 4, 8) }); } catch (e) {
+    const only = new Set(lexical.map((r) => r.id));
+    try {
+      ranked = await semantic.rank(draft, { agent, limit: Math.max(limit * 4, 8), only });
+    } catch (e) {
       debug(`semantic rank failed for ${agent}: ${e.message}`);
       return lexical;
     }
     if (!ranked || !ranked.length) return lexical;
-    const out = admissible(ranked, agent, limit);
+    // A ranker that ignores `only` would hand back the whole corpus again, so
+    // the restriction is re-applied rather than trusted. Anything it drops (an
+    // un-embedded survivor) keeps its lexical standing instead of vanishing.
+    const kept = ranked.filter((r) => only.has(r.id));
+    const missing = lexical.filter((r) => !kept.some((k) => k.id === r.id));
+    const out = admissible([...kept, ...missing], agent, limit);
     return out.length ? out : lexical;
   }
 
