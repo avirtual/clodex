@@ -143,3 +143,71 @@ test('restart: also refused while gated — degenerates to the gated start(), ne
     assert.match(res.error, /tee-blind backend \(bedrock\)/);
   });
 });
+
+// ── the pidfile: whose record is it, and who may delete it ──────────────────
+
+// A restart's OUTGOING child must never delete its SUCCESSOR's pidfile. `exit`
+// is emitted asynchronously, so it lands after restart() has already unlinked
+// the old record and start() has written a new one — an unconditional unlink
+// there orphans the live proxy.
+//
+// The consequence is not cosmetic. Clodex identifies its own detached survivor
+// ONLY by that file: _survivorPid() returns null without it, so status() reports
+// `external` (prefs reads "not running" and hides Restart) and start()'s `ours`
+// gate never runs the version comparison — pinning the running proxy at whatever
+// it launched with while a newer vendored copy sits unused. Observed live: a
+// v0.6.46 survivor ignored a v0.6.47 vendor bump across GUI restarts, and the
+// only recovery was killing the process by hand.
+test('pidfile: a dying child does not delete its successor\'s record', () => {
+  const { sup } = makeSup(ROUTED);
+  const pidFile = sup._pidFile();
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+
+  // restart(): old child 111 is signalled, its record dropped, successor 222 writes.
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: 111, port: 7800 }));
+  sup._releasePidFile(111);
+  assert.ok(!fs.existsSync(pidFile), 'the outgoing child releases its own record');
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: 222, port: 7800 }));
+
+  // ...and NOW the old child's exit event finally fires.
+  sup._releasePidFile(111);
+  assert.ok(fs.existsSync(pidFile), 'the successor\'s record must survive the old child\'s exit');
+  assert.strictEqual(JSON.parse(fs.readFileSync(pidFile, 'utf8')).pid, 222,
+    'and must still name the successor');
+});
+
+test('pidfile: a lone child exiting still cleans up after itself', () => {
+  // The guard must not become a leak: a stale record naming a dead pid makes
+  // _survivorPid() throw on process.kill and read as "no survivor" anyway, but it
+  // would also let a recycled pid be adopted as the proxy.
+  const { sup } = makeSup(ROUTED);
+  const pidFile = sup._pidFile();
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: 333, port: 7800 }));
+  sup._releasePidFile(333);
+  assert.ok(!fs.existsSync(pidFile), 'the record names this child, so it goes');
+});
+
+test('pidfile: an unreadable or absent record is cleared, not preserved', () => {
+  const { sup } = makeSup(ROUTED);
+  const pidFile = sup._pidFile();
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, 'not json{');
+  sup._releasePidFile(444);
+  assert.ok(!fs.existsSync(pidFile),
+    'a corrupt record must not be treated as a successor claim and left forever');
+  assert.doesNotThrow(() => sup._releasePidFile(444), 'and a missing file is not an error');
+});
+
+// Every unlink of the pidfile must go through the guard. A new call site added
+// with a bare fs.unlinkSync re-opens the race, and nothing else would catch it.
+test('pidfile: no raw unlink survives outside the guard', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'wirescope-supervisor.js'), 'utf8');
+  const raw = (src.match(/unlinkSync\(this\._pidFile\(\)\)/g) || []).length;
+  assert.strictEqual(raw, 1,
+    `expected exactly 1 raw pidfile unlink (the one inside _releasePidFile) and found ${raw} — `
+    + 'a bare unlink at a new call site lets an outgoing child delete its successor\'s record');
+  const guard = src.slice(src.indexOf('_releasePidFile(pid)'));
+  assert.match(guard.slice(0, 400), /rec\.pid !== pid/,
+    'the guard must compare the recorded pid against the caller\'s');
+});

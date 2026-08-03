@@ -266,6 +266,17 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       } catch { return null; }
     }
 
+    // Drop the pidfile only when it still names `pid`. A restart's outgoing child
+    // must never delete its successor's record — see the exit handler.
+    _releasePidFile(pid) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(this._pidFile(), 'utf8'));
+        if (rec && rec.pid !== pid) return;      // a successor owns it now
+      } catch { /* unreadable/absent — fall through and unlink */ }
+      try { fs.unlinkSync(this._pidFile()); } catch {}
+    }
+
+
     _logTail() {
       try {
         const buf = fs.readFileSync(this._logFile(), 'utf8');
@@ -326,7 +337,16 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       });
       child.on('exit', (code, signal) => {
         if (this.child === child) { this.child = null; this.startedPort = null; }
-        try { fs.unlinkSync(this._pidFile()); } catch {}
+        // ONLY if the record still names THIS child. `exit` lands asynchronously,
+        // so on a restart it fires AFTER the successor has already written its own
+        // pidfile — an unconditional unlink deletes the live proxy's record.
+        // Clodex then cannot recognize its own survivor: _survivorPid() returns
+        // null, so status() reports `external` (the UI reads "not running" and
+        // hides Restart) and start()'s `ours` gate never runs the version check,
+        // pinning the running proxy at whatever version it launched with while a
+        // newer one sits vendored. Observed live: a v0.6.46 survivor ignored a
+        // v0.6.47 vendor bump across GUI restarts.
+        this._releasePidFile(child.pid);
         if (code && code !== 0) {
           const tail = this._logTail();
           this.lastError = `wirescope exited (code ${code})${tail ? ': ' + tail : ''}`;
@@ -344,7 +364,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         const pid = this._survivorPid();
         if (pid) {
           try { process.kill(pid, 'SIGTERM'); } catch {}
-          try { fs.unlinkSync(this._pidFile()); } catch {}
+          this._releasePidFile(pid);
         }
       }
       this.child = null;
@@ -376,7 +396,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         try { process.kill(pid, 'SIGKILL'); } catch {}
         await new Promise((r) => setTimeout(r, 500));
       }
-      try { fs.unlinkSync(this._pidFile()); } catch {}
+      this._releasePidFile(pid);
       this.child = null;
       this.startedPort = null;
       return this.start();

@@ -33,6 +33,15 @@ blocks a release.
   up to 30 seconds, so a DM sent right after you changed the setting arrived
   late. Sessions you routed to a proxy explicitly are unaffected — they keep
   their hints, as they always should have.
+- **Fixed: a restarted proxy stopped being recognized as Clodex's own** —
+  which showed up as Preferences saying "not running" next to a proxy that
+  plainly was, no Restart button, and a vendored wirescope update that never
+  got picked up no matter how many times you relaunched. Clodex identifies the
+  proxy it started by a small pid file, and on a restart the outgoing process
+  deleted the incoming one's copy on its way out. Everything downstream reads
+  that file, so one missing byte turned a managed proxy into an unmanaged one.
+  Recovering meant killing the process by hand. If you are on a proxy that
+  reads "not running", it will re-adopt itself the next time it restarts.
 - Vendored wirescope v0.6.47.
 - **An agent that gets an irrelevant memory now drops it without telling you.**
   Retrieval matches on words, so it misses — and when it did, agents announced
