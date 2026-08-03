@@ -79,6 +79,28 @@ blocks a release.
   way that read like an ordinary helper, so it built its own instead of using
   the review channel that reports back to you. Both now say plainly what they
   are for and when to use them.
+- **An agent's lifetime spend now survives a restart, and Opus 5 turns are no
+  longer free.** The ⓘ panel's fourth number — everything this agent has ever
+  spent — is the one that only goes up, and it was being reset: restarting a
+  session dropped the list of conversations it was summed from, so "all time"
+  quietly became "since the last restart". Separately, Opus 5 had no price row
+  at all, so those turns costed at zero while still counting as requests — a
+  conversation that had plainly cost something showed a total far below it.
+  Both are fixed going forward; sessions already recorded with a zero total
+  stay as they were.
+- **Claude 5 Sonnet's introductory pricing now expires on its own.** The rate
+  drops to standard on 1 September 2026 and the change was tracked as a note
+  telling us to remember; it is now scheduled, so receipts before that date
+  keep the rate they were billed at and later ones do not.
+- **An agent updated by a new Clodex version now picks up its new instructions.**
+  An agent's instructions are frozen while its conversation is warm — rewriting
+  them mid-conversation would throw away everything it has cached, so changes
+  are handed over as a diff instead. What was missing was the other half: at a
+  /clear or a compact, where the conversation is gone or already being rebuilt,
+  the frozen copy can safely be replaced. It was not being replaced, so an agent
+  running across an upgrade could keep instructions from a week earlier
+  indefinitely — one seat here ran six days that way. Refreshing costs nothing
+  at a /clear and rides a cost the compact has already paid.
 - Vendored wirescope v0.6.47.
 - **An agent that gets an irrelevant memory now drops it without telling you.**
   Retrieval matches on words, so it misses — and when it did, agents announced
