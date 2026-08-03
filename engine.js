@@ -358,6 +358,10 @@ const semanticRanker = createSemanticRanker({
   log,
 });
 
+// The set name is bound here, not at the call site: `recall(agent, arg)` takes
+// an AGENT, and common units belong to none.
+const commonMemoryRecall = (arg) => commonMemoryStore.recall('chat-extract', arg);
+
 const hintArm = createHintArm({
   enabled: () => !!uiSettings.get().contextHints,
   retriever: createCompositeRetriever([
@@ -800,6 +804,7 @@ const SessionManager = createSessionManager({
     lastTranscriptWrite,
     log,
     memoryStore,
+    commonMemoryRecall,
     memoryLoad,
     hintArm,
     mergeClaudeSystemPrompt,

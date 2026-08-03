@@ -351,6 +351,26 @@ test('rank: confidence is a documented 0-1 band, floor maps to 0.5', () => {
   }
 });
 
+// The recall offer above is emitted for COMMON units too, whose bodies live in
+// a store the recalling agent does not own. Found live 2026-08-03: 7 common
+// units were over the cap, so the hint named `[agent:memory recall] <id>` and
+// the handler — which searched only the agent's own store — answered "no match"
+// every time. A dead-end instruction with nothing red anywhere, which is why
+// the fallback needs a test of its own.
+test('recall: a common-store id resolves through the fallback, not just the agent store', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hint-recall-'));
+  const own = createMemoryStore(path.join(dir, 'memory'));
+  const common = createMemoryStore(path.join(dir, 'common-memory'));
+  const unit = common.remember('chat-extract', { text: 'the operator sails a Bavaria 34', scope: 'life' });
+
+  assert.strictEqual(own.recall('clodex', unit.id), null,
+    'the agent store cannot see a common unit — this is the gap the fallback exists to close');
+  const viaFallback = common.recall('chat-extract', unit.id);
+  assert.ok(viaFallback && viaFallback.id === unit.id,
+    'a hint that offers this id must have a way to actually load it');
+  assert.ok(viaFallback.body.includes('Bavaria 34'), 'and it must return the body, not just a stub');
+});
+
 test('compose: a long body is offered by title with a recall pointer, a short one rides whole', () => {
   const short = compose([{ id: 'mem-1-a', text: 'a short claim' }]);
   assert.ok(short.includes('a short claim'), 'a short body rides in full');
@@ -1263,12 +1283,28 @@ test('compose: the preamble tells the model the delivery is one-shot', () => {
   // directly, `restate` costs output tokens but is the only thing that carries
   // the fact into a tool loop.
   const text = compose([{ id: 'mem-1-a', text: 'a short durable fact', tags: 'method', scope: '' }]);
-  assert.ok(/will not be repeated/.test(text), 'the hint must say it is not coming back');
+  assert.ok(/not repeated/.test(text), 'the hint must say it is not coming back');
   assert.ok(/act on it or restate/.test(text), 'and name both ways to preserve it');
-  assert.ok(/do not defer it to a later step/.test(text),
+  assert.ok(/not in a later step/.test(text),
     'deferring past a tool call is the exact failure this sentence prevents');
   assert.ok(!/cache|token|cost|billing/i.test(text),
     'the billing reason for one-shot delivery is not the model\'s to reason about');
+  // An anonymous block reads as invented — the model has no way to weigh it, and
+  // "I cannot source this" is what preceded a retracted correct answer.
+  assert.ok(/memory store/.test(text), 'the block must name where it came from');
+});
+
+// This preamble is billed UNCACHED on every request carrying a hint, so a
+// standing rule belongs in the cached system prompt instead. The retraction
+// guard is the one that keeps getting written here by mistake: it is about the
+// turn AFTER this one, so paying for it per hint is strictly wasteful.
+test('compose: standing rules stay out of the per-request preamble', () => {
+  const text = compose([{ id: 'mem-1-a', text: 'a short durable fact', tags: 'method', scope: '' }]);
+  assert.ok(!/confabulat/i.test(text),
+    'the retraction guard lives in ipc-prompt MEMORY (cached once per session), not here');
+  const preamble = text.split('\nmem-')[0];
+  assert.ok(preamble.length <= 240,
+    `the preamble is ${preamble.length} chars and rides uncached on every hint — keep it tight`);
 });
 
 // --- the semantic tier: gate stays lexical, order becomes semantic ----------

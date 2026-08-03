@@ -52,6 +52,20 @@ test('memory off → MEMORY section AND memory grammar lines both vanish', () =>
   assert.ok(p.includes('SHELL COMMANDS:'));
 });
 
+// Observed live 2026-08-03: a seat answered a personal question from a one-shot
+// hint, could not source it the next turn, and RETRACTED the correct answer as
+// confabulation. Retracting a right answer is worse than the original
+// uncertainty, and "claim I cannot source = I invented it" is a good rule the
+// rest of the time — only an explicit exemption beats it. It lives HERE rather
+// than in the hint preamble because it governs the turn AFTER the hint, and this
+// prompt is cached per session while a hint is billed per request.
+test('MEMORY carries the hint retraction guard', () => {
+  const p = buildIpcPrompt(ALL_GATEABLE);
+  assert.ok(/system-reminder/.test(p), 'the guard must name where the attached memory shows up');
+  assert.ok(/NOT a reason to retract it as confabulation/.test(p),
+    'without the exemption a seat retracts correct hint-fed answers it cannot source');
+});
+
 test('dm off → both dm grammar lines (incl the urgent park paragraph) vanish', () => {
   const list = ALL_GATEABLE.filter((t) => t !== 'dm');
   const p = buildIpcPrompt(list);

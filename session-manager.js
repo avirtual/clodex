@@ -234,6 +234,9 @@ function createSessionManager(deps) {
     fencedLines,
     looksLikeIntent,
     memoryStore,
+    // Recall fallback for ids the agent's own store does not hold; absent, the
+    // common half of the hint corpus is simply not recallable.
+    commonMemoryRecall,
     memoryLoad,
     hintArm,
     mergeClaudeSystemPrompt,
@@ -2870,7 +2873,13 @@ function createSessionManager(deps) {
         return;
       }
       if (sub === 'recall') {
-        const unit = memoryStore.recall(agent, body);
+        // A hint may offer a COMMON unit's id, whose body lives in a store this
+        // agent does not own. Without the fallback that offer names an action
+        // the agent cannot take, and the truncated body is unreachable.
+        let unit = memoryStore.recall(agent, body);
+        if (!unit && commonMemoryRecall) {
+          try { unit = commonMemoryRecall(body); } catch { unit = null; }
+        }
         if (!unit) {
           this._injectText(session, `[agent:memory] no match for "${body.trim().slice(0, 60)}"`, { parkable: true });
           return;

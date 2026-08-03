@@ -268,9 +268,19 @@ function compose(results) {
   // deadline is what converts a one-shot delivery into something the model can
   // preserve for itself. It stays silent on WHY delivery is one-shot: the
   // billing reason is not the model's to reason about.
-  const parts = ['This may relate to what the user is asking. If it does not, ignore it.'
-    + '\nIt is attached to this request only and will not be repeated. If it is useful,'
-    + ' act on it or restate what matters in your reply now — do not defer it to a later step.'];
+  // EVERY WORD HERE IS BILLED UNCACHED ON EVERY REQUEST THAT CARRIES A HINT, so
+  // only what is USELESS ONE SESSION EARLIER lives here. The standing rules —
+  // including the retraction guard for the turn after this one — are in
+  // ipc-prompt's MEMORY section, which rides the cached system prompt once.
+  // What must stay: provenance (an anonymous block reads as invented, and a
+  // named source bounds its authority) and the deadline (turn_start_only means
+  // a model that defers acting until after a tool call finds it gone, and
+  // reaching for a tool first is the default). Silent on WHY it is one-shot:
+  // billing is not the model's to reason about.
+  const parts = ['From your operator\'s memory store — may relate to what the user is asking;'
+    + ' if not, ignore it.'
+    + '\nAttached to this request only and not repeated: if useful, act on it or restate what'
+    + ' matters in your reply now, not in a later step.'];
   for (const r of results) {
     const b = String(r.text || '').trim();
     if (!b) continue;
