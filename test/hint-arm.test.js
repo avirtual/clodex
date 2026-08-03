@@ -31,7 +31,7 @@ const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S, HOLD_MAX_MS,
 } = require('../hint-arm');
 const {
-  rank, compose, terms, haystack, selfScore, personalAsk,
+  rank, compose, terms, haystack, selfScore, personalAsk, withSharedTerm,
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   unitsAsRecords, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
   selectWithinBudget, blockFor, HINT_BUDGET, HINT_MAX_UNITS, WIRE_MAX_ONE,
@@ -1596,7 +1596,13 @@ test('compose: standing rules stay out of the per-request preamble', () => {
 // A stand-in ranker. Returning a FIXED winner regardless of the draft is the
 // point: it makes "did the semantic order actually replace the lexical one"
 // observable, which a realistic ranker agreeing with lexical would hide.
-function fakeSemantic({ winner = null, returns = undefined, throws = false } = {}) {
+function fakeSemantic({
+  winner = null, returns = undefined, throws = false,
+  // The personal path now requires a shared term, so a fake unit that shares
+  // none is silently filtered — the default body carries the words the personal
+  // drafts in these tests ask about.
+  text = 'where bogdan chose to live, the semantically chosen unit body',
+} = {}) {
   const calls = [];
   return {
     calls,
@@ -1604,13 +1610,15 @@ function fakeSemantic({ winner = null, returns = undefined, throws = false } = {
       calls.push({ draft, opts });
       if (throws) throw new Error('daemon exploded');
       if (returns !== undefined) return returns;
-      return [{ id: winner, text: 'the semantically chosen unit body', tags: '', scope: '',
+      return [{ id: winner, text, tags: '', scope: '',
         source: 'memory', confidence: 0.7, evidence: { sim: 0.7, ranker: 'semantic' } }];
     },
   };
 }
 
-function mkArmWith(semantic, { loadState = () => 'absent', personalAsk: pa = null } = {}) {
+function mkArmWith(semantic, {
+  loadState = () => 'absent', personalAsk: pa = null, withSharedTerm: wst = withSharedTerm,
+} = {}) {
   const { store, ids } = mkStore(CORPUS);
   const posts = [];
   const logged = [];
@@ -1619,6 +1627,7 @@ function mkArmWith(semantic, { loadState = () => 'absent', personalAsk: pa = nul
     retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
     semantic,
     personalAsk: pa,
+    withSharedTerm: wst,
     compose,
     terms,
     loadState,
@@ -1691,6 +1700,129 @@ test('personal: an admitted draft still needs a semantic opinion above the floor
   await settle();
   assert.strictEqual(posts.length, 0,
     'a shape-admitted draft whose best match is weak must stay silent');
+});
+
+// COSINE HAS NO ORDER TO GIVE ON A ONE-TERM PERSONAL QUESTION, and that is a
+// measured property of the corpus, not of the model. On the live 1,711-unit
+// store "who are my colleagues?" spanned 0.6003 down to 0.5836 across the whole
+// shipped range — 197 units cleared the 0.55 floor and the unit naming actual
+// colleagues sat at rank 10, so what rode was three confident units about
+// agent collaboration and AWS networking.
+test('personal: a semantic winner sharing no term with the question does not ride', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x', text: 'kubernetes ingress reconciliation on the cluster' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', 'who are my colleagues', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 0,
+    'high cosine over a corpus about one person is not evidence about WHICH fact was asked for');
+  assert.strictEqual(sem.calls.length, 1, 'the ranker was still consulted — the filter runs on its output');
+});
+
+test('personal: the same question rides when the winner actually mentions it', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x', text: 'bogdan works with colleagues at opsguru' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', 'who are my colleagues', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1, 'a shared term is what separates this from the case above');
+  assert.ok(posts[0].text.includes('mem-x'));
+});
+
+// THE FILTER CAN ONLY CHOOSE FROM WHAT THE RANKER RETURNED, so a narrow window
+// silently decides the outcome before the filter ever runs. Measured on the live
+// store, "who are my colleagues?" put the unit naming actual colleagues at
+// cosine rank 235 — a top-12 slice made it unreachable no matter how good the
+// filter was, and the single unit that did survive had been picked out of a
+// 0.017 spread.
+test('personal: the ranker window is wide enough for the filter to have a choice', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x', text: 'bogdan works with colleagues at opsguru' });
+  const { arm } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', 'who are my colleagues', CTX, { final: true });
+  await settle();
+  assert.ok(sem.calls[0].opts.limit >= 200,
+    `the personal path asked for ${sem.calls[0].opts.limit} — too narrow to filter meaningfully`);
+});
+
+// REFINE RE-RANKS THE WHOLE CORPUS AND APPLIES NO SHARED-TERM FILTER, so running
+// it on a personal result restored precisely the units `personal` had rejected.
+// Caught by a call count, not by inspection: the filter looked correct in
+// isolation and was being undone one step later.
+test('personal: refine does not re-open a decision the personal filter made', async () => {
+  const sem = {
+    calls: [],
+    async rank(draft, opts) {
+      this.calls.push({ draft, opts });
+      return [
+        { id: 'good', text: 'bogdan works with colleagues at opsguru', tags: '', scope: '',
+          source: 'memory', confidence: 0.7, evidence: { sim: 0.70, ranker: 'semantic' } },
+        { id: 'bad', text: 'kubernetes ingress reconciliation cluster', tags: '', scope: '',
+          source: 'memory', confidence: 0.69, evidence: { sim: 0.69, ranker: 'semantic' } },
+      ];
+    },
+  };
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', 'who are my colleagues', CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1);
+  assert.ok(posts[0].text.includes('good'), 'the on-topic unit rides');
+  assert.ok(!posts[0].text.includes('bad'),
+    'and the one with no shared term stays out — refine must not have re-ranked it back in');
+  assert.strictEqual(sem.calls.length, 1, 'the ranker is consulted once on this path, not twice');
+});
+
+// Scope check: the filter must not reach the path that already requires matched
+// terms. A lexical arm has hits by construction, so applying it there would be
+// redundant at best and would double-filter a refined result at worst.
+test('personal: the shared-term filter applies to the personal path only', async () => {
+  const sem = fakeSemantic({ winner: 'mem-x', text: 'nothing whatsoever in common with the draft' });
+  const { arm, posts } = mkArmWith(sem, { personalAsk });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(posts.length, 1,
+    'the lexical path arms on its own hits and must be untouched by a filter meant for the unrankable case');
+});
+
+// The subset property is the safety argument for the whole filter: it can only
+// withhold what would have shipped, never admit something new. Without it, a
+// widened personal path would put the measured 0-false-arms-over-14-work-drafts
+// baseline back in play.
+test('personal: the filter can only ever remove results, never add them', () => {
+  const recs = [
+    { id: 'a', text: 'bogdan lives in romania', tags: '', scope: '' },
+    { id: 'b', text: 'terraform state locking on dynamodb', tags: '', scope: '' },
+  ];
+  // "live" vs "lives" is the plural fold doing its job, not an incidental match.
+  const out = withSharedTerm(recs, 'where do i live');
+  assert.deepStrictEqual(out.map((r) => r.id), ['a']);
+  assert.ok(out.every((r) => recs.includes(r)), 'every survivor is an input, unmodified');
+  // A draft of nothing but stop words has no terms to require, so filtering on
+  // them would silence everything; the caller's own gates own that case.
+  assert.strictEqual(withSharedTerm(recs, 'is it').length, 2,
+    'a query with no meaningful terms must pass through rather than reject everything');
+});
+
+// Tags and scope are curated labels and carry the topic the body may never state
+// outright — the same reason `haystack` exists for the lexical ranker.
+test('personal: a shared term in tags or scope counts', () => {
+  const recs = [
+    { id: 'a', text: 'simon, alex and michael are the ones pushing the framework', tags: 'colleagues', scope: '' },
+    { id: 'b', text: 'a body about nothing relevant', tags: '', scope: 'colleagues' },
+    { id: 'c', text: 'a body about nothing relevant', tags: '', scope: '' },
+  ];
+  assert.deepStrictEqual(withSharedTerm(recs, 'who are my colleagues').map((r) => r.id), ['a', 'b']);
+});
+
+// The question is plural and the fact is singular nearly every time it matters.
+// Without the fold, the two units naming actual colleagues are exactly what a
+// question about colleagues does NOT retrieve.
+test('personal: a plural question matches a singular fact', () => {
+  const recs = [
+    { id: 'a', text: "jonathan robinson is a colleague of bogdan's", tags: '', scope: '' },
+    { id: 'b', text: 'bogdan lives where his son can play outside', tags: '', scope: '' },
+  ];
+  assert.deepStrictEqual(withSharedTerm(recs, 'who are my colleagues').map((r) => r.id), ['a']);
+  assert.deepStrictEqual(withSharedTerm(recs, 'where do i live').map((r) => r.id), ['b']);
+  // Not a stemmer, and must not become one on the submit path: a bare -s only.
+  assert.strictEqual(withSharedTerm(recs, 'where am i living').length, 0);
 });
 
 // The personal path is a FALLBACK, so it can never take a slot lexical earned.

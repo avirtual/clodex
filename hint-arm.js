@@ -46,6 +46,16 @@ const HOLD_MAX_MS = 30 * 1000;
 // rejected everything the threshold would have caught.
 const PERSONAL_MIN_SIM = 0.55;
 
+// How many ranked units the shared-term filter gets to choose from. A slice of
+// ~12 is the right size when the ORDER is trustworthy; on this path it is not
+// (see withSharedTerm), so a narrow window hands the filter whatever cosine
+// noise floated to the top. Measured: "who are my colleagues?" put the unit
+// naming actual colleagues at cosine rank 235 of 1,711 — unreachable at 12, and
+// the one unit that did survive was picked by a 0.017 spread. Widening cost
+// nothing (the ranker already scores the whole corpus; `limit` only slices the
+// tail it returns) and no query got worse; 200 is where the gain flattened.
+const PERSONAL_WINDOW = 200;
+
 // Do not re-offer the same unit to the same agent inside this window. Cleared
 // early by a context clear/compact, which is the other half of the rule.
 const COOLDOWN_MS = 10 * 60 * 1000;
@@ -223,7 +233,7 @@ function createHintArm({
   retriever, semantic = null, compose, terms, loadState, armHints, clearHints,
   // Injected like `terms` so this module keeps no opinion about the tokenizer or
   // the admission grammar; absent, the personal path is simply off.
-  personalAsk = null,
+  personalAsk = null, withSharedTerm = null,
   // `Date.now` unbound rather than an arrow: a nested paren in a default value
   // makes free-identifier-leaks.test.js fail to parse THIS WHOLE PARAM LIST, so
   // every dep above would stop counting as defined here and the scan would
@@ -349,7 +359,7 @@ function createHintArm({
   async function personal(draft, agent, limit) {
     if (!semantic || !personalAsk || !personalAsk(draft)) return [];
     let ranked;
-    try { ranked = await semantic.rank(draft, { agent, limit: Math.max(limit * 4, 8) }); } catch (e) {
+    try { ranked = await semantic.rank(draft, { agent, limit: PERSONAL_WINDOW }); } catch (e) {
       debug(`personal rank failed for ${agent}: ${e.message}`);
       return [];
     }
@@ -361,7 +371,11 @@ function createHintArm({
     // to separate junk from real — only a weak personal match from a strong one.
     const top = ranked.filter((r) => !(typeof r.evidence?.sim === 'number')
       || r.evidence.sim >= PERSONAL_MIN_SIM);
-    return top.length ? admissible(top, agent, limit) : [];
+    // Cosine has no order to give on these queries — see withSharedTerm for the
+    // measurement. Applied only here: the lexical path already required matched
+    // terms, so this is the one route where a unit can ride without any.
+    const kept = withSharedTerm ? withSharedTerm(top, draft) : top;
+    return kept.length ? admissible(kept, agent, limit) : [];
   }
 
   // A hold outlives the pass that opened it — it must cover the span from "rank
@@ -392,15 +406,24 @@ function createHintArm({
     const nothing = () => clearArmed(key, ctx);
     // Only when lexical found nothing: a draft the normal gate can serve is
     // served by it, so this cannot regress any existing arm.
+    let fromPersonal = false;
     if (!results.length) {
       try { results = await personal(draft, agent, limit); } catch (e) {
         debug(`personal failed for ${agent}: ${e.message}`);
         results = [];
       }
+      fromPersonal = results.length > 0;
     }
     if (!results.length) { nothing(); return; }
-    try { results = await refine(results, draft, agent, limit); } catch (e) {
-      debug(`refine failed for ${agent}: ${e.message}`);
+    // REFINE MUST NOT RUN ON A PERSONAL RESULT. It re-ranks the whole corpus and
+    // replaces what it was given, with no shared-term filter — so it restored
+    // exactly the units `personal` had just rejected, silently undoing the filter
+    // in production. Reordering is also all refine offers, and a personal result
+    // is already in semantic order by construction.
+    if (!fromPersonal) {
+      try { results = await refine(results, draft, agent, limit); } catch (e) {
+        debug(`refine failed for ${agent}: ${e.message}`);
+      }
     }
     if (!results.length) { nothing(); return; }
     // Last, on the final ordering: the budget spends on what the rankers

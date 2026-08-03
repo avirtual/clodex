@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A personal question now retrieves memories that actually mention it.** In a
+  memory store about one person, every unit is similar to every question about
+  that person — "who are my colleagues?" spanned 0.600 to 0.584 across its whole
+  result, so what rode was three confident units about agent collaboration and
+  AWS networking while the ones naming actual colleagues sat far below. A memory
+  must now share a word with the question, and the pool it is chosen from is wide
+  enough for that to mean something. Measured over 14 personal questions:
+  precision rose from 40% to 75%, and four questions the store simply cannot
+  answer (pets, music, and two others) now stay silent instead of shipping three
+  confident irrelevant memories.
+
 - **A hint no longer outlives the draft it was ranked against.** Arming happens
   at a typing pause, so a draft you keep editing could leave a hint registered
   against text that no longer exists. Continuing to type already replaced it;

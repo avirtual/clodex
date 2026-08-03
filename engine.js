@@ -318,7 +318,7 @@ const { createHintArm } = require('./hint-arm');
 const {
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   compose: composeHint, terms: hintTerms, unitsAsRecords, personalAsk,
-  selectWithinBudget: selectHintsWithinBudget,
+  selectWithinBudget: selectHintsWithinBudget, withSharedTerm: withSharedHintTerm,
 } = require('./hint-retrieve');
 
 // Shared memory every agent can match against — imported sets, not anything an
@@ -380,6 +380,7 @@ const hintArm = createHintArm({
   selectWithinBudget: selectHintsWithinBudget,
   terms: hintTerms,
   personalAsk,
+  withSharedTerm: withSharedHintTerm,
   loadState: (agent, id) => memoryLoad.stateOf(agent, id),
   armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),

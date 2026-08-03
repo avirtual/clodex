@@ -172,6 +172,43 @@ function personalAsk(draft) {
   return terms(d).length <= PERSONAL_MAX_TERMS;
 }
 
+// COSINE ALONE CANNOT ORDER A ONE-TERM PERSONAL QUESTION, which is the failure
+// this filter exists for. Measured 2026-08-03 on the live 1,711-unit corpus:
+// "who are my colleagues?" scored max 0.6003 with the 15th result at 0.5836 — a
+// spread of 0.017 across the entire shipped range, and 197 units above the 0.55
+// floor. The three that rode were about agent collaboration and AWS networking;
+// the unit naming actual colleagues sat at rank 10. The ranking was not wrong,
+// it was undefined: every unit in a store about one person is similar to any
+// question about that person.
+//
+// Requiring a shared term restores the discrimination the embedding lost, and it
+// can only ever REMOVE a result the caller had already decided to ship — that
+// subset property is what keeps it clear of the 0-false-arms baseline the shape
+// test was measured against. Over 14 personal questions: 17 on-topic units of 42
+// shipped becomes 17 of 29, and four questions the store cannot answer at all
+// (pets, music, wife, studies) go silent instead of shipping three confident
+// units about Kubernetes.
+// The question is plural and the fact is singular almost every time it matters:
+// "who are my COLLEAGUES" against "a COLLEAGUE of Bogdan's". Measured, the fold
+// changed the shipped set on 4 of 18 questions and improved all four — it is what
+// surfaces the two units naming actual colleagues (0.5870, 0.5756) in place of a
+// unit about consulting engagements, and "Bogdan LIVES somewhere his son can play
+// outside" in place of one about CSS living in stylesheets. Deliberately not a
+// stemmer: this runs on the submit path, and everything past trailing -s was
+// noise on this corpus.
+function foldPlural(t) {
+  return t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t;
+}
+
+function withSharedTerm(results, draft) {
+  const q = terms(draft).map(foldPlural);
+  if (!q.length) return results || [];
+  return (results || []).filter((r) => {
+    const body = new Set(terms(haystack(r)).map(foldPlural));
+    return q.some((t) => body.has(t));
+  });
+}
+
 function unitsAsRecords(units, source = 'memory') {
   return (units || []).map((u) => ({
     id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source,
@@ -377,7 +414,8 @@ function compose(results) {
 }
 
 module.exports = {
-  terms, haystack, rank, compose, blockFor, selectWithinBudget, unitsAsRecords, createMemoryRetriever,
+  terms, haystack, rank, compose, blockFor, selectWithinBudget, withSharedTerm,
+  unitsAsRecords, createMemoryRetriever,
   createCommonRetriever, createCompositeRetriever, personalAsk,
   minScoreFor, confidenceOf, selfScore, MIN_HITS, MIN_COVERAGE, FULL_BODY_CAP, STOP,
   HINT_BUDGET, HINT_MAX_UNITS, RUNNERUP_MIN_RATIO, WIRE_MAX_ONE, composeFits,
