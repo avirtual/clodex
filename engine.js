@@ -604,10 +604,15 @@ function lastTranscriptWrite(agentType, cwd, sessionId) {
   try { return fs.statSync(path.join(dir, `${sessionId}.jsonl`)).mtimeMs; } catch { return null; }
 }
 
-// Bake the on-disk transcript before --resume. Warmth is irrelevant and needs no
-// gate: the prefix cache is keyed on the WIRE bytes, and the bake removes only
-// what the live strip already drops (bake ⊆ live-strip), so baked and unbaked
-// resumes produce the same wire bytes and the same cache key.
+// Bake the on-disk transcript before --resume, by handing the path to the proxy
+// (bake_session rewrites it; nothing here opens the file).
+//
+// NOT warmth-neutral, despite bake ⊆ live-strip holding for everything else: a
+// turn that is ENTIRELY thinking survives live-strip (it cannot emit an empty
+// content array) but the bake DELETES it, so each such turn re-caches once. The
+// proxy counts them as `pure_thinking_turns` and reports warmth — but only AFTER
+// rewriting, so these are logged, not gated. A real warmth gate needs a dry-run
+// pass first; don't add one by reading the response, it arrives too late.
 // Fail-safe: opt-in, proxy-gated, and any error / !ok resumes the ORIGINAL file.
 async function maybeCompactBeforeResume(entry) {
   try {
