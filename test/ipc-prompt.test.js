@@ -151,6 +151,22 @@ test('reboot line renders ONLY for a seat whose intents explicitly grant reboot'
 
 // ── exec: a synthesized section keyed on the granted command-id allowlist ─────
 
+// A listed command that never says WHEN to use it is dead weight: it renders as
+// a capability the seat notices and then routes around, because its shell tool
+// is always right there and needs no payload. Observed on a live lead, which
+// ran `npm test` by hand with clodex-run-tests granted the whole time — paying
+// for the full unbounded output the command exists to avoid.
+test('exec section states that a granted command BEATS the equivalent shell line', () => {
+  const p = buildIpcPrompt(null, ['clodex-run-tests']);
+  assert.match(p, /PREFERRED route/, 'the section must rank exec above an ad-hoc shell equivalent');
+  assert.match(p, /INSTEAD of assembling the same thing with your shell tool/,
+    'and say so as an instruction, not as a note about why it was registered');
+  // The rule is worthless if it only reaches seats that already read the whole
+  // section, so it must sit ABOVE the command list, not below it.
+  assert.ok(p.indexOf('PREFERRED route') < p.indexOf('[agent:exec clodex-run-tests]'),
+    'the rule must precede the listing it governs');
+});
+
 test('exec section renders the granted command ids, and only when granted', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests', 'clodex-team']);
   assert.ok(/\nEXEC COMMANDS:\n/.test(p), 'EXEC COMMANDS section present when granted');

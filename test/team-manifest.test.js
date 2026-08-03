@@ -670,8 +670,12 @@ test('formatRoster lists roles, briefs, class, and live seats per role', () => {
   assert.match(roster, /^\[team shop\] roster \(lead: clodex\)/m);
   assert.match(roster, /- lead \(session\) — the lead · live: clodex/);
   assert.match(roster, /- hand \(session, tmpl clodex-team-hand\) — the hand · live: shop-hand, shop-hand-2/);
-  // reviewer is subagent-class and has no live seat → listed, no "live:" tail.
-  assert.match(roster, /- reviewer \(subagent\) — the reviewer$/m);
+  // The reviewer renders HOW IT IS REACHED, never its manifest instantiate class:
+  // printing "(subagent)" next to it sent a lead to its harness subagent tool,
+  // which produces an uncapped reviewer with no [agent:review-done] channel and no
+  // seat the operator can see. No live seat → listed, no "live:" tail.
+  assert.match(roster, /- reviewer \(lead-only\) — the reviewer$/m);
+  assert.ok(!/reviewer \(subagent\)/.test(roster), 'the reviewer must never read as a harness subagent');
   assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\]/);
 });
 
@@ -693,6 +697,18 @@ test('formatRoster: the exec line carries the reading seat name in a schema-vali
     'the seatless fallback names the placeholder explicitly, not an empty or omitted agent');
   assert.deepStrictEqual(schemaViolations(generic, EXEC_SCHEMA), [],
     'the seatless fallback is still a schema-valid shape');
+});
+
+// Who may invoke the intent decides who is told about it: _handleTeamReview
+// bounces a non-lead, so naming it to a hand only buys a wasted turn.
+test('formatRoster: the reviewer names its intent to the lead, and reads lead-only to everyone else', () => {
+  const forLead = formatRoster(TEAM(), [], { seat: 'clodex' });
+  assert.match(forLead, /- reviewer \(via \[agent:team-review\]\)/, 'the lead is told the exact intent');
+  for (const seat of ['shop-hand', null]) {
+    const other = formatRoster(TEAM(), [], seat ? { seat } : {});
+    assert.match(other, /- reviewer \(lead-only\)/, `seat ${seat}: told the role exists and is not theirs`);
+    assert.ok(!/via \[agent:team-review\]/.test(other), `seat ${seat}: not handed an intent that would bounce`);
+  }
 });
 
 test('formatRoster: a role renders `tmpl <name>` only when its def has a template', () => {
@@ -729,8 +745,10 @@ test('formatRoster: live seats matching no role are listed, and the line is abse
 test('formatRoster: the action line is rendered for the lead seat only', () => {
   const forLead = formatRoster(TEAM(), [], { seat: 'clodex' });
   assert.match(forLead, /Dispatch: \[agent:task add <role>\] <spec>\./);
-  assert.match(forLead, /Review: \[agent:team-review\] <scope>\./,
-    'a reviewer is reached by intent, not by spawning a seat');
+  // The intent must be stated as SELF-SUFFICIENT. "Review: [agent:team-review]"
+  // alone read as a channel the lead had to spawn a seat for first.
+  assert.match(forLead, /Review: \[agent:team-review\] <scope> — the intent spawns the cold reviewer seat itself; do NOT spawn or subagent one by hand\./,
+    'a reviewer is reached by intent, and the line must say the intent does the spawning');
   assert.match(forLead, /New session seat: \[agent:spawn name:shop-<role> template:<tmpl>\]\./);
   // A hand does not dispatch, and this text is regenerated into every context
   // reset of every seat — non-leads pay nothing for it.

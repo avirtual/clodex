@@ -174,6 +174,7 @@ function execSection(execCommands) {
   if (!lines) return '';
   return `EXEC COMMANDS:
 Your operator granted this seat a set of named shell commands, listed below with the JSON payload each takes: \`[agent:exec <name>] {"key":value}\` on one line. The name selects a pre-registered command — you never write the command line itself, and your payload never becomes part of it, but most commands DO take arguments through that JSON. A payload is always required: even a command with no fields needs a literal \`{}\`, or it bounces with "payload: empty (expected JSON)". Values shown as \`a|b|c\` are the only ones accepted.
+A granted command is your operator's PREFERRED route for the job it names, not an alternative to keep in reserve: it was registered because the equivalent shell command is long, easy to get wrong, or returns far more output than you need. When a listed command covers what you are about to do, use it INSTEAD of assembling the same thing with your shell tool — reaching past it is a mistake even when your version works, and running both is strictly worse than either.
 Success is SILENT — nothing returns and no news is good news. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you. Yours:
 ${lines}`;
 }

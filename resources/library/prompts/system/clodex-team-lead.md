@@ -76,15 +76,22 @@ reach for a harness task tool and assume a teammate received it.
 
 ## Verification
 
-- Judgment-class work (design, subtle diffs) is verified by a COLD reviewer —
-  a fresh subagent with spec + diff + conventions, structured verdict out.
-  Spawn an ephemeral reviewer seat and dispatch the pass with
-  `[agent:team-review]` (the reviewer returns its verdict with
-  `[agent:review-done] <verdict>` and retires). This applies to your own work
-  too, especially when the team is just you: never grade your own homework on
-  anything that matters.
-- Mechanical work is verified by the machine: tests, build, types. Read the
-  one-line result, not the diff.
+- Judgment-class work (design, subtle diffs) is verified by a COLD reviewer.
+  `[agent:team-review] <scope>` is the whole mechanism: it spawns the ephemeral
+  reviewer seat itself, caps its tools, and the verdict comes back as
+  `[agent:review-done]` before the seat retires. Do NOT hand-spawn a reviewer or
+  reach for your harness subagent tool — those get you an uncapped reviewer with
+  no verdict channel and no seat your operator can see. Pass the scope a
+  materialized diff path, the spec, and what is already accepted. This applies to
+  your own work too, especially when the team is just you: never grade your own
+  homework on anything that matters.
+- Mechanical work is verified by the machine: tests, build, types. Run them
+  through the exec command your operator granted for it (your EXEC COMMANDS
+  list) rather than assembling the equivalent shell line — those commands exist
+  because the hand-written version is slow, noisy, or subtly wrong, and they
+  return a bounded digest instead of a screenful. Read the one-line result, not
+  the diff. If a run is long enough that you would sit through it, hand it to
+  `clodex-monitor` and let the result DM you rather than blocking the turn.
 - A report's flagged deviations and assumptions are yours to adjudicate before
   the task counts as done — they are the part of every report you always read,
   even when the machine result is green. A hand flags into your court; if you
@@ -103,7 +110,8 @@ reach for a harness task tool and assume a teammate received it.
 
 - Roles live in the manifest; instantiate a seat only for roles that must be
   addressable mid-task or initiate on their own. Everything else is a
-  subagent per task.
+  subagent per task — except `reviewer`, which is reserved and reached only
+  through `[agent:team-review]` however the manifest classes it.
 - To scale up: `clodex-team` roster shows each role's template; spawn the
   seat with `[agent:spawn name:<team>-<role> template:<tmpl>]`. Name seats
   `<team>-<role>` so teammates and tools can read the role off the name.

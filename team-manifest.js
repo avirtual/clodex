@@ -402,7 +402,11 @@ function leadActionLine(team) {
   }
   const parts = [];
   if (sessionRoles.length) parts.push('Dispatch: [agent:task add <role>] <spec>.');
-  if (hasReviewer) parts.push('Review: [agent:team-review] <scope>.');
+  // Spells out that the intent does the spawning. A lead reading "Review:
+  // [agent:team-review]" next to a roster line that said `reviewer (subagent)`
+  // reached for its harness subagent tool instead — which gets a reviewer with
+  // no tools cap, no verdict intent, and no seat the operator can see.
+  if (hasReviewer) parts.push('Review: [agent:team-review] <scope> — the intent spawns the cold reviewer seat itself; do NOT spawn or subagent one by hand.');
   if (subagentRoles.length) {
     parts.push(`Subagent roles (${subagentRoles.join(', ')}): your harness subagent tool, not a seat spawn.`);
   }
@@ -435,11 +439,19 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   }
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
   for (const [role, def] of Object.entries(team.roles)) {
+    // `reviewer` is a reserved key reached by [agent:team-review], which spawns a
+    // real ephemeral SESSION seat — its manifest `instantiate` is an internal
+    // detail, and printing it as "subagent" told the lead to use its harness
+    // subagent tool instead of the intent. Print how the role is reached, and
+    // name the intent ONLY to the seat allowed to use it: _handleTeamReview
+    // bounces a non-lead, so advertising it to a hand invites a wasted turn.
+    const cls = role !== 'reviewer' ? def.instantiate
+      : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
     const tmpl = def && typeof def.template === 'string' && def.template ? `, tmpl ${def.template}` : '';
     const brief = def && def.brief ? ` — ${def.brief}` : '';
     const live = byRole.get(role);
     const liveStr = live && live.length ? ` · live: ${live.join(', ')}` : '';
-    lines.push(`- ${role} (${def.instantiate}${tmpl})${brief}${liveStr}`);
+    lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
   }
   // A live seat off the naming convention is still warm and still DM-able;
   // dropping it defeats the point of a listing of who is live.
