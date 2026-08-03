@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Memory an agent can actually use
+## Unreleased
+
+## 4.12.0 — 2026-08-03 — Memory an agent can actually use
 
 The theme is retrieval: an agent now gets the right memory attached to the right
 question, without anyone having to know the memory exists.
