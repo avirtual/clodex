@@ -5711,6 +5711,17 @@ body {
           <input type="checkbox" id="prefs-compact-on-resume" style="margin: 0;">
           <span>Bake transcripts on resume</span>
         </label>
+        <p class="hint-text" style="margin: 14px 0 2px;">Contextual memory hints</p>
+        <p class="hint-text">When you submit a message, match it against the agent's own memories and attach the best match to the turn as an ephemeral hint the agent may ignore. Units already in the agent's context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
+          <span>Arm contextual hints from memory</span>
+        </label>
+        <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It reorders candidates, and it is also the only thing that can answer a short question about you ("where do i live") — word matching scores every record identically on a one-word query, so it has no way to pick. Whether to hint at all is still decided by word matching everywhere else, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching, and short personal questions simply stay quiet.</p>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="prefs-semantic-hints" style="margin: 0;">
+          <span>Rank hints with a local embedding model</span>
+        </label>
         <div id="ws-logs-block" style="display: none;">
           <p class="hint-text" style="margin: 14px 0 2px;">Capture logs</p>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
@@ -7396,7 +7407,7 @@ body {
         }
         if (clipped) body += "\n\u2026";
         const out = [`Delete this memory from ${flat(agent)}?`, ""];
-        if (u.pinned) out.push("THIS UNIT IS PINNED \u2014 it is served in full to every new session of this agent.", "");
+        if (u.operatorPinned) out.push("THIS UNIT IS PINNED \u2014 it is served in full to every new session of this agent.", "");
         if (u.idMismatch) out.push(`Note: this unit's id line says "${id}" but its filename is "${key}". The filename is what gets deleted.`, "");
         out.push("----- memory -----", body || "(empty)", "------------------", "");
         if (u.scope) out.push(`scope: ${flat(u.scope)}`);
@@ -7486,6 +7497,27 @@ body {
               if (alive() && btn.isConnected) btn.disabled = false;
             }
           }
+          async function togglePin(agent, u, btn) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            try {
+              let res;
+              try {
+                res = await rhost.invoke("setPin", { agent, id: u.key, on: !u.operatorPinned });
+              } catch (e) {
+                rhost.log.error("setPin failed", e);
+                res = null;
+              }
+              if (!alive()) return;
+              if (!res || res.ok !== true) {
+                rhost.ui.showToast(res && res.error || "Could not change the pin", { kind: "error" });
+                return;
+              }
+              await reload();
+            } finally {
+              if (alive() && btn.isConnected) btn.disabled = false;
+            }
+          }
           function renderUnits(agent, units) {
             unitsPane.innerHTML = "";
             if (!units.length) {
@@ -7493,9 +7525,9 @@ body {
               return;
             }
             for (const u of units) {
-              const card = el("div", u.pinned ? "mv-unit mv-pinned" : "mv-unit");
+              const card = el("div", u.operatorPinned ? "mv-unit mv-pinned" : "mv-unit");
               const head = el("div", "mv-unit-head");
-              if (u.pinned) head.appendChild(el("span", "mv-pin-mark", "pinned"));
+              if (u.operatorPinned) head.appendChild(el("span", "mv-pin-mark", "pinned"));
               if (u.scope) head.appendChild(el("span", "mv-scope", u.scope));
               head.appendChild(el("span", "mv-when", fmtWhen(u.learned_at)));
               if (u.source && u.source !== agent) {
@@ -7506,6 +7538,13 @@ body {
                 warn.title = `The id line says "${u.id}" but the file is "${u.key}". Deleting removes the file.`;
                 head.appendChild(warn);
               }
+              const pin = el("button", u.operatorPinned ? "mv-pin mv-pin-on" : "mv-pin", "\u{1F4CC}");
+              pin.title = u.operatorPinned ? `Unpin ${u.key} \u2014 it will stop being served in full at session start` : `Pin ${u.key} \u2014 serve it in full to every new session of this agent`;
+              pin.setAttribute("aria-label", pin.title);
+              pin.addEventListener("click", () => {
+                togglePin(agent, u, pin).catch((e) => rhost.log.error("pin failed", e));
+              });
+              head.appendChild(pin);
               const del = el("button", "mv-delete", "\u2715");
               del.title = `Delete ${u.key}`;
               del.setAttribute("aria-label", `Delete memory ${u.key}`);
@@ -28689,6 +28728,8 @@ Click for live activity`;
       var prefsProxyEnabled = document.getElementById("prefs-proxy-enabled");
       var prefsDisableDesignMcp = document.getElementById("prefs-disable-design-mcp");
       var prefsCompactOnResume = document.getElementById("prefs-compact-on-resume");
+      var prefsContextHints = document.getElementById("prefs-context-hints");
+      var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
@@ -30231,6 +30272,8 @@ ${res.stderr}` : "");
         prefsProxyEnabled.checked = !!s.proxyEnabled;
         prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
         prefsCompactOnResume.checked = !!s.compactOnResume;
+        prefsContextHints.checked = !!s.contextHints;
+        if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
         prefsRemoteToken.value = "";
@@ -30270,6 +30313,8 @@ ${res.stderr}` : "");
           proxyEnabled: prefsProxyEnabled.checked,
           disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
           compactOnResume: prefsCompactOnResume.checked,
+          contextHints: prefsContextHints.checked,
+          semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked
         });
