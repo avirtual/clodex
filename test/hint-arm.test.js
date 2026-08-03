@@ -691,6 +691,59 @@ test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold',
     'an abandoned draft must release the hold, or deliveries stall for the whole cap');
 });
 
+// The stale window pre-arming left behind: the hint rides the request, so a
+// draft that keeps changing after the pause must not keep serving the winner it
+// earned. Overwriting on a new winner was already covered by the fixed id; the
+// case that was not is editing down to NO winner at all.
+test('arm: a draft edited out of matching anything clears the register', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'the pause must have armed something to go stale');
+
+  // Ctrl-U then a different question: nothing in the corpus matches it.
+  h.arm.onDraft('s', 'lets talk about something else entirely ok', CTX);
+  await settle();
+  assert.strictEqual(h.clears.length, 1,
+    'a hint ranked against a draft that no longer exists would ride the request as if it did');
+  assert.strictEqual(h.clears[0].id, HINT_ID, 'and it clears by the same fixed id it armed');
+
+  // Idempotence: the clear is driven by what is REGISTERED, so a second
+  // no-match pass has nothing left to do and must not POST again.
+  h.arm.onDraft('s', 'still nothing to do with any of it here', CTX);
+  await settle();
+  assert.strictEqual(h.clears.length, 1, 'a second no-match pass must not re-clear an empty register');
+});
+
+// Not a ranking outcome but a "cannot rank" outcome — the draft became
+// unreadable (history recall, tab completion, a pasted wall). The previously
+// armed hint is no less stale for the reason being different.
+test('arm: a draft that becomes unrankable clears what was armed for it', async () => {
+  for (const flag of ['desync', 'overflow']) {
+    const h = mkArm();
+    h.arm.onDraft('s', DRAFT, CTX);
+    await settle();
+    assert.strictEqual(h.posts.length, 1, `${flag}: something must be armed first`);
+    h.arm.onDraft('s', DRAFT, CTX, { [flag]: true });
+    await settle();
+    assert.strictEqual(h.clears.length, 1,
+      `${flag}: the draft can no longer be ranked, so the hint armed against the old one must go`);
+  }
+});
+
+// The floor is not a "not yet" for an ALREADY armed draft — it means the user
+// deleted their way back below it, and what was armed described more text.
+test('arm: deleting back below the term floor clears the register', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'the pause must have armed something');
+  h.arm.onDraft('s', 'how', CTX);
+  await settle();
+  assert.strictEqual(h.clears.length, 1,
+    'a two-word draft cannot have earned the hint that is still registered against it');
+});
+
 // The hold is what answers the revert's second objection: a one-shot hint pops
 // at a TURN START, and an injected message is the only thing that starts one
 // while the operator is still at the prompt.
@@ -1067,6 +1120,47 @@ test('write: line edits across separate keystrokes track the terminal', async ()
     assert.strictEqual(final.opts.desync, true,
       'tab completion rewrote the line invisibly and the arm must be told, not handed stale text');
   } finally { h.stop('a'); }
+});
+
+// Every seat shares ONE wirescope, so the hint→request association is nothing
+// but the route in the ctx. A crossed route puts the operator's personal
+// memories into a different agent's context — the worst failure this feature
+// has. Concurrent seats are exactly the path a refactor breaks silently, so the
+// isolation is pinned rather than left to inspection.
+test('write: two seats typing at once arm on their own routes, never each other\'s', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  const a = await spawned(h, 'a');
+  const b = await spawned(h, 'b');
+  try {
+    // Interleaved to the byte, which is how two seats actually type.
+    const ta = 'where does the helm chart live';
+    const tb = 'how do i rotate the deploy token';
+    for (let i = 0; i < Math.max(ta.length, tb.length); i++) {
+      if (i < ta.length) h.m.write('a', ta[i]);
+      if (i < tb.length) h.m.write('b', tb[i]);
+    }
+    assert.strictEqual(a._draft, ta, 'seat a accumulated only its own keystrokes');
+    assert.strictEqual(b._draft, tb, 'seat b accumulated only its own keystrokes');
+
+    const drafts = rec.calls.filter((c) => c.fn === 'onDraft');
+    const routes = new Set(drafts.map((c) => c.ctx.route));
+    assert.strictEqual(routes.size, 2, 'each seat must arm on a route of its own');
+    for (const c of drafts) {
+      assert.strictEqual(c.key, c.ctx.agent,
+        'the arm key and the ranked agent must be the same seat, or one seat ranks against another\'s store');
+      const other = c.key === 'a' ? tb : ta;
+      assert.ok(!c.draft || !other.startsWith(c.draft) || c.draft.length === 0
+        || (c.key === 'a' ? ta : tb).startsWith(c.draft),
+        `seat ${c.key} was handed a draft that belongs to the other seat`);
+    }
+    // A glob route would match the other seat on the proxy side (fnmatchcase),
+    // which is the specific way this degrades to "next request through".
+    for (const c of drafts) {
+      assert.ok(!String(c.ctx.route).includes('*'),
+        'a glob route arms every seat whose name extends this one — the exact cross-delivery bug');
+    }
+  } finally { h.stop('a'); h.stop('b'); }
 });
 
 test('write: injected (non-human) writes never reach the accumulator', async () => {

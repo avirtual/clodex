@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **A hint no longer outlives the draft it was ranked against.** Arming happens
+  at a typing pause, so a draft you keep editing could leave a hint registered
+  against text that no longer exists. Continuing to type already replaced it;
+  what didn't was editing your way down to *no* match — the previous winner
+  stayed armed and rode the request. The hint slot is now cleared whenever the
+  current draft earns nothing, including when it becomes unreadable (history
+  recall, tab completion) or drops back below the length floor.
+- A hint now says it is retrieved rather than verified: where one conflicts with
+  what you just said, the agent is told you are right.
+
 ## 4.12.0 — 2026-08-03 — Memory an agent can actually use
 
 The theme is retrieval: an agent now gets the right memory attached to the right

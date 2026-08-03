@@ -10,6 +10,10 @@
 // and by `holding` (a live pre-arm holds the inject queue, since an injected
 // turn is the only thing that could pop the hint before the draft is sent).
 //
+// The registered hint is a REGISTER, not a queue: every pass overwrites it on a
+// fixed id, and a pass that finds nothing CLEARS it. Without that clear an
+// edited-away draft keeps serving the winner it no longer describes.
+//
 // ARMING MAY NEVER AFFECT THE KEYSTROKE. Every entry point here is fire and
 // forget: no caller awaits, a proxy failure is logged at debug and swallowed.
 // The user's byte reaches the PTY whether or not wirescope is even running.
@@ -269,6 +273,22 @@ function createHintArm({
   const hold = (key) => { stateFor(key).holdSince = now(); };
   const release = (key) => { const st = armed.get(key); if (st) st.holdSince = 0; };
 
+  // THE REGISTER IS LAST-WRITE-WINS, AND THE EMPTY WRITE IS THE ONE THAT WAS
+  // MISSING. Re-ranking a changed draft already overwrites the hint on the fixed
+  // id, but a draft that edits its way out of matching ANYTHING used to leave the
+  // previous winner registered, so it rode a turn it no longer described.
+  function clearArmed(key, ctx) {
+    const st = armed.get(key);
+    if (!st || !st.lastIds) return;
+    st.lastIds = null;
+    const { base, route } = ctx || {};
+    if (!base || !route) return;
+    try {
+      Promise.resolve(clearHints({ base, route, id: HINT_ID }))
+        .catch((e) => debug(`stale clear failed for ${route}: ${e.message}`));
+    } catch (e) { debug(`stale clear threw for ${route}: ${e.message}`); }
+  }
+
   // The two ledgers, applied per candidate AFTER whichever ranker produced it:
   // the suppression matrix is a property of the record, not of the ranking, so
   // filtering last is what keeps a suppressed winner from taking the slot a live
@@ -363,6 +383,7 @@ function createHintArm({
     await new Promise((r) => setImmediate(r));
     let results;
     try { results = pick(draft, agent, limit); } catch (e) { debug(`rank failed for ${agent}: ${e.message}`); return; }
+    const nothing = () => clearArmed(key, ctx);
     // Only when lexical found nothing: a draft the normal gate can serve is
     // served by it, so this cannot regress any existing arm.
     if (!results.length) {
@@ -371,11 +392,11 @@ function createHintArm({
         results = [];
       }
     }
-    if (!results.length) return;
+    if (!results.length) { nothing(); return; }
     try { results = await refine(results, draft, agent, limit); } catch (e) {
       debug(`refine failed for ${agent}: ${e.message}`);
     }
-    if (!results.length) return;
+    if (!results.length) { nothing(); return; }
     const ids = results.map((r) => r.id).join(',');
     const st = stateFor(key);
     // A draft that grows without changing the winner must not re-POST: the text
@@ -385,7 +406,7 @@ function createHintArm({
     if (st.lastIds === ids) return;
     let text;
     try { text = compose(results); } catch (e) { debug(`compose failed: ${e.message}`); return; }
-    if (!text) return;
+    if (!text) { nothing(); return; }
     st.lastIds = ids;
     let p;
     try {
@@ -415,18 +436,20 @@ function createHintArm({
     onDraft(key, draft, ctx = {}, { final = false, overflow = false, desync = false } = {}) {
       cancelTimer(key);
       if (enabled && !enabled()) return;
-      if (overflow) return;
+      // Each of these gates says the CURRENT draft cannot be ranked — which is
+      // also a reason not to keep serving a hint ranked against an earlier one.
+      if (overflow) { clearArmed(key, ctx); return; }
       // The accumulator no longer matches the screen (history recall, tab
       // completion). Ranking it would answer a question the user never asked,
       // and would do it with full confidence.
-      if (desync) return;
+      if (desync) { clearArmed(key, ctx); return; }
       // MIN_TERMS assumes a short draft is not yet a question. That holds for
       // prose, but "do i have kids" reduces to ONE content term and is a
       // complete question — so a draft the shape test recognises skips the
       // length floor. It is not a weaker gate: personalAsk is strictly narrower
       // than "has three terms", and its branch still needs a semantic opinion.
       const short = countTerms(draft, terms) < minTerms;
-      if (short && !(personalAsk && semantic && personalAsk(draft))) return;
+      if (short && !(personalAsk && semantic && personalAsk(draft))) { clearArmed(key, ctx); return; }
       // Deliberately NOT awaited, and the rejection is swallowed here rather
       // than left to bubble: `fire` became async when the semantic ranker landed
       // and an unhandled rejection on the keystroke path would crash the main
