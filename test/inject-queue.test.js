@@ -54,6 +54,30 @@ test('shouldDeferInject: quiet window elapsed → go', () => {
   }), false);
 });
 
+// A pre-armed hint is one-shot and pops at the next TURN START, so injecting
+// while one is held hands the operator's hint to the injected message instead.
+// The typing window alone does not cover this: the hold opens on a PAUSE, which
+// is exactly when the quiet-gate has stopped deferring.
+test('shouldDeferInject: a held hint defers past a quiet keyboard', () => {
+  assert.strictEqual(shouldDeferInject({
+    now: 10_000, lastHumanInputAt: 7_000, waitingSince: 9_000,
+    quietMs: 2_000, maxWaitMs: 30_000, hintHeld: true,
+  }), true);
+  // Same instant, no hold → the quiet window governs as before.
+  assert.strictEqual(shouldDeferInject({
+    now: 10_000, lastHumanInputAt: 7_000, waitingSince: 9_000,
+    quietMs: 2_000, maxWaitMs: 30_000, hintHeld: false,
+  }), false);
+});
+
+test('shouldDeferInject: the max-wait cap still overrides a held hint', () => {
+  // A hint hold must not be able to starve a delivery any more than a draft can.
+  assert.strictEqual(shouldDeferInject({
+    now: 40_000, lastHumanInputAt: 7_000, waitingSince: 10_000,
+    quietMs: 2_000, maxWaitMs: 30_000, hintHeld: true,
+  }), false);
+});
+
 test('shouldDeferInject: max-wait cap overrides an actively-typing draft', () => {
   // human typed 100ms ago (would normally defer) but this item has been waiting
   // 30s → cap reached, inject anyway (a walked-away draft can't starve forever)
@@ -169,6 +193,53 @@ test('InjectQueue: quiet-gate defers the write until typing stops', async () => 
   assert.deepStrictEqual(writes, ['\x15', 'hi', '\r']);
   // Clock advanced past the quiet window before the first write.
   assert.ok(clock - lastHuman >= 50, `expected quiet elapsed, clock=${clock}`);
+});
+
+// The hold's whole job: with the keyboard already quiet, only `hintHeld` stands
+// between an injected message and the one-shot hint armed for the draft the
+// operator is about to send.
+test('InjectQueue: a held hint defers the write until the hold releases', async () => {
+  const writes = [];
+  let clock = 10_000;
+  let held = true;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 50,
+    maxWaitMs: 10_000,
+    ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 1_000,          // long quiet — the typing gate is open
+    hintHeld: () => held,
+    isDead: () => false,
+    now: () => clock,
+    sleep: (ms) => {
+      clock += ms;
+      if (clock >= 10_200) held = false;    // the operator submits mid-wait
+      return Promise.resolve();
+    },
+  });
+  await q.enqueue('hi');
+  assert.deepStrictEqual(writes, ['\x15', 'hi', '\r'], 'the message must still land, just later');
+  assert.ok(clock >= 10_200, `the write must wait for the hold to release, clock=${clock}`);
+});
+
+test('InjectQueue: a throwing hintHeld must not block the delivery', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0,
+    maxWaitMs: 10_000,
+    ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    hintHeld: () => { throw new Error('arm exploded'); },
+    isDead: () => false,
+    now: () => 10_000,
+    sleep: () => Promise.resolve(),
+  });
+  await q.enqueue('hi');
+  assert.deepStrictEqual(writes, ['\x15', 'hi', '\r'],
+    'the hint is optional infrastructure; a broken hold must never strand a message');
 });
 
 // --- InjectQueue: park-at-fire-time divert seam ------------------------------

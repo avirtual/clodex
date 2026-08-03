@@ -28,7 +28,7 @@ const path = require('node:path');
 const http = require('node:http');
 
 const {
-  foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S,
+  foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S, HOLD_MAX_MS,
 } = require('../hint-arm');
 const {
   rank, compose, terms, haystack, selfScore, personalAsk,
@@ -401,19 +401,43 @@ const DRAFT = 'how does the wirescope tail hint registry expire a slot';
 const CTX = { agent: 'a', base: 'http://127.0.0.1:1', route: 'clodex-a-deadbeef' };
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-test('arm: typing arms nothing — only Enter does', async () => {
+// The defect that reverted pre-arming (e9b1781) was POST VOLUME on a fixed
+// hint id, not pre-arming itself. Each keystroke must cancel the pending pass,
+// so a whole draft typed without a pause costs ONE POST at the end — not one
+// per keystroke, and not the three-in-2.4s the revert measured.
+test('arm: a draft typed without pausing costs exactly one POST', async () => {
   const h = mkArm();
   // Every prefix of the same draft, as the user would actually type it.
   for (let i = 1; i <= DRAFT.length; i++) h.arm.onDraft('s', DRAFT.slice(0, i), CTX);
   await settle();
-  assert.strictEqual(h.posts.length, 0,
-    `${DRAFT.length} keystrokes produced ${h.posts.length} POSTs — mid-draft arming overwrites a `
-    + 'fixed hint id repeatedly, and one-shot semantics let an early worse match pop before the '
-    + 'final better one replaces it');
-  // The submitted draft is the only thing ranked, and it arms exactly once.
+  assert.strictEqual(h.posts.length, 1,
+    `${DRAFT.length} keystrokes produced ${h.posts.length} POSTs — the debounce must collapse a `
+    + 'burst of keystrokes into one pass, or a fixed hint id gets overwritten repeatedly and '
+    + 'one-shot semantics let an early worse match pop before the final better one replaces it');
+  // Enter does not re-POST: the pre-arm already registered this winner.
   h.arm.onDraft('s', DRAFT, CTX, { final: true });
   await settle();
-  assert.strictEqual(h.posts.length, 1, 'Enter arms the draft the user actually submitted');
+  assert.strictEqual(h.posts.length, 1, 'the winner is unchanged, so Enter must not re-POST');
+});
+
+// The whole point of the pre-arm: the hint is registered BEFORE the Enter byte
+// exists, because a `turn_start_only`+`once` hint armed after Enter rides the
+// NEXT turn.
+test('arm: the hint is registered before Enter, not by it', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'a typing pause must arm on its own, with no Enter');
+});
+
+// A draft submitted faster than the debounce never gets a pre-arm, so Enter
+// remains the safety net rather than dead code.
+test('arm: a draft submitted inside the debounce still arms on Enter', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });   // no pause — the timer never fires
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'Enter must arm a draft the debounce never reached');
 });
 
 // Precision is the open question for this feature, and it cannot be answered
@@ -629,6 +653,58 @@ test('arm: an abandoned draft DELETES the registered hint', async () => {
   const h2 = mkArm();
   h2.arm.disarm('s', CTX);
   assert.strictEqual(h2.clears.length, 0, 'disarming when nothing was armed sends nothing');
+});
+
+// A PRE-armed draft is the case the abandon path did not have to cover before:
+// the hint is registered against text that was never submitted, so Ctrl-C must
+// delete it even though no Enter ever happened.
+test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'the pause must have armed something');
+  assert.ok(h.arm.holding('s'), 'a live pre-arm holds the inject queue');
+  h.arm.disarm('s', CTX);
+  assert.strictEqual(h.clears.length, 1,
+    'a hint armed against a draft the user threw away would pop on whatever they type next');
+  assert.strictEqual(h.arm.holding('s'), false,
+    'an abandoned draft must release the hold, or deliveries stall for the whole cap');
+});
+
+// The hold is what answers the revert's second objection: a one-shot hint pops
+// at a TURN START, and an injected message is the only thing that starts one
+// while the operator is still at the prompt.
+test('arm: the hold spans the whole pre-arm and ends at submit', async () => {
+  const h = mkArm();
+  assert.strictEqual(h.arm.holding('s'), false, 'an idle session holds nothing');
+  h.arm.onDraft('s', DRAFT, CTX);
+  assert.ok(h.arm.holding('s'),
+    'the hold must open with the TIMER — once typing pauses, the queue\'s own typing-gate has '
+    + 'already stopped covering this draft, which is exactly the window being protected');
+  await settle();
+  assert.ok(h.arm.holding('s'), 'and it must survive the rank, through to the submit');
+  h.arm.onSubmit('s');
+  assert.strictEqual(h.arm.holding('s'), false, 'submitting the draft releases the queue');
+});
+
+// A hold that outlives its draft would starve every delivery to that session.
+test('arm: the hold expires on its own cap, and a pass that arms nothing never holds', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX);
+  await settle();
+  assert.ok(h.arm.holding('s'), 'held while the draft is live');
+  h.tick(HOLD_MAX_MS + 1);
+  assert.strictEqual(h.arm.holding('s'), false,
+    'a walked-away draft must not hold the queue forever — the cap is the only thing that ends it');
+
+  // Nothing was armed, so there is no one-shot hint to protect.
+  const h2 = mkArm();
+  h2.arm.onDraft('s', 'zzzz qqqq xxxx', CTX);
+  await settle();
+  assert.strictEqual(h2.posts.length, 0, 'this draft matches nothing');
+  assert.strictEqual(h2.arm.holding('s'), false,
+    'a pass that armed nothing must release — holding with no hint registered blocks deliveries '
+    + 'to protect something that does not exist');
 });
 
 test('arm: a proxy that throws synchronously is swallowed and does not poison the next attempt', async () => {

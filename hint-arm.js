@@ -1,14 +1,14 @@
 // Automatic contextual hint arming: accumulate the draft the user is typing,
-// and on Enter rank the agent's memory against it and register the best match as
-// a one-shot tail hint.
+// pre-arm on a typing pause, and re-arm on Enter.
 //
-// WHY ENTER AND NOT WHILE TYPING. Arming continuously looks like it beats a race
-// against the outgoing request, but session-manager folds the draft inline
-// BEFORE `pty.write`, so the Enter byte has not reached the CLI when the POST is
-// issued — there is no race to beat. What continuous arming did produce was up
-// to 22 POSTs in 38s, each overwriting the last on a fixed hint id; with
-// one-shot hints an early worse match can pop before the better final one
-// replaces it.
+// THE ARM MUST PRECEDE ENTER. A hint is `turn_start_only` + `once`, so it rides
+// the FIRST request of a turn; Enter reaches the CLI in ~0ms and a rank takes
+// 190-320ms (measured 2026-08-03, 2,220 units), so arming ON Enter always lands
+// one turn late. Arming while typing was reverted once (e9b1781) as racing
+// nothing — true only while the ranker was synchronous. Its two real objections
+// are answered by the debounce (cancelled per keystroke, so only a pause ranks)
+// and by `holding` (a live pre-arm holds the inject queue, since an injected
+// turn is the only thing that could pop the hint before the draft is sent).
 //
 // ARMING MAY NEVER AFFECT THE KEYSTROKE. Every entry point here is fire and
 // forget: no caller awaits, a proxy failure is logged at debug and swallowed.
@@ -23,6 +23,14 @@ const DRAFT_CAP = 4096;
 // Below this many content-bearing terms a draft is not yet a question, and
 // whatever it ranks against is noise.
 const MIN_TERMS = 3;
+
+// Typing pause that triggers the pre-arm. Must clear a slow typist's
+// inter-keystroke gap and still leave room for a 190-320ms rank before Enter.
+const DEBOUNCE_MS = 300;
+
+// Cap on the inject hold, so a walked-away draft cannot starve deliveries. Keep
+// it under the queue's own INJECT_QUIET_MAXWAIT — the hold is the narrower claim.
+const HOLD_MAX_MS = 30 * 1000;
 
 // Cosine floor for the personal path, measured 2026-08-03 over the live 2,220
 // unit corpus. It is NOT a general junk threshold — that experiment is in
@@ -221,12 +229,13 @@ function createHintArm({
   // sampled at construction would need an app restart to take effect.
   enabled = null,
   cooldownMs = COOLDOWN_MS, minTerms = MIN_TERMS,
+  debounceMs = DEBOUNCE_MS, holdMaxMs = HOLD_MAX_MS,
 } = {}) {
   // agent -> Map(unit id -> offered-at ms). Deliberately NOT shared with
   // memory-load's live set: "already in context" and "already offered" are
   // different questions, and conflating them makes the first one start lying.
   const offered = new Map();
-  // session key -> { timer, lastIds }
+  // session key -> { timer, lastIds, holdSince }
   const armed = new Map();
 
   const debug = (msg) => { try { if (log && log.debug) log.debug('hint', msg); } catch {} };
@@ -248,16 +257,17 @@ function createHintArm({
   };
 
   const stateFor = (key) => {
-    if (!armed.has(key)) armed.set(key, { timer: null, lastIds: null });
+    if (!armed.has(key)) armed.set(key, { timer: null, lastIds: null, holdSince: 0 });
     return armed.get(key);
   };
 
-  // No timer remains (arming is Enter-only), but the state map still holds the
-  // winner memo per session, so the reset points below stay meaningful.
   const cancelTimer = (key) => {
     const st = armed.get(key);
     if (st && st.timer) { clearTimeout(st.timer); st.timer = null; }
   };
+
+  const hold = (key) => { stateFor(key).holdSince = now(); };
+  const release = (key) => { const st = armed.get(key); if (st) st.holdSince = 0; };
 
   // The two ledgers, applied per candidate AFTER whichever ranker produced it:
   // the suppression matrix is a property of the record, not of the ranking, so
@@ -331,7 +341,18 @@ function createHintArm({
     return top.length ? admissible(top, agent, limit) : [];
   }
 
-  async function fire(key, draft, ctx) {
+  // A hold outlives the pass that opened it — it must cover the span from "rank
+  // in flight" through "armed, draft not yet sent". Only a pass that armed
+  // nothing releases; the `finally` is what keeps a throw in `rank` from leaking
+  // a hold and stalling that session's deliveries for the whole cap.
+  async function fire(key, draft, ctx, { preArm = false } = {}) {
+    try { await rank(key, draft, ctx); } finally {
+      const st = armed.get(key);
+      if (preArm && (!st || !st.lastIds)) release(key);
+    }
+  }
+
+  async function rank(key, draft, ctx) {
     const { agent, base, route, limit = 1 } = ctx || {};
     if (!base || !route || !agent) return;
     // YIELD BEFORE THE RANK. `async` only defers a body from its first await
@@ -359,6 +380,8 @@ function createHintArm({
     const st = stateFor(key);
     // A draft that grows without changing the winner must not re-POST: the text
     // registered is a function of the result set, not of the keystroke count.
+    // This is also what makes the Enter pass free after a pre-arm hit the same
+    // winner — the safety-net POST only fires when the pre-arm did not run.
     if (st.lastIds === ids) return;
     let text;
     try { text = compose(results); } catch (e) { debug(`compose failed: ${e.message}`); return; }
@@ -386,13 +409,12 @@ function createHintArm({
   }
 
   return {
-    // Called on every human keystroke with the session's accumulated draft, but
-    // only Enter (`final`) arms. Mid-draft keystrokes exist to keep the timer
-    // cancelled and the gate honoured, nothing more.
+    // A keystroke cancels the pending pre-arm and reschedules it, so only a
+    // pause ranks. Enter (`final`) skips the debounce and re-POSTs — idempotent
+    // on the fixed hint id, and the safety net for a draft sent inside 300ms.
     onDraft(key, draft, ctx = {}, { final = false, overflow = false, desync = false } = {}) {
       cancelTimer(key);
       if (enabled && !enabled()) return;
-      if (!final) return;
       if (overflow) return;
       // The accumulator no longer matches the screen (history recall, tab
       // completion). Ranking it would answer a question the user never asked,
@@ -409,7 +431,17 @@ function createHintArm({
       // than left to bubble: `fire` became async when the semantic ranker landed
       // and an unhandled rejection on the keystroke path would crash the main
       // process on a daemon hiccup.
-      Promise.resolve(fire(key, draft, ctx)).catch((e) => debug(`fire failed: ${e && e.message}`));
+      const go = (preArm) => Promise.resolve(fire(key, draft, ctx, { preArm }))
+        .catch((e) => debug(`fire failed: ${e && e.message}`));
+      if (final) { go(false); return; }
+      const st = stateFor(key);
+      // Held from the TIMER, not from the rank it starts: by the time the pause
+      // elapses the operator has stopped typing, so the inject queue's own
+      // typing-gate has already stopped covering this draft.
+      hold(key);
+      st.timer = setTimeout(() => { st.timer = null; go(true); }, debounceMs);
+      // A pending arm must never be the reason the process stays alive.
+      if (st.timer && typeof st.timer.unref === 'function') st.timer.unref();
     },
 
     // The draft was abandoned (Ctrl-C / Ctrl-U) or submitted. On abandon the
@@ -417,6 +449,7 @@ function createHintArm({
     // from a discarded draft pops on whatever the user types next.
     disarm(key, ctx = {}) {
       cancelTimer(key);
+      release(key);
       const st = stateFor(key);
       const had = st.lastIds;
       st.lastIds = null;
@@ -434,8 +467,19 @@ function createHintArm({
     // the offer is live.
     onSubmit(key) {
       cancelTimer(key);
+      release(key);
       const st = stateFor(key);
       st.lastIds = null;
+    },
+
+    // True while a pre-armed hint waits for the draft that earned it. The inject
+    // queue gates on this: a turn start is the only thing that pops a one-shot
+    // hint, and an injected message is the only thing that starts one here.
+    holding(key) {
+      const st = armed.get(key);
+      if (!st || !st.holdSince) return false;
+      if (now() - st.holdSince >= holdMaxMs) { st.holdSince = 0; return false; }
+      return true;
     },
 
     // Context cleared or compacted: whatever was offered is no longer in front
@@ -443,7 +487,7 @@ function createHintArm({
     // whichever comes first" half of the rule.
     onContextReset(agent) { offered.delete(agent); },
 
-    forget(key) { cancelTimer(key); armed.delete(key); },
+    forget(key) { cancelTimer(key); release(key); armed.delete(key); },
 
     // Test/inspection surface.
     _offered(agent) { return new Map(offered.get(agent) || []); },
@@ -453,5 +497,5 @@ function createHintArm({
 
 module.exports = {
   foldDraft, createHintArm,
-  DRAFT_CAP, MIN_TERMS, COOLDOWN_MS, HINT_ID, TTL_S,
+  DRAFT_CAP, MIN_TERMS, COOLDOWN_MS, HINT_ID, TTL_S, DEBOUNCE_MS, HOLD_MAX_MS,
 };

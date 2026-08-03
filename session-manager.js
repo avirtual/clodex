@@ -293,7 +293,7 @@ function createSessionManager(deps) {
   // A no-op stand-in rather than a null check at each call site: the draft fold
   // still runs and s._draft still tracks, so turning the flag on mid-life needs
   // no state that only exists when armed.
-  const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {} };
+  const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
@@ -4266,6 +4266,7 @@ function createSessionManager(deps) {
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
+          hintHeld: () => { try { return !!(arm.holding && arm.holding(session.name)); } catch { return false; } },
           isDead: () => !!session._dead,
           bracketedPaste: () => !!session._pasteModeOn,
           ready: isClaude ? () => !!session._bootReadySeen : undefined,

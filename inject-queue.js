@@ -19,8 +19,13 @@ const CTRLU_SETTLE_MS = 30;
 // unit-testable under plain node).
 const { PASTE_START, PASTE_END } = require('./proxy-util');
 
-function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWaitMs }) {
+// `hintHeld` covers the gap the typing window does not: a hint pre-armed against
+// the operator's draft is one-shot and pops at the next TURN START, so injecting
+// during a pause long enough to have stopped counting as typing would consume it.
+// Its own cap lives with the hold, so the max-wait below still bounds it.
+function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWaitMs, hintHeld = false }) {
   if (now - waitingSince >= maxWaitMs) return false;       // max-wait cap reached — inject anyway
+  if (hintHeld) return true;
   return now - (lastHumanInputAt || 0) < quietMs;          // still inside the typing window
 }
 
@@ -48,12 +53,13 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld }) {
     this._write = write;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
     this._maxWaitMs = maxWaitMs;
     this._lastHumanInputAt = lastHumanInputAt || (() => 0);
+    this._hintHeld = hintHeld || (() => false);
     this._isDead = isDead || (() => false);
     this._now = now || Date.now;
     this._sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -69,6 +75,9 @@ class InjectQueue {
   }
 
   get length() { return this._length; }
+
+  // A throwing hold must not block delivery — the hint is optional, the message is not.
+  _held() { try { return !!this._hintHeld(); } catch { return false; } }
 
   enqueue(text, opts = {}) {
     this._length++;
@@ -105,6 +114,7 @@ class InjectQueue {
         now: this._now(),
         lastHumanInputAt: this._lastHumanInputAt(),
         waitingSince, quietMs: this._quietMs, maxWaitMs: this._maxWaitMs,
+        hintHeld: this._held(),
       })) {
       deferred = true;
       await this._sleep(Math.min(this._quietMs, 500));
@@ -123,6 +133,8 @@ class InjectQueue {
       try { claimed = !!divert(text); } catch {}
       if (claimed) return;
     }
+    // Only a splice through LIVE typing is worth warning about; a hint hold that
+    // hit the cap injects into an idle prompt and is not the same event.
     if (deferred && this._onCapFire
       && this._now() - (this._lastHumanInputAt() || 0) < this._quietMs) {
       try { this._onCapFire(text); } catch {}
