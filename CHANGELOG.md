@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
+  you get what Clodex already knew but had nowhere to say: how many times this
+  conversation has been compacted and how much context those compacts threw
+  away, turns and API requests, how big the transcript has grown, and the cost —
+  in all four of its scopes, each labelled, because they are genuinely different
+  numbers. Spend since the last compact, spend since the CLI process started,
+  spend on this whole conversation, and **spend by this agent across every
+  conversation it has ever held**, which only ever goes up: a /clear starts a
+  fresh conversation but does not reset the seat's lifetime total. Where the
+  older records have aged out of the ledger, the panel says how many it still
+  has rather than presenting a short total as complete. Reading it costs
+  nothing until you click — the transcript scan runs on demand, not on the
+  poll.
 - **Preferences is seven collapsible groups instead of one long scroll.** Every
   setting was expanded at once, so finding one meant scrolling past eight others
   and their explanations. Groups now start collapsed, each with a one-line

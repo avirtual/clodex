@@ -36,7 +36,7 @@ function registerIpcHandlers(deps) {
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
-    readSessionArgs, applySessionArgs, sessionMeta,
+    readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken,
@@ -528,6 +528,32 @@ function registerIpcHandlers(deps) {
     } catch {}
     out.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
     return { ok: true, sessions: out, activeId };
+  });
+
+  // The ⓘ panel. On demand only — the transcript scan streams tens of MB, which
+  // is fine for a click and would not be for the poll. The live wire ledger is
+  // passed in for the CURRENT session because wire-totals.json is written on a
+  // 1s debounce: without it the agent lifetime total appears to go DOWN between
+  // a turn landing and the file catching up.
+  handle('session:info', async (_e, name) => {
+    try {
+      const entry = persistence.get(name);
+      if (!entry) return { ok: false, error: 'Session not found' };
+      const payload = proxyPoller ? proxyPoller.snapshot(name) : null;
+      let live = null;
+      const wt = manager._wireTelemetry;
+      if (wt) {
+        const w = wt.payload(name);
+        // Only when the wire agrees on the session identity — a stale agent
+        // record would credit this session with another's ledger.
+        if (w && w.sessionId && w.sessionId === entry.sessionId) {
+          live = { cost: w.cost && w.cost.usd, requests: w.cost && w.cost.requests, turns: w.turns, refusals: w.refusals };
+        }
+      }
+      return { ok: true, info: await sessionInfo.collect({ name, entry, payload, live }) };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   });
 
   handle('discovery:scan', async (_e, opts) => {

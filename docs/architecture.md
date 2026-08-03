@@ -162,6 +162,12 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **session-meta.js** — `createSessionMeta({REGISTRY_DIR})`: cheap `fs.stat`
   last-activity timestamps + TTL-cached `gh pr view` PR status for the sidebar
   organizer (group/sort/filter). Electron-free; in SCANNED_MODULES.
+- **session-info.js** — `createSessionInfo({fs,readline,homedir,pathFor,…})`:
+  the sidebar ⓘ panel's data layer, gathered on demand (`session:info`). Sums
+  `wire-totals.json` across a name's whole `sessionIds` history for the
+  monotonic per-agent total, and STREAMS the transcript for compact boundaries
+  (70MB/157ms — a sync read is ~10x that and copies the file into memory).
+  Never merges the four cost scopes. Electron-free; in SCANNED_MODULES.
 - **git-worktree.js** — stdlib-only git worktree ops (create/remove/repoInfo/
   defaultBranch) behind the New-Session worktree option and the delete flow's
   awaited `removeWorktree`. `execFile`, never a shell; in SCANNED_MODULES.
@@ -243,7 +249,9 @@ adapter that hosts it. The modules below are what the engine assembles.
   (string formatters, unit-tested), `render-html.js` (DOM-string builders),
   `checklists.js` (render/collect checklist pairs; owns five library
   caches behind setters), `session-actions.js` (the type→entries mapping for
-  the consolidated `⚙ session ▾` menu, unit-tested).
+  the consolidated `⚙ session ▾` menu, unit-tested), `session-info-view.js`
+  (the ⓘ panel's rows as data — pure so the four cost scopes and their labels
+  are unit-testable; the 07-15 three-scopes ruling is pinned there).
 - **Islands** (own state + DOM, `init*(deps)`): `ipc-log.js`,
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
   (prompts/agents/skills drawers), `subagent-popover.js`,
@@ -252,7 +260,11 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **renderer/popovers/** — the popover family behind `popoverApi`:
   `report-panel.js`, `context-popover.js`, `cost-popover.js`,
   `bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +
-  `isFilesPopoverForKey` for the peer subsystem), plus two that are NOT on
+  `isFilesPopoverForKey` for the peer subsystem), plus `session-info-popover.js`
+  (the sidebar row's ⓘ — anchored to the ROW, so it opens for a session that
+  isn't active, and off `window.api.sessionInfo` rather than the data seam
+  since it reads local persistence; peer rows build their own markup and
+  deliberately have no ⓘ), plus two that are NOT on
   the data seam by design: `checklist-popovers.js` (tools/skills/agents/**intents**
   — local config editors, direct `window.api`; tools/agents suppressed for
   peers, but **skills takes an optional peer `source`** so the same popover

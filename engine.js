@@ -687,6 +687,12 @@ const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });
 const { createSessionMeta } = require('./session-meta');
 const sessionMeta = createSessionMeta({ REGISTRY_DIR });
 
+const { createSessionInfo } = require('./session-info');
+const sessionInfo = createSessionInfo({
+  fs, readline: require('readline'), homedir: () => os.homedir(),
+  pathFor, registryDir: REGISTRY_DIR, userDataPath,
+});
+
 
 let msgCounter = 0;
 
@@ -1419,7 +1425,7 @@ const toolCache = createToolCache({ whichBin });
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState,
-    readSessionMeta, sessionMeta, claudeProjectDir, rebuildAllStatusScripts,
+    readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,

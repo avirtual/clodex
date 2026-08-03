@@ -39,6 +39,7 @@ const { initTooltips } = require('./tooltip');
 const { initReportPanel } = require('./popovers/report-panel');
 const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
+const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
 const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
@@ -504,13 +505,20 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
         </span>
       </div>
     </div>
+    <button class="session-info-btn" data-tip="Session info — cost, compactions, activity">i</button>
     <button class="session-close" data-tip="Archive session">&times;</button>
   `;
 
   item.addEventListener('click', (e) => {
     if (e.target.closest('.session-close')) return;
+    if (e.target.closest('.session-info-btn')) return;
     if (e.target.closest('.rename-input')) return;
     switchSession(name);
+  });
+
+  item.querySelector('.session-info-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSessionInfoPopover(name, item);
   });
 
   item.querySelector('.session-close').addEventListener('click', (e) => {
@@ -2931,6 +2939,10 @@ function popoverApi(name) {
 
 
 const { openCostPopover } = initCostPopover({ popoverApi, proxyState });
+
+// Sidebar-row ⓘ. Anchored to the row rather than the proxy bar, so it works for
+// any row — including one that isn't the active session.
+const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 
 
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState });

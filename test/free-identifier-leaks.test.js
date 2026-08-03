@@ -60,6 +60,10 @@ const SCANNED_MODULES = [
   'session-discovery.js',
   'git-worktree.js',
   'session-meta.js',
+  // The ⓘ panel's data layer (t-sessioninfo). Every source it reads — fs,
+  // readline, homedir, the registry dir, userData — arrives injected, which is
+  // what makes the transcript scan testable against fixtures without an app.
+  'session-info.js',
   // The frozen-system-prompt cache (t61). A pure fs/string leaf like
   // ctx-reminder.js, read by session-manager's claude arm through the deps
   // object — so the forward scan says something real: a name it reached for in
@@ -166,6 +170,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/popovers/report-panel.js',
   'renderer/popovers/cost-popover.js',
   'renderer/popovers/bust-popover.js',
+  'renderer/popovers/session-info-popover.js',
   'renderer/popovers/files-popover.js',
   'renderer/popovers/checklist-popovers.js',
   'renderer/popovers/team-roles-popover.js',

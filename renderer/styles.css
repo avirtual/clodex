@@ -900,6 +900,60 @@ html, body {
   color: var(--accent);
 }
 
+/* Row ⓘ, sharing the ✕'s hover-reveal. Sits left of it rather than below the
+   name: the row is one line tall at every sidebar width. */
+.session-info-btn {
+  position: absolute;
+  top: 4px;
+  right: 24px;
+  opacity: 0;
+  border: 1px solid var(--text-dim);
+  background: none;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, serif;
+  line-height: 1;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.session-item:hover .session-info-btn { opacity: 1; }
+.session-info-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Session-info panel (sidebar ⓘ). Row-anchored, so it's narrower than the
+   bar-anchored popovers and scrolls rather than growing off-screen. */
+#session-info-popover {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#session-info-popover.hidden { display: none; }
+#session-info-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.si-sec { margin-bottom: 10px; }
+.si-sec:last-child { margin-bottom: 0; }
+.si-title {
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  margin-bottom: 4px; padding-bottom: 3px; border-bottom: 1px solid var(--active-bg);
+}
+.si-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 11px; padding: 2px 0; }
+.si-k { color: var(--text-dim); }
+.si-v { color: var(--text); font-weight: 600; text-align: right; }
+.si-row[data-tip] { cursor: help; }
+
 /* Main area */
 
 #main {

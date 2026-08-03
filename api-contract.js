@@ -132,6 +132,7 @@ const API_CONTRACT = [
   { name: 'fileReveal', kind: 'invoke', channel: 'file:reveal' },
   { name: 'onSessionFileView', kind: 'on', channel: 'session-file-view' },
   { name: 'openExternal', kind: 'invoke', channel: 'app:openExternal' },
+  { name: 'sessionInfo', kind: 'invoke', channel: 'session:info' },
   { name: 'getProxySnapshot', kind: 'invoke', channel: 'proxy:snapshot' },
   { name: 'getProxyContext', kind: 'invoke', channel: 'proxy:context' },
   { name: 'getProxyReport', kind: 'invoke', channel: 'proxy:report' },
