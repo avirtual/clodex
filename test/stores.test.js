@@ -873,8 +873,8 @@ test('seed (T52): ships the reviewer template into a fresh registry (byte-exact)
     assert.deepStrictEqual(seeded.tools, ['Read', 'Grep', 'Glob']);
     assert.deepStrictEqual(seeded.env, {
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1',
+      CLODEX_SPAWNER_HINT: 'off',
     });
-    assert.strictEqual(seeded.spawnerHint, 'off');
   } finally {
     fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(registryDir, { recursive: true, force: true });

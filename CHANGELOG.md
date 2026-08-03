@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A session can now be told to skip wirescope's spawn-directive block.** Set
+  `CLODEX_SPAWNER_HINT=off` in a session's environment and the proxy stops
+  adding the `[wirescope]` block — the documentation of how to spawn subagents —
+  to that seat's system prompt. It is worth doing for a seat that will never
+  spawn one, since the block otherwise rides along on every request it makes.
+  `=on` is the opposite, for a port where the block is off by default; anything
+  else, including leaving the variable unset, changes nothing. The cold reviewer
+  seat already skipped the block because it holds no spawning tools, so nothing
+  about it changes here; what is new is that the switch is available to any
+  session rather than being wired into one internal code path.
+
 ## 4.13.0 — 2026-08-04
 
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and

@@ -136,3 +136,48 @@ CPU.
 
 Append outcomes here as they land, past tense, pinned to a commit or a
 measured number. Nothing in the present progressive.
+
+### t152 implementation (clodex-hand, uncommitted)
+
+Product, all in `session-manager.js` unless noted:
+- `CLODEX_SPAWNER_HINT` read off `mergedEnv` in `create()`, immediately after the
+  `proxyAgent` mint, guarded on `proxyBase && proxyAgent`. `off`/`on` POST
+  `{on:false}`/`{on:true}`; every other value (unset, `''`, `'0'`, garbage) posts
+  nothing. try/catch + `.catch()`, warn-logged.
+- `session.spawnerHintSet` records the POST that was actually made; `kill()` clears
+  on THAT. The `ephemeral && reviewFor` gate and its `killRec` read are gone.
+- Deleted: `wantSpawnerHintOff`, the `_handleTeamReview` POST block,
+  `REVIEWER_FALLBACK.spawnerHint`.
+- `CLODEX_SPAWNER_HINT` added to `REVIEWER_ENV_ALLOWLIST` and to
+  `REVIEWER_FALLBACK.env`; the `spawnerHint` field removed from
+  `resources/library/templates/clodex-team-reviewer.json`, replaced by
+  `"CLODEX_SPAWNER_HINT": "off"` in its `env`.
+
+Spec deviations: none in behaviour. Line numbers were all accurate except
+`kill()`'s POST, which the spec cites at `:1389`/`:1391` — the guard was at
+`:1389` and the call at `:1391`, so both readings point at the same block.
+
+Tests (`test/session-manager.test.js`): the five T51/T52 reviewer hint tests at
+`:2386-2477` and the T52 template-field test at `:2877-2891` were replaced by nine
+against the new path, driving the REAL `create()` claude arm (the branch reads
+`mergedEnv`, which does not exist outside it — a stubbed `create()`, correct when
+the POST lived in the handler, would assert nothing now). Three fixtures that
+mirrored the shipped template were updated, plus `test/stores.test.js:877`.
+
+Mutation checks — 5 run, 5 killed, 0 escapes:
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | delete the env read (`hintWant = undefined`) | **KILL** 2 fail (both named POST tests) |
+| M2 | drop the `spawnerHintSet` guard in `kill()` | **KILL** 1 fail (the "did not set it" test) |
+| M3 | fire the POST after `pty.spawn` instead of before | **KILL** 1 fail |
+| M4 | accept any truthy value as an override | **KILL** 1 fail |
+| M5 | drop the `proxyBase` guard | **KILL** 1 fail |
+
+M1 and M2 are the two the spec named; M3-M5 cover claims those two do not reach
+(the pre-first-turn ordering, the unset-is-silent promise, the tee-blind null).
+
+Full suite: **3560 pass, 0 fail, ESCAPES 0**. Baseline 3557; the +3 delta is the
+9 new tests less the 6 replaced. The first run wedged on `cli/test/attach.test.js`
+at 0.0% CPU (the known concurrency hang, unrelated to this change) and was killed;
+the clean re-run is the number above.

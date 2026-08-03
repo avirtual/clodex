@@ -37,6 +37,7 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLAUDE_CODE_DISABLE_CLAUDE_MDS',
   'FORCE_PROMPT_CACHING_5M',
   'CLODEX_DISABLE_IPC_PROMPT',
+  'CLODEX_SPAWNER_HINT',
 ]);
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
 const REVIEWER_FALLBACK = {
@@ -47,8 +48,8 @@ const REVIEWER_FALLBACK = {
     CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
+    CLODEX_SPAWNER_HINT: 'off',
   },
-  spawnerHint: 'off',
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
 const { hostNotice } = require('./host-stamp');
@@ -680,6 +681,42 @@ function createSessionManager(deps) {
         proxyAgent = resolveProxyAgentId({ name, fork, existing: getPersistence().get(name), taken });
       }
 
+      // CLODEX_SPAWNER_HINT=off|on — suppress (or force) wirescope's [wirescope]
+      // spawn-directive block for this seat's ROUTE. Fired here, before the PTY
+      // spawn, because the block rides inside the marked system prefix and
+      // carries the last system cache marker: a flip after the seat's first turn
+      // reshapes that prefix and costs a warm bust. Anything but off/on posts
+      // nothing, so the common path gains no traffic.
+      // Strict match, not a parser: this sits on an authority-adjacent path. The
+      // likely typos ('0', 'OFF', ' off') would otherwise fail silently, their only
+      // symptom a block reappearing in a prompt nobody reads — hence the warn.
+      // Unset stays silent, which is what keeps the common path quiet.
+      const hintWant = mergedEnv.CLODEX_SPAWNER_HINT;
+      const hintValid = hintWant === 'off' || hintWant === 'on';
+      let spawnerHintSet = false;
+      if (hintValid && proxyBase && proxyAgent) {
+        spawnerHintSet = true;
+        try {
+          ProxyClient.spawnerHint(proxyBase, proxyAgent, { on: hintWant === 'on' })
+            .catch((e) => log.warn('session', `spawner-hint(${hintWant}) ${proxyAgent} failed: ${e.message}`));
+        } catch (e) {
+          log.warn('session', `spawner-hint(${hintWant}) skipped: ${e.message}`);
+        }
+      } else if (hintWant && !hintValid) {
+        log.warn('session', `spawner-hint: CLODEX_SPAWNER_HINT=${JSON.stringify(hintWant)} not recognized (expected "off" or "on") — no hint set for ${name}`);
+      }
+
+      // The POST above lands before the session exists, so kill() cannot clear it
+      // if create() throws on the way to sessions.set — the route would keep a row
+      // in a TTL-less table forever. Called at every throw site past this point,
+      // mirroring the registry.unregister unwind below.
+      const abandonHint = () => {
+        if (!spawnerHintSet) return;
+        try {
+          ProxyClient.spawnerHint(proxyBase, proxyAgent, { clear: true }).catch(() => {});
+        } catch {}
+      };
+
       // createdAt: stamped ONCE, at the session's first create. kill()+recreate
       // (restart/restore) rebuilds the record from spawn args, so preserve any
       // existing stamp rather than resetting it — the sidebar's "created" sort/
@@ -917,6 +954,7 @@ function createSessionManager(deps) {
           env,
         });
       } catch (e) {
+        abandonHint();
         const d = collectSystemDiagnostics();
         const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
         const warning = diagWarning(d);
@@ -970,7 +1008,7 @@ function createSessionManager(deps) {
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
-          if (e.code !== 'EEXIST') throw e;
+          if (e.code !== 'EEXIST') { abandonHint(); throw e; }
           const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
           const existing = JSON.parse(existingRaw);
           if (existingRaw !== blockerRaw) blockerLive = null;
@@ -989,6 +1027,7 @@ function createSessionManager(deps) {
             try { fs.unlinkSync(existing.socket); } catch {}
             registry.register(name, socketPath, cwd);
           } else {
+            abandonHint();
             throw new Error(
               `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
             );
@@ -1001,6 +1040,7 @@ function createSessionManager(deps) {
         try {
           await transport.start();
         } catch (e) {
+          abandonHint();
           registry.unregister(name);
           transport = null;
           throw e;
@@ -1015,6 +1055,10 @@ function createSessionManager(deps) {
         sessionId: resumeId || null,
         workspaceId,
         proxyAgent, proxyBase,
+        // Recorded from the POST actually made, not re-read in kill(): the env
+        // can change under a live seat, and a clear driven by the new value
+        // would either leak a row or clear one this seat never set.
+        spawnerHintSet,
         // The tri-state as REQUESTED (false=off, string=explicit, null=follow the
         // pref), kept alongside the base it resolved to: _armCtx has to re-resolve
         // per draft, and the base alone cannot say whether an explicit route or a
@@ -1385,13 +1429,12 @@ function createSessionManager(deps) {
       log.info('session', `kill ${name} (user-initiated) pid=${s.pty.pid}`);
       s._userKilled = true;
       this._notifyComposition(s, 'retired');
-      const killRec = getPersistence().get(name);
-      if (killRec && killRec.ephemeral && killRec.reviewFor && s.proxyBase && s.proxyAgent) {
+      if (s.spawnerHintSet && s.proxyBase && s.proxyAgent) {
         try {
           ProxyClient.spawnerHint(s.proxyBase, s.proxyAgent, { clear: true })
-            .catch((e) => log.warn('session', `reviewer spawner-hint(clear) ${s.proxyAgent} failed: ${e.message}`));
+            .catch((e) => log.warn('session', `spawner-hint(clear) ${s.proxyAgent} failed: ${e.message}`));
         } catch (e) {
-          log.warn('session', `reviewer spawner-hint(clear) skipped: ${e.message}`);
+          log.warn('session', `spawner-hint(clear) skipped: ${e.message}`);
         }
       }
       getPersistence().remove(name);
@@ -3313,9 +3356,6 @@ function createSessionManager(deps) {
         ? ` — reviewer template env keys [${droppedEnvKeys.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
         : '';
 
-      const wantSpawnerHintOff =
-        ((reviewTpl && typeof reviewTpl.spawnerHint === 'string') ? reviewTpl.spawnerHint : REVIEWER_FALLBACK.spawnerHint) === 'off';
-
       // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude, regardless of
       // the manifest's `type`. team.json is agent-writable and enforcement is at
       // CONSUME, not at a write op (the C3 twin): only create()'s claude arm
@@ -3382,16 +3422,6 @@ function createSessionManager(deps) {
             null, false, session.proxy ?? null, [], [], disabledTools, [], [],
             reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
           );
-          try {
-            const hintBase = wantSpawnerHintOff ? resolveProxyBase(session.proxy ?? null, getUiSettings()) : null;
-            const routeName = (this.sessions.get(name) || {}).proxyAgent || null;
-            if (hintBase && routeName) {
-              ProxyClient.spawnerHint(hintBase, routeName, { on: false })
-                .catch((e) => log.warn('intent', `team-review spawner-hint(off) ${routeName} failed: ${e.message}`));
-            }
-          } catch (e) {
-            log.warn('intent', `team-review spawner-hint(off) skipped: ${e.message}`);
-          }
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
           });

@@ -2269,8 +2269,8 @@ const SHIPPED_REVIEWER_TEMPLATE = {
     CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
+    CLODEX_SPAWNER_HINT: 'off',
   },
-  spawnerHint: 'off',
 };
 
 function mkReview(extra = {}) {
@@ -2355,14 +2355,15 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   // dedupes itself against it, so the briefing lands once as the system prompt.
   assert.strictEqual(systemPromptFile, 'clodex-team-reviewer', 'role prompt is THE system prompt (replacement)');
   // T51: intents [] gates every catalog intent (only the uncatalogued review-done
-  // fires); execCommands [] grants nothing; sessionEnv is the hardcoded 3-var map.
+  // fires); execCommands [] grants nothing; sessionEnv is the template's env map.
   assert.deepStrictEqual(intents, [], 'every catalog intent gated (buildIpcPrompt([]) sheds grammar + MEMORY)');
   assert.deepStrictEqual(execCommands, [], 'no exec grant');
   assert.deepStrictEqual(sessionEnv, {
     CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
-  }, 'hardcoded lean-reviewer env: CLAUDE.md loader off, 5m cache pin, IPC-prompt skip directive');
+    CLODEX_SPAWNER_HINT: 'off',
+  }, 'lean-reviewer env: CLAUDE.md loader off, 5m cache pin, IPC-prompt skip, spawn-directive block off');
   // The Read/Grep/Glob allowlist inverts to a denylist of every OTHER catalog tool
   // (create() auto-binds the role PROMPT but not its TOOLS — the handler owns this).
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
@@ -2383,61 +2384,275 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
 });
 
-test('team-review (T51): fires the wirescope spawner-hint (on=0) keyed on the seat proxyAgent, AFTER create() and BEFORE the scope is delivered', async () => {
-  // The hint suppresses wirescope's spawner-hint block from the reviewer's system
-  // prompt. It must key on the seat's ACTUAL route name (proxyAgent, minted inside
-  // create()) and fire post-create/pre-deliver (the scope rides an active-class
-  // PARK → no API request yet → still pre-first-request, wirescope's only hard
-  // requirement).
+// --- t151: CLODEX_SPAWNER_HINT — the spawner-hint lever, generic over sessions ---
+//
+// Replaces the T51/T52 reviewer-only tests that lived here. The hint suppresses
+// (or forces) wirescope's `[wirescope]` spawn-directive block for one ROUTE, and
+// it used to be readable from exactly one place: the cold-reviewer template field
+// `spawnerHint`, POSTed by _handleTeamReview after create() returned. Any other
+// template could declare the field and nothing read it. The env var is now the
+// only reader, so every session type reaches the lever and the reviewer branch is
+// gone.
+//
+// ORDERING. The old test asserted "AFTER create(), BEFORE the scope handover" —
+// the requirement being pre-first-request, since the hint rides the marked system
+// prefix and a mid-session flip busts the warm cache. Firing INSIDE create() ahead
+// of the PTY spawn subsumes that claim: there is no seat, so there is no first
+// turn it could be racing. The tests below pin it against the pty.spawn call
+// instead, which is the stronger statement.
+//
+// These drive the REAL create() claude arm — the branch under test reads
+// mergedEnv, which only exists inside create(). A stubbed create() (what the old
+// tests used, appropriate when the POST was in the handler) would assert nothing
+// here.
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false } = {}) {
+  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-hint-'));
   const hints = [];
   const order = [];
-  const { m, created, parkedActive } = mkReview({
-    resolveProxyBase: () => 'http://127.0.0.1:7811',
-    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 }); } },
+  const warns = [];
+  const SessionManager = createSessionManager({
+    REGISTRY_DIR: root,
+    MSG_DIR: pathReal.join(root, 'messages'),
+    PENDING_DIR: pathReal.join(root, 'pending'),
+    fs: fsReal, path: pathReal, os: osReal,
+    pathFor: pathForReal, runDirFor: runDirForReal,
+    ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
+    // The real hook creates run/<name>/ as a side effect and the bake writes into
+    // it — a stub that skips the mkdir ENOENTs before the assertions.
+    setupClaudeHook: (n) => {
+      fsReal.mkdirSync(runDirForReal(root, n), { recursive: true });
+      return pathReal.join(root, 'settings.json');
+    },
+    bakePrompt: (_r, _n, realIpc) => realIpc,
+    promptCacheDir: () => pathReal.join(root, 'cache'),
+    readCache: () => null,
+    buildIpcPrompt: () => 'IPC\n',
+    mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
+    readAppendBodies: () => [],
+    resolveSystemPromptFile: () => null,
+    pluginGrammarLines: () => [],
+    resolveTeam: () => null,
+    formatTeamBlock: () => '',
+    matchSeatRole: () => null,
+    getAgentLibrary: () => ({ list: () => [] }),
+    unionEnabled: () => [],
+    buildAgentsArg: () => null,
+    writeSkillPlugin: () => null,
+    effectiveInjectedSkills: () => [],
+    getPersistence: () => ({ list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {} }),
+    getUiSettings: () => ({ get: () => ({}) }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getUserDataPath: () => root,
+    getRemoteServer: () => null,
+    memoryStore: { list: () => [] },
+    composeDigest: () => null,
+    resolveProxyBase: () => proxyBase,
+    resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
+    normalizeProxyBase: (v) => v,
+    lastTranscriptWrite: () => null,
+    ProxyClient: ProxyClient || {
+      spawnerHint: (base, agent, opts) => {
+        hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 });
+      },
+    },
+    registry: registry || { register: () => {}, unregister: () => {} },
+    Transport: class {
+      static async isSocketLive() { return socketLive; }
+      async start() { if (transportStart) return transportStart(); }
+      stop() {}
+    },
+    JsonlWatcher: class { start() {} stop() {} },
+    pty: {
+      spawn: () => {
+        order.push('spawn');
+        if (ptySpawn) return ptySpawn();
+        return { onData() {}, onExit() {}, pid: 999 };
+      },
+    },
+    notifyOS: () => {},
+    // Only reached on the pty.spawn failure path, which the abandon-clear tests
+    // drive; without them the real ENOENT is masked by a TypeError.
+    collectSystemDiagnostics: () => ({}),
+    whichBin: () => null,
+    diagWarning: () => '',
+    diagSummary: () => '',
+    log: { info() {}, warn: (scope, msg) => warns.push(msg), error() {} },
+    DEFAULT_WORKSPACE_ID: 'default',
   });
-  // Stubbed create() must populate the session with a proxyAgent — that's what the
-  // handler reads back for the route key.
-  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-abc123`, proxyBase: 'http://127.0.0.1:7811' }); order.push('create'); };
-  m._deliverParkedActive = (name, sender, body, mtype) => { parkedActive.push({ name, sender, body, mtype }); order.push('deliver'); };
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
-  m._handleTeamReview(m.sessions.get('lead'), 'scope');
-  await new Promise((r) => setImmediate(r));
+  const m = new SessionManager();
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  // A real create() leaves an fs.watch handle open that keeps the loop alive —
+  // the whole file would hang after reporting green. Same discipline as
+  // test/ipc-prompt-cache-rework.test.js.
+  const stopWatchers = (name) => {
+    const s = m.sessions.get(name);
+    if (!s) return;
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    try { if (s.watcher) s.watcher.stop(); } catch {}
+    try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
+    clearTimeout(s._bootDrainTimer);
+  };
+  const spawn = async (name, sessionEnv, type = 'claude') => {
+    try {
+      return await m.create(
+        name, type, osReal.tmpdir(), [], null, 'ws', null, false, null,
+        [], [], [], [], [], null, [], [], null, sessionEnv,
+      );
+    } finally { stopWatchers(name); }
+  };
+  return { m, hints, order, warns, spawn, root };
+}
+
+test('spawner-hint (t151): CLODEX_SPAWNER_HINT=off POSTs on:false on the seat route, BEFORE the PTY spawn', async () => {
+  const { m, hints, order, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: 'off' });
   assert.deepStrictEqual(hints, [{
-    base: 'http://127.0.0.1:7811', agent: 'clodex-team-reviewer-1-abc123', opts: { on: false },
-  }], 'spawner-hint POST keyed on the seat proxyAgent with on:false');
-  assert.deepStrictEqual(order, ['create', 'hint', 'deliver'],
-    'hint fired AFTER create() (proxyAgent exists) and BEFORE the scope handover (pre-first-request)');
+    base: 'http://127.0.0.1:7811', agent: 'clodex-seat-rt', opts: { on: false },
+  }], 'one POST keyed on the minted proxyAgent with on:false');
+  assert.deepStrictEqual(order, ['hint', 'spawn'],
+    'the POST precedes the PTY spawn — so it cannot land mid-session and bust the warm system prefix');
+  assert.strictEqual(m.sessions.get('seat').spawnerHintSet, true,
+    'the session records that IT set an override — kill() clears off this, not off the env');
 });
 
-test('team-review (T51): no proxy → NO spawner-hint POST (skipped entirely)', async () => {
-  const hints = [];
-  const { m } = mkReview({
-    resolveProxyBase: () => null, // lead has no proxy
-    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+test('spawner-hint (t151): CLODEX_SPAWNER_HINT=on POSTs on:true (the opt-IN mirror on a globally-off port)', async () => {
+  const { hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: 'on' });
+  assert.deepStrictEqual(hints, [{
+    base: 'http://127.0.0.1:7811', agent: 'clodex-seat-rt', opts: { on: true },
+  }], '"on" is a real value, not a synonym for unset');
+});
+
+test('spawner-hint (t151): unset (and any other value) POSTs NOTHING — the common path gains no traffic', async () => {
+  for (const [label, env] of [
+    ['unset', null],
+    ['empty string', { CLODEX_SPAWNER_HINT: '' }],
+    ['garbage', { CLODEX_SPAWNER_HINT: 'yes' }],
+    ['0 (not a synonym for off)', { CLODEX_SPAWNER_HINT: '0' }],
+  ]) {
+    const { m, hints, spawn } = mkHintProbe();
+    await spawn('seat', env);
+    assert.deepStrictEqual(hints, [], `${label} → no POST at all`);
+    assert.strictEqual(m.sessions.get('seat').spawnerHintSet, false,
+      `${label} → nothing recorded, so kill() posts no clear either`);
+  }
+});
+
+// The strict match means the likely typos all fail by doing nothing, and the only
+// symptom is a block reappearing in a prompt nobody reads. The warn is the whole
+// difference between "misconfigured" and "silently ignored".
+test('spawner-hint (t151): a set-but-unrecognized value WARNS; unset stays silent', async () => {
+  for (const bad of ['0', 'OFF', ' off', 'yes', 'true']) {
+    const { warns, hints, spawn } = mkHintProbe();
+    await spawn('seat', { CLODEX_SPAWNER_HINT: bad });
+    assert.deepStrictEqual(hints, [], `${bad} → still no POST; the warn does not loosen the match`);
+    assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify(bad))),
+      `${bad} → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
+  }
+
+  for (const [label, env] of [['unset', null], ['empty string', { CLODEX_SPAWNER_HINT: '' }]]) {
+    const { warns, spawn } = mkHintProbe();
+    await spawn('seat', env);
+    assert.deepStrictEqual(warns.filter((w) => w.includes('spawner-hint')), [],
+      `${label} → silent; every session that never asked for the lever would otherwise warn`);
+  }
+});
+
+// The POST lands before the session exists, so a create() that throws on the way
+// to sessions.set leaves a row kill() can never reach — a TTL-less table, so it is
+// permanent. Inert (each retry mints a fresh route), but create() already unwinds
+// its other partial work, and spawnerHintSet makes this look accounted for.
+test('spawner-hint (t151): a create() that throws AFTER the POST clears the route it orphaned', async () => {
+  const { hints, spawn } = mkHintProbe({
+    ptySpawn: () => { throw new Error('ENOENT: no claude on PATH'); },
   });
-  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-x`, proxyBase: null }); };
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
-  m._handleTeamReview(m.sessions.get('lead'), 'scope');
-  await new Promise((r) => setImmediate(r));
-  assert.deepStrictEqual(hints, [], 'no proxy base → the hint is skipped, never posted');
+  await assert.rejects(() => spawn('seat', { CLODEX_SPAWNER_HINT: 'off' }),
+    /ENOENT/, 'the spawn failure still propagates — the unwind does not swallow it');
+  assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
+    'the set is followed by a clear on the SAME route, so no orphan row survives the failed create()');
+  assert.strictEqual(hints[1].agent, 'clodex-seat-rt', 'cleared by route id, not session name');
 });
 
-test('team-review (T51): a spawner-hint failure NEVER frees the reserved seat name (spawn survives)', async () => {
-  // The hint is best-effort to the last byte — a sync throw or a rejected promise
-  // must not fall into the spawn-failure catch that frees the reserved name.
-  const { m, created, persistence } = mkReview({
-    resolveProxyBase: () => 'http://127.0.0.1:7811',
-    ProxyClient: { spawnerHint: () => { throw new Error('proxy exploded'); } }, // sync throw
+// Each throw site is its own edit, so one test per site — a single site left
+// uncalled would otherwise hide behind the others.
+test('spawner-hint (t151): the abandon-clear covers EVERY throw site past the POST, not just pty.spawn', async () => {
+  const cases = [
+    ['registry.register non-EEXIST rethrow', {
+      registry: { register: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }, unregister: () => {} },
+    }, /EACCES/],
+    ['transport.start() failure', {
+      transportStart: () => { throw new Error('EADDRINUSE'); },
+    }, /EADDRINUSE/],
+    // The name is held by a blocker with a PROVEN-LIVE socket, so create() refuses
+    // rather than force-cleaning. This site is reached only with a readable registry
+    // record, hence the seed below.
+    ['"already running elsewhere" refusal', {
+      socketLive: true,
+      registry: { register: () => { throw Object.assign(new Error('exists'), { code: 'EEXIST' }); }, unregister: () => {} },
+      seedRegistry: { pid: 999999, socket: '/tmp/clodex-blocker.sock' },
+    }, /already running elsewhere/],
+  ];
+  for (const [label, opts, re] of cases) {
+    const { hints, spawn, root } = mkHintProbe(opts);
+    if (opts.seedRegistry) {
+      fsReal.mkdirSync(runDirForReal(root, 'seat'), { recursive: true });
+      fsReal.writeFileSync(pathForReal(root, 'seat', 'registry'), JSON.stringify(opts.seedRegistry));
+    }
+    await assert.rejects(() => spawn('seat', { CLODEX_SPAWNER_HINT: 'off' }), re, label);
+    assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
+      `${label} → the orphaned route is cleared on the way out`);
+  }
+});
+
+test('spawner-hint (t151): the abandon-clear is silent when this seat set nothing', async () => {
+  const { hints, spawn } = mkHintProbe({
+    ptySpawn: () => { throw new Error('ENOENT: no claude on PATH'); },
   });
-  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-y`, proxyBase: 'http://127.0.0.1:7811' }); };
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
-  m._handleTeamReview(m.sessions.get('lead'), 'scope');
-  await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 0, 'create() was overridden — but the point is the seat name survived');
-  assert.ok(persistence.get('team-reviewer-1'), 'reserved seat record intact despite the hint throw');
+  await assert.rejects(() => spawn('seat', { CLODEX_SPAWNER_HINT: 'yes' }), /ENOENT/);
+  assert.deepStrictEqual(hints, [],
+    'no POST was made, so the unwind must not clear a row some OTHER seat owns');
 });
 
-test('review-done (T51): retiring a reviewer fires the spawner-hint CLEAR (action=clear) keyed on its proxyAgent', (t) => {
+test('spawner-hint (t151): set but no route to post to — BOTH guard conjuncts (no base, tee-blind base, no proxyAgent)', async () => {
+  const noProxy = mkHintProbe({ proxyBase: null });
+  await noProxy.spawn('seat', { CLODEX_SPAWNER_HINT: 'off' });
+  assert.deepStrictEqual(noProxy.hints, [], 'no proxy base → nothing to tell');
+
+  // A bash seat has agentType null, so no proxyAgent is ever minted — the second
+  // half of the guard. Without it this POSTs agent=null, which is not a route.
+  const bash = mkHintProbe();
+  await bash.spawn('seat', { CLODEX_SPAWNER_HINT: 'off' }, 'bash');
+  assert.deepStrictEqual(bash.hints, [],
+    'no proxyAgent (bash) → no POST; a null route id would address nothing');
+  assert.strictEqual(bash.m.sessions.get('seat').spawnerHintSet, false,
+    'and nothing recorded, so kill() posts no clear for a route that never existed');
+
+  // A Bedrock/Vertex seat resolves a base and then has it NULLED by the tee-blind
+  // guard, which sits above the hint. Its bytes never reach the proxy, so a hint
+  // row keyed on that route would be a permanent orphan in a TTL-less table.
+  const teeBlind = mkHintProbe();
+  await teeBlind.spawn('seat', { CLODEX_SPAWNER_HINT: 'off', CLAUDE_CODE_USE_BEDROCK: '1' });
+  assert.deepStrictEqual(teeBlind.hints, [],
+    'tee-blind backend nulls proxyBase before the hint reads it — no orphan row');
+  assert.strictEqual(teeBlind.m.sessions.get('seat').spawnerHintSet, false,
+    'and nothing is recorded, so the kill() clear stays silent too');
+});
+
+test('spawner-hint (t151): a hint failure NEVER fails the spawn (sync throw and rejected promise both)', async () => {
+  const thrower = mkHintProbe({ ProxyClient: { spawnerHint: () => { throw new Error('proxy exploded'); } } });
+  await thrower.spawn('seat', { CLODEX_SPAWNER_HINT: 'off' });
+  assert.ok(thrower.m.sessions.get('seat'), 'a sync throw is swallowed — the seat still spawned');
+
+  const rejecter = mkHintProbe({ ProxyClient: { spawnerHint: () => Promise.reject(new Error('timeout')) } });
+  await rejecter.spawn('seat', { CLODEX_SPAWNER_HINT: 'off' });
+  assert.ok(rejecter.m.sessions.get('seat'), 'a rejected promise is caught — the seat still spawned');
+  // An uncaught rejection here would not fail this assertion, it would kill the
+  // whole test PROCESS on the next tick. Give it that tick.
+  await new Promise((r) => setImmediate(r));
+});
+
+test('spawner-hint (t151): kill() of a seat that SET the hint clears its route row', (t) => {
   // kill() arms a 5s SIGKILL-fallback timer — mock it so the test process doesn't
   // hold open on it (the timer is production-correct; we just don't want to wait).
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -2445,33 +2660,35 @@ test('review-done (T51): retiring a reviewer fires the spawner-hint CLEAR (actio
   const { m, persistence } = mkReview({
     ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
   });
-  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead' });
-  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj',
-    proxyBase: 'http://127.0.0.1:7811', proxyAgent: 'clodex-team-reviewer-1-z', pty: { pid: 123, kill: () => {} } });
-  // Real kill() runs the clear (mkReview does NOT stub kill here — restore the class method).
+  persistence.upsert({ name: 'seat', workspaceId: 'default' });
+  m.sessions.set('seat', { name: 'seat', agentType: 'claude', cwd: '/proj', spawnerHintSet: true,
+    proxyBase: 'http://127.0.0.1:7811', proxyAgent: 'clodex-seat-z', pty: { pid: 123, kill: () => {} } });
   const RealSM = m.constructor.prototype;
   m.kill = RealSM.kill.bind(m);
   m._notifyComposition = () => {};
-  m.kill('team-reviewer-1');
+  m.kill('seat');
   assert.deepStrictEqual(hints, [{
-    base: 'http://127.0.0.1:7811', agent: 'clodex-team-reviewer-1-z', opts: { clear: true },
-  }], 'kill() of a reviewer seat clears its spawner-hint row');
+    base: 'http://127.0.0.1:7811', agent: 'clodex-seat-z', opts: { clear: true },
+  }], 'retiring a seat that set an override drops its row from the TTL-less hint table');
 });
 
-test('kill (T51): a NON-reviewer seat retiring does NOT touch the spawner-hint (proxy untouched)', (t) => {
+test('spawner-hint (t151): kill() of a seat that did NOT set it posts nothing — including an ephemeral reviewer', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const hints = [];
   const { m, persistence } = mkReview({
     ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
   });
-  persistence.upsert({ name: 'plain', workspaceId: 'default' }); // no ephemeral/reviewFor
+  // ephemeral+reviewFor is deliberately present: that pair WAS the old gate, so a
+  // clear firing here would mean the record is still driving the decision.
+  persistence.upsert({ name: 'plain', workspaceId: 'default', ephemeral: true, reviewFor: 'lead' });
   m.sessions.set('plain', { name: 'plain', agentType: 'claude', cwd: '/proj',
     proxyBase: 'http://127.0.0.1:7811', proxyAgent: 'clodex-plain-q', pty: { pid: 1, kill: () => {} } });
   const RealSM = m.constructor.prototype;
   m.kill = RealSM.kill.bind(m);
   m._notifyComposition = () => {};
   m.kill('plain');
-  assert.deepStrictEqual(hints, [], 'an ordinary seat kill never posts a clear — gated to reviewer seats only');
+  assert.deepStrictEqual(hints, [],
+    'no override set → no clear, whatever the persistence record says about the seat being a reviewer');
 });
 
 test('team-review: reviewer inherits the lead permission posture (--dangerously-skip-permissions) so it never strands on a prompt', async () => {
@@ -2738,7 +2955,7 @@ test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, n
 test('team-review (T52): a template WITHOUT tools falls back to the role manifest tools (still capped)', async () => {
   const { m, injected, created } = mkReview({
     reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [],
-      env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1' }, spawnerHint: 'off' }],
+      env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1' } }],
     reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
       tools: ['Read', 'Bash'], type: null, template: null, standing: null, ephemeral: false },
   });
@@ -2816,7 +3033,8 @@ test('team-review (T52): a MISSING template falls back to the built-in reviewer 
     CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
-  }, 'fallback env == the shipped 3-var map');
+    CLODEX_SPAWNER_HINT: 'off',
+  }, 'fallback env == the shipped template env map');
   assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'), 'fallback tools = the cap');
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'), 'everything outside the cap disabled');
   assert.ok(injected.some((t) => /reviewer template "clodex-team-reviewer" not found/.test(t) && /built-in defaults/.test(t)),
@@ -2874,20 +3092,42 @@ test('team-review (T52): a traversing systemPromptFile is rejected → falls bac
     'the lead gets a loud NOTE naming the rejected stem and the reason');
 });
 
-// --- T52: spawnerHint knob — 'off' (default) suppresses the proxy hint; any other
-// value leaves the hint in place (no POST) ---
-test('team-review (T52): a template spawnerHint other than "off" fires NO spawner-hint POST', async () => {
+// --- t151: the reviewer path itself no longer knows what a spawner hint IS ---
+// It reached the lever through a bespoke `spawnerHint` template field read at one
+// call site; it now reaches it the same way every other seat does, by threading
+// CLODEX_SPAWNER_HINT through sessionEnv. Two claims, and the second is what stops
+// the deleted branch growing back as a "harmless" synonym.
+test('team-review (t151): the reviewer gets its hint through sessionEnv, and the handler POSTs nothing itself', async () => {
   const hints = [];
-  const { m } = mkReview({
-    reviewTemplate: { spawnerHint: 'on' },
+  const { m, created } = mkReview({
     resolveProxyBase: () => 'http://127.0.0.1:7811',
     ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
-  m.create = async (name) => { m.sessions.set(name, { name, proxyAgent: `clodex-${name}-x` }); };
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.deepStrictEqual(hints, [], 'spawnerHint !== "off" → the proxy is never told to drop its hint block');
+  assert.strictEqual(created[0][18].CLODEX_SPAWNER_HINT, 'off',
+    'the shipped template ships the key in env — create() reads it, so the behaviour is unchanged');
+  assert.deepStrictEqual(hints, [],
+    'the team-review handler makes NO hint POST of its own — create() owns the lever, single reader');
+});
+
+test('team-review (t151): a leftover `spawnerHint` template FIELD is inert (env is the only reader)', async () => {
+  // A stale template on disk may still carry the deleted field. Honoring it as a
+  // synonym would restore the two-reader shape this ticket removed — and quietly
+  // route around REVIEWER_ENV_ALLOWLIST, which only screens `env`.
+  const hints = [];
+  const { m, created } = mkReview({
+    reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [],
+      tools: ['Read', 'Grep', 'Glob'], env: {}, spawnerHint: 'off' }],
+    resolveProxyBase: () => 'http://127.0.0.1:7811',
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created[0][18], {}, 'the field does not become env — it is dead data');
+  assert.deepStrictEqual(hints, [], 'and it drives no POST');
 });
 
 // NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.
