@@ -47,7 +47,6 @@ blocks a release.
   precision rose from 40% to 75%, and four questions the store simply cannot
   answer (pets, music, and two others) now stay silent instead of shipping three
   confident irrelevant memories.
-
 - **A hint no longer outlives the draft it was ranked against.** Arming happens
   at a typing pause, so a draft you keep editing could leave a hint registered
   against text that no longer exists. Continuing to type already replaced it;
