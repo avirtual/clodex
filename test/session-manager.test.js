@@ -6671,3 +6671,48 @@ test('t77: every kill-then-respawn path awaits waitForSessionExit', () => {
   assert.strictEqual(waits, 3,
     `expected exactly 3 waitForSessionExit call sites (engine.js restart x2, ipc-handlers.js session:kill) and found ${waits} — if a fourth kill+create caller was added, extend the ordering pin above to cover it rather than bumping this number`);
 });
+
+// `proxyBase` is captured when the session SPAWNS, so it outlives the pref that
+// produced it: unticking traffic optimization stops wirescope but leaves every
+// already-running session holding a base that still looks live. Before the
+// re-resolution in `_armCtx`, hint-arm read that base, ranked, and POSTed to the
+// dead port — and a REJECTED POST does not release the pre-arm's inject-queue
+// hold, so deliveries to that seat stalled for the full 30s cap. The pref alone
+// is not the gate either: an explicitly-routed session (`proxy` = a URL string)
+// must keep its hints when the global pref is off.
+test('hint arming re-resolves the proxy pref per draft, and an explicit route survives it', () => {
+  // proxyBase is its OWN column, never derived from proxyRequested: deriving it
+  // makes `proxyBase: null` reachable only via `proxyRequested: false`, and the
+  // two rows that justify the `s.proxyBase &&` conjunct then cannot be written at
+  // all — so deleting that half of the gate passes.
+  const cases = [
+    // [proxyRequested, proxyBase (what the spawn resolved to), pref, want, why]
+    [null, 'http://127.0.0.1:7800', true, 'http://127.0.0.1:7800',
+      'follows the pref, pref on'],
+    [null, 'http://127.0.0.1:7800', false, null,
+      'follows the pref, pref off — the captured base must not resurrect it'],
+    ['http://explicit:9', 'http://explicit:9', false, 'http://explicit:9',
+      'explicitly routed — the global pref does not reach it'],
+    [false, null, true, null,
+      'spawned with the proxy off stays off'],
+    // Spawned while the pref was off, pref later turned ON. The CLI was launched
+    // with no upstream override, so its traffic does not reach wirescope no matter
+    // what the pref says now — a hint armed on that route could never attach.
+    [null, null, true, null,
+      'a session spawned unrouted cannot gain hints when the pref comes back on'],
+    // Tee-blind backend: create() nulls proxyBase AFTER resolving it (a Bedrock /
+    // Vertex env the proxy must not sit in front of), leaving an explicit request
+    // with no base. Re-resolution alone says "routed"; only the AND says no.
+    ['http://explicit:9', null, true, null,
+      'tee-blind nulling at spawn survives re-resolution'],
+  ];
+  for (const [proxyRequested, proxyBase, proxyEnabled, want, why] of cases) {
+    const m = mk({
+      getUiSettings: () => ({ get: () => ({ proxyEnabled, proxyUrl: 'http://127.0.0.1:7800' }) }),
+      resolveProxyBase: require('../statusline').resolveProxyBase,
+    });
+    const ctx = m._armCtx({ name: 'a', proxyBase, proxyRequested, proxyAgent: 'clodex-a-x' });
+    assert.strictEqual(ctx.base, want,
+      `${why} (requested=${JSON.stringify(proxyRequested)}, base=${JSON.stringify(proxyBase)}, pref=${proxyEnabled})`);
+  }
+});

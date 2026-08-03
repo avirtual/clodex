@@ -413,7 +413,13 @@ function createHintArm({
     // to be wide enough to give it a choice. Every ranker and both ledgers run
     // over the whole set, so a suppressed unit still cannot reach the budget.
     const { agent, base, route, limit = selectWithinBudget ? maxUnits : 1 } = ctx || {};
-    if (!base || !route || !agent) return;
+    // clearArmed, not a bare return: the route can go away MID-DRAFT (the operator
+    // unticks traffic optimization while typing), and a bare return leaves the
+    // memo from the last successful arm set — which is what `fire`'s finally reads
+    // to decide whether to release the inject-queue hold. The seat then deferred
+    // every delivery for the full hold cap. The network clear inside is skipped on
+    // a falsy base, so this only nulls the memo.
+    if (!base || !route || !agent) { clearArmed(key, ctx); return; }
     // YIELD BEFORE THE RANK. `async` only defers a body from its first await
     // onward, and `pick` is synchronous — measured at 60ms over the live 2,220
     // record corpus, which onDraft's caller would otherwise eat on the keystroke

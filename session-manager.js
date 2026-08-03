@@ -1017,6 +1017,16 @@ function createSessionManager(deps) {
         sessionId: resumeId || null,
         workspaceId,
         proxyAgent, proxyBase,
+        // The tri-state as REQUESTED (false=off, string=explicit, null=follow the
+        // pref), kept alongside the base it resolved to: _armCtx has to re-resolve
+        // per draft, and the base alone cannot say whether an explicit route or a
+        // pref that has since been unticked produced it.
+        // NOT named `proxy`: `_handleSpawnIntent` and `_handleTeamReview` read
+        // `spawner.proxy ?? null` / `session.proxy ?? null` off the live session,
+        // which have always resolved to null (the field lived only in the
+        // persistence record). Naming it `proxy` here silently makes a child
+        // inherit its spawner's route — a real decision, but not this one.
+        proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         intentSource, wireRouted, backend, sentinel: null,
         fileTouches: [],
         // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
@@ -1319,7 +1329,21 @@ function createSessionManager(deps) {
     _armCtx(s) {
       return {
         agent: s.name,
-        base: s.proxyBase || null,
+        // Re-resolved every draft, not read straight off the session: `proxyBase`
+        // was captured at SPAWN, so unticking traffic optimization left a routed
+        // session ranking and POSTing hints at a wirescope that had just been
+        // stopped — and a rejected POST does not release the pre-arm's hold, so
+        // the inject queue then sat for its full cap before delivering.
+        // Re-resolution and NOT the live pref alone: an explicitly-routed session
+        // keeps its hints when the global pref is off. Used only as a BOOLEAN —
+        // the value is the CAPTURED base, because that is the one the child's env
+        // was baked with (the upstreams and openai_base_url args above), so
+        // editing proxyUrl mid-session correctly does not move it. That also makes
+        // a null capture win on its own, which is what preserves the spawn-time
+        // decisions re-resolution cannot reconstruct: the tee-blind nulling above,
+        // and a session spawned while the pref was off, whose CLI does not route
+        // through wirescope at all and cannot gain hints by ticking it back on.
+        base: resolveProxyBase(s.proxyRequested, getUiSettings()) ? s.proxyBase : null,
         route: s.proxyAgent || `${PROXY_AGENT_PREFIX}${s.name}-*`,
       };
     }
