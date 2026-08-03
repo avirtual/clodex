@@ -194,6 +194,20 @@ test('exec section says to match a command by what it DOES, not by its name', ()
   assert.match(p, /BEFORE you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
 });
 
+// The specific defect: a seat whose granted command timed out reached for the
+// raw `npm test` as a fallback. The registered version takes the suite mutex
+// and the raw one does not, so that "fallback" ran CONCURRENTLY with a locked
+// run and deadlocked both — measured, two runs wedged on a port-binding test,
+// the older for 13h47m. Routing around a refusal is the failure mode to name.
+test('exec section forbids the raw form as a fallback when a command refuses', () => {
+  const p = buildIpcPrompt(null, ['clodex-run-tests']);
+  assert.match(p, /UNSAFE to run twice at once/, 'the concurrency hazard is named, not just the preference');
+  assert.match(p, /The registered version takes the lock; the raw command you would have typed does not/,
+    'and WHY the raw form is not equivalent — without this the rule reads as mere style');
+  assert.match(p, /a refusal is information/,
+    'a refusing command must not read as an invitation to bypass it');
+});
+
 test('exec section renders the granted command ids, and only when granted', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests', 'clodex-team']);
   assert.ok(/\nEXEC COMMANDS:\n/.test(p), 'EXEC COMMANDS section present when granted');

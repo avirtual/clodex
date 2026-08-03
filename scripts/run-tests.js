@@ -41,6 +41,63 @@ function die(msg, code) {
   process.exit(code || 1);
 }
 
+// ── the suite mutex, shared with scripts/test-digest.sh ────────────────────
+// SAME lock dir and SAME protocol as the digest path, because parts of this
+// suite bind real ports (cli/test/attach.test.js) and two concurrent runs
+// deadlock at 0% CPU — neither finishes, and the wedge is indistinguishable
+// from a slow suite. The digest took this lock from the start; `npm test` did
+// not, so the obvious command walked straight past the guard. Measured: four
+// concurrent runs, two permanently wedged on attach.test.js, the older one for
+// 13h47m. Any new entry point to the suite must take this lock too.
+//
+// REFUSES rather than waits. The digest's 120s wait is for a run that is about
+// to finish; a human or agent at a prompt wants the reason NOW, and waiting
+// only converts a wedge into a timeout somewhere further up (the exec's own cap
+// killed the digest before it could report exactly this).
+const LOCK = path.join(ROOT, '.test-digest.lock');
+
+function acquireLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.mkdirSync(LOCK);
+      fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') die(`could not take the suite lock: ${e.message}`);
+    }
+    let holder = null;
+    try { holder = Number(fs.readFileSync(path.join(LOCK, 'pid'), 'utf8').trim()) || null; } catch {}
+    // A killed runner never cleans up, so a lock naming a DEAD pid is stale and
+    // reclaimed — without this the first crash wedges every later run forever.
+    let alive = false;
+    if (holder) { try { process.kill(holder, 0); alive = true; } catch {} }
+    if (alive) {
+      die(`another suite run is already going (pid ${holder}).\n`
+        + '  Parts of this suite bind real ports, so a second run deadlocks both.\n'
+        + '  Wait for it, or if it is wedged: kill '
+        + `${holder} && rm -rf ${path.relative(ROOT, LOCK)}`);
+    }
+    try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+  }
+  die('could not take the suite lock after reclaiming a stale one');
+}
+
+let lockHeld = false;
+function releaseLock() {
+  if (!lockHeld) return;
+  lockHeld = false;
+  try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+}
+acquireLock();
+lockHeld = true;
+// Covers the normal exit and the signals a Ctrl-C or a kill delivers; without
+// this an interrupted run leaves a lock whose pid is briefly still alive, and
+// the next run refuses against a ghost.
+process.on('exit', releaseLock);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => { releaseLock(); process.exit(130); });
+}
+
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
 
