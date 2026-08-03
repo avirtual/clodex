@@ -209,9 +209,12 @@ function withSharedTerm(results, draft) {
   });
 }
 
+// `learned_at` rides as its own field and is deliberately absent from
+// haystack() — dating a hint must not change which hint wins.
 function unitsAsRecords(units, source = 'memory') {
   return (units || []).map((u) => ({
     id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source,
+    learned_at: u.learned_at || '',
   }));
 }
 
@@ -287,11 +290,19 @@ const DIRECTIVE_LINE = /^(?:(?:scope|tags|tags_v|pinned|source|id|learned_at)=\S
 // Tags and scope are curated topic labels, and they carry relevance the excerpt
 // can miss — a unit whose preview reads off-topic may still be exactly right for
 // the tag it carries. Cheap to include, so always include them.
+// Undated, a memory reads as present tense: measured over the live stores, 7 of
+// 22 delivered units were >1y old with no date recoverable from their own text,
+// and the oldest asserted a 2-year-old branching strategy as current. The
+// session-start digest already ages every unit; this is the same fact on the
+// hint path. Year-month, not fmtAge's day count — the reader should not have to
+// subtract to know whether a claim predates the work in front of it.
 function labelOf(r) {
   const tags = String(r.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
   const bits = [];
   if (r.scope) bits.push(`scope=${r.scope}`);
   if (tags.length) bits.push(`tags=${tags.join(',')}`);
+  const t = Date.parse(r.learned_at);
+  if (!Number.isNaN(t)) bits.push(`learned=${new Date(t).toISOString().slice(0, 7)}`);
   return bits.length ? `  [${bits.join(' ')}]` : '';
 }
 

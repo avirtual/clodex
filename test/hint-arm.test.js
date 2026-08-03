@@ -2141,3 +2141,25 @@ test('common: extra frontmatter (kind, volatility, quote-in-body) survives the s
   assert.ok(u.body.includes('> i analyzed\n> tens of thousands of sessions'),
     'a multi-line quote must survive — in the body, where newlines are free');
 });
+
+test('a delivered hint carries WHEN it was learned', () => {
+  // Undated, a two-year-old "evolving" claim reads as present tense. Measured
+  // over the live stores: 7 of 22 delivered units were >1y old with no date
+  // recoverable from their own text.
+  const { store } = mkStore([{ text: 'Bogdan deploys infrastructure with Terragrunt on top of Terraform.' }]);
+  const rec = unitsAsRecords(store.list('a'))[0];
+  assert.ok(rec.learned_at, 'the record must carry the date at all');
+  assert.match(blockFor(rec), /learned=\d{4}-\d{2}/, 'and the shipped block must show it');
+});
+
+test('dating a hint does not change which hint wins', () => {
+  // learned_at is deliberately absent from haystack(): a date is metadata about
+  // a claim, and letting it match would rank a unit for containing a year.
+  const dated = { id: 'x', text: 'nothing in common here', tags: '', scope: '', learned_at: '2024-08-01T00:00:00.000Z' };
+  assert.ok(!haystack(dated).includes('2024'), 'the date must not enter the match text');
+  const recs = unitsAsRecords(mkStore(CORPUS).store.list('a'));
+  const withDates = rank(recs, 'wirescope tail hint registry', { limit: 3 });
+  const stripped = rank(recs.map(({ learned_at, ...r }) => r), 'wirescope tail hint registry', { limit: 3 });
+  assert.deepStrictEqual(withDates.map((r) => r.text), stripped.map((r) => r.text),
+    'identical ranking with and without dates');
+});
