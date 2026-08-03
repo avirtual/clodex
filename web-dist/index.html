@@ -1114,6 +1114,90 @@ body {
 .session-close:hover {
   color: var(--accent);
 }
+.session-info-btn {
+  position: absolute;
+  top: 4px;
+  right: 24px;
+  opacity: 0;
+  border: 1px solid var(--text-dim);
+  background: none;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, serif;
+  line-height: 1;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+.session-item:hover .session-info-btn {
+  opacity: 1;
+}
+.session-info-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+#session-info-popover {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#session-info-popover.hidden {
+  display: none;
+}
+#session-info-popover .popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.si-sec {
+  margin-bottom: 10px;
+}
+.si-sec:last-child {
+  margin-bottom: 0;
+}
+.si-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--active-bg);
+}
+.si-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+.si-k {
+  color: var(--text-dim);
+}
+.si-v {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+}
+.si-row[data-tip] {
+  cursor: help;
+}
 #main {
   position: fixed;
   top: 0;
@@ -5368,6 +5452,10 @@ body {
       <div class="popover-title"><span>Cost over Time — <span id="cost-popover-name"></span></span><button type="button" class="popover-close" id="cost-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="cost-popover-body"></div>
     </div>
+    <div id="session-info-popover" class="hidden">
+      <div class="popover-title"><span>Session Info — <span id="session-info-popover-name"></span></span><button type="button" class="popover-close" id="session-info-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="session-info-popover-body"></div>
+    </div>
     <div id="subagent-popover" class="hidden">
       <div class="popover-title"><span><span id="subagent-popover-name"></span></span><button type="button" class="popover-close" id="subagent-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="subagent-popover-body"></div>
@@ -6144,6 +6232,7 @@ body {
         { name: "fileReveal", kind: "invoke", channel: "file:reveal" },
         { name: "onSessionFileView", kind: "on", channel: "session-file-view" },
         { name: "openExternal", kind: "invoke", channel: "app:openExternal" },
+        { name: "sessionInfo", kind: "invoke", channel: "session:info" },
         { name: "getProxySnapshot", kind: "invoke", channel: "proxy:snapshot" },
         { name: "getProxyContext", kind: "invoke", channel: "proxy:context" },
         { name: "getProxyReport", kind: "invoke", channel: "proxy:report" },
@@ -20371,7 +20460,7 @@ helper=${d.helperPath}`;
       var GATEABLE_INTENTS = [
         { type: "dm", label: "Direct messages (dm)" },
         { type: "who", label: "List peers (who)" },
-        { type: "context", label: "Self context control (compact/clear)" },
+        { type: "context", label: "Self context control (compact/clear/reload)" },
         { type: "memory", label: "Memory management (remember/recall)" },
         { type: "spawn", label: "Spawn peer sessions (spawn)" },
         { type: "file", label: "Surface files on screen (file)" },
@@ -21786,6 +21875,216 @@ helper=${d.helperPath}`;
         return { openBustPopover };
       }
       module.exports = { initBustPopover };
+    }
+  });
+
+  // renderer/lib/session-info-view.js
+  var require_session_info_view = __commonJS({
+    "renderer/lib/session-info-view.js"(exports, module) {
+      "use strict";
+      function fmtUsd(v) {
+        if (typeof v !== "number" || !isFinite(v)) return null;
+        if (v >= 100) return `$${v.toFixed(0)}`;
+        return v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
+      }
+      function fmtInt(v) {
+        return typeof v === "number" && isFinite(v) ? v.toLocaleString("en-US") : null;
+      }
+      function fmtTokens(n) {
+        if (typeof n !== "number" || !isFinite(n)) return null;
+        if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+        if (n >= 1e3) return `${Math.round(n / 1e3)}k`;
+        return String(n);
+      }
+      function fmtBytes(n) {
+        if (typeof n !== "number" || !isFinite(n)) return null;
+        if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+        if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+        if (n >= 1e3) return `${Math.round(n / 1e3)} KB`;
+        return `${n} B`;
+      }
+      function fmtAge(ms) {
+        if (typeof ms !== "number" || !isFinite(ms) || ms < 0) return null;
+        const m = Math.floor(ms / 6e4);
+        if (m < 60) return `${m}m`;
+        const h = Math.floor(m / 60);
+        if (h < 48) return `${h}h ${m % 60}m`;
+        return `${Math.floor(h / 24)}d ${h % 24}h`;
+      }
+      function row(k, v, tip) {
+        return v == null ? null : { k, v, tip };
+      }
+      function aboutSection(info, now) {
+        const rows = [
+          row("type", info.type ? `${info.type}${info.backend ? ` \xB7 ${info.backend}` : ""}` : null),
+          row("model", info.model),
+          row("team", info.team),
+          row(
+            "created",
+            info.createdAt ? `${fmtAge(now - info.createdAt)} ago` : null,
+            info.createdAt ? new Date(info.createdAt).toLocaleString() : null
+          ),
+          row("conversation", info.sessionId ? info.sessionId.slice(0, 8) : null, info.sessionId),
+          // The count of session_ids this seat has held. Every /clear mints a new one,
+          // so this is "how many times has this seat started over" — the natural
+          // companion to the compact count below.
+          row(
+            "conversations",
+            info.sessionCount > 1 ? `${info.sessionCount} (this seat)` : null,
+            "Each /clear mints a new conversation id; this seat has held that many"
+          )
+        ].filter(Boolean);
+        return { title: "Session", rows };
+      }
+      function compactSection(info) {
+        const c = info.compact || { count: 0 };
+        const rows = [
+          row(
+            "compacted",
+            c.count === 0 ? "never" : `${c.count}\xD7`,
+            "Compactions on the current conversation (a /clear starts a fresh count)"
+          ),
+          row("auto vs manual", c.count > 0 && c.autoCount > 0 ? `${c.autoCount} auto \xB7 ${c.count - c.autoCount} manual` : null),
+          row("tokens dropped", fmtTokens(c.dropped), "Cumulative context discarded by every compact, per the CLI"),
+          row(
+            "last compact",
+            c.last && c.last.pre != null && c.last.post != null ? `${fmtTokens(c.last.pre)} \u2192 ${fmtTokens(c.last.post)}` : null,
+            "Context size immediately before and after the most recent compact"
+          )
+        ].filter(Boolean);
+        return { title: "Compaction", rows };
+      }
+      function costSection(info) {
+        const rows = [];
+        const sc = info.sinceCompact;
+        if (sc && typeof sc.estUsd === "number") {
+          rows.push({
+            k: sc.compacted ? "since last compact" : "since start",
+            v: fmtUsd(sc.estUsd),
+            tip: sc.compacted ? "Spend since the most recent compact boundary" : "This conversation has never compacted"
+          });
+        }
+        if (info.run) rows.push({ k: "this run", v: fmtUsd(info.run.usd), tip: "Since the agent's CLI process started (resets when the seat respawns)" });
+        if (info.session) {
+          rows.push({ k: "this conversation", v: fmtUsd(info.session.usd), tip: "Whole current conversation, across app restarts. Reset by /clear." });
+        }
+        const a = info.agent;
+        if (a && a.total > 0) {
+          const partial = a.known < a.total;
+          rows.push({
+            k: "this agent, all time",
+            v: fmtUsd(a.usd),
+            tip: partial ? `Every conversation this seat has held. ${a.known} of ${a.total} are still in the ledger \u2014 older ones have been pruned, so the real figure is higher.` : `Every conversation this seat has held (${a.total}), summed. Never resets.`
+          });
+          if (partial) rows.push({ k: "", v: `${a.known}/${a.total} conversations in the ledger`, tip: null });
+        }
+        return { title: "Cost", rows };
+      }
+      function activitySection(info) {
+        const a = info.agent || {};
+        const s = info.session || {};
+        const rows = [
+          row("turns", fmtInt(s.turns), "Completed turns on this conversation"),
+          row("requests", fmtInt(s.requests), "API roundtrips on this conversation \u2014 tool-loop calls, not just your prompts"),
+          row("turns, all time", a.total > 1 ? fmtInt(a.turns) : null, "Across every conversation this seat has held"),
+          row("requests, all time", a.total > 1 ? fmtInt(a.requests) : null),
+          row("refusals", a.refusals > 0 ? fmtInt(a.refusals) : null, "API refusals across this seat"),
+          row("subagents", info.subagents ? fmtInt(info.subagents) : null, "Subagent lines wirescope is currently tracking")
+        ].filter(Boolean);
+        return { title: "Activity", rows };
+      }
+      function contextSection(info, now) {
+        const ctx = info.context || {};
+        const t = info.transcript;
+        const rows = [
+          row("in context", fmtTokens(ctx.inputTokens), "Input tokens on the last main-line turn"),
+          row("messages", fmtInt(ctx.messages)),
+          row("strip level", info.stripLevel ? `L${info.stripLevel}` : null, "Thinking-block stripping configured for this session"),
+          row("transcript", t ? fmtBytes(t.bytes) : null, t && t.lines ? `${fmtInt(t.lines)} records on disk` : null),
+          row("last write", t && t.lastTs ? `${fmtAge(now - Date.parse(t.lastTs))} ago` : null)
+        ].filter(Boolean);
+        return { title: "Context", rows };
+      }
+      function buildSections(info, now = Date.now()) {
+        if (!info) return [];
+        return [aboutSection(info, now), costSection(info), compactSection(info), activitySection(info), contextSection(info, now)].filter((s) => s.rows.length);
+      }
+      module.exports = { buildSections, fmtUsd, fmtInt, fmtTokens, fmtBytes, fmtAge };
+    }
+  });
+
+  // renderer/popovers/session-info-popover.js
+  var require_session_info_popover = __commonJS({
+    "renderer/popovers/session-info-popover.js"(exports, module) {
+      "use strict";
+      var { esc } = require_format();
+      var { buildSections } = require_session_info_view();
+      function initSessionInfoPopover({ sessionList }) {
+        const pop = document.getElementById("session-info-popover");
+        const nameEl = document.getElementById("session-info-popover-name");
+        const body = document.getElementById("session-info-popover-body");
+        function close() {
+          pop.classList.add("hidden");
+          pop.dataset.name = "";
+        }
+        function renderSections(info) {
+          const sections = buildSections(info);
+          if (!sections.length) return '<div class="cost-note">Nothing recorded for this session yet.</div>';
+          return sections.map((s) => {
+            const rows = s.rows.map((r) => {
+              const tip = r.tip ? ` data-tip="${esc(r.tip)}"` : "";
+              return `<div class="si-row"${tip}><span class="si-k">${esc(r.k)}</span><span class="si-v">${esc(r.v)}</span></div>`;
+            }).join("");
+            return `<div class="si-sec"><div class="si-title">${esc(s.title)}</div>${rows}</div>`;
+          }).join("");
+        }
+        async function open(name, anchor) {
+          if (pop.dataset.name === name && !pop.classList.contains("hidden")) {
+            close();
+            return;
+          }
+          nameEl.textContent = name;
+          pop.dataset.name = name;
+          body.innerHTML = '<div class="cost-note">Reading session history\u2026</div>';
+          pop.classList.remove("hidden");
+          const r = anchor.getBoundingClientRect();
+          const w = pop.offsetWidth;
+          pop.style.left = `${Math.round(Math.min(r.right + 8, window.innerWidth - w - 8))}px`;
+          pop.style.top = `${Math.round(Math.max(8, Math.min(r.top, window.innerHeight - pop.offsetHeight - 8)))}px`;
+          let res;
+          try {
+            res = await window.api.sessionInfo(name);
+          } catch (e) {
+            res = { ok: false, error: String(e && e.message || e) };
+          }
+          if (pop.dataset.name !== name || pop.classList.contains("hidden")) return;
+          if (!res || !res.ok) {
+            body.innerHTML = `<div class="cost-note">${esc(res && res.error || "Session info unavailable")}</div>`;
+            return;
+          }
+          try {
+            body.innerHTML = renderSections(res.info);
+          } catch (e) {
+            body.innerHTML = `<div class="cost-note">Could not render: ${esc(String(e && e.message || e))}</div>`;
+          }
+          pop.style.top = `${Math.round(Math.max(8, Math.min(r.top, window.innerHeight - pop.offsetHeight - 8)))}px`;
+        }
+        document.addEventListener("mousedown", (e) => {
+          if (pop.classList.contains("hidden")) return;
+          if (pop.contains(e.target)) return;
+          if (e.target.closest(".session-info-btn")) return;
+          close();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !pop.classList.contains("hidden")) close();
+        });
+        document.getElementById("session-info-popover-close").addEventListener("click", close);
+        sessionList.addEventListener("scroll", () => {
+          if (!pop.classList.contains("hidden")) close();
+        });
+        return { openSessionInfoPopover: open, closeSessionInfoPopover: close };
+      }
+      module.exports = { initSessionInfoPopover };
     }
   });
 
@@ -25726,6 +26025,7 @@ ${detail}` });
       var { initReportPanel } = require_report_panel();
       var { initCostPopover } = require_cost_popover();
       var { initBustPopover } = require_bust_popover();
+      var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
       var { initChecklistPopovers } = require_checklist_popovers();
       var { initTeamRolesPopover } = require_team_roles_popover();
@@ -26179,12 +26479,18 @@ ${detail}` });
         </span>
       </div>
     </div>
+    <button class="session-info-btn" data-tip="Session info \u2014 cost, compactions, activity">i</button>
     <button class="session-close" data-tip="Archive session">&times;</button>
   `;
         item.addEventListener("click", (e) => {
           if (e.target.closest(".session-close")) return;
+          if (e.target.closest(".session-info-btn")) return;
           if (e.target.closest(".rename-input")) return;
           switchSession(name);
+        });
+        item.querySelector(".session-info-btn").addEventListener("click", (e) => {
+          e.stopPropagation();
+          openSessionInfoPopover(name, item);
         });
         item.querySelector(".session-close").addEventListener("click", (e) => {
           e.stopPropagation();
@@ -28494,6 +28800,7 @@ Click for live activity`;
         };
       }
       var { openCostPopover } = initCostPopover({ popoverApi, proxyState });
+      var { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
       var { openBustPopover } = initBustPopover({ popoverApi, proxyState });
       var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
         popoverApi,
