@@ -318,6 +318,7 @@ const { createHintArm } = require('./hint-arm');
 const {
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   compose: composeHint, terms: hintTerms, unitsAsRecords, personalAsk,
+  selectWithinBudget: selectHintsWithinBudget,
 } = require('./hint-retrieve');
 
 // Shared memory every agent can match against — imported sets, not anything an
@@ -376,6 +377,7 @@ const hintArm = createHintArm({
       : Promise.resolve(null)),
   },
   compose: composeHint,
+  selectWithinBudget: selectHintsWithinBudget,
   terms: hintTerms,
   personalAsk,
   loadState: (agent, id) => memoryLoad.stateOf(agent, id),

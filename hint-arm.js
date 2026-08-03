@@ -228,6 +228,9 @@ function createHintArm({
   // makes free-identifier-leaks.test.js fail to parse THIS WHOLE PARAM LIST, so
   // every dep above would stop counting as defined here and the scan would
   // report them as leaks from main.js scope.
+  // Applied AFTER every ranker and ledger, so it narrows what was already
+  // admitted and can never widen it. Absent, the winner rides alone.
+  selectWithinBudget = null, maxUnits = 3,
   log = null, now = Date.now,
   // Read per call, never captured: the setting is a live checkbox, so a value
   // sampled at construction would need an app restart to take effect.
@@ -373,7 +376,10 @@ function createHintArm({
   }
 
   async function rank(key, draft, ctx) {
-    const { agent, base, route, limit = 1 } = ctx || {};
+    // The budget, not this, is what decides how many units ride — this only has
+    // to be wide enough to give it a choice. Every ranker and both ledgers run
+    // over the whole set, so a suppressed unit still cannot reach the budget.
+    const { agent, base, route, limit = selectWithinBudget ? maxUnits : 1 } = ctx || {};
     if (!base || !route || !agent) return;
     // YIELD BEFORE THE RANK. `async` only defers a body from its first await
     // onward, and `pick` is synchronous — measured at 60ms over the live 2,220
@@ -397,6 +403,15 @@ function createHintArm({
       debug(`refine failed for ${agent}: ${e.message}`);
     }
     if (!results.length) { nothing(); return; }
+    // Last, on the final ordering: the budget spends on what the rankers
+    // actually chose, and cutting here rather than earlier keeps a unit the
+    // semantic pass would have promoted from being dropped for its size first.
+    if (selectWithinBudget) {
+      try { results = selectWithinBudget(results); } catch (e) {
+        debug(`budget failed for ${agent}: ${e.message}`);
+      }
+      if (!results.length) { nothing(); return; }
+    }
     const ids = results.map((r) => r.id).join(',');
     const st = stateFor(key);
     // A draft that grows without changing the winner must not re-POST: the text

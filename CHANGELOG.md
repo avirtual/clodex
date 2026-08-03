@@ -22,6 +22,13 @@ blocks a release.
   recall, tab completion) or drops back below the length floor.
 - A hint now says it is retrieved rather than verified: where one conflicts with
   what you just said, the agent is told you are right.
+- **A hint can carry more than one memory, bounded by characters rather than by
+  a count of one.** Short units — which is most of the common store — now ride
+  together instead of one at a time, so a question the store answers in three
+  places gets all three rather than whichever sorted first. Measured across
+  eight matching questions: 19 units delivered where there were 8. The winner
+  always rides; runners-up are admitted only while they stay close to it in
+  score and inside the budget.
 
 ## 4.12.0 — 2026-08-03 — Memory an agent can actually use
 

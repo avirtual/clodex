@@ -258,6 +258,102 @@ function labelOf(r) {
   return bits.length ? `  [${bits.join(' ')}]` : '';
 }
 
+// One record's block, byte for byte as compose emits it. Shared with
+// selectWithinBudget so the budget is measured on what actually ships — an
+// estimate here drifts from compose the first time either side is edited.
+// Returns null for a blank body, which is compose's skip condition.
+function blockFor(r) {
+  const b = String(r.text || '').trim();
+  if (!b) return null;
+  if (b.length <= FULL_BODY_CAP) return `\n${r.id}:${labelOf(r)}\n${b}`;
+  // A unit saved via `[agent:memory remember] scope=x tags=y pinned=true`
+  // keeps that directive as its first line, so the naive first line pitches
+  // the unit by its metadata and gives the model no reason to spend a
+  // recall. Skip leading directive-only lines; fall back to the first line
+  // if every line looks like one.
+  const prose = b.split('\n').filter((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim())).join('\n');
+  const full = (prose || b).trim();
+  const preview = full.slice(0, PREVIEW_CAP);
+  // A body between FULL_BODY_CAP and PREVIEW_CAP fits entirely, so claiming
+  // truncation would offer a recall that returns nothing the model already
+  // has — the offer has to be conditional on something actually being cut.
+  return preview.length < full.length
+    ? `\n${r.id}:${labelOf(r)}\n${preview}...`
+      + `\n(truncated at ${preview.length} of ${full.length} chars — emit [agent:memory recall] `
+      + `${r.id} on its own line to load it in full)`
+    : `\n${r.id}:${labelOf(r)}\n${preview}`;
+}
+
+// THE COST OF A HINT IS CHARACTERS, NOT UNITS, so the cut is a character budget.
+// A fixed count of one spends the whole allowance on one long preview but only
+// ~150 chars on a short unit — and the common store is deliberately short, so
+// that is where a count wastes the most. Measured 2026-08-03 over the live
+// stores across 8 hits: 8 units delivered at a count of 1, 19 at this budget.
+//
+// THE CEILING IS NOT NEGOTIABLE. Every unit rides as ONE hint, and the proxy
+// caps a single hint at HINTS_MAX_ONE=2500 chars (hints.py) — over which it
+// DECLINES THE WHOLE SET rather than truncating, so an over-budget hint delivers
+// nothing at all. This is the composed-body allowance; composeFits() below is
+// what actually enforces the wire limit, since the preamble rides on top.
+const HINT_BUDGET = 1800;
+
+// A second guard, because the budget alone would admit a tail of tiny units.
+// Past three the tail is padding whatever the sizes say — measured: raising it
+// to 4 bought one extra unit across the whole probe set.
+const HINT_MAX_UNITS = 3;
+
+// A runner-up must be in the same league as the winner. Confidence SATURATES on
+// this corpus (six units tied at 0.57, two at 1.00), so this cannot separate
+// good from bad — it only stops a strong winner from dragging in a weak tail.
+const RUNNERUP_MIN_RATIO = 0.6;
+
+// The winner rides UNCONDITIONALLY, whatever it costs: this must never deliver
+// less than the count of one it replaces, so the budget governs only what gets
+// ADDED to it.
+function selectWithinBudget(results, {
+  budget = HINT_BUDGET, maxUnits = HINT_MAX_UNITS, minRatio = RUNNERUP_MIN_RATIO,
+} = {}) {
+  const live = (results || []).filter((r) => blockFor(r));
+  if (!live.length) return [];
+  const out = [live[0]];
+  let spent = (blockFor(live[0]) || '').length;
+  const top = Number(live[0].confidence) || 0;
+  for (const r of live.slice(1)) {
+    if (out.length >= maxUnits) break;
+    if (top > 0 && (Number(r.confidence) || 0) / top < minRatio) break;
+    const cost = (blockFor(r) || '').length;
+    if (spent + cost > budget) break;
+    out.push(r);
+    spent += cost;
+  }
+  // The budget governs the bodies; the wire cap governs the whole composed
+  // hint, preamble included. Only the second one can lose us the delivery.
+  return composeFits(out);
+}
+
+// The proxy's per-hint ceiling (hints.py HINTS_MAX_ONE), minus room for the
+// envelope. Duplicated from the proxy by necessity — it is a wire limit, not a
+// shared constant — and deliberately under it: at the cap the proxy declines the
+// WHOLE set, so being wrong in this direction costs a few hundred chars while
+// being wrong in the other costs the entire hint.
+const WIRE_MAX_ONE = 2400;
+
+// Drop units from the TAIL until the composed hint fits the wire. The tail is
+// the right end to cut: it is the weakest match, and cutting the winner to keep
+// two runners-up would deliver the ranking upside down. A single unit that
+// cannot fit alone still rides — it is the winner, and the proxy's own cap is
+// then the thing that declines it, which is visible in the arm's debug line
+// rather than silently dropped here.
+function composeFits(results) {
+  let picked = results || [];
+  while (picked.length > 1) {
+    const text = compose(picked);
+    if (text && text.length <= WIRE_MAX_ONE) return picked;
+    picked = picked.slice(0, -1);
+  }
+  return picked;
+}
+
 function compose(results) {
   if (!results || !results.length) return null;
   // EVERY WORD HERE IS BILLED UNCACHED ON EVERY REQUEST THAT CARRIES A HINT, so
@@ -274,34 +370,15 @@ function compose(results) {
     + '\nAttached to this request only and not repeated: if useful, act on it or restate what'
     + ' matters in your reply now, not in a later step.'];
   for (const r of results) {
-    const b = String(r.text || '').trim();
-    if (!b) continue;
-    if (b.length <= FULL_BODY_CAP) {
-      parts.push(`\n${r.id}:${labelOf(r)}\n${b}`);
-    } else {
-      // A unit saved via `[agent:memory remember] scope=x tags=y pinned=true`
-      // keeps that directive as its first line, so the naive first line pitches
-      // the unit by its metadata and gives the model no reason to spend a
-      // recall. Skip leading directive-only lines; fall back to the first line
-      // if every line looks like one.
-      const prose = b.split('\n').filter((l) => l.trim() && !DIRECTIVE_LINE.test(l.trim())).join('\n');
-      const full = (prose || b).trim();
-      const preview = full.slice(0, PREVIEW_CAP);
-      // A body between FULL_BODY_CAP and PREVIEW_CAP fits entirely, so claiming
-      // truncation would offer a recall that returns nothing the model already
-      // has — the offer has to be conditional on something actually being cut.
-      parts.push(preview.length < full.length
-        ? `\n${r.id}:${labelOf(r)}\n${preview}...`
-          + `\n(truncated at ${preview.length} of ${full.length} chars — emit [agent:memory recall] `
-          + `${r.id} on its own line to load it in full)`
-        : `\n${r.id}:${labelOf(r)}\n${preview}`);
-    }
+    const block = blockFor(r);
+    if (block) parts.push(block);
   }
   return parts.length > 1 ? parts.join('\n') : null;
 }
 
 module.exports = {
-  terms, haystack, rank, compose, unitsAsRecords, createMemoryRetriever,
+  terms, haystack, rank, compose, blockFor, selectWithinBudget, unitsAsRecords, createMemoryRetriever,
   createCommonRetriever, createCompositeRetriever, personalAsk,
   minScoreFor, confidenceOf, selfScore, MIN_HITS, MIN_COVERAGE, FULL_BODY_CAP, STOP,
+  HINT_BUDGET, HINT_MAX_UNITS, RUNNERUP_MIN_RATIO, WIRE_MAX_ONE, composeFits,
 };

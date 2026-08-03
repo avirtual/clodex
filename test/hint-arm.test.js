@@ -34,6 +34,7 @@ const {
   rank, compose, terms, haystack, selfScore, personalAsk,
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   unitsAsRecords, minScoreFor, confidenceOf, MIN_HITS, MIN_COVERAGE,
+  selectWithinBudget, blockFor, HINT_BUDGET, HINT_MAX_UNITS, WIRE_MAX_ONE,
 } = require('../hint-retrieve');
 const { ProxyClient } = require('../wirescope-proxy');
 const { createMemoryStore } = require('../memory-store');
@@ -390,6 +391,96 @@ test('compose: a long body is offered by title with a recall pointer, a short on
     'and that holds for several blank records, not just one');
 });
 
+// --- the character budget --------------------------------------------------
+
+// THE COST OF A HINT IS CHARACTERS, NOT UNITS. A count of one spent the whole
+// allowance on one long preview but only ~150 chars on a short unit, and the
+// common store is deliberately short — measured on the live stores, the
+// top-ranked unit was WRONG in 2 of 8 hits while the right one sat at rank 2-3.
+const long = (n, id) => ({ id, text: 'x'.repeat(n), confidence: 1 });
+
+test('budget: short units ride together, a long one crowds out the tail', () => {
+  const shorts = [long(300, 'mem-1-a'), long(300, 'mem-2-b'), long(300, 'mem-3-c')];
+  assert.strictEqual(selectWithinBudget(shorts).length, 3,
+    'three short units fit the budget and are exactly the case a count of one wastes');
+
+  // A long WINNER leaves room for less. Note it cannot leave room for NOTHING:
+  // PREVIEW_CAP truncates any body to ~900 chars, so no single unit can spend
+  // the whole budget however large it is — the cost of a unit is bounded.
+  const tight = selectWithinBudget([long(5000, 'mem-4-d'), long(300, 'mem-5-e'), long(900, 'mem-6-f')]);
+  assert.strictEqual(tight[0].id, 'mem-4-d', 'the winner rides first, whatever it costs');
+  const spent = tight.reduce((n, r) => n + blockFor(r).length, 0);
+  assert.ok(spent <= HINT_BUDGET, `a long winner must still leave the total inside budget (${spent}c)`);
+});
+
+// The regression that matters most: this replaces a count of one, so it must
+// never deliver LESS than one. A winner over budget still rides.
+test('budget: the winner is unconditional, whatever it costs', () => {
+  const huge = selectWithinBudget([long(100000, 'mem-1-a')]);
+  assert.strictEqual(huge.length, 1, 'a winner larger than the whole budget must still be delivered');
+  assert.strictEqual(selectWithinBudget([]).length, 0, 'nothing in, nothing out');
+  assert.strictEqual(selectWithinBudget(null).length, 0, 'a null result set must not throw');
+});
+
+test('budget: a blank body is skipped rather than spending a slot', () => {
+  const out = selectWithinBudget([long(200, 'mem-1-a'), { id: 'mem-2-b', text: '  ', confidence: 1 },
+    long(200, 'mem-3-c')]);
+  assert.deepStrictEqual(out.map((r) => r.id), ['mem-1-a', 'mem-3-c'],
+    'compose skips a blank body, so counting it against the budget would spend a slot on nothing');
+});
+
+test('budget: a weak runner-up is cut even when it fits', () => {
+  const out = selectWithinBudget([
+    { id: 'mem-1-a', text: 'x'.repeat(200), confidence: 1 },
+    { id: 'mem-2-b', text: 'x'.repeat(200), confidence: 0.2 },
+  ]);
+  assert.deepStrictEqual(out.map((r) => r.id), ['mem-1-a'],
+    'a runner-up far below the winner is padding however cheap it is');
+});
+
+test('budget: the unit cap holds even when everything is tiny', () => {
+  const tiny = Array.from({ length: 10 }, (_, i) => long(20, `mem-${i}-x`));
+  assert.strictEqual(selectWithinBudget(tiny).length, HINT_MAX_UNITS,
+    'past the cap the tail is padding whatever the sizes say');
+});
+
+// THE FAILURE THIS PREVENTS IS TOTAL, NOT PARTIAL. Every unit rides as one
+// hint, and over HINTS_MAX_ONE the proxy declines the WHOLE set rather than
+// truncating it — so one unit too many delivers nothing at all, not slightly
+// less. A count of one could never hit this; a budget can.
+test('budget: the composed hint stays under the wire cap, dropping the tail', () => {
+  const big = [long(900, 'mem-1-a'), long(900, 'mem-2-b'), long(900, 'mem-3-c')];
+  const out = selectWithinBudget(big, { budget: 1e9, maxUnits: 9 });
+  const text = compose(out);
+  assert.ok(text.length <= WIRE_MAX_ONE,
+    `composed ${text.length} chars against a ${WIRE_MAX_ONE} wire cap — the proxy declines the `
+    + 'whole set over its own limit, so this delivers NOTHING rather than less');
+  assert.strictEqual(out[0].id, 'mem-1-a',
+    'the WINNER must survive the cut — trimming from the front delivers the ranking upside down');
+});
+
+// A winner that cannot fit alone is still the winner. Dropping it here would be
+// a silent no-hint; letting it ride puts the decline in the proxy's response,
+// which the arm logs.
+test('budget: a single oversized winner still rides', () => {
+  const out = selectWithinBudget([long(9000, 'mem-1-a')], { budget: 1e9 });
+  assert.strictEqual(out.length, 1, 'the last unit is never dropped — silence here would be invisible');
+});
+
+// The budget must be measured on what SHIPS. If it estimates, the estimate
+// drifts from compose the first time either side is edited.
+test('budget: the spend is the composed length, not an estimate', () => {
+  const picked = selectWithinBudget([long(400, 'mem-1-a'), long(400, 'mem-2-b'), long(400, 'mem-3-c')]);
+  const spent = picked.reduce((n, r) => n + blockFor(r).length, 0);
+  assert.ok(spent <= HINT_BUDGET, `selected ${spent} chars against a ${HINT_BUDGET} budget`);
+  // Every selected block must appear verbatim in the composed hint.
+  const text = compose(picked);
+  for (const r of picked) {
+    assert.ok(text.includes(blockFor(r)),
+      `${r.id}'s block was budgeted but composed differently — the budget is measuring the wrong thing`);
+  }
+});
+
 // --- the arm: debounce, suppression, cooldown ------------------------------
 
 function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false, enabled = null } = {}) {
@@ -689,6 +780,76 @@ test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold',
     'a hint armed against a draft the user threw away would pop on whatever they type next');
   assert.strictEqual(h.arm.holding('s'), false,
     'an abandoned draft must release the hold, or deliveries stall for the whole cap');
+});
+
+// The budget is wired through the arm, not just unit-tested: with it the arm
+// must widen past one unit, and WITHOUT it the old single-unit behaviour must
+// be exactly what it was.
+test('arm: the budget widens delivery, and its absence keeps the old single unit', async () => {
+  // Its OWN corpus: the shared one has a single unit matching DRAFT, and the
+  // gate rejects the rest correctly — so it cannot show a budget doing anything.
+  // Two units that genuinely answer the same question is the case at issue,
+  // and it is the common store's normal shape.
+  const { store } = mkStore([
+    { text: 'The wirescope tail hint registry keeps one slot per route and expires it by ttl.' },
+    { text: 'A wirescope tail hint registry slot expires when its ttl elapses, one per route.' },
+    { text: 'Sessions are keyed by name globally, so two windows cannot share a name.' },
+  ]);
+  const mk = (withBudget) => {
+    const posts = [];
+    const a = createHintArm({
+      retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+      compose,
+      terms,
+      loadState: () => 'absent',
+      armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+      clearHints: () => Promise.resolve({ status: 200 }),
+      debounceMs: 5,
+      ...(withBudget ? { selectWithinBudget } : {}),
+    });
+    return { arm: a, posts };
+  };
+
+  const wide = mk(true);
+  wide.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(wide.posts.length, 1, 'one POST, however many units it carries');
+  const units = (wide.posts[0].text.match(/^mem-/gm) || []).length;
+  assert.ok(units >= 2,
+    `the budget must admit more than the single winner (got ${units}) — short units are exactly `
+    + 'the case a count of one wastes');
+
+  const narrow = mk(false);
+  narrow.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual((narrow.posts[0].text.match(/^mem-/gm) || []).length, 1,
+    'with no budget injected the arm must deliver exactly the one unit it always did');
+});
+
+// The budget runs LAST, so it can only narrow what the ledgers already
+// admitted. A unit whose body is already in context must not reappear just
+// because there is now room for it.
+test('arm: the budget cannot resurrect a unit the ledgers suppressed', async () => {
+  const { store } = mkStore(CORPUS);
+  const posts = [];
+  const suppressed = store.list('a')[0].id;
+  const arm = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+    compose,
+    terms,
+    loadState: (agent, id) => (id === suppressed ? 'full' : 'absent'),
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+    selectWithinBudget,
+    debounceMs: 5,
+  });
+  arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  if (posts.length) {
+    assert.ok(!posts[0].text.includes(suppressed),
+      'a unit whose body is already in context was re-offered because the budget had room — the '
+      + 'suppression matrix must bind every unit that rides, not just the winner');
+  }
 });
 
 // The stale window pre-arming left behind: the hint rides the request, so a
