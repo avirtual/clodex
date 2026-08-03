@@ -42,6 +42,21 @@ blocks a release.
   that file, so one missing byte turned a managed proxy into an unmanaged one.
   Recovering meant killing the process by hand. If you are on a proxy that
   reads "not running", it will re-adopt itself the next time it restarts.
+- **A proxy Clodex lost track of now finds its way back.** The bug above left
+  some proxies already orphaned, and nothing recovered them: Preferences kept
+  saying "not running", the Restart button stayed hidden, and a vendored update
+  was never picked up no matter how many times you relaunched. Clodex now
+  re-adopts a proxy on the expected port after checking it was started the way
+  Clodex starts one — where it is running from and what it is running. A proxy
+  you started yourself is still left alone, and still never stopped by Clodex.
+- **An agent now reaches for the tools you gave it.** Agents were told which
+  commands you had granted them and how to call them, but not that those were
+  the intended way to do the job — so they noticed the command and then wrote
+  the equivalent shell line by hand, which is slower, noisier, and what the
+  command existed to avoid. A team lead was also being shown its reviewer in a
+  way that read like an ordinary helper, so it built its own instead of using
+  the review channel that reports back to you. Both now say plainly what they
+  are for and when to use them.
 - Vendored wirescope v0.6.47.
 - **An agent that gets an irrelevant memory now drops it without telling you.**
   Retrieval matches on words, so it misses — and when it did, agents announced
