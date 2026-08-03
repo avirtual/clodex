@@ -88,8 +88,16 @@ function releaseLock() {
   lockHeld = false;
   try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
 }
-acquireLock();
-lockHeld = true;
+
+// The suite spawns this runner ITSELF (test/test-escapes.test.js drives it
+// against scratch files to prove the escape detector works, and the lock tests
+// drive it against a stub). Those children run inside a run that already holds
+// the lock, and they name explicit FILES rather than sweeping the repo — so they
+// are not the collision the lock exists to prevent, and taking it would make the
+// suite deadlock against itself. The lock guards a full sweep, which is the only
+// thing that reaches the port-binding tests.
+const sweeping = !passthrough.some((a) => !a.startsWith('-'));
+if (sweeping) { acquireLock(); lockHeld = true; }
 // Covers the normal exit and the signals a Ctrl-C or a kill delivers; without
 // this an interrupted run leaves a lock whose pid is briefly still alive, and
 // the next run refuses against a ghost.

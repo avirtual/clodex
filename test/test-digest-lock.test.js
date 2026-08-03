@@ -146,8 +146,11 @@ function withFakeLock(holderPid, check) {
     // no tap and reads as a lock failure that never happened.
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
+    // NO file argument: the lock guards a SWEEP (the only mode that reaches the
+    // port-binding tests), so a named-file run deliberately does not take it.
+    // The sweep finds stub.test.js in this throwaway root.
     const res = require('node:child_process').spawnSync(
-      process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
     );
     check(`${res.stdout || ''}${res.stderr || ''}`, lockDir);
@@ -162,6 +165,12 @@ test('lock: npm test and the digest share ONE lock dir, or the mutex is not a mu
     'run-tests.js must use the SAME dir — a second lock name excludes nothing');
   assert.match(js, /process\.kill\(holder, 0\)/,
     'and the same staleness rule, or a crashed run wedges the other entry point forever');
+  // The lock guards a SWEEP only. The suite spawns this runner against explicit
+  // files (test-escapes.test.js proves the escape detector; these tests drive a
+  // stub), and those children run INSIDE a run that already holds the lock — so
+  // taking it for a named-file run deadlocks the suite against itself.
+  assert.match(js, /const sweeping = !passthrough\.some/,
+    'a named-file run must not take the lock, or the suite blocks on its own children');
 });
 
 test('lock: npm test REFUSES while another run holds it, and says how to clear it', () => {
@@ -172,6 +181,38 @@ test('lock: npm test REFUSES while another run holds it, and says how to clear i
       'and the message must name the holder and how to clear it, or the next reflex is to raise a timeout');
     assert.ok(!/TOTALS:/.test(out), 'the refused run must not have executed the suite');
   });
+});
+
+// The regression this file could NOT catch until now: these tests and
+// test-escapes.test.js spawn the runner, and both pass in ISOLATION. Locking a
+// named-file run only fails inside a full sweep, where the parent already holds
+// the lock — exactly how it shipped and how the suite went red at 6 failures.
+// Reproduced here by holding the lock and running a NAMED FILE, which must still
+// run.
+test('lock: a named-file run ignores a held lock — the suite spawns this runner', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  const lockDir = path.join(root, '.test-digest.lock');
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid));  // alive: a sweep in flight
+  const stub = path.join(root, 'stub.test.js');
+  fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const res = require('node:child_process').spawnSync(
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.match(out, /TOTALS:/,
+      'a named-file run must proceed while a sweep holds the lock, or the suite blocks on its own children');
+    assert.ok(!/another suite run is already going/.test(out), 'and must not be refused');
+    assert.ok(fs.existsSync(lockDir), "and must not steal or release the sweep's lock");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('lock: npm test reclaims a lock whose holder is dead, and releases on exit', () => {
