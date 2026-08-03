@@ -310,6 +310,13 @@ details>summary{cursor:pointer;color:#6ab0de}
 .turnhdr{margin:1.2em 0 .35em;padding-bottom:.15em;color:#9aa3b2;
          font-weight:bold;border-bottom:1px solid #2a2e36}
 .tstamp{float:right;color:#69707d;font-weight:normal;font-size:12px}
+.tw{font-weight:normal;font-size:12px;color:#7ec699;margin-left:.6em}
+.tw.hot{color:#e5c07b}
+.twc{font-weight:normal;font-size:12px;color:#69707d;margin-left:.45em}
+.twbar{display:inline-block;width:64px;height:6px;background:#22262e;
+       border-radius:3px;margin-left:.45em;vertical-align:middle;overflow:hidden}
+.twbar>i{display:block;height:100%;background:#4d7a5e}
+.tw.hot+.twbar>i{background:#b08a3e}
 pre.pv{margin-bottom:0}
 details.more>pre{margin-top:0}
 details.more>summary{color:#69707d;font-size:12px}
@@ -331,9 +338,9 @@ details.more>summary{color:#69707d;font-size:12px}
 .naventry a{color:#e5c07b;text-decoration:none;border:1px solid #3a3320;
         border-radius:4px;padding:.15em .5em;background:#1a1710}
 .naventry a:hover{text-decoration:underline}
-.crumb{margin:0 0 .4em;font-size:12px}
-.crumb a{color:#6ab0de;text-decoration:none}
-.crumb a:hover{text-decoration:underline}
+.crumb{font-size:12px;font-weight:normal;color:#6ab0de;text-decoration:none}
+.crumb:hover{text-decoration:underline}
+.crumbsep{color:#454b56;font-weight:normal;margin:0 .45em}
 .bustp{border-left-color:#e5c07b}
 .bustp pre.diff{font-size:12px;max-height:14em}
 .bustp pre.diff{color:#aab2c0}
@@ -521,6 +528,54 @@ def _turn_clock(session_id, render_ts=None):
     return out
 
 
+def _turn_weights(items, is_start):
+    """Per-turn CARRIAGE: how much each turn ADDED to the context window, keyed
+    by turn number (1-based, the same numbering the timeline renders — `is_start`
+    is the caller's turn-boundary predicate, so the two can't disagree).
+
+    A turn owns every message from its prompt up to (not including) the next
+    prompt: the user text, the assistant reply, and every tool_use/tool_result
+    round trip in between — i.e. exactly the bytes that turn appended and that
+    EVERY LATER TURN then re-carries. That is the number you scan for when
+    asking "where did this session get heavy": one 40k-char tool_result in turn
+    6 is not a one-off, it is 40k re-read on turns 7..n.
+
+    Returns {turn: {"ch": added, "cum": context through the END of that turn}}.
+    Messages only — tools+system are the fixed preamble, priced in the bar
+    above. Anything before turn 1 (a leading bundle) lands in turn 1's `cum`
+    but is attributed to no turn, which is honest: no turn added it."""
+    out, turn, cum = {}, 0, 0
+    for it in items:
+        if is_start(it):
+            turn += 1
+            out[turn] = {"ch": 0, "cum": cum}
+        ch = len(json.dumps(it, ensure_ascii=False)) if isinstance(it, dict) else 0
+        cum += ch
+        if turn:
+            out[turn]["ch"] += ch
+            out[turn]["cum"] = cum
+    return out
+
+
+def _turn_weight_html(w, peak):
+    """The per-turn-header weight chip: `+N tok` added, a share-of-the-heaviest
+    bar (relative, so it reads on any session size), and the running window
+    total. Amber once a turn is at least half the heaviest one — the scan
+    target. tok ≈ ch/4, same convention as the bar above."""
+    if not w:
+        return ""
+    ch = w["ch"]
+    share = (ch / peak) if peak else 0.0
+    hot = " hot" if share >= 0.5 else ""
+    return (f'<span class="tw{hot}" title="{ch:,} chars added by this turn '
+            f'(tok &approx; ch/4)">+{_fmt_tok(ch // 4)} tok</span>'
+            f'<span class="twbar"><i style="width:{min(100, round(share * 100))}%">'
+            f'</i></span>'
+            f'<span class="twc" title="context through the end of this turn: '
+            f'{w["cum"]:,} chars of messages">&Sigma;&thinsp;'
+            f'{_fmt_tok(w["cum"] // 4)}</span>')
+
+
 def _load_request_by_index(session_id, i):
     """Load the i-th MAIN-line captured turn (0-based, chronological) for the
     /_session navigator. Returns (entry, resp, usage, nav) where nav carries the
@@ -649,6 +704,8 @@ def _render_session_openai_body(entry, resp=None):
               f'<span class="dim">{hl}</span>{_prevu(instr, cap=160)}</div>')
     rows = []
     turn = 0
+    weights = _turn_weights(inp, codex_mod._is_prompt_item_openai)
+    peak = max((w["ch"] for w in weights.values()), default=0)
     for i, it in enumerate(inp):
         t = it.get("type")
         if codex_mod._is_prompt_item_openai(it):
@@ -656,7 +713,8 @@ def _render_session_openai_body(entry, resp=None):
             cur = (' · <span class="warm">current</span>'
                    if turn == n_turns else '')
             rows.append(f'<div class="turnhdr" id="turn-{turn}">'
-                        f'turn {turn}{cur}</div>')
+                        f'turn {turn}{cur}'
+                        f'{_turn_weight_html(weights.get(turn), peak)}</div>')
         if t == "message":
             role = it.get("role", "?")
             for c in (it.get("content") or []):
@@ -828,8 +886,11 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
     nav_html = _session_nav_html(sid, nav, bust_t) if nav else ""
     # Top-of-page way back to /_admin. The footer link is the same destination,
     # but a session page is as long as its transcript, so reaching it means
-    # scrolling past everything you were done reading.
-    crumb = f'<p class="crumb"><a href="/_admin">&larr; sessions</a></p>'
+    # scrolling past everything you were done reading. Rendered INSIDE the <h1>,
+    # leading the title line — a one-line back-link owned a whole line of the
+    # fold otherwise, and the title is what you're navigating away from anyway.
+    crumb = ('<a class="crumb" href="/_admin">&larr; sessions</a>'
+             '<span class="crumbsep">·</span>')
     if subrole:
         # Per-role subagent view: same session_id as the parent, but its own
         # model/activity. The parent's warmth/cwd belong to the parent line, so
@@ -845,7 +906,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                     if sub.get("display_name") and sub.get("role") != sub.get("display_name") else "")
         lbl_html = e(lbl) + rolechip + (f' <small class="dim">#{e(aid[:8])}</small>' if aid else "")
         ptitle = s.get("title") or "(untitled)"
-        head = (f'<h1>{e(ptitle)} <small>&#8627; <b>{lbl_html}</b></small> '
+        head = (f'<h1>{crumb}{e(ptitle)} <small>&#8627; <b>{lbl_html}</b></small> '
                 f'<small>· <code>{e(sid)}</code></small></h1>'
                 f'<p class="kv"><span class="dim">subagent of '
                 f'<a href="/_session?session={e(sid)}">{e(ptitle)}</a></span>'
@@ -858,13 +919,12 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                            f'{e(_fmt_dur(w.get("remaining_s")))} left</span>'),
                   "cold": '<span class="cold">&#10052;&#65039; cold</span>'
                   }.get(w.get("state"), '<span class="absent">&empty;</span>')
-        head = (f'<h1>{e(s.get("title") or "(untitled)")} '
+        head = (f'<h1>{crumb}{e(s.get("title") or "(untitled)")} '
                 f'<small>· <code>{e(sid)}</code></small></h1>'
                 f'<p class="kv"><span>{warmth}</span>'
                 f'<span>model <b>{e(writer_mod._short_model(s.get("model")))}</b></span>'
                 f'<span>cwd <b>{e(s.get("cwd") or "?")}</b></span>'
                 f'<span class="dim">last seen {e(_fmt_ago(s.get("last_seen")))}</span></p>')
-    head = crumb + head                    # breadcrumb above the title, both branches
     head += nav_html                       # turn navigator arrows + bust panel (nav mode)
     if not nav and not subrole:
         # TOP-of-page entry into the turn navigator, so the forensic controls
@@ -1010,6 +1070,10 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         # no request bodies are opened). A turn's boundary is keyed by the message
         # count at capture time, so msgs[:i] is the prefix that existed then.
         clock = _turn_clock(sid, render_ts=entry.get("ts"))
+        # how much each turn ADDED to the window (and the running total) —
+        # scanning these headers is how you find where a session got heavy.
+        weights = _turn_weights(msgs, meta_mod._is_prompt_msg)
+        peak = max((w["ch"] for w in weights.values()), default=0)
         for i, mm in enumerate(msgs):
             # group the timeline by turn: a divider before each prompt-bearing
             # user message (same predicate as turns_in_context — one source)
@@ -1024,7 +1088,9 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 stamp = (f' <span class="tstamp" title="{e(_fmt_when(tts))}">'
                          f'{e(_fmt_clock(tts))}</span>' if tts else '')
                 rows.append(f'<div class="turnhdr" id="turn-{turn}">'
-                            f'turn {turn}{cur}{stamp}</div>')
+                            f'turn {turn}{cur}'
+                            f'{_turn_weight_html(weights.get(turn), peak)}'
+                            f'{stamp}</div>')
             cum_ch += len(json.dumps(mm)) if isinstance(mm, dict) else 0
             role = mm.get("role", "?")
             content = mm.get("content")
