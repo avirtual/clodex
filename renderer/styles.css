@@ -2076,9 +2076,45 @@ html, body {
 #sandbox-detail-label { flex: 1; font-size: 14px; font-weight: 600; }
 #btn-sandbox-delete[disabled] { opacity: 0.4; cursor: not-allowed; }
 #prefs-dialog h3 { margin-bottom: 16px; font-size: 16px; }
-#prefs-dialog h4 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
+#prefs-dialog h4 { margin: 0; font-size: 13px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 #prefs-dialog section { margin-bottom: 16px; }
 #prefs-dialog .hint-text { margin-bottom: 8px; display: block; }
+
+/* Collapsible groups. Every group is CLOSED in the markup and reopened from
+   localStorage, so a first run shows nine one-line headers rather than the
+   whole dialog at once. */
+.prefs-group { border-top: 1px solid var(--border); padding: 10px 0; }
+.prefs-group:last-of-type { border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.prefs-group > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 10px; }
+/* The default triangle is replaced by our own, so both must be suppressed —
+   ::-webkit-details-marker alone still leaves the standard `list-item` bullet. */
+.prefs-group > summary::-webkit-details-marker { display: none; }
+.prefs-group > summary::before {
+  content: '▸'; flex: none; opacity: 0.55; font-size: 10px;
+  transform: translateY(-1px); transition: transform 0.12s ease;
+}
+.prefs-group[open] > summary::before { transform: translateY(-1px) rotate(90deg); }
+.prefs-group > summary:hover h4 { opacity: 1; }
+/* The one-line summary of what a collapsed group contains: it is what makes a
+   closed group navigable, so it hides only when the group is open. */
+.prefs-group-sub { font-size: 11px; opacity: 0.5; flex: 1; }
+.prefs-group[open] .prefs-group-sub { visibility: hidden; }
+.prefs-group > *:not(summary) { margin-left: 18px; }
+/* Sub-headings inside a group (was a bare .hint-text paragraph doing the job of
+   a heading, which left settings and prose at the same visual weight). */
+#prefs-dialog h5 {
+  margin: 16px 0 4px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; opacity: 0.55; letter-spacing: 0.4px;
+}
+#prefs-dialog h5:first-of-type { margin-top: 10px; }
+
+/* Was an inline `display:flex; align-items:center; gap:8px` repeated on ~10
+   rows. Keep as a class: an inline style cannot be overridden by the dep-off
+   rules below it. */
+.prefs-row { display: flex; align-items: center; gap: 8px; }
+.prefs-check { display: flex; align-items: center; gap: 8px; }
+.prefs-check input[type="checkbox"] { margin: 0; }
+.prefs-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none; }
 /* Why a dependent toggle is greyed. Hidden when empty rather than always
    present, so a live control has no leftover gap under it. */
 .prefs-dep-reason { display: none; font-size: 11px; opacity: 0.65; margin: 3px 0 0 24px; }

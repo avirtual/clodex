@@ -36,11 +36,13 @@ test('proxy on but hints off: semantic ranking is still dead, and says so', () =
   assert.strictEqual(g.compactOnResume.disabled, false, 'the bake does not depend on hints');
 });
 
-// The proxy reason must win over the hints reason: telling someone to enable
+// The wirescope reason must win over the hints reason: telling someone to enable
 // hints is useless advice when the proxy they both need is off.
-test('both off: the reason names the proxy, not the hints', () => {
+test('both off: the reason names wirescope, not the hints', () => {
   const g = prefsGate({ proxyEnabled: false, contextHints: false });
-  assert.match(g.semanticHints.reason, /traffic optimization/i);
+  assert.match(g.semanticHints.reason, /wirescope/i);
+  assert.doesNotMatch(g.semanticHints.reason, /contextual memory hints/i,
+    'naming the dependant the operator cannot usefully enable sends them in a circle');
 });
 
 test('a missing/empty state gates rather than assuming enabled', () => {

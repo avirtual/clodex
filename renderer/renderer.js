@@ -4860,6 +4860,26 @@ document.getElementById('btn-peers-sandbox').addEventListener('click', () => { c
 window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
 window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
 
+// Which groups the operator left open. Every group ships CLOSED, so this is
+// what stops a reopen from collapsing the section someone is working in.
+// Collapsed groups keep their controls in the DOM, so Save is unaffected.
+const PREFS_OPEN_KEY = 'clodex-prefs-open';
+function prefsGroups() { return [...document.querySelectorAll('#prefs-dialog .prefs-group')]; }
+function restorePrefsGroups() {
+  let open = [];
+  try { open = JSON.parse(localStorage.getItem(PREFS_OPEN_KEY) || '[]'); } catch {}
+  if (!Array.isArray(open)) open = [];
+  for (const g of prefsGroups()) g.open = open.includes(g.dataset.group);
+}
+for (const g of prefsGroups()) {
+  g.addEventListener('toggle', () => {
+    try {
+      localStorage.setItem(PREFS_OPEN_KEY, JSON.stringify(
+        prefsGroups().filter((x) => x.open).map((x) => x.dataset.group)));
+    } catch {}
+  });
+}
+
 // Grey out the toggles that cannot act, and say why.
 function applyPrefsGate() {
   const gate = prefsGate({
@@ -4897,6 +4917,7 @@ async function openPrefs() {
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
+  restorePrefsGroups();
   applyPrefsGate();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsRemoteToken.value = '';

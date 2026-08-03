@@ -819,61 +819,97 @@
   <div id="prefs-overlay" class="hidden">
     <div id="prefs-dialog">
       <h3>Preferences</h3>
-      <section>
-        <h4>Appearance</h4>
+      <details class="prefs-group" data-group="appearance">
+        <summary><h4>Appearance</h4><span class="prefs-group-sub">Theme</span></summary>
         <p class="hint-text">Theme applies immediately and persists across launches. Terminals retint live.</p>
         <select id="prefs-theme"></select>
-      </section>
-      <section>
-        <h4>Claude statusline</h4>
-        <p class="hint-text">Session name <code>[clodex:NAME]</code> is always shown.</p>
+      </details>
+      <details class="prefs-group" data-group="statusline">
+        <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
+        <p class="hint-text">Session name <code>[clodex:NAME]</code> is always shown. Applied at session start — existing sessions need a restart to pick up changes.</p>
+        <h5>Claude</h5>
         <div id="prefs-claude-components" class="prefs-checkboxes"></div>
         <p class="hint-text">Custom command (optional): gets the statusline JSON on stdin with <code>CLODEX_AGENT_NAME</code> set; its output replaces the components above. Falls back to them if it fails or prints nothing.</p>
         <input type="text" id="prefs-claude-sl-cmd" placeholder="$CLAUDE_PROJECT_DIR/.claude/status-line.sh" spellcheck="false">
-      </section>
-      <section>
-        <h4>Codex statusline</h4>
-        <p class="hint-text">Applied at session start. Existing Codex sessions need a restart to pick up changes.</p>
+        <h5>Codex</h5>
         <div id="prefs-codex-components" class="prefs-checkboxes"></div>
-      </section>
-      <section>
-        <h4>Traffic optimization</h4>
-        <p class="hint-text">Cache-warming, cost telemetry and wire optimizations. Routes each agent session's API traffic through a local proxy process on this machine, started and managed by Clodex (first run sets up a private Python environment; needs a system <code>python3</code>). Applied at spawn — running sessions pick it up on restart; sessions work normally without it.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-proxy-enabled" style="margin: 0;">
-          <span>Optimize agent API traffic</span>
+      </details>
+      <details class="prefs-group" data-group="new-sessions">
+        <summary><h4>New session defaults</h4><span class="prefs-group-sub">Tools and MCP for sessions you create from now on</span></summary>
+        <p class="hint-text">Both apply at spawn and only to new sessions; existing ones are unaffected.</p>
+        <h5>Default tools</h5>
+        <p class="hint-text">Unchecked tools are denied for new Claude sessions by default (you can still adjust per session at create). A consistent set lets sessions share one cached tools segment — leaving rarely-used tools off also trims each prompt.</p>
+        <label id="prefs-tools-row">Tools
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
-        <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-          <span id="ws-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
+        <h5>Claude MCP</h5>
+        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is too old to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-disable-design-mcp">
+          <span>Disable all MCP on unrouted sessions (<code>--strict-mcp-config</code>)</span>
+        </label>
+      </details>
+      <details class="prefs-group" data-group="env">
+        <summary><h4>Environment variables</h4><span class="prefs-group-sub">Extra variables for every session this app spawns</span></summary>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <span>Scope</span>
+          <select id="prefs-env-scope" style="flex: none;">
+            <option value="global">Global (all workspaces)</option>
+            <option value="workspace">This workspace</option>
+          </select>
+        </div>
+        <div id="prefs-env-list" style="margin-top: 8px;"></div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
+          <input type="text" id="prefs-env-key" placeholder="KEY" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-env-value" placeholder="value" spellcheck="false" autocomplete="off" style="flex: 2;">
+          <label class="prefs-check" style="gap: 4px; font-weight: normal; flex: none;">
+            <input type="checkbox" id="prefs-env-secret"><span>Secret</span>
+          </label>
+          <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
+        </div>
+        <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+      </details>
+      <details class="prefs-group" data-group="traffic">
+        <summary><h4>Traffic optimization</h4><span class="prefs-group-sub">Wirescope, and the transcript bake and memory hints that run on it</span></summary>
+        <h5>Wirescope</h5>
+        <p class="hint-text">Wirescope is the local proxy every optimization below runs on: it routes each agent session's API traffic through a process on this machine, started and managed by Clodex (first run sets up a private Python environment; needs a system <code>python3</code>), and from there does the cache-warming, cost telemetry and wire trimming. Applied at spawn — running sessions pick it up on restart; sessions work normally without it, they simply are not optimized. Turning this off turns off everything below it.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-proxy-enabled">
+          <span>Optimize agent API traffic through wirescope</span>
+        </label>
+        <div class="prefs-row" style="margin-top: 8px;">
+          <span id="ws-dot" class="prefs-dot"></span>
           <span id="ws-status-text" class="hint-text" style="flex: 1;">—</span>
           <button id="ws-restart-btn" class="secondary" type="button" style="display: none; flex: none;" title="Stop and respawn the managed proxy (picks up a bundled update). In-flight requests fail for a few seconds; sessions retry on their next turn.">Restart</button>
         </div>
-        <p class="hint-text" style="margin: 14px 0 2px;">Resume-time transcript bake</p>
-        <p class="hint-text">When resuming a session, bake its on-disk transcript down to the same set the proxy already strips on the wire, so the replayed prefix is permanently slimmer. Byte-identical to the live wire (it only removes what the wire already drops), so it never busts a warm cache. Fail-safe — resumes the original transcript on any error.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-compact-on-resume" style="margin: 0;">
+        <h5>Resume-time transcript bake</h5>
+        <p class="hint-text">When Clodex starts, hand each resumed session's on-disk transcript to wirescope, which bakes it down to what it already strips on the wire, so the replayed prefix is permanently slimmer. The original is backed up next to it first, and any error resumes it untouched. Mostly free: what it removes, the wire was dropping anyway. The exception is a turn made up entirely of thinking — the wire has to keep those, so baking one out re-caches that turn once, and it stays slimmer from then on.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-compact-on-resume">
           <span>Bake transcripts on resume</span>
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
-        <p class="hint-text" style="margin: 14px 0 2px;">Contextual memory hints</p>
-        <p class="hint-text">On a pause in your typing, match the draft against the agent's own memories and the common store, and attach the best matches to that turn as an ephemeral hint the agent may ignore. Units already in its context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
+        <h5>Contextual memory hints</h5>
+        <p class="hint-text">On a pause in your typing, match the draft against the agent's own memories and the common store, and attach the best matches to that turn as an ephemeral hint the agent may ignore. Units already in its context are skipped, and the same unit is not re-offered for ten minutes. Wirescope is what attaches the hint, so nothing is matched or sent when it is off.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-context-hints">
           <span>Arm contextual hints from memory</span>
         </label>
         <span id="prefs-context-hints-why" class="prefs-dep-reason"></span>
         <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It reorders candidates, and it is also the only thing that can answer a short question about you ("where do i live") — word matching scores every record identically on a one-word query, so it has no way to pick. Whether to hint at all is still decided by word matching everywhere else, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching, and short personal questions simply stay quiet.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-semantic-hints" style="margin: 0;">
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-semantic-hints">
           <span>Rank hints with a local embedding model</span>
         </label>
         <span id="prefs-semantic-hints-why" class="prefs-dep-reason"></span>
         <div id="ws-logs-block" style="display: none;">
-          <p class="hint-text" style="margin: 14px 0 2px;">Capture logs</p>
+          <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
-          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+          <div class="prefs-row" style="margin-top: 4px;">
             <span id="ws-logs-size" class="hint-text" style="flex: 1;">—</span>
-            <label class="hint-text" style="flex: none; display: flex; align-items: center; gap: 6px;">older than
+            <label class="hint-text prefs-row" style="flex: none; gap: 6px;">older than
               <select id="ws-logs-age" style="flex: none;">
                 <option value="180d">180 days</option>
                 <option value="90d">90 days</option>
@@ -885,71 +921,34 @@
             <button id="ws-logs-clear-btn" class="secondary" type="button" style="flex: none;" disabled>Clear…</button>
           </div>
         </div>
-      </section>
-      <section>
-        <h4>Phone access</h4>
+      </details>
+      <details class="prefs-group" data-group="phone">
+        <summary><h4>Phone access</h4><span class="prefs-group-sub">Read and reply to sessions from a browser</span></summary>
         <p class="hint-text">Serves a chat-style web view of your agent sessions (transcript + send box, no terminal) on this machine only (<code>127.0.0.1</code>). To reach it from your phone, put both devices on a tailnet and run <code>tailscale serve &lt;port&gt;</code>, or use an SSH tunnel — Clodex never opens a network-visible port itself.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-remote-enabled" style="margin: 0;">
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-remote-enabled">
           <span>Enable phone access</span>
         </label>
-        <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-          <span id="remote-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none;"></span>
+        <div class="prefs-row" style="margin-top: 8px;">
+          <span id="remote-dot" class="prefs-dot"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
         <p class="hint-text" style="margin-top: 10px;">Optional access token that gates the wire. Paste a token you keep a copy of — you'll need it for <code>?token=</code> bookmarks on your phone. Stored write-only on this machine; it's never shown again after you save. The <code>CLODEX_REMOTE_TOKEN</code> env var, if set, overrides this.</p>
-        <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+        <div class="prefs-row" style="margin-top: 6px;">
           <input type="password" id="prefs-remote-token" placeholder="Paste a token to set…" autocomplete="off" style="flex: 1;">
           <button id="prefs-remote-token-save" class="secondary" type="button" style="flex: none;">Save Token</button>
           <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
         </div>
         <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
-      </section>
-      <section>
-        <h4>Environment variables</h4>
-        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
-        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-          <span>Scope</span>
-          <select id="prefs-env-scope" style="flex: none;">
-            <option value="global">Global (all workspaces)</option>
-            <option value="workspace">This workspace</option>
-          </select>
-        </div>
-        <div id="prefs-env-list" style="margin-top: 8px;"></div>
-        <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
-          <input type="text" id="prefs-env-key" placeholder="KEY" spellcheck="false" autocomplete="off" style="flex: 1;">
-          <input type="text" id="prefs-env-value" placeholder="value" spellcheck="false" autocomplete="off" style="flex: 2;">
-          <label style="display: flex; align-items: center; gap: 4px; font-weight: normal; flex: none;">
-            <input type="checkbox" id="prefs-env-secret" style="margin: 0;"><span>Secret</span>
-          </label>
-          <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
-        </div>
-        <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
-      </section>
-      <section>
-        <h4>Session discovery</h4>
+      </details>
+      <details class="prefs-group" data-group="discovery">
+        <summary><h4>Session discovery</h4><span class="prefs-group-sub">Adopt Claude/Codex sessions started outside Clodex</span></summary>
         <p class="hint-text">Clodex can find Claude/Codex conversations on this machine that it isn't managing — including ones you started in a plain terminal — and let you adopt them (File ▸ Discover Sessions…). When enabled below, it checks on startup and offers any it finds; adopting resumes the conversation in a Clodex-managed session (it never attaches to a running process or spawns anything automatically).</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-discover-on-startup" style="margin: 0;">
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-discover-on-startup">
           <span>Offer to adopt external sessions on startup</span>
         </label>
-      </section>
-      <section>
-        <h4>Claude MCP</h4>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is too old to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP. Applied at spawn — restart a session to pick up changes.</p>
-        <label style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="prefs-disable-design-mcp" style="margin: 0;">
-          <span>Disable all MCP on unrouted sessions (<code>--strict-mcp-config</code>)</span>
-        </label>
-      </section>
-      <section>
-        <h4>Default tools for new sessions</h4>
-        <p class="hint-text">Unchecked tools are denied for new Claude sessions by default (you can still adjust per session at create). A consistent set lets sessions share one cached tools segment — leaving rarely-used tools off also trims each prompt. Applies only to new sessions; existing ones are unaffected.</p>
-        <label id="prefs-tools-row">Tools
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-          <div id="prefs-tools-list" class="agent-checklist"></div>
-        </label>
-      </section>
+      </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the
            "Manage Plugins…" dialog, so there is one place to look. -->

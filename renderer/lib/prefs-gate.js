@@ -3,11 +3,11 @@
 // of the dialog. Pure leaf: renderer.js plumbs the result into `disabled` and a
 // reason line.
 //
-// The three proxy-dependent toggles are not merely "less useful" with the proxy
-// off — they are DEAD. Hints are armed through ProxyClient, and `_armCtx` passes
-// `base: s.proxyBase || null`, which is null when the session was spawned
-// unrouted; hint-arm returns immediately on a falsy base. So the checkbox
-// persists, survives a reload, and does nothing.
+// The three wirescope-dependent toggles are not merely "less useful" with it off
+// — they are DEAD. Hints are armed through ProxyClient, and `_armCtx` resolves a
+// null base whenever wirescope is not routing this session; hint-arm returns
+// immediately on a falsy base. So the checkbox persists, survives a reload, and
+// does nothing.
 //
 // NEW leaf (not a renderer.js extraction), so — following the tool-gate.js and
 // sandbox-view.js precedent — deliberately NOT added to
@@ -16,9 +16,9 @@
 // Each dependent control names the pref it needs and why, so the reason shown
 // in the UI cannot drift from the dependency being enforced.
 const PROXY_DEPENDENT = [
-  ['compactOnResume', 'Needs traffic optimization — the bake mirrors what the proxy strips.'],
-  ['contextHints', 'Needs traffic optimization — hints are attached by the proxy.'],
-  ['semanticHints', 'Needs traffic optimization — hints are attached by the proxy.'],
+  ['compactOnResume', 'Needs wirescope — it is what bakes the transcript.'],
+  ['contextHints', 'Needs wirescope — it is what attaches the hint.'],
+  ['semanticHints', 'Needs wirescope — it is what attaches the hint.'],
 ];
 
 // state: the live checkbox values, NOT saved settings — the gate must respond to
