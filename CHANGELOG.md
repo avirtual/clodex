@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 4.13.0 — 2026-08-04
+
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
   you get what Clodex already knew but had nowhere to say: how many times this
   conversation has been compacted and how much context those compacts threw
