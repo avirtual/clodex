@@ -15,6 +15,7 @@ const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = requir
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName } = require('./lib/name-suggest');
+const { prefsGate } = require('./lib/prefs-gate');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -4859,6 +4860,34 @@ document.getElementById('btn-peers-sandbox').addEventListener('click', () => { c
 window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
 window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
 
+// Grey out the toggles that cannot act, and say why. A checkbox that persists
+// and does nothing is worse than a disabled one: it reports a state the app
+// will not honour, and nothing in the UI ever contradicts it.
+function applyPrefsGate() {
+  const gate = prefsGate({
+    proxyEnabled: prefsProxyEnabled.checked,
+    contextHints: prefsContextHints.checked,
+  });
+  for (const [key, el] of [
+    ['compactOnResume', prefsCompactOnResume],
+    ['contextHints', prefsContextHints],
+    ['semanticHints', prefsSemanticHints],
+  ]) {
+    if (!el) continue;
+    const g = gate[key];
+    el.disabled = g.disabled;
+    if (el.parentElement) el.parentElement.classList.toggle('dep-off', g.disabled);
+    const why = document.getElementById(`${el.id}-why`);
+    if (why) { why.textContent = g.reason; why.classList.toggle('shown', !!g.reason); }
+  }
+}
+
+// The gate reads live checkbox state, so every master must re-run it on change
+// — not only on open, or unticking the proxy would leave its dependants looking
+// live until the dialog was reopened.
+prefsProxyEnabled.addEventListener('change', applyPrefsGate);
+prefsContextHints.addEventListener('change', applyPrefsGate);
+
 async function openPrefs() {
   const s = await window.api.getSettings();
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
@@ -4870,6 +4899,7 @@ async function openPrefs() {
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
+  applyPrefsGate();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken);

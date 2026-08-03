@@ -2079,6 +2079,11 @@ html, body {
 #prefs-dialog h4 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 #prefs-dialog section { margin-bottom: 16px; }
 #prefs-dialog .hint-text { margin-bottom: 8px; display: block; }
+/* Why a dependent toggle is greyed. Hidden when empty rather than always
+   present, so a live control has no leftover gap under it. */
+.prefs-dep-reason { display: none; font-size: 11px; opacity: 0.65; margin: 3px 0 0 24px; }
+.prefs-dep-reason.shown { display: block; }
+#prefs-dialog label.dep-off { opacity: 0.5; }
 .prefs-checkboxes { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; }
 .prefs-checkboxes label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .prefs-checkboxes input[type="checkbox"] { margin: 0; }

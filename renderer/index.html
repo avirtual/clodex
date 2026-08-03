@@ -854,17 +854,20 @@
           <input type="checkbox" id="prefs-compact-on-resume" style="margin: 0;">
           <span>Bake transcripts on resume</span>
         </label>
+        <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
         <p class="hint-text" style="margin: 14px 0 2px;">Contextual memory hints</p>
         <p class="hint-text">When you submit a message, match it against the agent's own memories and attach the best match to the turn as an ephemeral hint the agent may ignore. Units already in the agent's context are skipped, and the same unit is not re-offered for ten minutes. Requires the proxy; nothing is sent when it is off.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-context-hints" style="margin: 0;">
           <span>Arm contextual hints from memory</span>
         </label>
+        <span id="prefs-context-hints-why" class="prefs-dep-reason"></span>
         <p class="hint-text">Word matching picks the right memory about 40% of the time; a local embedding model raises that to about 64% by matching on meaning rather than wording. It reorders candidates, and it is also the only thing that can answer a short question about you ("where do i live") — word matching scores every record identically on a one-word query, so it has no way to pick. Whether to hint at all is still decided by word matching everywhere else, which is the half that knows when to stay quiet. Needs Ollama running locally with the nomic-embed-text model; when it is unavailable this silently falls back to word matching, and short personal questions simply stay quiet.</p>
         <label style="display: flex; align-items: center; gap: 8px;">
           <input type="checkbox" id="prefs-semantic-hints" style="margin: 0;">
           <span>Rank hints with a local embedding model</span>
         </label>
+        <span id="prefs-semantic-hints-why" class="prefs-dep-reason"></span>
         <div id="ws-logs-block" style="display: none;">
           <p class="hint-text" style="margin: 14px 0 2px;">Capture logs</p>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
