@@ -51,6 +51,13 @@ blocks a release.
   started by hand is left alone even when it runs from the same directory, and
   so is one belonging to another Clodex install on the same machine — neither is
   ever stopped or restarted by this one.
+- **Two test runs can no longer wedge each other** (contributors only). Parts
+  of the suite bind real ports, so two at once deadlock — both sit at 0% CPU
+  and neither finishes, which looks exactly like a slow suite. `npm test` did
+  not take the lock the digest path has always used, so the most obvious
+  command in the repo walked past the guard; a stray run had been stuck for
+  over thirteen hours. It now refuses immediately, naming the process holding
+  the lock and how to clear it.
 - **An agent now reaches for the tools you gave it.** Agents were told which
   commands you had granted them and how to call them, but not that those were
   the intended way to do the job — so they noticed the command and then wrote
