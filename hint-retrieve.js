@@ -414,8 +414,13 @@ function compose(results) {
   // a model that defers acting until after a tool call finds it gone, and
   // reaching for a tool first is the default). Silent on WHY it is one-shot:
   // billing is not the model's to reason about.
+  // `silently` is load-bearing: "not repeated ... restate what matters" reads as
+  // don't let this be lost, which outweighed the bare "ignore it" — an idle seat
+  // handed an unrelated memory summarized it to the operator so it "isn't lost".
+  // The full rule is in ipc-prompt's MEMORY section (cached); this is the one
+  // word that has to survive at the point of delivery.
   const parts = ['From your operator\'s memory store — may relate to what the user is asking;'
-    + ' if not, ignore it.'
+    + ' if not, ignore it silently.'
     + '\nAttached to this request only and not repeated: if useful, act on it or restate what'
     + ' matters in your reply now, not in a later step.'];
   for (const r of results) {

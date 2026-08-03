@@ -66,6 +66,18 @@ test('MEMORY carries the hint retraction guard', () => {
     'without the exemption a seat retracts correct hint-fed answers it cannot source');
 });
 
+// The other half of the same failure. Retrieval is lexical and misses often, and
+// an idle seat handed an unrelated memory summarized it to the operator rather
+// than dropping it — the miss cost more attention than the hint was worth. Lives
+// HERE and not in the hint preamble for the same reason as the guard above: the
+// preamble is billed uncached on every armed request and has ~13 chars of slack.
+test('MEMORY says an irrelevant hint is dropped in silence', () => {
+  const p = buildIpcPrompt(ALL_GATEABLE);
+  assert.ok(/drop it in silence/.test(p), 'the rule must actually be stated');
+  assert.ok(/do not mention it, summarize it, or explain why you are not using it/.test(p),
+    'naming the three shapes it took: a bare "ignore it" was already there and did not hold');
+});
+
 test('dm off → both dm grammar lines (incl the urgent park paragraph) vanish', () => {
   const list = ALL_GATEABLE.filter((t) => t !== 'dm');
   const p = buildIpcPrompt(list);
