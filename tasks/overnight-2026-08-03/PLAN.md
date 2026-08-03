@@ -154,3 +154,40 @@ Set below. Point is recovery and drift-checking, not nagging.
   currently testing. NOT shipping it tonight unmeasured against more probe sets
   — but it is the one candidate that survived the night, and it is the right
   next spec.
+
+### A — Settings dialog: SHIPPED (83f98de)
+
+Found a correctness defect rather than a layout one, which is the better outcome
+since I cannot see this render. **Three checkboxes were inert whenever the proxy
+was off** — "Bake transcripts on resume", "Arm contextual hints from memory",
+"Rank hints with a local embedding model". They saved, persisted across a
+relaunch, and did nothing. Verified at source, not inferred:
+- `session-manager.js:1322` `_armCtx` passes `base: s.proxyBase || null`
+- `hint-arm.js:416` returns immediately on a falsy base
+- `engine.js:616-617` the resume bake takes the same route — `resolveProxyBase`
+  returns null with the proxy off and the function skips ("null when proxy
+  disabled → skip" is the code's own comment)
+
+Fix: `renderer/lib/prefs-gate.js`, a pure leaf returning {disabled, reason} per
+control, plumbed by `applyPrefsGate()` in renderer.js. Semantic ranking greys one
+level deeper (it only reorders what hints retrieved). Gating is PRESENTATIONAL —
+save still reads `.checked`, which a disabled input reports faithfully, so
+turning the proxy off preserves the stored preferences and they return intact.
+That property is pinned by a test, because the obvious "cleanup" of zeroing
+gated values would silently discard the operator's settings.
+
+Verification: 3470 pass / 0 fail (8 new), electron-smoke green, and both halves
+mutation-tested — forcing `proxyOn = true` fails 3 tests, deleting one reason
+span from the markup fails 1. A test that cannot fail is not evidence.
+
+NOT done on the settings dialog: the actual busy-ness. The prose is very long
+(the semantic-hints paragraph is ~8 lines) and grouping could be better, but
+that is a judgement about rendered appearance and I would be guessing. Left for
+Bogdan.
+
+### Subagents
+
+Dispatched two (settings inventory, cold reviewer); NEITHER reported back. I
+verified the reviewer's three deciding questions myself before committing rather
+than blocking on it. Noting the pattern: that is 2/2 background subagents silent
+tonight — if it repeats, the dispatch path is the suspect, not the tasks.
