@@ -62,8 +62,12 @@ Set below. Point is recovery and drift-checking, not nagging.
 
 ## Journal
 
-- 05:45 — Started. Tree clean, inventory dispatched.
-- 06:0x — **Thread B candidate 1 (cooldown) CLOSED, not a defect.** Probe
+Numbered rather than timestamped: I wrote the first few times from memory
+instead of running `date`, and they were wrong by up to an hour. Sequence is
+what these entries actually carry.
+
+- Step 1 — Started. Tree clean, inventory dispatched.
+- Step 2 — **Thread B candidate 1 (cooldown) CLOSED, not a defect.** Probe
   `cooldown.js`, 20 turns over 4 same-topic runs, production pool (8) vs deep
   (60): hinted 13/20 either way, **0 turns starved by the cooldown, 7 genuinely
   exhausted**. Every silent turn matched NOTHING at the retriever — the gate
@@ -71,13 +75,13 @@ Set below. Point is recovery and drift-checking, not nagging.
   `mem-1785722824893-cm3p33`, which claimed all 5 follow-ups matched and the
   same winner was suppressed each turn. The stored measurement was wrong, or was
   taken before `b10c977`/`94922c4`. Correct the unit; do not deepen the pool.
-- 06:1x — **`selfScore()` OOV inconsistency: real, ships nothing.** It sums
+- Step 3 — **`selfScore()` OOV inconsistency: real, ships nothing.** It sums
   every query term including df=0 ones that `score()` can never credit, so an
   unachievable maximum deflates coverage. Measured `oov.js`: **0 of 8 OOV drafts
   changed, false arms 11 -> 11.** A true statement about the code that decides
   nothing. NOT SHIPPING — this is the fourth plausible fix measurement has
   killed. Worth a comment only if it ever misleads someone.
-- 06:2x — **NEW, and it looks like Bogdan's actual complaint.** Chasing the
+- Step 4 — **NEW, and it looks like Bogdan's actual complaint.** Chasing the
   discrepancy between my pooled harness (11/14) and the stored "0 false arms"
   baseline, I ran the 14 work drafts through the REAL composite retriever:
   **12/14 arm, and the units are irrelevant.** Examples, verbatim from
@@ -99,7 +103,7 @@ Set below. Point is recovery and drift-checking, not nagging.
   — it cannot help when the lexical result is itself junk.
   NEXT: measure the mechanism (df of the hit terms, coverage at the margin)
   before proposing anything. Do not touch MIN_HITS on a hunch.
-- 06:4x — **Mechanism named** (`mech.js`). Score, coverage and confidence DO NOT
+- Step 5 — **Mechanism named** (`mech.js`). Score, coverage and confidence DO NOT
   separate the two populations: false arms run coverage 0.38-1.00, good arms
   0.38-0.72, fully overlapping. So no threshold on the existing quantities can
   fix this — the same conclusion the code already reached for absolute score.
@@ -109,7 +113,7 @@ Set below. Point is recovery and drift-checking, not nagging.
   and `log(1+N/df)` reads df=1 as maximally specific, worth ~7.4 points, so any
   two such words clear the 7.41 floor. The store is not answering; it simply has
   no coverage of the topic, and IDF cannot tell those apart.
-- 06:5x — **Size-scaled MIN_HITS: measured, PROMISING, then KILLED.** On the
+- Step 6 — **Size-scaled MIN_HITS: measured, PROMISING, then KILLED.** On the
   common store the separation is clean (`rarity.js`, `minhits.js`): codebase
   noise 14/16 -> 1/16 at mh=3 while operator answers hold 9/10. Subsampling the
   store to a size ladder (`knee.js`) put the knee near N=200: below it mh=3
@@ -127,7 +131,7 @@ Set below. Point is recovery and drift-checking, not nagging.
   Consequence: any real fix must key on the RELATION between draft and corpus,
   not on the corpus alone. That is a bigger question than one overnight run and
   it is NOT going in tonight.
-- 07:0x — **Topical support: measured, KILLED too** (`support.js`). Hypothesis:
+- Step 7 — **Topical support: measured, KILLED too** (`support.js`). Hypothesis:
   a corpus that genuinely covers a topic has a REGION about it (several units
   containing >=2 query terms), while a vocabulary collision lands in one unit by
   chance. This IS a draft-corpus relation, so it was the right shape. Result —
