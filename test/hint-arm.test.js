@@ -736,6 +736,35 @@ test('arm: the same unit is not re-offered inside the cooldown, and a compact en
   assert.strictEqual(h2.posts.length, 2, 'past 10 minutes the same unit may be offered again');
 });
 
+// A retired seat's name is REUSED by its replacement, and the cooldown ledger is
+// keyed by agent while the session state is keyed by name — so a fresh seat used
+// to inherit the dead one's suppressions and start life unable to be hinted.
+// The new-conversation-id reset does not cover this: a first attach has no prior
+// id, so that path never fires for a spawn.
+test('arm: a respawned seat does not inherit the retired one\'s cooldown', async () => {
+  const h = mkArm();
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: the first seat must have been offered something');
+  h.arm.onSubmit('s');
+
+  // Same seat, still inside the cooldown: correctly silent.
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 1, 'the cooldown still holds for a LIVE seat');
+
+  // Retire and respawn under the same name, which is what a team seat cycle
+  // does. The agent is passed explicitly: `armed` is keyed by SESSION and
+  // `offered` by AGENT, and they are equal in production — so a forget() that
+  // took one argument would pass here and rot silently the day they diverge.
+  h.arm.forget('s', CTX.agent);
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await settle();
+  assert.strictEqual(h.posts.length, 2,
+    'a fresh seat inherited the retired seat\'s cooldown and could not be hinted at all — the '
+    + 'ledger must die with the session it describes');
+});
+
 test('arm: a failed POST does not burn the cooldown', async () => {
   const h = mkArm({ armStatus: 503 });
   h.arm.onDraft('s1', DRAFT, CTX, { final: true });

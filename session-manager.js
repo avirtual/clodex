@@ -1694,8 +1694,10 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
-      // died would ride the next session under the same name.
-      try { arm.forget(name); } catch {}
+      // died would ride the next session under the same name. The offer
+      // cooldown goes too: a retired seat's name is reused by its replacement,
+      // and the replacement must not start life already suppressed.
+      try { arm.forget(name, name); } catch {}
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       s._postClearContinuation = null;
       // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are

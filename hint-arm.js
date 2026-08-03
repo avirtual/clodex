@@ -525,7 +525,18 @@ function createHintArm({
     // whichever comes first" half of the rule.
     onContextReset(agent) { offered.delete(agent); },
 
-    forget(key) { cancelTimer(key); release(key); armed.delete(key); },
+    // Session teardown. The COOLDOWN LEDGER GOES WITH IT, because it is keyed by
+    // agent while this is keyed by session — and a retired seat's name is reused
+    // by its replacement, so a fresh seat inherited the dead one's suppressions
+    // and started life unable to be hinted. The reset on a new conversation id
+    // does not cover this: a first attach has no prior id, so that path never
+    // fires for a spawn. Re-offering a unit to a resumed session is the cost,
+    // and it is the cheaper of the two mistakes.
+    //
+    // The two ledgers are keyed differently — `armed` by SESSION, `offered` by
+    // AGENT — and the names are equal in production, so one argument would have
+    // worked right up until the day it silently did not.
+    forget(key, agent = key) { cancelTimer(key); release(key); armed.delete(key); offered.delete(agent); },
 
     // Test/inspection surface.
     _offered(agent) { return new Map(offered.get(agent) || []); },
