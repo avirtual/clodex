@@ -2173,3 +2173,56 @@ test('dating a hint does not change which hint wins', () => {
   assert.deepStrictEqual(withDates.map((r) => r.text), stripped.map((r) => r.text),
     'identical ranking with and without dates');
 });
+
+// _armCtx re-resolves the proxy pref on every draft, which needs the tri-state as
+// REQUESTED — a base alone cannot say whether an explicit route or a pref that has
+// since been unticked produced it. create() has to put it on the LIVE session
+// object; it previously wrote it only into the persistence record, where _armCtx
+// cannot reach it. Asserted through a real create() rather than by grepping the
+// object literal: a source grep passes on `proxyRequested: undefined`.
+test('create: the proxy tri-state as requested rides on the live session object', async () => {
+  const rec = recorder();
+  const h = mkManager({ hintArm: rec });
+  try {
+    // Explicit per-session route (create()'s 10th positional arg).
+    await h.m.create('a', 'claude', os.tmpdir(), [], null, 'ws', null, false, 'http://custom:9');
+    assert.strictEqual(h.m.sessions.get('a').proxyRequested, 'http://custom:9',
+      'an explicitly-routed session must carry its URL, or _armCtx re-resolves against undefined '
+      + 'and silently drops its hints whenever the global pref is off');
+    // NOT `proxy`: _handleSpawnIntent and _handleTeamReview read `session.proxy`
+    // off the live object, and those reads have always resolved to null. Naming
+    // the field `proxy` makes a spawned child inherit its spawner's route — a
+    // real behavior change, and not one the hint gate is entitled to make.
+    assert.strictEqual(h.m.sessions.get('a').proxy, undefined,
+      'the field must not be named `proxy` — that silently activates spawn-time inheritance');
+  } finally { h.stop('a'); }
+
+  const h2 = mkManager({ hintArm: recorder() });
+  try {
+    await h2.m.create('b', 'claude', os.tmpdir(), [], null, 'ws', null, false, false);
+    assert.strictEqual(h2.m.sessions.get('b').proxyRequested, false,
+      'proxy:false must survive as false — `|| null` here would read as "follow the pref"');
+  } finally { h2.stop('b'); }
+});
+
+// The hold on the inject queue is released by `fire`'s finally ONLY when the pass
+// armed nothing (`!st.lastIds`). A route that disappears mid-draft — the operator
+// unticks traffic optimization while typing — used to `return` past that memo with
+// the last successful arm still recorded, so the seat deferred every delivery for
+// the full 30s cap. Measured before the fix: holding stayed true.
+test('arm: a route that disappears mid-draft releases the inject-queue hold', async () => {
+  const h = mkArm();
+  const CTX_ON = { agent: 'a', base: 'http://127.0.0.1:7800', route: 'clodex-a-x' };
+  h.arm.onDraft('s', DRAFT, CTX_ON);
+  await settle();
+  assert.ok(h.posts.length, 'ENTER: the draft must actually arm, or the release below is vacuous');
+  assert.ok(h.arm.holding('s'), 'ENTER: an armed hint holds the queue');
+
+  // Pref unticked: _armCtx now yields a null base. The operator keeps typing.
+  h.arm.onDraft('s', `${DRAFT} really`, { ...CTX_ON, base: null });
+  await settle();
+  assert.strictEqual(h.arm.holding('s'), false,
+    'a draft that cannot be ranked must not keep holding deliveries for something that can never arrive');
+  assert.strictEqual(h.arm._armedIds('s'), null, 'and the winner memo is cleared, not left stale');
+});
+
