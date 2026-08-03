@@ -4860,9 +4860,7 @@ document.getElementById('btn-peers-sandbox').addEventListener('click', () => { c
 window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
 window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
 
-// Grey out the toggles that cannot act, and say why. A checkbox that persists
-// and does nothing is worse than a disabled one: it reports a state the app
-// will not honour, and nothing in the UI ever contradicts it.
+// Grey out the toggles that cannot act, and say why.
 function applyPrefsGate() {
   const gate = prefsGate({
     proxyEnabled: prefsProxyEnabled.checked,
