@@ -2226,3 +2226,18 @@ test('arm: a route that disappears mid-draft releases the inject-queue hold', as
   assert.strictEqual(h.arm._armedIds('s'), null, 'and the winner memo is cleared, not left stale');
 });
 
+// A seat sent an unrelated memory on an idle turn correctly declined to act on it
+// — and then summarized it to the operator "so it isn't lost". The preamble caused
+// that: "not repeated ... restate what matters" is a stronger, more specific
+// instruction than a bare "ignore it", so the model obeyed the wrong half. The
+// full rule is in ipc-prompt's cached MEMORY section; this is the one word that
+// has to survive at the point of delivery, where the miss actually happens.
+test('compose: an irrelevant hint is to be dropped SILENTLY, not narrated', () => {
+  const text = compose([{ id: 'mem-1-a', text: 'a short durable fact', tags: 'method', scope: '' }]);
+  assert.ok(/ignore it silently/.test(text),
+    'a bare "ignore it" loses to the restate instruction below it — the model reports the miss instead');
+  // The two instructions sit one line apart and pull opposite ways, so the
+  // silence qualifier must come FIRST, attached to the condition it governs.
+  assert.ok(text.indexOf('ignore it silently') < text.indexOf('restate what'),
+    'the silence qualifier must reach the model before the instruction it bounds');
+});
