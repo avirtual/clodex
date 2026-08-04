@@ -240,7 +240,12 @@ function listingFacts(text) {
   const facts = [];
   for (const line of text.split('\n')) {
     if (/^recently closed:$/.test(line)) { facts.push('SECTION'); continue; }
-    const row = line.match(/^(t\d+) \[(\w+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
+    // The state bracket carries the t174 parked marker (`[open parked]`), so it
+    // is `[^\]]+` rather than `\w+`: with `\w+` a parked row matches NOTHING,
+    // gets dropped from both renderings, and parity goes green over a board
+    // neither side showed. Captured into the fact, or a marker on one side only
+    // would reduce away.
+    const row = line.match(/^(t\d+) \[([^\]]+)\] (\S+) (closed )?(\S+)( ago)? — (.*)$/);
     if (row) { facts.push(`${row[1]}|${row[2]}|${row[3]}|${row[4] ? 'closed' : 'open-age'}|${row[7]}`); continue; }
     // The window is CAPTURED, not just matched past. Matching `\d+h` and
     // discarding it made a leaf at 20h and an intent at 24h reduce to identical
@@ -311,6 +316,9 @@ function parityBoard() {
     { id: 't1', title: 'still going', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
     { id: 't2', title: 'old close', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
     { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR },
+    // t174: open AND assigned AND parked — the row that renders identically to
+    // t1 unless both implementations carry the marker.
+    { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, openedAt: now - 40 * HOUR, closedAt: null },
   ];
   for (let i = 0; i < 12; i++) {
     rows.push({
@@ -341,6 +349,8 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   assert.ok(mine.some((f) => /^TAIL\|over=2\|window=\d+h\|done=13\|cancelled=1$/.test(f)),
     `ENTER: cap overflow and both counts are live in the fixture: ${mine.join(' / ')}`);
   assert.strictEqual(mine.filter((f) => /\|closed\|/.test(f)).length, 10, 'ENTER: the cap is in play');
+  assert.ok(mine.some((f) => /^t16\|open parked\|/.test(f)),
+    `ENTER: a parked row reaches the reduced facts: ${mine.join(' / ')}`);
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');

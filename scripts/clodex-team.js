@@ -277,7 +277,7 @@ function doTickets(payload) {
   const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
   const now = Date.now();
   const row = (t) =>
-    `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
   const closedRow = (t) =>
     `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
   const lines = shown.map(row);

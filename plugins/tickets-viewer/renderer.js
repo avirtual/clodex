@@ -171,6 +171,14 @@ module.exports.activate = (rhost) => {
           ? 'Quiet past the team’s stall threshold; the watchdog has already nudged the seat once.'
           : 'Quiet past the team’s stall threshold.';
         meta.appendChild(flag);
+      } else if (t.parked && !(opts && opts.closed)) {
+        // Ahead of the backlog branch, and both are reachable: a parked ticket
+        // can also be unassigned, and "parked" is the more specific of the two
+        // (a decision the lead already made and can reverse) while "backlog"
+        // reads as one nobody has made yet.
+        const flag = el('span', 'tv-backlog-flag', 'parked');
+        flag.title = 'Held out of dispatch by the lead. The seat has NOT been sent the spec; assign it to release.';
+        meta.appendChild(flag);
       } else if (t.backlog && !(opts && opts.closed)) {
         // Its own flag, never the stalled one: core's watchdog exempts
         // unassigned tickets outright, so this row has not gone quiet — it was
@@ -226,6 +234,14 @@ module.exports.activate = (rhost) => {
         const backlogCount = res.open.filter((t) => t.backlog).length;
         if (backlogCount) {
           openHead.appendChild(el('span', 'tv-backlog-count', `${backlogCount} unassigned`));
+        }
+        // Counted over ALL parked rows, including the unassigned ones the line
+        // above also counts. The two heads answer different questions ("who
+        // decides this" vs "what is held back") and a parked backlog ticket is
+        // honestly both.
+        const parkedCount = res.open.filter((t) => t.parked).length;
+        if (parkedCount) {
+          openHead.appendChild(el('span', 'tv-backlog-count', `${parkedCount} parked`));
         }
         for (const t of res.open) boardPane.appendChild(ticketRow({ ...t, now: res.now }));
       }
@@ -313,6 +329,11 @@ module.exports.activate = (rhost) => {
             const b = el('span', 'tv-team-backlog', String(t.backlog));
             b.title = `${t.backlog} open ticket(s) with no assignee — the watchdog never nudges these`;
             row.appendChild(b);
+          }
+          if (t.parked) {
+            const p = el('span', 'tv-team-backlog', String(t.parked));
+            p.title = `${t.parked} open ticket(s) parked — assigned or not, held out of dispatch until released`;
+            row.appendChild(p);
           }
           row.appendChild(el('span', 'tv-team-count', `${t.open} open`));
         }

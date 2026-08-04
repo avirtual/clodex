@@ -323,6 +323,26 @@ test('a BACKLOG ticket is marked as backlog, never as stalled', async () => {
   });
 });
 
+test('a PARKED ticket is marked parked, never stalled or backlog (t174)', async () => {
+  await withDom({
+    teams: { ok: true, teams: [{ team: 'alpha', open: 2, stalled: 1, backlog: 0, parked: 1 }] },
+    board: boardRes({
+      // Assigned AND parked: the row that would read as ordinary work in flight
+      // without the flag, and that the backlog branch cannot claim.
+      open: [shaped('t1', { assignee: 'hand', parked: true, quietMs: 40 * HOUR }), shaped('t2', { stalled: true })],
+      counts: { ...boardRes().counts, open: 2, parked: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    const classes = classesOf(root).join(' ');
+    assert.match(text, /parked/, 'the row says it is held back');
+    assert.ok(!/backlog/.test(text), 'and does NOT claim nobody has decided — the lead did');
+    assert.match(text, /1 quiet longer than 30m/, 'the parked row is not in the stall count');
+    assert.match(text, /1 parked/, 'the head counts it separately');
+    assert.match(classes, /tv-team-backlog/, 'the sidebar chip renders');
+  });
+});
+
 test('a manifest core would reject is WARNED about while the tickets still render', async () => {
   await withDom({
     teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0, warning: 'team.json "root" is not an absolute path — core would refuse this team' }] },

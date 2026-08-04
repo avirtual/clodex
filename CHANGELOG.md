@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- **You can now file a ticket for later without starting it.**
+  `[agent:task add <role>] <spec>` dispatches immediately — it delivers the spec
+  to the seat the moment it is idle. Writing "BACKLOG, do not start" at the top
+  of the ticket did nothing, because nothing reads the body; only the worker's
+  own reading of that first line ever stopped it. Add `park` —
+  `[agent:task add park <role>] <spec>` — and the assignee is recorded while the
+  spec stays undelivered. A parked ticket is skipped by the queue, never replayed
+  to a restarted seat, and exempt from the stall watchdog, so it also stops
+  making real work wait behind it. `[agent:task assign <id> <role>]` releases it
+  and sends the spec; `[agent:task park <id>]` parks or unparks one already open,
+  so changing your mind no longer means cancelling and refiling. Both listings
+  and the ticket board mark parked rows.
+
 - **A seat's shell now sees the same Clodex root the app does.** The helper
   scripts — the team roster, the monitor, the task ledger — find their data
   through `CLODEX_HOME`. Commands you fire with `[agent:exec …]` were already

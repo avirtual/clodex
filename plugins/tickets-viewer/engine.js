@@ -236,11 +236,18 @@ function shape(t, now, stallMs) {
     // is no seat to nudge. Flagging it here would invent a stall core cannot
     // produce and cannot clear, and the two states need opposite actions —
     // assign it, versus chase whoever holds it.
-    stalled: assignee !== '' && quietMs !== null && quietMs >= stallMs,
+    // `!parked` for the same reason: core exempts a parked ticket from the
+    // sweep, so flagging one here invents a stall core can neither produce nor
+    // clear.
+    stalled: assignee !== '' && !t.parked && quietMs !== null && quietMs >= stallMs,
     // The same condition said in the affirmative, and kept OUT of the stalled
     // count and the section head on purpose: how long a backlog ticket has sat
     // is worth seeing, and it is not a stall.
     backlog: assignee === '',
+    // Distinct from `backlog`: both are undispatched, but a parked ticket
+    // already names its seat, so the lead's action is to release it rather than
+    // to decide who gets it.
+    parked: t.parked === true,
   };
 }
 
@@ -302,6 +309,7 @@ function board(teamName) {
     counts: {
       open: open.length,
       backlog: open.filter((t) => t.backlog).length,
+      parked: open.filter((t) => t.parked).length,
       done: doneAll.length,
       cancelled: cancelledAll.length,
       recentOver: Math.max(0, recentAll.length - recent.length),
@@ -363,6 +371,7 @@ function teams() {
       // Separate from `stalled` for the same reason it is separate on a row:
       // an unassigned ticket needs assigning, not chasing.
       backlog: open.filter((t) => t.backlog).length,
+      parked: open.filter((t) => t.parked).length,
       warning: man.warning || '',
     });
   }

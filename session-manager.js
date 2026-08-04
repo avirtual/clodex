@@ -1956,7 +1956,11 @@ function createSessionManager(deps) {
           const dir = path.dirname(t.file);
           if (!ticketsByDir.has(dir)) ticketsByDir.set(dir, ticketsStore.load(dir));
           const role = matchSeatRole(t, s.name);
-          const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null
+          // Same filter as _reconcileTickets: this is the badge on first paint
+          // and that is the badge on every change, so a term here that is
+          // missing there shows a ticket until the next reconcile and then
+          // drops it.
+          const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
             && (tk.assignee === s.name || tk.assignee === role));
           return open ? open.id : null;
         } catch { return null; }
@@ -3762,6 +3766,7 @@ function createSessionManager(deps) {
         case 'done': this._taskDone(session, team, teamDir, intent, reply); break;
         case 'reject': this._taskReject(session, team, teamDir, intent, reply); break;
         case 'cancel': this._taskCancel(session, team, teamDir, intent, reply); break;
+        case 'park': this._taskPark(session, team, teamDir, intent, reply); break;
         case 'list': this._taskList(session, team, teamDir, intent, reply); break;
       }
     }
@@ -3838,10 +3843,15 @@ function createSessionManager(deps) {
     // deterministic for two tickets minted in the same ms.
     // Backlog (`assignee == null`) is excluded here, so it can never be replayed
     // to anybody — an unassigned ticket resolves to no seat by definition.
+    // `parked` is the same exclusion for a ticket that DOES name its seat: the
+    // lead filed who it is for without filing that it starts now. It is dropped
+    // rather than sorted last, so it cannot occupy the head that advance takes
+    // — a parked ticket must not make a live one wait, and ordering by a flag
+    // would make dispatch order depend on it.
     _openTicketsFor(teamDir, team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
       return ticketsStore.load(teamDir)
-        .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null
+        .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && (t.assignee === seatName || (role && t.assignee === role)))
         .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
           || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
@@ -4055,23 +4065,35 @@ function createSessionManager(deps) {
       }
       const tickets = ticketsStore.load(teamDir);
       const now = Date.now();
+      // Written only when true: absent is the overwhelming majority and is what
+      // every record predating this field carries, so a stored `parked: false`
+      // would be a second spelling of the same state for readers to get wrong.
+      const parked = !!intent.park;
       const ticket = {
         id: nextTicketId(tickets), title: ticketTitle(spec), spec,
         assignee, opener: session.name, state: 'open',
         openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
+        ...(parked ? { parked: true } : {}),
       };
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
       tickets.push(ticket);
       ticketsStore.save(teamDir, tickets);
       let suffix = '';
-      if (assignee) {
+      // Parking is the whole point of the flag: the assignee is RECORDED and the
+      // spec is deliberately NOT delivered, so filing who a ticket is for stops
+      // being the same act as telling them to start.
+      if (assignee && !parked) {
         const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
         suffix = this._ticketDeliverySuffix(d, assignee);
       }
       this._reconcileTickets(team, teamDir);
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened` });
-      log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'})`);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened${parked ? ' (parked)' : ''}` });
+      log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'}${parked ? ', parked' : ''})`);
+      if (parked) {
+        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task assign ${ticket.id} ${assignee || '<role|name>'}] dispatches it`);
+        return;
+      }
       reply(assignee ? `ticket ${ticket.id} → ${assignee}${suffix}` : `ticket ${ticket.id} (backlog)`);
     }
 
@@ -4096,13 +4118,19 @@ function createSessionManager(deps) {
       ticket.assignee = assignee;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null; // fresh assignment starts a new stall episode
+      // Assign IS the dispatch, so it unparks: the spec goes out two lines below
+      // whatever the flag said, and leaving it set would mean a ticket that was
+      // delivered yet still invisible to advance, replay and the badge.
+      const wasParked = !!ticket.parked;
+      delete ticket.parked;
       ticketsStore.save(teamDir, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
-      log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'} → ${assignee}`);
-      reply(reassigning ? `ticket ${ticket.id}: ${prev} → ${assignee}${suffix}` : `ticket ${ticket.id} → ${assignee}${suffix}`);
+      log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'}${wasParked ? ' (parked)' : ''} → ${assignee}`);
+      const unparked = wasParked ? ' (unparked)' : '';
+      reply(reassigning ? `ticket ${ticket.id}: ${prev} → ${assignee}${unparked}${suffix}` : `ticket ${ticket.id} → ${assignee}${unparked}${suffix}`);
     }
 
     _taskDone(session, team, teamDir, intent, reply) {
@@ -4187,6 +4215,37 @@ function createSessionManager(deps) {
       reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }
 
+    // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A
+    // flag settable only at file time would be write-once, leaving cancel-and-
+    // refile as the only way to change a lead's mind — which is the cost this
+    // ticket exists to remove.
+    // Toggle rather than park/unpark verbs: the state is one bit and the reply
+    // names which way it went, so a lead cannot ask for the wrong direction.
+    // Deliberately does NOT deliver on unpark — that is `assign`'s job, and a
+    // second delivery path would let the two disagree about what a seat was told.
+    _taskPark(session, team, teamDir, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can park a ticket`); return; }
+      if (!intent.id) { reply('error: park needs a ticket id — [agent:task park <id>]'); return; }
+      const tickets = ticketsStore.load(teamDir);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be parked`); return; }
+      const parking = !ticket.parked;
+      if (parking) ticket.parked = true;
+      else delete ticket.parked;
+      ticket.lastActivityAt = Date.now();
+      // A parked ticket is exempt from the watchdog, so a stamp left behind
+      // would spend the one nudge of the episode that starts when it unparks.
+      ticket.nudgedAt = null;
+      ticketsStore.save(teamDir, tickets);
+      this._reconcileTickets(team, teamDir);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(backlog)', body: `ticket ${ticket.id} ${parking ? 'parked' : 'unparked'}` });
+      log.info('intent', `task ${parking ? 'park' : 'unpark'} ${ticket.id} by ${session.name}`);
+      reply(parking
+        ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${ticket.assignee || '<role|name>'}] releases it`
+        : `ticket ${ticket.id} unparked → ${ticket.assignee || 'backlog'} — the spec was NOT re-sent; use [agent:task assign ${ticket.id} <role|name>] to deliver it`);
+    }
+
     // Default view is OPEN plus a capped recently-CLOSED section (done only) and a
     // tail that counts done and cancelled SEPARATELY — one number answers neither
     // "what did this team ship" nor "what did I drop". Recently-cancelled is
@@ -4211,8 +4270,11 @@ function createSessionManager(deps) {
       if (!tickets.length) { reply(`no tickets on ${team.name}`); return; }
       const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
       const now = Date.now();
+      // A parked ticket is open and assigned and yet will not be dispatched, so
+      // without a marker the open list is the one place that reads exactly like
+      // a ticket in flight.
       const row = (t) =>
-        `${t.id} [${t.state}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
       const closedRow = (t) =>
         `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
       const lines = shown.map(row);
@@ -4243,7 +4305,7 @@ function createSessionManager(deps) {
       const tickets = ticketsStore.load(teamDir);
       for (const name of this._teamLiveSeatNames(team.root)) {
         const role = matchSeatRole(team, name);
-        const open = tickets.find((t) => t.state === 'open' && t.assignee != null
+        const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role));
         if (open) this._ticketWatch.set(name, { teamDir, role });
         else this._ticketWatch.delete(name);
@@ -4292,7 +4354,10 @@ function createSessionManager(deps) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(teamDir);
       for (const t of tickets) {
-        if (t.state !== 'open' || t.assignee == null) continue; // backlog/closed exempt
+        // Parked is exempt for the same reason backlog is: nothing was dispatched,
+        // so quiet is the expected state and a nudge would report the lead's own
+        // decision back to them once per stall threshold.
+        if (t.state !== 'open' || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode

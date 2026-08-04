@@ -4952,6 +4952,170 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
 });
 
+// --- t174: `parked` — filing WHO a ticket is for without dispatching it ------
+// The defect: a ticket whose BODY said "BACKLOG, do not start" was dispatched
+// anyway, because nothing reads the body. These pin the field the mechanism
+// reads instead. `parked` is orthogonal to `state` on purpose — a parked ticket
+// IS open — so every test here asserts both.
+
+test('task add park: records the assignee and does NOT deliver the spec', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'later work' });
+  const t = f.one('t1');
+  assert.strictEqual(t.parked, true, 'the flag is on the record, not in the prose');
+  assert.strictEqual(t.state, 'open', 'parked is NOT a state — the ticket is open');
+  assert.strictEqual(t.assignee, 'hand', 'the assignee IS recorded — that is the whole point');
+  assert.deepStrictEqual(f.gated, [], 'the seat was told nothing');
+  assert.ok(f.injected.some((x) => /ticket t1 parked for hand/.test(x)), 'the lead is told it was parked');
+});
+
+test('task add without park writes NO parked key, so old records read identically', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'now' });
+  // Absence, not `false`: every record predating t174 has no key, and a stored
+  // `false` would be a second spelling of the same state for readers to get wrong.
+  assert.ok(!('parked' in f.one('t1')), 'no parked key on an ordinary add');
+  assert.strictEqual(f.gated.length, 1, 'and it still dispatches');
+});
+
+test('a parked ticket is invisible to _openTicketsFor, so advance SKIPS it', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // t1 live, t2 parked, t3 live — t2 is minted BETWEEN them so it would sit at
+  // the head of the FIFO after t1 closes. This is t119's "real dispatches queue
+  // behind parked ones", and the fix must skip t2 without reordering t3.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'third' });
+  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((t) => t.id), ['t1', 't3'],
+    'the parked ticket is dropped from the queue entirely');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
+  const specs = f.gated.filter((g) => g.target === 'team-hand').map((g) => g.body);
+  assert.ok(specs.some((b) => /^\[ticket t3\]/.test(b)), 'advance jumped to t3');
+  assert.ok(!specs.some((b) => /^\[ticket t2\]/.test(b)), 'and never delivered the parked t2');
+});
+
+test('a parked ticket is never replayed to a respawned seat', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  const s = f.seat('team-hand', '/proj', { incarnation: 7 });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
+  f.gated.length = 0;
+  assert.strictEqual(f.m._replayOpenTickets(s), true, 'the pass finishes — nothing is held');
+  assert.deepStrictEqual(f.gated, [], 'a respawn does not resurrect a parked dispatch');
+});
+
+test('task assign UNPARKS: assign is the dispatch, so the flag cannot survive it', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'the spec' });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  const t = f.one('t1');
+  // The key is REMOVED, not set false — same reason add omits it.
+  assert.ok(!('parked' in t), 'the flag is gone from the record');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }],
+    'and the spec finally goes out');
+  assert.ok(f.injected.some((x) => /unparked/.test(x)), 'the lead is told it was released');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((x) => x.id), ['t1'],
+    'and it is back in the queue');
+});
+
+test('[agent:task park] toggles an already-open ticket both ways', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.strictEqual(f.gated.length, 1, 'dispatched on add');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  assert.strictEqual(f.one('t1').parked, true, 'parked after the fact');
+  assert.strictEqual(f.one('t1').state, 'open', 'still open');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand'), [], 'out of the queue');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  assert.ok(!('parked' in f.one('t1')), 'the second call unparks');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((t) => t.id), ['t1'], 'back in the queue');
+  // Unpark deliberately does NOT re-send: assign owns delivery, and a second
+  // delivery path would let the two disagree about what the seat was told.
+  assert.deepStrictEqual(f.gated, [], 'neither direction delivers a spec');
+});
+
+test('task park: lead-gated, open-only, and bounces an unknown id', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  assert.ok(f.injected.some((x) => /only the team lead/.test(x)), 'a non-lead cannot park');
+  assert.ok(!('parked' in f.one('t1')), 'and nothing was written');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't9', who: null, body: '' });
+  assert.ok(f.injected.some((x) => /no ticket t9/.test(x)), 'unknown id bounces');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'report' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  assert.ok(f.injected.some((x) => /is done, not open/.test(x)), 'a closed ticket cannot be parked');
+});
+
+test('parking clears nudgedAt, so the unpark starts a fresh stall episode', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  tstore.save(f.teamDir, arr);
+  f.m._sweepTickets(Date.now());
+  assert.ok(f.one('t1').nudgedAt, 'ENTER: stamped by the watchdog');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  // A stamp left behind would spend the one nudge of the episode that begins
+  // when this unparks — and only activity clears it, which never comes while
+  // the ticket is parked.
+  assert.strictEqual(f.one('t1').nudgedAt, null, 'the stale stamp is cleared');
+});
+
+test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  tstore.save(f.teamDir, arr);
+  f.gated.length = 0;
+  f.m._sweepTickets(Date.now());
+  // The assignee is set, so ONLY the parked term can be exempting this — which
+  // is what makes this different from the backlog case below.
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: assigned, so the backlog exemption does not apply');
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [], 'nothing was dispatched, so quiet is expected');
+  assert.strictEqual(f.one('t1').nudgedAt, null);
+});
+
+test('a parked ticket is not the seat badge, on reconcile and on list()', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
+  const badge = f.broadcasts.filter((b) => b.channel === 'session-ticket' && b.msg.name === 'team-hand').pop();
+  assert.ok(badge, 'ENTER: a badge was broadcast for the seat');
+  assert.strictEqual(badge.msg.ticket, null, 'reconcile shows no ticket');
+  // list() is first paint and reconcile is every change; a term in one and not
+  // the other shows the badge until the next reconcile and then drops it.
+  const row = f.m.list().find((s) => s.name === 'team-hand');
+  assert.strictEqual(row.ticket, null, 'and first paint agrees');
+});
+
+test('task list marks a parked row, so an open list cannot read as work in flight', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'live one' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, filter: null, body: '' });
+  const out = f.injected.join('\n');
+  assert.match(out, /t1 \[open parked\] hand/, 'the parked row says so');
+  assert.match(out, /t2 \[open\] hand/, 'and the live row is unchanged');
+});
+
 test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', () => {
   const f = mkTasks();
   f.seat('lead');

@@ -67,18 +67,25 @@ function parseIntentLegacy(rawLine) {
   const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
   if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
-  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|list)\b([^\]]*)\]\s*(.*)/s);
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (taskMatch) {
     const sub = taskMatch[1];
     const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
     const body = taskMatch[3];
-    if (sub === 'add') return { type: 'task', sub, who: argToks[0] || null, id: null, body };
+    // t174: `park` is a modifier on add, filtered out of the positionals so it
+    // can never be read as the assignee. Same lockstep rule as t80's filter.
+    if (sub === 'add') {
+      const park = argToks.includes('park');
+      const rest = argToks.filter((t) => t !== 'park');
+      return { type: 'task', sub, who: rest[0] || null, id: null, park, body };
+    }
     if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
     // t80: list carries an optional state filter from the bracket. Updated here
     // in lockstep with parseTask — this copy exists to catch UNINTENDED drift
     // between the walk and the legacy chain, so a deliberate, reviewed shape
     // change belongs in both or the pin stops meaning anything.
     if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
+    if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
@@ -179,6 +186,9 @@ const ADVERSARIAL = [
   '[agent:task cancel t1]', '[agent:task cancel t1] why', '[agent:task list]',
   '[agent:task list] trailing', '[agent:task foo]', '[agent:task]',
   '[agent:task added t1]',
+  '[agent:task park t1]', '[agent:task park t1] why', '[agent:task park]',
+  '[agent:task add park] spec', '[agent:task add park hand] spec',
+  '[agent:task add hand park] spec', '[agent:task add parked] spec',
   '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
   '[agent:team role-set lead template:t] brief', '[agent:team role-rm lead]',
   '[agent:team role-rename a b]', '[agent:team watchdog 5000]',

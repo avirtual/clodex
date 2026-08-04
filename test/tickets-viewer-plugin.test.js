@@ -469,6 +469,35 @@ test('tickets-viewer: an UNASSIGNED open ticket is backlog, never stalled', asyn
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: a PARKED open ticket is parked, never stalled (t174)', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    const now = Date.now();
+    // Core exempts a parked ticket from the sweep the same way it exempts
+    // backlog, so flagging it here would invent a stall core can neither
+    // produce nor clear. The distinguishing fixture: t1 is ASSIGNED, so only
+    // the parked term can be exempting it — with an unassigned one the backlog
+    // exemption would answer the same and prove nothing.
+    writeTickets(dir, [
+      ticket('t1', { assignee: 'hand', parked: true, lastActivityAt: now - 40 * HOUR }),
+      ticket('t2', { assignee: 'hand', lastActivityAt: now - 5 * HOUR }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    assert.equal(byId.t1.parked, true);
+    assert.equal(byId.t1.stalled, false, 'nothing was dispatched, so quiet is expected');
+    assert.equal(byId.t1.backlog, false, 'it HAS an assignee — parked and backlog are different rows');
+    assert.equal(byId.t2.parked, false, 'an ordinary ticket carries the flag as false, not undefined');
+    assert.equal(byId.t2.stalled, true);
+    assert.equal(res.counts.parked, 1);
+    const list = await host.dispatch('tickets-viewer', 'teams', []);
+    const row = list.teams.find((t) => t.team === 'alpha');
+    assert.equal(row.stalled, 1, 'the sidebar stall count excludes parked too');
+    assert.equal(row.parked, 1);
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: an already-nudged stall is marked as such', async () => {
   const { host, teams, cleanup } = boot();
   try {
