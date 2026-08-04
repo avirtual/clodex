@@ -219,33 +219,43 @@ plugin *reaches*:
 | `rhost.ui.sidebar.footerButton` | always | **always** — see below |
 | `rhost.ui.settings.section` | always | **always** |
 | `rhost.ui.surfaces.overlay` | always | **always** |
-| `host.sessions.*` / `rhost.sessions.*` | unchanged | **unchanged at every scope** |
+| `host.sessions.*` / `rhost.sessions.*` *(enumeration)* | unchanged | **unchanged at every scope** |
+| `host.sessions.onAgentText` | never delivers | only granted sessions |
 
 The last three UI rows are deliberate. A sidebar footer button belongs to the *window*,
 not to whichever session happens to be active; hiding it on session switch would
 make the chrome flicker with no coherent meaning. Scope governs what a plugin
 sees **of a session**, and those three see none of it.
 
-The `sessions.*` row is the one to read carefully: the session ENUMERATION APIs
-are **not narrowed for a scoped plugin**. `host.sessions.get(name)` and
-`rhost.sessions.listWorkspace()` answer the same for a plugin granted nothing as
-for one granted everything. Do not design against this table as though it were an
-isolation boundary — see the next section.
+The `sessions.*` rows are the ones to read carefully, and they point opposite
+ways. The session ENUMERATION APIs are **not narrowed for a scoped plugin**:
+`host.sessions.get(name)` and `rhost.sessions.listWorkspace()` answer the same
+for a plugin granted nothing as for one granted everything. Do not design
+against that row as though it were an isolation boundary — see the next section.
+The turn-text feed is the exception, and the only member of `sessions.*` that
+scope governs: a `global` plugin never receives a single event from it, whatever
+a session granted (§4).
 
 ### The three grants
 
 A grant is per session and per capability, each defaulting **off**, and they are
 separate because they carry different risk:
 
-| Capability | What it covers |
-|---|---|
-| `turns` | Turn text — what the agent writes |
-| `thinking` | Thinking blocks — its reasoning, not just its answers |
-| `toolInputs` | Tool inputs — Bash commands it runs and file contents it writes |
+| Capability | What it covers | Consumed by |
+|---|---|---|
+| `turns` | Turn text — what the agent writes | `sessions.onAgentText` (§4) |
+| `thinking` | Thinking blocks — its reasoning, not just its answers | nothing yet |
+| `toolInputs` | Tool inputs — Bash commands it runs and file contents it writes | nothing yet |
 
 They are independent: holding `toolInputs` does not imply `turns`. If they shared
 one grant, everyone who wanted a turn archiver would also get every command the
 agent ran.
+
+The two unconsumed rows are declared but inert — an operator can grant them and
+nothing reads them. That is deliberate rather than unfinished: `hostApi` is
+frozen at `"1"` and only a change that breaks a conforming plugin bumps it, so a
+capability added *after* the API it gates would be exactly such a change.
+Declaring the whole vocabulary up front spends no version bump.
 
 A plugin holding **any** capability on a session is visible to it; holding none
 means it is absent. The operator edits these in the Intents popover's *Plugin
@@ -352,6 +362,7 @@ host = {
     fsScope(name),                       // -> { cwd } | { error }
     onCreate(fn),                        // -> dispose
     onExit(fn),                          // -> dispose
+    onAgentText(fn),                     // -> dispose; needs the `turns` grant
   },
 
   ipc:   { handle(method, fn) },         // -> dispose
@@ -655,6 +666,71 @@ whatever you cache.
 Both return a dispose function. You do not have to call it: everything you
 register is torn down for you when your plugin is disabled (§10).
 
+### `host.sessions.onAgentText` — the turn-text feed
+
+```js
+const off = host.sessions.onAgentText((ev) => { … });
+```
+
+What the agent actually said, as it says it. This is the one API that hands you
+the work rather than the container, and it is the reason session scope exists.
+
+```js
+{ session:   'clodex-hand',   // name; resolve a handle with sessions.get()
+  text:      '…',             // visible assistant text
+  source:    'wire' | 'jsonl',
+  truncated: false,           // wire: the turn exceeded the 4MB text cap
+  isTurnEnd: true | null,     // wire only; null on jsonl — see below
+  files:     [ { tool, path } ],   // files this turn wrote
+  reads:     [ { tool, path } ] }  // wire only; null on jsonl
+```
+
+The event and its arrays are frozen, and every subscriber is handed the same
+object. Copy anything you intend to keep.
+
+**You need the `turns` grant, per session** (§2.1). Not "any grant" — a session
+that granted you `toolInputs` and not `turns` delivers you nothing here, because
+Bash commands and turn prose are different exposures and the split exists to
+keep them apart. A `global`-scoped plugin receives nothing here even holding a
+valid token — the feed re-checks your manifest scope on every delivery, because
+grants are stored per session and outlive the manifest that earned them. Grants
+themselves are read at **delivery** time too, so a revoke takes effect on the
+very next turn rather than at the next restart.
+
+**`isTurnEnd` and `reads` are `null` on the jsonl path, and that is a claim
+about knowledge, not a missing value.** The transcript path has no protocol
+turn-end signal — it inferred boundaries from a second of silence — and cannot
+see tool-use blocks at all. `false` and `[]` would be assertions you could not
+distinguish from observations. `files` is computable on both paths, so it is a
+real array either way.
+
+**This fires per REQUEST, not per turn.** A single user turn is roughly 4.4
+requests, most of them tool-loop hops, and about 40% of requests carry no text
+at all (those are dropped rather than delivered as empty events). If you want
+turn boundaries, watch for `isTurnEnd === true` — but do not assume one event
+per turn, and note that jsonl-sourced sessions cannot tell you.
+
+**Delivery is at-least-once, not exactly-once.** This is the sharpest difference
+from §7's intent handler, which *is* exactly-once. Intents get that guarantee
+from a deduper keyed on intent content; raw text has no such key, and there is a
+real double-delivery path: when the wire's observer fails for a request, Clodex
+replays that turn's tail from the transcript, and text the wire already
+delivered arrives again. If your subscriber does something non-idempotent —
+appending to a file, sending a message — deduplicate on your own key.
+
+**Delivery is deferred.** Your subscriber runs on a later tick, not on the
+junction's stack, because that stack also dispatches the agent's intents. It is
+still *synchronous* in the §4 sense: returning a promise is a contract
+violation. Throwing is contained per subscriber.
+
+You only ever hear the **main line**: subagent turns and side-calls (title
+generation, probes) never reach you. A Task-heavy session would otherwise flood
+you with subagent chatter you have no context for.
+
+Thinking blocks and tool inputs are **not** in this event. They are separate
+grants (`thinking`, `toolInputs`) that no API consumes yet; declaring them
+early was the point of shipping the vocabulary before the feed.
+
 <a name="callback-conventions"></a>
 ### Callback conventions
 
@@ -684,6 +760,7 @@ or must be treated as "may fire more than once":
 | Callback | Guarantee |
 |---|---|
 | `sessions.onCreate` / `onExit` (§4) | Once per session creation / exit. |
+| `sessions.onAgentText` (§4) | **At-least-once per request.** Fires per REQUEST (~4.4 per user turn), and a tee-failure replay can re-deliver a turn's tail. Deduplicate on your own key. |
 | `intents.handler` (§7) | Exactly once per matched line — see §7. |
 | Render callbacks: `when`/`button`/`render`/`badge`/`resolve` (§6) | **No guarantee. Called on every render pass, many times per second.** They must be pure, cheap and side-effect free — treat them as read-only views of state you keep elsewhere. |
 

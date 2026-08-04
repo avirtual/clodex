@@ -166,7 +166,7 @@ test('onCreate fires at the create() tail and disposes cleanly', () => {
   off();
   engine.hooks.fireCreate('a');
   assert.deepEqual(seen, ['a'], 'disposed subscriber no longer fires');
-  assert.deepEqual(engine._hookCounts(), { create: 0, exit: 0 });
+  assert.deepEqual(engine._hookCounts(), { create: 0, exit: 0, text: 0 });
 });
 
 // ── §3.3 events — the multi-window law ─────────────────────────────────────
@@ -231,12 +231,12 @@ test('deactivate tears down everything the host handed out, plugin cooperation o
     deactivate() { deactivated = true; throw new Error('bad citizen'); },
   });
   assert.equal(engine._dispatchKeys().length, 1);
-  assert.deepEqual(engine._hookCounts(), { create: 1, exit: 1 });
+  assert.deepEqual(engine._hookCounts(), { create: 1, exit: 1, text: 0 });
 
   engine.deactivate('demo');
   assert.ok(deactivated, "the plugin's own deactivate ran first");
   assert.deepEqual(engine._dispatchKeys(), [], 'dispatch entries torn down regardless');
-  assert.deepEqual(engine._hookCounts(), { create: 0, exit: 0 }, 'hooks torn down regardless');
+  assert.deepEqual(engine._hookCounts(), { create: 0, exit: 0, text: 0 }, 'hooks torn down regardless');
   assert.deepEqual(engine.catalog(), []);
   // And the hooks are genuinely gone — firing must not reach the dead plugin.
   engine.hooks.fireCreate('a');

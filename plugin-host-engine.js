@@ -9,7 +9,7 @@
 
 const {
   HOST_API_VERSION, isValidPluginId, RESERVED_PLUGIN_IDS, namespaced, HOST_PSEUDO_ID,
-  NO_SUCH_METHOD, errorEnvelope, scopeOf,
+  NO_SUCH_METHOD, errorEnvelope, scopeOf, pluginGranted,
 } = require('./plugin-api');
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
@@ -25,6 +25,7 @@ function createPluginHostEngine(deps) {
     libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
+    getPersistence,   // getter: the sessions store — read for per-session plugin grants
     onPluginStateChanged,
   } = deps;
   const notifyStateChanged = () => {
@@ -91,6 +92,7 @@ function createPluginHostEngine(deps) {
 
   const createHooks = new Set();
   const exitHooks = new Set();
+  const textHooks = new Map();   // pluginId -> Set<fn>; keyed because the grant is per-PLUGIN
 
 // Each subscriber in its own try/catch: a throw here lands mid-PTY-teardown.
 // SYNC ONLY — the hook must complete before _cleanup(name); an async subscriber
@@ -115,7 +117,84 @@ function createPluginHostEngine(deps) {
 // For a naturally-exited bash session the persistence entry is already gone.
     fireExit(name) { runHooks(exitHooks, 'sessions.onExit', sessionHandle(name)); },
     handleFor(name) { return sessionHandle(name); },
+    fireAgentText(ev) { fireAgentText(ev); },
   };
+
+// The turn-text feed. Unlike onCreate/onExit this is DEFERRED, not synchronous:
+// the wire junction that calls it is the same one that dispatches intents, so a
+// subscriber doing real work on a 4MB turn inline would delay every intent
+// behind it. setImmediate is the same escape the intent loop already takes.
+//
+// One frozen event object shared by every subscriber, built ONCE before the
+// grant loop: `files`/`reads` arrive as the wire collector's live arrays, which
+// core also reads for the heat map, so a subscriber mutating one would corrupt
+// core's view. Freezing beats copying per subscriber.
+  function agentTextEvent(ev) {
+    // Defaults to the path that CLAIMS LESS. 'wire' would mean isTurnEnd:false
+    // and reads:[] — two assertions — for a source nobody recognised; 'jsonl'
+    // means two nulls. Both callers pass a literal, so this only decides what an
+    // unrecognised third caller would get, and it should fail toward "unknown".
+    const src = ev && ev.source === 'wire' ? 'wire' : 'jsonl';
+    // null, never false/[]: the jsonl path has no protocol turn-end signal and
+    // no tool-use blocks to read. `false` and `[]` are CLAIMS a plugin cannot
+    // tell apart from an observation; null says "not knowable here". Same
+    // discipline as the sidebar-meta merge bugs — absent and false differ.
+    const frozenList = (v) => (Array.isArray(v) ? Object.freeze(v.map((x) => Object.freeze({ ...x }))) : null);
+    return Object.freeze({
+      session: String((ev && ev.session) || ''),
+      text: typeof (ev && ev.text) === 'string' ? ev.text : '',
+      source: src,
+      truncated: !!(ev && ev.truncated),
+      isTurnEnd: src === 'wire' ? !!(ev && ev.isTurnEnd) : null,
+      files: frozenList(ev && ev.files) || Object.freeze([]),
+      reads: src === 'wire' ? (frozenList(ev && ev.reads) || Object.freeze([])) : null,
+    });
+  }
+
+  function fireAgentText(ev) {
+    if (textHooks.size === 0) return;              // nothing subscribed: no grant reads, no event build
+    const event = agentTextEvent(ev);
+    if (!event.session) return;
+    // ONE setImmediate around the whole dispatch, not one per subscriber: the
+    // grant read below is a synchronous whole-file sessions.json read + parse
+    // (and _load can WRITE the file back-filling workspaceId), so leaving it on
+    // the caller's stack would pay the exact cost the deferral exists to avoid,
+    // once per REQUEST. Reading here still means read-at-delivery — a revoke
+    // lands on the next turn.
+    setImmediate(() => {
+      const grants = readPluginGrants(event.session);
+      for (const [pluginId, set] of textHooks) {
+        // Gated on the `turns` capability SPECIFICALLY, not on pluginReaches:
+        // reaching is ANY capability, and a plugin granted only `toolInputs`
+        // holding turn text would defeat the whole point of splitting the grants
+        // by risk. pluginGranted is the primitive pluginReaches is built from —
+        // one predicate family, the member that matches this payload.
+        if (!pluginGranted(pluginId, 'turns', grants)) continue;
+        // Scope from the REGISTERED MANIFEST, same rule as intents.register:
+        // grants persist per session and survive an upgrade that flips a
+        // manifest session→global, so a stale token would keep delivering to a
+        // plugin the grants editor no longer even lists.
+        const rec = registered.get(pluginId);
+        if (!rec || scopeOf(rec.manifest) !== 'session') continue;
+        for (const fn of set) {
+          try { fn(event); } catch (e) {
+            try { log.info('plugin', `sessions.onAgentText subscriber threw (ignored): ${e && e.message}`); } catch {}
+          }
+        }
+      }
+    });
+  }
+
+// Read at DELIVERY, never cached: a revoke has to take effect on the next turn,
+// and a cache here would be the same "stale grant lives for the process's life"
+// shape the sidebar-meta revoke bug had.
+  function readPluginGrants(sessionName) {
+    try {
+      const p = getPersistence && getPersistence();
+      const entry = p && p.get(sessionName);
+      return (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
+    } catch { return null; }   // no persistence ⇒ no grants ⇒ pluginGranted refuses
+  }
 
   function sessionHandle(name) {
     const s = manager.sessions.get(name);
@@ -208,6 +287,42 @@ function createPluginHostEngine(deps) {
         onExit: (fn) => {
           exitHooks.add(fn);
           return disposable(pluginId, () => exitHooks.delete(fn));
+        },
+// Turn text, gated by the per-session `turns` grant (t190's vocabulary). A
+// GLOBAL-scoped plugin can never receive anything here — the grants editor
+// offers session-scoped plugins only — which is deliberate: text is exactly the
+// exposure per-session scope was built for. See plugins/plugin-api.md §2.2.
+//
+// AT-LEAST-ONCE, not exactly-once. Intents get exactly-once from a deduper keyed
+// on intent CONTENT; raw text has no such key, and the tee-failure recovery
+// replay genuinely re-delivers a handover turn's tail.
+        onAgentText: (fn) => {
+          if (typeof fn !== 'function') return () => {};
+          // Post-deactivate late subscribe, same window intents.register refuses.
+          // Returning rather than throwing: a leaked subscriber costs nothing in
+          // correctness (delivery re-checks the record), but the re-created Set
+          // would have no teardown left to drain it, defeating fireAgentText's
+          // size===0 fast path for the process's life — a persistence read per
+          // request, forever, for a plugin nobody is running.
+          if (!registered.has(pluginId)) return () => {};
+          // Diagnostic only — the enforcement is at delivery, because an upgrade
+          // can flip the manifest after this runs. Without it the refusal is the
+          // one silent no-op in this file, and the shape that hits it is an
+          // author who simply omitted the field.
+          if (scopeOf(registered.get(pluginId).manifest) !== 'session') {
+            logFor(pluginId).info('sessions.onAgentText: this plugin\'s manifest is global — the feed never delivers to a global plugin; add "scope": "session"');
+          }
+          if (!textHooks.has(pluginId)) textHooks.set(pluginId, new Set());
+          textHooks.get(pluginId).add(fn);
+          return disposable(pluginId, () => {
+            const set = textHooks.get(pluginId);
+            if (!set) return;
+            set.delete(fn);
+            // Drop the empty Set, not just the fn: fireAgentText's fast path is
+            // `textHooks.size === 0`, and an empty Set left behind would keep
+            // every turn reading persistence for grants nobody is waiting on.
+            if (set.size === 0) textHooks.delete(pluginId);
+          });
         },
       }),
 
@@ -395,6 +510,10 @@ function createPluginHostEngine(deps) {
       try { rec.mod.deactivate(); } catch (e) { logFor(pluginId).error(`deactivate threw (ignored): ${e && e.message}`); }
     }
     for (const d of [...ledger(pluginId)]) d();
+    // Belt to the ledger's braces, same reasoning as unregisterSource below: a
+    // text subscriber that escaped the ledger would keep receiving turn text
+    // after the operator disabled the plugin.
+    textHooks.delete(pluginId);
     // Belt to the ledger's braces: intent rows live in a MODULE-level table (that
     // is what makes a plugin verb live on all three feeds), so a row that escaped
     // the ledger would outlive its plugin and keep parsing into a dead handler.
@@ -523,7 +642,11 @@ function createPluginHostEngine(deps) {
     register, deactivate, hooks,
     hostApiVersion: HOST_API_VERSION,
     _dispatchKeys: () => [...dispatchMap.keys()],
-    _hookCounts: () => ({ create: createHooks.size, exit: exitHooks.size }),
+    _hookCounts: () => ({
+      create: createHooks.size,
+      exit: exitHooks.size,
+      text: [...textHooks.values()].reduce((n, s) => n + s.size, 0),
+    }),
   };
   return api;
 }

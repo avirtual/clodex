@@ -82,6 +82,12 @@ function makeEngine({ manager = makeManager([seatA, seatB]), settings = {} } = {
     path,
     gitWorktree: { list: () => ['wt-1'] },
     telemetrySnapshot: (name) => (name === 'seat-a' ? { tok: 1234 } : null),
+    // The turn-text feed reads grants off persistence at DELIVERY time. seat-a
+    // holds the `turns` grant so the feed has a live path here; seat-b holds
+    // none, which is what makes the gate visible rather than assumed.
+    getPersistence: () => ({
+      get: (name) => (name === 'seat-a' ? { name, pluginGrants: ['fake:turns'] } : { name }),
+    }),
   });
   return { engine, manager, dir, logged, uiSettings: () => ui };
 }
@@ -118,6 +124,7 @@ function makeEnginePlugin() {
     created: [],
     exited: [],
     intents: [],
+    text: [],
     disposers: [],
   };
   const mod = {
@@ -135,6 +142,13 @@ function makeEnginePlugin() {
       record.disposers.push(host.sessions.onExit((h) => {
         // The handle is already dead here; a plugin reads it, it does not act on it.
         record.exited.push({ name: h ? h.name : null, alive: h ? h.isAlive() : null });
+      }));
+
+      // §2.2 — the turn-text feed. DEFERRED, unlike the two hooks above, and
+      // gated on the session's `turns` grant: this subscriber hears seat-a and
+      // never seat-b, whatever the plugin does here.
+      record.disposers.push(host.sessions.onAgentText((ev) => {
+        record.text.push({ session: ev.session, source: ev.source, len: ev.text.length });
       }));
 
       // §2.3 — an intent verb. Registered as a PLUGIN row, so the host forces
@@ -177,7 +191,7 @@ test('fake plugin: activation reaches every engine extension point exactly once'
     assert.strictEqual(host.hostApiVersion, HOST_API_VERSION);
     // Three dispatch entries, both hooks, one intent row — all namespaced/owned.
     assert.deepStrictEqual(engine._dispatchKeys().sort(), ['fake:boom', 'fake:ping', 'fake:slow']);
-    assert.deepStrictEqual(engine._hookCounts(), { create: 1, exit: 1 });
+    assert.deepStrictEqual(engine._hookCounts(), { create: 1, exit: 1, text: 1 });
     assert.strictEqual(intentRegistry.pluginRowFor('fake-note').source, 'fake');
     // `scope` (t190) is part of the catalog row because the renderer must know
     // which plugins are session-scoped BEFORE it activates any of them. A
@@ -295,6 +309,31 @@ test('fake plugin: onCreate/onExit fire through the hooks core calls, with a dea
   });
 });
 
+test('fake plugin: the turn-text feed reaches a GRANTED seat only, and only after a tick', async () => {
+  await withReset(async () => {
+    const { engine } = makeEngine();       // seat-a holds fake:turns, seat-b holds nothing
+    const { mod, record } = makeEnginePlugin();
+    // The ONE registration in this file that declares a scope: everywhere else
+    // the fake is global (see the catalog row test), and the feed refuses a
+    // global manifest whatever grants a session carries. A real turn-text
+    // consumer is session-scoped by construction.
+    engine.register('fake', mod, { scope: 'session' });
+
+    engine.hooks.fireAgentText({ session: 'seat-a', text: 'hello there', source: 'wire', isTurnEnd: true });
+    // Deferred by contract: this junction also dispatches intents, so a
+    // subscriber must not run on its stack. Unlike onCreate/onExit above, which
+    // are sync BECAUSE they sit inside PTY teardown.
+    assert.deepStrictEqual(record.text, [], 'nothing has run synchronously');
+    await new Promise((r) => setImmediate(() => setImmediate(r)));
+    assert.deepStrictEqual(record.text, [{ session: 'seat-a', source: 'wire', len: 11 }],
+      'ENTER: the granted seat reached the plugin — so the absence below is the gate');
+
+    engine.hooks.fireAgentText({ session: 'seat-b', text: 'not for you', source: 'wire', isTurnEnd: true });
+    await new Promise((r) => setImmediate(() => setImmediate(r)));
+    assert.strictEqual(record.text.length, 1, 'the ungranted seat delivered nothing');
+  });
+});
+
 test('fake plugin: storage is per-plugin, atomic, and survives a re-read', () => {
   withReset(() => {
     const { engine, dir } = makeEngine();
@@ -361,7 +400,7 @@ test('fake plugin: deactivate tears down EVERY engine-side registration, plugin 
 
     assert.strictEqual(record.deactivated, 1, "the plugin's own deactivate ran first");
     assert.deepStrictEqual(engine._dispatchKeys(), [], 'dispatch entries gone');
-    assert.deepStrictEqual(engine._hookCounts(), { create: 0, exit: 0 }, 'hooks unsubscribed');
+    assert.deepStrictEqual(engine._hookCounts(), { create: 0, exit: 0, text: 0 }, 'hooks unsubscribed');
     assert.strictEqual(intentRegistry.pluginRowFor('fake-note'), null, 'the module-level intent row is gone too');
     assert.deepStrictEqual(engine.catalog(), []);
   });
@@ -383,7 +422,7 @@ test('fake plugin: teardown holds even when the plugin forgets everything', () =
 
     engine.deactivate('messy');
     assert.deepStrictEqual(engine._dispatchKeys(), []);
-    assert.deepStrictEqual(engine._hookCounts(), { create: 0, exit: 0 });
+    assert.deepStrictEqual(engine._hookCounts(), { create: 0, exit: 0, text: 0 });
     assert.strictEqual(intentRegistry.pluginRowFor('sloppy'), null);
   });
 });

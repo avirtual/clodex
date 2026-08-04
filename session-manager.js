@@ -449,6 +449,15 @@ function createSessionManager(deps) {
             }
           }
           if (t.sideCall || isSubagentRole(t.role)) return; // intents: main line only
+          // Plugin turn-text feed. Positioned INSIDE the main-line filter above
+          // deliberately, and NOT gated on stop.is_turn: `turn.completed` fires
+          // per REQUEST (~4.4 per user turn), and gating would drop the text of
+          // every tool-loop hop — the same reason intent extraction below is not
+          // gated on it either.
+          this._publishAgentText({
+            session: t.agent, text: t.text, source: 'wire', truncated: t.truncated,
+            isTurnEnd: !!(t.stop && t.stop.is_turn), files: t.files, reads: t.reads,
+          });
           const intents = this._extractIntents(t.text);
           this._shadowLog({
             type: 'wire-turn', agent: t.agent, sessionId: t.sessionId,
@@ -560,7 +569,18 @@ function createSessionManager(deps) {
           this._activity.requestFailed(ev.agent, ev.reqId);
           const s = this.sessions.get(ev.agent);
           if (s && s.intentSource === 'wire' && s.sentinel && !s.sentinel.recovering) {
-            s.sentinel.armRecovery((text) => {
+            s.sentinel.armRecovery((text, touches) => {
+              // Published from the recovery replay too, and this is exactly the
+              // path that makes the feed AT-LEAST-ONCE rather than exactly-once:
+              // the tail replayed here overlaps the handover turn the wire may
+              // already have delivered. Intents survive that overlap through the
+              // content-keyed deduper below; raw text has no such key. Not
+              // publishing here would instead lose text precisely when the wire
+              // produced no receipt, which is the worse failure.
+              this._publishAgentText({
+                session: ev.agent, text, source: 'jsonl', truncated: false,
+                files: Array.isArray(touches) ? touches : [],
+              });
               const fired = new Set();
               for (const intent of this._extractIntents(text)) {
                 const bkey = shadowIntentKey(ev.agent, intent);
@@ -1321,7 +1341,7 @@ function createSessionManager(deps) {
       } else if (agentType) {
         session.watcher = new JsonlWatcher(
           name,
-          (text) => this._scanJsonlText(text, name),
+          (text, touches) => this._scanJsonlText(text, name, touches),
           onSessionId,
           (state) => this._emitActivity(name, state, state === 'idle'),
           () => this._fireCompactContinuation(session),
@@ -2579,8 +2599,24 @@ function createSessionManager(deps) {
       return intents;
     }
 
-    _scanJsonlText(text, senderName) {
+    _scanJsonlText(text, senderName, touches) {
       const s = this.sessions.get(senderName);
+      // A wire-routed session running intentSource:'jsonl' (shadow mode) has
+      // BOTH junctions live. Publishing here too would double-deliver every
+      // turn deterministically, so the wire wins: it is already firing and
+      // carries reads + a real turn-end signal this path cannot know.
+      //
+      // `!s.backend` is the load-bearing half. A tee-blind (Bedrock/Vertex)
+      // session is ALSO wireRouted — the registration is kept and merely
+      // ignored — but its bytes never traverse the tee, so turn.completed
+      // never fires and this watcher is its ONLY junction. Discriminating on
+      // wireRouted alone blanks the feed for it permanently.
+      if (!(s && s.wireRouted && !s.backend)) {
+        this._publishAgentText({
+          session: senderName, text, source: 'jsonl', truncated: false,
+          files: Array.isArray(touches) ? touches : [],
+        });
+      }
       for (const intent of this._extractIntents(text)) {
         if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {
           try {
@@ -2592,6 +2628,25 @@ function createSessionManager(deps) {
         }
         this._handleIntent(senderName, intent);
       }
+    }
+
+// The single door to the plugin turn-text feed. Consume-only, like every other
+// plugin hook: a throw here lands in the wire's event handler, which also
+// dispatches intents, so it must never escape. The engine owns the grant check
+// and the setImmediate deferral — this side only decides WHAT is published and
+// from WHERE.
+    _publishAgentText(ev) {
+      try {
+        const hooks = getPluginHooks && getPluginHooks();
+        if (!hooks || typeof hooks.fireAgentText !== 'function') return;
+        // Nothing to say: 576 of 1359 measured requests carried no text at all
+        // (pure tool calls). An event with neither text nor file touches is a
+        // wake-up with no payload, paid by every subscriber.
+        const hasFiles = Array.isArray(ev.files) && ev.files.length;
+        const hasReads = Array.isArray(ev.reads) && ev.reads.length;
+        if (!ev.text && !hasFiles && !hasReads) return;
+        hooks.fireAgentText(ev);
+      } catch { /* consume-only */ }
     }
 
 

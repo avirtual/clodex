@@ -1405,6 +1405,7 @@ const toolCache = createToolCache({ whichBin });
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
+        getPersistence: () => persistence,
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
       });
       pluginLoader = createPluginLoader({

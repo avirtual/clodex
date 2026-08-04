@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Plugins can now read what an agent says.** A session-scoped plugin granted
+  turn text receives each turn as the agent writes it — the capability that
+  makes turn archivers, cross-session search and standup writers possible,
+  where before a plugin could see a session's name and status but not one word
+  of its work. The grant is per session and defaults off, and a plugin granted
+  only tool inputs or thinking does not receive turn text: the capabilities are
+  separate because they carry different risk. Nothing bundled uses this yet.
+
 - **Plugins can now be scoped to individual sessions.** A plugin whose manifest
   says `"scope": "session"` is invisible to every session that has not granted
   it — absent from that session's intent checklist and prompt, not listed and

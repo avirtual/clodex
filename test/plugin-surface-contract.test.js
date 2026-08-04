@@ -43,7 +43,7 @@ const HOST_CONTRACT = [
   { name: 'settings', kind: 'ns', members: ['get', 'set'] },
   // NOTE the absence of an unqualified `list` — the two named accessors are the
   // whole point (docs §4; plugin-host-engine.js law 1). Pinned negatively below.
-  { name: 'sessions', kind: 'ns', members: ['listAll', 'listWorkspace', 'get', 'fsScope', 'onCreate', 'onExit'] },
+  { name: 'sessions', kind: 'ns', members: ['listAll', 'listWorkspace', 'get', 'fsScope', 'onCreate', 'onExit', 'onAgentText'] },
   { name: 'ipc', kind: 'ns', members: ['handle'] },
   { name: 'intents', kind: 'ns', members: ['register'] },
   { name: 'events', kind: 'ns', members: ['emit'] },

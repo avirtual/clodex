@@ -42,6 +42,12 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
+      // Touches seen since the last text flush. They fire per-LINE the moment
+      // they are parsed (onFileTouches, below) because the heat map wants them
+      // immediately; onText flushes on a requestId change or 1s of silence. The
+      // plugin feed needs them CORRELATED with the text they accompanied, so
+      // they are also accumulated here and handed to onText at flush time.
+      this._pendingTouches = [];
     }
 
     _setActivity(state) {
@@ -73,12 +79,22 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       try {
         const target = fs.realpathSync(linkPath);
         if (target !== this._currentTarget && fs.existsSync(target)) {
+          // FIRST, before the fd closes: emit any text still pending from the OLD
+          // transcript with the touches that actually accompanied it. Resetting
+          // only _pendingTouches below would leave the mirror-image lie — old
+          // text surviving the repoint, then flushing with the NEW
+          // conversation's first touch attached. A correlation has two halves.
+          this._flushPending();
           if (this._fd !== null) {
             try { fs.closeSync(this._fd); } catch {}
           }
           this._fd = fs.openSync(target, 'r');
           this._currentTarget = target;
           this._readBuf = '';
+          // Belt to the flush above's braces: bounds the no-text-ever case,
+          // where _flushPending emits nothing and touches would otherwise
+          // accumulate for the watcher's life.
+          this._pendingTouches = [];
           // Start at EOF. On Clodex restart / resume, the transcript already
           // contains historical turns we've processed before; replaying them
           // would re-fire past [agent:...] intents. We only care about turns
@@ -140,7 +156,10 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         // off turn.completed instead — this watcher isn't running steady-state
         // there, and sentinel-made watchers pass no callback).
         const touches = extractFileTouches(obj);
-        if (touches.length) { try { this._onFileTouches(touches); } catch {} }
+        if (touches.length) {
+          try { this._onFileTouches(touches); } catch {}
+          this._pendingTouches.push(...touches);
+        }
 
         const text = extractText(obj);
         if (text) {
@@ -160,11 +179,15 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
 
     _flushPending() {
       if (this._pendingText) {
-        try { this._onText(this._pendingText); } catch {}
+        try { this._onText(this._pendingText, this._pendingTouches); } catch {}
         this._setActivity('idle');
       }
       this._pendingRid = null;
       this._pendingText = null;
+      // Cleared unconditionally, including on a no-text flush: touches held past
+      // their own turn would attach to a LATER turn's text, which is a worse
+      // claim than not reporting them.
+      this._pendingTouches = [];
     }
   }
 
