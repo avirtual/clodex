@@ -2133,6 +2133,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._replayFallbackTimer);
+      clearTimeout(s._parkedDrainFallbackTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
       // cooldown goes too: a retired seat's name is reused by its replacement,
@@ -5290,17 +5291,97 @@ function createSessionManager(deps) {
         return;
       }
       const finalText = this._buildDeliveryText(target, senderName, body, mtype);
+      let parkedFile;
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
+        parkedFile = parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
       } catch (e) {
         log.error('inject', `active park failed for ${target.name}: ${e.message} — delivering normally`);
         this._deliverMessage(targetName, senderName, body, mtype);
         return;
       }
+      this._armParkedDrainFallback(target, parkedFile, INJECT_BOOT_MAXWAIT, Date.now() + 3 * INJECT_BOOT_MAXWAIT);
       this._broadcast('ipc-message', {
         ts: Date.now(), from: senderName, to: targetName, kind: 'parked',
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
       });
+    }
+
+    // The second edge for an active park. _deliverParkedActive is the ONLY park
+    // path that arms no timer of its own, and its target is the one seat that can
+    // never reach the other two drains: the boot-ready rising edge is one-shot, and
+    // both the idle drain and the out-of-process hook need a turn the seat will
+    // never take, because the thing it is missing IS its first turn. So a park whose
+    // boot-ready edge does not fire — measured twice, seat alive and the files still
+    // unclaimed 8s later — is silent and permanent, and the drain is what is
+    // missing, not the write: the delivery that eventually rescued it was an
+    // operator flush through this same queue, with no boot-readiness cap in sight.
+    //
+    // Recovery for a seat ALREADY in that state is a plain dm re-sending the scope,
+    // never a respawn. Respawning is the intuitive move and it is wrong: the seat is
+    // healthy and its name is reserved, so a respawn mints a SECOND seat while the
+    // first keeps its parked mail and its `born` stamp — and the stamp is what makes
+    // the old mail undeliverable to the new seat (drainPending discards a `born`
+    // mismatch). A dm lands on the live seat and drains the park with it.
+    //
+    // Modeled on _armReplayFallback, and re-checks for the same reason rather than
+    // delivering on schedule: a drain forced while the latch is still missing puts
+    // the write back inside the boot re-render window with the messages already
+    // claimed off disk. Deferring to an armed _bootDrainTimer is what preserves
+    // BOOT_DRAIN_SETTLE_MS as the margin — this timer never shortens it. A plain
+    // _armParkCap here would be that same forced delivery, which is why it isn't one.
+    //
+    // EVERY path out of a pass either delivers or leaves a timer armed. A bare
+    // return anywhere here makes this second edge one-shot in exactly the way the
+    // first one is, which is the defect this method exists to cover, one layer out:
+    // yielding to a drain that then bails (an open draft at :2514, a producer that
+    // claims nothing) would end with the park unclaimed and nothing alive to notice.
+    // `file` scopes a pass to the park it was armed FOR: hasActivePending is
+    // name-scoped, so a later pass would otherwise find UNRELATED mail parked
+    // meanwhile by _maybeParkDelivery and force it through, bypassing _injectText's
+    // hold check and splicing into the very thinking seat that park protects.
+    // `drained` marks a pass that FOLLOWS a terminal drain, and it gates the warn,
+    // not the re-arm. Bounding the re-arm instead was the obvious move and it is
+    // wrong: a seat whose draft stays open across two periods would have its park
+    // abandoned with nothing scheduled to look again — this ticket's own defect,
+    // reintroduced by the thing meant to stop the log from repeating. So the timer
+    // lives as long as the park does, and only the first drain announces itself. It
+    // is bounded in the ways that actually end: the pass returns once the file is
+    // claimed, and _cleanup clears the handle when the seat dies.
+    _armParkedDrainFallback(session, file, periodMs, deadline, drained = false) {
+      if (!session || session.agentType !== 'claude') return;
+      if (session._parkedDrainFallbackTimer) return;   // earliest arm governs, like the park cap
+      const stillParked = () => {
+        try { return fs.existsSync(path.join(PENDING_DIR, session.name, file)); } catch { return false; }
+      };
+      session._parkedDrainFallbackTimer = setTimeout(() => {
+        session._parkedDrainFallbackTimer = null;
+        if (session._dead) return;
+        if (!stillParked()) return;                    // this park was claimed — nothing owed
+        // Re-arm rather than yield outright: the drain may bail (draft open, or its
+        // producer claims nothing) and would leave the park silent and permanent.
+        // Extending the deadline is what keeps this from expiring while deferring.
+        if (session._bootDrainTimer) {
+          this._armParkedDrainFallback(session, file, periodMs, deadline + periodMs, drained);
+          return;
+        }
+        if (!session._bootReadySeen && Date.now() < deadline) {
+          this._armParkedDrainFallback(session, file, periodMs, deadline, drained);
+          return;
+        }
+        // seen=… is the discriminator: a park landing AFTER the edge was already
+        // spent is the likeliest real case, and there the edge fired — early — so an
+        // unqualified "never fired" would misdiagnose it. This defect was found in
+        // these lines and nothing else.
+        if (!drained) {
+          log.warn('inject', `parked-drain fallback for ${session.name} — boot-ready drain never fired (boot-ready seen=${!!session._bootReadySeen}); draining active park`);
+        }
+        this._drainPendingAtBootReady(session);
+        // The drain can return having drained nothing (open draft, or its producer
+        // claims nothing), so the warn above asserts something that may not have
+        // happened. Every following pass verifies and retries in silence until the
+        // file is gone — the log says it once, the timer keeps its promise.
+        this._armParkedDrainFallback(session, file, periodMs, deadline, true);
+      }, periodMs);
     }
   }
 

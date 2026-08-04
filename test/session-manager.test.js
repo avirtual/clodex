@@ -1505,6 +1505,12 @@ function mkPark(overrides = {}) {
   const m = mk({
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
     INJECT_QUIET_MS: 4000, INJECT_QUIET_MAXWAIT: 3_600_000, // maxwait large: park cap won't fire mid-test
+    // Same reason as the maxwait above, and NOT decorative: _deliverParkedActive
+    // arms the parked-drain fallback with this, so leaving it undefined arms a 1ms
+    // timer against a NaN deadline. Every test here empties the store before it
+    // fires, so today that is invisible — which is exactly why it is pinned by
+    // construction rather than by luck.
+    INJECT_BOOT_MAXWAIT: 60_000,
     findProjectRoot: () => null, // teams: default = no project anywhere; retire tests override
     log: { info: () => {}, warn: () => {}, error: () => {} },
     ...overrides,
