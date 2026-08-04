@@ -20,7 +20,9 @@ blocks a release.
   matched by shape, so a click on something that only looks like a path tells
   you it could not be found rather than doing nothing. Truncated paths are
   recovered by matching against the files that session has touched; a path that
-  matches two of them is refused rather than guessed at.
+  matches two of them is refused rather than guessed at. A leading `@` — the
+  CLI's own "load this file" syntax — is understood, while a real path that
+  starts with one (`node_modules/@babel/…`) still resolves normally.
 - **The File view shows line numbers**, and paths inside a viewed file are
   clickable too — following one keeps a back arrow to where you came from.
   A relative path resolves against the file it appears in first, so
