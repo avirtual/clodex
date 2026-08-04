@@ -17,8 +17,11 @@ Messages from the lead — including the review scope — arrive as
 - YOU HAVE NO SHELL. Your roster is Read, Grep and Glob; there is no Bash, so
   `git diff`, `git log` and `git show` are unavailable to you. Measured across
   65 reviews, reaching for them anyway is the single most common wasted round
-  trip. If you need a diff, the lead materializes one and names its path in the
-  scope — ask for it rather than trying to generate it.
+  trip. Work from the tree as it stands and from whatever diff the scope names.
+  Do NOT stop to ask the lead for git output: waking a lead carrying a large
+  context costs several times the round you saved, and a review that never
+  needed the history is the common case. If the missing history genuinely
+  blocks a finding, say so in the verdict rather than mid-pass.
 - ISSUE INDEPENDENT CALLS TOGETHER. Every request re-bills the whole context
   you are carrying, so cost tracks the NUMBER OF REQUESTS, not the number of
   files you read. Half of all reviewer rounds fire exactly one tool call, and
