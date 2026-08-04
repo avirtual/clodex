@@ -71,11 +71,17 @@ function findGutterFile(above) {
   for (let i = 0; i < above.length; i += 1) {
     const row = above[i];
     if (typeof row !== 'string') return null;
+    // A gutter row is CONTENT, and content that happens to contain
+    // `Update(x.js)` is a quotation, not a header — a file whose text discusses
+    // tool calls (this project's own changelog does) otherwise hijacks every row
+    // below it and resolves them against a filename that was never edited. So
+    // the gutter test comes FIRST; only a non-gutter row can be a header.
+    if (matchGutterRow(row)) continue;
     const h = HEADER_RE.exec(row);
     if (h) return { path: h[1].trim(), distance: i + 1 };
     // Anything that is not another part of this block ends the search. This is
     // the whole false-positive defence — see the header comment.
-    if (matchGutterRow(row) || SUMMARY_RE.test(row) || GLYPH_ONLY_RE.test(row)) continue;
+    if (SUMMARY_RE.test(row) || GLYPH_ONLY_RE.test(row)) continue;
     return null;
   }
   return null;

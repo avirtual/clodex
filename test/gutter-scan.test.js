@@ -87,6 +87,29 @@ test('prose separated from a header by an unrelated row does not resolve', () =>
   assert.strictEqual(findGutterFile(above), null);
 });
 
+// Shipped broken: a gutter row whose CONTENT mentions `Update(file.js)` was read
+// as a header, so every row below it linked to a file that was never edited —
+// and the miss only appeared a few lines in, where the quotation happened to be.
+// Any file discussing tool calls (this project's changelog) triggers it.
+test('a tool call quoted INSIDE gutter content is not a header', () => {
+  const above = [
+    '     15 +  its gutter under `Update(file.js)`, clicking a number opens that',
+    '     14 +  **The line numbers an edit prints are clickable too.**',
+    '  ⎿  Added 5 lines',
+    '● Update(CHANGELOG.md)',
+  ];
+  assert.deepStrictEqual(findGutterFile(above), { path: 'CHANGELOG.md', distance: 4 });
+});
+
+// The same hazard on a context row, which carries no +/- marker at all.
+test('a tool call quoted in an unmarked context row is not a header', () => {
+  const above = [
+    '     15    see Update(other.js) for the pattern',
+    '● Write(real.js)',
+  ];
+  assert.deepStrictEqual(findGutterFile(above), { path: 'real.js', distance: 2 });
+});
+
 test('a header far above an unbroken block is still found', () => {
   const above = [];
   for (let i = 0; i < 300; i += 1) above.push(`   ${i + 2} +  line ${i}`);
