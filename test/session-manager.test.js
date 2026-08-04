@@ -3122,6 +3122,61 @@ test('review-done (T31): a HELD delivery is accepted and the seat still discards
   assert.deepStrictEqual(order, ['deliver', 'context-action', 'discard'], 'held delivery still enqueues before the discard');
 });
 
+// t186 THE FUSE. Every review test above calls _handleReviewDone DIRECTLY, so
+// none of them crosses the fire-time gate in _handleIntent — the one thing
+// standing between the shipped reviewer and silence. This test goes through the
+// gate on purpose.
+//
+// A reviewer ships `intents: []` from BOTH sources (the shipped template
+// resources/library/templates/clodex-team-reviewer.json and the hardcoded
+// REVIEWER_FALLBACK), and `[]` is a real value meaning EVERY catalogued intent
+// is gated. `review-done` reaches its handler for exactly one reason:
+// intent-catalog's intentEnabled returns true before consulting the list for any
+// type outside GATEABLE_INTENTS, and review-done is not in that catalog. The
+// seat's only egress survives on an omission.
+//
+// intentEnabledFor does NOT cover this: it fails closed only for PLUGIN rows,
+// and review-done is a core registry row, so pluginRowFor returns null and it
+// falls straight through to the catalog's return-true-by-omission.
+//
+// So adding `{ type: 'review-done', … }` to GATEABLE_INTENTS — one line, and it
+// looks entirely reasonable — mutes EVERY reviewer that exists. Each still
+// spawns, still runs, still composes a verdict, and has it swallowed at the
+// gate; the lead waits forever on a seat that already reported. The catalog and
+// prompt pins do fail on that edit, but both read as "you changed the catalog,
+// update the pin" — which is exactly what the author making it would do. Nothing
+// says *you just muted every reviewer*. This does.
+//
+// The `who` arm is not decoration: it proves the seat's `[]` is REAL and
+// load-bearing on this very fixture. Without it a green test is consistent with
+// gating being broken for everything, which would prove nothing about
+// review-done's exemption.
+test('t186: review-done survives the FIRE-TIME GATE on a seat with intents:[] (the uncatalogued-verb fuse)', async () => {
+  const { m, injected, gated, killed, persistence } = mkReview();
+  // Exactly what _handleTeamReview persists for a reviewer: identity markers plus
+  // the shipped template's `intents: []`. Asserted below rather than trusted.
+  persistence.upsert({ name: 'team-reviewer-1', ephemeral: true, reviewFor: 'lead', intents: [] });
+  m.sessions.set('team-reviewer-1', { name: 'team-reviewer-1', agentType: 'claude', cwd: '/proj' });
+
+  // ENTER: the gate reads the PERSISTED list, so a fixture that failed to store
+  // `[]` would exercise the all-enabled default and pass while testing nothing.
+  assert.deepStrictEqual(persistence.get('team-reviewer-1').intents, [],
+    'ENTER: the seat really is persisted with the everything-gated empty allowlist');
+
+  // Control: a CATALOGUED verb on this same seat is denied by that same `[]`.
+  await m._handleIntent('team-reviewer-1', { type: 'who' });
+  assert.ok(injected.some((t) => /the who intent is disabled for this session/.test(t)),
+    'the empty allowlist really does gate a catalogued intent on this seat');
+
+  await m._handleIntent('team-reviewer-1', { type: 'review-done', body: 'VERDICT: ACCEPT' });
+
+  assert.deepStrictEqual(gated, [{ target: 'lead', sender: 'team-reviewer-1', body: 'VERDICT: ACCEPT' }],
+    'the verdict crossed the gate and reached the lead — catalog review-done and this is []');
+  assert.deepStrictEqual(killed, ['team-reviewer-1'], 'the seat retired, so the lead is not left waiting on it');
+  assert.ok(!injected.some((t) => /the review-done intent is disabled/.test(t)),
+    'review-done was never bounced as a disabled intent');
+});
+
 // T31 launch-time sweep: drop persisted ephemeral+reviewFor+archivedAt corpses (the
 // old ARCHIVE-retire graveyard). The three-marker guard is the doubt-guard — a
 // record missing ANY marker stays.
