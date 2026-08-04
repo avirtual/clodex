@@ -34,6 +34,22 @@ function mk(overrides = {}) {
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
+    // Real pure leaf, like fs above: _flushParkedNow pre-counts with it OUTSIDE a
+    // try/catch (the count decides whether to enqueue a producer at all), so an
+    // unwired seam is an uncaughtException, not a silent no-op the way the old
+    // in-try drainPending was. Reads the fixture's own PENDING_DIR and returns 0
+    // for a missing dir, so a fixture that parks nothing needs no override.
+    countPending: require('../pending-store').countPending,
+    // The rest of the pending seam, for one reason: every OTHER caller of these
+    // sits inside `try { … } catch { return; }`, so an unwired seam is a swallowed
+    // TypeError — both drains become a silent no-op and any test written against
+    // them passes vacuously. (Third time this family bit us: countPending above,
+    // MSG_MAX_AGE below.) All three are pure leaves over the fixture's own
+    // PENDING_DIR and answer "nothing parked" for the undefined one most fixtures
+    // have, so wiring them here changes no behaviour — it only stops the silence.
+    isDraftOpen: require('../proxy-util').isDraftOpen,
+    drainPending: require('../pending-store').drainPending,
+    hasActivePending: require('../pending-store').hasActivePending,
     // Every rejecting ticket verb calls this. Undefined here would make each one
     // run its catch branch and report the failure wording, so a host that stopped
     // wiring the seam would degrade silently instead of failing a test.
@@ -1304,7 +1320,7 @@ test('spawn template: malformed JSON file errors, no spawn', async () => {
 // the idle-edge Node drain is the turn-end fallback for a pure-text (no-tool)
 // turn. Real pending-store fns + isDraftOpen injected over a temp PENDING_DIR;
 // _injectText captured (no PTY). One atomic rename-claim = exactly-once.
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal, parkIdInUse } = require('../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../proxy-util');
 
 function mkPark(overrides = {}) {
@@ -1317,7 +1333,19 @@ function mkPark(overrides = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     ...overrides,
   });
-  m._injectText = (s, text) => injected.push(text);
+  // Models the QUEUE: a producer is evaluated at WRITE time. The real queue
+  // claims inside _drain, so a stub that pushed the placeholder text would record
+  // '' for every produce-based drain and assert nothing about the payload.
+  m._injectText = (s, text, opts) => {
+    const out = opts && typeof opts.produce === 'function' ? opts.produce() : text;
+    // The queue WRITES NOTHING for a null/empty producer (inject-queue _drain
+    // returns before the write), so recording one would invent an injection that
+    // never happens — and every "nothing was delivered" assertion would see a
+    // phantom entry. A producer returns null whenever its claim came up empty:
+    // another drainer won, or every entry failed the born check.
+    if (out == null || out === '') return;
+    injected.push(out);
+  };
   m._broadcast = () => {};
   return { m, PENDING_DIR, injected };
 }
@@ -2021,9 +2049,30 @@ test('_injectRoster/_settleBoot: a codex seat stamps only at the settle (deliver
   m.sessions.set('cx', s);
   m._injectRoster(s, teamStub);   // stashes the team ref — must NOT stamp yet
   assert.deepStrictEqual(stamped, [], 'the stash does not stamp — a seat dying pre-settle retries');
-  m._deliverMessage = () => {};
+  // The stamp now rides _deliverMessage's onWrite (6th arg), fired when the text is
+  // DURABLE — so the stub must invoke it or it is modelling a delivery that never
+  // wrote. That is the next test, which pins the other half.
+  m._deliverMessage = (_n, _s, _b, _t, _tag, onWrite) => { if (onWrite) onWrite(); };
   m._settleBoot(s);               // actual delivery at boot-settle
   assert.deepStrictEqual(stamped, ['cx'], 'the settle stamps rosterSent');
+});
+
+test('_settleBoot: a delivery that never reaches the write does NOT stamp rosterSent', () => {
+  // The t168 property, and the reason the stamp moved off the enqueue: enqueue
+  // returns while the bytes are still in the queue's ready loop, INSIDE the boot
+  // window this runs in. A stamp taken from the return suppresses the roster for
+  // the seat's whole life (_maybeInjectComposition reads rosterSentAt) on the
+  // strength of a write the boot re-render may have wiped. Modelled by a delivery
+  // that never fires onWrite; the seat must stay un-stamped so it retries.
+  const stamped = [];
+  const { m } = mkPark({ ...teamDeps,
+    getPersistence: () => ({ list: () => [], get: () => null, setRosterSent: (n) => stamped.push(n) }) });
+  const s = { name: 'cx', agentType: 'codex', cwd: '/proj/b' };
+  m.sessions.set('cx', s);
+  m._injectRoster(s, teamStub);
+  m._deliverMessage = () => {};   // enqueued, never written
+  m._settleBoot(s);
+  assert.deepStrictEqual(stamped, [], 'no write → no stamp → the roster is retried, not suppressed forever');
 });
 
 test('_notifyComposition: teamless / dep-less session is a no-op, never throws into teardown', () => {
@@ -2332,7 +2381,7 @@ function mkReview(extra = {}) {
   m._deliverParkedActive = (name, sender, body, mtype) => parkedActive.push({ name, sender, body, mtype });
   // Default: delivery succeeds. A test can reassign m._gatedDeliver to return
   // { error } (dead/absent lead) to drive MUST-FIX 3's bounce-and-keep-live arm.
-  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { delivered: true }; };
+  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); order.push('deliver'); return { queued: true }; };
   m.archive = async (name) => { archived.push(name); order.push('archive'); };
   // T31: review-done now DISCARDS (kill) instead of archiving. kill() drops the
   // persistence record — mirror that here so the sweep/record assertions see it.
@@ -3277,9 +3326,16 @@ function mkTasks(extra = {}) {
   // with deepStrictEqual, and widening the recorded shape would force those
   // pins to be rewritten to accommodate a field they are not about.
   const urgents = [];
-  m._gatedDeliver = (target, sender, body, urgent) => {
+  // Fires `onWrite` (6th arg), because this stub models a delivery that REACHES
+  // THE WRITE. A stub that took it and never called it would model a permanently
+  // wiped write, so every caller that stamps from onWrite (the watchdog nudge)
+  // would look permanently broken; a stub that ignored the arg would silently
+  // certify the old stamp-on-return behaviour. Tests wanting the never-written
+  // case override with a stub that omits the call.
+  m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
     gated.push({ target, sender, body }); urgents.push(urgent);
-    return { delivered: true };
+    if (typeof onWrite === 'function') onWrite();
+    return { queued: true };
   };
   m._broadcast = (channel, msg) => broadcasts.push({ channel, msg });
   m._sendToSession = () => {};
@@ -3391,7 +3447,7 @@ test('task reassign: a parked/dead OLD seat does not block the NEW delivery (ind
   let call = 0;
   f.m._gatedDeliver = (target, sender, body) => {
     call++; f.gated.push({ target, sender, body });
-    return call === 1 ? { error: 'old seat gone' } : { delivered: true };
+    return call === 1 ? { error: 'old seat gone' } : { queued: true };
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
   assert.strictEqual(f.gated.length, 2, 'both deliveries attempted despite the first erroring');
@@ -3601,7 +3657,7 @@ test('t92 reassign: the prev → next reply carries the suffix too (its own word
     // Park the NEW-assignee spec only; the old-assignee notice is fire-and-forget.
     return target === 'team-reviewer-1'
       ? { parked: 'pk-2', reason: 'idle 5h with a cold cache — waking it re-bills its full context' }
-      : { delivered: true };
+      : { queued: true };
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
   const note = f.injected.join('\n');
@@ -3691,11 +3747,96 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () 
   f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
   assert.strictEqual(f.one('t1').nudgedAt, null,
     'a held nudge reaches nobody, so it must not burn the single nudge this stall episode gets — otherwise the alarm is silently spent');
-  // Parked, by contrast, DOES arrive on the lead's next turn and counts.
-  f.m._gatedDeliver = () => ({ parked: 'pk-9', reason: 'idle' });
+  // Parked, by contrast, DOES arrive on the lead's next turn and counts — a park is
+  // durable, so the real _gatedDeliver fires onWrite on it (and never on a bare held).
+  f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => {
+    if (typeof onWrite === 'function') onWrite();
+    return { parked: 'pk-9', reason: 'idle' };
+  };
   f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
   assert.ok(typeof f.one('t1').nudgedAt === 'number',
     'a parked nudge DOES count — it drains on the lead`s next turn, so re-nudging would duplicate it');
+});
+
+test('t168 a nudge QUEUED but never written does not spend the stall episode', () => {
+  // The A3 half of t168. `nudgedAt` is read back to spend the one nudge a stall
+  // episode gets, so stamping it from _gatedDeliver's synchronous return silences
+  // the watchdog forever on exactly the ticket it exists to surface — the bytes sit
+  // in the queue's ready loop and a boot re-render can wipe them. Modelled by a
+  // stub that returns success WITHOUT firing onWrite: the ticket must stay
+  // un-nudged, and the next sweep must try again.
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const stallMs = 60 * 60 * 1000;
+  const ts = f.load();
+  ts[0].lastActivityAt = Date.now() - (stallMs * 4);
+  tstore.save(f.teamDir, ts);
+  let calls = 0;
+  f.m._gatedDeliver = () => { calls++; return { queued: true }; };  // accepted; never written
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(calls, 1, 'ENTER: the sweep must have attempted a nudge, or the assertion below is vacuous');
+  assert.strictEqual(f.one('t1').nudgedAt, null,
+    'queued is not delivered — a nudge whose write never happened must leave the episode UNSPENT');
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(calls, 2, 'and the next sweep re-nudges, because the alarm was never actually raised');
+});
+
+// The rework half of A3. Moving the stamp to onWrite opens a window the
+// synchronous stamp did not have: the write can land AFTER the seat has spoken.
+// _touchTicketActivity clears `nudgedAt` on activity — that IS the end of the
+// stall episode — so a stamp that only knows its ticket re-marks a fresh episode
+// as already-nudged, and `:4197` then suppresses the next stall forever, since
+// only activity clears the field and activity is precisely what a stall lacks.
+// Both halves are required: the first alone proves a stamp was skipped, which a
+// stamp that never happens also satisfies.
+test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW episode', () => {
+  const f = mkTasks();
+  f.seat('lead'); const hand = f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const stallMs = 60 * 60 * 1000;
+  const stall = () => { const ts = f.load(); ts[0].lastActivityAt = Date.now() - (stallMs * 4); tstore.save(f.teamDir, ts); };
+  stall();
+  let captured = null;
+  let calls = 0;
+  // Models the real gap: accepted by the queue, written some time later.
+  f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; captured = onWrite; return { queued: true }; };
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(calls, 1, 'ENTER: the sweep found the stall and enqueued a nudge');
+  assert.strictEqual(typeof captured, 'function', 'ENTER: the stamp rides onWrite, so there is something to fire late');
+  // The seat speaks while the nudge is still in the queue. Real path, not a poke
+  // at the store: _reconcileTickets arms the watch map, _touchTicketActivity ends
+  // the episode exactly as a PTY turn would.
+  f.m._reconcileTickets(f.team, f.teamDir);
+  f.m._touchTicketActivity(hand.name);
+  assert.strictEqual(f.one('t1').nudgedAt, null, 'ENTER: activity ended the episode');
+  captured();
+  assert.strictEqual(f.one('t1').nudgedAt, null,
+    'the write is about the episode that ENDED — stamping now marks a fresh episode as already-nudged');
+  // And the alarm is still armed: the next stall must reach the lead.
+  stall();
+  f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; if (typeof onWrite === 'function') onWrite(); return { queued: true }; };
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  assert.strictEqual(calls, 2, 'the next stall nudges — a skipped stamp that also killed the alarm would be no better than stamping');
+  assert.ok(typeof f.one('t1').nudgedAt === 'number', 'and THAT nudge, written in its own episode, spends it');
+});
+
+// t168: the success return is `queued`, never `delivered`. Nothing else in the
+// suite pins it — every consumer branches on error/held/parked and falls through
+// on success, so renaming the field back leaves the whole suite green while every
+// caller silently reads a claim the queue cannot back. The name IS the fix here:
+// the negative verdicts are decided synchronously and are exact, but success only
+// means the inject queue accepted the text — the write follows within a poll of
+// the seat's readiness latch.
+test('t168 _gatedDeliver reports QUEUED, not delivered — the write happens later', () => {
+  const { m } = mkPark({ shouldHoldDm: () => ({ hold: false }) });
+  m.sessions.set('a', { name: 'a', agentType: 'claude', activityState: 'idle' });
+  m._deliverMessage = () => {};
+  const r = m._gatedDeliver('a', 'bob', 'hi', false);
+  assert.deepStrictEqual(r, { queued: true },
+    'success is a QUEUE acceptance; `delivered` would assert a write that has not happened');
+  assert.strictEqual(r.delivered, undefined,
+    'and the old key must be GONE — a caller left reading `.delivered` would silently see undefined and treat every success as a failure');
 });
 
 test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, but not a work assignment)', () => {
@@ -4044,7 +4185,7 @@ test('task done: the ASSIGNEE path is unchanged — delivery, and the keep-open 
 
   // Same sender, reachable lead: closes, delivers, and says so.
   f.gated.length = 0;
-  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { delivered: true }; };
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { queued: true }; };
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
   assert.strictEqual(f.one('t1').state, 'done');
   assert.strictEqual(f.one('t1').closedBy, 'team-hand', 'the closer is the seat, not the role');
@@ -5999,11 +6140,21 @@ function mkFlush(overrides = {}) {
     PENDING_DIR: '/tmp/pending-test',
     log: { warn() {}, info() {}, error() {} },
     drainPending: (root, name, tag) => { drained.push({ name, tag }); return overrides._texts || []; },
+    // The pre-count is non-destructive and must agree with what the stubbed drain
+    // would yield; the real fn would read the (nonexistent) PENDING_DIR as 0.
+    countPending: () => (overrides._texts || []).length,
     ...overrides,
   });
   m._drained = drained;
   m._injected = [];
-  m._injectText = (session, text, opts) => m._injected.push({ name: session.name, text, opts });
+  // Models the QUEUE: a producer is evaluated at write time, not at enqueue.
+  // Running it here is what keeps `_drained` a record of when the claim actually
+  // happened — a fixture that ignored `produce` would record no claim at all and
+  // every assertion about the drain would pass vacuously.
+  m._injectText = (session, text, opts) => {
+    const produced = opts && typeof opts.produce === 'function' ? opts.produce() : text;
+    m._injected.push({ name: session.name, text: produced, opts });
+  };
   return m;
 }
 
@@ -6332,7 +6483,7 @@ test('T35 latch: the boot gate reads the latch live, and the latch never un-sets
 // at queue-BUILD time; test (c) relabels the seat 'claude' before building the
 // queue so the real onData latch, the real ready() seam, and the real InjectQueue
 // drain compose end-to-end. Only the relabel is a test artifact.
-function mkOnDataProbe() {
+function mkOnDataProbe(overrides = {}) {
   let onDataCb = null;
   const fakePty = {
     spawn: () => ({ onData(cb) { onDataCb = cb; }, onExit() {}, kill() {}, pid: 777 }),
@@ -6361,6 +6512,7 @@ function mkOnDataProbe() {
     // assertions; the T54 edge tests below seed a park to exercise it.
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
     bootDrainSettleMs: 0,
+    ...overrides,
   });
   m._sendToSession = () => {};
   m._scanPtyOutput = () => {};        // bash onData scans pty output — silence it
@@ -6506,6 +6658,155 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   await new Promise((r) => setTimeout(r, 400));  // > readyPollMs (250) so the producer definitely fires
   assert.deepStrictEqual(writes, [], 'fire-time re-check saw the draft → claimed nothing, wrote nothing');
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
+});
+
+// t168: the same invariant, for the two OTHER drains that reach the store. T54
+// fixed only the boot edge; _flushParkedNow and _drainPendingAtIdle kept the
+// eager claim (drainPending, THEN a fire-and-forget inject), so a write that
+// never happened took the only copy with it. Both are ported to the fire-time
+// producer here. The lever is the same one boot-g uses: hold the queue's
+// readiness gate so the producer is enqueued but not yet fired, then make the
+// write impossible and assert the payload is STILL ON DISK and re-drains.
+//
+// Asserting "the bytes arrived" would NOT test this. The pre-fix code delivers
+// the bytes correctly whenever the write does happen; the defect is only visible
+// on the path where it does not.
+
+test('t168 INVARIANT: an operator FLUSH whose write never lands leaves the mail on disk and re-drainable', async () => {
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'flush-a', null);
+  const s = getSession('flush-a');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'flush-a', '[agent:from lead] the only copy', '1');
+  fireData('\x1b[?2004h');
+  s._bootReadySeen = false;                      // hold the queue before the producer can fire
+  const r = m.flushPending('flush-a');
+  // The operator-facing report is synchronous and optimistic by design (the spec
+  // forbids awaiting the write), so it says 1 — that is precisely why the payload
+  // must survive underneath it.
+  assert.deepStrictEqual(r, { ok: true, count: 1 }, 'the flush reports what it queued');
+  await new Promise((r2) => setTimeout(r2, 20));
+  assert.deepStrictEqual(writes, [], 'producer parked at the ready gate — nothing written');
+  assert.ok(hasPending(PENDING_DIR, 'flush-a'),
+    'INVARIANT: pre-fix this was already claimed off disk while the button reported success — the mail existed nowhere');
+  // The seat dies before ever becoming ready: the write can now never happen.
+  s._dead = true;
+  s._bootReadySeen = true;
+  await new Promise((r2) => setTimeout(r2, 400));
+  assert.deepStrictEqual(writes, [], 'dead seat → no write');
+  assert.ok(hasPending(PENDING_DIR, 'flush-a'),
+    'and the mail is STILL on disk — recoverable by the next drain, not silently destroyed');
+  // Re-drainable, which is the whole point of not having claimed it.
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'flush-a', 'check'),
+    ['[agent:from lead] the only copy'], 'the payload survives intact and re-drains');
+});
+
+test('t168 INVARIANT: an IDLE-edge drain whose write never lands leaves the mail on disk and re-drainable', async () => {
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
+  await bashCreate(m, 'idle-a', null);
+  const s = getSession('idle-a');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'idle-a', '[agent:from lead] the only copy', '1');
+  fireData('\x1b[?2004h');
+  s._bootReadySeen = false;                      // hold the queue before the producer fires
+  s.lastUserInputTs = 0; s.lastUserSubmitTs = 0; // no draft — the pre-enqueue gate passes
+  m._drainPendingAtIdle(s);
+  await new Promise((r2) => setTimeout(r2, 20));
+  assert.deepStrictEqual(writes, [], 'producer parked at the ready gate — nothing written');
+  assert.ok(hasPending(PENDING_DIR, 'idle-a'), 'INVARIANT: not claimed at schedule time');
+  s._dead = true;
+  s._bootReadySeen = true;
+  await new Promise((r2) => setTimeout(r2, 400));
+  assert.deepStrictEqual(writes, [], 'dead seat → no write');
+  assert.ok(hasPending(PENDING_DIR, 'idle-a'), 'the mail is STILL on disk after a write that never happened');
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'idle-a', 'check'),
+    ['[agent:from lead] the only copy'], 'the payload survives intact and re-drains');
+});
+
+// The idle twin of boot-g: a draft opening between enqueue and fire. The parkable
+// divert alone is NOT enough here — it runs AFTER the producer has claimed, so it
+// re-parks a JOINED blob under a fresh seq with no resend id, and the originals
+// (their ids, their separation) are gone. Nothing is lost, which is why every
+// disk-presence assertion above stays green either way; what is lost is identity.
+test('t168 rework: a draft opening between the idle enqueue and the fire leaves the parked entries UNTOUCHED', async () => {
+  // INJECT_QUIET_MAXWAIT explicitly large, for the reason mkCompact documents about
+  // INJECT_HOLD_TIMEOUT: mkOnDataProbe omits it, so the park cap armed by a divert
+  // runs on setTimeout(fn, undefined) — next tick — and re-flushes the re-parked
+  // blob before any assertion, turning an identity check into a write race.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe({ INJECT_QUIET_MAXWAIT: 60_000 });
+  await bashCreate(m, 'idle-b', null);
+  const s = getSession('idle-b');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  // seq must be the `<ts>.<counter>` form _nextParkSeq mints: parkFileHasId reads
+  // the id from segment 2 of a 4-segment name, so a single-token seq hides the id.
+  parkDelivery(PENDING_DIR, 'idle-b', '[agent:from lead] first', '100.1', 'pk1');
+  parkDelivery(PENDING_DIR, 'idle-b', '[agent:from lead] second', '100.2', 'pk2');
+  fireData('\x1b[?2004h');
+  s._bootReadySeen = false;                      // hold the queue before the producer fires
+  s.lastUserInputTs = 0; s.lastUserSubmitTs = 0; // no draft — the pre-enqueue gate passes
+  m._drainPendingAtIdle(s);
+  await new Promise((r2) => setTimeout(r2, 20));
+  assert.strictEqual(countPendingReal(PENDING_DIR, 'idle-b'), 2, 'ENTER: producer enqueued and held, nothing claimed yet');
+  s.lastUserInputTs = Date.now();                // draft opens in the enqueue→fire window
+  s._bootReadySeen = true;                       // release the producer
+  await new Promise((r2) => setTimeout(r2, 400));
+  assert.deepStrictEqual(writes, [], 'draft open at fire time → nothing spliced into it');
+  assert.strictEqual(countPendingReal(PENDING_DIR, 'idle-b'), 2,
+    'still TWO entries — a claim-then-divert would have re-parked them as one joined blob');
+  assert.ok(parkIdInUse(PENDING_DIR, 'pk1') && parkIdInUse(PENDING_DIR, 'pk2'),
+    'and their resend handles survive — the divert re-parks with no id, so a resend would resolve to nothing');
+});
+
+// The HOLD branch is the longest-lived window a producer can sit in — a compact
+// or a permission dialog lasts as long as the operator does, not a poll tick —
+// so it is where an eager claim costs the most. Two separate places could
+// flatten a producer into text there and both leave every other test green:
+// _injectText pushing produce() at ENQUEUE time, and _maybeFlushInjectQueue
+// joining producers at RELEASE time. One timeline covers both because the claim
+// they'd each make happens at a different instant, so the disk is asserted twice.
+test('t168 INVARIANT: a producer held across a compact window claims nothing at enqueue OR at release', async () => {
+  // INJECT_HOLD_TIMEOUT explicitly large: mk() omits it, so the valve armed by the
+  // hold branch runs on setTimeout(fn, undefined) — next tick — and clears
+  // _compactGuard before the assertions, testing a hold that never happened.
+  const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe({ INJECT_HOLD_TIMEOUT: 60_000 });
+  await bashCreate(m, 'hold-a', null);
+  const s = getSession('hold-a');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(PENDING_DIR, 'hold-a', '[agent:from lead] the only copy', '1');
+  fireData('\x1b[?2004h');
+  s._bootReadySeen = false;                      // queue gate held for the whole test
+  s.lastUserInputTs = 0; s.lastUserSubmitTs = 0; // no draft — the pre-enqueue gate passes
+  s._compactGuard = true;                        // _injectHoldReason → 'compact-window'
+  m._drainPendingAtIdle(s);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(s._injectQueue && s._injectQueue.length === 1, 'the drain reached the hold branch');
+  assert.strictEqual(typeof s._injectQueue[0].produce, 'function',
+    'held as an unclaimed ENTRY, not as text — flattening here claims now and holds the bytes in memory for the whole compact');
+  assert.ok(hasPending(PENDING_DIR, 'hold-a'), 'INVARIANT: nothing claimed at enqueue time');
+  // Compact ends. The release re-enqueues, and must STILL not claim: the queue's
+  // own gates are downstream of this point.
+  s._compactGuard = false;
+  m._maybeFlushInjectQueue(s);
+  assert.strictEqual(s._injectQueue.length, 0,
+    'the flush actually ran — it early-returns on any hold reason, and then the disk assertion below is vacuous');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(writes, [], 'ready gate still held — nothing written');
+  assert.ok(hasPending(PENDING_DIR, 'hold-a'), 'INVARIANT: nothing claimed at hold-release time either');
+  // The seat dies before the queue ever writes.
+  s._dead = true;
+  s._bootReadySeen = true;
+  await new Promise((r) => setTimeout(r, 400));
+  assert.deepStrictEqual(writes, [], 'dead seat → no write');
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'hold-a', 'check'),
+    ['[agent:from lead] the only copy'], 'the payload survived the whole hold and re-drains');
 });
 
 // --- plugin intent verbs (plugin-plan.md [internal design doc, not in this repo] R-INT-2, rules P1/P4) ----------

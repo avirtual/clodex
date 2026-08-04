@@ -1842,8 +1842,17 @@ function createSessionManager(deps) {
       if (team) {
         session._pendingRoster = null;
         try {
-          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
-          this._markRosterSent(session);   // delivered now → stamp so a restart won't re-inject
+          // Stamped from the WRITE, not the enqueue: `rosterSentAt` is read back by
+          // _maybeInjectComposition to suppress the roster for the seat's whole life,
+          // so a stamp taken here can suppress a roster that was never delivered.
+          // The gap is real even though this path has no ready gate (the roster is
+          // codex-only and `ready` is installed for claude): the delivery rides a
+          // promise chain, then the quiet gate, and an inject hold parks it for up to
+          // INJECT_HOLD_TIMEOUT — all inside the boot window this function runs in,
+          // where a seat that dies early hits the _dead early-returns instead.
+          // Same shape as the deliveredTo bug.
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm',
+            '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
         }
@@ -2326,31 +2335,58 @@ function createSessionManager(deps) {
       clearTimeout(session._injectHoldTimer);
       session._injectHoldTimer = null;
       session._injectQueue = [];
+      // Mixed queue: plain texts and unclaimed producers, in arrival order. If any
+      // entry is a producer the whole flush becomes one, so the claim still happens
+      // at write time — joining eagerly here would re-introduce the eager claim on
+      // the hold-release path specifically, which is the hardest one to notice.
+      if (queue.some((e) => e && typeof e.produce === 'function')) {
+        const produce = () => {
+          const parts = [];
+          for (const e of queue) {
+            if (e && typeof e.produce === 'function') {
+              let p = null;
+              try { p = e.produce(); } catch { p = null; }
+              if (p) parts.push(p);
+            } else if (e) parts.push(e);
+          }
+          return parts.length ? parts.join('\n') : null;
+        };
+        this._injectText(session, '', { bypassHold: true, produce });
+        return;
+      }
       this._injectText(session, queue.join('\n'), { bypassHold: true });
     }
 
+    // Claims LATE, like the boot-ready drain below. The eager version claimed here
+    // and fire-and-forgot the inject, which is a silent loss whenever the write does
+    // not happen: _drain returns without writing on every isDead() check, and the
+    // parkable divert can re-park, so a seat dying between the claim and the write
+    // dropped the messages with the files already deleted. The producer runs inside
+    // the queue's critical section, so claim and write are the same instant.
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       try { if (isDraftOpen(session)) return; } catch { return; }   // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;
-      let texts = [];
-      try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch {}
-      if (!texts.length) return;                        // hook already drained, or nothing parked
-      this._injectText(session, texts.join('\n\n'), { parkable: true });
+      this._injectText(session, '', {
+        parkable: true,
+        produce: () => {
+          if (session._dead) return null;
+          try { if (isDraftOpen(session)) return null; } catch { return null; }
+          let texts = [];
+          try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
+          return texts.length ? texts.join('\n\n') : null;   // hook already drained
+        },
+      });
     }
 
-    // Boot-ready-edge drain (T54). The idle-edge drain above claims the store
-    // EAGERLY (drainPending at schedule time) then fire-and-forgets the inject —
-    // fine for a genuinely-parked LIVE seat, but a silent-loss trap on a FRESH boot
-    // edge, where the composer may not yet accept input: the file is gone from disk
-    // (no ✉) yet the write is wiped by the boot re-render. So the boot path claims
-    // LATE instead: peek (non-destructive) to decide whether to bother, then enqueue
-    // a fire-time PRODUCER that does the destructive drainPending claim only once the
-    // InjectQueue is past its ready + quiet gates and about to write. If the seat
-    // died or a draft opened in the meantime the producer claims nothing and returns
-    // null — the delivery stays parked, recoverable, its ✉ intact (never worse than
-    // pre-T54's recoverable click). Exactly-once holds: the claim is the same atomic
-    // dir-rename the hook + idle drains use, so whoever fires first owns the messages.
+    // Boot-ready-edge drain (T54). Claims LATE, like every other drain: peek
+    // (non-destructive) to decide whether to bother, then enqueue a fire-time
+    // PRODUCER that does the destructive drainPending claim only once the InjectQueue
+    // is past its ready + quiet gates and about to write. If the seat died or a draft
+    // opened in the meantime the producer claims nothing and returns null — the
+    // delivery stays parked, recoverable, its ✉ intact. Exactly-once holds: the claim
+    // is the same atomic dir-rename the hook + idle drains use, so whoever fires
+    // first owns the messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
@@ -3734,7 +3770,7 @@ function createSessionManager(deps) {
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
-      return { delivered: true };
+      return { queued: true };   // handed to the queue; the write comes later
     }
 
     _ticketDeliverySuffix(d, assignee) {
@@ -3810,15 +3846,22 @@ function createSessionManager(deps) {
         if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
         if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
         const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true);
-        // Stamp only what actually reached the seat. `parked` counts — the text is
-        // in the seat's pending store and drains on its next turn — but `held` and
-        // `undelivered` do NOT: stamping those would record a delivery that never
-        // happened and suppress the next replay, which is this bug with extra steps.
+        // Stamp only what reached the seat, or is durably on its way. `parked`
+        // counts — the text is in the seat's pending store and drains on its next
+        // turn — but `held` and `undelivered` do NOT: stamping those would record a
+        // delivery that never happened and suppress the next replay, which is this
+        // bug with extra steps.
+        // `queued` is WEAKER than `parked` and knowingly so: the bytes are in the
+        // inject queue, written within a poll of the seat's readiness latch, so a
+        // write wiped by a boot re-render still stamps. t156's latch is what keeps
+        // that window shut in practice; at _armReplayFallback's ceiling it reopens.
+        // Closing it properly means stamping from a write-time hook here too — a
+        // change to the replay, which t156 already latched and t168 does not touch.
         // `held` is the one non-delivery worth retrying: it is a property of the seat
         // at this instant, not of the ticket. `self` and `undelivered` are structural
         // and would be identical on every later pass.
         if (r && r.held) held = true;
-        if (!r || !(r.delivered || r.parked)) continue;
+        if (!r || !(r.queued || r.parked)) continue;
         // ONE ticket per respawn, not N. N back-to-back injects race: #1's Enter
         // starts a turn and #2 lands in the turn-start churn where its Enter is
         // swallowed → stranded draft (_flushParkedNow documents the same race being
@@ -4152,17 +4195,45 @@ function createSessionManager(deps) {
     _sweepTeamTickets(team, teamDir, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(teamDir);
-      let changed = false;
       for (const t of tickets) {
         if (t.state !== 'open' || t.assignee == null) continue; // backlog/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode
-        const r = this._gatedDeliver(team.lead, 'ticket-watchdog',
-          `[ticket ${t.id}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false);
-        if (r && !r.error && !r.held) { t.nudgedAt = now; changed = true; }
+        // `nudgedAt` is read back at the top of this loop to spend the ONE nudge a
+        // stall episode gets, so a stamp taken from the return silences the watchdog
+        // forever on exactly the ticket it exists to surface — a nudge wiped by a
+        // boot re-render costs the alarm entirely.
+        // The stamp therefore rides onWrite, which fires LATER than this loop (the
+        // queue writes after its gates). It cannot mutate `t`: that object is this
+        // sweep's snapshot and nothing saves it. So it re-loads, stamps and saves on
+        // its own — the same load-after-the-delivery-decided shape _replayOpenTickets
+        // uses, and for the same reason: a wide window invites clobbering a
+        // concurrent write.
+        const tid = t.id;
+        const seenAt = t.lastActivityAt || null;
+        this._gatedDeliver(team.lead, 'ticket-watchdog',
+          `[ticket ${tid}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false, '',
+          () => {
+            try {
+              const fresh = ticketsStore.load(teamDir);
+              const rec = fresh.find((x) => x.id === tid);
+              if (!rec || rec.nudgedAt) return;      // closed, or another sweep won
+              // The stamp must identify the EPISODE it was decided for, not just the
+              // ticket: _touchTicketActivity clears `nudgedAt` on any activity, so a
+              // seat that speaks inside this window ends the stall. Stamping anyway
+              // spends the next episode's one nudge before it starts, and only
+              // activity clears it — which never comes during a stall.
+              if (rec.state !== 'open') return;
+              if ((rec.lastActivityAt || null) !== seenAt) return;
+              rec.nudgedAt = Date.now();
+              ticketsStore.save(teamDir, fresh);
+            } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
+          });
       }
-      if (changed) ticketsStore.save(teamDir, tickets);
+      // No save here: the only field this sweep writes is `nudgedAt`, and each stamp
+      // now saves its own re-loaded copy from onWrite. A save of `tickets` at this
+      // point would write back a snapshot taken BEFORE those stamps and undo them.
     }
 
     static CONTEXT_COMMANDS = {
@@ -4368,7 +4439,10 @@ function createSessionManager(deps) {
     }
 
 
-    _gatedDeliver(targetName, senderTag, body, urgent, tag = '') {
+    // `onWrite` (see _deliverMessage) fires once the text is DURABLE — parked, or
+    // released by the queue. A caller that persists "this seat has been told" must
+    // use it rather than the return, which is only a queue acceptance.
+    _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       const verdict = shouldHoldDm({
@@ -4383,12 +4457,20 @@ function createSessionManager(deps) {
         const parkId = canPark
           ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag))
           : null;
+        // A park IS durable, so it fires onWrite; a bare `held` reached nobody and
+        // must not — that asymmetry is the same one the nudge/replay stamps encode.
+        if (parkId && typeof onWrite === 'function') { try { onWrite(); } catch {} }
         return parkId
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
-      this._deliverMessage(targetName, senderTag, body, 'dm', tag);
-      return { delivered: true };
+      this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite);
+      // `queued`, not `delivered`: _deliverMessage returns once the text is parked
+      // or handed to the inject queue, and the queue writes it later — within one
+      // poll of the seat's readiness latch. Every negative verdict above IS decided
+      // synchronously and is therefore exact; only success is a statement about the
+      // future. A caller needing certainty passes _deliverMessage an onWrite hook.
+      return { queued: true };
     }
 
     _setRelayRoster(via, roster) {
@@ -4585,12 +4667,26 @@ function createSessionManager(deps) {
       return `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
     }
 
-    _deliverMessage(targetName, senderName, body, mtype, tag = '') {
+    // `onWrite` fires when the text is DURABLE — parked to disk, or released by the
+    // queue — never on the enqueue. A caller that persists "this seat has been told"
+    // must use it: enqueue returns while the bytes are still in the ready loop, so a
+    // stamp taken from the return outlives a write that the boot re-render wiped, and
+    // the seat is then suppressed forever on the strength of it.
+    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
+      const fire = typeof onWrite === 'function' ? onWrite : null;
       if (!this._maybeParkDelivery(target, finalText)) {
-        this._injectText(target, finalText, { parkable: true });
+        this._injectText(target, finalText, {
+          parkable: true,
+          // A park via the fire-time divert is durable too, so the stamp is taken
+          // once the producer runs and the write is imminent — the same instant the
+          // divert decides. Returning the text unchanged keeps this a pure hook.
+          ...(fire ? { produce: () => { try { fire(); } catch {} return finalText; } } : {}),
+        });
+      } else if (fire) {
+        try { fire(); } catch {}   // parked to disk = durable; the stamp is honest
       }
       this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
     }
@@ -4692,14 +4788,22 @@ function createSessionManager(deps) {
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead) return { ok: true, count: 0 };
-      let texts = [];
-      try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch {}
-      if (!texts.length) return { ok: true, count: 0 };  // another drainer won the claim
-      const plural = texts.length === 1 ? 'y' : 'ies';
+      // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
+      // files, and enqueue returns before the queue has written anything, so
+      // claiming here meant a wiped or never-reached write destroyed the only
+      // copy — with flushPending broadcasting pending-count: 0 on top of it.
+      // The producer runs inside the queue's critical section, past the ready and
+      // quiet gates, so the files are claimed only when the write is imminent.
+      // The count is a non-destructive PRE-count for the return value and the log
+      // line; the drain may legitimately yield fewer (another drainer won, a born
+      // mismatch restored one), which costs an over-count in a log, never a message.
+      const count = countPending(PENDING_DIR, target.name);
+      if (!count) return { ok: true, count: 0 };
+      const plural = count === 1 ? 'y' : 'ies';
       const body = kind === 'park-cap'
-        ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${texts.length} parked deliver${plural}`
-        : `flushed ${texts.length} parked deliver${plural} (operator)`;
-      log.warn('inject', `${kind} for ${target.name} — draining ${texts.length} parked deliver${plural} via queue`);
+        ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${count} parked deliver${plural}`
+        : `flushed ${count} parked deliver${plural} (operator)`;
+      log.warn('inject', `${kind} for ${target.name} — draining ${count} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       // ONE injection for the whole drain, not N. N sequential _injectText calls
       // raced: #1's Enter starts a CLI turn and #2 landed in the turn-start churn
@@ -4708,8 +4812,15 @@ function createSessionManager(deps) {
       // single body with the SAME blank-line separator the out-of-process hook
       // drain uses (cli-hooks.js: texts.join('\\n\\n')), so a seat sees the same
       // combined shape whichever drainer won. drainPending returns park order.
-      this._injectText(target, texts.join('\n\n'));
-      return { ok: true, count: texts.length };
+      this._injectText(target, '', {
+        produce: () => {
+          if (target._dead) return null;
+          let texts = [];
+          try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch { return null; }
+          return texts.length ? texts.join('\n\n') : null;   // another drainer won the claim
+        },
+      });
+      return { ok: true, count };
     }
 
     flushPending(name) {
@@ -4727,10 +4838,18 @@ function createSessionManager(deps) {
       return r;
     }
 
+    // `produce` carries a payload that is still ON DISK and unclaimed; the queue
+    // evaluates it at write time. Every branch below must keep it a callback: the
+    // moment it is flattened into a string the claim has already happened, which
+    // is the loss this pattern exists to prevent.
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
+      const produce = typeof opts.produce === 'function' ? opts.produce : null;
       if (!opts.bypassHold && this._injectHoldReason(session)) {
-        (session._injectQueue = session._injectQueue || []).push(text);
+        // Held as an ENTRY, not as text — see above. Flattening here would claim
+        // now and hold the bytes in memory for the whole hold, so a process that
+        // dies during a compact window or a permission dialog loses them.
+        (session._injectQueue = session._injectQueue || []).push(produce ? { produce } : text);
         this._armInjectValve(session);
         return;
       }
@@ -4740,7 +4859,10 @@ function createSessionManager(deps) {
       // agent. The divert re-checks for an open draft at write time, inside the
       // queue's critical section.
       const divert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
-      this._injectQueueFor(session).enqueue(text, divert ? { divert } : undefined);
+      const qopts = {};
+      if (divert) qopts.divert = divert;
+      if (produce) qopts.produce = produce;
+      this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
     _parkDivertFor(session, id = null) {

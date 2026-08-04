@@ -264,7 +264,11 @@ function createRemoteWiring(deps) {
           const senderTag = from.includes('@') ? from : `${from}@${origin}`;
           const r = manager._gatedDeliver(to, senderTag, body, urgent === true);
           manager._broadcast('ipc-message', { type: 'dm', from: senderTag, to, body: `WIRE←${origin}: ${body}` });
-          if (r.delivered) return { ok: true, delivered: true };
+          // The WIRE field stays `delivered` — it is the peer protocol and an older
+          // Clodex on the far side reads exactly that key. Only the local return was
+          // renamed to `queued` (it is a queue acceptance, not a write), so this is
+          // the one place the two vocabularies meet. Do not "tidy" them into one.
+          if (r.queued) return { ok: true, delivered: true };
           if (r.parked) return { ok: true, parked: r.parked };
           const why = r.held || r.error || 'not delivered';
           log.info('peer', `dm from ${senderTag} to ${to} not delivered: ${why}`);
