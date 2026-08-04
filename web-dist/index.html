@@ -2330,6 +2330,7 @@ body {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
+  min-width: 0;
 }
 .file-peek-controls {
   display: flex;
@@ -2363,6 +2364,57 @@ body {
   overflow-y: auto;
   min-height: 80px;
 }
+#file-peek-body.hidden,
+#file-peek-editor.hidden,
+#file-peek-save.hidden,
+#file-peek-dirty.hidden,
+#file-peek-back.hidden {
+  display: none;
+}
+.peek-path {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 3px;
+}
+.peek-path:hover {
+  color: #61afef;
+  text-decoration: underline solid;
+  text-decoration-color: currentColor;
+}
+#file-peek-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.file-peek-dirty {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+}
+#file-peek-editor {
+  flex: 0 1 auto;
+  min-height: 0;
+  resize: none;
+  tab-size: 2;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+  background: var(--active-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+#file-peek-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .file-peek-pre {
   font-family:
     ui-monospace,
@@ -2382,6 +2434,17 @@ body {
 }
 .diff-ctx {
   color: var(--text);
+}
+.peek-ln {
+  display: inline-block;
+  margin-right: 12px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  user-select: none;
+  text-align: right;
+}
+.peek-line-hit {
+  background: rgba(97, 175, 239, 0.16);
 }
 .diff-file {
   color: var(--text-dim);
@@ -5473,13 +5536,18 @@ body {
         <div class="popover-title">
           <span id="file-peek-path" title=""></span>
           <span class="file-peek-controls">
+            <button type="button" class="file-peek-tab hidden" id="file-peek-back" title="Back to the file you came from">&larr;</button>
             <button type="button" class="file-peek-tab" id="file-peek-tab-diff">Diff</button>
             <button type="button" class="file-peek-tab" id="file-peek-tab-file">File</button>
+            <button type="button" class="file-peek-tab" id="file-peek-tab-edit">Edit</button>
+            <span id="file-peek-dirty" class="file-peek-dirty hidden" title="Unsaved changes">&bull;</span>
+            <button type="button" class="file-peek-open" id="file-peek-save" title="Save (Cmd+S)">Save</button>
             <button type="button" class="file-peek-open" id="file-peek-open" title="Open in the default editor">Open</button>
             <button type="button" class="popover-close" id="file-peek-close" title="Close" aria-label="Close">&times;</button>
           </span>
         </div>
         <div id="file-peek-body"></div>
+        <textarea id="file-peek-editor" class="hidden" spellcheck="false"></textarea>
       </div>
     </div>
     <div id="report-overlay" class="hidden">
@@ -6223,6 +6291,13 @@ body {
         { name: "sessionFiles", kind: "invoke", channel: "session:files" },
         { name: "filePeek", kind: "invoke", channel: "file:peek" },
         { name: "fileDiff", kind: "invoke", channel: "file:diff" },
+        // The peek's Edit tab. The only WRITE row in the file family, and deliberately
+        // not reachable through peerQuery — a peer's file rows are all reads, and a
+        // write kind there would be remote file-write authority with no per-request
+        // authorization behind it.
+        { name: "fileWrite", kind: "invoke", channel: "file:write" },
+        // Read-only: answers whether a displayed string names a real file, and where.
+        { name: "fileResolve", kind: "invoke", channel: "file:resolve" },
         { name: "fileOpen", kind: "invoke", channel: "file:open" },
         // Reveal in the OS file manager, as distinct from opening the file itself.
         // An ordinary capability row, NOT part of the frozen five-row plugin transport
@@ -7928,6 +8003,10 @@ body {
               const flag = el("span", "tv-stall-flag", t.nudged ? "stalled \xB7 nudged" : "stalled");
               flag.title = t.nudged ? "Quiet past the team\u2019s stall threshold; the watchdog has already nudged the seat once." : "Quiet past the team\u2019s stall threshold.";
               meta.appendChild(flag);
+            } else if (t.parked && !(opts && opts.closed)) {
+              const flag = el("span", "tv-backlog-flag", "parked");
+              flag.title = "Held out of dispatch by the lead. The seat has NOT been sent the spec; assign it to release.";
+              meta.appendChild(flag);
             } else if (t.backlog && !(opts && opts.closed)) {
               const flag = el("span", "tv-backlog-flag", "backlog");
               flag.title = "Unassigned, so the watchdog never nudges it. Assign it or close it.";
@@ -7968,6 +8047,10 @@ body {
               const backlogCount = res.open.filter((t) => t.backlog).length;
               if (backlogCount) {
                 openHead.appendChild(el("span", "tv-backlog-count", `${backlogCount} unassigned`));
+              }
+              const parkedCount = res.open.filter((t) => t.parked).length;
+              if (parkedCount) {
+                openHead.appendChild(el("span", "tv-backlog-count", `${parkedCount} parked`));
               }
               for (const t of res.open) boardPane.appendChild(ticketRow({ ...t, now: res.now }));
             }
@@ -8038,6 +8121,11 @@ body {
                   const b = el("span", "tv-team-backlog", String(t.backlog));
                   b.title = `${t.backlog} open ticket(s) with no assignee \u2014 the watchdog never nudges these`;
                   row.appendChild(b);
+                }
+                if (t.parked) {
+                  const p = el("span", "tv-team-backlog", String(t.parked));
+                  p.title = `${t.parked} open ticket(s) parked \u2014 assigned or not, held out of dispatch until released`;
+                  row.appendChild(p);
                 }
                 row.appendChild(el("span", "tv-team-count", `${t.open} open`));
               }
@@ -18859,6 +18947,108 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/path-scan.js
+  var require_path_scan = __commonJS({
+    "renderer/lib/path-scan.js"(exports, module) {
+      var EXTENSIONS = [
+        "js",
+        "mjs",
+        "cjs",
+        "jsx",
+        "ts",
+        "tsx",
+        "json",
+        "md",
+        "css",
+        "html",
+        "sh",
+        "bash",
+        "zsh",
+        "py",
+        "rb",
+        "rs",
+        "go",
+        "java",
+        "c",
+        "h",
+        "cpp",
+        "yml",
+        "yaml",
+        "toml",
+        "ini",
+        "cfg",
+        "conf",
+        "sql",
+        "txt",
+        "log"
+      ];
+      var PATH_RE = new RegExp(
+        String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})\b(?::\d+)?`,
+        "g"
+      );
+      var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+      function scanPaths(text) {
+        if (typeof text !== "string" || !text) return [];
+        const urls = [];
+        URL_RE.lastIndex = 0;
+        for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
+          urls.push([u.index, u.index + u[0].length]);
+        }
+        const inUrl = (i) => urls.some(([a, b]) => i >= a && i < b);
+        const out = [];
+        PATH_RE.lastIndex = 0;
+        for (let m = PATH_RE.exec(text); m; m = PATH_RE.exec(text)) {
+          if (inUrl(m.index)) continue;
+          const hit = m[0];
+          const colon = hit.lastIndexOf(":");
+          const hasLine = colon > 0 && /^\d+$/.test(hit.slice(colon + 1));
+          out.push({
+            start: m.index,
+            end: m.index + hit.length,
+            text: hit,
+            path: hasLine ? hit.slice(0, colon) : hit,
+            line: hasLine ? Number(hit.slice(colon + 1)) : null
+          });
+        }
+        return out;
+      }
+      module.exports = { scanPaths, PATH_RE, EXTENSIONS };
+    }
+  });
+
+  // renderer/lib/gutter-scan.js
+  var require_gutter_scan = __commonJS({
+    "renderer/lib/gutter-scan.js"(exports, module) {
+      "use strict";
+      var GUTTER_RE = /^(\s*)(\d+)(?=\s|$)/;
+      var HEADER_RE = /\b(?:Update|Edit|MultiEdit|Write|Create|Read|NotebookEdit)\(([^)\s][^)]*)\)/;
+      var SUMMARY_RE = /^[\s⎿└├│╰─]*(?:Added|Removed|Updated|Wrote|Read)\b/;
+      var GLYPH_ONLY_RE = /^[\s⎿└├│╰─]*$/;
+      function matchGutterRow(text) {
+        if (typeof text !== "string" || !text) return null;
+        const m = GUTTER_RE.exec(text);
+        if (!m) return null;
+        const n = Number(m[2]);
+        if (!Number.isSafeInteger(n) || n < 1) return null;
+        return { start: m[1].length, end: m[1].length + m[2].length, line: n };
+      }
+      function findGutterFile(above) {
+        if (!Array.isArray(above)) return null;
+        for (let i = 0; i < above.length; i += 1) {
+          const row = above[i];
+          if (typeof row !== "string") return null;
+          if (matchGutterRow(row)) continue;
+          const h = HEADER_RE.exec(row);
+          if (h) return { path: h[1].trim(), distance: i + 1 };
+          if (SUMMARY_RE.test(row) || GLYPH_ONLY_RE.test(row)) continue;
+          return null;
+        }
+        return null;
+      }
+      module.exports = { matchGutterRow, findGutterFile, HEADER_RE, GUTTER_RE };
+    }
+  });
+
   // renderer/lib/args-model.js
   var require_args_model = __commonJS({
     "renderer/lib/args-model.js"(exports, module) {
@@ -22088,12 +22278,77 @@ helper=${d.helperPath}`;
     }
   });
 
+  // renderer/lib/popover-drag.js
+  var require_popover_drag = __commonJS({
+    "renderer/lib/popover-drag.js"(exports, module) {
+      "use strict";
+      var offsets = /* @__PURE__ */ new WeakMap();
+      function clampAxis(start, size, delta, viewport, margin) {
+        const minDelta = margin - start;
+        const maxDelta = viewport - margin - size - start;
+        if (maxDelta < minDelta) return minDelta;
+        return Math.max(minDelta, Math.min(maxDelta, delta));
+      }
+      function clampTranslate(rect, dx, dy, vw, vh, margin = 8) {
+        return {
+          dx: clampAxis(rect.left, rect.width, dx, vw, margin),
+          dy: clampAxis(rect.top, rect.height, dy, vh, margin)
+        };
+      }
+      function applyOffset(popover, dx, dy) {
+        offsets.set(popover, { dx, dy });
+        popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+      }
+      function resetDrag(popover) {
+        if (popover) applyOffset(popover, 0, 0);
+      }
+      function makeDraggable(popover) {
+        if (!popover) return;
+        const title = popover.querySelector(".popover-title");
+        if (!title) return;
+        title.classList.add("draggable-title");
+        title.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (e.target.closest("button")) return;
+          const cur = offsets.get(popover) || { dx: 0, dy: 0 };
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const r = popover.getBoundingClientRect();
+          const base = { left: r.left - cur.dx, top: r.top - cur.dy, width: r.width, height: r.height };
+          e.preventDefault();
+          title.classList.add("dragging");
+          const onMove = (ev) => {
+            const want = clampTranslate(
+              base,
+              cur.dx + (ev.clientX - startX),
+              cur.dy + (ev.clientY - startY),
+              window.innerWidth,
+              window.innerHeight,
+              8
+            );
+            applyOffset(popover, want.dx, want.dy);
+          };
+          const onUp = () => {
+            title.classList.remove("dragging");
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+      }
+      module.exports = { clampTranslate, makeDraggable, resetDrag };
+    }
+  });
+
   // renderer/popovers/files-popover.js
   var require_files_popover = __commonJS({
     "renderer/popovers/files-popover.js"(exports, module) {
       var { esc, fmtAgo } = require_format();
       var { renderDiffHtml } = require_render_html();
-      function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession }) {
+      var { scanPaths } = require_path_scan();
+      var { makeDraggable, resetDrag } = require_popover_drag();
+      function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, showToast }) {
         const filesPopover = document.getElementById("files-popover");
         const filesPopoverName = document.getElementById("files-popover-name");
         const filesPopoverBody = document.getElementById("files-popover-body");
@@ -22175,23 +22430,68 @@ helper=${d.helperPath}`;
         });
         document.getElementById("files-popover-close").addEventListener("click", closeFilesPopover);
         const filePeekOverlay = document.getElementById("file-peek-overlay");
+        const filePeekModal = document.getElementById("file-peek-modal");
         const filePeekPath = document.getElementById("file-peek-path");
         const filePeekBody = document.getElementById("file-peek-body");
         const filePeekTabDiff = document.getElementById("file-peek-tab-diff");
         const filePeekTabFile = document.getElementById("file-peek-tab-file");
+        const filePeekTabEdit = document.getElementById("file-peek-tab-edit");
+        const filePeekEditor = document.getElementById("file-peek-editor");
+        const filePeekSave = document.getElementById("file-peek-save");
+        const filePeekDirty = document.getElementById("file-peek-dirty");
+        const peekBackBtn = document.getElementById("file-peek-back");
         let filePeek = null;
+        let peekBack = [];
+        const peekDirty = () => !!(filePeek && filePeek.baseline != null && filePeekEditor.value !== filePeek.baseline);
+        function renderPeekDirty() {
+          const d = peekDirty();
+          filePeekDirty.classList.toggle("hidden", !d);
+          filePeekSave.disabled = !d;
+        }
+        function confirmDiscardPeekEdit() {
+          if (!peekDirty()) return true;
+          return confirm("Discard unsaved changes to this file?");
+        }
         function closeFilePeek() {
+          if (!confirmDiscardPeekEdit()) return;
           filePeekOverlay.classList.add("hidden");
           filePeek = null;
+        }
+        function linkifyPaths(line) {
+          const hits = scanPaths(line);
+          if (!hits.length) return esc(line);
+          let out = "";
+          let at = 0;
+          for (const h of hits) {
+            out += esc(line.slice(at, h.start));
+            out += `<span class="peek-path" data-path="${esc(h.path)}"${h.line ? ` data-goto="${h.line}"` : ""}>${esc(h.text)}</span>`;
+            at = h.end;
+          }
+          return out + esc(line.slice(at));
+        }
+        function peekEditable() {
+          const { peekRes, editable } = filePeek || {};
+          return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
         }
         function renderFilePeek() {
           if (!filePeek) return;
           const { tab, diffRes, peekRes } = filePeek;
           filePeekTabDiff.classList.toggle("active", tab === "diff");
           filePeekTabFile.classList.toggle("active", tab === "file");
+          filePeekTabEdit.classList.toggle("active", tab === "edit");
+          filePeekTabEdit.style.display = peekEditable() ? "" : "none";
+          peekBackBtn.classList.toggle("hidden", peekBack.length === 0);
+          filePeekBody.classList.toggle("hidden", tab === "edit");
+          filePeekEditor.classList.toggle("hidden", tab !== "edit");
+          filePeekSave.classList.toggle("hidden", tab !== "edit");
+          filePeekDirty.classList.toggle("hidden", tab !== "edit" || !peekDirty());
           const diffOk = !!(diffRes && diffRes.ok);
           filePeekTabDiff.disabled = !diffOk;
           filePeekTabDiff.title = diffOk ? "Uncommitted changes (git, vs HEAD)" : diffRes && diffRes.error || "Diff unavailable";
+          if (tab === "edit") {
+            renderPeekDirty();
+            return;
+          }
           if (tab === "diff") {
             if (!diffOk) {
               filePeekBody.innerHTML = `<div class="cost-note">${esc(diffRes && diffRes.error || "Diff unavailable")}</div>`;
@@ -22210,16 +22510,43 @@ helper=${d.helperPath}`;
             filePeekBody.innerHTML = `<div class="cost-note">Binary file (${peekRes.size} bytes) \u2014 use Open.</div>`;
           } else {
             const note = peekRes.truncated ? `<div class="cost-note">Showing the first ${Math.round(peekRes.content.length / 1024)}KB of ${Math.round(peekRes.size / 1024)}KB.</div>` : "";
-            filePeekBody.innerHTML = `${note}<div class="file-peek-pre">${esc(peekRes.content).split("\n").map((l) => `<div class="diff-line diff-ctx">${l || " "}</div>`).join("")}</div>`;
+            const raw = peekRes.content.split("\n");
+            const w = String(raw.length).length;
+            const rows = raw.map((l, i) => {
+              const n = String(i + 1).padStart(w, " ");
+              const hit = filePeek.line === i + 1 ? " peek-line-hit" : "";
+              return `<div class="diff-line diff-ctx${hit}" data-line="${i + 1}"><span class="peek-ln">${n}</span>${linkifyPaths(l) || " "}</div>`;
+            }).join("");
+            filePeekBody.innerHTML = `${note}<div class="file-peek-pre">${rows}</div>`;
+            if (filePeek.line) {
+              const el = filePeekBody.querySelector(`.diff-line[data-line="${filePeek.line}"]`);
+              if (el) el.scrollIntoView({ block: "center" });
+            }
           }
         }
-        async function openFilePeek(name, filePath) {
+        async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false) {
+          if (!confirmDiscardPeekEdit()) return;
+          if (!keepHistory) peekBack = [];
           const api = popoverApi(name);
-          filePeek = { path: filePath, tab: "diff", diffRes: null, peekRes: null };
+          filePeek = {
+            path: filePath,
+            name,
+            tab: "diff",
+            diffRes: null,
+            peekRes: null,
+            line,
+            editable: !api.remote,
+            baseline: null,
+            mtime: null
+          };
+          filePeekEditor.value = "";
+          filePeekEditor.rows = 8;
+          filePeekSave.disabled = true;
           filePeekPath.textContent = filePath;
           filePeekPath.title = filePath;
           document.getElementById("file-peek-open").style.display = api.remote || window.__CLODEX_WEB__ ? "none" : "";
           filePeekBody.innerHTML = '<div class="cost-note">Loading\u2026</div>';
+          if (filePeekOverlay.classList.contains("hidden")) resetDrag(filePeekModal);
           filePeekOverlay.classList.remove("hidden");
           const [diffRes, peekRes] = await Promise.all([
             api.diff(filePath).catch((e) => ({ ok: false, error: String(e) })),
@@ -22228,7 +22555,13 @@ helper=${d.helperPath}`;
           if (!filePeek || filePeek.path !== filePath) return;
           filePeek.diffRes = diffRes;
           filePeek.peekRes = peekRes;
-          filePeek.tab = diffRes && diffRes.ok && !diffRes.untracked && diffRes.diff.trim() ? "diff" : "file";
+          if (peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated) {
+            filePeekEditor.value = peekRes.content;
+            filePeekEditor.rows = Math.min(Math.max(peekRes.content.split("\n").length, 8), 400);
+            filePeek.baseline = peekRes.content;
+            filePeek.mtime = peekRes.mtime;
+          }
+          filePeek.tab = (forceTab === "edit" && !peekEditable() ? "file" : forceTab) || (diffRes && diffRes.ok && !diffRes.untracked && diffRes.diff.trim() ? "diff" : "file");
           renderFilePeek();
         }
         filePeekTabDiff.addEventListener("click", () => {
@@ -22243,10 +22576,65 @@ helper=${d.helperPath}`;
             renderFilePeek();
           }
         });
+        filePeekTabEdit.addEventListener("click", () => {
+          if (!filePeek || !peekEditable()) return;
+          filePeek.tab = "edit";
+          renderFilePeek();
+          filePeekEditor.focus();
+        });
+        filePeekEditor.addEventListener("input", renderPeekDirty);
+        filePeekEditor.addEventListener("keydown", (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+            e.preventDefault();
+            if (!filePeekSave.disabled) filePeekSave.click();
+          }
+          if (e.key === "Escape" && peekDirty()) e.stopPropagation();
+        });
+        filePeekSave.addEventListener("click", async () => {
+          if (!filePeek || !peekEditable()) return;
+          const { path: p, name, mtime } = filePeek;
+          const text = filePeekEditor.value;
+          filePeekSave.disabled = true;
+          const res = await window.api.fileWrite(name, p, text, mtime).catch((e) => ({ ok: false, error: String(e) }));
+          if (!filePeek || filePeek.path !== p) return;
+          if (!res || !res.ok) {
+            filePeekSave.disabled = false;
+            showToast(`Save failed: ${res && res.error || "unknown"}`, { kind: "error", duration: 1e4 });
+            return;
+          }
+          filePeek.baseline = text;
+          filePeek.mtime = res.mtime;
+          filePeek.peekRes = { ...filePeek.peekRes, content: text, size: res.size, mtime: res.mtime };
+          renderPeekDirty();
+          const fresh = await popoverApi(name).diff(p).catch((e) => ({ ok: false, error: String(e) }));
+          if (filePeek && filePeek.path === p) {
+            filePeek.diffRes = fresh;
+            renderFilePeek();
+          }
+        });
         document.getElementById("file-peek-open").addEventListener("click", async () => {
           if (!filePeek) return;
           const err = await window.api.fileOpen(filePeek.path);
           if (!err) closeFilePeek();
+        });
+        filePeekBody.addEventListener("click", async (e) => {
+          const el = e.target.closest(".peek-path");
+          if (!el || !filePeek) return;
+          const { name, path: from } = filePeek;
+          const cut = from.lastIndexOf("/");
+          const baseDir = cut > 0 ? from.slice(0, cut) : null;
+          const res = await window.api.fileResolve(name, el.dataset.path, baseDir).catch((err) => ({ ok: false, error: String(err) }));
+          if (!res || !res.ok) {
+            showToast(res && res.error || `Can't find "${el.dataset.path}"`, { kind: "warn", duration: 4e3 });
+            return;
+          }
+          peekBack.push({ path: from, line: filePeek.line, tab: filePeek.tab });
+          openFilePeek(name, res.path, "file", el.dataset.goto ? Number(el.dataset.goto) : null, true);
+        });
+        peekBackBtn.addEventListener("click", () => {
+          const prev = peekBack.pop();
+          if (!prev || !filePeek) return;
+          openFilePeek(filePeek.name, prev.path, prev.tab, prev.line, true);
         });
         document.getElementById("file-peek-close").addEventListener("click", closeFilePeek);
         window.api.onSessionFileView((name, filePath) => {
@@ -22258,75 +22646,13 @@ helper=${d.helperPath}`;
         document.addEventListener("keydown", (e) => {
           if (e.key === "Escape" && !filePeekOverlay.classList.contains("hidden")) closeFilePeek();
         });
+        makeDraggable(filePeekModal);
         function isFilesPopoverForKey(key) {
           return !filesPopover.classList.contains("hidden") && filesPopover.dataset.name === key;
         }
         return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
       }
       module.exports = { initFilesPopover };
-    }
-  });
-
-  // renderer/lib/popover-drag.js
-  var require_popover_drag = __commonJS({
-    "renderer/lib/popover-drag.js"(exports, module) {
-      "use strict";
-      var offsets = /* @__PURE__ */ new WeakMap();
-      function clampAxis(start, size, delta, viewport, margin) {
-        const minDelta = margin - start;
-        const maxDelta = viewport - margin - size - start;
-        if (maxDelta < minDelta) return minDelta;
-        return Math.max(minDelta, Math.min(maxDelta, delta));
-      }
-      function clampTranslate(rect, dx, dy, vw, vh, margin = 8) {
-        return {
-          dx: clampAxis(rect.left, rect.width, dx, vw, margin),
-          dy: clampAxis(rect.top, rect.height, dy, vh, margin)
-        };
-      }
-      function applyOffset(popover, dx, dy) {
-        offsets.set(popover, { dx, dy });
-        popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
-      }
-      function resetDrag(popover) {
-        if (popover) applyOffset(popover, 0, 0);
-      }
-      function makeDraggable(popover) {
-        if (!popover) return;
-        const title = popover.querySelector(".popover-title");
-        if (!title) return;
-        title.classList.add("draggable-title");
-        title.addEventListener("mousedown", (e) => {
-          if (e.button !== 0) return;
-          if (e.target.closest("button")) return;
-          const cur = offsets.get(popover) || { dx: 0, dy: 0 };
-          const startX = e.clientX;
-          const startY = e.clientY;
-          const r = popover.getBoundingClientRect();
-          const base = { left: r.left - cur.dx, top: r.top - cur.dy, width: r.width, height: r.height };
-          e.preventDefault();
-          title.classList.add("dragging");
-          const onMove = (ev) => {
-            const want = clampTranslate(
-              base,
-              cur.dx + (ev.clientX - startX),
-              cur.dy + (ev.clientY - startY),
-              window.innerWidth,
-              window.innerHeight,
-              8
-            );
-            applyOffset(popover, want.dx, want.dy);
-          };
-          const onUp = () => {
-            title.classList.remove("dragging");
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-          };
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onUp);
-        });
-      }
-      module.exports = { clampTranslate, makeDraggable, resetDrag };
     }
   });
 
@@ -25993,6 +26319,9 @@ ${detail}` });
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
+      var { scanPaths } = require_path_scan();
+      var { matchGutterRow, findGutterFile } = require_gutter_scan();
+      var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
       var { altChordAction } = require_web_shortcuts();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
@@ -26945,13 +27274,33 @@ ${detail}` });
         const base = n === 0 ? "Clodex" : n === 1 ? "Clodex (1 session)" : `Clodex (${n} sessions)`;
         document.title = window.__CLODEX_WEB__ ? badgeTitle(base, webAttentionCount()) : base;
       }
+      function filePathFromUri(uri) {
+        if (typeof uri !== "string" || !uri.startsWith("file://")) return null;
+        try {
+          return decodeURIComponent(new URL(uri).pathname) || null;
+        } catch {
+          return null;
+        }
+      }
       function createTerminal(name, peer = null) {
         const terminal = new Terminal({
           fontSize: 13,
           fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
           theme: currentXtermTheme(),
           cursorBlink: true,
-          allowProposedApi: true
+          allowProposedApi: true,
+          // OSC 8 hyperlinks, when a CLI emits them: the URI carries an ALREADY
+          // ABSOLUTE path even where the display text is shortened, so it needs no
+          // resolution and is strictly better than the text scan below. Kept as the
+          // preferred route even though the Claude CLI is not currently observed to
+          // reach it — a CLI that does emit them gets exact paths for free.
+          linkHandler: {
+            activate: (event, text) => {
+              const p = filePathFromUri(text);
+              if (!p) return;
+              openFilePeek(name, p, "file");
+            }
+          }
         });
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
@@ -26959,6 +27308,55 @@ ${detail}` });
           if (isExternallyOpenable(uri)) window.api.openExternal(uri);
         });
         terminal.loadAddon(webLinksAddon);
+        const rowText = (row) => {
+          const l = terminal.buffer.active.getLine(row);
+          return l ? l.translateToString(true) : null;
+        };
+        const isWrapped = (row) => {
+          const l = terminal.buffer.active.getLine(row);
+          return !!(l && l.isWrapped);
+        };
+        terminal.registerLinkProvider({
+          provideLinks: (y, cb) => {
+            const line = terminal.buffer.active.getLine(y - 1);
+            if (!line) return cb(void 0);
+            const raw = line.translateToString(true);
+            const hits = scanPaths(raw);
+            const g = !line.isWrapped ? matchGutterRow(raw) : null;
+            if (g) {
+              const above = [];
+              for (let r = y - 2; r >= 0 && above.length < GUTTER_HEADER_SCAN; r -= 1) {
+                if (isWrapped(r)) continue;
+                const t = rowText(r);
+                if (t == null) break;
+                above.push(t);
+              }
+              const owner = findGutterFile(above);
+              if (owner) {
+                hits.push({
+                  start: g.start,
+                  end: g.end,
+                  text: String(g.line),
+                  path: owner.path,
+                  line: g.line
+                });
+              }
+            }
+            if (!hits.length) return cb(void 0);
+            cb(hits.map((h) => ({
+              range: { start: { x: h.start + 1, y }, end: { x: h.end, y } },
+              text: h.text,
+              activate: async () => {
+                const res = await window.api.fileResolve(name, h.path, null).catch((e) => ({ ok: false, error: String(e) }));
+                if (!res || !res.ok) {
+                  showToast(res && res.error || `Can't find "${h.path}"`, { kind: "warn", duration: 4e3 });
+                  return;
+                }
+                openFilePeek(name, res.path, "file", h.line);
+              }
+            })));
+          }
+        });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
         searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -28808,6 +29206,7 @@ Click for live activity`;
         filesUnseen,
         peerFilesCount,
         renderProxyBar,
+        showToast,
         getActiveSession: () => activeSession
       });
       var { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });

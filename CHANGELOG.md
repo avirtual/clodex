@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Nothing an agent wrote gets thrown away
+## Unreleased — Every path in the terminal is a door
 
 - **File paths in the terminal are now clickable.** When an agent mentions
   `renderer/lib/format.js:71`, clicking it opens that file in the peek modal,
@@ -132,6 +132,12 @@ blocks a release.
   later resume as well, not just the running process. A session that reloaded
   once came back subtly different and stayed that way.
 
+- **Team task artifacts are written outside your repository.** A team's working
+  notes — specs, journals, design documents — live under
+  `~/.clodex/projects/<project>-<hash>/tasks/`, never in the project being worked
+  on. The directory is named for the project so it can be browsed by hand, and
+  the hash is taken from its resolved path, so two checkouts that happen to share
+  a folder name do not quietly share one artifact directory.
 - **A restarted agent is told what it was working on.** A ticket's instructions
   used to reach a seat exactly once, when it was assigned. If that seat then
   crashed, cleared, or reloaded, it came back with no idea what its job was, and
