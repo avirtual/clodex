@@ -16,6 +16,7 @@
 const { esc, fmtAgo } = require('../lib/format');
 const { renderDiffHtml } = require('../lib/render-html');
 const { scanPaths } = require('../lib/path-scan');
+const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 
 function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, showToast }) {
   // ── Touched files (wire file-tool observer) ────────────────────────────
@@ -140,6 +141,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   // deletes everything past the peek cap. The engine refuses it too
   // (file-edit.js); this is the affordance, not the guard.
   const filePeekOverlay = document.getElementById('file-peek-overlay');
+  const filePeekModal = document.getElementById('file-peek-modal');
   const filePeekPath = document.getElementById('file-peek-path');
   const filePeekBody = document.getElementById('file-peek-body');
   const filePeekTabDiff = document.getElementById('file-peek-tab-diff');
@@ -282,6 +284,10 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
     // to escape to, and the file is already shown in-page, so hide Open there too.
     document.getElementById('file-peek-open').style.display = (api.remote || window.__CLODEX_WEB__) ? 'none' : '';
     filePeekBody.innerHTML = '<div class="cost-note">Loading…</div>';
+    // Re-anchor only when the peek was CLOSED. While it is open, the position is
+    // the user's — following a path, going back, or opening another row should
+    // not yank the modal out from under the pointer it was just moved away from.
+    if (filePeekOverlay.classList.contains('hidden')) resetDrag(filePeekModal);
     filePeekOverlay.classList.remove('hidden');
     const [diffRes, peekRes] = await Promise.all([
       api.diff(filePath).catch((e) => ({ ok: false, error: String(e) })),
@@ -389,6 +395,11 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !filePeekOverlay.classList.contains('hidden')) closeFilePeek();
   });
+  // Draggable by its title bar (shared helper), so a peek can be moved off
+  // whatever it is covering. The drag is a transform, which composes with the
+  // overlay's flex centering and leaves the resize handle working. The helper
+  // ignores mousedowns on title buttons, so the tabs keep their clicks.
+  makeDraggable(filePeekModal);
 
   // The peer subsystem needs to know whether the files popover is currently
   // showing a given session's rows (onPeerTelemetry suppresses the unseen latch
