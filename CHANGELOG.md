@@ -63,6 +63,21 @@ blocks a release.
   per verb so a session that has not learned the setting cannot fill the message
   directory by retrying every turn.
 
+- **`[agent:context reload]` no longer strips a session's environment.** Reload
+  respawns the CLI in place, and it was dropping every environment variable the
+  session had been given. The loss outlived the reload: the respawn rewrote the
+  session's saved record without them, so the variables were gone from every
+  later resume as well, not just the running process. A session that reloaded
+  once came back subtly different and stayed that way.
+
+- **A restarted agent is told what it was working on.** A ticket's instructions
+  used to reach a seat exactly once, when it was assigned. If that seat then
+  crashed, cleared, or reloaded, it came back with no idea what its job was, and
+  nothing ever told it again — from the board the ticket still looked assigned and
+  in progress. Open tickets are now re-delivered when the agent comes back up, at
+  the moment it can actually receive them, which is a different moment for Claude
+  and Codex sessions. Only tickets belonging to that specific agent are replayed.
+
 ## 4.13.0 — 2026-08-04
 
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
