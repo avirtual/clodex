@@ -40,15 +40,25 @@ function resolveDisplayedPath({ raw, cwd, baseDir = null, touched = [], home, pa
     ? path.join(home || '', trimmed.slice(1))
     : trimmed;
 
+  // `@file.md` is the CLI's load-this-file syntax: the `@` is a sigil, not part
+  // of the name. The scanner keeps it because `@` is a legal path character and
+  // dropping it would break `@babel/core/index.js`, so the ambiguity lands here.
+  // Both readings are tried, LITERAL FIRST — a file actually named `@x.md` is a
+  // fact, the sigil reading is an inference, and only one of them can be wrong.
+  const forms = [expanded];
+  if (expanded.length > 1 && expanded.startsWith('@')) forms.push(expanded.slice(1));
+
   const tries = [];
-  if (path.isAbsolute(expanded)) {
-    tries.push(['absolute', expanded]);
-  } else {
-    // The file's own directory FIRST: a relative path written inside a file is
-    // relative to that file far more often than to the repo root, and when both
-    // exist the local one is what the author meant.
-    if (baseDir) tries.push(['relative to the open file', path.resolve(baseDir, expanded)]);
-    if (cwd) tries.push(['relative to the session directory', path.resolve(cwd, expanded)]);
+  for (const form of forms) {
+    if (path.isAbsolute(form)) {
+      tries.push(['absolute', form]);
+    } else {
+      // The file's own directory FIRST: a relative path written inside a file is
+      // relative to that file far more often than to the repo root, and when both
+      // exist the local one is what the author meant.
+      if (baseDir) tries.push(['relative to the open file', path.resolve(baseDir, form)]);
+      if (cwd) tries.push(['relative to the session directory', path.resolve(cwd, form)]);
+    }
   }
 
   for (const [via, p] of tries) {
@@ -64,7 +74,10 @@ function resolveDisplayedPath({ raw, cwd, baseDir = null, touched = [], home, pa
   // then any leading slash, so the remainder is a clean run of segments. The
   // slash strip must come LAST: `…/a/b.js` still starts with `/` after the
   // ellipsis goes, and a tail beginning with `/` can never match `'/' + tail`.
-  const tail = expanded.replace(/^[….]+/, '').replace(/^(?:\.{0,2}\/)+/, '').replace(/^\/+/, '');
+  // `@` leads the strip list for the same reason it is tried above: a sigil the
+  // CLI prints, never part of the name once the shortener has already cut the
+  // front off the path.
+  const tail = expanded.replace(/^[@….]+/, '').replace(/^(?:\.{0,2}\/)+/, '').replace(/^\/+/, '');
   if (tail) {
     const hits = [];
     for (const t of (touched || []).slice(0, CANDIDATE_CAP)) {

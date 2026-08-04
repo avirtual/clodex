@@ -67,6 +67,66 @@ test('resolves a real file outside the session cwd', () => {
     { ok: true, path: '/etc/hosts.md', via: 'absolute' });
 });
 
+// `@plan.md` is how the CLI is told to load a file, so the `@` is displayed
+// constantly and is not part of any name. The scanner cannot drop it (`@` is
+// legal in a path — see the scoped-package case below), so resolution tries it
+// both ways.
+test('strips a leading @ sigil when only the bare name exists', () => {
+  assert.deepStrictEqual(call('@plan.md', { exists: ['/repo/plan.md'] }),
+    { ok: true, path: '/repo/plan.md', via: 'relative to the session directory' });
+});
+
+test('strips a leading @ sigil on a path with directories', () => {
+  assert.deepStrictEqual(call('@docs/spec-v2.md', { exists: ['/repo/docs/spec-v2.md'] }),
+    { ok: true, path: '/repo/docs/spec-v2.md', via: 'relative to the session directory' });
+});
+
+test('strips a leading @ sigil on an absolute path', () => {
+  assert.deepStrictEqual(call('@/etc/notes.md', { exists: ['/etc/notes.md'] }),
+    { ok: true, path: '/etc/notes.md', via: 'absolute' });
+});
+
+// The whole reason the literal form is tried first. A file really named
+// `@types.md` is a fact on disk; the sigil reading is an inference about what
+// someone meant. Both candidates must exist or this passes against either order.
+test('a file literally named with a leading @ wins over the stripped reading', () => {
+  assert.deepStrictEqual(call('@types.md', { exists: ['/repo/@types.md', '/repo/types.md'] }),
+    { ok: true, path: '/repo/@types.md', via: 'relative to the session directory' });
+});
+
+// `@` is in the scanner's char class for this case, so stripping it blindly
+// would break the commonest real path that starts with one.
+test('a scoped package path is not mangled by the sigil strip', () => {
+  assert.deepStrictEqual(
+    call('node_modules/@babel/core/lib/index.js',
+      { exists: ['/repo/node_modules/@babel/core/lib/index.js'] }),
+    { ok: true, path: '/repo/node_modules/@babel/core/lib/index.js', via: 'relative to the session directory' });
+});
+
+test('a bare @ is not treated as a path', () => {
+  assert.strictEqual(call('@', { exists: ['/repo'] }).ok, false);
+});
+
+// baseDir still outranks the cwd for the stripped form: the sigil changes what
+// the string NAMES, not where a relative name is anchored.
+test('the @-stripped form still prefers the open file\'s directory', () => {
+  const r = call('@lib/format.js', {
+    baseDir: '/repo/renderer',
+    exists: ['/repo/renderer/lib/format.js', '/repo/lib/format.js'],
+  });
+  assert.deepStrictEqual(r,
+    { ok: true, path: '/repo/renderer/lib/format.js', via: 'relative to the open file' });
+});
+
+test('a shortened @ path recovers from the touched set', () => {
+  const r = call('@…/tasks/HANDOFF.md', {
+    exists: ['/home/u/.clodex/tasks/HANDOFF.md'],
+    touched: ['/home/u/.clodex/tasks/HANDOFF.md'],
+  });
+  assert.deepStrictEqual(r,
+    { ok: true, path: '/home/u/.clodex/tasks/HANDOFF.md', via: 'a file this session touched' });
+});
+
 test('a path that names nothing is an honest miss, not a guess', () => {
   const r = call('nope.js', { exists: ['/repo/other.js'] });
   assert.strictEqual(r.ok, false);
