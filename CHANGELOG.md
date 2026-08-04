@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Every path in the terminal is a door
+## Unreleased
+
+## 4.14.0 — 2026-08-04 — Every path in the terminal is a door
 
 - **File paths in the terminal are now clickable.** When an agent mentions
   `renderer/lib/format.js:71`, clicking it opens that file in the peek modal,
