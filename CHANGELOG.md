@@ -20,6 +20,12 @@ blocks a release.
   say which questions they asked, so a cheap one can neither overwrite nor be
   believed about an expensive one's answer.
 
+- **Revoking a plugin's access to a session now takes effect immediately.** The
+  badges and menu entries it had painted used to stay up for the life of the
+  window, because the sidebar refresh could not say "this session grants
+  nothing" in a way the renderer could tell apart from "this refresh didn't
+  ask".
+
 - **Plugins can now read what an agent says.** A session-scoped plugin granted
   turn text receives each turn as the agent writes it — the capability that
   makes turn archivers, cross-session search and standup writers possible,
