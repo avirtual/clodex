@@ -148,6 +148,7 @@ the menu bar has a tick next to it.
 | `style` | no | Path to a CSS file, relative to the plugin directory. Loaded as **text** and injected per window. |
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
+| `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin is **invisible** to any session that has not granted it — see §2.1. Absent means `global`, which is the behaviour every plugin had before this field existed. |
 
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
 version add optional fields without breaking your manifest, and lets you carry
@@ -182,6 +183,90 @@ The refusals, and what to do about each:
   resolved and must land inside your own directory; `"engine": "../../session-manager.js"`
   is refused. This is the runtime twin of the static boundary lint (§12) —
   neither catches what the other does.
+- **`scope` is present but isn't `"global"` or `"session"`.** Refused rather
+  than defaulted, and this one matters: an unrecognized scope resolves to
+  `global` everywhere else in the host, so a typo on a plugin meant to be
+  invisible would silently make it visible to every session. `"Session"` with a
+  capital S is a refusal, not an opt-in.
+
+---
+
+## 2.1 Scope: global and session-scoped plugins
+
+Plugins are `global` by default and that is what every shipped plugin is: it
+loads once, its UI draws in every window, its intent verbs appear in every
+session's checklist, and the only thing standing between a seat and one of its
+verbs is the per-session intent gate (§7).
+
+That fits a plugin that adds UI. It does not fit a plugin written for one team's
+seats, which should be **invisible** to unrelated agents rather than merely
+refused. `"scope": "session"` is that opt-in.
+
+### What actually becomes conditional
+
+A session-scoped plugin still **loads once** — its engine half is one module, and
+`activate(host)` runs exactly as before. What becomes per-session is what the
+plugin *reaches*:
+
+| Surface | Global plugin | Session-scoped plugin |
+|---|---|---|
+| Intent-checklist rows | every session | only granted sessions |
+| Grammar lines in the seat's prompt | every granted seat | only granted sessions |
+| The near-miss bounce's verb list | every session | only granted sessions |
+| `rhost.ui.sidebar.rowBadge` | every row | only granted rows |
+| `rhost.ui.sessionMenu.addProvider` | every session | only granted sessions |
+| `rhost.ui.statusBar.addAction` / `addSegment` | every session | only granted sessions |
+| `rhost.ui.sidebar.footerButton` | always | **always** — see below |
+| `rhost.ui.settings.section` | always | **always** |
+| `rhost.ui.surfaces.overlay` | always | **always** |
+| `host.sessions.*` / `rhost.sessions.*` | unchanged | **unchanged at every scope** |
+
+The last three UI rows are deliberate. A sidebar footer button belongs to the *window*,
+not to whichever session happens to be active; hiding it on session switch would
+make the chrome flicker with no coherent meaning. Scope governs what a plugin
+sees **of a session**, and those three see none of it.
+
+The `sessions.*` row is the one to read carefully: the session ENUMERATION APIs
+are **not narrowed for a scoped plugin**. `host.sessions.get(name)` and
+`rhost.sessions.listWorkspace()` answer the same for a plugin granted nothing as
+for one granted everything. Do not design against this table as though it were an
+isolation boundary — see the next section.
+
+### The three grants
+
+A grant is per session and per capability, each defaulting **off**, and they are
+separate because they carry different risk:
+
+| Capability | What it covers |
+|---|---|
+| `turns` | Turn text — what the agent writes |
+| `thinking` | Thinking blocks — its reasoning, not just its answers |
+| `toolInputs` | Tool inputs — Bash commands it runs and file contents it writes |
+
+They are independent: holding `toolInputs` does not imply `turns`. If they shared
+one grant, everyone who wanted a turn archiver would also get every command the
+agent ran.
+
+A plugin holding **any** capability on a session is visible to it; holding none
+means it is absent. The operator edits these in the Intents popover's *Plugin
+Access* block, and only session-scoped plugins appear there — a global plugin has
+no per-session decision to offer.
+
+### Scope means visibility, not isolation
+
+State this to yourself before designing around it. Intent verbs live in **one
+global namespace**: `registerIntent` throws `EVERBTAKEN` on collision (§7), and
+session scoping does **not** partition that. Two session-scoped plugins used by
+different agents still cannot share a verb name — the second one to load is
+refused, exactly as two global plugins would be.
+
+Nor is scope a security boundary. A scoped plugin's engine half is unsandboxed
+in-process Node with the same `host` every other plugin gets (§13); what scope
+changes is what the operator is *shown* and what the plugin is *fed*, not what a
+determined plugin could reach. The enforcement that was already there —
+`intentEnabledFor`'s strict per-session gate — is unchanged and is what actually
+refuses a verb. Scope stops a plugin from being *offered*; the gate is what stops
+it from *firing*.
 
 ---
 

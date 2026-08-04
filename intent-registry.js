@@ -9,6 +9,7 @@ const {
   intentsAllowlistFromChecked,
   withoutPrivilegedIntents,
 } = require('./intent-catalog');
+const { DEFAULT_PLUGIN_SCOPE, pluginReaches } = require('./plugin-api');
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
@@ -182,7 +183,7 @@ const PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 // "registered on one feed only" failure mode cannot be expressed (R-INT-3).
 const pluginRows = [];
 
-function registerIntent(spec, source) {
+function registerIntent(spec, source, opts = {}) {
   const src = String(source || '').trim();
   if (!src) throw new Error('intent registration requires a source plugin id');
   const type = String((spec && (spec.verb || spec.type)) || '');
@@ -225,6 +226,10 @@ function registerIntent(spec, source) {
     promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
     handler: typeof spec.handler === 'function' ? spec.handler : null,
     source: src,
+// The MANIFEST's scope, threaded by the host at register() — never read off
+// `spec`, which is the plugin's own argument. A plugin that could declare its
+// own scope could declare itself global and undo the operator's decision.
+    scope: opts.scope === 'session' ? 'session' : DEFAULT_PLUGIN_SCOPE,
   });
   pluginRows.push(row);
   let disposed = false;
@@ -256,6 +261,26 @@ function rowFor(type) {
 
 function pluginRowFor(type) {
   return pluginRows.find((r) => r.type === type) || null;
+}
+
+// The SURFACING gate (t190), and only that — enforcement stays with
+// `intentEnabledFor`, which is already strict and is deliberately NOT
+// scope-aware. The two answer different questions: this one is "should this
+// session's operator ever be shown this row?", that one is "may this session
+// fire this verb?". A session-scoped plugin's verb is refused by the second
+// whether or not this one hid it, so hiding can never be the only thing
+// standing between a seat and a verb.
+//
+// A `global` row is visible to everything, which is what makes the shipped four
+// byte-identical: they declare no scope, `scopeOf` resolves them to `global`,
+// and this returns true for every grants value including the absent one.
+function rowVisibleTo(row, grants) {
+  if (!row || row.scope !== 'session') return true;
+  return pluginReaches(row.source, grants);
+}
+
+function visiblePluginRows(grants) {
+  return pluginRows.filter((r) => rowVisibleTo(r, grants));
 }
 
 
@@ -303,10 +328,10 @@ function withoutPrivilegedIntentsFor(intentsList) {
 // R-INT-4: the checklist projection. GATEABLE_INTENTS in ITS order (which owns
 // checklist row order), then plugin rows in registration order — so the
 // existing checklist is byte-identical and simply grows a plugin tail.
-function catalogRows() {
+function catalogRows(grants) {
   return [
     ...GATEABLE_INTENTS.map((i) => ({ type: i.type, label: i.label, privileged: PRIVILEGED_INTENTS.has(i.type), source: 'core' })),
-    ...pluginRows.map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source })),
+    ...visiblePluginRows(grants).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source })),
   ];
 }
 
@@ -323,8 +348,13 @@ function allowlistFromChecked(checkedTypes) {
   return [...coreEnabled, ...pluginChecked];
 }
 
-function pluginGrammarLines(intentsList) {
-  return pluginRows
+// Two filters, not one, and the scope filter is the OUTER of the two: a
+// session-scoped plugin whose verb was somehow left in an old `intents` array
+// must still contribute no grammar line to a session that has not granted it.
+// Collapsing these into a single condition would make that depend on which
+// stale list wins.
+function pluginGrammarLines(intentsList, grants) {
+  return visiblePluginRows(grants)
     .filter((r) => r.promptLines && intentEnabledFor(r.type, intentsList))
     .map((r) => r.promptLines);
 }
@@ -337,8 +367,11 @@ const CORE_VALID_INTENT_NAMES = [
   'remind', 'notify-user', 'team-review', 'review-done', 'task', 'reboot',
 ];
 
-function validIntentNames() {
-  return [...CORE_VALID_INTENT_NAMES, ...pluginRows.map((r) => r.type), 'end'];
+// Feeds the near-miss bounce, which is user-visible text: naming a verb here
+// that the session cannot see would advertise a scoped plugin's existence to
+// exactly the agents it is meant to be invisible to.
+function validIntentNames(grants) {
+  return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(grants).map((r) => r.type), 'end'];
 }
 
 module.exports = {
@@ -352,6 +385,8 @@ module.exports = {
   rows,
   rowFor,
   pluginRowFor,
+  rowVisibleTo,
+  visiblePluginRows,
   parseWithRegistry,
   bodyModeFor,
   intentEnabledFor,

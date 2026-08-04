@@ -319,6 +319,11 @@
         <div id="intents-popover-exec-list" class="agent-checklist"></div>
         <span class="hint-text" id="intents-popover-exec-note"></span>
       </div>
+      <div id="intents-popover-grants" class="hidden">
+        <div class="popover-subhead">Plugin Access</div>
+        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off, and a plugin with no grant here is invisible to this session — absent from the list above, not merely refused.</span>
+        <div id="intents-popover-grants-list" class="agent-checklist"></div>
+      </div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="intents-popover-restart">
         <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists disabled intents, but the gate already bounces them).</span>

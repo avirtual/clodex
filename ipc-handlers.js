@@ -9,8 +9,8 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-const { NO_SUCH_METHOD, errorEnvelope } = require('./plugin-api');
-const { catalogRows, allowlistFromChecked } = require('./intent-registry');
+const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, PLUGIN_CAPABILITIES, pluginReaches } = require('./plugin-api');
+const { catalogRows, allowlistFromChecked, pluginRowFor } = require('./intent-registry');
 // contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
 // — an imported token must never round-trip through the renderer (see the
 // peer:import handlers below).
@@ -594,6 +594,15 @@ function registerIpcHandlers(deps) {
         meta[s.name].archivedAt = s.archivedAt || null;
         if (!teamByCwd.has(s.cwd)) teamByCwd.set(s.cwd, manager.teamNameFor(s.cwd));
         meta[s.name].team = teamByCwd.get(s.cwd);
+        // Per-session plugin grants (t190). Carried on the meta refresh rather
+        // than a new channel: the sidebar paints every session at once, so the
+        // renderer needs an answer for each ROW, and this is already the
+        // per-row read that runs on a timer.
+        // Written UNCONDITIONALLY, empty array included: the renderer merges
+        // meta by spread, so an omitted key reads as "unchanged" and a revoke
+        // would never land — the stale array would keep every badge and menu
+        // entry painted for the life of the window.
+        meta[s.name].pluginGrants = Array.isArray(s.pluginGrants) ? [...s.pluginGrants] : [];
       }
       return { ok: true, meta };
     } catch (err) {
@@ -798,7 +807,64 @@ function registerIpcHandlers(deps) {
   // the plugin host — the registry is a module-level table both halves mutate, so
   // it stays authoritative with no host (kill switch, construction failed), where
   // routing through the host would blank the checklist in exactly those cases.
-  handle('intents:catalog', () => catalogRows());
+  // The session name is OPTIONAL and its absence is not a shortcut for "show
+  // everything": with no session there are no grants, so a session-scoped
+  // plugin's rows do not surface. That is the right answer for the only caller
+  // that has no name to give — the NEW-session dialog, which is choosing what a
+  // seat that does not exist yet may do.
+  handle('intents:catalog', (_e, name) => {
+    const entry = name ? persistence.get(String(name)) : null;
+    return catalogRows(entry && entry.pluginGrants);
+  });
+
+  // Companion to session:setIntents, and deliberately a SEPARATE channel rather
+  // than a field on it: the two are written by different UI blocks, and folding
+  // grants into the intents payload would make a checklist save that omitted
+  // them silently revoke every grant.
+  handle('session:setPluginGrants', (_e, name, grants) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    const next = sanitizeGrants(grants);
+    persistence.setPluginGrants(name, next);
+    // A revoked grant must also drop the plugin's verbs from the allowlist, at
+    // this one write point. Without it the two decisions diverge silently and
+    // the UI hides the side that still bites: the row vanishes from the
+    // checklist and the grammar line from the prompt, while `intentEnabledFor`
+    // — scope-blind by design, and staying that way — keeps letting the seat
+    // fire the verb into a plugin it holds no capability on. The popover's own
+    // save order (intents first, grants second) makes that the DEFAULT outcome
+    // of an in-dialog revoke.
+    // A null allowlist needs no reconcile: a plugin row is enabled only by
+    // explicit inclusion in an array, never by the all-enabled default.
+    if (Array.isArray(entry.intents)) {
+      const kept = entry.intents.filter((t) => {
+        const row = pluginRowFor(t);
+        if (!row || row.scope !== 'session') return true;
+        return pluginReaches(row.source, next);
+      });
+      if (kept.length !== entry.intents.length) persistence.setIntents(name, kept);
+    }
+    return { ok: true };
+  });
+
+  // What the grants UI needs to draw itself: the session-scoped plugins that
+  // exist, plus what this session has already granted. Only SCOPED plugins are
+  // listed — a global plugin has no per-session decision to offer, so listing it
+  // would invite an operator to withhold something that is not withheld.
+  handle('session:pluginGrants', (_e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    const host = getPluginHost && getPluginHost();
+    const status = host ? host.status() : { plugins: [] };
+    return {
+      ok: true,
+      capabilities: [...PLUGIN_CAPABILITIES],
+      plugins: (status.plugins || [])
+        .filter((p) => p.scope === 'session' && p.enabled && !p.quarantined)
+        .map((p) => ({ id: p.id, name: p.name })),
+      granted: Array.isArray(entry.pluginGrants) ? [...entry.pluginGrants] : [],
+    };
+  });
 
   handle('peer:probe', async (_e, sshHost, port, opts = {}) => {
     if (!sshHost || typeof sshHost !== 'string') return { kind: 'ssh-fail', stderr: 'no ssh host given' };

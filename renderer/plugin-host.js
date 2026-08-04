@@ -19,7 +19,23 @@ function initPluginHost({
 // No `= () => null` default here: the leak scanner's param matcher cannot
 // cross nested parens, and a defaulted arrow hides every dep above it.
   getWorkspaceId,
+// (pluginId, sessionName) -> bool. The SURFACING gate's renderer half (t190):
+// false hides a session-scoped plugin's per-session UI from that session.
+// Absent = everything reaches everything, which is what a host built before
+// scopes existed did — so the default is today's behaviour, not a refusal.
+  pluginReachesSession,
 } = {}) {
+  // Only the three PER-SESSION slots consult this. The window-global three
+  // (footerButton, settings.section, surfaces.overlay) deliberately do not: a
+  // sidebar footer button belongs to the window, not to whichever session
+  // happens to be active, and hiding it on session switch would make the
+  // chrome flicker with no coherent meaning. Scope governs what a plugin sees
+  // OF a session, and those three see none of it.
+  function reaches(pluginId, sessionName) {
+    if (typeof pluginReachesSession !== 'function') return true;
+    if (!sessionName) return true;
+    try { return pluginReachesSession(pluginId, sessionName) !== false; } catch { return true; }
+  }
   // ── Registries ────────────────────────────────────────────────────────────
   // Arrays, not Maps: render order is registration order, and every consumer
   // iterates. Each entry keeps its owning pluginId so disable can filter.
@@ -126,6 +142,7 @@ function initPluginHost({
     const ctx = barContext();
     const out = [];
     for (const a of statusActions) {
+      if (!reaches(a.pluginId, ctx.session)) continue;
       let show = false, b = null;
       try { show = !!a.when(ctx); } catch (e) { warn(a.pluginId, e); continue; }
       if (!show) continue;
@@ -136,6 +153,7 @@ function initPluginHost({
       out.push(`<button class="px-action px-plugin${cls}" data-act="${esc(a.id)}"${tip}>${esc(String(b.label))}</button>`);
     }
     for (const s of statusSegments) {
+      if (!reaches(s.pluginId, ctx.session)) continue;
       let r = null;
       try { r = s.render(ctx); } catch (e) { warn(s.pluginId, e); continue; }
       if (!r || !r.text) continue;
@@ -149,26 +167,37 @@ function initPluginHost({
     return out.join('');
   }
 
+  // Must apply the SAME filter statusBarHtml does. This decides whether the bar
+  // draws at all, so a laxer test here reserves space for a contribution that
+  // then renders empty — an unexplained gap in the chrome of exactly the
+  // sessions the plugin is meant to be invisible to.
   function hasVisibleContribution() {
     const ctx = barContext();
     for (const a of statusActions) {
+      if (!reaches(a.pluginId, ctx.session)) continue;
       try { if (a.when(ctx)) return true; } catch (e) { warn(a.pluginId, e); }
     }
     for (const s of statusSegments) {
+      if (!reaches(s.pluginId, ctx.session)) continue;
       try { const r = s.render(ctx); if (r && r.text) return true; } catch (e) { warn(s.pluginId, e); }
     }
     return false;
   }
 
+  // `reaches` here is enforcement, not hiding, for the same reason handleMenuPick
+  // applies it: a `data-act` is a DOM attribute, so a bar painted before a grant
+  // was revoked can still route a click here after it.
   function handleBarClick(act, anchorEl) {
     const ctx = barContext();
     for (const a of statusActions) {
       if (a.id !== act) continue;
+      if (!reaches(a.pluginId, ctx.session)) return false;
       try { a.onClick(anchorEl, ctx); } catch (e) { warn(a.pluginId, e); }
       return true;
     }
     for (const s of statusSegments) {
       if (s.id !== act) continue;
+      if (!reaches(s.pluginId, ctx.session)) return false;
       let r = null;
       try { r = s.render(ctx); } catch (e) { warn(s.pluginId, e); return true; }
       const fn = (r && typeof r.onClick === 'function') ? r.onClick : s.onClick;
@@ -206,6 +235,12 @@ function initPluginHost({
       const sel = `[data-plugin-badge="${CSS.escape(b.id)}"]`;
       let chip = badges.querySelector(sel);
       let r = null;
+      // Per ROW, not per active session: the sidebar paints every session, so
+      // this is the one slot where several grant answers are live at once. A
+      // badge already on screen must also be REMOVED when the grant goes away,
+      // which is why this falls through to the removal below rather than
+      // `continue`-ing past it.
+      if (!reaches(b.pluginId, name)) { if (chip) chip.remove(); continue; }
       try { r = b.resolve(name, meta); } catch (e) { warn(b.pluginId, e); }
       if (!r || !r.text) { if (chip) chip.remove(); continue; }
       if (!chip) {
@@ -262,9 +297,15 @@ function initPluginHost({
     addProvider(spec) { return register(menuProviders, spec, ['entriesFor', 'onPick']); },
   };
 
-  function menuEntriesFor(type) {
+  // `sessionName` is optional and defaults to the active session rather than to
+  // "unscoped": every caller opens this menu FOR a session, and a missing
+  // argument at some future call site must not become a hole that surfaces a
+  // scoped plugin's entries on a seat that never granted it.
+  function menuEntriesFor(type, sessionName) {
+    const forSession = sessionName || (getActiveSession ? getActiveSession() : null);
     const out = [];
     for (const p of menuProviders) {
+      if (!reaches(p.pluginId, forSession)) continue;
       let entries = null;
       try { entries = p.entriesFor(type); } catch (e) { warn(p.pluginId, e); continue; }
       if (!Array.isArray(entries)) continue;
@@ -283,6 +324,9 @@ function initPluginHost({
     const bare = act.slice(i + 1);
     for (const p of menuProviders) {
       if (p.pluginId !== owner) continue;
+      // Enforcement, not just hiding: an act string is a DOM attribute, so a
+      // stale menu (opened before a grant was revoked) can still route here.
+      if (!reaches(owner, sessionName)) return false;
       try { p.onPick(bare, sessionName, anchorEl); } catch (e) { warn(p.pluginId, e); }
       return true;
     }

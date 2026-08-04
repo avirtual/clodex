@@ -4316,6 +4316,19 @@ body {
 #intents-popover-exec-note.warn {
   color: var(--warn, #d08770);
 }
+#intents-popover-grants.hidden {
+  display: none;
+}
+#intents-popover-grants {
+  margin-top: 10px;
+}
+#intents-popover-grants .grant-plugin-name {
+  text-transform: none;
+  letter-spacing: 0;
+}
+#intents-popover-grants .agent-checklist > .grant-plugin-name:first-child {
+  margin-top: 4px;
+}
 .agent-deny {
   display: flex;
   align-items: flex-start;
@@ -5420,6 +5433,11 @@ body {
         <div id="intents-popover-exec-list" class="agent-checklist"></div>
         <span class="hint-text" id="intents-popover-exec-note"></span>
       </div>
+      <div id="intents-popover-grants" class="hidden">
+        <div class="popover-subhead">Plugin Access</div>
+        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off, and a plugin with no grant here is invisible to this session — absent from the list above, not merely refused.</span>
+        <div id="intents-popover-grants-list" class="agent-checklist"></div>
+      </div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="intents-popover-restart">
         <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists disabled intents, but the gate already bounces them).</span>
@@ -6492,7 +6510,12 @@ body {
         // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
         // that reads its own frozen copy of intent-catalog.js is reading a stale
         // catalog — and the web bundle's copy is frozen at build time.
-        { name: "getIntentCatalog", kind: "invoke", channel: "intents:catalog" }
+        { name: "getIntentCatalog", kind: "invoke", channel: "intents:catalog" },
+        // Plugin capability grants (t190). Separate from setIntents on purpose: the
+        // two are written by different UI blocks, and folding them together would let
+        // an intents save silently revoke every grant.
+        { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
+        { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" }
       ];
       module.exports = { API_CONTRACT };
     }
@@ -18153,6 +18176,99 @@ ${i3.join("\n")}
     }
   });
 
+  // plugin-api.js
+  var require_plugin_api = __commonJS({
+    "plugin-api.js"(exports, module) {
+      "use strict";
+      var HOST_API_VERSION = "1";
+      var PLUGIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+      var RESERVED_PLUGIN_IDS = /* @__PURE__ */ new Set(["enabled"]);
+      function isValidPluginId(id) {
+        return typeof id === "string" && PLUGIN_ID_RE.test(id) && !RESERVED_PLUGIN_IDS.has(id);
+      }
+      var PLUGIN_SCOPES = Object.freeze(["global", "session"]);
+      var DEFAULT_PLUGIN_SCOPE = "global";
+      function scopeOf(manifest) {
+        const s = manifest && manifest.scope;
+        return s === "session" ? "session" : DEFAULT_PLUGIN_SCOPE;
+      }
+      var PLUGIN_CAPABILITIES = Object.freeze(["turns", "thinking", "toolInputs"]);
+      function grantToken(pluginId, capability) {
+        return `${pluginId}:${capability}`;
+      }
+      function isValidCapability(capability) {
+        return PLUGIN_CAPABILITIES.includes(capability);
+      }
+      function pluginGranted(pluginId, capability, grants) {
+        if (!Array.isArray(grants)) return false;
+        if (!isValidCapability(capability)) return false;
+        return grants.includes(grantToken(pluginId, capability));
+      }
+      function sanitizeGrants(list) {
+        if (!Array.isArray(list)) return null;
+        const seen = /* @__PURE__ */ new Set();
+        for (const raw of list) {
+          if (typeof raw !== "string") continue;
+          const at = raw.indexOf(":");
+          if (at <= 0) continue;
+          const id = raw.slice(0, at);
+          const cap = raw.slice(at + 1);
+          if (!isValidPluginId(id) || !isValidCapability(cap)) continue;
+          seen.add(grantToken(id, cap));
+        }
+        return [...seen];
+      }
+      function grantsForUnlistedPlugins(granted, listedPluginIds) {
+        if (!Array.isArray(granted)) return [];
+        const listed = new Set(listedPluginIds || []);
+        return granted.filter((g) => {
+          if (typeof g !== "string") return false;
+          const at = g.indexOf(":");
+          return at > 0 && !listed.has(g.slice(0, at));
+        });
+      }
+      function mergeGrants(checked, unlisted) {
+        return [.../* @__PURE__ */ new Set([...checked || [], ...unlisted || []])];
+      }
+      function pluginReaches(pluginId, grants) {
+        return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
+      }
+      var HOST_PSEUDO_ID = "_host";
+      function namespaced(pluginId, id) {
+        return `${pluginId}:${id}`;
+      }
+      function pluginsEnabled(env = {}) {
+        return String(env.CLODEX_PLUGINS ?? "") !== "0";
+      }
+      var NO_SUCH_METHOD = "no such plugin method";
+      function errorEnvelope(error) {
+        return { ok: false, error };
+      }
+      module.exports = {
+        HOST_API_VERSION,
+        PLUGIN_ID_RE,
+        RESERVED_PLUGIN_IDS,
+        isValidPluginId,
+        PLUGIN_SCOPES,
+        DEFAULT_PLUGIN_SCOPE,
+        scopeOf,
+        PLUGIN_CAPABILITIES,
+        grantToken,
+        isValidCapability,
+        sanitizeGrants,
+        grantsForUnlistedPlugins,
+        mergeGrants,
+        pluginGranted,
+        pluginReaches,
+        HOST_PSEUDO_ID,
+        namespaced,
+        pluginsEnabled,
+        NO_SUCH_METHOD,
+        errorEnvelope
+      };
+    }
+  });
+
   // sidebar-width.js
   var require_sidebar_width = __commonJS({
     "sidebar-width.js"(exports, module) {
@@ -18862,14 +18978,35 @@ ${i3.join("\n")}
     "renderer/lib/render-html.js"(exports, module) {
       var { esc, fmtUsd, fmtBustTokens } = require_format();
       var { BUST_FAULT } = require_constants();
-      function renderDiffHtml(diff) {
-        return diff.split("\n").map((ln) => {
+      function diffLineNumbers(lines) {
+        let oldN = null;
+        let newN = null;
+        return lines.map((ln) => {
+          if (ln.startsWith("@@")) {
+            const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(ln);
+            oldN = m ? Number(m[1]) : null;
+            newN = m ? Number(m[2]) : null;
+            return null;
+          }
+          if (oldN == null || ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index ") || ln.startsWith("\\") || ln === "") return null;
+          if (ln.startsWith("+")) return newN++;
+          if (ln.startsWith("-")) return oldN++;
+          oldN++;
+          return newN++;
+        });
+      }
+      function renderDiffHtml(diff, opts = {}) {
+        const lines = diff.split("\n");
+        const nums = opts.lineNumbers ? diffLineNumbers(lines) : null;
+        const w = nums ? String(Math.max(1, ...nums.map((n) => n == null ? 0 : n))).length : 0;
+        return lines.map((ln, i) => {
           let cls = "diff-ctx";
           if (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index ")) cls = "diff-file";
           else if (ln.startsWith("@@")) cls = "diff-hunk";
           else if (ln.startsWith("+")) cls = "diff-add";
           else if (ln.startsWith("-")) cls = "diff-del";
-          return `<div class="diff-line ${cls}">${esc(ln) || " "}</div>`;
+          const gut = nums ? `<span class="peek-ln">${(nums[i] == null ? "" : String(nums[i])).padStart(w, " ")}</span>` : "";
+          return `<div class="diff-line ${cls}">${gut}${esc(ln) || " "}</div>`;
         }).join("");
       }
       function costStackBlock(title, badge, defs, vals, total) {
@@ -22516,7 +22653,7 @@ helper=${d.helperPath}`;
             } else if (!diffRes.diff.trim()) {
               filePeekBody.innerHTML = '<div class="cost-note">No uncommitted changes \u2014 what the agent touched here is already committed (or was reverted).</div>';
             } else {
-              filePeekBody.innerHTML = `<div class="file-peek-pre">${renderDiffHtml(diffRes.diff)}</div>`;
+              filePeekBody.innerHTML = `<div class="file-peek-pre">${renderDiffHtml(diffRes.diff, { lineNumbers: true })}</div>`;
             }
             return;
           }
@@ -22699,6 +22836,12 @@ helper=${d.helperPath}`;
       var { parseSkillFrontmatter } = require_skills_util();
       var { esc } = require_format();
       var { makeDraggable, resetDrag } = require_popover_drag();
+      var { grantsForUnlistedPlugins, mergeGrants } = require_plugin_api();
+      var CAPABILITY_LABELS = {
+        turns: "Turn text \u2014 what the agent writes",
+        thinking: "Thinking blocks \u2014 its reasoning, not just its answers",
+        toolInputs: "Tool inputs \u2014 Bash commands it runs and file contents it writes"
+      };
       var agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [], session));
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
@@ -22996,6 +23139,42 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           refreshExecReadoutInertState();
         }
+        const intentsGrantsBlock = document.getElementById("intents-popover-grants");
+        const intentsGrantsList = document.getElementById("intents-popover-grants-list");
+        let unlistedGrants = [];
+        function renderPluginGrants(res) {
+          const plugins = res && res.plugins || [];
+          const caps = res && res.capabilities || [];
+          const granted = new Set(res && res.granted || []);
+          unlistedGrants = grantsForUnlistedPlugins(res && res.granted || [], plugins.map((p) => p.id));
+          intentsGrantsList.innerHTML = "";
+          intentsGrantsBlock.classList.toggle("hidden", !plugins.length);
+          if (!plugins.length) return;
+          for (const p of plugins) {
+            const head = document.createElement("div");
+            head.className = "popover-subhead grant-plugin-name";
+            head.textContent = p.name || p.id;
+            intentsGrantsList.appendChild(head);
+            for (const cap of caps) {
+              const token = `${p.id}:${cap}`;
+              const row = document.createElement("label");
+              row.className = "agent-check";
+              const cb = document.createElement("input");
+              cb.type = "checkbox";
+              cb.value = token;
+              cb.checked = granted.has(token);
+              const txt = document.createElement("span");
+              txt.textContent = CAPABILITY_LABELS[cap] || cap;
+              row.appendChild(cb);
+              row.appendChild(txt);
+              intentsGrantsList.appendChild(row);
+            }
+          }
+        }
+        function collectPluginGrants() {
+          const checked = Array.from(intentsGrantsList.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+          return mergeGrants(checked, unlistedGrants);
+        }
         function closeIntentsPopover() {
           intentsPopover.classList.add("hidden");
           intentsPopover.dataset.name = "";
@@ -23006,9 +23185,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             alert("Session not found in persistence.");
             return;
           }
-          setIntentCatalogCache(await window.api.getIntentCatalog() || []);
+          setIntentCatalogCache(await window.api.getIntentCatalog(name) || []);
           renderIntentChecklist(popoverIntentsList, res.intents);
           renderExecGrantReadout(res.execCommands || []);
+          let grantsRes = null;
+          try {
+            grantsRes = await window.api.getSessionPluginGrants(name);
+          } catch {
+          }
+          renderPluginGrants(grantsRes && grantsRes.ok ? grantsRes : null);
           intentsPopoverRestart.checked = false;
           intentsPopoverName.textContent = name;
           intentsPopover.dataset.name = name;
@@ -23025,12 +23210,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = intentsPopover.dataset.name;
           if (!name) return closeIntentsPopover();
           const intents = collectIntentChecklist(popoverIntentsList);
+          const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
+          const grants = grantsShown ? collectPluginGrants() : null;
           const restart = intentsPopoverRestart.checked;
           closeIntentsPopover();
           const r = await window.api.setSessionIntents(name, intents);
           if (!r || !r.ok) {
             alert(`Update intents failed: ${r && r.error ? r.error : "unknown error"}`);
             return;
+          }
+          if (grants) {
+            const g = await window.api.setSessionPluginGrants(name, grants);
+            if (!g || !g.ok) {
+              alert(`Update plugin access failed: ${g && g.error ? g.error : "unknown error"}`);
+              return;
+            }
           }
           if (!restart) return;
           const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -25637,8 +25831,22 @@ ${detail}` });
         // (msg, opts) -> void
         // No `= () => null` default here: the leak scanner's param matcher cannot
         // cross nested parens, and a defaulted arrow hides every dep above it.
-        getWorkspaceId
+        getWorkspaceId,
+        // (pluginId, sessionName) -> bool. The SURFACING gate's renderer half (t190):
+        // false hides a session-scoped plugin's per-session UI from that session.
+        // Absent = everything reaches everything, which is what a host built before
+        // scopes existed did — so the default is today's behaviour, not a refusal.
+        pluginReachesSession
       } = {}) {
+        function reaches(pluginId, sessionName) {
+          if (typeof pluginReachesSession !== "function") return true;
+          if (!sessionName) return true;
+          try {
+            return pluginReachesSession(pluginId, sessionName) !== false;
+          } catch {
+            return true;
+          }
+        }
         const statusActions = [];
         const statusSegments = [];
         const footerButtons = [];
@@ -25742,6 +25950,7 @@ ${detail}` });
           const ctx = barContext();
           const out = [];
           for (const a of statusActions) {
+            if (!reaches(a.pluginId, ctx.session)) continue;
             let show = false, b = null;
             try {
               show = !!a.when(ctx);
@@ -25762,6 +25971,7 @@ ${detail}` });
             out.push(`<button class="px-action px-plugin${cls}" data-act="${esc(a.id)}"${tip}>${esc(String(b.label))}</button>`);
           }
           for (const s of statusSegments) {
+            if (!reaches(s.pluginId, ctx.session)) continue;
             let r = null;
             try {
               r = s.render(ctx);
@@ -25781,6 +25991,7 @@ ${detail}` });
         function hasVisibleContribution() {
           const ctx = barContext();
           for (const a of statusActions) {
+            if (!reaches(a.pluginId, ctx.session)) continue;
             try {
               if (a.when(ctx)) return true;
             } catch (e) {
@@ -25788,6 +25999,7 @@ ${detail}` });
             }
           }
           for (const s of statusSegments) {
+            if (!reaches(s.pluginId, ctx.session)) continue;
             try {
               const r = s.render(ctx);
               if (r && r.text) return true;
@@ -25801,6 +26013,7 @@ ${detail}` });
           const ctx = barContext();
           for (const a of statusActions) {
             if (a.id !== act) continue;
+            if (!reaches(a.pluginId, ctx.session)) return false;
             try {
               a.onClick(anchorEl, ctx);
             } catch (e) {
@@ -25810,6 +26023,7 @@ ${detail}` });
           }
           for (const s of statusSegments) {
             if (s.id !== act) continue;
+            if (!reaches(s.pluginId, ctx.session)) return false;
             let r = null;
             try {
               r = s.render(ctx);
@@ -25858,6 +26072,10 @@ ${detail}` });
             const sel = `[data-plugin-badge="${CSS.escape(b.id)}"]`;
             let chip = badges.querySelector(sel);
             let r = null;
+            if (!reaches(b.pluginId, name)) {
+              if (chip) chip.remove();
+              continue;
+            }
             try {
               r = b.resolve(name, meta);
             } catch (e) {
@@ -25925,9 +26143,11 @@ ${detail}` });
             return register(menuProviders, spec, ["entriesFor", "onPick"]);
           }
         };
-        function menuEntriesFor(type) {
+        function menuEntriesFor(type, sessionName) {
+          const forSession = sessionName || (getActiveSession ? getActiveSession() : null);
           const out = [];
           for (const p of menuProviders) {
+            if (!reaches(p.pluginId, forSession)) continue;
             let entries = null;
             try {
               entries = p.entriesFor(type);
@@ -25950,6 +26170,7 @@ ${detail}` });
           const bare = act.slice(i + 1);
           for (const p of menuProviders) {
             if (p.pluginId !== owner) continue;
+            if (!reaches(owner, sessionName)) return false;
             try {
               p.onPick(bare, sessionName, anchorEl);
             } catch (e) {
@@ -26329,6 +26550,7 @@ ${detail}` });
       var { SearchAddon } = require_addon_search();
       var { WebLinksAddon } = require_addon_web_links();
       var { isExternallyOpenable } = require_external_link();
+      var { pluginReaches } = require_plugin_api();
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo } = require_proxy_util();
@@ -28640,6 +28862,12 @@ ${detail}` });
         const type = (st.sessions || []).find((s) => s.name === entry.peer.name)?.type;
         return !type || type === "claude" || type === "codex";
       }
+      var scopedPluginIds = /* @__PURE__ */ new Set();
+      function pluginReachesSession(pluginId, sessionName) {
+        if (!scopedPluginIds.has(pluginId)) return true;
+        const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
+        return pluginReaches(pluginId, grants);
+      }
       var pluginBar = initPluginHost({
         getActiveSession: () => activeSession,
         sessionTypeOf,
@@ -28650,7 +28878,8 @@ ${detail}` });
         getWorkspaceId: () => currentWorkspaceId,
         listSessions: () => window.api.listSessions(),
         openPath: (p) => window.api.fileOpen(p),
-        showToast
+        showToast,
+        pluginReachesSession
       });
       async function activatePluginRenderer(id) {
         let reported = false;
@@ -28686,14 +28915,19 @@ ${detail}` });
         if (window.__CLODEX_WEB__ || !window.require) return null;
         return window.require(rendererPath);
       }
-      async function loadPluginRenderers() {
-        if (!window.api.pluginCatalog) return;
-        let catalog = [];
+      async function refreshScopedPluginIds() {
+        let catalog = null;
         try {
           catalog = await window.api.pluginCatalog();
         } catch {
-          return;
+          return null;
         }
+        scopedPluginIds = new Set((catalog || []).filter((p) => p && p.scope === "session").map((p) => p.id));
+        return catalog || [];
+      }
+      async function loadPluginRenderers() {
+        if (!window.api.pluginCatalog) return;
+        const catalog = await refreshScopedPluginIds();
         for (const p of catalog || []) {
           if (!p || !p.enabled) continue;
           await activatePluginRenderer(p.id);
@@ -28703,8 +28937,11 @@ ${detail}` });
       if (window.api.onPluginEvent) {
         window.api.onPluginEvent((pluginId, topic, payload) => {
           if (pluginId === "_host" && topic === "plugin-state" && payload && payload.id) {
-            if (payload.enabled) activatePluginRenderer(payload.id);
-            else pluginBar.dispose(payload.id);
+            if (payload.enabled) {
+              refreshScopedPluginIds().then((c) => {
+                if (c) activatePluginRenderer(payload.id);
+              });
+            } else pluginBar.dispose(payload.id);
             if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
             return;
           }
@@ -31331,7 +31568,7 @@ ${res.stderr}` : "");
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsIntentsSection.style.display = isClaude ? "" : "none";
-        setIntentCatalogCache(await window.api.getIntentCatalog() || []);
+        setIntentCatalogCache(await window.api.getIntentCatalog(name) || []);
         renderIntentChecklist(argsIntentsList, res.intents);
         const isExecEditable = isClaude && !argsSource;
         argsExecSection.style.display = isExecEditable ? "" : "none";

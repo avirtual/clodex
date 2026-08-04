@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Plugins can now be scoped to individual sessions.** A plugin whose manifest
+  says `"scope": "session"` is invisible to every session that has not granted
+  it — absent from that session's intent checklist and prompt, not listed and
+  refused. Grants are per capability (turn text, thinking blocks, tool inputs),
+  each defaulting off, edited in the Intents popover's new Plugin Access block.
+  Nothing shipped uses this yet: all four bundled plugins declare no scope and
+  behave exactly as before. Scope means visibility, not isolation — intent verbs
+  still share one global namespace.
+
 - **The file popover's Diff tab now has line numbers**, the way the CLI shows
   them: additions and context numbered in the new file, deletions in the old,
   restarting at each hunk. The code column lines up with the File tab's gutter,

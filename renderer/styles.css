@@ -3073,6 +3073,19 @@ html, body {
 #intents-popover-exec-note { display: block; margin-top: 2px; }
 #intents-popover-exec-note.warn { color: var(--warn, #d08770); }
 
+/* Plugin Access (t190): per-session capability grants for session-scoped
+   plugins. The plugin NAME re-uses .popover-subhead but must not carry its
+   top margin on the first row, or the block opens with a gap the exec readout
+   above does not have. */
+/* Per-id, because there is no generic `.hidden` rule (see the popover list
+   above and test/css-hidden-invariant.test.js) — without this the block ships
+   permanently visible and unstyled on every install that has no scoped plugin,
+   which is all of them today. */
+#intents-popover-grants.hidden { display: none; }
+#intents-popover-grants { margin-top: 10px; }
+#intents-popover-grants .grant-plugin-name { text-transform: none; letter-spacing: 0; }
+#intents-popover-grants .agent-checklist > .grant-plugin-name:first-child { margin-top: 4px; }
+
 .agent-deny {
   display: flex;
   align-items: flex-start;

@@ -397,6 +397,83 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
   }
 });
 
+// ── The surface under SCOPE (t190) ──────────────────────────────────────────
+// Scope made one thing about this contract conditional, and exactly one: WHICH
+// SESSIONS a plugin's per-session surfaces materialize for. The member set did
+// not become conditional, and that is the property worth pinning hardest —
+// "under grants X the surface is exactly Y" is a matrix only if Y varies, and
+// the whole design is that it does not.
+//
+// If a later change makes a NAMESPACE conditional, the tables above stop being a
+// list and become a matrix, and this section is where that shows up first: these
+// tests walk the same HOST_CONTRACT table for a scoped plugin and for a global
+// one, and demand the same answer.
+
+const SCOPES_TO_CHECK = [
+  { label: 'a GLOBAL plugin (the shipped four)', manifest: { hostApi: HOST_API_VERSION } },
+  { label: 'an explicitly global plugin', manifest: { hostApi: HOST_API_VERSION, scope: 'global' } },
+  { label: 'a SESSION-SCOPED plugin', manifest: { hostApi: HOST_API_VERSION, scope: 'session' } },
+];
+
+test('the engine host is the SAME surface at every scope — scope narrows reach, not members', () => {
+  // The one-line version of the whole ticket. A scoped plugin that received a
+  // smaller `host` would make every §4 member conditional, and plugins/plugin-api.md
+  // would need a column per capability for forty members.
+  const shapes = [];
+  for (const { label, manifest } of SCOPES_TO_CHECK) {
+    const { engine, cleanup } = realEngineHost();
+    try {
+      const host = engine.register('scoped-demo', { activate() {} }, manifest);
+      assertContract(host, HOST_CONTRACT, `host(${label})`);
+      assert.ok(Object.isFrozen(host), `host(${label}) is frozen`);
+      // The shape as DATA, so the three are compared to each other and not just
+      // each to the table — a table edit that broke all three identically would
+      // otherwise pass.
+      shapes.push(Object.keys(host).sort().join(','));
+      // The SessionHandle too: a scoped plugin gets the same five-and-two.
+      const h = host.sessions.get('seat');
+      assert.deepStrictEqual(Object.keys(h).sort(),
+        [...SESSION_HANDLE_CONTRACT.values, ...SESSION_HANDLE_CONTRACT.fns].sort(),
+        `the SessionHandle is not narrowed for ${label}`);
+    } finally { cleanup(); }
+  }
+  assert.strictEqual(new Set(shapes).size, 1,
+    'all three scopes produce an IDENTICAL member set — if this ever fails, the contract tables '
+    + 'above have become a matrix and plugins/plugin-api.md §4 needs a column per capability');
+});
+
+test('scope changes WHICH SESSIONS a verb surfaces to, and nothing about the host', () => {
+  const intentRegistry = require('../intent-registry');
+  const { engine, cleanup } = realEngineHost();
+  const mk = (verb) => ({
+    verb,
+    parse: (l) => (l === `[agent:${verb}]` ? {} : null),
+    promptLines: `  [agent:${verb}]   x`,
+  });
+  try {
+    engine.register('glob-p', { activate(h) { h.intents.register(mk('globverb')); } },
+      { hostApi: HOST_API_VERSION });
+    engine.register('scoped-p', { activate(h) { h.intents.register(mk('scopedverb')); } },
+      { hostApi: HOST_API_VERSION, scope: 'session' });
+
+    // The MATRIX, such as it is: two plugins, three grant states, one table.
+    const surface = (grants) => intentRegistry.catalogRows(grants)
+      .filter((r) => r.source !== 'core').map((r) => r.type).sort();
+    assert.deepStrictEqual(surface(null), ['globverb'],
+      'ENTER: the global verb registered and surfaces ungranted — so the scoped absence is the gate');
+    assert.deepStrictEqual(surface([]), ['globverb']);
+    assert.deepStrictEqual(surface(['scoped-p:turns']), ['globverb', 'scopedverb'],
+      'CONTROL: the scoped verb appears once its plugin is granted');
+    assert.deepStrictEqual(surface(['glob-p:turns']), ['globverb'],
+      'and granting a GLOBAL plugin adds nothing — it was never withheld');
+  } finally {
+    engine.deactivate('glob-p');
+    engine.deactivate('scoped-p');
+    intentRegistry._resetPluginRows();
+    cleanup();
+  }
+});
+
 // ── The document ────────────────────────────────────────────────────────────
 
 test('plugins/plugin-api.md exists, is frozen at this version, and names every published member', () => {

@@ -475,6 +475,26 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
+    // Per-session plugin capability grants (t190) — `<pluginId>:<capability>`
+    // tokens. Same file and the same divergence-only rule as setIntents, but the
+    // polarity is inverted and that is deliberate: an ABSENT key means NO plugin
+    // reaches this session, never the living all-enabled default. A scoped
+    // plugin that defaulted to granted would reach every seat created before it
+    // was installed.
+    //
+    // There is no agent-facing writer for this, by omission. `intents` has one
+    // (filtered through withoutPrivilegedIntentsFor) because a seat asking for
+    // its own verbs is meaningful; a seat granting a plugin the right to read
+    // its own thinking is not a decision the seat gets to make.
+    setPluginGrants(name, grants) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (Array.isArray(grants) && grants.length) entry.pluginGrants = grants.map(String);
+        else delete entry.pluginGrants;
+        this._save(all);
+      }
+    },
     setExecCommands(name, execCommands) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

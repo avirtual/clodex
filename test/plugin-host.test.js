@@ -1050,3 +1050,204 @@ test('t108: a listener registered DURING delivery does not fire in the same roun
   host.deliverEvent('demo', 'changed', null);
   assert.deepEqual(seen, ['first', 'first', 'late']);
 });
+
+// ── t190: per-session scope in the renderer half ────────────────────────────
+// `pluginReachesSession` hides a SESSION-SCOPED plugin's per-session UI from a
+// session that has not granted it. Three of the seven slots consult it — row
+// badges, session-menu providers, and the two status-bar slots — because those
+// are the ones that draw something ABOUT a session. The window-global three
+// (footerButton, settings.section, surfaces.overlay) deliberately do not.
+//
+// Every assertion here is an ABSENCE, so each is paired with a CONTROL arm on
+// the SAME host and the SAME registration, flipping only the grant. Without the
+// control, a fixture whose plugin never registered would pass all of them.
+
+// `reaches` is a Map of `${pluginId}|${session}` -> bool, so one host can answer
+// differently for two rows — which is the whole point for badges.
+function makeScopedHost(reaches) {
+  return makeHost({
+    pluginReachesSession: (pluginId, session) => reaches.get(`${pluginId}|${session}`) !== false,
+  });
+}
+
+test('t190: a rowBadge is painted per ROW, so one plugin can reach one session and not another', () => {
+  const reaches = new Map([['demo|seat-a', true], ['demo|seat-b', false]]);
+  const { host } = makeScopedHost(reaches);
+  host.activate('demo', {
+    activate: (rhost) => rhost.ui.sidebar.rowBadge({ id: 'count', resolve: () => ({ text: '3' }) }),
+  });
+  const mkRow = (name) => {
+    const row = el('div', null, 'session-item');
+    row.dataset.name = name;
+    const badges = el('span', null, 'session-badges');
+    row.appendChild(badges);
+    return { row, badges };
+  };
+
+  const granted = mkRow('seat-a');
+  host.applyRowBadges(granted.row);
+  // CONTROL: the plugin really did register a badge that really does resolve.
+  assert.ok(granted.badges.querySelector('[data-plugin-badge="demo:count"]'),
+    'CONTROL: the granted row gets its chip');
+
+  const denied = mkRow('seat-b');
+  host.applyRowBadges(denied.row);
+  assert.equal(denied.badges.querySelector('[data-plugin-badge="demo:count"]'), null,
+    'the ungranted row gets none — from the SAME host and the same registration');
+
+  // A grant REVOKED must un-paint a chip already on screen. Skipping the badge
+  // without removing it would leave the last painted value frozen on the row,
+  // which reads as current data rather than as absence.
+  //
+  // Scope note: this drives the callback directly, so it pins the HOST's
+  // response to a changed answer — not that a real revoke ever changes the
+  // answer. That second half is a main→renderer transport property (an omitted
+  // sidebar:meta key read as "unchanged" made every revoke inert here while
+  // this test was green), and it is pinned where it lives, in
+  // test/plugin-scope.test.js under REWORK MF2.
+  reaches.set('demo|seat-a', false);
+  host.applyRowBadges(granted.row);
+  assert.equal(granted.badges.querySelector('[data-plugin-badge="demo:count"]'), null,
+    'revoking the grant removes the chip that was already painted');
+});
+
+test('t190: status-bar slots and the bar-alive test agree about what is hidden', () => {
+  const reaches = new Map([['demo|seat-a', true]]);
+  const { host, state } = makeScopedHost(reaches);
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.ui.statusBar.addAction({ id: 'go', when: () => true, button: () => ({ label: 'Go' }), onClick: () => {} });
+      rhost.ui.statusBar.addSegment({ id: 'seg', render: () => ({ text: 'Seg' }) });
+    },
+  });
+  // CONTROL first: both slots really do render for a granted session.
+  assert.match(host.statusBarHtml(), /demo:go/, 'CONTROL: the action renders when granted');
+  assert.match(host.statusBarHtml(), /Seg/, 'CONTROL: and so does the segment');
+  assert.equal(host.hasVisibleContribution(), true, 'CONTROL: so the bar stays alive');
+
+  reaches.set('demo|seat-a', false);
+  assert.equal(host.statusBarHtml(), '', 'an ungranted session sees neither slot');
+  // The two MUST agree: hasVisibleContribution decides whether the bar draws at
+  // all, so a laxer answer here reserves space for a contribution that then
+  // renders empty — an unexplained gap in exactly the sessions the plugin is
+  // meant to be invisible to.
+  assert.equal(host.hasVisibleContribution(), false,
+    'and the bar-alive test hides the bar rather than reserving an empty one');
+  void state;
+});
+
+test('t190: session-menu entries are hidden AND the stale act is refused', () => {
+  const reaches = new Map([['demo|seat-a', true], ['demo|seat-b', false]]);
+  const { host } = makeScopedHost(reaches);
+  let picked = 0;
+  host.activate('demo', {
+    activate: (rhost) => rhost.ui.sessionMenu.addProvider({
+      id: 'p', entriesFor: () => [{ act: 'thing', label: 'Do Thing…' }], onPick: () => { picked++; },
+    }),
+  });
+  assert.deepEqual(host.menuEntriesFor('claude', 'seat-a'), [{ act: 'demo:thing', label: 'Do Thing…' }],
+    'CONTROL: a granted session is offered the entry');
+  assert.equal(host.handleMenuPick('demo:thing', 'seat-a', null), true);
+  assert.equal(picked, 1, 'CONTROL: and picking it runs the provider');
+
+  assert.deepEqual(host.menuEntriesFor('claude', 'seat-b'), [],
+    'an ungranted session is offered nothing');
+  // Hiding alone is not enough: an act string is a DOM attribute, so a menu
+  // opened before a revoke can still route here.
+  assert.equal(host.handleMenuPick('demo:thing', 'seat-b', null), false,
+    'and a stale act from an ungranted session is refused, not run');
+  assert.equal(picked, 1, 'the provider did not run a second time');
+});
+
+test('t190: the WINDOW-global slots ignore scope entirely', () => {
+  // A sidebar footer button belongs to the window, not to whichever session is
+  // active; hiding it on session switch would make the chrome flicker with no
+  // coherent meaning. Pinned so "make everything consistent" does not quietly
+  // become a UI regression.
+  const { host, dom } = makeScopedHost(new Map([['demo|seat-a', false]]));
+  const footer = el('div', 'sidebar-footer');
+  dom.body.appendChild(footer);
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.ui.sidebar.footerButton({ id: 'b', glyph: '⚑', label: 'Thing', onClick: () => {} });
+      rhost.ui.settings.section({ id: 's', title: 'S', render: () => '', collect: () => ({}) });
+      rhost.ui.surfaces.overlay({ id: 'o', mount: () => {} });
+    },
+  });
+  assert.ok(footer.querySelector('[data-plugin-footer="demo:b"]'),
+    'the footer button paints even though the active session has no grant');
+  const counts = host._counts();
+  assert.equal(counts.sections, 1, 'the settings section is registered regardless of scope');
+  assert.equal(counts.overlays, 1, 'and so is the overlay');
+});
+
+test('t190: with NO pluginReachesSession dep, every slot behaves exactly as before', () => {
+  // The dep is absent in any host built before scopes existed, and must fail
+  // toward today's behaviour rather than toward a refusal — otherwise a host
+  // that forgot to wire it blanks every plugin's UI.
+  const { host } = makeHost();  // no pluginReachesSession at all
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.ui.statusBar.addAction({ id: 'go', when: () => true, button: () => ({ label: 'Go' }), onClick: () => {} });
+      rhost.ui.sidebar.rowBadge({ id: 'count', resolve: () => ({ text: '3' }) });
+      rhost.ui.sessionMenu.addProvider({ id: 'p', entriesFor: () => [{ act: 'x', label: 'X' }], onPick: () => {} });
+    },
+  });
+  assert.match(host.statusBarHtml(), /demo:go/);
+  assert.deepEqual(host.menuEntriesFor('claude', 'anything'), [{ act: 'demo:x', label: 'X' }]);
+  const row = el('div', null, 'session-item');
+  row.dataset.name = 'seat-z';
+  const badges = el('span', null, 'session-badges');
+  row.appendChild(badges);
+  host.applyRowBadges(row);
+  assert.ok(badges.querySelector('[data-plugin-badge="demo:count"]'), 'the badge paints');
+});
+
+test('t190: a THROWING scope callback fails open, not closed', () => {
+  // The renderer's answer comes from a cache that may not be populated yet. A
+  // throw must not blank a global plugin's UI — the callback is a filter, and a
+  // broken filter that hides everything is worse than one that hides nothing,
+  // because the ENGINE still refuses the verb either way.
+  const { host } = makeHost({
+    pluginReachesSession: () => { throw new Error('cache miss'); },
+  });
+  host.activate('demo', {
+    activate: (rhost) => rhost.ui.statusBar.addAction({
+      id: 'go', when: () => true, button: () => ({ label: 'Go' }), onClick: () => {},
+    }),
+  });
+  assert.match(host.statusBarHtml(), /demo:go/, 'a throwing callback leaves the UI as it was');
+});
+
+test('t190 REWORK: a stale data-act in the STATUS BAR is refused, like a stale menu act', () => {
+  // handleMenuPick already refused a stale act; the bar did not. A `data-act` is
+  // the same DOM attribute with the same staleness window — a bar painted while
+  // granted survives the revoke until the next repaint, and a click on it routed
+  // straight through to the plugin.
+  const reaches = new Map([['demo|seat-a', true]]);
+  const { host } = makeScopedHost(reaches);
+  let clicks = 0;
+  let segClicks = 0;
+  host.activate('demo', {
+    activate: (rhost) => {
+      rhost.ui.statusBar.addAction({
+        id: 'go', when: () => true, button: () => ({ label: 'Go' }), onClick: () => { clicks++; },
+      });
+      rhost.ui.statusBar.addSegment({
+        id: 'seg', render: () => ({ text: 'Seg' }), onClick: () => { segClicks++; },
+      });
+    },
+  });
+  // CONTROL: both really do route while granted, so the refusals below are the
+  // guard rather than an id that never matched.
+  assert.equal(host.handleBarClick('demo:go', null), true, 'CONTROL: the action routes when granted');
+  assert.equal(clicks, 1, 'CONTROL: and its onClick ran');
+  assert.equal(host.handleBarClick('demo:seg', null), true, 'CONTROL: the segment routes too');
+  assert.equal(segClicks, 1, 'CONTROL: and so does its onClick');
+
+  reaches.set('demo|seat-a', false);
+  assert.equal(host.handleBarClick('demo:go', null), false, 'a revoked action refuses the stale act');
+  assert.equal(clicks, 1, 'and the plugin never ran');
+  assert.equal(host.handleBarClick('demo:seg', null), false, 'the segment refuses it too');
+  assert.equal(segClicks, 1, 'and its onClick never ran either');
+});

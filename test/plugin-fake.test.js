@@ -179,8 +179,11 @@ test('fake plugin: activation reaches every engine extension point exactly once'
     assert.deepStrictEqual(engine._dispatchKeys().sort(), ['fake:boom', 'fake:ping', 'fake:slow']);
     assert.deepStrictEqual(engine._hookCounts(), { create: 1, exit: 1 });
     assert.strictEqual(intentRegistry.pluginRowFor('fake-note').source, 'fake');
+    // `scope` (t190) is part of the catalog row because the renderer must know
+    // which plugins are session-scoped BEFORE it activates any of them. A
+    // manifest that declares none resolves to 'global' — today's behaviour.
     assert.deepStrictEqual(engine.catalog(), [
-      { id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null },
+      { id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null, scope: 'global' },
     ]);
   });
 });

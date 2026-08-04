@@ -1,6 +1,6 @@
 'use strict';
 
-const { isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS } = require('./plugin-api');
+const { isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf } = require('./plugin-api');
 
 function validateManifest(m, dirName) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
@@ -11,6 +11,13 @@ function validateManifest(m, dirName) {
   if (m.id !== dirName) return `manifest id "${m.id}" does not match its directory "${dirName}"`;
   const want = String(m.hostApi ?? '');
   if (want !== HOST_API_VERSION) return `wants hostApi "${want}" but this host is "${HOST_API_VERSION}"`;
+  // REFUSED rather than defaulted: `scopeOf` resolves anything unrecognized to
+  // `global`, so a typo'd scope on a plugin meant to be invisible would load it
+  // for every session — the exact failure the field exists to prevent, and
+  // silent. An absent scope is legal and means global.
+  if (m.scope != null && !PLUGIN_SCOPES.includes(m.scope)) {
+    return `invalid scope: ${JSON.stringify(m.scope)} — must be ${PLUGIN_SCOPES.map((s) => JSON.stringify(s)).join(' or ')}`;
+  }
   if (!m.entry || typeof m.entry !== 'object') return 'manifest.entry is missing';
   if (m.entry.engine && typeof m.entry.engine !== 'string') return 'manifest.entry.engine must be a string';
   if (m.entry.renderer && typeof m.entry.renderer !== 'string') return 'manifest.entry.renderer must be a string';
@@ -473,6 +480,7 @@ function createPluginLoader(deps) {
           restartRequired: restartRequired.get(rec.id) || null,
           root: rec.root || null,
           rootLabel: rec.rootLabel || null,
+          scope: scopeOf(rec.manifest),
         };
       }),
       problems: discoveryProblems.slice(),

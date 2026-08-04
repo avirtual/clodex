@@ -52,6 +52,109 @@ function isValidPluginId(id) {
   return typeof id === 'string' && PLUGIN_ID_RE.test(id) && !RESERVED_PLUGIN_IDS.has(id);
 }
 
+// ── Scope (t190) ────────────────────────────────────────────────────────────
+// `global` is the default and is today's behaviour exactly: the plugin's rows,
+// grammar lines and per-session UI appear for every session. `session` means the
+// plugin is INVISIBLE to a session that has not granted it — absent from the
+// checklist, not present-and-refused, which is what `intentEnabledFor` already
+// does and is not what this adds.
+//
+// Additive by design (see HOST_API_VERSION above): an absent `scope` resolves to
+// `global`, so every manifest written against "1" keeps working and the field
+// costs no version bump. Retrofitting the gate LATER would, which is why the
+// vocabulary is declared before anything ships that needs it.
+const PLUGIN_SCOPES = Object.freeze(['global', 'session']);
+const DEFAULT_PLUGIN_SCOPE = 'global';
+
+function scopeOf(manifest) {
+  const s = manifest && manifest.scope;
+  return s === 'session' ? 'session' : DEFAULT_PLUGIN_SCOPE;
+}
+
+// Capabilities are separate grants because they carry different RISK, not
+// because they name different plugins. Bash commands and Write contents are the
+// sharpest thing on offer; sharing a grant with turn text would hand every turn
+// archiver the full command history as a side effect.
+//
+// Order is the order they are offered in the UI, weakest first. It is not a
+// hierarchy — holding `toolInputs` does not imply `turns`; each is independent
+// and each defaults OFF.
+const PLUGIN_CAPABILITIES = Object.freeze(['turns', 'thinking', 'toolInputs']);
+
+// `:` is what makes a grant token unforgeable as an intent verb and vice versa:
+// PLUGIN_VERB_RE admits no colon, so a grant list and an intents list can never
+// be confused for one another even though they ride the same entry.
+function grantToken(pluginId, capability) {
+  return `${pluginId}:${capability}`;
+}
+
+function isValidCapability(capability) {
+  return PLUGIN_CAPABILITIES.includes(capability);
+}
+
+// STRICT, exactly like intentEnabledFor's plugin branch: an absent list is a
+// refusal, never the living all-enabled default. A scoped plugin that fell back
+// to "granted" on a session created before the plugin existed would be a
+// retroactive grant to every seat that ever existed.
+function pluginGranted(pluginId, capability, grants) {
+  if (!Array.isArray(grants)) return false;
+  if (!isValidCapability(capability)) return false;
+  return grants.includes(grantToken(pluginId, capability));
+}
+
+// The door filter for anything arriving from a renderer or over the wire. An
+// unknown capability is already inert (pluginGranted refuses it), so this is
+// about not PERSISTING junk that a later, wider vocabulary would silently
+// activate: a `p:everything` token written today must not become a real grant
+// the day `everything` is added.
+function sanitizeGrants(list) {
+  if (!Array.isArray(list)) return null;
+  const seen = new Set();
+  for (const raw of list) {
+    if (typeof raw !== 'string') continue;
+    const at = raw.indexOf(':');
+    if (at <= 0) continue;
+    const id = raw.slice(0, at);
+    const cap = raw.slice(at + 1);
+    if (!isValidPluginId(id) || !isValidCapability(cap)) continue;
+    seen.add(grantToken(id, cap));
+  }
+  return [...seen];
+}
+
+// The grants a grants EDITOR must carry forward untouched: those held for a
+// plugin it drew no row for. The editor is offered only enabled, unquarantined
+// plugins, and quarantine is AUTOMATIC on repeated failure — so a whole-list
+// save would silently revoke every grant for a plugin that quarantined itself,
+// with no operator action anywhere in the chain. Lives here rather than in the
+// popover because the popover is DOM-bound and untestable, and this arithmetic
+// is the whole fix.
+function grantsForUnlistedPlugins(granted, listedPluginIds) {
+  if (!Array.isArray(granted)) return [];
+  const listed = new Set(listedPluginIds || []);
+  return granted.filter((g) => {
+    if (typeof g !== 'string') return false;
+    const at = g.indexOf(':');
+    return at > 0 && !listed.has(g.slice(0, at));
+  });
+}
+
+// The other half of that fix, and here for the same reason: the union itself is
+// what the editor SAVES, so a fix that computes the carry-forward correctly and
+// then drops it on the way out is no fix at all. Both halves in the leaf means
+// one mutant kills the shipped behaviour rather than a test's copy of it.
+function mergeGrants(checked, unlisted) {
+  return [...new Set([...(checked || []), ...(unlisted || [])])];
+}
+
+// The SURFACING predicate — "does this plugin reach this session at all?".
+// Deliberately ANY rather than a fourth "visible" capability: a plugin the
+// operator granted turn text but nothing else must still show its rows, and a
+// separate visibility grant would be a checkbox that does nothing on its own.
+function pluginReaches(pluginId, grants) {
+  return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
+}
+
 // Host-owned namespacing (plan §2.1/§2.4): every id a plugin registers — status
 // bar action, session-menu act, dispatch method — is prefixed by the host, never
 // by the plugin. `_host` is the reserved pseudo-plugin the renderer host uses for
@@ -84,6 +187,17 @@ module.exports = {
   PLUGIN_ID_RE,
   RESERVED_PLUGIN_IDS,
   isValidPluginId,
+  PLUGIN_SCOPES,
+  DEFAULT_PLUGIN_SCOPE,
+  scopeOf,
+  PLUGIN_CAPABILITIES,
+  grantToken,
+  isValidCapability,
+  sanitizeGrants,
+  grantsForUnlistedPlugins,
+  mergeGrants,
+  pluginGranted,
+  pluginReaches,
   HOST_PSEUDO_ID,
   namespaced,
   pluginsEnabled,

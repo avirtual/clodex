@@ -115,11 +115,18 @@ const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
-// Fields _preserveAcrossRestart carries whether or not a caller asks. Only
-// APPEND-ONLY history belongs here — a field a restart can legitimately reset
-// (rosterSentAt on a fresh restart) must stay caller-controlled.
+// Fields _preserveAcrossRestart carries whether or not a caller asks. The test
+// for membership is that NO caller can regrow the field: append-only history
+// (sessionIds) and operator decisions no spawn argument carries (pluginGrants —
+// not a create() parameter, so create's rebuild upsert writes a record without
+// it) — AND that no caller re-asserts it after create(). That second clause is
+// what keeps `label`/`stripLevel` out: no caller can regrow them either, but
+// all three call sites deliberately re-assert them post-create, so moving them
+// here would make two writers for one field.
+// A field a restart can legitimately reset (rosterSentAt on a fresh
+// restart) must stay caller-controlled.
 // test/preserve-across-restart.test.js pins that every caller gets these.
-const ALWAYS_PRESERVE = ['sessionIds'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants'];
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -828,6 +835,13 @@ function createSessionManager(deps) {
             extraArgs,
             intents,
             execCommands,
+            // Captured at spawn, exactly like `intents` beside it — refreshPrompt
+            // REPLAYS this object, so a member that re-read persistence would
+            // make clear/compact write different bytes than the spawn did. A
+            // grant edited live therefore reaches the prompt on the seat's next
+            // respawn, which is the same deal the intent checklist already
+            // offers; the fire-time gate is what applies immediately.
+            pluginGrants: (existingEntry && existingEntry.pluginGrants) || null,
             appendPromptFiles,
             inlineBody: systemPromptBody || null,
             hasSystemFile: !!sysFile,
@@ -979,7 +993,8 @@ function createSessionManager(deps) {
           cmd = 'codex';
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents)), {
+          const codexGrants = (existingEntry && existingEntry.pluginGrants) || null;
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, codexGrants)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           args = [...cleaned];
@@ -1694,7 +1709,8 @@ function createSessionManager(deps) {
     _realIpcFor(recipe, teamBlock) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
-        : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands), pluginGrammarLines(recipe.intents));
+        : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands),
+          pluginGrammarLines(recipe.intents, recipe.pluginGrants));
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles),
         inlineBody: recipe.inlineBody,
@@ -2587,9 +2603,14 @@ function createSessionManager(deps) {
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
+          // Grants-scoped: this list is written INTO the seat's context, so
+          // naming a session-scoped plugin's verb here would advertise the
+          // plugin's existence to exactly the agents it is meant to be
+          // invisible to.
+          const grants = getPersistence().get(senderName)?.pluginGrants;
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
-            + `Valid intents: ${validIntentNames().join(', ')}. `
+            + `Valid intents: ${validIntentNames(grants).join(', ')}. `
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
         this._broadcast('ipc-message', {

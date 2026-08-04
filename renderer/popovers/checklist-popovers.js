@@ -30,11 +30,23 @@ const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util'
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
 const { makeDraggable, resetDrag } = require('../lib/popover-drag');
+const { grantsForUnlistedPlugins, mergeGrants } = require('../../plugin-api');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
 // Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
 // grammar the library drawer uses). Feeds render (checked+disabled `· auto`) and
 // the Save reconcile (exclude from the persisted set).
+// Operator-facing names for the plugin capabilities (plugin-api's
+// PLUGIN_CAPABILITIES). The vocabulary is the engine's; the WORDING is the UI's,
+// and it is deliberately about what the plugin gets to see rather than what the
+// field is called — "toolInputs" does not tell an operator that it includes
+// every Bash command the agent ran.
+const CAPABILITY_LABELS = {
+  turns: 'Turn text — what the agent writes',
+  thinking: 'Thinking blocks — its reasoning, not just its answers',
+  toolInputs: 'Tool inputs — Bash commands it runs and file contents it writes',
+};
+
 const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [], session));
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
@@ -375,6 +387,57 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     refreshExecReadoutInertState();
   }
 
+  // --- Plugin Access (t190) -------------------------------------------------
+  // Same storage rule as the intent gate and the same strict semantics, but its
+  // own block and its own header: "Intents" is what this seat may EMIT, a grant
+  // is what a plugin may READ of it, and an operator scanning for "who can see
+  // my thinking" will not look under a list of verbs. Only SESSION-SCOPED
+  // plugins appear — a global plugin has no per-session decision to offer, so
+  // the block is absent entirely when none is installed, which is every install
+  // that ships today.
+  const intentsGrantsBlock = document.getElementById('intents-popover-grants');
+  const intentsGrantsList = document.getElementById('intents-popover-grants-list');
+
+  // Grants held for plugins this dialog CANNOT draw a row for — see
+  // grantsForUnlistedPlugins. Stashed at render, unioned back at collect, so a
+  // save only ever changes the rows the operator actually saw.
+  let unlistedGrants = [];
+
+  function renderPluginGrants(res) {
+    const plugins = (res && res.plugins) || [];
+    const caps = (res && res.capabilities) || [];
+    const granted = new Set((res && res.granted) || []);
+    unlistedGrants = grantsForUnlistedPlugins((res && res.granted) || [], plugins.map((p) => p.id));
+    intentsGrantsList.innerHTML = '';
+    intentsGrantsBlock.classList.toggle('hidden', !plugins.length);
+    if (!plugins.length) return;
+    for (const p of plugins) {
+      const head = document.createElement('div');
+      head.className = 'popover-subhead grant-plugin-name';
+      head.textContent = p.name || p.id;
+      intentsGrantsList.appendChild(head);
+      for (const cap of caps) {
+        const token = `${p.id}:${cap}`;
+        const row = document.createElement('label');
+        row.className = 'agent-check';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = token;
+        cb.checked = granted.has(token);
+        const txt = document.createElement('span');
+        txt.textContent = CAPABILITY_LABELS[cap] || cap;
+        row.appendChild(cb);
+        row.appendChild(txt);
+        intentsGrantsList.appendChild(row);
+      }
+    }
+  }
+
+  function collectPluginGrants() {
+    const checked = Array.from(intentsGrantsList.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+    return mergeGrants(checked, unlistedGrants);
+  }
+
   function closeIntentsPopover() {
     intentsPopover.classList.add('hidden');
     intentsPopover.dataset.name = '';
@@ -385,11 +448,14 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     // res.intents is the raw persisted allowlist (array, or null = all-enabled).
     // Rows are SERVED (intents:catalog), so seed the cache first, same as the dialog.
-    setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
+    setIntentCatalogCache((await window.api.getIntentCatalog(name)) || []);
     renderIntentChecklist(popoverIntentsList, res.intents);
     // res.execCommands is the seat's persisted grant list (local session, never
     // stripped — the wire strip is peer-only). Readout dims live off the exec box.
     renderExecGrantReadout(res.execCommands || []);
+    let grantsRes = null;
+    try { grantsRes = await window.api.getSessionPluginGrants(name); } catch {}
+    renderPluginGrants(grantsRes && grantsRes.ok ? grantsRes : null);
     intentsPopoverRestart.checked = false;
     intentsPopoverName.textContent = name;
     intentsPopover.dataset.name = name;
@@ -407,10 +473,20 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const name = intentsPopover.dataset.name;
     if (!name) return closeIntentsPopover();
     const intents = collectIntentChecklist(popoverIntentsList); // array | null
+    // Read BEFORE the close: closing does not clear the list, but the two reads
+    // must describe the same dialog state, and a later read is a later state.
+    const grantsShown = !intentsGrantsBlock.classList.contains('hidden');
+    const grants = grantsShown ? collectPluginGrants() : null;
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
     const r = await window.api.setSessionIntents(name, intents);
     if (!r || !r.ok) { alert(`Update intents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    // Only when the block was actually drawn: a save from a dialog that never
+    // showed the grants must not revoke grants it never displayed.
+    if (grants) {
+      const g = await window.api.setSessionPluginGrants(name, grants);
+      if (!g || !g.ok) { alert(`Update plugin access failed: ${g && g.error ? g.error : 'unknown error'}`); return; }
+    }
     if (!restart) return;
     // Same re-attach dance as the tools popover's restart path.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);

@@ -9,7 +9,7 @@
 
 const {
   HOST_API_VERSION, isValidPluginId, RESERVED_PLUGIN_IDS, namespaced, HOST_PSEUDO_ID,
-  NO_SUCH_METHOD, errorEnvelope,
+  NO_SUCH_METHOD, errorEnvelope, scopeOf,
 } = require('./plugin-api');
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
@@ -221,7 +221,18 @@ function createPluginHostEngine(deps) {
 
       intents: Object.freeze({
         register: (row) => {
-          const undo = registerIntent(row, pluginId);
+          // Scope comes from the REGISTERED MANIFEST, read at call time, not
+          // from `row` — a plugin that could name its own scope could declare
+          // itself global and undo the operator's decision. `registered.set`
+          // runs before activate(), so the record is always there by now.
+          // Except after deactivate(), where a late timer would find no record:
+          // scopeOf(undefined) resolves to GLOBAL and the ledger disposer no
+          // longer fires, so the row would leak permanently at the wider scope
+          // — the same silent globalization the loader's manifest refusal
+          // exists to prevent. Refuse rather than default.
+          const rec = registered.get(pluginId);
+          if (!rec) throw new Error(`plugin ${pluginId} is not registered — intents.register after deactivate`);
+          const undo = registerIntent(row, pluginId, { scope: scopeOf(rec.manifest) });
           return disposable(pluginId, undo);
         },
       }),
@@ -481,6 +492,11 @@ function createPluginHostEngine(deps) {
         version: r.manifest.version || null,
         enabled: true,
         announce: r.manifest.announce || null,
+        // The renderer needs to know WHICH plugins are session-scoped before it
+        // can hide any of them, and this is the read it already does at startup.
+        // A scope that arrived later than the first paint would show a scoped
+        // plugin's UI on every session for a frame.
+        scope: scopeOf(r.manifest),
       }));
     },
     setEnabled(pluginId, enabled) {

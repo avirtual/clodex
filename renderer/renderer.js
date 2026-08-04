@@ -3,6 +3,13 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
+// Both halves of the surfacing gate answer through this one predicate. The web
+// bundle freezes PLUGIN_CAPABILITIES at build time, which is the copy shape
+// `intents:catalog` exists to avoid — safe here only because the bundle ships
+// its own engine built from the same tree, and a PEER row carries no
+// pluginGrants at all, so a scoped plugin fails closed across that seam rather
+// than reading a stale vocabulary.
+const { pluginReaches } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-util');
@@ -2436,6 +2443,27 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
+// Which SESSION-SCOPED plugins may draw for a given session (t190). Answered
+// off sidebarMeta, which already carries a per-row read on a timer — the
+// sidebar paints every session at once, so a single active-session answer would
+// be the wrong shape for row badges.
+//
+// A plugin absent from `scopedPluginIds` is GLOBAL (or does not exist) and
+// always reaches: this must fail toward today's behaviour, because the set
+// arrives asynchronously and an empty one during startup would otherwise blank
+// every plugin's UI for a frame.
+let scopedPluginIds = new Set();
+function pluginReachesSession(pluginId, sessionName) {
+  if (!scopedPluginIds.has(pluginId)) return true;
+  const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
+  // The engine's own predicate, not a local re-derivation: it matches whole
+  // tokens against the capability vocabulary, where the split-on-':' this used
+  // to do read a colon-less "demoX" as plugin "demo" (indexOf -1 → slice(0,-1)).
+  // Both halves must answer the same question the same way or the renderer hides
+  // what the engine allows, or worse.
+  return pluginReaches(pluginId, grants);
+}
+
 const pluginBar = initPluginHost({
   getActiveSession: () => activeSession,
   sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
@@ -2444,6 +2472,7 @@ const pluginBar = initPluginHost({
   listSessions: () => window.api.listSessions(),
   openPath: (p) => window.api.fileOpen(p),
   showToast,
+  pluginReachesSession,
 });
 
 async function activatePluginRenderer(id) {
@@ -2480,10 +2509,26 @@ function requirePluginRenderer(rendererPath, id) {
   return window.require(rendererPath);
 }
 
+// Which installed plugins declare `scope: "session"`. Separated from the load
+// loop because a plugin enabled mid-run must update it without re-activating
+// every other plugin.
+// null (never []) on a failed read, and every caller must skip ACTIVATION on it:
+// the set is left as it was, so a plugin activated against a stale set would draw
+// unscoped on every session until some later refresh happened to fix it. Not
+// drawing at all is the recoverable half of that.
+async function refreshScopedPluginIds() {
+  let catalog = null;
+  try { catalog = await window.api.pluginCatalog(); } catch { return null; }
+  scopedPluginIds = new Set((catalog || []).filter((p) => p && p.scope === 'session').map((p) => p.id));
+  return catalog || [];
+}
+
 async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
-  let catalog = [];
-  try { catalog = await window.api.pluginCatalog(); } catch { return; }
+  // Recorded BEFORE activation: a scoped plugin's first paint can happen inside
+  // activate(), and a set filled afterwards would let it draw once on every
+  // session regardless of grants.
+  const catalog = await refreshScopedPluginIds();
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;
     await activatePluginRenderer(p.id);
@@ -2494,7 +2539,11 @@ loadPluginRenderers();
 if (window.api.onPluginEvent) {
   window.api.onPluginEvent((pluginId, topic, payload) => {
     if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
-      if (payload.enabled) activatePluginRenderer(payload.id);
+      // A plugin enabled mid-run has never been through loadPluginRenderers, so
+      // its scope would be unknown and it would draw unscoped until restart.
+      if (payload.enabled) {
+        refreshScopedPluginIds().then((c) => { if (c) activatePluginRenderer(payload.id); });
+      }
       else pluginBar.dispose(payload.id);
       if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
       return;
@@ -5208,7 +5257,9 @@ async function openArgsDialog(name, argsSource = null) {
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsIntentsSection.style.display = isClaude ? '' : 'none';
-  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
+  // Named: a session-scoped plugin's verbs surface here only if THIS seat
+  // granted the plugin. Passing no name would draw the un-granted catalog.
+  setIntentCatalogCache((await window.api.getIntentCatalog(name)) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   const isExecEditable = isClaude && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';

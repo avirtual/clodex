@@ -309,6 +309,11 @@ const API_CONTRACT = [
   // that reads its own frozen copy of intent-catalog.js is reading a stale
   // catalog — and the web bundle's copy is frozen at build time.
   { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },
+  // Plugin capability grants (t190). Separate from setIntents on purpose: the
+  // two are written by different UI blocks, and folding them together would let
+  // an intents save silently revoke every grant.
+  { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
+  { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
 ];
 
 module.exports = { API_CONTRACT };
