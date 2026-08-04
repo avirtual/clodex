@@ -157,6 +157,10 @@ const RENDERER_SCANNED_MODULES = [
   // extraction, but it is read BY peers-ui (which is DOM-bound and untested), so
   // the cheap guard that it never reaches for a renderer.js name is worth having.
   'renderer/lib/peer-web-view.js',
+  // Read by BOTH renderer.js (terminal link provider) and files-popover.js
+  // (peek linkify), so a reach for a renderer.js name would break one caller
+  // and not the other.
+  'renderer/lib/path-scan.js',
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',
   'renderer/pot-drawer.js',
