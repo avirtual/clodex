@@ -10,7 +10,7 @@
 // left to integration + Bogdan's GUI smoke test.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createSessionManager, isStaleRegistration, nameConflict } = require('../session-manager');
+const { createSessionManager, deniedBodyDisposition, isStaleRegistration, nameConflict } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { intentEnabled } = require('../intent-catalog');
 
@@ -629,7 +629,183 @@ test('gate: exec disabled → coarse bounce before the per-command grant is cons
   m._handleExecIntent = () => { ran = true; };
   await m._handleIntent('a', { type: 'exec', cmd: 'bridge-reply', body: '{}' });
   assert.strictEqual(ran, false); // never reached the per-command layer
-  assert.strictEqual(injected[0], '[agent:exec] the exec intent is disabled for this session');
+  // t170: the body is reported lost, not spilled — an exec payload is derived from
+  // the line the sender just wrote and means nothing without the denied command.
+  assert.strictEqual(injected[0],
+    '[agent:exec] the exec intent is disabled for this session — this capability is off for this seat; '
+    + 'retrying will bounce the same way, and only the operator can turn it on (Edit Session → Intents). '
+    + 'Your exec body (2 bytes) was NOT saved and exists only in your own turn');
+});
+
+// --- t170: a DENIED intent must not destroy the sender's body ----------------
+//
+// Same data-loss shape as t166, different site and different answer. Two things
+// make it different, and each is pinned below: the sender cannot fix a denial by
+// retrying (only the operator can), and the path repeats every turn forever, so
+// the spill needs a rate cap that MSG_MAX_AGE (an age bound) does not provide.
+//
+// The spill is REAL here (a temp dir) for the reason mkSpillTasks documents: a
+// stub returning a fixed string cannot tell a written file from a named one.
+function mkDenied(extra = {}) {
+  const spillDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t170-'));
+  const spills = [];
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents: [] } : null) }), // everything gated
+    spillToFile: (sender, body, recipient) => {
+      const p = pathReal.join(spillDir, `msg-${spills.length}.txt`);
+      fsReal.writeFileSync(p, `From: ${sender}\n\n${body}`);
+      spills.push({ sender, recipient, path: p });
+      return p;
+    },
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+    // mk() does not wire `log`, and the spill-failure branch warns through it — an
+    // unwired seam turns "the disk is full" into a TypeError thrown out of the gate,
+    // i.e. no bounce at all on exactly the path that most needs one. mkTasks wires it
+    // for the same reason.
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    ...extra,
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  // Read the payload back through the path the BOUNCE carries, never off the
+  // recorded call: the sender has nothing but the reply text.
+  const recovered = () => {
+    const mm = /minutes and then swept: (\S+)/.exec(injected[injected.length - 1] || '');
+    return mm ? fsReal.readFileSync(mm[1], 'utf8') : null;
+  };
+  return { m, injected, spills, recovered, last: () => injected[injected.length - 1] };
+}
+
+test('t170 a denied dm hands the body back on disk, and the bounce carries the path', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'dm', target: 'b', body: 'the composed message' });
+  assert.strictEqual(f.spills.length, 1, 'exactly one file written');
+  assert.match(f.recovered(), /the composed message/, 'and it is READABLE through the path the sender was given');
+  assert.strictEqual(f.spills[0].recipient, 'a',
+    'spilled into the SENDER\'s own directory — this is why handing the payload back does not weaken the gate: '
+    + 'the denied target is never written to and never told');
+});
+
+// The whole bounce, as one literal. A regex would pass against a sentence
+// containing `undefined` or `NaN` — which is exactly what an unwired fixture dep
+// renders, and that family has cost three tickets running.
+test('t170 the denial bounce is fully rendered and never advises a retry', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'dm', target: 'b', body: 'twenty-one chars here' });
+  assert.strictEqual(f.last(),
+    '[agent:dm] the dm intent is disabled for this session — this capability is off for this seat; '
+    + 'retrying will bounce the same way, and only the operator can turn it on (Edit Session → Intents). '
+    + `Your dm body (21 bytes) is saved for the next 30 minutes and then swept: ${f.spills[0].path} — copy it out before then`);
+  // t166's sites tell the sender to fix the input and retry. Here retrying is
+  // guaranteed to bounce identically, so that advice would be a loop with no exit.
+  assert.doesNotMatch(f.last(), /try again|retry it|re-fire|re-emit/i,
+    'a denial is the operator\'s configuration, not a sender mistake');
+});
+
+// The rate policy. sweepSpilledMessages bounds spill AGE, not RATE, and a seat
+// that has not internalised a denial emits the same verb every turn forever — so
+// without a cap here one seat writes files without bound. Four bounces, not two:
+// the cap is only observable on the bounce AFTER the budget is spent.
+test('t170 the spill budget is per (seat, verb) and the overflow bounce admits the loss', async () => {
+  const f = mkDenied();
+  for (let i = 0; i < 4; i++) await f.m._handleIntent('a', { type: 'dm', target: 'b', body: `body ${i}` });
+  assert.strictEqual(f.spills.length, 3, 'three written, the fourth refused — the cap is DENIED_SPILL_CAP, not unbounded');
+  assert.match(f.last(), /was NOT saved — 3 bodies for this verb have already been spilled/);
+  assert.doesNotMatch(f.last(), /is saved for/,
+    'the two outcomes must stay distinguishable: a sender that reads "saved" stops holding the only copy');
+
+  // A different verb has its own budget. A seat can be denied several capabilities
+  // and one must not consume another's allowance.
+  await f.m._handleIntent('a', { type: 'notify-user', body: 'an operator note' });
+  assert.strictEqual(f.spills.length, 4, 'notify-user spills despite dm being exhausted');
+  assert.match(f.recovered(), /an operator note/);
+});
+
+test('t170 a fresh session gets a fresh budget (a respawn has not read the earlier bounces)', async () => {
+  const f = mkDenied();
+  for (let i = 0; i < 4; i++) await f.m._handleIntent('a', { type: 'dm', target: 'b', body: `body ${i}` });
+  assert.strictEqual(f.spills.length, 3);
+  f.m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' }); // respawn: new Session object
+  await f.m._handleIntent('a', { type: 'dm', target: 'b', body: 'after the respawn' });
+  assert.strictEqual(f.spills.length, 4, 'the budget rides the live Session, so a respawn starts over');
+});
+
+// The one verb whose denial makes the payload MOOT rather than lost: the reset did
+// not happen, so the continuation note is still in the context it was written for.
+// A "your body was not saved" line here would be a false alarm.
+test('t170 a denied context keeps its ORIGINAL bounce — nothing was destroyed', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'context', sub: 'compact', body: 'pick up at phase 3' });
+  assert.strictEqual(f.last(), '[agent:context] the context intent is disabled for this session');
+  assert.strictEqual(f.spills.length, 0);
+});
+
+test('t170 a denied exec reports the loss but writes nothing', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'exec', cmd: 'c', body: '{"a":1}' });
+  assert.strictEqual(f.spills.length, 0, 'a derived JSON args object is not worth a file');
+  assert.match(f.last(), /Your exec body \(7 bytes\) was NOT saved/, 'but the loss is still announced');
+});
+
+// memory splits on `sub`: only `remember` carries a greedy body. A sub that gains
+// one later must not be spilled under the `remember` label.
+test('t170 memory spills only for `remember`', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'memory', sub: 'remember', body: 'a durable fact' });
+  assert.strictEqual(f.spills.length, 1);
+  assert.strictEqual(f.spills[0].sender, 'memory remember (denied)',
+    'the on-disk label distinguishes a DENIED payload from t166\'s REJECTED ones');
+  await f.m._handleIntent('a', { type: 'memory', sub: 'recall', body: 'x' });
+  assert.strictEqual(f.spills.length, 1, 'a non-remember sub is reported, not written');
+  assert.match(f.last(), /Your memory recall body \(1 bytes\) was NOT saved/);
+});
+
+// The five bodiless gateable verbs. The spec asks that a spill on these be
+// IMPOSSIBLE rather than merely unreached, so this walks the catalogue against the
+// grammar table instead of listing verbs by hand — a verb that gains a body later
+// fails here and has to be classified deliberately.
+test('t170 every bodiless gateable verb is structurally unspillable', () => {
+  const { GATEABLE_INTENTS } = require('../intent-catalog');
+  const { bodyModeFor } = require('../intent-registry');
+  // Probed across subs, not called bare: `context` and `memory` answer 'none' for a
+  // MISSING sub and 'greedy' for compact/remember, so a single bare call would
+  // misfile both as bodiless and this test would then certify a spill path it never
+  // exercised. Bodiless means bodiless for every sub the verb can carry.
+  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list'];
+  const bodiless = GATEABLE_INTENTS
+    .map((i) => i.type)
+    .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
+  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'who'],
+    'the bodiless five — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  for (const type of bodiless) {
+    assert.deepStrictEqual(deniedBodyDisposition({ type }), { how: 'none', label: null },
+      `${type} carries no body, so it can never reach a spill`);
+  }
+});
+
+// A path named for a file nobody wrote is worse than admitting the loss: the sender
+// drops its only copy on the strength of it. Same invariant as t166, new site.
+test('t170 a FAILED spill names no path and does not spend the budget', async () => {
+  let boom = true;
+  const f = mkDenied({ spillToFile: (...a) => { if (boom) throw new Error('disk full'); return '/tmp/ok.txt'; } });
+  await f.m._handleIntent('a', { type: 'dm', target: 'b', body: 'the composed message' });
+  assert.match(f.last(), /could NOT be saved \(disk full\)/);
+  assert.doesNotMatch(f.last(), /is saved for|and then swept/, 'and must not read as a success');
+  // The budget exists to bound DISK. A failed spill wrote nothing, so charging it
+  // would let a transient error consume an allowance that cost no bytes.
+  boom = false;
+  for (let i = 0; i < 3; i++) await f.m._handleIntent('a', { type: 'dm', target: 'b', body: `retry ${i}` });
+  assert.match(f.last(), /is saved for the next 30 minutes/,
+    'the third post-failure spill still succeeds — the failure did not spend an allowance');
+});
+
+test('t170 an ENABLED intent spills nothing (the gate is the only entry point)', async () => {
+  const f = mkDenied({ getPersistence: () => ({ list: () => [], get: () => ({ intents: null }) }) });
+  await f.m._handleIntent('a', { type: 'who', body: '' });
+  assert.strictEqual(f.spills.length, 0);
 });
 
 // [agent:reboot] (Task 27): operator-gated app relaunch. AUTH is the per-session

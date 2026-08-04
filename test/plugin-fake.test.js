@@ -1005,8 +1005,15 @@ test('fake plugin (intents): an ungranted seat is refused at the gate, never at 
 
     await m._handleIntent('seat-a', { type: 'fake-note', body: 'x' });
     assert.deepStrictEqual(record.intents, [], 'the handler never ran');
-    assert.deepStrictEqual(injected, ['[agent:fake-note] the fake-note intent is disabled for this session'],
-      'and the agent got the standard gate bounce, not a plugin-specific one');
+    // t170 note-not-spill: an unclassified verb (every plugin verb is one) reports
+    // its body lost rather than writing it. That is the SAFE default — a plugin verb
+    // that gains a greedy body later announces the loss instead of silently eating
+    // it, and Clodex never writes a payload it knows nothing about to disk.
+    assert.deepStrictEqual(injected, [
+      '[agent:fake-note] the fake-note intent is disabled for this session — this capability is off for this seat; '
+      + 'retrying will bounce the same way, and only the operator can turn it on (Edit Session → Intents). '
+      + 'Your fake-note body (1 bytes) was NOT saved and exists only in your own turn'],
+    'and the agent got the standard gate bounce, not a plugin-specific one');
   });
 });
 

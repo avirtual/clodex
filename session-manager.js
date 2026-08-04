@@ -168,6 +168,49 @@ function nameConflict({ liveHas, persistedHas }) {
   return null;
 }
 
+// How many payloads a seat may spill per denied verb, for its whole live session.
+// Not 1: intents are handled in sequence, so one turn carrying three denied dms
+// would keep an arbitrary one and destroy the rest. Not unbounded: see the rate
+// note on _deniedIntentPayload.
+const DENIED_SPILL_CAP = 3;
+
+// What to do with the body of an intent the gate just refused. Pure → unit-tested
+// directly, and keyed on the INTENT rather than the type because `memory` and
+// `context` split on `sub`.
+//   'spill' — hand the payload back on disk. Reserved for bodies whose value IS
+//             the composition: prose the sender wrote once and cannot regenerate.
+//   'note'  — tell the sender the body is gone, write nothing.
+//   'none'  — say nothing, because nothing was lost.
+// 'note' is the DEFAULT on purpose. Silence about a destroyed payload is the
+// defect this function exists to fix, so it has to be argued for per verb (below,
+// `context` is the single case) rather than inherited by any verb nobody
+// classified — including a plugin verb that gains a greedy body later.
+function deniedBodyDisposition(intent) {
+  if (!intent || !intent.body) return { how: 'none', label: null };
+  switch (intent.type) {
+    case 'dm': case 'notify-user': case 'remind':
+      return { how: 'spill', label: intent.type };
+    case 'memory':
+      // `remember` is the only sub with a greedy body; a future one that gained a
+      // body would be reported as lost rather than silently spilled under the
+      // wrong label.
+      if (intent.sub === 'remember') return { how: 'spill', label: 'memory remember' };
+      return { how: 'note', label: `memory ${intent.sub || ''}`.trim() };
+    // The one verb whose denial makes the body MOOT rather than lost: the
+    // compact/clear/reload did not happen, so the continuation note is still sitting
+    // in the context it was written for, and the post-reset self it addresses does
+    // not exist. Nothing to hand back, and a "your body was not saved" line here
+    // would be a false alarm.
+    case 'context':
+      return { how: 'none', label: null };
+    // exec's body is a JSON args object derived from the same line the sender just
+    // wrote, and it means nothing apart from the command that was refused. Lost, so
+    // it is reported; not composed, so it is not written to disk.
+    default:
+      return { how: 'note', label: intent.type };
+  }
+}
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -2518,7 +2561,7 @@ function createSessionManager(deps) {
         if (session && session.agentType) {
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
-            : `the ${intent.type} intent is disabled for this session`;
+            : `the ${intent.type} intent is disabled for this session${this._deniedIntentPayload(session, intent)}`;
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
@@ -3945,6 +3988,53 @@ function createSessionManager(deps) {
       }
     }
 
+    // The disabled-intent gate's payload suffix. Separate from the t166 ticket
+    // sites (_spillRejectedPayload above) for two reasons that are properties of
+    // THIS gate, not of spilling:
+    //
+    // A denial is not a mistake. Every t166 site rejects an input the sender can
+    // correct — wrong id, not your ticket — so telling it to copy the body out and
+    // retry is actionable. Here retrying is guaranteed to bounce identically; only
+    // the operator can change the seat's allowlist, from the local GUI. Any copy
+    // that reads as "fix it and try again" sends the sender into a loop it cannot
+    // exit, so this path says whose call it is instead.
+    //
+    // And a denial REPEATS without bound. A t166 bounce is a rare error; a seat
+    // that has not internalised a denied verb emits one every turn, forever, and an
+    // unconditional spill would write a file each time. sweepSpilledMessages bounds
+    // spill AGE (MSG_MAX_AGE), not RATE, and engine.js's sweep header explicitly
+    // rules against adding a second expiry policy that could disagree with parking
+    // — so the rate has to be capped at the source. Hence the per-(seat, verb)
+    // budget: keyed by verb because a seat can be denied several capabilities and
+    // one must not eat another's budget, and held on the live Session so a respawn
+    // (fresh context, has not read the earlier bounces) starts over.
+    //
+    // Past the budget the sender is still told the body is gone. The
+    // saved/not-saved outcomes stay distinguishable in the reply for the same
+    // reason _spillRejectedPayload distinguishes them: a sender that reads "saved"
+    // stops holding the only copy.
+    _deniedIntentPayload(session, intent) {
+      const { how, label } = deniedBodyDisposition(intent);
+      if (how === 'none') return '';
+      const off = ` — this capability is off for this seat; retrying will bounce the same way, and only the operator can turn it on (Edit Session → Intents)`;
+      const body = String(intent.body);
+      if (how === 'spill') {
+        const used = (session._deniedSpills || (session._deniedSpills = new Map())).get(label) || 0;
+        if (used < DENIED_SPILL_CAP) {
+          try {
+            const path_ = spillToFile(`${label} (denied)`, body, session.name);
+            session._deniedSpills.set(label, used + 1);
+            return `${off}. Your ${label} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+          } catch (e) {
+            log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
+            return `${off}. WARNING: your ${label} body (${body.length} bytes) could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
+          }
+        }
+        return `${off}. Your ${label} body (${body.length} bytes) was NOT saved — ${DENIED_SPILL_CAP} bodies for this verb have already been spilled this session and the rest are dropped; it exists only in your own turn`;
+      }
+      return `${off}. Your ${label} body (${body.length} bytes) was NOT saved and exists only in your own turn`;
+    }
+
     _taskAdd(session, team, teamDir, intent, reply) {
       // Read before the permission check, not after: a non-lead's spec is the longest
       // payload any ticket verb carries, and the check below is the one rejection in
@@ -5030,4 +5120,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding };
+module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding };
