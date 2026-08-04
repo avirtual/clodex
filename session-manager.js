@@ -995,7 +995,13 @@ function createSessionManager(deps) {
           args = [...extraArgs];
       }
 
-      const env = { ...mergedEnv, TERM: 'xterm-256color' };
+      // Applied AFTER the scope merge, in env-scopes.js's app-owned-key slot:
+      // these override any value an env scope set, deliberately. CLODEX_HOME
+      // belongs here because a seat that runs scripts/task-ledger.js or
+      // clodex-team.js from its own shell must land on the same tree as the
+      // exec route already does — a scope-set value would resurrect exactly the
+      // split those pins closed.
+      const env = { ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR };
       if (type === 'codex') env.WB_WRAP_NAME = name;
 
       let ptyProc;

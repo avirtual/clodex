@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A seat's shell now sees the same Clodex root the app does.** The helper
+  scripts — the team roster, the monitor, the task ledger — find their data
+  through `CLODEX_HOME`. Commands you fire with `[agent:exec …]` were already
+  pointed at the app's own root, but the same script run by hand from a seat's
+  terminal inherited whatever the app happened to be launched with, so the two
+  routes could read different trees and disagree about who is on the team. Every
+  session now starts with that variable set to the app's root, which closes the
+  split. The consequence worth knowing: setting `CLODEX_HOME` yourself in a
+  session's environment no longer has any effect — it is overridden, the same way
+  `TERM` always has been. Nothing else in that environment changes.
+
 - **A session can now be told to skip wirescope's spawn-directive block.** Set
   `CLODEX_SPAWNER_HINT=off` in a session's environment and the proxy stops
   adding the `[wirescope]` block — the documentation of how to spawn subagents —

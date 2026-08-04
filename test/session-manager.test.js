@@ -5569,7 +5569,11 @@ function mkEnvProbe({ global = {}, workspaces = {} } = {}) {
     spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; },
   };
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-envud-')); // no env-override.env inside
+  // A root that is NOT ~/.clodex, so the CLODEX_HOME pin below asserts something:
+  // against the real default it would agree with an unpinned env by accident.
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-envroot-'));
   const m = mk({
+    REGISTRY_DIR: registryDir,
     getPersistence: () => ({
       list: () => [], get: () => null,
       upsert: (e) => { persisted[e.name] = { ...(persisted[e.name] || {}), ...e }; },
@@ -5583,7 +5587,7 @@ function mkEnvProbe({ global = {}, workspaces = {} } = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._sendToSession = () => {};
-  return { m, persisted, captured: () => capturedEnv };
+  return { m, persisted, registryDir, captured: () => capturedEnv };
 }
 // Like bashCreate but threads the 19th positional (sessionEnv).
 const bashCreateWithEnv = (m, name, sessionEnv) => m.create(
@@ -5591,13 +5595,17 @@ const bashCreateWithEnv = (m, name, sessionEnv) => m.create(
   [], [], [], [], [], null, [], [], null, sessionEnv,
 );
 
-test('create → PTY env: no scopes reduces to byte-identical { ...process.env, TERM }', async () => {
+test('create → PTY env: no scopes reduces to byte-identical { ...process.env, TERM, CLODEX_HOME }', async () => {
   // The load-bearing no-behavior-change pin: with nothing set anywhere and no
   // override file, mergeSessionEnv returns exactly { ...process.env }, so the
-  // spawned env is byte-for-byte the historical `{ ...process.env, TERM }`.
-  const { m, captured } = mkEnvProbe();
+  // spawned env is byte-for-byte process.env plus the app-owned keys and
+  // NOTHING else. Whole-object equality on purpose — it is what catches a key
+  // arriving as undefined from a seam the harness forgot to wire.
+  const { m, captured, registryDir } = mkEnvProbe();
   await bashCreate(m, 'env-none', null);
-  assert.deepStrictEqual(captured(), { ...process.env, TERM: 'xterm-256color' });
+  assert.deepStrictEqual(captured(), {
+    ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir,
+  });
 });
 
 test('create → PTY env: a session env param layers over the base and reaches spawn', async () => {
@@ -5638,6 +5646,46 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
   assert.strictEqual(env.OK, '1', 'a legal sibling key still lands');
   assert.strictEqual(env.CLODEX_REMOTE_TOKEN, process.env.CLODEX_REMOTE_TOKEN,
     'the scope did not inject the deny key (base value, whatever it is, untouched)');
+});
+
+// t173: CLODEX_HOME is an app-owned key, applied AFTER the merge like TERM.
+// A seat that runs scripts/task-ledger.js from its own shell must land on the
+// same tree the exec dispatcher already pins (session-manager.js:3067), so a
+// scope-set value is overridden rather than rejected — sanitizeFlat's deny-list
+// is for keys that gate their own write surface, which this is not. Every case
+// sets the variable to a tree that is NOT registryDir, because with it unset the
+// two agree whatever the code does.
+test('create → PTY env: the app-owned CLODEX_HOME pin beats a SESSION-scope value', async () => {
+  const { m, captured, registryDir } = mkEnvProbe();
+  await bashCreateWithEnv(m, 'env-home-sess', { CLODEX_HOME: '/tmp/decoy-session-home', OK: '1' });
+  const env = captured();
+  assert.strictEqual(env.CLODEX_HOME, registryDir, 'the app root wins over the session scope');
+  assert.strictEqual(env.OK, '1', 'a legal sibling key in the same scope still lands');
+});
+
+test('create → PTY env: the app-owned CLODEX_HOME pin beats a global/workspace scope value', async () => {
+  const { m, captured, registryDir } = mkEnvProbe({
+    global: { CLODEX_HOME: { value: '/tmp/decoy-global-home' } },
+    workspaces: { ws: { CLODEX_HOME: { value: '/tmp/decoy-ws-home' } } },
+  });
+  await bashCreate(m, 'env-home-scope', null);
+  assert.strictEqual(captured().CLODEX_HOME, registryDir);
+});
+
+test('create → PTY env: the CLODEX_HOME pin beats an INHERITED value (the t132 split)', async () => {
+  // The defect the pin closes: the app launched from a shell with CLODEX_HOME
+  // set handed that value to every seat, so the same script read one tree
+  // through the shell and another through exec.
+  const prev = process.env.CLODEX_HOME;
+  process.env.CLODEX_HOME = '/tmp/decoy-inherited-home';
+  try {
+    const { m, captured, registryDir } = mkEnvProbe();
+    await bashCreate(m, 'env-home-inherit', null);
+    assert.strictEqual(captured().CLODEX_HOME, registryDir,
+      'the value in the app\'s own environment must not reach the PTY');
+  } finally {
+    if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
+  }
 });
 
 test('create: a session env param persists as a flat { KEY: value } on the entry (--resume identity)', async () => {
