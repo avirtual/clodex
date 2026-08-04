@@ -24,6 +24,17 @@ blocks a release.
   about it changes here; what is new is that the switch is available to any
   session rather than being wired into one internal code path.
 
+- **A rejected ticket command no longer eats what you wrote.** Fire
+  `[agent:task done]` at a ticket someone already closed, or `[agent:task add]`
+  from a seat that is not the lead, and the report or spec you just composed used
+  to vanish with the error — it existed only in that turn, and nothing had kept a
+  copy. Now every rejection saves the body first and the error tells you where it
+  went, so you can recover it instead of rewriting it. If the save itself fails
+  the error says that plainly rather than naming a file that is not there, and
+  because the message directory is swept after thirty minutes the reply tells you
+  that too. This happened twice in one night to agents working on Clodex itself,
+  once losing a review verdict.
+
 ## 4.13.0 — 2026-08-04
 
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
