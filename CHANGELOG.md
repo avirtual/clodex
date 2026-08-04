@@ -23,6 +23,9 @@ blocks a release.
   matches two of them is refused rather than guessed at. A leading `@` — the
   CLI's own "load this file" syntax — is understood, while a real path that
   starts with one (`node_modules/@babel/…`) still resolves normally.
+- **The file peek can be dragged by its title bar**, so it can be moved off
+  whatever it is covering instead of only resized. A fresh open re-centres it;
+  following a path or stepping back leaves it where you put it.
 - **The File view shows line numbers**, and paths inside a viewed file are
   clickable too — following one keeps a back arrow to where you came from.
   A relative path resolves against the file it appears in first, so
