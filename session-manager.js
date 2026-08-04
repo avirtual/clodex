@@ -1148,6 +1148,13 @@ function createSessionManager(deps) {
         appendPromptFiles: Array.isArray(appendPromptFiles) ? appendPromptFiles : [],
         proxy: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         proxyAgent,
+        // Written UNCONDITIONALLY, including the `false` that looks redundant on a
+        // fresh record: upsert spread-MERGES (stores.js), so omitting it on the
+        // no-hint path leaves a stale `true` from an earlier spawn, and the
+        // record-dropping exits below would then clear a row this seat never set.
+        // The live path reads the session flag; only the exits that run without a
+        // session (forget, reviewer sweep) need it here.
+        spawnerHintSet,
         agents: Array.isArray(agents) ? agents : [],
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
@@ -1513,12 +1520,32 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
+    // The exits that DROP a record run without a live session, so they cannot read
+    // `spawnerHintSet` off it — hence the persisted mirror. Dropping the record is
+    // the last moment the route id is knowable, and the hint table has no TTL, so a
+    // row not cleared here is permanent. Gated on the seat having set the override
+    // itself: a blind clear would also wipe one an operator set out-of-band through
+    // /_hint, which is supported pre-launch arm config.
+    clearHintForRecord(name) {
+      const entry = getPersistence().get(name);
+      if (!entry || entry.spawnerHintSet !== true || !entry.proxyAgent) return;
+      const base = resolveProxyBase(entry.proxy ?? null, getUiSettings());
+      if (!base) return;
+      try {
+        ProxyClient.spawnerHint(base, entry.proxyAgent, { clear: true })
+          .catch((e) => log.warn('session', `spawner-hint(clear) ${entry.proxyAgent} failed: ${e.message}`));
+      } catch (e) {
+        log.warn('session', `spawner-hint(clear) skipped: ${e.message}`);
+      }
+    }
+
     sweepReviewerGraveyard() {
       const swept = [];
       const corpses = getPersistence().list()
         .filter((e) => e && e.ephemeral === true && e.reviewFor && e.archivedAt)
         .map((e) => e.name);
       for (const name of corpses) {
+        this.clearHintForRecord(name);
         getPersistence().remove(name);
         swept.push(name);
       }

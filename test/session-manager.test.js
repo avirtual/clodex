@@ -2410,6 +2410,9 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   const hints = [];
   const order = [];
   const warns = [];
+  // The upserted entries, in order — create()'s record is what the exits that run
+  // WITHOUT a session (forget, reviewer sweep) read the hint flag back out of.
+  const upserts = [];
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
@@ -2439,7 +2442,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     buildAgentsArg: () => null,
     writeSkillPlugin: () => null,
     effectiveInjectedSkills: () => [],
-    getPersistence: () => ({ list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {} }),
+    getPersistence: () => ({ list: () => [], get: () => null, upsert: (e) => upserts.push(e), setSessionId: () => {} }),
     getUiSettings: () => ({ get: () => ({}) }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
@@ -2501,7 +2504,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       );
     } finally { stopWatchers(name); }
   };
-  return { m, hints, order, warns, spawn, root };
+  return { m, hints, order, warns, upserts, spawn, root };
 }
 
 test('spawner-hint (t151): CLODEX_SPAWNER_HINT=off POSTs on:false on the seat route, BEFORE the PTY spawn', async () => {
@@ -2689,6 +2692,66 @@ test('spawner-hint (t151): kill() of a seat that did NOT set it posts nothing �
   m.kill('plain');
   assert.deepStrictEqual(hints, [],
     'no override set → no clear, whatever the persistence record says about the seat being a reviewer');
+});
+
+// kill() reads the flag off the live session, but the exits that DROP a record
+// (session:forget, the reviewer sweep) have no session to read — so the flag is
+// mirrored onto the record. Written unconditionally: upsert spread-merges, so a
+// conditional omit would leave a stale `true` behind on a seat respawned without
+// the env, and those exits would clear a row this seat never set.
+test('spawner-hint (t158): create() persists spawnerHintSet on the record — false as deliberately as true', async () => {
+  const set = mkHintProbe();
+  await set.spawn('seat', { CLODEX_SPAWNER_HINT: 'off' });
+  assert.strictEqual(set.upserts.at(-1).spawnerHintSet, true,
+    'a seat that set an override records it where a session-less exit can read it');
+
+  const unset = mkHintProbe();
+  await unset.spawn('seat', null);
+  assert.strictEqual(unset.upserts.at(-1).spawnerHintSet, false,
+    'and one that did not writes `false` — absent would spread-merge over a stale true');
+});
+
+test('spawner-hint (t158): the reviewer-graveyard sweep clears the route row before dropping the record', () => {
+  const hints = [];
+  const { m, persistence } = mkReview({
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+    getUiSettings: () => ({ get: () => ({ proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7811' }) }),
+    // The real tri-state resolver, not a fake: `proxy: false` (never routed) vs
+    // null (inherit the global pref) is exactly the distinction the guard leans on.
+    resolveProxyBase: require('../statusline').resolveProxyBase,
+  });
+  persistence.upsert({ name: 'rev', ephemeral: true, reviewFor: 'lead', archivedAt: 1,
+    proxy: null, proxyAgent: 'clodex-rev-k', spawnerHintSet: true });
+  const swept = m.sweepReviewerGraveyard();
+  assert.deepStrictEqual(swept, ['rev'], 'the corpse is still swept');
+  assert.deepStrictEqual(hints, [{
+    base: 'http://127.0.0.1:7811', agent: 'clodex-rev-k', opts: { clear: true },
+  }], 'dropping the record is the last moment the route id is knowable, and the hint table has no TTL');
+  assert.strictEqual(persistence.get('rev'), null, 'and the record is gone');
+});
+
+// The guard that keeps t152's rule ("clear only what this seat set") holding at
+// the session-less sites too. A blind clear keyed on the record alone would also
+// wipe an override an operator set out-of-band through /_hint, which is supported
+// pre-launch arm config — a correctness failure, not a style preference.
+test('spawner-hint (t158): a corpse that never set an override is swept WITHOUT a clear', () => {
+  const hints = [];
+  const { m, persistence } = mkReview({
+    ProxyClient: { spawnerHint: (base, agent, opts) => { hints.push({ base, agent, opts }); return Promise.resolve({}); } },
+    getUiSettings: () => ({ get: () => ({ proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7811' }) }),
+    // The real tri-state resolver, not a fake: `proxy: false` (never routed) vs
+    // null (inherit the global pref) is exactly the distinction the guard leans on.
+    resolveProxyBase: require('../statusline').resolveProxyBase,
+  });
+  // Routed, so the ONLY thing withholding the clear is the flag.
+  persistence.upsert({ name: 'plain', ephemeral: true, reviewFor: 'lead', archivedAt: 1,
+    proxy: null, proxyAgent: 'clodex-plain-q' });
+  // Flag set but no route to address: the other half of the guard.
+  persistence.upsert({ name: 'unrouted', ephemeral: true, reviewFor: 'lead', archivedAt: 1,
+    proxy: false, proxyAgent: 'clodex-unrouted-z', spawnerHintSet: true });
+  assert.deepStrictEqual(m.sweepReviewerGraveyard().sort(), ['plain', 'unrouted']);
+  assert.deepStrictEqual(hints, [],
+    'neither a record-only inference nor a null base produces a POST');
 });
 
 test('team-review: reviewer inherits the lead permission posture (--dangerously-skip-permissions) so it never strands on a prompt', async () => {

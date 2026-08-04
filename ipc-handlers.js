@@ -1457,6 +1457,7 @@ function registerIpcHandlers(deps) {
   });
 
   handle('session:forget', (_e, name) => {
+    manager.clearHintForRecord(name);
     persistence.remove(name);
     return true;
   });
