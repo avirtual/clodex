@@ -35,6 +35,20 @@ blocks a release.
   that too. This happened twice in one night to agents working on Clodex itself,
   once losing a review verdict.
 
+- **Clodex no longer records a message as sent while it is still queued.** Text
+  bound for a session waits for a safe moment — the seat has to be idle, not
+  mid-draft, not paused on a permission dialog — and that wait can run to
+  minutes. The internal call that queues it, though, answered "delivered" the
+  instant it accepted the bytes, so anything Clodex wrote down on the strength of
+  that answer was recording a write that had not happened yet. If the app quit
+  during the wait, the record said the message went out and the message was gone.
+  The affected spots each hold something you would notice missing: parked mail
+  waiting on a restart, a team's roster introduction, and the stall alarm that
+  tells a lead one of its agents has gone quiet. They now wait for the write
+  itself. The alarm additionally checks that the stall it is reporting is still
+  the one happening — an agent that speaks up while the alarm is queued ends the
+  stall, and the old code would have quietly disarmed the next one.
+
 ## 4.13.0 — 2026-08-04
 
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
