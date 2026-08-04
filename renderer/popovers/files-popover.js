@@ -230,7 +230,9 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
       } else if (!diffRes.diff.trim()) {
         filePeekBody.innerHTML = '<div class="cost-note">No uncommitted changes — what the agent touched here is already committed (or was reverted).</div>';
       } else {
-        filePeekBody.innerHTML = `<div class="file-peek-pre">${renderDiffHtml(diffRes.diff)}</div>`;
+        // Numbered to match the File tab's gutter — switching tabs on the same
+        // file should not change which column the code starts in.
+        filePeekBody.innerHTML = `<div class="file-peek-pre">${renderDiffHtml(diffRes.diff, { lineNumbers: true })}</div>`;
       }
       return;
     }

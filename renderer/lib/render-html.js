@@ -13,14 +13,51 @@
 const { esc, fmtUsd, fmtBustTokens } = require('./format');
 const { BUST_FAULT } = require('./constants');
 
-function renderDiffHtml(diff) {
-  return diff.split('\n').map((ln) => {
+// A unified diff carries positions ONLY in its `@@ -a,b +c,d @@` headers; the
+// body omits every unchanged line between hunks. So the gutter has to be
+// replayed per line and re-seeded at each header — running one counter through
+// the whole diff puts every hunk after the first off by the gap git dropped.
+// Returns one entry per input line: a number to show, or null for lines that
+// occupy no position in either file (headers, `\ No newline`).
+function diffLineNumbers(lines) {
+  let oldN = null; let newN = null;
+  return lines.map((ln) => {
+    if (ln.startsWith('@@')) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(ln);
+      oldN = m ? Number(m[1]) : null;
+      newN = m ? Number(m[2]) : null;
+      return null;
+    }
+    // Order matters: `---`/`+++` are file headers, not del/add lines, and they
+    // appear before the first `@@` where the counters are still null anyway.
+    if (oldN == null || ln.startsWith('+++') || ln.startsWith('---')
+      || ln.startsWith('diff ') || ln.startsWith('index ') || ln.startsWith('\\') || ln === '') return null;
+    if (ln.startsWith('+')) return newN++;
+    if (ln.startsWith('-')) return oldN++;
+    oldN++;
+    return newN++;
+  });
+}
+
+// `lineNumbers` adds the git-style gutter. Default off: this function is frozen
+// into the plugin surface as `lib.renderDiffHtml` under `hostApi: "1"`, so a
+// change to its default output is a change every conforming plugin sees.
+function renderDiffHtml(diff, opts = {}) {
+  const lines = diff.split('\n');
+  const nums = opts.lineNumbers ? diffLineNumbers(lines) : null;
+  const w = nums ? String(Math.max(1, ...nums.map(n => (n == null ? 0 : n)))).length : 0;
+  return lines.map((ln, i) => {
     let cls = 'diff-ctx';
     if (ln.startsWith('+++') || ln.startsWith('---') || ln.startsWith('diff ') || ln.startsWith('index ')) cls = 'diff-file';
     else if (ln.startsWith('@@')) cls = 'diff-hunk';
     else if (ln.startsWith('+')) cls = 'diff-add';
     else if (ln.startsWith('-')) cls = 'diff-del';
-    return `<div class="diff-line ${cls}">${esc(ln) || ' '}</div>`;
+    // The gutter is a blank of the same width on numberless lines, so the code
+    // column stays aligned across hunk headers instead of stepping left.
+    const gut = nums
+      ? `<span class="peek-ln">${(nums[i] == null ? '' : String(nums[i])).padStart(w, ' ')}</span>`
+      : '';
+    return `<div class="diff-line ${cls}">${gut}${esc(ln) || ' '}</div>`;
   }).join('');
 }
 

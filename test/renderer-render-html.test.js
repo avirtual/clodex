@@ -27,7 +27,7 @@ function fakeNode() {
 
 const prevDoc = global.document;
 global.document = { createElement: () => fakeNode() };
-const { bustRow } = require('../renderer/lib/render-html');
+const { bustRow, renderDiffHtml } = require('../renderer/lib/render-html');
 process.on('exit', () => {
   if (prevDoc === undefined) delete global.document; else global.document = prevDoc;
 });
@@ -228,4 +228,98 @@ test('bustRow: the compact signals are each required, not either', () => {
   const notPreamble = bustRow(tx({ class: 'conversation' }), null, null);
   assert.ok(!hasCompactBadge(notPreamble),
     'the predicate is scoped to the preamble class — a deep-history rewrite is a different population and wirescope already classes compacts there itself');
+});
+
+// --- renderDiffHtml gutter --------------------------------------------------
+
+// Two hunks with a real gap between them, which is the only shape that can
+// catch the off-by-the-gap bug: a single counter run over the whole diff gets
+// hunk 1 right and every later hunk wrong, so a one-hunk fixture proves nothing.
+const TWO_HUNK = [
+  'diff --git a/renderer/plugin-host.js b/renderer/plugin-host.js',
+  'index 1111111..2222222 100644',
+  '--- a/renderer/plugin-host.js',
+  '+++ b/renderer/plugin-host.js',
+  '@@ -262,6 +292,7 @@ function initPluginHost({',
+  '   };',
+  ' ',
+  '-  function menuEntriesFor(type) {',
+  '+  // sessionName is optional',
+  '+  function menuEntriesFor(type, sessionName) {',
+  '     const out = [];',
+  '   }',
+  '@@ -400,3 +431,3 @@ function other() {',
+  '-  const a = 1;',
+  '+  const a = 2;',
+  '   return a;',
+].join('\n');
+
+// [class, gutterText, lineText] per rendered row. Parsing the markup rather
+// than trusting a count is what lets the assertions below name a specific row.
+function rows(html) {
+  return [...html.matchAll(/<div class="diff-line ([a-z-]+)">(?:<span class="peek-ln">([^<]*)<\/span>)?([\s\S]*?)<\/div>/g)]
+    .map(m => [m[1], m[2] === undefined ? null : m[2].trim(), m[3]]);
+}
+
+test('renderDiffHtml: the gutter re-seeds at each @@ header', () => {
+  const r = rows(renderDiffHtml(TWO_HUNK, { lineNumbers: true }));
+  assert.equal(r.length, 16, 'every input line must produce exactly one row');
+
+  // ENTER: the second hunk's rows must actually be in the parse, or every
+  // assertion about them below is true of nothing.
+  const secondHunk = r.slice(13);
+  assert.deepStrictEqual(secondHunk.map(x => x[2]), ['-  const a = 1;', '+  const a = 2;', '   return a;'],
+    'the second hunk body must have survived into the parsed rows');
+
+  // Hunk 1 starts at old 262 / new 292. A context line takes the NEW number.
+  assert.deepStrictEqual(r.slice(4, 12).map(x => [x[0], x[1]]), [
+    ['diff-hunk', ''],        // the @@ header itself occupies no line
+    ['diff-ctx', '292'],
+    ['diff-ctx', '293'],
+    ['diff-del', '264'],      // deletion numbers in the OLD file, which the two context lines above already advanced 262->264
+    ['diff-add', '294'],
+    ['diff-add', '295'],
+    ['diff-ctx', '296'],
+    ['diff-ctx', '297'],
+  ], 'hunk 1: adds/context count in the new file, deletions in the old');
+
+  assert.deepStrictEqual(secondHunk.map(x => x[1]), ['400', '431', '432'],
+    'hunk 2 must restart from ITS header (400/431), not continue hunk 1 — a single running counter lands here at 266/298');
+});
+
+test('renderDiffHtml: file headers get no number and the gutter stays fixed-width', () => {
+  const r = rows(renderDiffHtml(TWO_HUNK, { lineNumbers: true }));
+
+  const heads = r.slice(0, 4);
+  assert.deepStrictEqual(heads.map(x => x[0]), ['diff-file', 'diff-file', 'diff-file', 'diff-file'],
+    'ENTER: the four header lines must be classed diff-file before asserting they are unnumbered');
+  assert.ok(heads.every(x => x[1] === ''), '--- and +++ are file headers, not del/add lines, and hold no position');
+
+  // The blank gutter must still be emitted at full width, or the code column
+  // steps left on every header row.
+  const widths = [...renderDiffHtml(TWO_HUNK, { lineNumbers: true })
+    .matchAll(/<span class="peek-ln">([^<]*)<\/span>/g)].map(m => m[1].length);
+  assert.ok(widths.length === 16, 'every row carries a gutter span, numbered or not');
+  assert.deepStrictEqual([...new Set(widths)], [3], 'all gutters are padded to the widest number (3 chars)');
+});
+
+test('renderDiffHtml: default output carries no gutter at all', () => {
+  // lib.renderDiffHtml is frozen into the plugin surface under hostApi "1".
+  // Changing what a no-opts call returns is a change every conforming plugin
+  // sees, so the default must stay byte-identical to the pre-gutter output.
+  const html = renderDiffHtml(TWO_HUNK);
+  const r = rows(html);
+  assert.equal(r.length, 16, 'ENTER: all rows parsed, so the absence below is over a populated set');
+  assert.deepStrictEqual([...new Set(r.map(x => x[0]))], ['diff-file', 'diff-hunk', 'diff-ctx', 'diff-del', 'diff-add'],
+    'ENTER: every diff class is present in the default render');
+  assert.ok(!html.includes('peek-ln'), 'no gutter span without an explicit opt-in');
+  assert.deepStrictEqual(r.map(x => x[1]), new Array(16).fill(null), 'and no row carries gutter text');
+});
+
+test('renderDiffHtml: a diff with no @@ header numbers nothing rather than guessing', () => {
+  const html = renderDiffHtml('diff --git a/x b/x\nindex 1..2 100644', { lineNumbers: true });
+  const r = rows(html);
+  assert.deepStrictEqual(r.map(x => x[0]), ['diff-file', 'diff-file'],
+    'ENTER: both header rows reached the assertion');
+  assert.ok(r.every(x => x[1] === ''), 'without a hunk header there is no known position — emit blanks, not 1..n');
 });

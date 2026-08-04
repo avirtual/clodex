@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **The file popover's Diff tab now has line numbers**, the way the CLI shows
+  them: additions and context numbered in the new file, deletions in the old,
+  restarting at each hunk. The code column lines up with the File tab's gutter,
+  so switching tabs on the same file no longer shifts everything sideways.
+
 - **A session can now be spawned with the wire off.** New "Wire off" checkbox
   under Other options: the seat launches with no `ANTHROPIC_BASE_URL` at all —
   no Clodex tee and no API proxy. This is what Anthropic's remote access needs
