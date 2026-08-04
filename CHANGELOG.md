@@ -49,6 +49,20 @@ blocks a release.
   the one happening — an agent that speaks up while the alarm is queued ends the
   stall, and the old code would have quietly disarmed the next one.
 
+- **Turning an intent off no longer destroys what an agent wrote with it.** If a
+  session is not allowed to send direct messages, and it composes one anyway, the
+  refusal used to arrive with the message already gone. The bounce now explains
+  that the capability is off for that seat, that retrying will fail the same way,
+  and that only you can change it — from Edit Session → Intents. Four verbs also
+  save the body first and tell the agent where it went: direct messages, inbox
+  notes, reminders, and memory writes, the ones whose payload is composed prose
+  that took a turn to write. A refused compact does not, because its note is still
+  sitting in the context it was written for; a refused exec does not, because its
+  arguments mean nothing without the command. Anything else says plainly that the
+  body was lost rather than pretending otherwise. Saving is capped per seat and
+  per verb so a session that has not learned the setting cannot fill the message
+  directory by retrying every turn.
+
 ## 4.13.0 — 2026-08-04
 
 - **Every sidebar session has an ⓘ button now.** Hover a row, click the ⓘ, and
