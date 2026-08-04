@@ -18,6 +18,11 @@
 const META_TIERS = {
   activity: ['lastActivityTs'],
   pr: ['branch', 'prState', 'prNumber'],
+  // One tier, not four: these are read together off the persistence entry by a
+  // single synchronous loop, so no payload can ever answer some of them and not
+  // the rest. Named for what it answers rather than for the handler that
+  // decorates them, since a later producer may fill them elsewhere.
+  record: ['createdAt', 'archivedAt', 'team', 'pluginGrants'],
 };
 
 const TIER_OF_KEY = new Map();
@@ -35,8 +40,10 @@ for (const [tier, keys] of Object.entries(META_TIERS)) {
 // an expensive tier's answer even if it spells the keys out. That second half
 // is what makes a half-applied version of this fix — a producer that marks its
 // tiers but still null-fills the ones it skipped — inert rather than a
-// regression. Keys in no tier (createdAt, team, pluginGrants, …) always keep
-// plain-spread semantics.
+// regression. A key in no tier keeps plain-spread semantics — every key
+// `sidebar:meta` sends is tiered today, but the branch is not dead code: it is
+// how a key added by a NEWER main process crosses to a web/peer frontend whose
+// bundled table predates it. Dropping it would silently discard that key.
 //
 // An incoming row with NO `_tiers` claims nothing and is a plain spread: that is
 // what an older main process across a peer/web connection sends, and it must

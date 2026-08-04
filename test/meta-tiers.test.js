@@ -7,12 +7,22 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { META_TIERS, mergeMeta } = require('../meta-tiers');
 
-test('META_TIERS: the PR keys are one tier, separate from activity', () => {
+// Whole-object, not a spot check on one tier: a key that drifts OUT of the table
+// silently reverts to plain-spread, which is the exact defect the table exists to
+// close and looks like nothing from a per-tier assertion.
+test('META_TIERS: each producer\'s keys are one tier, and the three are separate', () => {
   assert.deepStrictEqual(META_TIERS, {
     activity: ['lastActivityTs'],
     pr: ['branch', 'prState', 'prNumber'],
+    record: ['createdAt', 'archivedAt', 'team', 'pluginGrants'],
   });
 });
+
+// Every key `sidebar:meta` sends is tiered, so the untiered branch below can only
+// be exercised by a key this table does not know — which is precisely the case it
+// exists for: a newer main process sending a key a web/peer frontend's bundled
+// table predates. A test key is the honest fixture for it, not a cheat.
+const UNTIERED = 'aKeyThisTableDoesNotKnow';
 
 // ── Polarity 1: a null-filled key read as news ──────────────────────────────
 // The shipped defect. The 30s tier does not ask git/gh anything, so whatever it
@@ -68,11 +78,48 @@ test('mergeMeta: a claimed tier clears the keys it no longer reports', () => {
 });
 
 test('mergeMeta: keys in no tier keep plain-spread semantics', () => {
-  const cached = { team: 'clodex', createdAt: 1, pluginGrants: ['scoped:turns'] };
-  const merged = mergeMeta(cached, { _tiers: ['activity', 'pr'], lastActivityTs: 5, pluginGrants: [] });
-  assert.deepStrictEqual(merged.pluginGrants, [], 'an untiered key still overwrites');
-  assert.strictEqual(merged.team, 'clodex', 'and an untiered key the payload omits is kept');
-  assert.strictEqual(merged.createdAt, 1);
+  const cached = { [UNTIERED]: 'old', anotherUnknown: 'kept' };
+  const merged = mergeMeta(cached, { _tiers: ['activity', 'pr'], lastActivityTs: 5, [UNTIERED]: 'new' });
+  assert.strictEqual(merged[UNTIERED], 'new', 'an untiered key still overwrites');
+  assert.strictEqual(merged.anotherUnknown, 'kept', 'and an untiered key the payload omits is kept');
+  assert.strictEqual(merged.lastActivityTs, 5, 'ENTER: the marked merge really ran');
+});
+
+// ── The `record` tier: the four keys metaFor does not produce ───────────────
+// They are decorated onto the row AFTER metaFor returns, which left them untiered
+// and therefore plain-spread — the reason pluginGrants had to be empty-filled on
+// every refresh. The claim is what makes omission mean "none".
+test('mergeMeta: a revoked grant lands as absent once the record tier is claimed', () => {
+  const cached = { pluginGrants: ['scoped:turns'], createdAt: 1, team: 'clodex', lastActivityTs: 100 };
+
+  // CONTROL: the same payload WITHOUT the record claim leaves the stale array
+  // live — that is the pre-tier behaviour, and without pinning it the assertion
+  // below would pass on a mergeMeta that drops pluginGrants unconditionally.
+  const unclaimed = mergeMeta(cached, { _tiers: ['activity'], lastActivityTs: 200 });
+  assert.deepStrictEqual(unclaimed.pluginGrants, ['scoped:turns'],
+    'CONTROL: without the claim the stale grant survives');
+
+  const merged = mergeMeta(cached, {
+    _tiers: ['activity', 'record'], lastActivityTs: 200, createdAt: 1, archivedAt: null, team: 'clodex',
+  });
+  assert.deepStrictEqual(merged, {
+    lastActivityTs: 200, createdAt: 1, archivedAt: null, team: 'clodex',
+  }, 'the whole row: pluginGrants is GONE, and nothing else moved');
+  assert.ok(!('pluginGrants' in merged),
+    'absent, not empty — the renderer reads a missing list as no grant, and this is '
+    + 'the revoke the unconditional empty-fill used to carry');
+});
+
+// The other half of the same claim: a record-only payload must not be trusted
+// about the PR tier, which no producer of these four keys can answer.
+test('mergeMeta: a record claim cannot speak for the tiers it did not ask', () => {
+  const cached = { branch: 'master', prState: 'open', prNumber: 7, lastActivityTs: 100 };
+  const merged = mergeMeta(cached, {
+    _tiers: ['record'], createdAt: 5, team: null, prState: null, lastActivityTs: 0,
+  });
+  assert.deepStrictEqual(merged, {
+    branch: 'master', prState: 'open', prNumber: 7, lastActivityTs: 100, createdAt: 5, team: null,
+  }, 'the record keys land; the pr and activity keys it spelled out are dropped');
 });
 
 // A payload with no marker claims nothing. That is what an older main process
@@ -89,18 +136,18 @@ test('mergeMeta: an unmarked payload is a plain spread, deleting nothing', () =>
 // delete anything is exactly the reasoning a later refactor would quietly break.
 test('mergeMeta: an empty claim deletes nothing, and still drops tiered payload keys', () => {
   const cached = { branch: 'master', prState: 'open', lastActivityTs: 100 };
-  const merged = mergeMeta(cached, { _tiers: [], prState: 'merged', team: 'clodex' });
+  const merged = mergeMeta(cached, { _tiers: [], prState: 'merged', [UNTIERED]: 'x' });
   assert.strictEqual(merged.prState, 'open', 'claiming nothing authorizes nothing');
   assert.strictEqual(merged.branch, 'master');
   assert.strictEqual(merged.lastActivityTs, 100);
-  assert.strictEqual(merged.team, 'clodex', 'ENTER: the merge ran — the untiered key landed');
+  assert.strictEqual(merged[UNTIERED], 'x', 'ENTER: the merge ran — the untiered key landed');
 });
 
 test('mergeMeta: an unknown tier is inert, not a crash and not a wipe', () => {
   const cached = { branch: 'master', prState: 'open', lastActivityTs: 100 };
-  const merged = mergeMeta(cached, { _tiers: ['bogus'], team: 'clodex' });
+  const merged = mergeMeta(cached, { _tiers: ['bogus'], [UNTIERED]: 'x' });
   assert.deepStrictEqual(merged,
-    { branch: 'master', prState: 'open', lastActivityTs: 100, team: 'clodex' });
+    { branch: 'master', prState: 'open', lastActivityTs: 100, [UNTIERED]: 'x' });
 
   // A prototype key is the same case wearing a truthy value: a bare
   // META_TIERS[tier] lookup returns a non-iterable function, and the TypeError

@@ -18297,7 +18297,12 @@ ${i3.join("\n")}
     "meta-tiers.js"(exports, module) {
       var META_TIERS = {
         activity: ["lastActivityTs"],
-        pr: ["branch", "prState", "prNumber"]
+        pr: ["branch", "prState", "prNumber"],
+        // One tier, not four: these are read together off the persistence entry by a
+        // single synchronous loop, so no payload can ever answer some of them and not
+        // the rest. Named for what it answers rather than for the handler that
+        // decorates them, since a later producer may fill them elsewhere.
+        record: ["createdAt", "archivedAt", "team", "pluginGrants"]
       };
       var TIER_OF_KEY = /* @__PURE__ */ new Map();
       for (const [tier, keys] of Object.entries(META_TIERS)) {

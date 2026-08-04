@@ -562,17 +562,25 @@ test('REWORK MF1: a grant survives the restart the popover itself offers', () =>
 });
 
 // ── MF2: a revoke must reach the renderer ───────────────────────────────────
-// sidebar:meta is merged renderer-side with a spread, so an OMITTED key means
-// "unchanged", not "none". Writing the key only when non-empty therefore made a
-// revoke inert for the life of the window: every badge, status slot and menu
-// entry kept drawing off the stale array on every timer tick.
+// A revoke is carried by ABSENCE now that `record` is a tier (t196): the claim
+// makes the four post-metaFor keys authoritative including by omission, so the
+// renderer's tier clear is what drops the stale array. Before the tier, absence
+// meant "unchanged" to a plain spread and the key had to be empty-filled on
+// every refresh or a revoked plugin kept drawing for the life of the window.
 //
 // This is t189's `noWire` bug one layer up — an omitted `false` leaving a stale
 // `true` — which is why it is pinned against the REAL handler and the REAL merge
 // expression rather than through a fixture that answers reachability directly.
-function metaFixture(list) {
+// The consequence is that the handler's payload alone can no longer be read as
+// the answer: only the payload PLUS the merge says what the renderer holds.
+function metaFixture(list, { skipMeta = false } = {}) {
   const handlers = new Map();
   const stub = () => () => {};
+  // ONE instance across every row, frozen — exactly how the real metaFor shares
+  // its marker (session-meta.js). A per-row array here would let a handler that
+  // pushes onto `_tiers` pass, and pushing is both a throw in production and a
+  // retroactive re-tier of the whole batch.
+  const sharedTiers = Object.freeze(['activity', 'pr']);
   const deps = new Proxy({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
@@ -584,15 +592,20 @@ function metaFixture(list) {
     // dropping the `tier &&` guard, which wipes every untiered key on a marked
     // payload, would be invisible to this test. That is the t190 regression.
     sessionMeta: {
-      metaFor: async (sessions) => Object.fromEntries(
-        sessions.map((s) => [s.name, { _tiers: ['activity', 'pr'], lastActivityTs: 1 }])),
+      // skipMeta reproduces the row metaFor returned nothing for, which the
+      // handler backfills with `{}` — it must still claim `record`, since it
+      // really is authoritative about the four keys it goes on to write.
+      metaFor: async (sessions) => (skipMeta ? {} : Object.fromEntries(
+        sessions.map((s) => [s.name, { _tiers: sharedTiers, lastActivityTs: 1 }]))),
     },
     manager: { teamNameFor: () => null },
     getPluginHost: () => null,
     log: { info() {}, error() {} },
   }, { get(t, p) { return p in t ? t[p] : stub(); } });
   registerIpcHandlers(deps);
-  return (opts) => handlers.get('sidebar:meta')({}, opts);
+  const call = (opts) => handlers.get('sidebar:meta')({}, opts);
+  call.sharedTiers = sharedTiers;
+  return call;
 }
 
 const { mergeMeta } = require('../meta-tiers');
@@ -609,18 +622,24 @@ test('REWORK MF2: a revoke reaches the renderer through the meta merge', async (
   // The revoked state, as persistence stores it: setPluginGrants DELETES the key
   // on empty, so the entry genuinely has no pluginGrants at all.
   const revoked = await metaFixture([{ name: 'seat', cwd: '/p' }])({});
-  assert.ok('pluginGrants' in revoked.meta.seat,
-    'the key must be PRESENT on a revoked seat — an omitted key is indistinguishable '
-    + 'from "no news" to a spread merge, which is what left the stale array live');
-  assert.deepStrictEqual(revoked.meta.seat.pluginGrants, [], 'and it says: nothing granted');
+  assert.ok(revoked.meta.seat._tiers.includes('record'),
+    'the revoked row must CLAIM the record tier — that claim is the only thing '
+    + 'that makes the omission below mean "none" rather than "no news"');
+  assert.ok(!('pluginGrants' in revoked.meta.seat),
+    'and having claimed it, the handler omits the key rather than empty-filling');
 
   // The renderer's merge — the REAL function, not a copy. Asserting the
   // handler's payload alone would not prove the revoke survives the merge, and
-  // the merge is where the previous version of this fix died. pluginGrants is
-  // in no tier, so mergeMeta must still spread it straight over the cache.
+  // the merge is where the previous version of this fix died. The whole object,
+  // not the one key: a partial match reads around a `record` claim that stopped
+  // clearing, since the stale array would then simply survive unmentioned.
+  // (`prState` is absent from the result because this fixture's metaFor CLAIMS
+  // the pr tier and answers nothing for it — the row-only case where an
+  // unclaimed tier survives is pinned in the record-only test below.)
   const cached = mergeMeta({ pluginGrants: ['scoped:turns'], team: 't' }, revoked.meta.seat);
-  assert.deepStrictEqual(cached.pluginGrants, [],
-    'the merge overwrites the stale array rather than preserving it');
+  assert.deepStrictEqual(cached, {
+    lastActivityTs: 1, createdAt: null, archivedAt: null, team: null,
+  }, 'the merge drops the stale array rather than preserving it');
   assert.strictEqual(cached.team, null, 'ENTER: the merge really ran over this object');
 
   // The renderer is DOM-bound and cannot be required here, so pin that the
@@ -647,6 +666,55 @@ test('REWORK MF2: a revoke reaches the renderer through the meta merge', async (
   assert.match(wsrc, MERGE_LINE,
     'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
     + 'browser frontend keeps merging by the old spread');
+});
+
+// t196: the four keys the handler bolts on AFTER metaFor returns were in no tier,
+// so they fell through to plain-spread and pluginGrants had to be empty-filled.
+// The claim is what retires that. It has to be added without touching metaFor's
+// marker, which is one frozen instance shared by every row in the response.
+test('t196: the handler claims `record` on top of metaFor\'s tiers, without touching the shared marker', async () => {
+  const call = metaFixture([
+    { name: 'a', cwd: '/p', createdAt: 1, pluginGrants: ['scoped:turns'] },
+    { name: 'b', cwd: '/q', createdAt: 2 },
+  ]);
+  const res = await call({});
+  assert.strictEqual(res.ok, true,
+    'ENTER: the handler returned rather than falling into its catch — a throw from '
+    + 'pushing onto the frozen array would otherwise surface as ok:false with the '
+    + 'assertions below never reached');
+
+  assert.deepStrictEqual(res.meta.a._tiers, ['activity', 'pr', 'record'],
+    'the row claims record IN ADDITION to what metaFor asked');
+  assert.deepStrictEqual(res.meta.b._tiers, ['activity', 'pr', 'record']);
+
+  // The three ways this can go wrong, and only the first is loud in production.
+  assert.deepStrictEqual(call.sharedTiers, ['activity', 'pr'],
+    'metaFor\'s instance is unchanged — a push would re-tier every row in the batch');
+  assert.notStrictEqual(res.meta.a._tiers, call.sharedTiers, 'the row got a NEW array');
+  assert.notStrictEqual(res.meta.a._tiers, res.meta.b._tiers,
+    'and not one new array shared between rows, which would re-tier the batch the '
+    + 'moment anything downstream extended one row');
+
+  // CONTROL for the omission in MF2: a seat that still holds grants sends them,
+  // so absence there is the revoke landing rather than the key never being sent.
+  assert.deepStrictEqual(res.meta.a.pluginGrants, ['scoped:turns']);
+  assert.ok(!('pluginGrants' in res.meta.b), 'and an ungranted seat omits it');
+});
+
+test('t196: a row metaFor returned nothing for still claims `record`', async () => {
+  // The `meta[s.name] = {}` backfill. It has no activity or pr answer, but it is
+  // fully authoritative about the four keys it goes on to write — so it must
+  // claim record and claim ONLY record. Claiming nothing would leave those keys
+  // plain-spread on exactly the rows that have no other content to correct them.
+  const res = await metaFixture([{ name: 'seat', cwd: '/p', createdAt: 9 }], { skipMeta: true })({});
+  assert.deepStrictEqual(res.meta.seat, {
+    _tiers: ['record'], createdAt: 9, archivedAt: null, team: null,
+  });
+
+  const cached = mergeMeta({ pluginGrants: ['scoped:turns'], lastActivityTs: 100 }, res.meta.seat);
+  assert.deepStrictEqual(cached, {
+    lastActivityTs: 100, createdAt: 9, archivedAt: null, team: null,
+  }, 'the revoke lands off a record-only row, and the activity it never asked survives');
 });
 
 // ── MF3: a revoke must not leave the verb live ──────────────────────────────

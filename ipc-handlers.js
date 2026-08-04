@@ -590,6 +590,11 @@ function registerIpcHandlers(deps) {
       const teamByCwd = new Map();
       for (const s of list) {
         if (!meta[s.name]) meta[s.name] = {};
+        // A new array, never a push: metaFor freezes ONE instance and shares it
+        // across every row, so extending it in place would re-tier the whole
+        // batch (and throw). Claiming the tier is what makes the four keys below
+        // authoritative — including by omission, which is how a revoke lands.
+        meta[s.name]._tiers = [...(meta[s.name]._tiers || []), 'record'];
         meta[s.name].createdAt = s.createdAt || null;
         meta[s.name].archivedAt = s.archivedAt || null;
         if (!teamByCwd.has(s.cwd)) teamByCwd.set(s.cwd, manager.teamNameFor(s.cwd));
@@ -598,11 +603,15 @@ function registerIpcHandlers(deps) {
         // than a new channel: the sidebar paints every session at once, so the
         // renderer needs an answer for each ROW, and this is already the
         // per-row read that runs on a timer.
-        // Written UNCONDITIONALLY, empty array included: the renderer merges
-        // meta by spread, so an omitted key reads as "unchanged" and a revoke
-        // would never land — the stale array would keep every badge and menu
-        // entry painted for the life of the window.
-        meta[s.name].pluginGrants = Array.isArray(s.pluginGrants) ? [...s.pluginGrants] : [];
+        //
+        // Omitted rather than empty-filled on a revoke: the `record` claim above
+        // makes absence mean "none granted", so the renderer's clear is what
+        // lands it. Before the tier existed this key had to be written
+        // unconditionally, because an omitted key read as "unchanged" and every
+        // badge kept painting off the stale array.
+        if (Array.isArray(s.pluginGrants) && s.pluginGrants.length) {
+          meta[s.name].pluginGrants = [...s.pluginGrants];
+        }
       }
       return { ok: true, meta };
     } catch (err) {
