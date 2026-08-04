@@ -94,22 +94,47 @@ test('makeResizeSender: dedups an unchanged geometry; forget() re-arms', () => {
 function fakeTty({ cols = 80, rows = 24 } = {}) {
   const dataL = new Set(), resizeL = new Set(), sigL = new Set();
   const outChunks = [], errChunks = [], rawLog = [];
+  // An event delivered before attach() arms its listener is HELD, not dropped.
+  // Every driver below is scheduled on a wall clock, but the listeners are armed
+  // only once the SSE `replay` event arrives (attach.js: the replay handler calls
+  // wireTerminal) — a spawn + waitForPort + HTTP + SSE handshake away, and
+  // waitForPort polls on a 150ms tick, so one missed poll outruns the timer.
+  // Losing a detach (Ctrl-\ or a signal) is a LOST WAKEUP, not a failed
+  // assertion: attach() resolves only through teardown, so the run blocks
+  // forever at 0% CPU with no error and no timeout. That is the t153 wedge, and
+  // it reproduces deterministically if the replay is delayed past the timer.
+  // Queueing per listener-set turns the race into ordinary delivery.
+  const pending = new Map();
+  const arm = (set, fn) => {
+    set.add(fn);
+    const q = pending.get(set);
+    if (q) { pending.delete(set); for (const emit of q) emit(fn); }
+    return () => set.delete(fn);
+  };
+  const fire = (set, emit) => {
+    if (!set.size) {
+      if (!pending.has(set)) pending.set(set, []);
+      pending.get(set).push(emit);
+      return;
+    }
+    [...set].forEach(emit);
+  };
   const t = {
     isInTTY: true, isOutTTY: true,
     size: () => ({ cols, rows }),
     setRawMode: (on) => rawLog.push(on),
-    onData: (fn) => { dataL.add(fn); return () => dataL.delete(fn); },
-    onResize: (fn) => { resizeL.add(fn); return () => resizeL.delete(fn); },
-    onSignal: (fn) => { sigL.add(fn); return () => sigL.delete(fn); },
+    onData: (fn) => arm(dataL, fn),
+    onResize: (fn) => arm(resizeL, fn),
+    onSignal: (fn) => arm(sigL, fn),
     resume: () => {}, pause: () => {},
     writeOut: (s) => outChunks.push(s),
     writeErr: (s) => errChunks.push(s),
   };
   return {
     tty: t,
-    push: (buf) => dataL.forEach((fn) => fn(Buffer.isBuffer(buf) ? buf : Buffer.from(buf))),
-    resize: (c, r) => { cols = c; rows = r; resizeL.forEach((fn) => fn()); },
-    signal: () => [...sigL].forEach((fn) => fn()),
+    push: (buf) => fire(dataL, (fn) => fn(Buffer.isBuffer(buf) ? buf : Buffer.from(buf))),
+    resize: (c, r) => { cols = c; rows = r; fire(resizeL, (fn) => fn()); },
+    signal: () => fire(sigL, (fn) => fn()),
     out: () => outChunks.join(''),
     err: () => errChunks.join(''),
     rawLog,
@@ -375,10 +400,25 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', asy
   assert.strictEqual(code, 0);
   assert.match(tty.err(), /attached to bash/);
   assert.deepStrictEqual(tty.rawLog, [true, false]);   // raw mode restored
-  // withWire's finally group-killed the tunnel child on detach.
-  await new Promise((r) => setTimeout(r, 400));
-  assert.ok(child && (child.killed === true || child.exitCode != null || child.signalCode != null),
-    'tunnel child was reaped on detach');
+  // withWire's finally group-killed the tunnel child on detach. The child is
+  // spawned DETACHED (transport.js: it leads its own process group so kill(-pid)
+  // sweeps helpers), which is exactly what lets it outlive this process — so
+  // "reaped" has to mean the process is GONE, not that a signal was dispatched
+  // at it. `child.killed` is only "a signal was sent successfully" and is true
+  // even if the target ignored it; asserting on it lets a survivor pass.
+  assert.ok(child && child.pid > 0, 'ENTER: a real pid, or there is no process to prove dead');
+  const pid = child.pid;
+  for (let i = 0; i < 100 && child.exitCode == null && child.signalCode == null; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.ok(child.exitCode != null || child.signalCode != null,
+    'the tunnel child must have EXITED on detach — a detached child that merely received a signal and kept '
+    + 'running outlives the test run and leaks a listening port into every later one');
+  // Independent of the child handle: signal 0 tests existence only, and throws
+  // ESRCH once the pid is gone. The handle could report an exit while a forked
+  // helper in the same group survived; this asks the OS directly.
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' },
+    'and the pid must be gone from the process table, not merely reported exited by its own handle');
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   server.close();
 });
