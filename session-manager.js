@@ -58,6 +58,16 @@ const { foldDraft } = require('./hint-arm');
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
+// Process-life identity for a spawned session (ticket replay). Module-level and
+// NOT a deps seam: every value this is compared against was minted by the same
+// build, so an injectable generator could only ever be stubbed into agreeing with
+// itself. The pid is what makes it unique across app processes — the property the
+// whole replay condition rests on.
+let incarnationSeq = 0;
+function nextIncarnation() {
+  return `${process.pid}.${Date.now().toString(36)}.${++incarnationSeq}`;
+}
+
 // First claude spawn on a fresh box (deployed node, sandbox container) hits
 // the CLI's interactive onboarding wizard — theme picker etc. — inside a PTY
 // nobody on a headless node is watching. Pre-seed the global ~/.claude.json
@@ -1059,6 +1069,21 @@ function createSessionManager(deps) {
         // can change under a live seat, and a clear driven by the new value
         // would either leak a row or clear one this seat never set.
         spawnerHintSet,
+        // Ticket-replay incarnation key. Minted here and NEVER persisted, so that
+        // its absence from a resumed record is itself the signal that this process
+        // has not been handed its open tickets' specs (_replayOpenTickets). Every
+        // candidate read back off the record fails for one reason: the record is
+        // what survived the respawn. `sessionId` in particular cannot serve — it is
+        // assigned from `resumeId` just below, so a --resume carries the SAME id,
+        // which is exactly the case that loses a delivery.
+        //
+        // pid + ms + counter rather than randBase36 (the house idiom for park
+        // handles) because this is the only value in create() that must be unique
+        // ACROSS processes: a fresh process colliding with its predecessor's key
+        // would read its own tickets as already delivered and replay nothing. Two
+        // app processes cannot share a pid at the same millisecond, and the counter
+        // separates managers built inside one process.
+        incarnation: nextIncarnation(),
         // The tri-state as REQUESTED (false=off, string=explicit, null=follow the
         // pref), kept alongside the base it resolved to: _armCtx has to re-resolve
         // per draft, and the base alone cannot say whether an explicit route or a
@@ -1270,6 +1295,10 @@ function createSessionManager(deps) {
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
               this._drainPendingAtBootReady(session);
+              // Same margin, same reason: a ticket spec written before the readline
+              // loop is up is wiped by the boot re-render, and the replay stamps it
+              // delivered — so the loss is silent until the NEXT respawn.
+              this._replayTicketsOnce(session);
             }, BOOT_DRAIN_SETTLE_MS);
           }
         }
@@ -1316,9 +1345,36 @@ function createSessionManager(deps) {
       log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
       if (resolvedTeam) {
         this._maybeInjectComposition(session, resolvedTeam, existingEntry);
+        // NEVER fired here. Both arms defer to the edge where the seat can actually
+        // receive, which is a different edge per agent type — a write at create()
+        // lands in a CLI whose input loop is not up, and the boot re-render wipes it
+        // while the replay stamps it delivered: the same silent drop this exists to
+        // close, one layer down.
+        session._replayTicketsPending = true;
         if (session.agentType !== 'claude') {
           session._bootSettling = true;
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor
+          // That cap is NOT wall-clock: _settleBoot runs only from _armBootSettle,
+          // which runs only from onData, so a codex seat emitting nothing never
+          // settles and would lose its spec for the life of the process. The reason
+          // this arm has no ordinary fallback — never fire while boot output is
+          // streaming — says nothing about a seat that has produced no output at all,
+          // so the timer below fires only in that case (`!_bootSettleTimer` ⇒ onData
+          // never ran).
+          session._replayFallbackTimer = setTimeout(() => {
+            session._replayFallbackTimer = null;
+            if (session._bootSettleTimer) return;   // output seen; the settle owns it
+            this._replayTicketsOnce(session);
+          }, INJECT_BOOT_MAXWAIT);
+        } else {
+          // Claude's queue gates on _bootReadySeen, but that gate CANNOT cover this
+          // race on its own (see BOOT_DRAIN_SETTLE_MS): by the time the drain runs the
+          // latch is already set, so the gate is no-op-true and adds zero wait. Only
+          // the wall-clock defer is margin, so the replay rides it.
+          // The fallback covers a seat that never emits mode-2004 at all — the
+          // edge-armed drain never runs there, and without this its spec is lost for
+          // the life of the process.
+          this._armReplayFallback(session, INJECT_BOOT_MAXWAIT, Date.now() + 3 * INJECT_BOOT_MAXWAIT);
         }
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
@@ -1753,15 +1809,22 @@ function createSessionManager(deps) {
     _settleBoot(session) {
       session._bootSettleTimer = null;
       session._bootSettling = false;   // boot window closed → deltas deliver normally now
+      if (session._dead) return;
       const team = session._pendingRoster;
-      if (!team || session._dead) return;
-      session._pendingRoster = null;
-      try {
-        this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
-        this._markRosterSent(session);   // delivered now → stamp so a restart won't re-inject
-      } catch (e) {
-        log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
+      if (team) {
+        session._pendingRoster = null;
+        try {
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
+          this._markRosterSent(session);   // delivered now → stamp so a restart won't re-inject
+        } catch (e) {
+          log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
+        }
       }
+      // AFTER the roster, and outside its guard: a RESUMED seat has no pending
+      // roster (_maybeInjectComposition skips it on rosterSentAt) and is precisely
+      // the seat whose tickets need replaying, so an early return on `!team` would
+      // skip the replay in the only case it matters.
+      this._replayTicketsOnce(session);
     }
 
     _notifyComposition(session, verb) {
@@ -1911,6 +1974,7 @@ function createSessionManager(deps) {
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
+      clearTimeout(s._replayFallbackTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
       // cooldown goes too: a retired seat's name is reused by its replacement,
@@ -3604,11 +3668,37 @@ function createSessionManager(deps) {
       return this._teamLiveSeatNames(team.root).includes(a) ? a : null;
     }
 
-    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false) {
+    // `replay` marks a REDELIVERY of a spec the seat may already have acted on.
+    // Unmarked, the fix trades a silent drop for a silent double-execution: the
+    // seat cannot tell a replay from a fresh assignment (that indistinguishability
+    // is the whole finding in this ticket's notes), so the marker has to be in the
+    // text, not in the caller's head.
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
-      const r = this._gatedDeliver(seat, fromName, `[ticket ${ticket.id}] ${specText}`, urgent);
+      // Worded to be true of BOTH replay cases: a spec redelivered after a respawn,
+      // and one that never reached a seat at all (assigned to a role with nobody
+      // live). "your process restarted" would be a lie in the second.
+      // Points at the WORKING TREE first, not the task artifact: the incarnation that
+      // died is precisely the one that may never have written an artifact, so absent
+      // notes are no evidence of absent work. And it must offer three branches — a
+      // done/not-done pair sends the realistic partial case down "start over", which
+      // is the destructive one.
+      const head = replay
+        ? `[ticket ${ticket.id} REPLAY] this ticket was already open and assigned to you when this process `
+          + `started, so an earlier incarnation of you may have already done some or all of it. `
+          + `BEFORE you build, edit, or commit anything: run \`git status\` and \`git log\` and check the task `
+          + `artifact. Then — if the work is DONE, close the ticket instead of redoing it; if NOTHING was `
+          + `started, do the task as specified below; if it is PARTIALLY done, do NOT restart it — report what `
+          + `you found and ask how to proceed.\n`
+        : `[ticket ${ticket.id}] `;
+      // The marker also rides the pointer line: this head is ~490 chars, so head+spec
+      // spills for all but the shortest specs, and a spilled body announces itself
+      // only as "Message (N bytes) attached". A seat must know this is a REPLAY
+      // before it opens the file, not after.
+      const r = this._gatedDeliver(seat, fromName, `${head}${specText}`, urgent,
+        replay ? `[ticket ${ticket.id} REPLAY]` : '');
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
@@ -3622,26 +3712,137 @@ function createSessionManager(deps) {
       return '';
     }
 
+    // Every open ticket resolving to `seatName`, oldest first — advance takes the
+    // head, replay takes the whole list. ONE resolver on purpose: a second copy of
+    // the role-or-name match would let advance and replay disagree about which
+    // tickets are a seat's, and the disagreement would be invisible (each would
+    // look right in isolation).
+    // Order is FIFO by openedAt, ties broken by numeric id — array order is not
+    // deterministic for two tickets minted in the same ms.
+    // Backlog (`assignee == null`) is excluded here, so it can never be replayed
+    // to anybody — an unassigned ticket resolves to no seat by definition.
+    _openTicketsFor(teamDir, team, seatName, excludeId = null) {
+      const role = matchSeatRole(team, seatName);
+      return ticketsStore.load(teamDir)
+        .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null
+          && (t.assignee === seatName || (role && t.assignee === role)))
+        .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
+          || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
+    }
+
     // Hand a seat its next open ticket when it closes one: the COMPLETION edge has no
     // other trigger, and a seat holding a queue otherwise goes idle until a human
-    // pokes it. Order is FIFO by openedAt, ties broken by numeric id — array order is
-    // not deterministic for two tickets minted in the same ms.
+    // pokes it.
     // `closedId` is redundant on both current callers (each stamps its terminal state
     // and SAVES before calling, so the state filter already excludes it) — kept
     // because that is an ordering ACCIDENT, not a property of the helper: move the
     // advance above the save and without it the seat is handed back what it finished.
     _advanceSeat(team, teamDir, seatName, closedId) {
-      const role = matchSeatRole(team, seatName);
-      const open = ticketsStore.load(teamDir)
-        .filter((t) => t.state === 'open' && t.id !== closedId && t.assignee != null
-          && (t.assignee === seatName || (role && t.assignee === role)))
-        .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
-          || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
-      const next = open[0];
+      const next = this._openTicketsFor(teamDir, team, seatName, closedId)[0];
       if (!next) return null;
       this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true);
       log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closedId}`);
       return next;
+    }
+
+    // A ticket's spec is delivered when it is ASSIGNED and never again, so a seat
+    // that dies between assignment and completion comes back holding a bare id
+    // with no body — and from inside the seat that is indistinguishable from a
+    // ticket it has correctly been told to hold. No design that waits for the seat
+    // to notice will ever fire; the asymmetry has to be resolvable from the RECORD.
+    //
+    // Redeliver when the record cannot SHOW this incarnation has the spec:
+    // `deliveredTo.incarnation` is minted at spawn and lives only in memory, so
+    // after a respawn it cannot match and the absence is itself the signal. A
+    // timestamp would not work — `deliveredAt` survives the very respawn that lost
+    // the delivery, and any key read back off the record has the same defect for
+    // the same reason: the record is what survived.
+    // Returns whether the pass is FINISHED — delivered, or found nothing it could
+    // ever deliver. False means only that a candidate was held, which is temporary by
+    // nature, so the caller keeps its one-shot armed for the next edge.
+    _replayOpenTickets(session) {
+      if (!session || !session.agentType || session._dead) return true;
+      let team; try { team = resolveTeam(session.cwd); } catch { return true; }
+      if (!team) return true;
+      const teamDir = path.dirname(team.file);
+      const open = this._openTicketsFor(teamDir, team, session.name);
+      if (!open.length) return true;
+      let held = false;
+      for (const t of open) {
+        const d = t.deliveredTo;
+        if (d && d.seat === session.name && d.incarnation === session.incarnation) continue;
+        // `_openTicketsFor` matches a ROLE ticket to every seat filling that role,
+        // but _deliverTicketSpec re-resolves to the FIRST live seat with it. Without
+        // this, two seats on one role send the spec to seat #1 twice and stamp it
+        // with seat #2, which received nothing.
+        if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
+        if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
+        const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true);
+        // Stamp only what actually reached the seat. `parked` counts — the text is
+        // in the seat's pending store and drains on its next turn — but `held` and
+        // `undelivered` do NOT: stamping those would record a delivery that never
+        // happened and suppress the next replay, which is this bug with extra steps.
+        // `held` is the one non-delivery worth retrying: it is a property of the seat
+        // at this instant, not of the ticket. `self` and `undelivered` are structural
+        // and would be identical on every later pass.
+        if (r && r.held) held = true;
+        if (!r || !(r.delivered || r.parked)) continue;
+        // ONE ticket per respawn, not N. N back-to-back injects race: #1's Enter
+        // starts a turn and #2 lands in the turn-start churn where its Enter is
+        // swallowed → stranded draft (_flushParkedNow documents the same race being
+        // fixed once already). Head-only rather than joining, because the seat's next
+        // ticket already arrives on close via _advanceSeat — a proven path.
+        // Loaded HERE, after the delivery decided: an early load would be a wider
+        // window for a concurrent clodex-team write to be clobbered by the save.
+        const tickets = ticketsStore.load(teamDir);
+        const rec = tickets.find((x) => x.id === t.id);
+        if (!rec) return true;
+        rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
+        ticketsStore.save(teamDir, tickets);
+        log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
+        return true;
+      }
+      return !held;
+    }
+
+    // The claude fallback for a seat that never announces bracketed paste. It must
+    // not deliver while the latch is still MISSING: `enqueue` returns delivered
+    // synchronously but the bytes wait in the queue's ready loop and are written
+    // within one poll of whenever the latch does arrive — so firing at the cap for a
+    // seat that announces just after it puts the write back inside the re-render
+    // window, stamped delivered. Same defect as the original, one layer further out.
+    //
+    // So re-check instead of delivering: any latch arriving during a period this
+    // short leaves _bootDrainTimer armed at the next check, and the drain owns it.
+    // The ceiling is what stops an unbootable seat re-arming forever; delivering at
+    // that point is a considered last resort, since a spec injected into a seat that
+    // never came up is no worse than the spec being dropped.
+    _armReplayFallback(session, periodMs, deadline) {
+      session._replayFallbackTimer = setTimeout(() => {
+        session._replayFallbackTimer = null;
+        if (session._dead || !session._replayTicketsPending) return;
+        if (session._bootDrainTimer) return;                       // edge latched; the drain owns it
+        if (!session._bootReadySeen && Date.now() < deadline) {
+          this._armReplayFallback(session, periodMs, deadline);
+          return;
+        }
+        this._replayTicketsOnce(session);
+      }, periodMs);
+    }
+
+    // One replay per process, whichever edge gets there first: the claude arm has two
+    // (the boot-ready drain and a fallback for a seat that never announces), and both
+    // must be safe to fire.
+    // The one-shot is spent only on an outcome that REACHED the seat. A `held` verdict
+    // delivers nothing and stamps nothing, so consuming the flag there would burn the
+    // process's only replay on a pass that did no work — while the other claude edge
+    // is still to come.
+    _replayTicketsOnce(session) {
+      if (!session || !session._replayTicketsPending || session._dead) return;
+      let done = false;
+      try { done = this._replayOpenTickets(session); }
+      catch (e) { log.error('inject', `ticket replay failed for ${session.name}: ${e.message}`); done = true; }
+      if (done) session._replayTicketsPending = false;
     }
 
     _taskAdd(session, team, teamDir, intent, reply) {
@@ -4101,7 +4302,7 @@ function createSessionManager(deps) {
     }
 
 
-    _gatedDeliver(targetName, senderTag, body, urgent) {
+    _gatedDeliver(targetName, senderTag, body, urgent, tag = '') {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       const verdict = shouldHoldDm({
@@ -4114,13 +4315,13 @@ function createSessionManager(deps) {
       if (verdict.hold) {
         const canPark = target.agentType === 'claude' && !target._dead;
         const parkId = canPark
-          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm'))
+          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag))
           : null;
         return parkId
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
-      this._deliverMessage(targetName, senderTag, body, 'dm');
+      this._deliverMessage(targetName, senderTag, body, 'dm', tag);
       return { delivered: true };
     }
 
@@ -4282,7 +4483,12 @@ function createSessionManager(deps) {
       return !!(s && s.agentType && !s._dead);
     }
 
-    _buildDeliveryText(target, senderName, body, mtype) {
+    // `tag` rides the POINTER line ONLY. A spilled message is announced as "Message
+    // (N bytes) attached", so any marker the body carries is invisible until the file
+    // is opened — and a codex seat must spend a turn on a Read to see it at all. On
+    // the inline branch the body is right there, so repeating the marker in the
+    // prefix would print it twice.
+    _buildDeliveryText(target, senderName, body, mtype, tag = '') {
       const prefix = `[agent:from ${senderName}]`;
 
       // The reply nudge is parenthesized and never at column 1, so IntentScanner
@@ -4298,6 +4504,7 @@ function createSessionManager(deps) {
 
       if (body.length > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
+        const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
         // @-mention makes Claude Code attach the file inline instead of
         // spending a turn on a Read call; Codex has no equivalent. The
         // trailing space after the path closes the @-autocomplete popup —
@@ -4306,16 +4513,16 @@ function createSessionManager(deps) {
         // The trailer rides the pointer line (not the spilled file, which may be
         // read after the register has already drifted).
         return target.agentType === 'claude'
-          ? `${prefix} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
-          : `${prefix} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
+          ? `${marked} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
+          : `${marked} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
       }
       return `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
     }
 
-    _deliverMessage(targetName, senderName, body, mtype) {
+    _deliverMessage(targetName, senderName, body, mtype, tag = '') {
       const target = this.sessions.get(targetName);
       if (!target) return;
-      const finalText = this._buildDeliveryText(target, senderName, body, mtype);
+      const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       if (!this._maybeParkDelivery(target, finalText)) {
         this._injectText(target, finalText, { parkable: true });
       }
