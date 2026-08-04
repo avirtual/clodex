@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Nothing an agent wrote gets thrown away
 
 - **A session listing that ignored workspace boundaries has been removed.** The
   `session:listAll` IPC channel returned every session in every workspace. No
