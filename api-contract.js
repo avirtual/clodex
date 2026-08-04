@@ -123,6 +123,13 @@ const API_CONTRACT = [
   { name: 'sessionFiles', kind: 'invoke', channel: 'session:files' },
   { name: 'filePeek', kind: 'invoke', channel: 'file:peek' },
   { name: 'fileDiff', kind: 'invoke', channel: 'file:diff' },
+  // The peek's Edit tab. The only WRITE row in the file family, and deliberately
+  // not reachable through peerQuery — a peer's file rows are all reads, and a
+  // write kind there would be remote file-write authority with no per-request
+  // authorization behind it.
+  { name: 'fileWrite', kind: 'invoke', channel: 'file:write' },
+  // Read-only: answers whether a displayed string names a real file, and where.
+  { name: 'fileResolve', kind: 'invoke', channel: 'file:resolve' },
   { name: 'fileOpen', kind: 'invoke', channel: 'file:open' },
   // Reveal in the OS file manager, as distinct from opening the file itself.
   // An ordinary capability row, NOT part of the frozen five-row plugin transport

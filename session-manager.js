@@ -1010,7 +1010,13 @@ function createSessionManager(deps) {
       // clodex-team.js from its own shell must land on the same tree as the
       // exec route already does — a scope-set value would resurrect exactly the
       // split those pins closed.
-      const env = { ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR };
+      // FORCE_HYPERLINK: a CLI that gates OSC 8 emission on a TERM_PROGRAM
+      // allowlist reads it from OUR process env, so its hyperlinks would appear
+      // when Clodex is launched from a terminal and vanish when launched from
+      // Finder. Forcing it removes that inheritance. Click-to-open does NOT
+      // depend on this — it scans rendered text (renderer.js, registerLinkProvider)
+      // precisely because the Claude CLI is not observed to emit OSC 8 either way.
+      const env = { ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' };
       if (type === 'codex') env.WB_WRAP_NAME = name;
 
       let ptyProc;

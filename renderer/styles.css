@@ -1628,7 +1628,7 @@ html, body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 #file-peek-modal .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; flex: none; }
-#file-peek-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+#file-peek-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; min-width: 0; }
 .file-peek-controls { display: flex; align-items: center; gap: 6px; flex: none; }
 .file-peek-tab, .file-peek-open {
   font-size: 10px; padding: 2px 10px; border-radius: 4px; cursor: pointer;
@@ -1639,6 +1639,26 @@ html, body {
 .file-peek-tab:disabled { opacity: 0.4; cursor: default; }
 .file-peek-open:hover, .file-peek-tab:not(:disabled):hover { color: var(--text); }
 #file-peek-body { overflow-y: auto; min-height: 80px; }
+#file-peek-body.hidden, #file-peek-editor.hidden, #file-peek-save.hidden,
+#file-peek-dirty.hidden, #file-peek-back.hidden { display: none; }
+/* Speculative links: scanned, not statted, so the affordance stays quiet until
+   hover rather than promising every token resolves. */
+.peek-path { cursor: pointer; text-decoration-color: transparent; }
+.peek-path:hover { color: #61afef; text-decoration: underline; text-decoration-color: currentColor; }
+#file-peek-save:disabled { opacity: 0.45; cursor: default; }
+.file-peek-dirty { color: var(--accent); font-size: 14px; line-height: 1; }
+/* Sized by its `rows` (set from the line count) rather than a fixed height, so
+   the Edit tab is as tall as the File tab showing the same bytes and switching
+   between them doesn't resize the modal. flex-shrink + min-height:0 let the
+   modal's max-height still clamp a long file, exactly as it clamps the body. */
+#file-peek-editor {
+  flex: 0 1 auto; min-height: 0; resize: none; tab-size: 2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.45; white-space: pre; overflow: auto;
+  background: var(--active-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px;
+}
+#file-peek-editor:focus { outline: none; border-color: var(--accent); }
 .file-peek-pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; line-height: 1.45; white-space: pre; overflow-x: auto;
@@ -1646,6 +1666,12 @@ html, body {
 }
 .diff-line { min-height: 1em; }
 .diff-ctx { color: var(--text); }
+/* user-select:none keeps the gutter out of a copied selection. */
+.peek-ln {
+  display: inline-block; margin-right: 12px; color: var(--text-dim);
+  opacity: 0.55; user-select: none; text-align: right;
+}
+.peek-line-hit { background: rgba(97, 175, 239, 0.16); }
 .diff-file { color: var(--text-dim); font-weight: 600; }
 .diff-hunk { color: #61afef; }
 .diff-add { color: #4caa6e; background: rgba(76, 170, 110, 0.08); }

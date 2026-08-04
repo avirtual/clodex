@@ -25,7 +25,7 @@ function registerIpcHandlers(deps) {
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR, SKILL_REENABLE_CONFIRMED,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
     claudeProjectDir, collectSystemDiagnostics, createWindow, diagSummary,
-    checkTools, invalidateToolCache, diagWarning, fetchFileDiff, fetchFilePeek, fetchProxyBust,
+    checkTools, invalidateToolCache, diagWarning, fetchFileDiff, fetchFilePeek, writeFilePeek, resolveFilePath, fetchProxyBust,
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager,
@@ -614,6 +614,13 @@ function registerIpcHandlers(deps) {
   handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
+  // Takes a name, unlike file:peek — the session's cwd is what confines the
+  // write, so there is no nameless form of this row to reach for.
+  handle('file:write', (_e, name, filePath, content, expectMtime) =>
+    writeFilePeek(name, filePath, content, expectMtime));
+  // "Does this displayed string name a real file?" — the renderer scans text for
+  // path-shaped tokens but cannot stat, so it asks here before opening a peek.
+  handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
   handle('file:open', (_e, filePath) => openPath(filePath));
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
 

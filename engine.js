@@ -15,6 +15,8 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
+const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
+const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { materializePotCli, materializeExecScripts } = require('./pot-bin');
 // Module-level, unlike the rest of pending-store's surface (required inside
@@ -955,7 +957,6 @@ function fetchSessionFiles(name) {
 }
 
 function fetchFilePeek(filePath) {
-  const PEEK_MAX_BYTES = 512 * 1024;
   try {
     const st = fs.statSync(filePath);
     if (!st.isFile()) return { ok: false, error: 'Not a regular file' };
@@ -972,6 +973,49 @@ function fetchFilePeek(filePath) {
       truncated: st.size > PEEK_MAX_BYTES, binary,
       content: binary ? null : buf.toString('utf-8'),
     };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// Resolve a path as DISPLAYED (in the terminal, or inside a peeked file) to one
+// that exists. Main-side because only main can stat; the renderer decides what
+// looks like a path (lib/path-scan.js) and asks here whether it is one.
+function resolveFilePath(name, raw, baseDir) {
+  const s = manager.sessions.get(name);
+  if (!s) return { ok: false, error: 'Session not running' };
+  if (s.peer) return { ok: false, error: 'remote' };
+  return resolveDisplayedPath({
+    raw, cwd: s.cwd, baseDir: baseDir || null,
+    touched: (s.fileTouches || []).map((t) => t && t.path).filter(Boolean),
+    home: os.homedir(), path,
+    statFile: (p) => fs.statSync(p).isFile(),
+  });
+}
+
+// The peek's write half. Takes a session NAME (fetchFilePeek does not) because
+// the cwd is the containment boundary — a write with no session to confine it
+// to is refused rather than resolved against the process cwd.
+function writeFilePeek(name, filePath, content, expectMtime) {
+  const s = manager.sessions.get(name);
+  if (!s) return { ok: false, error: 'Session not running' };
+  if (s.peer) return { ok: false, error: 'remote' }; // no local file behind a peer row
+  const v = vetFileWrite({
+    filePath, cwd: s.cwd, content, expectMtime,
+    resolve: path.resolve, realpath: fs.realpathSync, stat: fs.statSync,
+    readHead: (p) => {
+      const fd = fs.openSync(p, 'r');
+      try {
+        const buf = Buffer.alloc(8192);
+        const n = fs.readSync(fd, buf, 0, 8192, 0);
+        return buf.subarray(0, n);
+      } finally { fs.closeSync(fd); }
+    },
+  });
+  if (!v.ok) return v;
+  try {
+    fs.writeFileSync(v.path, content);
+    // The fresh mtime is the caller's next `expectMtime`; without it every save
+    // after the first would trip the stale check against its own write.
+    return { ok: true, mtime: fs.statSync(v.path).mtimeMs, size: Buffer.byteLength(content) };
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
@@ -1423,7 +1467,7 @@ const toolCache = createToolCache({ whichBin });
     checkTools: () => toolCache.get(),
     invalidateToolCache: () => toolCache.invalidate(),
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
-    fetchSessionFiles, fetchFilePeek, fetchFileDiff,
+    fetchSessionFiles, fetchFilePeek, fetchFileDiff, writeFilePeek, resolveFilePath,
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState,

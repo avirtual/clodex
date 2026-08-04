@@ -9,6 +9,7 @@ const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-uti
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
+const { scanPaths } = require('./lib/path-scan');
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
@@ -994,6 +995,13 @@ function updateWindowTitle() {
 }
 
 
+// Pull a filesystem path out of an OSC 8 URI. Returns null for anything that
+// isn't file://, so http links keep flowing to the browser.
+function filePathFromUri(uri) {
+  if (typeof uri !== 'string' || !uri.startsWith('file://')) return null;
+  try { return decodeURIComponent(new URL(uri).pathname) || null; } catch { return null; }
+}
+
 function createTerminal(name, peer = null) {
   const terminal = new Terminal({
     fontSize: 13,
@@ -1001,6 +1009,18 @@ function createTerminal(name, peer = null) {
     theme: currentXtermTheme(),
     cursorBlink: true,
     allowProposedApi: true,
+    // OSC 8 hyperlinks, when a CLI emits them: the URI carries an ALREADY
+    // ABSOLUTE path even where the display text is shortened, so it needs no
+    // resolution and is strictly better than the text scan below. Kept as the
+    // preferred route even though the Claude CLI is not currently observed to
+    // reach it — a CLI that does emit them gets exact paths for free.
+    linkHandler: {
+      activate: (event, text) => {
+        const p = filePathFromUri(text);
+        if (!p) return;
+        openFilePeek(name, p, 'file');
+      },
+    },
   });
 
   const fitAddon = new FitAddon();
@@ -1014,6 +1034,43 @@ function createTerminal(name, peer = null) {
     if (isExternallyOpenable(uri)) window.api.openExternal(uri);
   });
   terminal.loadAddon(webLinksAddon);
+
+  // Click a `path:line` in the terminal → peek that file at that line. The CLI
+  // is never told about the click: xterm owns the rendered buffer here, so the
+  // hit-test and the text are entirely local.
+  //
+  // Text-shaped, NOT OSC 8 — the CLI's hyperlinks do not survive to us, so a
+  // scan of the buffer line is what there is. It is therefore SPECULATIVE: a
+  // token that looks like a path underlines whether or not it names a file, and
+  // the resolve on activate is what decides. Statting during provideLinks would
+  // mean sync fs on every hover of every line.
+  //
+  // xterm ranges are 1-BASED and INCLUSIVE at both ends; scanPaths returns
+  // 0-based half-open offsets. Both conversions below are that difference.
+  terminal.registerLinkProvider({
+    provideLinks: (y, cb) => {
+      const line = terminal.buffer.active.getLine(y - 1);
+      if (!line) return cb(undefined);
+      const hits = scanPaths(line.translateToString(true));
+      if (!hits.length) return cb(undefined);
+      cb(hits.map((h) => ({
+        range: { start: { x: h.start + 1, y }, end: { x: h.end, y } },
+        text: h.text,
+        activate: async () => {
+          const res = await window.api.fileResolve(name, h.path, null)
+            .catch((e) => ({ ok: false, error: String(e) }));
+          if (!res || !res.ok) {
+            // The link is speculative (scanned, never statted), so a miss is an
+            // ordinary outcome — but a SILENT one is indistinguishable from a
+            // broken click, which reads as the feature not working at all.
+            showToast((res && res.error) || `Can't find "${h.path}"`, { kind: 'warn', duration: 4000 });
+            return;
+          }
+          openFilePeek(name, res.path, 'file', h.line);
+        },
+      })));
+    },
+  });
 
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
@@ -2948,7 +3005,7 @@ const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState });
 
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
-  popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar,
+  popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, showToast,
   getActiveSession: () => activeSession,
 });
 

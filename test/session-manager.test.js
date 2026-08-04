@@ -5823,7 +5823,7 @@ test('create → PTY env: no scopes reduces to byte-identical { ...process.env, 
   const { m, captured, registryDir } = mkEnvProbe();
   await bashCreate(m, 'env-none', null);
   assert.deepStrictEqual(captured(), {
-    ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir,
+    ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
   });
 });
 

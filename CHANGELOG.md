@@ -13,6 +13,25 @@ blocks a release.
 
 ## Unreleased — Nothing an agent wrote gets thrown away
 
+- **File paths in the terminal are now clickable.** When an agent mentions
+  `renderer/lib/format.js:71`, clicking it opens that file in the peek modal,
+  scrolled to line 71 and highlighted. The CLI is not involved and needs no
+  support for this — Clodex scans the text it has already rendered. Paths are
+  matched by shape, so a click on something that only looks like a path tells
+  you it could not be found rather than doing nothing. Truncated paths are
+  recovered by matching against the files that session has touched; a path that
+  matches two of them is refused rather than guessed at.
+- **The File view shows line numbers**, and paths inside a viewed file are
+  clickable too — following one keeps a back arrow to where you came from.
+  A relative path resolves against the file it appears in first, so
+  `../lib/format.js` means what it means to that file.
+- **A file can now be edited in the peek.** An Edit tab next to Diff and File,
+  with Cmd+S, a dirty marker, and a prompt before discarding unsaved changes.
+  Editing is confined to the session's own directory and refuses a file that
+  changed on disk since you opened it, so an agent still working in that file
+  cannot have its edit silently overwritten. Files too large to load whole are
+  not editable — saving one would discard everything past the display limit.
+  Sessions running on a peer machine are viewable but not editable.
 - **A session listing that ignored workspace boundaries has been removed.** The
   `session:listAll` IPC channel returned every session in every workspace. No
   client ever called it — the tray, the one thing it was written for, reads the
