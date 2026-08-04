@@ -161,6 +161,9 @@ const RENDERER_SCANNED_MODULES = [
   // (peek linkify), so a reach for a renderer.js name would break one caller
   // and not the other.
   'renderer/lib/path-scan.js',
+  // Same shape as path-scan: a pure leaf feeding the DOM-bound link provider,
+  // where the buffer walking that calls it has no unit tests of its own.
+  'renderer/lib/gutter-scan.js',
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',
   'renderer/pot-drawer.js',

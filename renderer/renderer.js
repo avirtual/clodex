@@ -10,6 +10,12 @@ const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_F
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
 const { scanPaths } = require('./lib/path-scan');
+const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
+
+// How far above a gutter row to look for its `Update(file)` header. The search
+// stops at the first row that is not part of the block, so this is only a bound
+// on a pathological run, not the usual cost.
+const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
@@ -1035,9 +1041,11 @@ function createTerminal(name, peer = null) {
   });
   terminal.loadAddon(webLinksAddon);
 
-  // Click a `path:line` in the terminal → peek that file at that line. The CLI
-  // is never told about the click: xterm owns the rendered buffer here, so the
-  // hit-test and the text are entirely local.
+  // Click a `path:line` in the terminal → peek that file at that line, plus the
+  // line numbers in an edit tool's gutter, which name a line but not a file (the
+  // file is in the `Update(...)` header above — gutter-scan.js walks up to it).
+  // The CLI is never told about the click: xterm owns the rendered buffer here,
+  // so the hit-test and the text are entirely local.
   //
   // Text-shaped, NOT OSC 8 — the CLI's hyperlinks do not survive to us, so a
   // scan of the buffer line is what there is. It is therefore SPECULATIVE: a
@@ -1047,11 +1055,47 @@ function createTerminal(name, peer = null) {
   //
   // xterm ranges are 1-BASED and INCLUSIVE at both ends; scanPaths returns
   // 0-based half-open offsets. Both conversions below are that difference.
+  // Read a logical line as text. A row xterm WRAPPED is a continuation of the
+  // row above it, not a line of its own — walking rows naively would read the
+  // tail of a wrapped edit as a fresh line and find gutter numbers mid-sentence.
+  const rowText = (row) => {
+    const l = terminal.buffer.active.getLine(row);
+    return l ? l.translateToString(true) : null;
+  };
+  const isWrapped = (row) => {
+    const l = terminal.buffer.active.getLine(row);
+    return !!(l && l.isWrapped);
+  };
+
   terminal.registerLinkProvider({
     provideLinks: (y, cb) => {
       const line = terminal.buffer.active.getLine(y - 1);
       if (!line) return cb(undefined);
-      const hits = scanPaths(line.translateToString(true));
+      const raw = line.translateToString(true);
+      const hits = scanPaths(raw);
+
+      // A gutter number, linked to the file its tool-call header names. Only on
+      // an unwrapped row: a continuation row's leading digits are content.
+      // Appended to the path hits rather than replacing them — a gutter row can
+      // also CONTAIN a path, and both should stay clickable.
+      const g = !line.isWrapped ? matchGutterRow(raw) : null;
+      if (g) {
+        const above = [];
+        for (let r = y - 2; r >= 0 && above.length < GUTTER_HEADER_SCAN; r -= 1) {
+          if (isWrapped(r)) continue; // a wrapped tail belongs to the row above it
+          const t = rowText(r);
+          if (t == null) break;
+          above.push(t);
+        }
+        const owner = findGutterFile(above);
+        if (owner) {
+          hits.push({
+            start: g.start, end: g.end, text: String(g.line),
+            path: owner.path, line: g.line,
+          });
+        }
+      }
+
       if (!hits.length) return cb(undefined);
       cb(hits.map((h) => ({
         range: { start: { x: h.start + 1, y }, end: { x: h.end, y } },

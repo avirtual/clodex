@@ -23,6 +23,11 @@ blocks a release.
   matches two of them is refused rather than guessed at. A leading `@` — the
   CLI's own "load this file" syntax — is understood, while a real path that
   starts with one (`node_modules/@babel/…`) still resolves normally.
+- **The line numbers an edit prints are clickable too.** When a tool call shows
+  its gutter under `Update(file.js)`, clicking a number opens that file at that
+  line — the numbers name a line but not a file, so Clodex reads the file from
+  the header above them. A number only links when it is part of an unbroken
+  gutter under such a header, so numbers in ordinary output stay inert.
 - **The file peek can be dragged by its title bar**, so it can be moved off
   whatever it is covering instead of only resized. A fresh open re-centres it;
   following a path or stepping back leaves it where you put it.
