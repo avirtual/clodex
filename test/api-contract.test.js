@@ -170,10 +170,10 @@ test('preload builds exactly the pinned window.api surface by looping the table'
   }
 });
 
-test('every invoke channel has a registered handler in ipc-handlers', () => {
-  // Register with capturing transport seams (as main.js/web-host do) onto a
-  // Proxy of inert stubs, so registration runs without electron or real deps —
-  // registration only calls handle()/on(); handler bodies never execute here.
+// Register with capturing transport seams (as main.js/web-host do) onto a Proxy
+// of inert stubs, so registration runs without electron or real deps —
+// registration only calls handle()/on(); handler bodies never execute here.
+function captureRegistrations() {
   const registered = new Set();
   const capture = {
     handle: (ch) => registered.add(ch),
@@ -190,8 +190,76 @@ test('every invoke channel has a registered handler in ipc-handlers', () => {
   });
   const { registerIpcHandlers } = require('../ipc-handlers');
   registerIpcHandlers(deps);
+  return registered;
+}
 
+// Main→renderer pushes, so they are NOT ipcMain registrations and must be
+// excluded from both directions below. `kind: 'on'` names a renderer-side
+// subscription; `deps.on` is ipcMain.on, which carries `kind: 'send'`. Same
+// word, opposite direction — comparing registrations against all 228 rows
+// would report every one of these as missing.
+const CALLABLE_KINDS = ['invoke', 'send'];
+
+test('every invoke channel has a registered handler in ipc-handlers', () => {
+  const registered = captureRegistrations();
   const invokeChannels = API_CONTRACT.filter((r) => r.kind === 'invoke').map((r) => r.channel);
   const missing = invokeChannels.filter((ch) => !registered.has(ch));
   assert.deepEqual(missing, [], `invoke channels with no registered handler: ${missing}`);
+});
+
+// The inverse of the test above, and the one that matters for surface control:
+// that one proves the table's rows are all backed by handlers, which says
+// nothing about a handler registered outside the table. An uncontracted channel
+// is invisible to preload and api-shim (both build window.api by looping the
+// table) yet fully live over web-host, which dispatches any registered channel
+// by name without consulting the contract. So the gap it closes is exactly the
+// one nothing else can see: reachable, unreviewed, and unreferenced by the
+// surface definition. `session:listAll` sat here handing an authenticated
+// connection every workspace's sessions while bound to one.
+test('every registered ipc-handlers channel appears in the contract', () => {
+  const registered = captureRegistrations();
+  const contracted = new Set(
+    API_CONTRACT.filter((r) => CALLABLE_KINDS.includes(r.kind)).map((r) => r.channel),
+  );
+  const uncontracted = [...registered].filter((ch) => !contracted.has(ch));
+  assert.deepEqual(uncontracted, [], `channels registered in ipc-handlers but absent from api-contract.js: ${uncontracted}`);
+});
+
+// Channels web-host registers on TOP of registerIpcHandlers, each with the
+// reason it is not in the contract. An entry here is a deliberate exemption;
+// anything else web-host adds fails the test below until it is listed or
+// contracted.
+const WEB_HOST_ONLY = {
+  // web-host.js:218-219 — "Deliberately absent from api-contract: reached by a
+  // raw invoke, so the desktop surface stays untouched." Restart is meaningful
+  // only for a browser client whose host process it re-execs.
+  'app:restart': 'browser-only; reached by raw invoke so the desktop surface stays untouched',
+};
+
+test('web-host registers nothing uncontracted beyond its allowlist', () => {
+  // The real createWebHost, with registerIpcHandlers stubbed out: this isolates
+  // what web-host adds ITSELF, so the assertion cannot be satisfied by a channel
+  // that merely happens to be contracted elsewhere.
+  const { createWebHost } = require('../web-host');
+  const host = createWebHost({
+    engine: { stores: {} },
+    log: { info() {}, warn() {}, error() {} },
+    port: 0,
+    host: '127.0.0.1',
+    userDataPath: require('node:os').tmpdir(),
+    registerHandlers: () => {},
+  });
+  try {
+    const own = [...host._handlers.keys()];
+    const unexpected = own.filter((ch) => !(ch in WEB_HOST_ONLY));
+    assert.deepEqual(unexpected, [], `web-host channels neither contracted nor allowlisted: ${unexpected}`);
+    // The allowlist decays into a comment if nothing proves its entries are
+    // live: an entry for a channel web-host no longer registers would sit here
+    // exempting nothing.
+    for (const ch of Object.keys(WEB_HOST_ONLY)) {
+      assert.ok(host._handlers.has(ch), `allowlisted channel ${ch} is no longer registered by web-host — drop the entry`);
+    }
+  } finally {
+    host.close();
+  }
 });

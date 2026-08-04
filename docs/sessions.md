@@ -262,8 +262,10 @@ on relink; autoCompact read from persistence), mirroring the ipc-handlers
 ## 6. Workspaces
 
 One BrowserWindow per workspace (`SessionManager.windows` map); sessions
-carry `workspaceId`; `session:list` is sender-scoped, `session:listAll`
-feeds the tray. Closing a window detaches its sessions: `pty-data` buffers
+carry `workspaceId`; `session:list` is sender-scoped. The tray lists across
+workspaces by calling `getManager().list()` in-process (app-menus.js) — no
+IPC channel exposes an unscoped listing.
+Closing a window detaches its sessions: `pty-data` buffers
 into `session.pendingOutput` (2MB cap, oldest dropped) and replays on
 reopen; exit/activity events while detached are dropped and recomputed.
 **Delete Workspace…** (Window menu) removes a whole workspace record: confirm →

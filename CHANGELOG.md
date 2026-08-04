@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **A session listing that ignored workspace boundaries has been removed.** The
+  `session:listAll` IPC channel returned every session in every workspace. No
+  client ever called it — the tray, the one thing it was written for, reads the
+  same data in-process — but the browser frontend dispatches any registered
+  channel by name, so an authenticated connection bound to a single workspace
+  could have used it to list all of them. Deleted, along with the note in the
+  architecture docs that wrongly described it as feeding the tray. A new test
+  now fails if any IPC handler is registered without appearing in the API
+  contract, which is how this one stayed unnoticed.
 - **You can now file a ticket for later without starting it.**
   `[agent:task add <role>] <spec>` dispatches immediately — it delivers the spec
   to the seat the moment it is idle. Writing "BACKLOG, do not start" at the top

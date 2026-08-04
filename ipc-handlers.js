@@ -197,8 +197,12 @@ function registerIpcHandlers(deps) {
   // the same guarantee, offered to every plugin instead of re-implemented per
   // handler, which is what stops a plugin widening locality by accident.
 
+  // No unscoped cross-workspace lister on this surface: web-host dispatches any
+  // registered channel by name without consulting the contract, so a
+  // `manager.list()` handler hands an authenticated connection every workspace's
+  // sessions when it is bound to one. In-process callers (app-menus.js) use
+  // `getManager().list()` directly and need no channel.
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
-  handle('session:listAll', () => manager.list());
   handle('session:reservedNames', () => {
     const names = new Set(manager.sessions.keys());
     for (const s of persistence.list()) names.add(s.name);
