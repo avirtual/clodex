@@ -395,6 +395,10 @@ test('SECURITY-adjacent: 127.0.0.1:1 never appears — the dead-peer sentinel is
   record();
   await failUntilGaveUp(() => tun, children);
   record();
+  // The shape check below is skipped for every null, so a run where the tunnel
+  // never produced a URL at all would satisfy this loop without testing the
+  // property it is named for.
+  assert.ok(seen.some((u) => u !== null), 'ENTER: at least one non-null URL reached the assertions');
   for (const u of seen) {
     assert.notStrictEqual(u, 'http://127.0.0.1:1', 'the dead-peer sentinel is never produced');
     if (u !== null) assert.match(u, /^http:\/\/127\.0\.0\.1:\d{2,5}$/, `a real ephemeral port, got ${u}`);

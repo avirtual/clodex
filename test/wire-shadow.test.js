@@ -65,6 +65,10 @@ test('independent keys do not cross-match', () => {
   const d = new ShadowDiff(sinkInto(records), { windowMs: 1000 });
   d.record('wire', 'k1', {});
   d.record('jsonl', 'k2', {});
+  // Both keys were actually seen: the absence below is the matcher declining to
+  // pair them, not `record` failing to emit and leaving nothing to match.
+  assert.equal(records.filter((r) => r.type === 'sighting').length, 2,
+    'ENTER: two independent sightings reached the differ');
   assert.equal(records.filter((r) => r.type === 'match').length, 0);
   d.stop();
 });
