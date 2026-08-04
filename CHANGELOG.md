@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **The sidebar's PR chip no longer disappears thirty seconds after launch.** It
+  painted at boot and then vanished for the life of the window: the cheap
+  refresh that runs every 30s omits the git and gh work, and the renderer could
+  not tell "this refresh didn't ask" from "the answer is none". Refreshes now
+  say which questions they asked, so a cheap one can neither overwrite nor be
+  believed about an expensive one's answer.
+
 - **Plugins can now read what an agent says.** A session-scoped plugin granted
   turn text receives each turn as the agent writes it — the capability that
   makes turn archivers, cross-session search and standup writers possible,

@@ -11,6 +11,7 @@ const { isExternallyOpenable } = require('../external-link');
 // than reading a stale vocabulary.
 const { pluginReaches } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
+const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
@@ -955,7 +956,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     const res = await window.api.sidebarMeta({ includePr });
     if (res && res.ok && res.meta) {
       for (const [name, m] of Object.entries(res.meta)) {
-        sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), ...m });
+        sidebarMeta.set(name, mergeMeta(sidebarMeta.get(name), m));
       }
     }
   } catch {} finally { metaRefreshInFlight = false; }

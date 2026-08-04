@@ -18292,6 +18292,37 @@ ${i3.join("\n")}
     }
   });
 
+  // meta-tiers.js
+  var require_meta_tiers = __commonJS({
+    "meta-tiers.js"(exports, module) {
+      var META_TIERS = {
+        activity: ["lastActivityTs"],
+        pr: ["branch", "prState", "prNumber"]
+      };
+      var TIER_OF_KEY = /* @__PURE__ */ new Map();
+      for (const [tier, keys] of Object.entries(META_TIERS)) {
+        for (const key of keys) TIER_OF_KEY.set(key, tier);
+      }
+      function mergeMeta(prev, incoming) {
+        const out = { ...prev || {} };
+        const marked = Array.isArray(incoming && incoming._tiers);
+        const claimed = marked ? incoming._tiers : [];
+        for (const tier of claimed) {
+          if (!Object.prototype.hasOwnProperty.call(META_TIERS, tier)) continue;
+          for (const key of META_TIERS[tier]) delete out[key];
+        }
+        for (const [key, value] of Object.entries(incoming || {})) {
+          if (key === "_tiers") continue;
+          const tier = TIER_OF_KEY.get(key);
+          if (marked && tier && !claimed.includes(tier)) continue;
+          out[key] = value;
+        }
+        return out;
+      }
+      module.exports = { META_TIERS, mergeMeta };
+    }
+  });
+
   // peer-input-queue.js
   var require_peer_input_queue = __commonJS({
     "peer-input-queue.js"(exports, module) {
@@ -26552,6 +26583,7 @@ ${detail}` });
       var { isExternallyOpenable } = require_external_link();
       var { pluginReaches } = require_plugin_api();
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
+      var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
@@ -27457,7 +27489,7 @@ ${detail}` });
           const res = await window.api.sidebarMeta({ includePr });
           if (res && res.ok && res.meta) {
             for (const [name, m] of Object.entries(res.meta)) {
-              sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, ...m });
+              sidebarMeta.set(name, mergeMeta(sidebarMeta.get(name), m));
             }
           }
         } catch {

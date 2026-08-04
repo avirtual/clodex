@@ -101,13 +101,24 @@ function createSessionMeta({ REGISTRY_DIR, prTtlMs = 60_000 }) {
 
   // Bulk metadata for a set of sessions [{ name, cwd }]. Timestamps always;
   // PR status only when includePr (it's the slow tier). Returns
-  // { [name]: { lastActivityTs, branch, prState, prNumber } }.
+  // { [name]: { _tiers, lastActivityTs, branch?, prState?, prNumber? } }.
+  //
+  // Every row carries `_tiers` — the tiers this payload actually asked about.
+  // The PR keys are OMITTED, not nulled, when the PR tier wasn't asked: a
+  // present `prState: null` claims "computed, and unknowable", and the renderer
+  // merged that filler over the boot tier's real answer, so the PR chip painted
+  // at launch and vanished at the first 30s refresh. Absent means "not asked";
+  // mergeMeta in meta-tiers.js is what reads the difference.
   async function metaFor(sessions, { includePr = true } = {}) {
     const out = {};
+    // One array instance is shared by every row in the response — frozen so a
+    // consumer that pushes onto it cannot retroactively re-tier the whole batch.
+    const tiers = Object.freeze(includePr ? ['activity', 'pr'] : ['activity']);
     // Dedupe PR lookups by cwd — many sessions share a repo.
     const prByCwd = new Map();
     for (const s of sessions) {
-      const m = { lastActivityTs: lastActivityTs(s.name), branch: null, prState: null, prNumber: null };
+      const m = { _tiers: tiers, lastActivityTs: lastActivityTs(s.name) };
+      if (includePr) Object.assign(m, { branch: null, prState: null, prNumber: null });
       out[s.name] = m;
       if (includePr && s.cwd && !prByCwd.has(s.cwd)) prByCwd.set(s.cwd, null);
     }

@@ -578,7 +578,15 @@ function metaFixture(list) {
     on: (ch, fn) => handlers.set(ch, fn),
     persistence: { listForWorkspace: () => list, get: () => null },
     workspaceOfSender: () => 'ws',
-    sessionMeta: { metaFor: async (sessions) => Object.fromEntries(sessions.map((s) => [s.name, {}])) },
+    // Marked exactly as the real metaFor marks a boot-tier response. An unmarked
+    // `{}` here would route every assertion below through mergeMeta's
+    // compatibility branch, where untiered keys are spread unconditionally — so
+    // dropping the `tier &&` guard, which wipes every untiered key on a marked
+    // payload, would be invisible to this test. That is the t190 regression.
+    sessionMeta: {
+      metaFor: async (sessions) => Object.fromEntries(
+        sessions.map((s) => [s.name, { _tiers: ['activity', 'pr'], lastActivityTs: 1 }])),
+    },
     manager: { teamNameFor: () => null },
     getPluginHost: () => null,
     log: { info() {}, error() {} },
@@ -586,6 +594,8 @@ function metaFixture(list) {
   registerIpcHandlers(deps);
   return (opts) => handlers.get('sidebar:meta')({}, opts);
 }
+
+const { mergeMeta } = require('../meta-tiers');
 
 test('REWORK MF2: a revoke reaches the renderer through the meta merge', async () => {
   // CONTROL: a granted seat really does carry its tokens over this channel, so
@@ -604,27 +614,39 @@ test('REWORK MF2: a revoke reaches the renderer through the meta merge', async (
     + 'from "no news" to a spread merge, which is what left the stale array live');
   assert.deepStrictEqual(revoked.meta.seat.pluginGrants, [], 'and it says: nothing granted');
 
-  // The renderer's merge, verbatim from refreshSidebarMeta. Asserting the
+  // The renderer's merge — the REAL function, not a copy. Asserting the
   // handler's payload alone would not prove the revoke survives the merge, and
-  // the merge is where the previous version of this fix died.
-  let cached = { pluginGrants: ['scoped:turns'], team: 't' };
-  cached = { ...cached, ...revoked.meta.seat };
+  // the merge is where the previous version of this fix died. pluginGrants is
+  // in no tier, so mergeMeta must still spread it straight over the cache.
+  const cached = mergeMeta({ pluginGrants: ['scoped:turns'], team: 't' }, revoked.meta.seat);
   assert.deepStrictEqual(cached.pluginGrants, [],
-    'the spread merge overwrites the stale array rather than preserving it');
+    'the merge overwrites the stale array rather than preserving it');
   assert.strictEqual(cached.team, null, 'ENTER: the merge really ran over this object');
 
-  // The merge above is a COPY of renderer.js's, and a copy is exactly how the
-  // first version of this coverage rotted: the plugin-host revoke test kept
-  // passing against its own fixture while the shipped revoke was inert. The
-  // renderer is DOM-bound and cannot be required here, so pin the original by
-  // source (the pattern at test/intent-checklist-seam.test.js and
-  // test/preserve-across-restart.test.js) — changing the real expression must
-  // redden the copy rather than silently leaving it describing nothing.
+  // The renderer is DOM-bound and cannot be required here, so pin that the
+  // shipped line really routes through the function called above (the pattern at
+  // test/intent-checklist-seam.test.js and test/preserve-across-restart.test.js).
+  // The earlier version of this pin copied the merge expression inline, and a
+  // copy is exactly how the first version of this coverage rotted: the
+  // plugin-host revoke test kept passing against its own fixture while the
+  // shipped revoke was inert.
+  const MERGE_LINE = /sidebarMeta\.set\(name, mergeMeta\(sidebarMeta\.get\(name\), m\)\)/;
   const rsrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  assert.match(rsrc, /sidebarMeta\.set\(name, \{ \.\.\.\(sidebarMeta\.get\(name\) \|\| \{\}\), \.\.\.m \}\)/,
-    'the shipped merge is still a plain spread of the payload OVER the cached entry — '
-    + 'the property this test copies. A per-key merge, or one that skipped absent keys, '
-    + 'would restore the stale-array bug with this test still green');
+  assert.match(rsrc, MERGE_LINE,
+    'the shipped merge is the mergeMeta this test exercises — a hand-rolled per-key '
+    + 'merge here, or one that skipped absent keys, would restore the stale-array bug '
+    + 'with this test still green');
+
+  // The browser frontend runs its own copy of this line out of the committed
+  // bundle, so a renderer fix that never gets rebuilt leaves web users on the
+  // bug. esbuild emits THIS expression byte-identically (the spread it replaced
+  // was not: `{ ...sidebarMeta.get(name) || {}`), which is the only reason one
+  // regex can gate both. If a later edit breaks that byte-identity, pin the
+  // bundle's own shape rather than deleting the gate.
+  const wsrc = fs.readFileSync(path.join(__dirname, '..', 'web-dist', 'index.html'), 'utf8');
+  assert.match(wsrc, MERGE_LINE,
+    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
+    + 'browser frontend keeps merging by the old spread');
 });
 
 // ── MF3: a revoke must not leave the verb live ──────────────────────────────
