@@ -3,9 +3,10 @@
 // tickets-store.js — the team-scoped ticket registry (Task 25). Formal tickets
 // let a team LEAD attach tasks to members as tracked envelopes (opened, assigned,
 // closed by clodex itself) instead of lifecycle-by-dm-and-lead-discipline. It
-// FORMALIZES, not replaces, the tasks/NN-name/spec.md + notes.md artifact
+// FORMALIZES, not replaces, the <task-dir>/spec.md + notes.md artifact
 // convention: the ticket is registry + lifecycle + notification; specs/journals
-// stay files (an optional `taskDir` links the two).
+// stay files (an optional `taskDir` links the two). Those files live outside
+// the user's repo — see clodex-paths.taskDirFor.
 //
 // Storage: ~/.clodex/teams/<team>/tickets.json — a flat array of ticket records.
 // It lives under ~/.clodex (team-scoped, like team.json), NOT userData, because
@@ -75,11 +76,19 @@ function ticketTitle(specText) {
   return '(untitled)';
 }
 
-// Optional artifact link: if the spec text's FIRST LINE contains a `tasks/<dir>`
-// path, capture it verbatim (string only — no fs validation). Links ticket →
-// on-disk spec/journal. Absent → null.
+// Optional artifact link: if the spec text's FIRST LINE names a task dir,
+// capture it verbatim (string only — no fs validation). Links ticket → on-disk
+// spec/journal. Absent → null.
+//
+// Both forms are accepted because artifacts moved out of the project repo to
+// ~/.clodex/projects/<leaf>-<hash>/tasks/ (clodex-paths.taskDirFor), and every
+// ticket written before that move carries the bare `tasks/<dir>` form. Matching
+// the absolute form FIRST matters: `tasks/` appears inside it, so trying the
+// bare pattern first would truncate an absolute path to its tail.
 function extractTaskDir(specText) {
   const firstLine = String(specText == null ? '' : specText).split('\n')[0] || '';
+  const abs = firstLine.match(/(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/);
+  if (abs) return abs[0];
   const m = firstLine.match(/tasks\/[A-Za-z0-9._/-]+/);
   return m ? m[0] : null;
 }

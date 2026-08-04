@@ -47,7 +47,7 @@ visible rather than silently lost.
 
 - `[agent:task add <role|name>]` then the spec as the body — opens a ticket
   and delivers it to that role's live seat (or leaves it queued if none is
-  live). The first line of the body becomes the title; a `tasks/<dir>` path on
+  live). The first line of the body becomes the title; a task-dir path on
   that line links the ticket to its artifact.
 - `[agent:task assign <id> <role|name>]` — (re)assigns an open ticket.
   Reassignment is your stall-remediation lever: it notifies the old assignee
@@ -105,6 +105,10 @@ reach for a harness task tool and assume a teammate received it.
 - Workers journal into their task artifact as they work; a dead or compacted
   worker is replaced by a fresh spawn reading the artifact, never resumed
   from mush.
+- Artifacts live OUTSIDE the project, under
+  `~/.clodex/projects/<leaf>-<hash>/tasks/<task>/` — never in the user's own
+  repo. Their working tree belongs to them; your process notes are not their
+  commits to carry. Name the dir on a ticket's first line to link the two.
 
 ## Team lifecycle
 

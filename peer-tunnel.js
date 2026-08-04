@@ -16,7 +16,7 @@
 // respawn, backoff, the stable check, the status row and the kill all live in
 // tunnel-supervisor.js, and this file says only what makes a WIRE tunnel
 // different. The two copies were ~90 identical lines apiece and had drifted in
-// three places (journal: tasks/tunnel-supervisor/). What is configured here,
+// three places. What is configured here,
 // and the property of the CONSUMER that decides each:
 //
 //   • RETRY IS UNBOUNDED, because Clodex itself needs this forward

@@ -66,8 +66,7 @@ function score(queryTerms, rec, df, total) {
 // log(1+N) is by construction the weight of one maximally-rare term, i.e. the
 // smallest floor one lucky word cannot clear on its own. MIN_HITS is what
 // actually separates the populations: coincidence hits one term, relevance hits
-// several. Both halves are needed; see the four-store table in
-// tasks/hint-injector/JOURNAL.md.
+// several. Both halves are needed — measured across four stores.
 const MIN_HITS = 2;
 function minScoreFor(total) { return Math.log(1 + Math.max(1, total)); }
 

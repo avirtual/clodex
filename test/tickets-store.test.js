@@ -63,4 +63,11 @@ test('extractTaskDir: captures a tasks/<dir> path on the FIRST line only', () =>
   // Only the first line is scanned.
   assert.strictEqual(extractTaskDir('first line\nsee tasks/9-foo'), null);
   assert.strictEqual(extractTaskDir(''), null);
+  // Artifacts moved out of the repo, so the absolute form must survive WHOLE.
+  // `tasks/` occurs inside it, so a bare-pattern-first implementation would
+  // silently truncate an absolute path to its tail — the failure this pins.
+  const abs = '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/durable-state';
+  assert.strictEqual(extractTaskDir(`sweep ${abs} now`), abs);
+  assert.strictEqual(extractTaskDir('~/.clodex/projects/api-1a2b3c4d/tasks/foo'),
+    '~/.clodex/projects/api-1a2b3c4d/tasks/foo');
 });

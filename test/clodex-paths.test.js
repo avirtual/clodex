@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const path = require('path');
 const {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
+  projectDirFor, taskDirFor,
 } = require('../clodex-paths');
 
 const ROOT = '/root/.clodex';
@@ -59,4 +60,33 @@ test('legacySuffixes: sorted longest-first for greedy owner-derivation', () => {
   // the ambiguous pair the ordering exists to disambiguate
   assert.ok(s.indexOf('-hook-output.json') < s.indexOf('.json'));
   assert.ok(s.indexOf('-ctxwarn.sh') < s.indexOf('-ctxwarn'));
+});
+
+test('projectDirFor: same-leaf checkouts get DIFFERENT dirs', () => {
+  // The whole reason the hash exists. Bare leaves collide silently — two
+  // checkouts named `api` sharing one artifact dir is a failure with no
+  // symptom, so this is the property, not the formatting.
+  const a = projectDirFor(ROOT, '/home/x/work/api');
+  const b = projectDirFor(ROOT, '/home/x/side/api');
+  assert.notStrictEqual(a, b);
+  assert.ok(path.basename(a).startsWith('api-'));
+  assert.ok(path.basename(b).startsWith('api-'));
+  assert.strictEqual(path.dirname(a), path.join(ROOT, 'projects'));
+});
+
+test('projectDirFor: stable across calls and trailing-slash/relative spellings', () => {
+  const canonical = projectDirFor(ROOT, '/home/x/work/api');
+  assert.strictEqual(projectDirFor(ROOT, '/home/x/work/api'), canonical);
+  assert.strictEqual(projectDirFor(ROOT, '/home/x/work/api/'), canonical);
+  assert.strictEqual(projectDirFor(ROOT, '/home/x/work/./api'), canonical);
+  assert.strictEqual(projectDirFor(ROOT, '/home/x/work/sub/../api'), canonical);
+});
+
+test('taskDirFor: task artifacts land under the project dir, never in the repo', () => {
+  const d = taskDirFor(ROOT, '/home/x/work/api', 'durable-state');
+  assert.ok(d.startsWith(path.join(ROOT, 'projects')), d);
+  assert.strictEqual(path.basename(d), 'durable-state');
+  assert.strictEqual(path.basename(path.dirname(d)), 'tasks');
+  // The user's own tree is never a prefix of an artifact path.
+  assert.ok(!d.startsWith('/home/x/work/api'), d);
 });

@@ -55,6 +55,7 @@
 // If the grammar below changes, update the Codex hook template in cli-hooks.js.
 
 const path = require('path');
+const crypto = require('crypto');
 
 // kind → the unsuffixed basename inside run/<name>/.
 const KINDS = {
@@ -113,6 +114,29 @@ function runDirFor(root, name) {
   return path.join(root, 'run', name);
 }
 
+// The per-PROJECT artifact dir: ~/.clodex/projects/<leaf>-<hash8>/. Team task
+// artifacts (specs, journals, design notes) live here, NOT in the user's own
+// repo — Clodex never writes a user project file, and a `tasks/` convention
+// baked into a product other people clone would push our process into theirs.
+//
+// The leaf is for a human browsing ~/.clodex/projects; the hash is what makes
+// it correct. Bare leaves collide silently — every second checkout is named
+// `api`, `web`, or `cli`, and two of them sharing an artifact dir is a failure
+// with no symptom. Hash the REALPATH so a symlinked checkout resolves to the
+// same dir as the thing it points at.
+function projectDirFor(root, projectPath) {
+  const real = path.resolve(projectPath);
+  const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);
+  return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
+}
+
+// Where one task's artifacts live. `tasks/<name>` is preserved as the tail so
+// the shape a lead already writes in a ticket body stays literal-truthy under
+// the new root.
+function taskDirFor(root, projectPath, taskName) {
+  return path.join(projectDirFor(root, projectPath), 'tasks', taskName);
+}
+
 // The absolute path to one per-agent artifact. Throws on an unknown kind so a
 // typo fails loud at the call site rather than minting a stray file.
 function pathFor(root, name, kind) {
@@ -133,4 +157,7 @@ function legacySuffixes() {
   return Object.values(LEGACY_SUFFIXES).slice().sort((a, b) => b.length - a.length);
 }
 
-module.exports = { KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes };
+module.exports = {
+  KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
+  projectDirFor, taskDirFor,
+};
