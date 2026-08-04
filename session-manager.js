@@ -557,6 +557,15 @@ function createSessionManager(deps) {
               const fired = new Set();
               for (const intent of this._extractIntents(text)) {
                 const bkey = shadowIntentKey(ev.agent, intent);
+                // No exec exemption here, unlike the wire loop above, and adding
+                // one would be INERT rather than wrong: it would only hand the
+                // second exec to IntentDeduper.claim, which rejects
+                // recovery-after-recovery unconditionally (a replay tail repeats
+                // every poll). The exemption did arrive by drift (one of two
+                // adjacent guards was edited), but the EFFECT is not drift —
+                // claim ALLOWS wire-after-wire, so on the wire side this Set is
+                // the only intra-turn dedup and the exemption there is
+                // load-bearing.
                 if (fired.has(bkey)) {
                   log.warn('intent', `intra-turn dup ${intent.type} ${ev.agent} — swallowed`);
                   continue;

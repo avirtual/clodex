@@ -7912,3 +7912,91 @@ test('hint arming re-resolves the proxy pref per draft, and an explicit route su
       `${why} (requested=${JSON.stringify(proxyRequested)}, base=${JSON.stringify(proxyBase)}, pref=${proxyEnabled})`);
   }
 });
+
+// ── t188: WHICH LAYER stops a repeated exec in a replayed turn ──────────────
+//
+// The wire loop exempts exec from its per-turn `fired` Set (two identical
+// registered-command calls in one turn are both legitimate) and the recovery
+// loop does not. That asymmetry reads like drift — it was filed as a bug — but
+// it is correct, and the reason lives one layer down in IntentDeduper.claim:
+// claim ALLOWS wire-after-wire, so on the wire side the Set is the only
+// intra-turn dedup and the exemption is load-bearing; claim REJECTS
+// recovery-after-recovery unconditionally (a replay tail repeats every poll),
+// so mirroring the exemption here would only hand the second exec to claim,
+// which drops it anyway. Measured: with the exemption mirrored in, a replayed
+// turn with two identical execs still fires ONE.
+//
+// TWO layers, and which one answers depends on the SHAPE of the repeat, so both
+// halves are pinned here:
+//   - twice inside ONE replayed callback → the recovery `fired` Set;
+//   - the same exec again on a LATER poll of the tail → claim, reason
+//     `recovery replay repeat`.
+// Asserting the fire count alone cannot tell those apart, and they have
+// different futures: deleting claim's replay-repeat rule to "make the second
+// exec fire" — the change this test exists to catch — leaves the first half
+// green and fails the second with a diff naming the rule that was removed.
+//
+// Drives the real closure rather than a lifted copy: the loop is a closure
+// inside _ensureWire(), reachable only through a wire failure event, and
+// extracting it would reshape production code to suit a test.
+function mkRecovery() {
+  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t188-'));
+  const warns = [];
+  const m = mk({
+    REGISTRY_DIR: root, fs: fsReal, path: pathReal,
+    getUserDataPath: () => root,
+    log: { info: () => {}, warn: (_tag, msg) => warns.push(msg), error: () => {} },
+    // The intent scan is the subject here, so every leaf it walks is real: a
+    // stubbed parseIntent would decide the two "identical" emissions are
+    // identical by fiat, which is the thing under test.
+    shadowIntentKey: require('../intent-scanner').shadowIntentKey,
+    parseIntent: parseIntentReal,
+    looksLikeIntent: looksLikeIntentReal,
+    execBodyCap: 64 * 1024,
+  });
+  return { m, warns };
+}
+
+test('t188: a replayed turn fires a repeated exec ONCE, and the DEDUPER is what stops the second', async () => {
+  const { m, warns } = mkRecovery();
+  const fired = [];
+  m._handleIntent = (agent, intent) => { fired.push(`${intent.type}:${intent.cmd || intent.target}`); };
+  m._broadcast = () => {};
+
+  const wire = await m._ensureWire(); // binds an ephemeral port — torn down below
+  try {
+    const captured = [];
+    m.sessions.set('a', {
+      name: 'a', intentSource: 'wire',
+      sentinel: { recovering: false, armRecovery: (cb) => captured.push(cb) },
+    });
+    wire.emit('tee-failure', { agent: 'a', reqId: 'r1', error: 'tee closed mid-stream' });
+    // Without this the callback below is undefined and every assertion after it
+    // reads an empty `fired` — the whole test would pass while reaching nothing.
+    assert.strictEqual(captured.length, 1, 'ENTER: the tee-failure armed recovery and we hold the real callback');
+
+    const emission = '[agent:exec deploy] {"env":"prod"}';
+
+    // Half 1 — twice in ONE replayed callback: the recovery `fired` Set answers.
+    captured[0](`${emission}\n${emission}`);
+    // _handleIntent is dispatched through setImmediate, so asserting in this
+    // tick reads [] and passes vacuously no matter what the loops did.
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(fired, ['exec:deploy'], 'the exec repeated within one replayed turn fired once');
+    assert.deepStrictEqual(warns, ['intra-turn dup exec a — swallowed'],
+      'the recovery Set is the layer that stopped the same-callback repeat');
+
+    // Half 2 — the tail replayed AGAIN on a later poll: claim answers, and the
+    // reason names the rule. This is the differential half.
+    captured[0](emission);
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(fired, ['exec:deploy'], 'the re-polled tail did not re-run the command');
+    assert.ok(
+      warns.includes('drop exec a: recovery replay repeat'),
+      `the DEDUPER stopped the cross-callback repeat, by that rule — warns: ${JSON.stringify(warns)}`,
+    );
+  } finally {
+    await wire.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+});
