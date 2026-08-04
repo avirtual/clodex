@@ -13,6 +13,21 @@ blocks a release.
 
 ## Unreleased
 
+- **A session can now be spawned with the wire off.** New "Wire off" checkbox
+  under Other options: the seat launches with no `ANTHROPIC_BASE_URL` at all —
+  no Clodex tee and no API proxy. This is what Anthropic's remote access needs
+  (attaching to a running session from the phone app refuses to work when that
+  variable is set), so a wire-off seat can be reached from your phone and still
+  drive the rest of the fleet through intents, which come from the transcript
+  and are unaffected. The cost is the wire-only features: cache warmth, wire
+  telemetry and protocol-accurate activity all go quiet, so wire-off rows carry
+  a `⊘` in the sidebar rather than looking merely idle. The file list a session
+  has touched still works — it is read from the transcript — but edits stop
+  being attributed to the subagent that made them.
+  Context %, tokens and cost still show — those come from the CLI's own status
+  hook. The setting is remembered, so a restart, a restore or a template spawn
+  all come back wire-off.
+
 ## 4.14.0 — 2026-08-04 — Every path in the terminal is a door
 
 - **File paths in the terminal are now clickable.** When an agent mentions

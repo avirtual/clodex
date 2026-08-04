@@ -619,6 +619,12 @@
             <span class="hint-text" style="margin: 0;">On by default: fire a <code>/compact</code> as this seat nears its context limit (needs a wirescope proxy). Uncheck to opt out — it runs to the CLI's own hard limit. Also togglable at runtime from the session ⚙ menu.</span>
           </label>
         </label>
+        <label id="no-wire-row">Wire off
+          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+            <input type="checkbox" id="input-no-wire" style="margin: 0;">
+            <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
+          </label>
+        </label>
       </details>
       <label id="model-row">Model
         <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">

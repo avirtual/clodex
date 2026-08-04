@@ -98,6 +98,8 @@ async function restoreSessionsForWorkspace({
         Array.isArray(entry.execCommands) ? entry.execCommands : [],
         Array.isArray(entry.intents) ? entry.intents : null,
         (entry.env && typeof entry.env === 'object') ? entry.env : null,
+        false,             // mint — a restore re-creates a persisted name by design
+        entry.noWire === true,
       );
       restored.push({
         name: entry.name,
@@ -127,6 +129,12 @@ async function restoreSessionsForWorkspace({
       });
     }
   }
+  // Wire-off is persisted config, so it belongs on EVERY row shape this loop
+  // emits — live-reattach, freshly restored, archived and failed alike. Stamped
+  // once here rather than in the four pushes above, which would drift apart the
+  // first time one of them is touched.
+  const wireOff = new Set(saved.filter((e) => e.noWire === true).map((e) => e.name));
+  for (const r of restored) if (wireOff.has(r.name)) r.noWire = true;
   return restored;
 }
 

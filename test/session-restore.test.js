@@ -179,3 +179,63 @@ test('mixed batch — one running, one restored, one failed — order preserved'
   assert.strictEqual(out[2].failed, true, 'third is the failure');
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']]);
 });
+
+// t189 — wire-off is persisted config, and the sidebar needs it on EVERY row
+// shape this loop emits, not just the freshly-spawned one. The four pushes are
+// separate literals, so a per-push stamp drifts the first time one is touched;
+// the flag is applied once after the loop, and this pins that it reaches all of
+// them. The archived and failed rows matter as much as the live ones: a wire-off
+// seat that fails to spawn must still render as wire-off in the retry row, or
+// the operator retries it not knowing what they are restarting.
+test('t189: noWire reaches every row shape — running, restored, archived and failed', async () => {
+  const createArgs = new Map();
+  const manager = {
+    sessions: new Map([['run', { backend: null, pendingOutput: '' }]]),
+    async create(name, ...rest) {
+      createArgs.set(name, rest);
+      if (name === 'bad') throw new Error('spawn refused');
+      manager.sessions.set(name, { backend: null, noWire: true });
+      return { name };
+    },
+    pendingCountFor: () => 0,
+    teamNameFor: () => null,
+  };
+  const persistence = fakePersistence([
+    { name: 'run', type: 'claude', cwd: '/w/r', noWire: true },
+    { name: 'ok', type: 'claude', cwd: '/w/o', noWire: true },
+    { name: 'arch', type: 'claude', cwd: '/w/a', noWire: true, archivedAt: 123 },
+    { name: 'bad', type: 'claude', cwd: '/w/x', noWire: true },
+    { name: 'wired', type: 'claude', cwd: '/w/w' },
+  ]);
+
+  const out = await restoreSessionsForWorkspace({
+    workspaceId: 'ws1', persistence, manager, ...noopDeps,
+  });
+
+  // ENTER: all five rows survived, and each is the shape its name claims. Every
+  // assertion below is a per-row lookup, so a loop that dropped one would leave
+  // the flag check inspecting `undefined` and reporting a difference that is
+  // really an absence.
+  assert.deepStrictEqual(out.map((e) => e.name), ['run', 'ok', 'arch', 'bad', 'wired'],
+    'ENTER: every row shape is present to be checked');
+  assert.ok('replay' in out[0], 'ENTER: "run" is the already-running shape');
+  assert.strictEqual(out[2].archived, true, 'ENTER: "arch" is the archived shape');
+  assert.strictEqual(out[3].failed, true, 'ENTER: "bad" is the failed shape');
+
+  assert.deepStrictEqual(out.map((e) => e.noWire), [true, true, true, true, undefined],
+    'the flag rides all four wire-off shapes, and a wired seat carries no key at all');
+
+  // The RETURN row is only the sidebar's copy. The respawn itself must carry the
+  // flag as create()'s last positional, or the process comes back wired while the
+  // row still claims otherwise — the failure that would look like a UI bug.
+  const okArgs = createArgs.get('ok');
+  assert.ok(okArgs, 'ENTER: the restored seat was actually spawned, so there are arguments to inspect');
+  assert.strictEqual(okArgs[okArgs.length - 1], true,
+    'the restore respawn passes noWire through to create()');
+  const wiredArgs = createArgs.get('wired');
+  assert.strictEqual(wiredArgs[wiredArgs.length - 1], false,
+    'control: an ordinary seat respawns with the flag explicitly off, not merely absent');
+
+  assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']],
+    'and the restore path still mutates nothing');
+});

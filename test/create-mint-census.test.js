@@ -188,6 +188,13 @@ function census() {
         // parameter default applies, which is false — that is the OUTPUT of the
         // call site being observed, not a judgement about it.
         mint: args.length >= 20 ? args[19].trim() : '(absent → default false)',
+        // The 21st positional is t189's `noWire`. Observed the same way and for
+        // the same reason: it too defaults false, so a site that drops it goes on
+        // working while the seat silently comes back WIRED — which for a wire-off
+        // seat means ANTHROPIC_BASE_URL reappears and the phone can no longer
+        // attach. Two of the sites that must carry it (the GUI front door and
+        // restartSession) had no test of their own.
+        noWire: args.length >= 21 ? args[20].trim() : '(absent → default false)',
       });
     }
   }
@@ -206,18 +213,29 @@ function census() {
 // session under a name that was free) or a restore (the same conversation coming
 // back under a name that is already its own), and add the row. Do not silence it
 // by regenerating the table from the code.
+//
+// ── THE `noWire` COLUMN (t189) ───────────────────────────────────────────────
+// Same shape, same rule, different axis. `noWire` is the 21st positional and it
+// ALSO defaults false, so the failure mode is identical to mint's: a site that
+// drops it keeps working, and a wire-off seat silently comes back WIRED —
+// ANTHROPIC_BASE_URL reappears and the phone can no longer attach to it. The
+// expected value is the literal ARGUMENT TEXT, because "reads the flag off the
+// persisted record" is the property, and `entry.noWire === true` states it in a
+// way a wrong-source substitution (a neighbouring entry, a live session) cannot
+// satisfy by accident. `false` means the argument is deliberately absent:
+// legitimate for a site that never spawns a wire-off seat.
 const EXPECTED = [
-  { file: 'engine.js', mint: false, label: 'restartSession — in-place restart, same conversation' },
-  { file: 'engine.js', mint: false, label: 'applySessionArgs — args-edit restart, same conversation' },
-  { file: 'ipc-handlers.js', mint: true, label: 'spawnFromParams — THE mint front door (session:create / team:create / team:join)' },
-  { file: 'ipc-handlers.js', mint: true, label: 'peer:deployFix — brand-new session under a freshly deconflicted name' },
-  { file: 'ipc-handlers.js', mint: null, label: 'sandbox:createBox — mgr.create(id, label), the BOX REGISTRY. A different object entirely; it has no mint axis and never spawns a PTY. Listed so the census stays exhaustive and nobody "fixes" it by adding a flag.' },
-  { file: 'ipc-handlers.js', mint: false, label: 'session:retrySpawn — retry of a failed restore' },
-  { file: 'remote-wiring.js', mint: true, label: 'peer createSession — the REMOTE front door. Refuses live-or-persisted names, so every session born here is new; carries a resumeId only on a remote adopt, which is still a mint. This is the site that shipped mint-less (t71 defect 2).' },
-  { file: 'session-manager.js', mint: true, label: '[agent:spawn] intent — agent-initiated new seat' },
-  { file: 'session-manager.js', mint: true, label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new' },
-  { file: 'session-manager.js', mint: false, label: '[agent:context reload] — cold respawn of the SAME seat' },
-  { file: 'session-restore.js', mint: false, label: 'restoreSessionsForWorkspace — restore-on-launch, the real one' },
+  { file: 'engine.js', mint: false, noWire: 'entry.noWire === true', label: 'restartSession — in-place restart, same conversation' },
+  { file: 'engine.js', mint: false, noWire: 'beforeKill.noWire === true', label: 'applySessionArgs — args-edit restart, same conversation. Reads beforeKill, not the patch: the Edit dialog does not surface wire-off, so an unrelated save must replay the persisted value rather than clear it.' },
+  { file: 'ipc-handlers.js', mint: true, noWire: 'p.noWire === true', label: 'spawnFromParams — THE mint front door (session:create / team:create / team:join). The only site that takes the flag from the CALLER (the GUI checkbox) rather than a record.' },
+  { file: 'ipc-handlers.js', mint: true, noWire: false, label: 'peer:deployFix — brand-new session under a freshly deconflicted name. Never wire-off: it is a support session Clodex authors itself, with no operator checkbox behind it.' },
+  { file: 'ipc-handlers.js', mint: null, noWire: null, label: 'sandbox:createBox — mgr.create(id, label), the BOX REGISTRY. A different object entirely; it has no mint axis and never spawns a PTY. Listed so the census stays exhaustive and nobody "fixes" it by adding a flag.' },
+  { file: 'ipc-handlers.js', mint: false, noWire: 'entry.noWire === true', label: 'session:retrySpawn — retry of a failed restore' },
+  { file: 'remote-wiring.js', mint: true, noWire: false, label: 'peer createSession — the REMOTE front door. Refuses live-or-persisted names, so every session born here is new; carries a resumeId only on a remote adopt, which is still a mint. This is the site that shipped mint-less (t71 defect 2). DELIBERATELY not threaded for noWire: setting it changes which base URL a box process gets, and this door already strips exec grants and privileged intents for the same reason — a remote viewer is not the box\'s local operator.' },
+  { file: 'session-manager.js', mint: true, noWire: '(tpl && tpl.noWire) === true', label: '[agent:spawn] intent — agent-initiated new seat. DOES carry the flag, unlike the privileged-intent strip beside it: wire-off REMOVES a capability rather than granting one, and it cannot redirect traffic (proxyBase is nulled outright, never pointed where the template chose).' },
+  { file: 'session-manager.js', mint: true, noWire: false, label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new. Never wire-off: it is a short-lived seat Clodex spawns, and the wire is what its verdict rides.' },
+  { file: 'session-manager.js', mint: false, noWire: 'entry.noWire === true', label: '[agent:context reload] — cold respawn of the SAME seat' },
+  { file: 'session-restore.js', mint: false, noWire: 'entry.noWire === true', label: 'restoreSessionsForWorkspace — restore-on-launch, the real one' },
 ];
 
 test('mint census: every SessionManager.create() call site is accounted for', () => {
@@ -246,7 +264,11 @@ test('mint census: each call site passes the mint value its row claims', () => {
     if (want.mint === null) return; // the box registry — no mint axis, see its label
     const where = `${site.file}:${site.line} (${want.label})`;
     if (want.mint === true) {
-      assert.strictEqual(site.arity, 20,
+      // >= 20, not === 20: create() has grown positionals PAST mint (noWire is
+      // the 22nd), so a site that passes the flag explicitly and then one more
+      // argument is still correct. What must hold is that position 20 is
+      // REACHED — an arity below it means the default supplied the value.
+      assert.ok(site.arity >= 20,
         `${where}\nis a MINT, so it must pass the 20th positional explicitly — omitting it takes the `
         + `default (false), which freezes a new session onto whatever baseline a dead same-named `
         + `session left behind. Found arity ${site.arity}.`);
@@ -259,6 +281,62 @@ test('mint census: each call site passes the mint value its row claims', () => {
         + `token bust the cache exists to stop. Found mint=${site.mint}.`);
     }
   });
+});
+
+// t189. A COLUMN rather than a spot check on the two sites that lacked one: the
+// argument can be dropped at any of the eleven, and a per-site test only ever
+// covers the site whose omission someone already thought of. Two of the sites
+// that must carry it — the GUI front door (ipc-handlers.js) and restartSession
+// (engine.js) — had no test that would go red, which is what this closes.
+//
+// The expected value is the ARGUMENT TEXT, not just "is present". Presence alone
+// is satisfied by an argument reading the wrong thing — a neighbouring entry, a
+// live session object, `true` hardcoded — and each of those is a real bug with an
+// identical arity. Pinning the expression pins the SOURCE.
+test('t189 census: each call site passes the noWire value its row claims', () => {
+  const found = census();
+  assert.strictEqual(found.length, EXPECTED.length, 'count checked by the census test above');
+
+  // ENTER: at least one site must actually thread the flag. Every assertion below
+  // is either an equality against a table cell or an absence check, and if the
+  // parameter were removed from create() wholesale the table's `false` rows would
+  // all still pass — an all-absent census must not read as a healthy one.
+  const threading = found.filter((s) => s.arity >= 21);
+  assert.ok(threading.length >= 6,
+    `ENTER: the noWire argument must actually be threaded somewhere — found ${threading.length} sites `
+    + `passing a 21st positional. Zero (or near it) means the parameter was dropped from create() and `
+    + `every "deliberately absent" row below is passing for the wrong reason.`);
+
+  found.forEach((site, i) => {
+    const want = EXPECTED[i];
+    if (want.noWire === null) return; // the box registry — no such axis, see its label
+    const where = `${site.file}:${site.line} (${want.label})`;
+    if (want.noWire === false) {
+      assert.strictEqual(site.arity, 20,
+        `${where}\nis a row the table says does NOT thread noWire, so it must stop at the 20th `
+        + `positional. Found arity ${site.arity} — if you deliberately added the flag here, change `
+        + `the table row and say why in its label; do not leave the two disagreeing.`);
+    } else {
+      assert.strictEqual(site.noWire, want.noWire,
+        `${where}\nmust pass noWire as \`${want.noWire}\`. Found: ${site.noWire}\n`
+        + `Dropping it (or reading it off the wrong object) makes a wire-off seat respawn WIRED: `
+        + `ANTHROPIC_BASE_URL comes back and Anthropic's remote access can no longer attach — `
+        + `silently, since the sidebar mark is rendered from a different value.`);
+    }
+  });
+});
+
+// Companion to the mint-default pin below, and load-bearing for the same reason:
+// the table's `false` rows above assert an ABSENT argument, which is only correct
+// while the parameter's default is false. A signature edit flipping it would make
+// three sites silently wire-off with nothing else failing.
+test('t189 census: create()\'s noWire parameter still DEFAULTS FALSE', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'session-manager.js'), 'utf8');
+  const sig = /async create\(([^)]*)\)/.exec(src);
+  assert.ok(sig, 'ENTER: create()\'s signature must be findable, or this pins nothing');
+  assert.match(sig[1], /noWire\s*=\s*false/,
+    'create()\'s noWire parameter must still default FALSE — the census rows that expect an ABSENT '
+    + 'argument are only correct while it does.');
 });
 
 // The parameter default is what every restore path above actually relies on —

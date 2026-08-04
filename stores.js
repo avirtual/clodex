@@ -542,7 +542,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // MUST be added here too, or merge-preserve resurrects it after a clear.
   const EDITOR_OWNED = new Set([
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
-    'autoCompact', 'denyBuiltins', 'disabledTools', 'disabledSkills',
+    'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
   ]);
   const templates = {

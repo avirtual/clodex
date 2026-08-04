@@ -693,7 +693,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -719,6 +719,15 @@ function createSessionManager(deps) {
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
+      // Wire-off (T189): the seat's whole point is that ANTHROPIC_BASE_URL is
+      // never set for it — Anthropic's remote access refuses to attach when it
+      // is. Nulling proxyBase here is not a second switch: setupClaudeHook falls
+      // back to proxyBase whenever wireBase is absent, so skipping only the wire
+      // registration below would re-set the variable through the external proxy
+      // and defeat the flag entirely. Same reason the tee-blind case just below
+      // nulls it.
+      const wireOff = noWire === true;
+      if (wireOff) proxyBase = null;
 
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
@@ -838,7 +847,7 @@ function createSessionManager(deps) {
           // wire failure falls back to the normal path: a tee must never
           // block a session from starting.
           let wireBase = null;
-          if (WIRE_SHADOW) {
+          if (WIRE_SHADOW && !wireOff) {
             try {
               const wire = await this._ensureWire();
               wireBase = wire.registerAgent(name, {
@@ -1159,7 +1168,7 @@ function createSessionManager(deps) {
         // persistence record). Naming it `proxy` here silently makes a child
         // inherit its spawner's route — a real decision, but not this one.
         proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
-        intentSource, wireRouted, backend, sentinel: null,
+        intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
         fileTouches: [],
         // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
         // since-when, updated in _emitActivity. Restores seed from the resumed
@@ -1221,6 +1230,13 @@ function createSessionManager(deps) {
         // session (forget, reviewer sweep) need it here.
         spawnerHintSet,
         agents: Array.isArray(agents) ? agents : [],
+        // Written UNCONDITIONALLY like spawnerHintSet above, for the same reason:
+        // upsert spread-MERGES, so omitting `false` leaves a stale `true` from an
+        // earlier spawn and the seat silently stays wire-off after being turned
+        // back on. Absence and false mean the same thing here (unlike `intents`,
+        // whose absence is a distinct living default), so there is nothing to lose
+        // by writing the boolean every time.
+        noWire: wireOff,
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
         disabledSkills: Array.isArray(disabledSkills) ? disabledSkills : [],
@@ -1450,7 +1466,7 @@ function createSessionManager(deps) {
         }
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
-      return { name, type, pid: ptyProc.pid, backend, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
+      return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
     write(name, data) {
@@ -1989,6 +2005,7 @@ function createSessionManager(deps) {
         team: teamFor(s.cwd),
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
+        noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
@@ -3451,13 +3468,19 @@ function createSessionManager(deps) {
             // GUI create/edit may. null passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
             sessionEnv, true,
+            // Wire-off is not an authority grant in the privileged-intent sense —
+            // it REMOVES a capability (the tee, wire telemetry, warmth)
+            // rather than adding one, so an agent-initiated template spawn may
+            // carry it. What it cannot do is redirect traffic: proxyBase is nulled
+            // outright, never pointed somewhere the template chose.
+            (tpl && tpl.noWire) === true,
           );
           if (tpl) {
             if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
             if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
           }
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
+            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
           this._broadcast('ipc-message', {
             type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}` + (tpl ? ` (template ${tplLabel})` : ''),
@@ -3619,7 +3642,7 @@ function createSessionManager(deps) {
             reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
           );
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null,
+            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
           this._deliverParkedActive(name, session.name, scope, 'dm');
           this._broadcast('ipc-message', {
@@ -4481,12 +4504,14 @@ function createSessionManager(deps) {
               // NO session env at all — silently, since create() then re-persists
               // the entry without it, so every later --resume is wrong too.
               (entry.env && typeof entry.env === 'object') ? entry.env : null,
+              false,           // mint — a reload respawns an existing record
+              entry.noWire === true,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
             if (entry.label) getPersistence().setLabel(name, entry.label);
             this._sendToSession(name, 'session:context-action', {
-              action: 'reattach', name, type: entry.type, cwd: entry.cwd, backend: (this.sessions.get(name) || {}).backend || null,
+              action: 'reattach', name, type: entry.type, cwd: entry.cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             });
             const fresh = this.sessions.get(name);
             if (fresh) this._injectReloadHandoff(fresh, handoff);

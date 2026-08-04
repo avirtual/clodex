@@ -41,8 +41,36 @@ test('args-edit restart threads the persisted env into create() (19th positional
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.restarted, true);
   assert.strictEqual(captured.length, 1, 'create was called once');
-  assert.strictEqual(captured[0].length, 19, 'create got the full 19-positional signature');
+  // 21, because create() grew two positionals past env (mint, then t189's
+  // noWire). The count is still asserted rather than only the index: env sits at
+  // 18 and a signature that lost a LATER argument would leave 18 correct while
+  // the tail silently defaults — which is how noWire would stop surviving a
+  // restart with nothing else failing.
+  assert.strictEqual(captured[0].length, 21, 'create got the full 21-positional signature');
   assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct', DB: 'x' }, 'the persisted env is threaded as the 19th arg — not dropped');
+  assert.strictEqual(captured[0][20], false,
+    'and the 21st is noWire, resolved off the persisted entry — an args edit must not un-wire an ordinary seat');
+});
+
+// t189 — the arm that carries the claim. The `false` above is satisfied by a
+// dropped argument (the parameter defaults false), so on its own it says nothing
+// about whether the value is READ. This one can only pass if applySessionArgs
+// actually reaches into the persisted entry: the Edit dialog does not surface
+// wire-off, so `patch` never carries it and the record is the sole source.
+// Without this, an args edit silently re-wires a wire-off seat — ANTHROPIC_BASE_URL
+// comes back and the phone can no longer attach — while the save reports success.
+test('args-edit restart on a WIRE-OFF seat threads noWire true (21st positional)', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'w', type: 'claude', cwd: '/tmp', noWire: true });
+  const captured = [];
+  spyCreate(eng.manager, captured);
+  const res = await eng.applySessionArgs('w', { extraArgs: ['--z'], restart: true }, 'default');
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.restarted, true,
+    'ENTER: the restart must have happened — a save that did not respawn calls create() zero times and the assertion below reads undefined');
+  assert.strictEqual(captured.length, 1, 'create was called once');
+  assert.strictEqual(captured[0][20], true,
+    'the persisted wire-off flag survives an unrelated args edit — the patch never carries it, so this can only come from the record');
 });
 
 test('args-edit restart with no persisted env threads null (no-scopes byte-identity holds)', async () => {

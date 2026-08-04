@@ -382,7 +382,7 @@ function addFailedSessionToSidebar(entry) {
     }
     item.remove();
     createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     switchSession(entry.name);
   });
 
@@ -426,7 +426,7 @@ function addArchivedSessionToSidebar(entry) {
     item.remove();
     sidebarMeta.delete(entry.name);
     createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -488,7 +488,7 @@ async function deleteSessionRow(name) {
   }
 }
 
-function addSessionToSidebar(name, type, cwd, label, backend = null, team = null) {
+function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false) {
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
@@ -496,6 +496,12 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   item.dataset.type = type;
   if (backend) item.dataset.backend = backend;
   if (team) item.dataset.team = team;
+  // Wire-off seats lose warmth, wire telemetry and protocol-accurate activity, so
+  // the row must say so without opening settings — those badges simply never
+  // populate, which is indistinguishable from an idle session otherwise. (Touched
+  // files are NOT lost: the JsonlWatcher feeds the same sink. What goes is
+  // subagent attribution on the edits.)
+  if (noWire) item.dataset.noWire = '1';
   const displayName = label || name;
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
   item.innerHTML = `
@@ -505,6 +511,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
       <div class="session-meta">
         ${cwdLabel ? `<span class="session-cwd">${cwdLabel}</span>` : ''}
         <span class="session-badges">
+          ${noWire ? '<span class="session-nowire" data-tip="Wire off — no ANTHROPIC_BASE_URL: no tee, no warmth/wire telemetry. Intents and touched files still work; subagent attribution does not.">⊘</span>' : ''}
           ${type === 'claude' ? '<span class="session-pending" data-tip="Parked messages waiting — click to deliver now"></span>' : ''}
           <span class="session-think"></span>
           <span class="session-warm"></span>
@@ -570,6 +577,7 @@ function restartSessionWithReattach(name) {
   const snapCwd = item ? item.dataset.cwd : null;
   const snapBackend = item ? item.dataset.backend || null : null;
   const snapTeam = item ? item.dataset.team || null : null; // cwd is unchanged by a restart → team persists
+  const snapNoWire = item ? item.dataset.noWire === '1' : false; // spawn-time config, unchanged by a restart
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
@@ -577,13 +585,13 @@ function restartSessionWithReattach(name) {
     }
     if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire);
       switchSession(name);
     }
   });
 }
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, disposition }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -594,7 +602,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, dispositi
     case 'reattach':
       if (type) {
         createTerminal(name);
-        addSessionToSidebar(name, type, cwd, null, backend || null);
+        addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
         switchSession(name);
       }
       break;
@@ -1593,6 +1601,7 @@ const inputInjectSkillsList = document.getElementById('input-inject-skills-list'
 const stripRow = document.getElementById('strip-row');
 const inputStripLevel = document.getElementById('input-strip-level');
 const inputAutoCompact = document.getElementById('input-auto-compact');
+const inputNoWire = document.getElementById('input-no-wire');
 const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
@@ -1806,6 +1815,7 @@ async function openDialog(prefill = null) {
   refreshCwdSuggestions();
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
+  if (inputNoWire) inputNoWire.checked = false; // default wired each open
   // Reset placement to Host BEFORE applyTypeDefaults so a stale box value from a
   // prior open can't trip the type-change → applySandboxState hook during open
   // (which would fire a spurious catalog fetch). The options + placementRow
@@ -1916,6 +1926,7 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
     if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
+    if (inputNoWire) inputNoWire.checked = t.noWire === true;
   }
   if (t.type === 'claude' || t.type === 'codex') {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
@@ -1970,6 +1981,7 @@ function collectFormConfig() {
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
+  const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
   // owned key on save means "removed", not "preserve the stored value". Keep the
@@ -1984,6 +1996,7 @@ function collectFormConfig() {
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     ...(autoCompactOff ? { autoCompact: false } : {}),
+    ...(noWireOn ? { noWire: true } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
     disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
@@ -2004,7 +2017,7 @@ async function doCreate() {
   const cfg = collectFormConfig();
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
-          systemPromptFile, appendPromptFiles, intents } = cfg;
+          systemPromptFile, appendPromptFiles, intents, noWire } = cfg;
   const env = collectDialogEnv();
 
   const supportsPrompts = type === 'claude' || type === 'codex';
@@ -2079,7 +2092,7 @@ async function doCreate() {
   // could abandon the managed wirescope when the port stops matching).
   if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
   const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env };
+  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true };
   let result;
   if (teamOn && dialogTeamMode === 'create') {
     const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -2089,7 +2102,7 @@ async function doCreate() {
     const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
     result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
   } else {
-    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env);
+    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true);
   }
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
@@ -2101,7 +2114,7 @@ async function doCreate() {
   if (worktree) window.api.markSessionWorktree(name, worktree);
 
   createTerminal(name);
-  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null);
+  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
   switchSession(name);
 
   const warnings = (result.session && result.session.warnings) || [];
@@ -2171,6 +2184,7 @@ async function openTemplateEditor(tpl = null) {
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
   if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
+  if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
   setDialogMode('template');
   applyTypeDefaults({ skipAsyncRefresh: true });
@@ -5279,6 +5293,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const snapType = existing ? existing.dataset.type || null : null;
   const snapCwd = existing ? existing.dataset.cwd : null;
   const snapBackend = existing ? existing.dataset.backend || null : null;
+  // The Edit dialog does not surface wire-off (it is spawn-time config, and
+  // applySessionArgs replays the PERSISTED value), so the rebuilt row must carry
+  // the flag forward or an unrelated edit silently un-marks a wire-off seat.
+  const snapNoWire = existing ? existing.dataset.noWire === '1' : false;
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
   // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
@@ -5299,7 +5317,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (source) source.onRestarted();
     else if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire);
       switchSession(name);
     }
   }
@@ -5328,7 +5346,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       continue;
     }
     const { terminal } = createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
     if (item) {

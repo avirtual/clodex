@@ -66,15 +66,15 @@ function registerIpcHandlers(deps) {
       throw new Error(`A session named "${p.name}" is archived or saved — unarchive it or pick another name.`);
     }
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true);
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true);
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -304,6 +304,9 @@ function registerIpcHandlers(deps) {
     // no `intents` key, so we must NOT write `intents: []` here (that would freeze
     // "everything gated" onto a template that meant "all on"). Absent stays absent.
     if (Array.isArray(entry.intents)) t.intents = entry.intents;
+    // Opt-out field like stripLevel/autoCompact: written only when ON, so an
+    // ordinary (wired) session exports a template with no `noWire` key at all.
+    if (entry.noWire === true) t.noWire = true;
     templates.saveByName(t);
     return { ok: true, templates: templates.list() };
   });
@@ -1460,6 +1463,8 @@ function registerIpcHandlers(deps) {
         Array.isArray(entry.execCommands) ? entry.execCommands : [],
         Array.isArray(entry.intents) ? entry.intents : null,
         (entry.env && typeof entry.env === 'object') ? entry.env : null,
+        false,             // mint — retry re-spawns an existing record
+        entry.noWire === true,
       );
       return { ok: true };
     } catch (err) {

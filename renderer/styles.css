@@ -629,6 +629,21 @@ html, body {
 .session-warm[data-state="cold"]  { color: var(--text-dim); background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
 .session-warm[data-state="stale"] { color: var(--text-dim); background: color-mix(in srgb, var(--text-dim) 12%, transparent); opacity: 0.7; }
 
+/* Wire-off mark (⊘). Static, dim and never empty — unlike the ctx/warm/think
+   pills beside it, which self-hide when they have nothing to say. That is
+   exactly the point: on a wire-off seat those three go permanently silent, and
+   without a standing mark the row is indistinguishable from a quiet wired one. */
+.session-nowire {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 9px;
+  line-height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
+
 /* Parked-DM pill (✉N) — click to flush the queue now. Accent-tinted so it
    reads as pending/attention, distinct from the ctx/warm pills. */
 .session-pending {

@@ -795,6 +795,16 @@ body {
   background: color-mix(in srgb, var(--text-dim) 12%, transparent);
   opacity: 0.7;
 }
+.session-nowire {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 9px;
+  line-height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
 .session-pending {
   font-size: 10px;
   font-weight: 600;
@@ -5708,6 +5718,12 @@ body {
           <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
             <input type="checkbox" id="input-auto-compact" checked style="margin: 0;">
             <span class="hint-text" style="margin: 0;">On by default: fire a <code>/compact</code> as this seat nears its context limit (needs a wirescope proxy). Uncheck to opt out — it runs to the CLI's own hard limit. Also togglable at runtime from the session ⚙ menu.</span>
+          </label>
+        </label>
+        <label id="no-wire-row">Wire off
+          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+            <input type="checkbox" id="input-no-wire" style="margin: 0;">
+            <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
           </label>
         </label>
       </details>
@@ -26688,7 +26704,7 @@ ${detail}` });
           }
           item.remove();
           createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
           switchSession(entry.name);
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
@@ -26731,7 +26747,7 @@ ${detail}` });
           item.remove();
           sidebarMeta.delete(entry.name);
           createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
           if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
           switchSession(entry.name);
           refreshSidebarView();
@@ -26784,7 +26800,7 @@ ${detail}` });
           showToast(`Worktree removal failed: ${res.error}`, { kind: "warn", duration: 12e3, name });
         }
       }
-      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null) {
+      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false) {
         const item = document.createElement("div");
         item.className = "session-item";
         item.dataset.name = name;
@@ -26792,6 +26808,7 @@ ${detail}` });
         item.dataset.type = type;
         if (backend) item.dataset.backend = backend;
         if (team) item.dataset.team = team;
+        if (noWire) item.dataset.noWire = "1";
         const displayName = label || name;
         const cwdLabel = cwd ? esc(baseName(cwd)) : "";
         item.innerHTML = `
@@ -26801,6 +26818,7 @@ ${detail}` });
       <div class="session-meta">
         ${cwdLabel ? `<span class="session-cwd">${cwdLabel}</span>` : ""}
         <span class="session-badges">
+          ${noWire ? '<span class="session-nowire" data-tip="Wire off \u2014 no ANTHROPIC_BASE_URL: no tee, no warmth/wire telemetry. Intents and touched files still work; subagent attribution does not.">\u2298</span>' : ""}
           ${type === "claude" ? '<span class="session-pending" data-tip="Parked messages waiting \u2014 click to deliver now"></span>' : ""}
           <span class="session-think"></span>
           <span class="session-warm"></span>
@@ -26854,6 +26872,7 @@ ${detail}` });
         const snapCwd = item ? item.dataset.cwd : null;
         const snapBackend = item ? item.dataset.backend || null : null;
         const snapTeam = item ? item.dataset.team || null : null;
+        const snapNoWire = item ? item.dataset.noWire === "1" : false;
         return window.api.restartSession(name).then((res) => {
           if (!res || !res.ok) {
             alert(`Restart failed: ${res && res.error ? res.error : "unknown error"}`);
@@ -26861,12 +26880,12 @@ ${detail}` });
           }
           if (snapType) {
             createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam);
+            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire);
             switchSession(name);
           }
         });
       }
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, disposition }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -26877,7 +26896,7 @@ ${detail}` });
           case "reattach":
             if (type) {
               createTerminal(name);
-              addSessionToSidebar(name, type, cwd, null, backend || null);
+              addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
               switchSession(name);
             }
             break;
@@ -27825,6 +27844,7 @@ ${detail}` });
       var stripRow = document.getElementById("strip-row");
       var inputStripLevel = document.getElementById("input-strip-level");
       var inputAutoCompact = document.getElementById("input-auto-compact");
+      var inputNoWire = document.getElementById("input-no-wire");
       var toolsSection = document.getElementById("tools-section");
       var skillsSection = document.getElementById("skills-section");
       var otherSection = document.getElementById("other-section");
@@ -28047,6 +28067,7 @@ ${detail}` });
         refreshCwdSuggestions();
         if (inputStripLevel) inputStripLevel.value = "0";
         if (inputAutoCompact) inputAutoCompact.checked = true;
+        if (inputNoWire) inputNoWire.checked = false;
         inputPlacement.value = "host";
         for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
           if (sec) sec.open = false;
@@ -28144,6 +28165,7 @@ ${detail}` });
           await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
           if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
           if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
+          if (inputNoWire) inputNoWire.checked = t.noWire === true;
         }
         if (t.type === "claude" || t.type === "codex") {
           setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
@@ -28192,6 +28214,7 @@ ${detail}` });
         const agentType = type === "claude" || type === "codex";
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
+        const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
           type,
           cwd: expandPath(inputCwd.value.trim()) || homeDir,
@@ -28201,6 +28224,7 @@ ${detail}` });
           execCommands: type === "claude" ? collectExecChecklist(inputExecList) : [],
           ...Array.isArray(intents) ? { intents } : {},
           ...autoCompactOff ? { autoCompact: false } : {},
+          ...noWireOn ? { noWire: true } : {},
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
           disabledTools: type === "claude" ? collectToolChecklist(inputToolsList) : [],
           disabledSkills: type === "claude" ? collectSkillChecklist(inputSkillsList) : [],
@@ -28231,7 +28255,8 @@ ${detail}` });
           stripLevel,
           systemPromptFile,
           appendPromptFiles,
-          intents
+          intents,
+          noWire
         } = cfg;
         const env = collectDialogEnv();
         const supportsPrompts = type === "claude" || type === "codex";
@@ -28303,7 +28328,7 @@ ${detail}` });
         closeDialog();
         if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
         const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env };
+        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true };
         let result;
         if (teamOn && dialogTeamMode === "create") {
           const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -28313,7 +28338,7 @@ ${detail}` });
           const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
           result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
         } else {
-          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env);
+          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true);
         }
         if (!result.ok) {
           console.error("Failed to create session:", result.error);
@@ -28323,7 +28348,7 @@ ${detail}` });
         }
         if (worktree) window.api.markSessionWorktree(name, worktree);
         createTerminal(name);
-        addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null);
+        addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
         switchSession(name);
         const warnings = result.session && result.session.warnings || [];
         for (const w of warnings) showToast(w, { kind: "warn", duration: 15e3, name });
@@ -28387,6 +28412,7 @@ ${detail}` });
         argsHint.textContent = ARGS_HINTS[inputType.value] || "";
         if (inputStripLevel) inputStripLevel.value = String(tpl && tpl.stripLevel || 0);
         if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
+        if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
         for (const sec of [toolsSection, skillsSection, otherSection]) {
           if (sec) sec.open = false;
         }
@@ -31392,6 +31418,7 @@ ${res.stderr}` : "");
         const snapType = existing ? existing.dataset.type || null : null;
         const snapCwd = existing ? existing.dataset.cwd : null;
         const snapBackend = existing ? existing.dataset.backend || null : null;
+        const snapNoWire = existing ? existing.dataset.noWire === "1" : false;
         closeArgsDialog();
         const res = source ? await source.save({
           // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),
@@ -31418,7 +31445,7 @@ ${res.stderr}` : "");
           if (source) source.onRestarted();
           else if (snapType) {
             createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend);
+            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire);
             switchSession(name);
           }
         }
@@ -31446,7 +31473,7 @@ ${res.stderr}` : "");
             continue;
           }
           const { terminal } = createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null);
+          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
           if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
           const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
           if (item) {
