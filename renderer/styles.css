@@ -1641,10 +1641,22 @@ html, body {
 #file-peek-body { overflow-y: auto; min-height: 80px; }
 #file-peek-body.hidden, #file-peek-editor.hidden, #file-peek-save.hidden,
 #file-peek-dirty.hidden, #file-peek-back.hidden { display: none; }
-/* Speculative links: scanned, not statted, so the affordance stays quiet until
-   hover rather than promising every token resolves. */
-.peek-path { cursor: pointer; text-decoration-color: transparent; }
-.peek-path:hover { color: #61afef; text-decoration: underline; text-decoration-color: currentColor; }
+/* Speculative links: scanned, never statted, so the resting state is DOTTED —
+   the conventional "this might be something" underline — rather than the solid
+   one that promises a destination. Hover commits to solid + accent. Muted
+   var(--text-dim) at rest keeps a code-heavy line from turning into a wall of
+   underlines while still being findable without hunting. */
+.peek-path {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 3px;
+}
+.peek-path:hover {
+  color: #61afef;
+  text-decoration: underline solid;
+  text-decoration-color: currentColor;
+}
 #file-peek-save:disabled { opacity: 0.45; cursor: default; }
 .file-peek-dirty { color: var(--accent); font-size: 14px; line-height: 1; }
 /* Sized by its `rows` (set from the line count) rather than a fixed height, so
