@@ -3961,6 +3961,12 @@ function createSessionManager(deps) {
               entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
               Array.isArray(entry.execCommands) ? entry.execCommands : [],
               Array.isArray(entry.intents) ? entry.intents : null,
+              // Session env, same expression as the other two kill()-based
+              // respawns (engine.js restartSession, session-restore.js). Omitting
+              // it defaults sessionEnv to null and the reloaded seat spawns with
+              // NO session env at all — silently, since create() then re-persists
+              // the entry without it, so every later --resume is wrong too.
+              (entry.env && typeof entry.env === 'object') ? entry.env : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
