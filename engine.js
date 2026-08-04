@@ -752,6 +752,7 @@ const SessionManager = createSessionManager({
     LONG_TEXT_THRESHOLD,
     MSG_DIR,
     MSG_SPILL_THRESHOLD,
+    MSG_MAX_AGE,
     OUTBOX_DIR,
     PENDING_DIR,
     ProxyClient,

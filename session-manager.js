@@ -185,6 +185,7 @@ function createSessionManager(deps) {
     LONG_TEXT_THRESHOLD,
     MSG_DIR,
     MSG_SPILL_THRESHOLD,
+    MSG_MAX_AGE,
     OUTBOX_DIR,
     PENDING_DIR,
     ProxyClient,
@@ -3664,7 +3665,11 @@ function createSessionManager(deps) {
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
-      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      // The first rejecting return a ticket command meets, and the only one reached
+      // before the verb runs — so the payload invariant holds at the entry point
+      // rather than at each interior exit. The verbs that carry no body (assign,
+      // list) fall out on the helper's empty-body guard.
+      if (!team) { reply(`error: this session is not on a team (no team.json owns its cwd)${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
       const teamDir = path.dirname(team.file);
       switch (intent.sub) {
         case 'add': this._taskAdd(session, team, teamDir, intent, reply); break;
@@ -3872,14 +3877,42 @@ function createSessionManager(deps) {
       if (done) session._replayTicketsPending = false;
     }
 
+    // A ticket verb's body is composed in the sender's turn and exists nowhere else,
+    // so a validation error that just returns destroys it. Every rejecting return a
+    // ticket command can reach — the entry-point team check, the verbs below, and
+    // done's undeliverable-report branch — routes its reply suffix through here, so
+    // the payload is on disk before the sender is told no. No exceptions: a site
+    // added without one is a silent regression, since the suite stays green.
+    // The two outcomes must be DISTINGUISHABLE in the reply: a sender that reads
+    // "saved to <path>" stops holding the only copy, so a failed spill reports the
+    // failure and never a path.
+    // The success line names the DEADLINE because the file is not durable:
+    // sweepSpilledMessages exempts only names a PARKED pointer references, and a
+    // promptly-delivered bounce is never parked — so the common case expires
+    // MSG_MAX_AGE after the spill. An unqualified "saved" would be the same false
+    // claim as naming a path for a spill that failed, one timer delayed.
+    _spillRejectedPayload(session, verb, body) {
+      if (!body) return '';
+      try {
+        const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
+        return ` — your ${verb} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+      } catch (e) {
+        log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
+        return ` — WARNING: your ${verb} body could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
+      }
+    }
+
     _taskAdd(session, team, teamDir, intent, reply) {
-      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket`); return; }
+      // Read before the permission check, not after: a non-lead's spec is the longest
+      // payload any ticket verb carries, and the check below is the one rejection in
+      // the system with no re-send to fall back on.
       const spec = String(intent.body == null ? '' : intent.body).trim();
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
       if (!spec) { reply('error: a ticket needs spec text — [agent:task add [role|name]] <what to do>'); return; }
       let assignee = null;
       if (intent.who) {
         assignee = this._resolveAssignee(team, intent.who);
-        if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
+        if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
       }
       const tickets = ticketsStore.load(teamDir);
       const now = Date.now();
@@ -3934,21 +3967,27 @@ function createSessionManager(deps) {
     }
 
     _taskDone(session, team, teamDir, intent, reply) {
-      if (!intent.id) { reply('error: done needs a ticket id — [agent:task done <id>] <report>'); return; }
+      // Read above the id check so a malformed command — where no id resolves and
+      // there is nothing to attach the report to — still preserves it.
       const report = String(intent.body == null ? '' : intent.body).trim();
+      if (!intent.id) { reply(`error: done needs a ticket id — [agent:task done <id>] <report>${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
       const tickets = ticketsStore.load(teamDir);
       const ticket = tickets.find((t) => t.id === intent.id);
-      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
-      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open`); return; }
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const myRole = matchSeatRole(team, session.name);
       const isAssignee = ticket.assignee != null && (ticket.assignee === session.name || ticket.assignee === myRole);
       const isLead = team.lead === session.name;
-      if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it`); return; }
+      if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const lead = team.lead;
       if (!isLead) {
         const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
-        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable`); return; }
+        // Spilled like every other rejecting return, and MORE needed here: the others
+        // invite an immediate retry, this one tells the sender to wait on an
+        // unreachable lead — an interval that can outlive its context or its process.
+        // Keeping the ticket open preserves the ticket's state, never the report.
+        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       }
       ticket.state = 'done';
       ticket.closedAt = Date.now();
@@ -3965,14 +4004,14 @@ function createSessionManager(deps) {
     }
 
     _taskReject(session, team, teamDir, intent, reply) {
-      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket`); return; }
-      if (!intent.id) { reply('error: reject needs a ticket id — [agent:task reject <id>] <reason>'); return; }
       const reason = String(intent.body == null ? '' : intent.body).trim();
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
+      if (!intent.id) { reply(`error: reject needs a ticket id — [agent:task reject <id>] <reason>${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!reason) { reply('error: reject needs a reason — [agent:task reject <id>] <what to fix>'); return; }
       const tickets = ticketsStore.load(teamDir);
       const ticket = tickets.find((t) => t.id === intent.id);
-      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
-      if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}`); return; }
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
+      if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       ticket.state = 'open';
       ticket.closedAt = null;
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
@@ -3988,13 +4027,13 @@ function createSessionManager(deps) {
     }
 
     _taskCancel(session, team, teamDir, intent, reply) {
-      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket`); return; }
-      if (!intent.id) { reply('error: cancel needs a ticket id — [agent:task cancel <id>] [reason]'); return; }
       const reason = String(intent.body == null ? '' : intent.body).trim();
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
+      if (!intent.id) { reply(`error: cancel needs a ticket id — [agent:task cancel <id>] [reason]${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       const tickets = ticketsStore.load(teamDir);
       const ticket = tickets.find((t) => t.id === intent.id);
-      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
-      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel`); return; }
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       ticket.state = 'cancelled';
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;  // one shape across both close verbs

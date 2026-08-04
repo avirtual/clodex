@@ -34,6 +34,14 @@ function mk(overrides = {}) {
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
+    // Every rejecting ticket verb calls this. Undefined here would make each one
+    // run its catch branch and report the failure wording, so a host that stopped
+    // wiring the seam would degrade silently instead of failing a test.
+    spillToFile: () => '/tmp/spill-stub.txt',
+    // The PRODUCTION value (engine.js), not a token: the spill bounce divides by it,
+    // so an unset seam renders "NaN minutes" — a sentence no user can ever see, which
+    // every assertion about that bounce would still pass against.
+    MSG_MAX_AGE: 1800,
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
@@ -3750,6 +3758,202 @@ test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
   // chase, when it is itself the actor that can close the thing.
   assert.ok(f.injected.some((x) => /only ticket t1's assignee \(hand\) or the team lead \(lead\) can close it/.test(x)),
     `the bounce does not name the lead as a permitted closer: ${JSON.stringify(f.injected.filter((x) => /close it/.test(x)))}`);
+});
+
+// --- t166: a rejecting ticket verb must not destroy the sender's payload ------
+//
+// The body is composed in the sender's turn and exists NOWHERE else, so a
+// validation error that merely returns is data loss. These tests read the spilled
+// file back through the path the bounce advertises: asserting the reply merely
+// MENTIONS a path would pass against a bounce that names a file nobody wrote.
+// The spill is REAL here (a temp dir), unlike the rest of this file which stubs it
+// away — a stub returning a fixed string cannot distinguish those two cases.
+function mkSpillTasks(extra = {}) {
+  const spillDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t166-'));
+  const spills = [];
+  const f = mkTasks({
+    spillToFile: (sender, body, recipient) => {
+      const p = pathReal.join(spillDir, `msg-${recipient}-${spills.length}.txt`);
+      fsReal.writeFileSync(p, `From: ${sender}\n\n${body}`);
+      spills.push({ sender, recipient, path: p });
+      return p;
+    },
+    ...extra,
+  });
+  const bounce = (re) => f.injected.filter((x) => re.test(x)).pop();
+  // The path is read out of the REPLY, never off the recorded call: the sender has
+  // nothing but the reply text, so a path the bounce fails to carry is unrecoverable
+  // however well the file was written.
+  const recovered = (re) => {
+    const m = /minutes and then swept: (\S+)/.exec(bounce(re) || '');
+    return m ? fsReal.readFileSync(m[1], 'utf8') : null;
+  };
+  return { ...f, spills, recovered, bounce };
+}
+
+// THE priority case (spec's verification section): the longest payload in the
+// system, rejected on the verb's first decision, with no re-send to fall back on.
+test('t166 task add: a NON-LEAD sender is rejected, and the whole spec is recoverable at the advertised path', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const spec = 'BUILD THE WIDGET\nstep one\nstep two';
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'add', who: null, id: null, body: spec });
+  assert.deepStrictEqual(f.load(), [], 'still no ticket — the permission check is unchanged');
+  const got = f.recovered(/can open a ticket/);
+  assert.ok(got, `the bounce carries no readable path: ${JSON.stringify(f.bounce(/can open a ticket/))}`);
+  assert.ok(got.includes(spec), 'the spec must survive VERBATIM — a truncated spill is still a loss');
+  assert.strictEqual(f.spills[0].recipient, 'team-hand', 'spilled to the SENDER, who is the one that has to recover it');
+});
+
+test('t166 task add: an unknown assignee also spills — the spec is read by then and dropped just the same', () => {
+  const f = mkSpillTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'ghost', id: null, body: 'the spec' });
+  assert.ok((f.recovered(/neither a team role nor a live seat/) || '').includes('the spec'));
+});
+
+// The bounce that opened this ticket: a report fired at an already-closed ticket.
+test('t166 task done: a report bounced off a non-open ticket is recoverable', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'first report' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'THE REWORK REPORT' });
+  assert.ok((f.recovered(/is done, not open/) || '').includes('THE REWORK REPORT'));
+});
+
+// Spill-first exists FOR this case: no id resolves, so there is no ticket to
+// reopen or attach to, and every recovery shape that needs one is unavailable.
+test('t166 task done: a MALFORMED command (no ticket id) still preserves the report', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: null, who: null, body: 'a long report' });
+  assert.ok((f.recovered(/done needs a ticket id/) || '').includes('a long report'));
+});
+
+test('t166 task done: a report aimed at an id that does not exist is recoverable', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't9', who: null, body: 'a whole report' });
+  assert.ok((f.recovered(/no ticket t9/) || '').includes('a whole report'));
+});
+
+// `cancel`'s reason is OPTIONAL, so its rejects are the one place a reject site is
+// reached with nothing to save. Without the empty-body guard this writes a
+// zero-payload file and advertises it, teaching the sender to go read nothing.
+test('t166 a rejection with an EMPTY body spills no file and advertises no path', () => {
+  const f = mkSpillTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't9', who: null, body: '' });
+  assert.deepStrictEqual(f.spills, [], 'nothing to save, so nothing is written');
+  assert.doesNotMatch(f.bounce(/no ticket t9/), /is saved for|could NOT be saved/, 'and the bounce stays a plain error');
+});
+
+test('t166 task reject: a reason aimed at a ticket in the wrong state is recoverable', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'the must-fixes' });
+  assert.ok((f.recovered(/reject reopens a DONE ticket/) || '').includes('the must-fixes'));
+});
+
+test('t166 task cancel: a reason aimed at a ticket that does not exist is recoverable', () => {
+  const f = mkSpillTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't9', who: null, body: 'why it is dropped' });
+  assert.ok((f.recovered(/no ticket t9/) || '').includes('why it is dropped'));
+});
+
+// EVERY spill site, including the ones the named tests above already reach. The
+// suffixes are hand-placed per site, so any one of them can be dropped by a later
+// edit with the suite still green — per-site coverage is what makes that visible.
+// A site added without a suffix fails here only if this table is extended too; the
+// invariant is stated at the helper for that reason.
+const T166_SITES = [
+  ['entry: no team', 'lead', { sub: 'done', id: 't1', body: 'PAYLOAD' }, /not on a team/, { noTeam: true }],
+  ['add: non-lead', 'team-hand', { sub: 'add', who: null, id: null, body: 'PAYLOAD' }, /can open a ticket/],
+  ['add: unknown assignee', 'lead', { sub: 'add', who: 'ghost', id: null, body: 'PAYLOAD' }, /neither a team role/],
+  ['done: no id', 'team-hand', { sub: 'done', id: null, body: 'PAYLOAD' }, /done needs a ticket id/],
+  ['done: no such ticket', 'team-hand', { sub: 'done', id: 't9', body: 'PAYLOAD' }, /no ticket t9/],
+  ['done: not open', 'team-hand', { sub: 'done', id: 't1', body: 'PAYLOAD' }, /is done, not open/, { close: true }],
+  ['done: not assignee nor lead', 'team-reviewer-1', { sub: 'done', id: 't1', body: 'PAYLOAD' }, /can close it/],
+  ['done: report undeliverable', 'team-hand', { sub: 'done', id: 't1', body: 'PAYLOAD' }, /report NOT delivered/, { gateFails: true }],
+  ['reject: non-lead', 'team-hand', { sub: 'reject', id: 't1', body: 'PAYLOAD' }, /can reject a ticket/],
+  ['reject: no id', 'lead', { sub: 'reject', id: null, body: 'PAYLOAD' }, /reject needs a ticket id/],
+  ['reject: no such ticket', 'lead', { sub: 'reject', id: 't9', body: 'PAYLOAD' }, /no ticket t9/],
+  ['reject: not done', 'lead', { sub: 'reject', id: 't1', body: 'PAYLOAD' }, /reopens a DONE ticket/],
+  ['cancel: non-lead', 'team-hand', { sub: 'cancel', id: 't1', body: 'PAYLOAD' }, /can cancel a ticket/],
+  ['cancel: no id', 'lead', { sub: 'cancel', id: null, body: 'PAYLOAD' }, /cancel needs a ticket id/],
+  ['cancel: no such ticket', 'lead', { sub: 'cancel', id: 't9', body: 'PAYLOAD' }, /no ticket t9/],
+  ['cancel: not open', 'lead', { sub: 'cancel', id: 't1', body: 'PAYLOAD' }, /not open — cannot cancel/, { close: true }],
+];
+
+for (const [label, sender, intent, bounceRe, opts = {}] of T166_SITES) {
+  test(`t166 site coverage — ${label}: the payload is recoverable at the advertised path`, () => {
+    const f = mkSpillTasks(opts.noTeam ? { resolveTeam: () => null } : {});
+    f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+    if (!opts.noTeam) {
+      f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+      if (opts.close) f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
+    }
+    // Fails the delivery AFTER setup, so the ticket exists and only the report hop breaks.
+    if (opts.gateFails) f.m._gatedDeliver = () => ({ error: 'lead is unreachable' });
+    f.spills.length = 0;
+    f.m._handleTask(f.seat(sender), { type: 'task', who: null, ...intent });
+    const got = f.recovered(bounceRe);
+    assert.ok(got, `no readable path on the bounce: ${JSON.stringify(f.bounce(bounceRe))}`);
+    assert.ok(got.includes('PAYLOAD'), 'the spilled file must hold the sender body');
+    // Every assertion above passes against "NaN minutes", because the deadline sits
+    // before the path they read. An unrenderable number in an operator-facing string
+    // means the fixture is not reaching the state it claims to model.
+    assert.doesNotMatch(f.bounce(bounceRe), /NaN|undefined/,
+      'the bounce must render fully — an unset dep here yields a sentence no user sees');
+  });
+}
+
+// The spilled file is swept MSG_MAX_AGE after it is written (only PARKED pointers
+// are exempt, and a promptly-delivered bounce is never parked). A sender that drops
+// its own copy on an unqualified "saved" loses the payload to a timer, so the
+// deadline has to be in the sentence the sender reads — and derived from the real
+// constant, since a hardcoded "30 minutes" would drift the moment the sweep changes.
+test('t166 the success line names the sweep deadline, derived from MSG_MAX_AGE', () => {
+  const f = mkSpillTasks({ MSG_MAX_AGE: 600 });
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  assert.match(f.bounce(/can open a ticket/), /saved for the next 10 minutes and then swept/,
+    'the deadline must track the injected constant, not a number written into the string');
+
+  // And the DEFAULT fixture must render the number a user actually sees: 30, from
+  // engine.js's MSG_MAX_AGE = 1800. Pinned as a literal because engine.js does not
+  // export it and cannot be required here. Without this, the fixture default could
+  // be set to any token value and the 16 site rows would still pass, which is the
+  // fixture-cannot-reach-the-modelled-state defect one level up.
+  const d = mkSpillTasks();
+  d.seat('lead'); d.seat('team-hand');
+  d.m._handleTask(d.seat('team-hand'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  assert.match(d.bounce(/can open a ticket/), /saved for the next 30 minutes and then swept/,
+    'the harness default must be the production MSG_MAX_AGE, or the site rows assert a sentence no user sees');
+});
+
+// A path named for a spill that did not happen is WORSE than admitting the loss:
+// the sender stops holding the only copy on the strength of it.
+test('t166 a FAILED spill reports the failure and names no path', () => {
+  const f = mkSpillTasks({ spillToFile: () => { throw new Error('disk full'); } });
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
+  const b = f.bounce(/can open a ticket/);
+  assert.match(b, /could NOT be saved \(disk full\)/, 'the sender is told the payload was not persisted, and why');
+  assert.doesNotMatch(b, /is saved for/, 'and must NOT read as a successful spill — the two outcomes drive opposite actions');
+});
+
+// The verbs run constantly; an unconditional spill would drop an inbound-looking
+// message into the seat's own inbox on every successful ticket op.
+test('t166 a SUCCESSFUL ticket op spills nothing', () => {
+  const f = mkSpillTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'the report' });
+  assert.deepStrictEqual(f.spills, [], 'nothing spilled on the happy path');
 });
 
 // --- t52: the close path's actor ---------------------------------------------
