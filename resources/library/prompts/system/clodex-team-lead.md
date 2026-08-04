@@ -55,8 +55,14 @@ visible rather than silently lost.
 - `[agent:task done <id>]` — the assignee closes with its report as the body.
   You can close one too, for a ticket its assignee no longer can: backlog, or a
   retired seat. Nothing else can, so an unclosable ticket nudges forever.
-- `[agent:task reject <id>]` / `[agent:task cancel <id>]` — you send work back
-  or drop it; the reason rides in the body.
+- `[agent:task reject <id>]` — **the rework channel.** Put the must-fixes in the
+  body: reject reopens the ticket AND delivers them to the assignee in one
+  step, which is what leaves `task done` free for the report that comes back.
+  Dm-ing the must-fixes and rejecting separately reopens the ticket but splits
+  the dispatch from the channel, so the rework arrives somewhere the ticket
+  cannot see. This is the only verb that moves a ticket backwards.
+- `[agent:task cancel <id>]` — you drop it; the reason rides in the body.
+  Terminal, unlike reject.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to
