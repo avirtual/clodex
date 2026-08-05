@@ -32,6 +32,11 @@
 //    no tool replaces that.
 // 3. A symbol occurring many times in a file can resolve to the wrong
 //    occurrence. WINDOW_LINES is deliberately tight to bound this; see below.
+// 4. Tickets cite files by BASENAME (`peers-ui.js`, `transforms.py`), not by
+//    repo-relative path. Resolving that needs the repo's file list, which this
+//    leaf does not read — pass `opts.files` or every such reference reports
+//    `no such file`. Where the basename is ambiguous the chosen path is
+//    reported in the finding, so a wrong pick is visible rather than silent.
 //
 // `cli/` leaf: no upward imports, no I/O of its own. Callers supply the file
 // text (see readPinned in the tests — the fixture reads are PINNED to a commit
@@ -56,7 +61,53 @@ const REF_RE = /(?:([\w./-]+\.[a-z]{2,4}):)?:?\b(\d{1,6})(?:-(\d{1,6}))?\b/g;
 // — so a symbol the ticket named would be discarded as a file path, and the
 // reference reported against whatever other symbol it bound instead. The
 // ticket's own design example, `registry.cleanup()`, is the same shape.
-const FILE_TOKEN_RE = /^[\w./-]+\.(?:js|mjs|cjs|json|md|sh|ts|css|html|ya?ml)$/;
+const FILE_TOKEN_RE = /^[\w./-]+\.(?:js|mjs|cjs|json|md|sh|ts|css|html|py|ya?ml)$/;
+
+// A CITATION is not a symbol. Ticket prose backticks its own references
+// (`prompt-rails.js:33`, `:856`, `session-manager.js:389, 404, 517-524`), and
+// binding one as the symbol to look for guarantees a miss: the tool then
+// reports that the ticket's own reference text does not occur in the file, or
+// "found at :1" off some incidental substring. That is scope limit 1's case —
+// a reference with nothing named next to it — so it must reach SKIPPED.
+// Stripping is used only to DECIDE, never to substitute: a token that is a
+// bare citation is dropped, not rewritten.
+const CITATION_TAIL_RE = /(?::\d{1,6}(?:-\d{1,6})?)(?:\s*,\s*\d{1,6}(?:-\d{1,6})?)*$/;
+
+// Backticks mark quoted PROSE as readily as code — "it deletes `# Heading`
+// blocks", "reported as `no such file`". Bound as a symbol, such a span is a
+// guaranteed miss reported against a real file, which reads exactly like drift.
+// A multi-word span is code only if it carries code punctuation; every real
+// multi-word symbol in ticket text does (`existsSync(socket) && isAlive(pid)`,
+// `const wc = e.sender`, `entry.replyStderr === true`).
+const CODE_PUNCT_RE = /[(){}[\]=<>&|;!+*/'"$._]/;
+
+// A single code token anywhere in the span defeats the punctuation test —
+// "`:856 does not occur in engine.js`" is a ticket quoting THIS TOOL's own
+// output, and `engine.js` alone makes it look like code. Two more shapes,
+// both measured on the live board rather than imagined:
+//
+// A line citation inside a multi-word span ("`prompt-rails.js:33 found at
+// :1`"). A real multi-word symbol never contains one — a citation is prose's
+// way of pointing AT code, not code.
+const EMBEDDED_REF_RE = /(?:[\w./-]+\.[a-z]{2,4})?:\d{1,6}(?:-\d{1,6})?(?:\s|$)/;
+// A run of three bare lowercase words. The multi-word symbols in ticket text
+// interleave punctuation every token or two; English does not.
+const WORD_RUN_RE = /\b[a-z]+ [a-z]+ [a-z]+\b/;
+
+function isProse(symbol) {
+  const s = symbol.trim();
+  if (!/\s/.test(s)) return false;
+  return !CODE_PUNCT_RE.test(s) || WORD_RUN_RE.test(s) || EMBEDDED_REF_RE.test(s);
+}
+
+function isCitation(symbol) {
+  let s = symbol.trim().replace(CITATION_TAIL_RE, '');
+  // Trailing prose punctuation. A `)` is only punctuation when nothing opened
+  // it — `registry.cleanup()` is a symbol, `findings.md)` is a citation.
+  while (s && /[,.;:]$/.test(s)) s = s.slice(0, -1);
+  if (s.endsWith(')') && !s.includes('(')) s = s.slice(0, -1);
+  return !s || FILE_TOKEN_RE.test(s);
+}
 
 // Which spans of ticket prose are worth treating as a symbol. Backticks are the
 // strong signal; the bare-token cases are the shapes that read as code without
@@ -93,14 +144,14 @@ function extractCandidates(text) {
   const backticked = /`([^`\n]+)`/g;
   let m;
   while ((m = backticked.exec(text)) !== null) {
-    if (FILE_TOKEN_RE.test(m[1]) && !/[()]/.test(m[1])) continue; // a path, not a symbol
+    if (isCitation(m[1]) || isProse(m[1])) continue; // not a symbol
     out.push({ symbol: m[1], index: m.index, backticked: true });
   }
   BARE_TOKEN_RE.lastIndex = 0;
   while ((m = BARE_TOKEN_RE.exec(text)) !== null) {
     const sym = m[0];
     if (NOT_SYMBOLS.has(sym)) continue;
-    if (FILE_TOKEN_RE.test(sym)) continue;
+    if (isCitation(sym)) continue;
     // Already covered by a backticked span at the same place.
     if (out.some((c) => c.backticked && m.index >= c.index && m.index < c.index + c.symbol.length + 2)) continue;
     out.push({ symbol: sym, index: m.index, backticked: false });
@@ -184,12 +235,78 @@ function matchLines(lines, symbol) {
   return hits;
 }
 
+// Resolve a cited path against the repo's file list. Tickets cite by basename
+// far more often than by repo-relative path, and a literal join to the repo
+// root turns every one of those into `no such file` — the largest noise class
+// on a real board.
+//
+// The suffix match is on a PATH BOUNDARY, not a bare endsWith: `transport.js`
+// must not match `agent-transport.js`. Without the boundary the unambiguous
+// cases become ambiguous and the resolution stops being usable.
+//
+// Returns [] when nothing matches, and ALL matches — shallowest first — when
+// several do. Resolving to a single path here would be a guess made before the
+// only evidence that can settle it: `renderer.js:168` for `taskDir` means
+// plugins/tickets-viewer/renderer.js, and picking the shallowest reports the
+// symbol missing from a file that was never the referent. The SYMBOL
+// disambiguates; see checkTicket.
+function resolvePath(cited, files) {
+  if (files.includes(cited)) return [cited];
+  const suffix = `/${cited}`;
+  const hits = files.filter((f) => f.endsWith(suffix));
+  return hits.slice().sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+}
+
+// Strongest outcome wins when one basename resolves to several files: a symbol
+// found AT the line beats one found elsewhere, which beats absent.
+const RANK = { 'NOT-FOUND': 0, MOVED: 1, RESOLVED: 2 };
+
+// Check a reference's bound symbols against ONE file's text.
+function checkAgainst(src, ref, symbols) {
+  const lines = src.split('\n');
+  const moved = [];
+  const missing = [];
+  for (const { symbol } of symbols) {
+    const hits = matchLines(lines, symbol);
+    if (!hits.length) { missing.push(symbol); continue; }
+    const near = hits.find((h) => h >= ref.start - WINDOW_LINES && h <= ref.end + WINDOW_LINES);
+    // ANY-wins: one confirmed symbol means the cited line is right. A sentence
+    // can name several things and only one of them has to be AT the line.
+    if (near) return { status: 'RESOLVED', symbol, detail: `\`${symbol}\` at :${near}` };
+    const nearest = hits.reduce((a, b) => (Math.abs(b - ref.start) < Math.abs(a - ref.start) ? b : a));
+    moved.push({ symbol, line: nearest });
+  }
+  if (moved.length) {
+    // The NEAREST of the bound symbols, not the first one bound. A sentence
+    // names several ("`sessions.delete` is the LAST statement in `_cleanup`");
+    // the one closest to the cited line is the one the reference was aimed at,
+    // and reporting the other sends the reader to a different function.
+    const m = moved.reduce((a, b) => (Math.abs(b.line - ref.start) < Math.abs(a.line - ref.start) ? b : a));
+    return {
+      status: 'MOVED',
+      symbol: m.symbol,
+      foundAt: m.line,
+      detail: `\`${m.symbol}\` found at :${m.line}, ticket says :${ref.start}`,
+    };
+  }
+  return {
+    status: 'NOT-FOUND',
+    symbol: missing[0],
+    detail: `\`${missing[0]}\` does not occur in %PATH%`,
+  };
+}
+
 // Check one ticket's references against the files they cite.
 //
 // `readFile(path)` returns the file's text or null when the path does not
 // exist. Pinning WHICH tree that read comes from is the caller's job and is
 // load-bearing for any historical ticket — see the tests.
-function checkTicket(id, text, readFile) {
+//
+// `opts.files` is the repo's file list, enabling basename resolution. Omitted,
+// every cited path is used verbatim — which is what the pinned fixture wants,
+// since resolving against today's file list would not be a pinned read.
+function checkTicket(id, text, readFile, opts = {}) {
+  const files = opts.files || null;
   const refs = extractRefs(text);
   const bound = bindSymbols(text, refs, extractCandidates(text));
   const findings = [];
@@ -201,62 +318,34 @@ function checkTicket(id, text, readFile) {
     const where = `${ref.path}:${ref.start}${ref.end !== ref.start ? `-${ref.end}` : ''}`;
     const base = { ticket: id, ref: where, path: ref.path, start: ref.start, end: ref.end };
 
-    if (!cache.has(ref.path)) cache.set(ref.path, readFile(ref.path));
-    const src = cache.get(ref.path);
-    if (src == null) {
+    if (!cache.has(ref.path)) {
+      const paths = files ? resolvePath(ref.path, files) : [ref.path];
+      cache.set(ref.path, paths.map((p) => ({ path: p, src: readFile(p) })).filter((c) => c.src != null));
+    }
+    const candidates = cache.get(ref.path);
+    if (!candidates.length) {
       findings.push({ ...base, status: 'NOT-FOUND', detail: 'no such file' });
       continue;
     }
     // Scope limit 1: nothing named, nothing checkable. Reported, not dropped —
-    // a silent skip would read as a clean check.
+    // a silent skip would read as a clean check. Which of several same-basename
+    // files it refers to is unknowable without a symbol, so report the citation.
     if (!symbols.length) {
       findings.push({ ...base, status: 'SKIPPED', detail: 'no symbol named next to the reference' });
       continue;
     }
 
-    const lines = src.split('\n');
-    let resolved = null;
-    const moved = [];
-    const missing = [];
-    for (const { symbol } of symbols) {
-      const hits = matchLines(lines, symbol);
-      if (!hits.length) { missing.push(symbol); continue; }
-      const near = hits.find((h) => h >= ref.start - WINDOW_LINES && h <= ref.end + WINDOW_LINES);
-      if (near) { resolved = { symbol, line: near }; break; }
-      const nearest = hits.reduce((a, b) => (Math.abs(b - ref.start) < Math.abs(a - ref.start) ? b : a));
-      moved.push({ symbol, line: nearest });
-    }
-
-    // ANY-wins: one confirmed symbol means the cited line is right. A sentence
-    // can name several things and only one of them has to be AT the line.
-    if (resolved) {
-      findings.push({
-        ...base,
-        status: 'RESOLVED',
-        symbol: resolved.symbol,
-        detail: `\`${resolved.symbol}\` at :${resolved.line}`,
-      });
-    } else if (moved.length) {
-      // The NEAREST of the bound symbols, not the first one bound. A sentence
-      // names several ("`sessions.delete` is the LAST statement in `_cleanup`");
-      // the one closest to the cited line is the one the reference was aimed at,
-      // and reporting the other sends the reader to a different function.
-      const m = moved.reduce((a, b) => (Math.abs(b.line - ref.start) < Math.abs(a.line - ref.start) ? b : a));
-      findings.push({
-        ...base,
-        status: 'MOVED',
-        symbol: m.symbol,
-        foundAt: m.line,
-        detail: `\`${m.symbol}\` found at :${m.line}, ticket says :${ref.start}`,
-      });
-    } else {
-      findings.push({
-        ...base,
-        status: 'NOT-FOUND',
-        symbol: missing[0],
-        detail: `\`${missing[0]}\` does not occur in ${ref.path}`,
-      });
-    }
+    // The symbol picks the file. Where a basename is ambiguous the ONLY
+    // evidence for which one the ticket meant is whether the named symbol is
+    // in it, so check them all and keep the strongest outcome. Resolving on
+    // path shape first (shallowest, say) reports a symbol missing from a file
+    // that was never the referent — indistinguishable from real drift.
+    const results = candidates.map((c) => ({ path: c.path, ...checkAgainst(c.src, ref, symbols) }));
+    const best = results.reduce((a, b) => (RANK[b.status] > RANK[a.status] ? b : a));
+    if (best.path !== ref.path) base.resolvedPath = best.path;
+    const others = candidates.length - 1;
+    if (others > 0) base.alternatives = others;
+    findings.push({ ...base, ...best, detail: best.detail.replace('%PATH%', best.path) });
   }
   return findings;
 }
@@ -268,7 +357,11 @@ function checkTicket(id, text, readFile) {
 const flagged = (findings) => findings.filter((f) => f.status === 'MOVED' || f.status === 'NOT-FOUND');
 
 function formatFinding(f) {
-  return `${f.status}: ${f.ticket} ${f.ref} — ${f.detail}`;
+  // The resolved path is part of the finding, not decoration: a basename match
+  // is a guess, and a reader who cannot see WHICH file was read cannot tell a
+  // real drift from a lookup that picked the wrong one of five `renderer.js`.
+  const via = f.resolvedPath ? ` [${f.resolvedPath}${f.alternatives ? ` +${f.alternatives} other` : ''}]` : '';
+  return `${f.status}: ${f.ticket} ${f.ref}${via} — ${f.detail}`;
 }
 
 module.exports = {
@@ -278,4 +371,6 @@ module.exports = {
   formatFinding,
   extractRefs,
   extractCandidates,
+  resolvePath,
+  isCitation,
 };

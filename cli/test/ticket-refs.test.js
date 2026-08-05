@@ -21,7 +21,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
-const { checkTicket, flagged, WINDOW_LINES } = require('../src/ticket-refs');
+const { checkTicket, flagged, WINDOW_LINES, resolvePath, extractCandidates } = require('../src/ticket-refs');
 const { PIN, TICKETS } = require('./fixtures/ticket-refs-fixtures');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -229,4 +229,154 @@ test('a reference to a file that does not exist is NOT-FOUND, not a crash', () =
   assert.strictEqual(findings.length, 1, 'ENTER: exactly the one reference');
   assert.strictEqual(findings[0].status, 'NOT-FOUND');
   assert.match(findings[0].detail, /no such file/);
+});
+
+// ── noise classes measured on the live board ────────────────────────────────
+//
+// The pinned fixture cannot expose these: t75/t76/t77 happen to cite only
+// repo-local paths with real symbols. On the live open board they were 37 of 61
+// flagged findings — every one a confident-looking claim about a real file,
+// which is the shape that trains a reader to ignore the tool. Each case below
+// is a string taken from a real open ticket, not an invented one.
+
+// A backticked span is not automatically a symbol. Tickets backtick their OWN
+// references, and binding one guarantees a miss reported against a real file:
+// "`prompt-rails.js:33` does not occur in prompt-rails.js" reads exactly like
+// drift. Scope limit 1 already covers the case — it must reach SKIPPED.
+const CITATION_SPANS = [
+  ['`prompt-rails.js:33`', 'a backticked path:line'],
+  ['`:856`', 'a backticked bare line'],
+  ['`clodex-paths.js:45,87`', 'a comma list of lines'],
+  ['`cli/src/deploy.js:1-2`', 'a line range'],
+  ['`findings.md)`', 'a path with trailing prose punctuation'],
+  ['`transforms.py`', 'a bare path whose extension is not js'],
+];
+
+test('a backticked reference is a citation, not a symbol to look for', () => {
+  for (const [span, why] of CITATION_SPANS) {
+    const cands = extractCandidates(`the wiring at ${span} is the one to delete`);
+    assert.deepStrictEqual(cands.map((c) => c.symbol), [],
+      `${why}: ${span} was bound as a symbol — the tool then reports its own citation text `
+      + 'missing from the file, which is indistinguishable from a real MOVED finding');
+  }
+});
+
+// The other half of the same class: prose in backticks. A ticket quoting
+// English, or quoting THIS TOOL's output back at itself, produces a candidate
+// that can never match. `engine.js` inside the quoted output is enough to
+// defeat a punctuation-only test, which is why the word-run and embedded-ref
+// rules exist.
+const PROSE_SPANS = [
+  ['`# Heading`', 'a markdown heading quoted as prose'],
+  ['`no such file`', "this tool's own NOT-FOUND detail, quoted"],
+  ['`:856 does not occur in engine.js`', 'a quoted finding containing a real filename'],
+  ['`prompt-rails.js:33 found at :1`', 'a quoted finding containing a citation'],
+];
+
+test('backticked prose is not a symbol, even when it contains a filename', () => {
+  for (const [span, why] of PROSE_SPANS) {
+    const cands = extractCandidates(`reported as ${span} against session-manager.js:100`);
+    assert.deepStrictEqual(cands.map((c) => c.symbol), [],
+      `${why}: ${span} was bound as a symbol`);
+  }
+});
+
+// A quoted sentence can CONTAIN a code token — an error message, a test name —
+// and one token is enough to defeat the punctuation test. These two rows are
+// the only thing separating "drop the sentence, keep the symbol inside it"
+// from binding the whole sentence and reporting it missing from a real file.
+// Both spans are verbatim from the board (t25, t126).
+test('a quoted sentence is prose even when it contains a code token', () => {
+  assert.deepStrictEqual(
+    extractCandidates('crashes with `TypeError: app.setAboutPanelOptions is not a function` at app-menus.js:431')
+      .map((c) => c.symbol),
+    ['app.setAboutPanelOptions'],
+    'the SYMBOL inside the message is the checkable thing; binding the whole message reports '
+    + 'an error string missing from the file, which is noise wearing a NOT-FOUND badge');
+  assert.deepStrictEqual(
+    extractCandidates("`'97 pins against the real budget leaves every id reachable'` at test/memory-store.test.js:184")
+      .map((c) => c.symbol),
+    [],
+    'a quoted test name names nothing to grep for — the quote marks are code punctuation');
+});
+
+// And the rule must not eat real symbols. A multi-word span IS code when it
+// carries code punctuation, and every multi-word symbol in real ticket text
+// does. Without this the prose rule silently disables checking on the
+// most specific references the board has.
+const REAL_MULTIWORD_SYMBOLS = [
+  '`const wc = e.sender`',
+  '`entry.replyStderr === true`',
+  '`existsSync(socket) && isAlive(pid)`',
+  '`wireRouted && intentSource === \'jsonl\'`',
+];
+
+test('a multi-word span carrying code punctuation is still a symbol', () => {
+  for (const span of REAL_MULTIWORD_SYMBOLS) {
+    const cands = extractCandidates(`${span} at session-manager.js:100`);
+    assert.strictEqual(cands.length, 1,
+      `${span} must survive extraction — dropping it makes the reference uncheckable`);
+    assert.strictEqual(cands[0].symbol, span.slice(1, -1));
+  }
+});
+
+// ── basename resolution ─────────────────────────────────────────────────────
+
+// The suffix match is on a path boundary. A bare endsWith makes `transport.js`
+// match `agent-transport.js` — turning the unambiguous cases ambiguous, which
+// is worse than not resolving at all: the tool then reports a symbol missing
+// from a file the ticket never meant.
+test('a cited basename matches on a path boundary, not a bare suffix', () => {
+  const files = ['agent-transport.js', 'cli/src/transport.js', 'peer-import.js', 'cli/src/import.js'];
+  assert.deepStrictEqual(resolvePath('transport.js', files), ['cli/src/transport.js'],
+    'agent-transport.js ends with "transport.js" but is a DIFFERENT file');
+  assert.deepStrictEqual(resolvePath('import.js', files), ['cli/src/import.js'],
+    'peer-import.js is likewise not an import.js');
+  assert.deepStrictEqual(resolvePath('nope.js', files), [],
+    'no match must be empty, so the caller can report `no such file` honestly');
+});
+
+// An exact path is not a guess and must short-circuit — otherwise a cited
+// `cli/src/transport.js` would be re-derived from the file list and could pick
+// up a same-basename sibling.
+test('an exactly-cited path resolves to itself alone', () => {
+  const files = ['cli/src/transport.js', 'other/cli/src/transport.js'];
+  assert.deepStrictEqual(resolvePath('cli/src/transport.js', files), ['cli/src/transport.js']);
+});
+
+// Which of several same-basename files a ticket meant is decided by the SYMBOL,
+// because nothing else can decide it. Resolving on path shape first (shallowest
+// wins, say) reports the symbol absent from a file that was never the referent
+// — a confident NOT-FOUND about the wrong file, which is the exact failure this
+// whole ticket exists to remove. Taken from t122: `renderer.js:168` for
+// `taskDir` means plugins/tickets-viewer/renderer.js, not renderer/renderer.js.
+test('an ambiguous basename resolves to the file the symbol is actually in', () => {
+  const files = ['renderer/renderer.js', 'plugins/tickets-viewer/renderer.js'];
+  const src = {
+    'renderer/renderer.js': 'const a = 1;\n'.repeat(400),
+    'plugins/tickets-viewer/renderer.js': `${'// filler\n'.repeat(197)}const art = t.taskDir;\n`,
+  };
+  const findings = checkTicket('tX', 'the artifact row at `taskDir` — renderer.js:168', (p) => src[p] || null, { files });
+  assert.strictEqual(findings.length, 1, 'ENTER: exactly the one reference');
+  const f = findings[0];
+  assert.strictEqual(f.status, 'MOVED',
+    'the symbol IS in one of the candidates, so this is drift — NOT-FOUND here would be the '
+    + 'shallowest-wins bug, reporting absence from a file that was never the referent');
+  assert.strictEqual(f.resolvedPath, 'plugins/tickets-viewer/renderer.js',
+    'the finding must name the file it actually read; a basename match is a guess and an '
+    + 'unshown guess cannot be checked by the reader');
+  assert.strictEqual(f.foundAt, 198);
+  assert.strictEqual(f.alternatives, 1, 'and the reader must be told another candidate existed');
+});
+
+// Resolution is OPT-IN. The pinned fixture passes no file list on purpose:
+// resolving a historical reference against TODAY's file list is not a pinned
+// read, and would let a file added since the pin change a verdict about it.
+test('without a file list, every cited path is used verbatim', () => {
+  const reads = [];
+  const read = (p) => { reads.push(p); return null; };
+  checkTicket('tX', 'see `someHelper` at renderer.js:12', read);
+  assert.deepStrictEqual(reads, ['renderer.js'],
+    'no opts.files means no resolution — the caller\'s path is the path, which is what keeps '
+    + 'the pinned fixture a pinned read');
 });
