@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Infra paths, and a review that arrives
+## Unreleased
+
+## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link
   scanner matches by extension — an allowlist, so ordinary prose stays inert —
