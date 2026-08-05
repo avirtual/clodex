@@ -841,7 +841,7 @@ html, body {
 .subagent-detail-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
 .subagent-detail-tool {
   font-size: 12px; line-height: 1.5;
-  margin-bottom: 8px; word-break: break-word;
+  word-break: break-word;
 }
 .subagent-tool-name {
   font-weight: 600; color: var(--accent);
@@ -855,14 +855,30 @@ html, body {
   font-size: 13px; line-height: 1.55; color: var(--text);
   white-space: pre-wrap; word-break: break-word;
 }
-.subagent-detail-note { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+.subagent-detail-note { font-size: 11px; color: var(--text-dim); }
 .subagent-detail-empty { font-size: 12px; color: var(--text-dim); font-style: italic; }
 
 /* One turn in the activity feed. Reads as a continuous conversation — modest
    spacing between turns, no dividers, no per-turn timestamps (one "as of" sits
    at the very bottom on the latest turn). */
-.subagent-feed-entry { margin-bottom: 14px; }
+/* The entry owns ALL vertical rhythm, inside and out. Its rows carried their own
+   margin-bottom before, which stacked onto this one on tool-only entries (no
+   text row to absorb it) and rendered a visibly bigger gap than entries with
+   text. Do not put vertical margin back on the row classes. */
+.subagent-feed-entry {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 14px;
+}
 .subagent-feed-entry:last-child { margin-bottom: 0; }
+/* Glyphs sit on the text baseline rather than the line box, so a wrapped text
+   row keeps its icon beside the FIRST line instead of centred against the
+   block. */
+.subagent-icon {
+  display: inline-block; vertical-align: -1px;
+  margin-right: 5px; flex: none; opacity: 0.75;
+}
+.subagent-detail-tool .subagent-icon { color: var(--accent); opacity: 1; }
+.subagent-detail-note .subagent-icon { opacity: 0.9; }
 
 .session-close {
   position: absolute;

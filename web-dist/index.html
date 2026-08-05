@@ -1030,7 +1030,6 @@ body {
 .subagent-detail-tool {
   font-size: 12px;
   line-height: 1.5;
-  margin-bottom: 8px;
   word-break: break-word;
 }
 .subagent-tool-name {
@@ -1058,7 +1057,6 @@ body {
 .subagent-detail-note {
   font-size: 11px;
   color: var(--text-dim);
-  margin-top: 6px;
 }
 .subagent-detail-empty {
   font-size: 12px;
@@ -1066,10 +1064,27 @@ body {
   font-style: italic;
 }
 .subagent-feed-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 14px;
 }
 .subagent-feed-entry:last-child {
   margin-bottom: 0;
+}
+.subagent-icon {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 5px;
+  flex: none;
+  opacity: 0.75;
+}
+.subagent-detail-tool .subagent-icon {
+  color: var(--accent);
+  opacity: 1;
+}
+.subagent-detail-note .subagent-icon {
+  opacity: 0.9;
 }
 .session-close {
   position: absolute;
@@ -21773,6 +21788,11 @@ helper=${d.helperPath}`;
       var { createSubagentFeed } = require_subagent_feed();
       var { classifySubagent } = require_subagent_policy();
       var DETAIL_MS = 1500;
+      var ICON = {
+        tool: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M11.5 1a3.5 3.5 0 0 0-3.3 4.66L1.7 12.17a1 1 0 0 0 0 1.42l.7.7a1 1 0 0 0 1.42 0l6.51-6.5A3.5 3.5 0 1 0 11.5 1Zm0 5.5a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/></svg>',
+        text: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v6A1.5 1.5 0 0 1 12.5 11H6.2l-2.9 2.6A.5.5 0 0 1 2.5 13v-2A1.5 1.5 0 0 1 2 9.5v-6Z"/></svg>',
+        alert: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M8 1.5a.9.9 0 0 1 .78.45l6 10.4A.9.9 0 0 1 14 13.7H2a.9.9 0 0 1-.78-1.35l6-10.4A.9.9 0 0 1 8 1.5Zm0 3.6a.7.7 0 0 0-.7.76l.25 3a.45.45 0 0 0 .9 0l.25-3A.7.7 0 0 0 8 5.1Zm0 5.2a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>'
+      };
       var MAX_RETAINED_FEEDS = 20;
       var feedKeyOf = (name, key) => `${name} ${key}`;
       function createActivityTab({ host, proxyState, proxyPollMs }) {
@@ -21942,7 +21962,7 @@ helper=${d.helperPath}`;
             parts.push('<div class="subagent-detail-empty">No activity captured yet.</div>');
           }
           if (rec.feed.missed()) {
-            parts.push('<div class="subagent-detail-note">Earlier turns dropped \u2014 the feed exceeded its capture limit.</div>');
+            parts.push(`<div class="subagent-detail-note">${ICON.alert}Earlier turns dropped \u2014 the feed exceeded its capture limit.</div>`);
           }
           for (const e of entries) {
             const entry = [];
@@ -21951,10 +21971,10 @@ helper=${d.helperPath}`;
               if (e.toolsOmitted > 0) {
                 names.push(`<span class="subagent-tool-more">+${e.toolsOmitted} more</span>`);
               }
-              entry.push(`<div class="subagent-detail-tool">${names.join(" ")}</div>`);
+              entry.push(`<div class="subagent-detail-tool">${ICON.tool}${names.join(" ")}</div>`);
             }
-            if (e.text) entry.push(`<div class="subagent-detail-text">${esc(e.text)}</div>`);
-            if (e.truncated) entry.push('<div class="subagent-detail-note">(truncated)</div>');
+            if (e.text) entry.push(`<div class="subagent-detail-text">${ICON.text}${esc(e.text)}</div>`);
+            if (e.truncated) entry.push(`<div class="subagent-detail-note">${ICON.alert}(truncated)</div>`);
             parts.push(`<div class="subagent-feed-entry">${entry.join("")}</div>`);
           }
           bodyEl.innerHTML = parts.join("");

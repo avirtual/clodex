@@ -174,6 +174,18 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.
+- **subagent-ring.js** — the per-session ring of subagent turns: `createSubagentStore`
+  (one store per session, hung off the Session), `noteSubagentTurn` on the wire
+  tee's write side, `feedSince` behind `proxy:subagentFeed`. Owns all four bounds
+  (`FEED_CAP`/`SUB_CAP`/`TEXT_CAP`/`TOOLS_CAP`) rather than trusting callers — a
+  feed lives as long as its session, so nothing upstream is positioned to
+  remember. `seq` is monotonic per SESSION, not per feed, which is what lets one
+  cursor order every subagent's turns and answer a single feed without gaps; the
+  reply's `seq` is the store HEAD, so a quiet feed still advances. `key` is the
+  `x-claude-code-agent-id` header verbatim (role-name fallback), byte-identical to
+  wirescope's — the chip strip stays wirescope-driven and the feed is looked up BY
+  the chip's key, so a divergence shows an empty feed instead of failing. Pure leaf
+  (no I/O, no electron, like file-touch.js); NOT in the leak-scanner lists.
 - **wirescope-proxy.js** — wirescope client + the ProxyPoller telemetry
   tick.
 - **wirescope-supervisor.js** — wirescope process supervision.
@@ -255,8 +267,9 @@ adapter that hosts it. The modules below are what the engine assembles.
   `subagent-policy.js` (`classifySubagent` — live/done/drop is POLICY, there is
   no wire signal for it, and the sidebar child rows and the drawer's Activity
   chips share this one copy so they cannot disagree), `subagent-feed.js`
-  (the accumulating turn feed as pure state: the detail endpoint repeats the
-  latest completed turn on every poll, so dedup is the whole job).
+  (the accumulating turn feed as pure state, folding `proxy:subagentFeed` replies
+  into what the operator has seen; the cursor IS the dedup, and the feed owns no
+  running/done opinion of its own — that is the policy leaf's).
 - **Islands** (own state + DOM, `init*(deps)`): `drawer-host.js` (the bottom
   drawer as a TAB HOST — owns collapsed state, the tab strip, badges, the
   `#main` layout contract and pane swapping; tenants register with
@@ -264,11 +277,13 @@ adapter that hosts it. The modules below are what the engine assembles.
   `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
   Its header comment carries four rules a tenant author must not re-derive),
   `ipc-log.js` (the `log` tenant: rows + export only),
-  `activity-tab.js` (the `activity` tenant: subagent chips off the free 5s
-  `session-proxy` payload, plus ONE `/_subagents` detail poll for the selected
-  feed — started in `onShow`, stopped in `onHide`, so a hidden or collapsed tab
-  costs nothing. Replaced `subagent-popover.js`, whose feed died on any click
-  elsewhere),
+  `activity-tab.js` (the `activity` tenant, and the seam between the two owners:
+  the CHIPS are wirescope's, off the free 5s `session-proxy` payload, and the FEED
+  is ours, ONE `proxy:subagentFeed` read of subagent-ring.js for the SELECTED
+  subagent only. A feed with no chip is not shown — one roster. Polling starts in
+  `onShow` and stops in `onHide` with no idempotence of its own (the host
+  guarantees alternating edges), so a hidden or collapsed tab costs nothing.
+  Replaced `subagent-popover.js`, whose feed died on any click elsewhere),
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
   (prompts/agents/skills drawers),
   `inbox-drawer.js` (operator inbox for `[agent:notify-user]` notes +
