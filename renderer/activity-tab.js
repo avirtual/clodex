@@ -35,17 +35,16 @@ const { classifySubagent } = require('./lib/subagent-policy');
 // them. That is the difference from the wirescope-polled version, where the
 // interval was racing a one-slot store.
 const DETAIL_MS = 1500;
-// Row-kind glyphs. Inline SVG rather than an icon font or emoji: the drawer has
-// no icon font loaded, and these must inherit `currentColor` so they follow the
-// per-kind colour and both themes without a second declaration. 12px matches the
-// tool row's cap height.
+// Row-kind glyphs. Emoji, not SVG: the statusbar, the strip toggle and the
+// context popover all mark context/thinking with a literal glyph, so a bespoke
+// icon set here would be a second vocabulary for the same window. Reserve the
+// brain for actual thinking blocks — the feed cannot show them yet (turn.text is
+// visible assistant text only, wire/sse.js), so using it for prose would make
+// the one glyph mean two things the day thinking lands.
 const ICON = {
-  tool: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
-    + '<path fill="currentColor" d="M11.5 1a3.5 3.5 0 0 0-3.3 4.66L1.7 12.17a1 1 0 0 0 0 1.42l.7.7a1 1 0 0 0 1.42 0l6.51-6.5A3.5 3.5 0 1 0 11.5 1Zm0 5.5a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/></svg>',
-  text: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
-    + '<path fill="currentColor" d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v6A1.5 1.5 0 0 1 12.5 11H6.2l-2.9 2.6A.5.5 0 0 1 2.5 13v-2A1.5 1.5 0 0 1 2 9.5v-6Z"/></svg>',
-  alert: '<svg class="subagent-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
-    + '<path fill="currentColor" d="M8 1.5a.9.9 0 0 1 .78.45l6 10.4A.9.9 0 0 1 14 13.7H2a.9.9 0 0 1-.78-1.35l6-10.4A.9.9 0 0 1 8 1.5Zm0 3.6a.7.7 0 0 0-.7.76l.25 3a.45.45 0 0 0 .9 0l.25-3A.7.7 0 0 0 8 5.1Zm0 5.2a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>',
+  tool: '<span class="subagent-icon" aria-hidden="true">&#128296;</span>',
+  text: '<span class="subagent-icon" aria-hidden="true">&#128172;</span>',
+  alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>',
 };
 // Feeds outlive their subagents on purpose (history is the point), so memory is
 // bounded here: the oldest feeds that are neither live nor selected are evicted.

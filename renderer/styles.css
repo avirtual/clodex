@@ -872,13 +872,13 @@ html, body {
 .subagent-feed-entry:last-child { margin-bottom: 0; }
 /* Glyphs sit on the text baseline rather than the line box, so a wrapped text
    row keeps its icon beside the FIRST line instead of centred against the
-   block. */
+   block. Sized down from the row's font-size: at 13px an emoji outweighs the
+   text it labels. */
 .subagent-icon {
-  display: inline-block; vertical-align: -1px;
-  margin-right: 5px; flex: none; opacity: 0.75;
+  display: inline-block; font-size: 10px;
+  margin-right: 5px; opacity: 0.85;
 }
-.subagent-detail-tool .subagent-icon { color: var(--accent); opacity: 1; }
-.subagent-detail-note .subagent-icon { opacity: 0.9; }
+.subagent-detail-note .subagent-icon { opacity: 1; }
 
 .session-close {
   position: absolute;
