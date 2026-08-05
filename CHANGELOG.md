@@ -11,7 +11,34 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Infra paths, and a review that arrives
+
+- **Terraform and HCL paths in the terminal are now clickable.** The link
+  scanner matches by extension — an allowlist, so ordinary prose stays inert —
+  and it had no infrastructure languages in it at all, which left
+  `modules/vpc/main.tf:42` as dead text. Adds `.tf`, `.tfvars`, `.tfstate` and
+  `.hcl`. State files are included: they often hold secrets, but an agent
+  working in your tree can already edit one, so hiding the viewer was never the
+  thing protecting it.
+
+- **A review no longer goes missing when the reviewer seat is brand new.** The
+  scope is handed to a seat that has not taken its first turn yet, and only one
+  event could deliver it; when that event did not fire, the review sat unread
+  on disk forever while the seat looked alive and idle. There is now a second,
+  independent path that delivers it, so a review that is waiting always lands.
+
+- **A reviewer template's thinking-strip setting now actually applies.** Saving
+  a strip level on the reviewer template had no effect on the seats that
+  `[agent:team-review]` spawns — they ran unstripped whatever the template
+  said, and nothing about the running seat showed it. The level is read from
+  the template and applied to the seat.
+
+- **The reviewer is told it has no shell.** Its tools are Read, Grep and Glob;
+  there is no Bash, so `git diff` and friends were never available to it.
+  Across 65 captured reviews, reaching for them anyway was the most common
+  wasted round trip — each one re-bills the whole review context and returns
+  nothing. It is also now told to issue independent reads together, since a
+  review's cost tracks the number of requests, not the number of files.
 
 - **The sidebar's PR chip no longer disappears thirty seconds after launch.** It
   painted at boot and then vanished for the life of the window: the cheap
