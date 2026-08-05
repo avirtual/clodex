@@ -21789,10 +21789,14 @@ helper=${d.helperPath}`;
         let chipsEl = null;
         let bodyEl = null;
         let asOfEl = null;
-        let notify = () => {
+        const queuedNotifies = [];
+        let notify = (level) => {
+          queuedNotifies.push(level);
         };
         const feeds = /* @__PURE__ */ new Map();
         const notified = /* @__PURE__ */ new Set();
+        const lastReq = /* @__PURE__ */ new Map();
+        const awayReq = /* @__PURE__ */ new Map();
         const firstSeen = /* @__PURE__ */ new Map();
         let seenSeq = 0;
         function stamp(fk) {
@@ -21853,12 +21857,22 @@ helper=${d.helperPath}`;
         function noticeSubs(live) {
           for (const [fk, l] of live) {
             stamp(fk);
-            if (!notified.has(fk)) {
+            const req = typeof l.sub.requests === "number" ? l.sub.requests : null;
+            const fresh = !awayReq.has(fk);
+            const base = awayReq.get(fk);
+            const advanced = !fresh && req !== null && typeof base === "number" && req > base;
+            if (req !== null) lastReq.set(fk, req);
+            if ((fresh || advanced) && !notified.has(fk)) {
               notified.add(fk);
               notify("activity");
             }
             if (feeds.has(fk)) feedFor(l.name, l.key, l.label);
           }
+        }
+        function armBadge() {
+          notified.clear();
+          awayReq.clear();
+          for (const [fk, n] of lastReq) awayReq.set(fk, n);
         }
         function buildChip(fk, meta) {
           const chip = document.createElement("button");
@@ -21954,6 +21968,11 @@ helper=${d.helperPath}`;
             }
             parts.push(`<div class="subagent-feed-entry">${entry.join("")}</div>`);
           }
+          const req = lastReq.get(selected);
+          const gap = typeof req === "number" ? req - entries.length : 0;
+          if (gap > 1) {
+            parts.push(`<div class="subagent-detail-note">~${gap} turns not captured \u2014 this feed samples, it does not stream.</div>`);
+          }
           if (rec.feed.ended()) {
             parts.push('<div class="subagent-detail-note">Session ended \u2014 no further activity.</div>');
           }
@@ -22019,7 +22038,7 @@ helper=${d.helperPath}`;
       <div class="activity-chips"></div>
       <div class="activity-body"></div>
       <div class="activity-footer">
-        <span class="activity-boundary">updates at turn boundaries \u2014 the in-flight stream is not on the wire</span>
+        <span class="activity-boundary">samples completed turns \u2014 turns between polls are not captured</span>
         <span class="activity-asof"></span>
       </div>`;
           chipsEl = pane.querySelector(".activity-chips");
@@ -22039,8 +22058,12 @@ helper=${d.helperPath}`;
             bodyEl.scrollTop = bodyEl.scrollHeight;
             startPolling();
           },
-          onHide: stopPolling
+          onHide() {
+            stopPolling();
+            armBadge();
+          }
         });
+        for (const level of queuedNotifies.splice(0)) notify(level);
         function selectFeed(fk, name, key, label) {
           if (selected === fk) return;
           selected = fk;
@@ -22065,6 +22088,12 @@ helper=${d.helperPath}`;
           }
           for (const fk of [...notified]) {
             if (fk.startsWith(`${name} `)) notified.delete(fk);
+          }
+          for (const fk of [...lastReq.keys()]) {
+            if (fk.startsWith(`${name} `)) {
+              lastReq.delete(fk);
+              awayReq.delete(fk);
+            }
           }
           for (const fk of [...firstSeen.keys()]) {
             if (fk.startsWith(`${name} `)) firstSeen.delete(fk);

@@ -45,10 +45,27 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   let chipsEl = null;
   let bodyEl = null;
   let asOfEl = null;
-  let notify = () => {};
+  // Badge calls made BEFORE host.register returns are queued, not dropped. The
+  // host mounts the first registered tenant from inside `register`, so if this
+  // tenant ever became first (the log tab gaining an `available()` that returns
+  // false is enough) `mount` would run `noticeSubs` against a notify that does
+  // not exist yet — marking every live sub as badged with no badge, for the life
+  // of the window. Relying on registration order to keep that unreachable makes
+  // a silent, permanent failure depend on a fact stated in another file.
+  const queuedNotifies = [];
+  let notify = (level) => { queuedNotifies.push(level); };
 
   const feeds = new Map();      // feedKey -> { name, key, label, feed }
-  const notified = new Set();   // child keys already badged (once per subagent)
+  // Badge state, all three re-armed on every onHide: the badge counts subagents
+  // that did something while the operator was NOT LOOKING, so its unit is the
+  // away-period, not the window. `awayReq` is each sub's `requests` count as the
+  // away-period began and `lastReq` the newest seen, so "took a turn since you
+  // looked away" is answerable with no fetch at all — `requests` rides the free
+  // 5s chip payload (proxy-util.js `shapeSubagent`) and the detail poll is
+  // stopped while hidden, so this is the only evidence of a turn there is.
+  const notified = new Set();   // subs already badged in the CURRENT away-period
+  const lastReq = new Map();    // feedKey -> newest `requests` seen
+  const awayReq = new Map();    // feedKey -> `requests` when this away-period began
   // feedKey -> a monotonic stamp taken when the key is FIRST observed. The chip
   // strip orders by this and never by anything the wire controls: the payload
   // arrives in RECENCY order (proxylab meta.py sorts sub_agents by last_seen
@@ -132,6 +149,15 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   // second — so on a fresh window the pane does not exist until the operator
   // selects the tab. A badge that only counts once you have looked at the tab is
   // the feature inverted: its whole job is to report the tab you are NOT on.
+  //
+  // The badge counts SUBAGENTS THAT DID SOMETHING WHILE THE OPERATOR WAS AWAY,
+  // which is not the same as new subagents: three subs that appeared while the
+  // tab was open and then ran for ten minutes are not new, and a badge keyed on
+  // novelty reads 0 for all of it. Both halves of "did something" count — a sub
+  // first observed this away-period, and a known sub whose turn count advanced.
+  //
+  // Still at most ONCE per sub per away-period, never per turn: a per-turn badge
+  // ticks several times a minute per sub and stops meaning anything.
   function noticeSubs(live) {
     for (const [fk, l] of live) {
       // Stamped HERE, in payload-iteration order, rather than lazily in the sort
@@ -140,14 +166,31 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       // algorithm. This also runs while the pane is unmounted, so a sub observed
       // before the operator ever opened the tab still keeps its slot.
       stamp(fk);
-      if (!notified.has(fk)) {
+      const req = typeof l.sub.requests === 'number' ? l.sub.requests : null;
+      // Absent from the snapshot = not seen when this away-period began, so its
+      // mere presence is the activity. `requests` can be null on the wire, and a
+      // sub we can never count turns for badges on appearance only.
+      const fresh = !awayReq.has(fk);
+      const base = awayReq.get(fk);
+      const advanced = !fresh && req !== null && typeof base === 'number' && req > base;
+      if (req !== null) lastReq.set(fk, req);
+      if ((fresh || advanced) && !notified.has(fk)) {
         notified.add(fk);
-        // Once per SUBAGENT, never per turn: a badge that counted turns would
-        // tick several times a minute per sub and stop meaning anything.
         notify('activity');
       }
       if (feeds.has(fk)) feedFor(l.name, l.key, l.label); // keep the label fresh
     }
+  }
+
+  // Re-arm for the next away-period. Called on onHide ONLY: an away-period is
+  // bounded by the operator looking away and looking back, and the host's badge
+  // clear on show is the other half of the same edge. Snapshotting here rather
+  // than counting from zero is what keeps a sub that was already mid-run from
+  // badging for turns the operator watched happen.
+  function armBadge() {
+    notified.clear();
+    awayReq.clear();
+    for (const [fk, n] of lastReq) awayReq.set(fk, n);
   }
 
   function buildChip(fk, meta) {
@@ -279,6 +322,24 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       parts.push(`<div class="subagent-feed-entry">${entry.join('')}</div>`);
     }
 
+    // What the feed MISSED, because it is a sampler that looks like a stream:
+    // `/_subagents` publishes only the latest forwarded request, so a turn that
+    // completes between two polls is never seen by anyone. A feed that admits
+    // that is trustworthy; one that silently drops turns reads as broken, which
+    // is how this was reported.
+    //
+    // An ESTIMATE and it must never render as a ledger — three separate skews,
+    // all in the same direction: `requests` counts forwarded REQUESTS rather
+    // than published turns, the newest request has no assistant turn to capture
+    // yet, and a feed at the 500-entry cap has discarded entries this still
+    // counts as missed. A gap of 1 is the off-by-one on its own, so it shows
+    // nothing rather than a wrong-looking "~1".
+    const req = lastReq.get(selected);
+    const gap = typeof req === 'number' ? req - entries.length : 0;
+    if (gap > 1) {
+      parts.push(`<div class="subagent-detail-note">~${gap} turns not captured — this feed samples, it does not stream.</div>`);
+    }
+
     if (rec.feed.ended()) {
       parts.push('<div class="subagent-detail-note">Session ended — no further activity.</div>');
     }
@@ -380,7 +441,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       <div class="activity-chips"></div>
       <div class="activity-body"></div>
       <div class="activity-footer">
-        <span class="activity-boundary">updates at turn boundaries — the in-flight stream is not on the wire</span>
+        <span class="activity-boundary">samples completed turns — turns between polls are not captured</span>
         <span class="activity-asof"></span>
       </div>`;
     chipsEl = pane.querySelector('.activity-chips');
@@ -401,8 +462,14 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       bodyEl.scrollTop = bodyEl.scrollHeight;
       startPolling();
     },
-    onHide: stopPolling,
+    onHide() {
+      stopPolling();
+      armBadge();
+    },
   });
+  // Drain anything badged during `register` (see queuedNotifies): the host
+  // mounts the first tenant from inside the call that produces this function.
+  for (const level of queuedNotifies.splice(0)) notify(level);
 
   // --- surface for renderer.js ----------------------------------------------
 
@@ -436,6 +503,9 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     }
     for (const fk of [...notified]) {
       if (fk.startsWith(`${name} `)) notified.delete(fk);
+    }
+    for (const fk of [...lastReq.keys()]) {
+      if (fk.startsWith(`${name} `)) { lastReq.delete(fk); awayReq.delete(fk); }
     }
     // Same cleanup as `notified`, and for the same reason: the parent is gone,
     // so these keys can never be observed again. `seenSeq` is deliberately NOT
