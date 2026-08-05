@@ -20382,7 +20382,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/drawer-host.js"(exports, module) {
       var TAB_IDS = Object.freeze(["log", "activity", "ctl", "term"]);
       var BADGE_MAX = 99;
-      function createDrawerHost({ sessions, getActiveSession }) {
+      function createDrawerHost({ refitActiveTerminal }) {
         const drawer = document.getElementById("drawer");
         const drawerHeader = document.getElementById("drawer-header");
         const tabsEl = document.getElementById("drawer-tabs");
@@ -20430,15 +20430,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           });
         }
         function refitSessionTerminal() {
-          if (getActiveSession()) {
-            const s = sessions.get(getActiveSession());
-            if (s) {
-              requestAnimationFrame(() => {
-                s.fitAddon.fit();
-                window.api.resizeSession(getActiveSession(), s.terminal.cols, s.terminal.rows);
-              });
-            }
-          }
+          requestAnimationFrame(refitActiveTerminal);
         }
         function select(id) {
           const rec = tenants.get(id);
@@ -29760,7 +29752,7 @@ Click for live activity`;
         setTimeout(() => el.classList.remove("mention-pulse"), 2e3);
         if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(mentionNotice(name, mtype));
       });
-      var drawerHost = createDrawerHost({ sessions, getActiveSession: () => activeSession });
+      var drawerHost = createDrawerHost({ refitActiveTerminal });
       var { appendIpcEntry } = createIpcLog({ host: drawerHost });
       createInboxDrawer();
       createPotDrawer();

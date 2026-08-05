@@ -3140,7 +3140,9 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 // The drawer host and its tenants. The register() calls ARE the tenant
 // registry — order here is registration order, not tab order (drawer-host
 // sorts by its frozen id list).
-const drawerHost = createDrawerHost({ sessions, getActiveSession: () => activeSession });
+// refitActiveTerminal is a hoisted declaration below — passed by reference so
+// the drawer refits through the SAME peer-aware path as every other caller.
+const drawerHost = createDrawerHost({ refitActiveTerminal });
 const { appendIpcEntry } = createIpcLog({ host: drawerHost });
 
 createInboxDrawer();

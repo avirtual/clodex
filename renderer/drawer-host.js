@@ -3,9 +3,13 @@
 // badges, and pane swapping; tenants (ipc-log today) own only their content.
 //
 // FACTORY (R2): the toggle refits the active SESSION terminal after the layout
-// shift, which needs core state — so `sessions` (the live Map) and
-// `getActiveSession` (a getter, since activeSession is a reassignable let in
-// renderer.js) are passed in, exactly as ipc-log.js took them before the split.
+// shift. That is renderer.js's `refitActiveTerminal`, injected — NOT a local
+// copy over `sessions` + `getActiveSession`. The copy this replaced (inherited
+// from ipc-log.js's toggle) treated a peer row as a local session and pushed
+// `resizeSession` upstream for it, which breaks the read-only-peer invariant at
+// renderer.js's `remeasureReadonlyPeer`: a read-only viewer must never send
+// dimensions to the owner. One implementation means the peer rules cannot drift
+// out of this file's sight again.
 //
 // Four rules here exist for tenants that do not exist yet, and each is the
 // kind of mistake that is cheap now and a contract migration later:
@@ -46,7 +50,7 @@ const TAB_IDS = Object.freeze(['log', 'activity', 'ctl', 'term']);
 // Beyond this the badge is "a lot"; the count itself keeps counting.
 const BADGE_MAX = 99;
 
-function createDrawerHost({ sessions, getActiveSession }) {
+function createDrawerHost({ refitActiveTerminal }) {
   const drawer = document.getElementById('drawer');
   const drawerHeader = document.getElementById('drawer-header');
   const tabsEl = document.getElementById('drawer-tabs');
@@ -109,18 +113,13 @@ function createDrawerHost({ sessions, getActiveSession }) {
     });
   }
 
-  // Moved verbatim from ipc-log.js's toggleIpcLog: the drawer's layout shift
-  // changes the terminal's box, and the PTY has to be told the new size.
+  // The drawer's layout shift changes the session terminal's box. The rAF is
+  // load-bearing: the CSS height transition means the new geometry is not
+  // readable in the frame that flips the class, so fitting synchronously
+  // measures the OLD box. renderer.js's own callers (ResizeObserver, zoom
+  // nudge) fire after layout already settled and so need no rAF of their own.
   function refitSessionTerminal() {
-    if (getActiveSession()) {
-      const s = sessions.get(getActiveSession());
-      if (s) {
-        requestAnimationFrame(() => {
-          s.fitAddon.fit();
-          window.api.resizeSession(getActiveSession(), s.terminal.cols, s.terminal.rows);
-        });
-      }
-    }
+    requestAnimationFrame(refitActiveTerminal);
   }
 
   function select(id) {
