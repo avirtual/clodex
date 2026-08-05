@@ -4,12 +4,20 @@
 # registry entry (replyStderr: true): the exec dispatcher returns only the
 # LAST stderr line (200-char slice) on both the success and failure paths, so
 # the whole digest lives on a single bounded line.
-#   pass: "811/811 green"
-#   fail: "798/811 green, 13 failing: name1; name2; …" (capped)
+#   pass: "[wb-wrap-ui] 811/811 green"
+#   fail: "[wb-wrap-ui] 798/811 green, 13 failing: name1; name2; …" (capped)
 # Dependency-free: sh + awk only. The TAP reporter is forced so the summary
 # grammar ("# pass N") doesn't shift with TTY detection across node versions.
 
 cd "$(dirname "$0")/.." || exit 1
+
+# The cd above means the tree measured is THIS script's checkout no matter who
+# calls it, so a caller in another worktree gets a real, current, green number
+# for code that was never run — that reads as a pass, not an error. Hence every
+# digest line names its tree, AHEAD of the failing names: the 180-char cap below
+# eats the tail first. Parameter expansion, not basename(1), to keep the
+# dependency-free promise in the header literal.
+tree=${PWD##*/}
 
 # Drain the exec payload (stdin) so the dispatcher's write can't EPIPE.
 cat >/dev/null 2>/dev/null
@@ -55,13 +63,13 @@ fail=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="fail" {n=$3} END{print n+0}')
 if [ "$tests" -eq 0 ]; then
   # The runner never produced a summary — surface its last line, not silence.
   last=$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')
-  printf '%.180s\n' "suite did not run: $last" 1>&2
+  printf '%.180s\n' "[$tree] suite did not run: $last" 1>&2
   [ "$code" -eq 0 ] && exit 1
   exit "$code"
 fi
 
 if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ]; then
-  printf '%s/%s green\n' "$pass" "$tests" 1>&2
+  printf '[%s] %s/%s green\n' "$tree" "$pass" "$tests" 1>&2
   exit 0
 fi
 
@@ -69,6 +77,6 @@ fi
 # appear at every nesting depth; parent wrappers of a failed subtest are noise
 # but harmless — the cap keeps the reply bounded either way.
 names=$(printf '%s\n' "$out" | awk 'sub(/^[ \t]*not ok [0-9]+ - /, "") {printf "%s%s", sep, $0; sep="; "}')
-printf '%.180s\n' "$pass/$tests green, $fail failing: $names" 1>&2
+printf '%.180s\n' "[$tree] $pass/$tests green, $fail failing: $names" 1>&2
 [ "$code" -eq 0 ] && exit 1
 exit "$code"

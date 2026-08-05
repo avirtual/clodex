@@ -18,7 +18,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawn } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 
@@ -222,4 +222,113 @@ test('lock: npm test reclaims a lock whose holder is dead, and releases on exit'
     assert.match(out, /TOTALS:/, 'a stale lock must be reclaimed, not treated as a live holder');
     assert.ok(!fs.existsSync(lockDir), 'and the lock is released when the run finishes');
   });
+});
+
+// ── the tree the digest measured ────────────────────────────────────────────
+// A wrong-tree run does not look like an error, it looks like a PASS: the
+// script cds to its own checkout, so a caller in another worktree gets a real,
+// current, green number for code that was never run. A branch that merely
+// modifies files leaves no tell at all.
+//
+// So the fixture has to BE a second tree: the SHIPPED script is copied into a
+// scratch checkout whose basename cannot occur anywhere else, with a stub
+// `node` on PATH standing in for the suite. Asserting the digest line WHOLE is
+// what separates "the script emitted the marker" from "the path happens to
+// contain that string" — a spawn error naming the fixture path satisfies any
+// substring grep, and does it in the case where the script emitted nothing.
+function runDigest({ tap, exit, cwd }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+  fs.mkdirSync(path.join(root, 'bin'));
+  fs.writeFileSync(path.join(root, 'bin', 'node'),
+    `#!/bin/sh\ncat <<'CLX_TAP'\n${tap}\nCLX_TAP\nexit ${exit}\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}` };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env });
+    const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
+    return { tree: path.basename(root), lines, digest: lines[lines.length - 1], code: res.status };
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+const PASS_CASE = {
+  what: 'pass',
+  tap: ['TAP version 13', 'ok 1 - a case', '1..1', '# tests 3', '# pass 3', '# fail 0'].join('\n'),
+  exit: 0,
+  code: 0,
+  digest: (t) => `[${t}] 3/3 green`,
+};
+
+const DIGEST_CASES = [
+  PASS_CASE,
+  {
+    what: 'fail',
+    tap: ['TAP version 13', 'not ok 1 - a failing case', '1..3',
+      '# tests 3', '# pass 2', '# fail 1'].join('\n'),
+    exit: 1,
+    code: 1,
+    digest: (t) => `[${t}] 2/3 green, 1 failing: a failing case`,
+  },
+  {
+    // No summary at all — the runner died before producing one. The path that
+    // carries the LEAST information is the one most likely to be read as noise
+    // from the wrong place, so it names its tree too.
+    what: 'suite did not run',
+    tap: ['node: bad option: --test-reporter=tap'].join('\n'),
+    exit: 9,
+    code: 9,
+    digest: (t) => `[${t}] suite did not run: node: bad option: --test-reporter=tap`,
+  },
+];
+
+test('digest: every line the digest can emit names the tree it measured', () => {
+  for (const c of DIGEST_CASES) {
+    const r = runDigest(c);
+    // The digest is the LAST stderr line by contract (the exec dispatcher
+    // returns only that one). Reducing to it can yield undefined from a script
+    // that never ran, which every assertion below would then be about nothing.
+    assert.ok(r.lines.length > 0,
+      `ENTER: ${c.what}: the script wrote nothing to stderr, so there is no digest to check`);
+    assert.strictEqual(r.digest, c.digest(r.tree),
+      `${c.what}: the whole digest line, tree marker included — a number with no statement of `
+      + 'what it measured is the false-green this marker exists to prevent');
+    assert.strictEqual(r.code, c.code,
+      `${c.what}: the script still exits with node's code; the marker must not change the verdict`);
+  }
+});
+
+test("digest: the tree named is the script's own checkout, not the caller's cwd", () => {
+  // The exact shape of the observed bug: caller in one tree, run in another.
+  // The marker is only worth anything if it tracks the tree that RAN.
+  const caller = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-CALLER-'));
+  try {
+    const r = runDigest({ ...PASS_CASE, cwd: caller });
+    assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`);
+    assert.ok(!r.digest.includes(path.basename(caller)),
+      'the digest must name the tree that ran, never the one that asked — the caller reading its '
+      + 'own basename back would confirm exactly the run it cannot distinguish');
+  } finally { fs.rmSync(caller, { recursive: true, force: true }); }
+});
+
+test('digest: a digest path cannot be added without the tree marker', () => {
+  // The three cases above pin today's three lines. This pins the PROPERTY, so a
+  // fourth digest path added later cannot ship unmarked with the suite green.
+  // Scoped to below the runner invocation on purpose: the lock-refusal printf
+  // above it reports no measurement, and lockHarness() extracts that block
+  // standalone (`tree` is assigned above the anchor, so it would expand empty).
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const from = src.indexOf('out=$(node --test');
+  assert.ok(from > 0,
+    'the digest section is extracted by anchor and that anchor has moved');
+  const emits = src.slice(from).split('\n').filter((l) => /printf/.test(l) && /1>&2/.test(l));
+  assert.ok(emits.length >= 3,
+    `ENTER: found ${emits.length} digest emit lines, expected at least the pass, fail and `
+    + 'did-not-run paths — the filter is no longer matching what it names');
+  for (const line of emits) {
+    assert.ok(/\[\$tree\]|\[%s\]/.test(line),
+      `a digest line that does not name its tree: ${line.trim()}`);
+  }
 });
