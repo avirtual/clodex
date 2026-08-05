@@ -474,17 +474,17 @@
       <p>No sessions yet</p>
       <p class="hint">Click <strong>+</strong> to create one</p>
     </div>
-    <div id="ipc-log" class="collapsed">
-      <div id="ipc-log-header">
-        <span class="ipc-title">IPC Traffic</span>
-        <span class="ipc-count" id="ipc-count">0</span>
-        <button id="ipc-export" title="Save log as a text file" type="button">Export</button>
-        <button id="ipc-clear" title="Clear log" type="button">Clear</button>
-        <button id="ipc-toggle" title="Toggle panel" type="button">▲</button>
+    <!-- The bottom drawer is a TAB HOST (drawer-host.js): the strip, the panes
+         and the per-tenant action groups are all built at runtime from the
+         register() calls, so a tenant's markup lives with the tenant and this
+         stays a shell. -->
+    <div id="drawer" class="collapsed">
+      <div id="drawer-header">
+        <div id="drawer-tabs"></div>
+        <div id="drawer-actions"></div>
+        <button id="drawer-toggle" title="Toggle panel" type="button">▲</button>
       </div>
-      <div id="ipc-log-body">
-        <div id="ipc-empty">No messages yet. Inter-agent DMs will appear here.</div>
-      </div>
+      <div id="drawer-panes"></div>
     </div>
   </div>
 

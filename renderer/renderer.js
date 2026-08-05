@@ -41,6 +41,7 @@ const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
+const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
 const { createPotDrawer } = require('./pot-drawer');
@@ -3136,7 +3137,11 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 });
 
 
-const { appendIpcEntry } = createIpcLog({ sessions, getActiveSession: () => activeSession });
+// The drawer host and its tenants. The register() calls ARE the tenant
+// registry — order here is registration order, not tab order (drawer-host
+// sorts by its frozen id list).
+const drawerHost = createDrawerHost({ sessions, getActiveSession: () => activeSession });
+const { appendIpcEntry } = createIpcLog({ host: drawerHost });
 
 createInboxDrawer();
 
@@ -3189,6 +3194,10 @@ window.api.onZoomNudge(refitActiveTerminal);
 // Capture at document level (capture phase) so xterm doesn't swallow them
 document.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.altKey || e.ctrlKey) return;
+  // Every chord below acts on the active SIDEBAR session, so focus inside the
+  // drawer must not reach them — Cmd+W typed into a drawer tenant would
+  // archive an unrelated session.
+  if (drawerHost.hasFocus()) return;
 
   if (e.key === 't') {
     e.preventDefault();
@@ -3254,6 +3263,7 @@ document.addEventListener('keydown', (e) => {
   if (!window.__CLODEX_WEB__) return;
   const action = altChordAction(e);
   if (!action) return;
+  if (drawerHost.hasFocus()) return; // same arbitration as the Cmd handler above
   e.preventDefault();
   e.stopPropagation();
 

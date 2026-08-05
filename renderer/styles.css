@@ -990,6 +990,13 @@ html, body {
      chrome that must stay above popovers (drawers z15, context-menu z200)
      exceeds this, so it's unaffected. */
   z-index: 11;
+
+  /* The bottom drawer's two heights. Every offset that has to clear the drawer
+     (terminal bottom, proxy bar) derives from these — they were six hardcoded
+     literals, and a tab strip changing the collapsed bar's height desynced the
+     proxy bar from the terminal bottom unless all six moved together. */
+  --drawer-collapsed-h: 36px;
+  --drawer-h: 220px;
 }
 
 #search-bar {
@@ -1056,27 +1063,29 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 32px; /* collapsed IPC log header height */
+  bottom: var(--drawer-collapsed-h);
   transition: bottom 0.2s ease;
 }
 
-#main.ipc-expanded #terminal-container {
-  bottom: 220px;
+#main.drawer-expanded #terminal-container {
+  bottom: var(--drawer-h);
 }
 
-/* When the proxy status bar is shown, reserve a strip above the IPC log. */
+/* When the proxy status bar is shown, reserve a strip above the drawer. The
+   24px is #proxy-bar's own height below, the one offset here that is not the
+   drawer's. */
 #main.has-proxy-bar #terminal-container {
-  bottom: 56px; /* 32 (collapsed IPC header) + 24 (bar) */
+  bottom: calc(var(--drawer-collapsed-h) + 24px);
 }
-#main.has-proxy-bar.ipc-expanded #terminal-container {
-  bottom: 244px; /* 220 + 24 */
+#main.has-proxy-bar.drawer-expanded #terminal-container {
+  bottom: calc(var(--drawer-h) + 24px);
 }
 
 #proxy-bar {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 32px; /* sit just above the collapsed IPC log header */
+  bottom: var(--drawer-collapsed-h); /* sit just above the collapsed drawer bar */
   height: 24px;
   z-index: 5;
   display: flex;
@@ -1092,8 +1101,8 @@ html, body {
   overflow: hidden;
   transition: bottom 0.2s ease;
 }
-#main.ipc-expanded #proxy-bar {
-  bottom: 220px;
+#main.drawer-expanded #proxy-bar {
+  bottom: var(--drawer-h);
 }
 /* Staleness dims the telemetry only — the action icons stay fully usable. */
 #proxy-telemetry { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
@@ -3211,9 +3220,12 @@ html, body {
   margin-top: 1px;
 }
 
-/* IPC log panel */
+/* Bottom drawer (tab host) */
 
-#ipc-log {
+/* NOTHING in this subtree may be hidden with `display:none` — collapse is
+   height-only and inactive panes use `visibility`. An xterm tenant inside a
+   display:none ancestor measures zero and never recovers (CLAUDE.md). */
+#drawer {
   position: absolute;
   bottom: 0;
   left: 0;
@@ -3224,38 +3236,64 @@ html, body {
   flex-direction: column;
   z-index: 5;
   transition: height 0.2s ease;
-  height: 220px;
+  height: var(--drawer-h);
   max-height: 50%;
+  overflow: hidden;
 }
 
-#ipc-log.collapsed {
-  height: 32px;
+#drawer.collapsed {
+  height: var(--drawer-collapsed-h);
 }
 
-#ipc-log.collapsed #ipc-log-body {
-  display: none;
+#drawer.collapsed #drawer-panes {
+  visibility: hidden;
 }
 
-#ipc-log-header {
+#drawer-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 0 12px;
   background: var(--sidebar-bg);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
-  height: 32px;
+  height: var(--drawer-collapsed-h);
   flex-shrink: 0;
 }
 
-.ipc-title {
+#drawer-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+}
+
+.drawer-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
   font-weight: 600;
   font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 10px;
+}
+
+.drawer-tab:hover {
   color: var(--text);
 }
 
-.ipc-count {
+.drawer-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.drawer-badge {
   font-size: 10px;
   background: var(--accent);
   color: white;
@@ -3265,13 +3303,29 @@ html, body {
   text-align: center;
 }
 
-.ipc-count.zero {
+.drawer-badge.zero {
   background: var(--border);
   color: var(--text-dim);
 }
 
-#ipc-log-header button {
+/* notify('attention') vs notify('activity') — the two levels must be tellable
+   apart on the strip or the tenant API is a no-op the caller can't see. */
+.drawer-badge.attention {
+  background: var(--error);
+}
+
+#drawer-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.drawer-action-group {
+  display: flex;
+  align-items: center;
+}
+
+#drawer-header button:not(.drawer-tab) {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -3281,18 +3335,39 @@ html, body {
   border-radius: 4px;
 }
 
-#ipc-log-header button:hover {
+#drawer-header button:not(.drawer-tab):hover {
   background: var(--sidebar-hover);
   color: var(--text);
 }
 
-#ipc-toggle {
+#drawer-toggle {
   font-size: 10px !important;
   transition: transform 0.2s;
 }
 
-#ipc-log.collapsed #ipc-toggle {
+#drawer.collapsed #drawer-toggle {
   transform: rotate(180deg);
+}
+
+/* Panes STACK — every tenant keeps its box, only visibility changes, so a
+   tenant that measures itself (xterm) is never measured at zero size. */
+#drawer-panes {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.drawer-pane {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer-pane.active {
+  visibility: visible;
 }
 
 #ipc-log-body {

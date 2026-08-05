@@ -124,6 +124,15 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const restartHost = seams.restartHost || (() => {});
   const pathMergeFailed = !!seams.pathMergeFailed;
   const enableSandbox = seams.enableSandbox !== false;
+  // The drawer's service-backed tenants (a clodexctl verb runner over `ctl:*`,
+  // a workbench PTY over `wterm:*`) are DESKTOP-ONLY, and the boundary that
+  // makes them so is this flag, not the renderer. web-host.js registers the
+  // same ipc-handlers map the desktop does and dispatches any registered
+  // channel BY NAME without consulting api-contract, so a handler that exists
+  // is a handler an authenticated web connection can invoke — a token-backed
+  // verb runner and a remote shell. The renderer's `available()` only hides
+  // the tabs. Same shape as enableSandbox: the host opts out at construction.
+  const enableDrawerServices = seams.enableDrawerServices !== false;
 
   // The browser frontend's host, for peers that want to REACH it (t30). A
   // GETTER, not a value: web-host.js is started by headless-main.js AFTER
@@ -1459,6 +1468,7 @@ const toolCache = createToolCache({ whichBin });
     openPeerWeb, closePeerWeb,
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
+    enableDrawerServices,
     getPluginHost: () => pluginHost,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog,

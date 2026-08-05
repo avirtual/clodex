@@ -1219,6 +1219,8 @@ body {
   align-items: center;
   justify-content: center;
   z-index: 11;
+  --drawer-collapsed-h: 36px;
+  --drawer-h: 220px;
 }
 #search-bar {
   position: absolute;
@@ -1277,23 +1279,23 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 32px;
+  bottom: var(--drawer-collapsed-h);
   transition: bottom 0.2s ease;
 }
-#main.ipc-expanded #terminal-container {
-  bottom: 220px;
+#main.drawer-expanded #terminal-container {
+  bottom: var(--drawer-h);
 }
 #main.has-proxy-bar #terminal-container {
-  bottom: 56px;
+  bottom: calc(var(--drawer-collapsed-h) + 24px);
 }
-#main.has-proxy-bar.ipc-expanded #terminal-container {
-  bottom: 244px;
+#main.has-proxy-bar.drawer-expanded #terminal-container {
+  bottom: calc(var(--drawer-h) + 24px);
 }
 #proxy-bar {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 32px;
+  bottom: var(--drawer-collapsed-h);
   height: 24px;
   z-index: 5;
   display: flex;
@@ -1313,8 +1315,8 @@ body {
   overflow: hidden;
   transition: bottom 0.2s ease;
 }
-#main.ipc-expanded #proxy-bar {
-  bottom: 220px;
+#main.drawer-expanded #proxy-bar {
+  bottom: var(--drawer-h);
 }
 #proxy-telemetry {
   display: flex;
@@ -4493,7 +4495,7 @@ body {
   flex-shrink: 0;
   margin-top: 1px;
 }
-#ipc-log {
+#drawer {
   position: absolute;
   bottom: 0;
   left: 0;
@@ -4504,33 +4506,56 @@ body {
   flex-direction: column;
   z-index: 5;
   transition: height 0.2s ease;
-  height: 220px;
+  height: var(--drawer-h);
   max-height: 50%;
+  overflow: hidden;
 }
-#ipc-log.collapsed {
-  height: 32px;
+#drawer.collapsed {
+  height: var(--drawer-collapsed-h);
 }
-#ipc-log.collapsed #ipc-log-body {
-  display: none;
+#drawer.collapsed #drawer-panes {
+  visibility: hidden;
 }
-#ipc-log-header {
+#drawer-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 0 12px;
   background: var(--sidebar-bg);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
-  height: 32px;
+  height: var(--drawer-collapsed-h);
   flex-shrink: 0;
 }
-.ipc-title {
+#drawer-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+}
+.drawer-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
   font-weight: 600;
   font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 10px;
+}
+.drawer-tab:hover {
   color: var(--text);
 }
-.ipc-count {
+.drawer-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.drawer-badge {
   font-size: 10px;
   background: var(--accent);
   color: white;
@@ -4539,12 +4564,23 @@ body {
   min-width: 18px;
   text-align: center;
 }
-.ipc-count.zero {
+.drawer-badge.zero {
   background: var(--border);
   color: var(--text-dim);
 }
-#ipc-log-header button {
+.drawer-badge.attention {
+  background: var(--error);
+}
+#drawer-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+.drawer-action-group {
+  display: flex;
+  align-items: center;
+}
+#drawer-header button:not(.drawer-tab) {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -4553,16 +4589,32 @@ body {
   padding: 3px 8px;
   border-radius: 4px;
 }
-#ipc-log-header button:hover {
+#drawer-header button:not(.drawer-tab):hover {
   background: var(--sidebar-hover);
   color: var(--text);
 }
-#ipc-toggle {
+#drawer-toggle {
   font-size: 10px !important;
   transition: transform 0.2s;
 }
-#ipc-log.collapsed #ipc-toggle {
+#drawer.collapsed #drawer-toggle {
   transform: rotate(180deg);
+}
+#drawer-panes {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.drawer-pane {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.drawer-pane.active {
+  visibility: visible;
 }
 #ipc-log-body {
   flex: 1;
@@ -5588,17 +5640,17 @@ body {
       <p>No sessions yet</p>
       <p class="hint">Click <strong>+</strong> to create one</p>
     </div>
-    <div id="ipc-log" class="collapsed">
-      <div id="ipc-log-header">
-        <span class="ipc-title">IPC Traffic</span>
-        <span class="ipc-count" id="ipc-count">0</span>
-        <button id="ipc-export" title="Save log as a text file" type="button">Export</button>
-        <button id="ipc-clear" title="Clear log" type="button">Clear</button>
-        <button id="ipc-toggle" title="Toggle panel" type="button">▲</button>
+    <!-- The bottom drawer is a TAB HOST (drawer-host.js): the strip, the panes
+         and the per-tenant action groups are all built at runtime from the
+         register() calls, so a tenant's markup lives with the tenant and this
+         stays a shell. -->
+    <div id="drawer" class="collapsed">
+      <div id="drawer-header">
+        <div id="drawer-tabs"></div>
+        <div id="drawer-actions"></div>
+        <button id="drawer-toggle" title="Toggle panel" type="button">▲</button>
       </div>
-      <div id="ipc-log-body">
-        <div id="ipc-empty">No messages yet. Inter-agent DMs will appear here.</div>
-      </div>
+      <div id="drawer-panes"></div>
     </div>
   </div>
 
@@ -20325,6 +20377,193 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/drawer-host.js
+  var require_drawer_host = __commonJS({
+    "renderer/drawer-host.js"(exports, module) {
+      var TAB_IDS = Object.freeze(["log", "activity", "ctl", "term"]);
+      var BADGE_MAX = 99;
+      function createDrawerHost({ sessions, getActiveSession }) {
+        const drawer = document.getElementById("drawer");
+        const drawerHeader = document.getElementById("drawer-header");
+        const tabsEl = document.getElementById("drawer-tabs");
+        const actionsEl = document.getElementById("drawer-actions");
+        const toggleBtn = document.getElementById("drawer-toggle");
+        const panesEl = document.getElementById("drawer-panes");
+        const tenants = /* @__PURE__ */ new Map();
+        let activeId = null;
+        const isCollapsed = () => drawer.classList.contains("collapsed");
+        const isVisible = (id) => !isCollapsed() && activeId === id;
+        function renderBadge(rec) {
+          rec.badgeEl.textContent = rec.unread > BADGE_MAX ? `${BADGE_MAX}+` : String(rec.unread);
+          rec.badgeEl.classList.toggle("zero", rec.unread === 0);
+          rec.badgeEl.classList.toggle("attention", rec.attention && rec.unread > 0);
+        }
+        function clearBadge(rec) {
+          rec.unread = 0;
+          rec.attention = false;
+          renderBadge(rec);
+        }
+        function mountIfNeeded(rec) {
+          if (rec.mounted) return;
+          rec.mounted = true;
+          if (rec.def.mount) rec.def.mount(rec.pane, rec.actions);
+        }
+        function dispatchShow(rec) {
+          requestAnimationFrame(() => {
+            if (rec.shown || !isVisible(rec.id)) return;
+            rec.shown = true;
+            if (rec.def.onShow) rec.def.onShow();
+            dispatchResize(rec);
+          });
+        }
+        function dispatchHide(rec) {
+          if (!rec.shown) return;
+          rec.shown = false;
+          if (rec.def.onHide) rec.def.onHide();
+        }
+        function dispatchResize(rec) {
+          if (rec.pendingResize) return;
+          rec.pendingResize = true;
+          requestAnimationFrame(() => {
+            rec.pendingResize = false;
+            if (isVisible(rec.id) && rec.def.onResize) rec.def.onResize();
+          });
+        }
+        function refitSessionTerminal() {
+          if (getActiveSession()) {
+            const s = sessions.get(getActiveSession());
+            if (s) {
+              requestAnimationFrame(() => {
+                s.fitAddon.fit();
+                window.api.resizeSession(getActiveSession(), s.terminal.cols, s.terminal.rows);
+              });
+            }
+          }
+        }
+        function select(id) {
+          const rec = tenants.get(id);
+          if (!rec || rec.id === activeId) return;
+          const prev = tenants.get(activeId);
+          if (prev) {
+            prev.pane.classList.remove("active");
+            prev.tabEl.classList.remove("active");
+            if (prev.actions.parentNode) prev.actions.remove();
+            dispatchHide(prev);
+          }
+          activeId = id;
+          rec.pane.classList.add("active");
+          rec.tabEl.classList.add("active");
+          actionsEl.appendChild(rec.actions);
+          mountIfNeeded(rec);
+          clearBadge(rec);
+          if (!isCollapsed()) dispatchShow(rec);
+        }
+        function toggle() {
+          drawer.classList.toggle("collapsed");
+          const expanded = !isCollapsed();
+          document.getElementById("main").classList.toggle("drawer-expanded", expanded);
+          const rec = tenants.get(activeId);
+          if (rec) {
+            if (expanded) {
+              clearBadge(rec);
+              dispatchShow(rec);
+            } else {
+              dispatchHide(rec);
+            }
+          }
+          refitSessionTerminal();
+        }
+        function open(id) {
+          if (!tenants.has(id)) return;
+          select(id);
+          if (isCollapsed()) toggle();
+        }
+        function register(def) {
+          if (!TAB_IDS.includes(def.id)) throw new Error(`drawer: unknown tab id ${def.id}`);
+          if (def.available && !def.available()) return () => {
+          };
+          const pane = document.createElement("div");
+          pane.className = "drawer-pane";
+          pane.dataset.tab = def.id;
+          panesEl.appendChild(pane);
+          const actions = document.createElement("div");
+          actions.className = "drawer-action-group";
+          const tabEl = document.createElement("button");
+          tabEl.type = "button";
+          tabEl.className = "drawer-tab";
+          tabEl.dataset.tab = def.id;
+          const labelEl = document.createElement("span");
+          labelEl.className = "drawer-tab-label";
+          labelEl.textContent = def.label || def.id;
+          const badgeEl = document.createElement("span");
+          badgeEl.className = "drawer-badge zero";
+          badgeEl.textContent = "0";
+          tabEl.appendChild(labelEl);
+          tabEl.appendChild(badgeEl);
+          tabEl.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (def.id === activeId && !isCollapsed()) {
+              toggle();
+              return;
+            }
+            select(def.id);
+            if (isCollapsed()) toggle();
+          });
+          const rec = {
+            id: def.id,
+            def,
+            pane,
+            actions,
+            tabEl,
+            badgeEl,
+            unread: 0,
+            attention: false,
+            mounted: false,
+            shown: false,
+            // the onShow/onHide edge state (rule 2)
+            pendingResize: false
+          };
+          tenants.set(def.id, rec);
+          const after = TAB_IDS.slice(TAB_IDS.indexOf(def.id) + 1).map((id) => tenants.get(id)).find(Boolean);
+          tabsEl.insertBefore(tabEl, after ? after.tabEl : null);
+          if (activeId === null) selectFirst(rec);
+          return function notify(level) {
+            if (isVisible(rec.id)) return;
+            rec.unread++;
+            if (level === "attention") rec.attention = true;
+            renderBadge(rec);
+          };
+        }
+        function selectFirst(rec) {
+          activeId = rec.id;
+          rec.pane.classList.add("active");
+          rec.tabEl.classList.add("active");
+          actionsEl.appendChild(rec.actions);
+          mountIfNeeded(rec);
+          if (!isCollapsed()) dispatchShow(rec);
+        }
+        function hasFocus() {
+          return panesEl.contains(document.activeElement);
+        }
+        drawerHeader.addEventListener("click", (e) => {
+          if (e.target.closest("button")) return;
+          toggle();
+        });
+        toggleBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggle();
+        });
+        new ResizeObserver(() => {
+          const rec = tenants.get(activeId);
+          if (rec && isVisible(rec.id)) dispatchResize(rec);
+        }).observe(panesEl);
+        window.api.onRequestOpenIpcLog(() => open("log"));
+        return { register, open, toggle, hasFocus };
+      }
+      module.exports = { createDrawerHost, TAB_IDS };
+    }
+  });
+
   // renderer/lib/ipc-export.js
   var require_ipc_export = __commonJS({
     "renderer/lib/ipc-export.js"(exports, module) {
@@ -20356,51 +20595,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/ipc-log.js"(exports, module) {
       var { esc } = require_format();
       var { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
-      function createIpcLog({ sessions, getActiveSession }) {
-        const ipcLog = document.getElementById("ipc-log");
-        const ipcLogHeader = document.getElementById("ipc-log-header");
-        const ipcLogBody = document.getElementById("ipc-log-body");
-        const ipcEmpty = document.getElementById("ipc-empty");
-        const ipcCount = document.getElementById("ipc-count");
-        const ipcExportBtn = document.getElementById("ipc-export");
-        const ipcClearBtn = document.getElementById("ipc-clear");
-        const ipcToggleBtn = document.getElementById("ipc-toggle");
+      function createIpcLog({ host }) {
+        let ipcLogBody = null;
+        let ipcEmpty = null;
+        let notify = () => {
+        };
         let ipcMessageCount = 0;
-        let unreadIpcCount = 0;
         const exportLines = [];
         let exportDropped = 0;
-        function updateIpcCount() {
-          ipcCount.textContent = String(unreadIpcCount);
-          ipcCount.classList.toggle("zero", unreadIpcCount === 0);
-        }
-        updateIpcCount();
-        function toggleIpcLog() {
-          ipcLog.classList.toggle("collapsed");
-          const expanded = !ipcLog.classList.contains("collapsed");
-          document.getElementById("main").classList.toggle("ipc-expanded", expanded);
-          if (expanded) {
-            unreadIpcCount = 0;
-            updateIpcCount();
-            ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-          }
-          if (getActiveSession()) {
-            const s = sessions.get(getActiveSession());
-            if (s) {
-              requestAnimationFrame(() => {
-                s.fitAddon.fit();
-                window.api.resizeSession(getActiveSession(), s.terminal.cols, s.terminal.rows);
-              });
-            }
-          }
-        }
         function clearIpcLog() {
           ipcLogBody.innerHTML = "";
           ipcLogBody.appendChild(ipcEmpty);
           ipcMessageCount = 0;
-          unreadIpcCount = 0;
           exportLines.length = 0;
           exportDropped = 0;
-          updateIpcCount();
         }
         function exportIpcLog() {
           const head = exportDropped > 0 ? [`# ${exportDropped} older message(s) dropped (buffer keeps the last ${MAX_EXPORT_LINES})`] : [];
@@ -20413,30 +20621,38 @@ ${m[2].replace(/^\r?\n/, "")}`;
           a.click();
           setTimeout(() => URL.revokeObjectURL(url), 1e4);
         }
-        ipcLogHeader.addEventListener("click", (e) => {
-          if (e.target.closest("button")) return;
-          toggleIpcLog();
-        });
-        ipcToggleBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          toggleIpcLog();
-        });
-        ipcClearBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          clearIpcLog();
-        });
-        ipcExportBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          exportIpcLog();
-        });
-        function appendIpcEntry(msg) {
+        function mount(pane, actions) {
+          pane.innerHTML = `
+      <div id="ipc-log-body">
+        <div id="ipc-empty">No messages yet. Inter-agent DMs will appear here.</div>
+      </div>`;
+          ipcLogBody = pane.querySelector("#ipc-log-body");
+          ipcEmpty = pane.querySelector("#ipc-empty");
+          const exportBtn = document.createElement("button");
+          exportBtn.type = "button";
+          exportBtn.id = "ipc-export";
+          exportBtn.title = "Save log as a text file";
+          exportBtn.textContent = "Export";
+          const clearBtn = document.createElement("button");
+          clearBtn.type = "button";
+          clearBtn.id = "ipc-clear";
+          clearBtn.title = "Clear log";
+          clearBtn.textContent = "Clear";
+          exportBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            exportIpcLog();
+          });
+          clearBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            clearIpcLog();
+          });
+          actions.appendChild(exportBtn);
+          actions.appendChild(clearBtn);
+        }
+        function renderEntry(msg) {
+          if (!ipcLogBody) return;
           if (ipcMessageCount === 0 && ipcEmpty.parentNode === ipcLogBody) ipcEmpty.remove();
           ipcMessageCount++;
-          exportLines.push(formatIpcLine(msg, /* @__PURE__ */ new Date()));
-          if (exportLines.length > MAX_EXPORT_LINES) {
-            exportLines.shift();
-            exportDropped++;
-          }
           const time = (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
           const entry = document.createElement("div");
           entry.className = "ipc-entry";
@@ -20448,18 +20664,29 @@ ${m[2].replace(/^\r?\n/, "")}`;
           ipcLogBody.appendChild(entry);
           const nearBottom = ipcLogBody.scrollHeight - ipcLogBody.scrollTop - ipcLogBody.clientHeight < 40;
           if (nearBottom) ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-          if (ipcLog.classList.contains("collapsed")) {
-            unreadIpcCount++;
-            updateIpcCount();
-          }
         }
+        function appendIpcEntry(msg) {
+          exportLines.push(formatIpcLine(msg, /* @__PURE__ */ new Date()));
+          if (exportLines.length > MAX_EXPORT_LINES) {
+            exportLines.shift();
+            exportDropped++;
+          }
+          renderEntry(msg);
+          notify("activity");
+        }
+        notify = host.register({
+          id: "log",
+          label: "IPC Traffic",
+          available: () => true,
+          mount,
+          onShow() {
+            ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
+          }
+        });
         window.api.onIpcMessage((msg) => {
           appendIpcEntry(msg);
         });
-        window.api.onRequestOpenIpcLog(() => {
-          if (ipcLog.classList.contains("collapsed")) toggleIpcLog();
-        });
-        return { appendIpcEntry, toggleIpcLog };
+        return { appendIpcEntry };
       }
       module.exports = { createIpcLog };
     }
@@ -26620,6 +26847,7 @@ ${detail}` });
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
         session
       ));
+      var { createDrawerHost } = require_drawer_host();
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
       var { createPotDrawer } = require_pot_drawer();
@@ -29532,7 +29760,8 @@ Click for live activity`;
         setTimeout(() => el.classList.remove("mention-pulse"), 2e3);
         if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(mentionNotice(name, mtype));
       });
-      var { appendIpcEntry } = createIpcLog({ sessions, getActiveSession: () => activeSession });
+      var drawerHost = createDrawerHost({ sessions, getActiveSession: () => activeSession });
+      var { appendIpcEntry } = createIpcLog({ host: drawerHost });
       createInboxDrawer();
       createPotDrawer();
       var {
@@ -29593,6 +29822,7 @@ Click for live activity`;
       window.api.onZoomNudge(refitActiveTerminal);
       document.addEventListener("keydown", (e) => {
         if (!e.metaKey || e.altKey || e.ctrlKey) return;
+        if (drawerHost.hasFocus()) return;
         if (e.key === "t") {
           e.preventDefault();
           e.stopPropagation();
@@ -29647,6 +29877,7 @@ Click for live activity`;
         if (!window.__CLODEX_WEB__) return;
         const action = altChordAction(e);
         if (!action) return;
+        if (drawerHost.hasFocus()) return;
         e.preventDefault();
         e.stopPropagation();
         if (action.type === "new") {

@@ -252,7 +252,13 @@ adapter that hosts it. The modules below are what the engine assembles.
   the consolidated `⚙ session ▾` menu, unit-tested), `session-info-view.js`
   (the ⓘ panel's rows as data — pure so the four cost scopes and their labels
   are unit-testable; the 07-15 three-scopes ruling is pinned there).
-- **Islands** (own state + DOM, `init*(deps)`): `ipc-log.js`,
+- **Islands** (own state + DOM, `init*(deps)`): `drawer-host.js` (the bottom
+  drawer as a TAB HOST — owns collapsed state, the tab strip, badges, the
+  `#main` layout contract and pane swapping; tenants register with
+  `{id, label, available, mount, onShow, onHide, onResize}` and get a
+  `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
+  Its header comment carries four rules a tenant author must not re-derive),
+  `ipc-log.js` (the `log` tenant: rows + export only),
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
   (prompts/agents/skills drawers), `subagent-popover.js`,
   `inbox-drawer.js` (operator inbox for `[agent:notify-user]` notes +

@@ -212,6 +212,12 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     openWirescopeWindow: (url) => openExternal(url),
     refreshAppMenu: () => {}, refreshTrayMenu: () => {}, setUiTheme: () => {},
     workspaceOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.workspaceId) || DEFAULT_WORKSPACE_ID,
+    // The drawer's service-backed tenants (`ctl:*` verb runner, `wterm:*`
+    // workbench PTY) must never have handlers in THIS map: onFrame dispatches
+    // any registered channel by name, so registration IS the capability. Set
+    // here rather than inherited from the engine seam so the guarantee holds
+    // for whatever engine this host is handed.
+    enableDrawerServices: false,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
 

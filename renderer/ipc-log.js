@@ -1,73 +1,35 @@
-// ipc-log.js — the collapsible IPC-traffic log drawer at the bottom of the
-// window (read-only view of every inter-agent message). Owns its DOM handles,
-// its two counters (total + unread), and its own IPC subscription; renderer.js
-// keeps only the `appendIpcEntry` handle it needs to log a synthetic
-// deploy-failure line.
+// ipc-log.js — the IPC-traffic log: a read-only view of every inter-agent
+// message, and the drawer host's first tenant (tab id `log`). Owns its rows,
+// its export mirror and its own IPC subscription; renderer.js keeps only the
+// `appendIpcEntry` handle it needs to log a synthetic deploy-failure line.
 //
-// FACTORY (R2): created via createIpcLog(deps). toggleIpcLog refits the active
-// terminal after the layout shift, which needs core state — so `sessions` (the
-// live Map) and `getActiveSession` (a getter, since activeSession is a
-// reassignable let in renderer.js) are passed in. Those two are the only
-// cross-island reach-ins; everything else is self-contained.
+// The drawer's toggle, layout flip, terminal refit and unread counter moved to
+// drawer-host.js — this module now learns about traffic (notify) and about
+// becoming visible (onShow) and owns nothing else about the drawer.
 //
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee.
+// guarantee for the row/export half that stayed.
 
 const { esc } = require('./lib/format');
 const { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
 
-function createIpcLog({ sessions, getActiveSession }) {
-  const ipcLog = document.getElementById('ipc-log');
-  const ipcLogHeader = document.getElementById('ipc-log-header');
-  const ipcLogBody = document.getElementById('ipc-log-body');
-  const ipcEmpty = document.getElementById('ipc-empty');
-  const ipcCount = document.getElementById('ipc-count');
-  const ipcExportBtn = document.getElementById('ipc-export');
-  const ipcClearBtn = document.getElementById('ipc-clear');
-  const ipcToggleBtn = document.getElementById('ipc-toggle');
+function createIpcLog({ host }) {
+  let ipcLogBody = null;
+  let ipcEmpty = null;
+  let notify = () => {};
 
   let ipcMessageCount = 0;
-  let unreadIpcCount = 0;
   // Plain-text mirror of the entries for Export — the DOM is display-only.
   // Capped; oldest lines drop first (the file says so when it happens).
   const exportLines = [];
   let exportDropped = 0;
 
-  function updateIpcCount() {
-    ipcCount.textContent = String(unreadIpcCount);
-    ipcCount.classList.toggle('zero', unreadIpcCount === 0);
-  }
-  updateIpcCount();
-
-  function toggleIpcLog() {
-    ipcLog.classList.toggle('collapsed');
-    const expanded = !ipcLog.classList.contains('collapsed');
-    document.getElementById('main').classList.toggle('ipc-expanded', expanded);
-    if (expanded) {
-      unreadIpcCount = 0;
-      updateIpcCount();
-      ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-    }
-    // Refit the terminal after layout shift
-    if (getActiveSession()) {
-      const s = sessions.get(getActiveSession());
-      if (s) {
-        requestAnimationFrame(() => {
-          s.fitAddon.fit();
-          window.api.resizeSession(getActiveSession(), s.terminal.cols, s.terminal.rows);
-        });
-      }
-    }
-  }
-
   function clearIpcLog() {
     ipcLogBody.innerHTML = '';
     ipcLogBody.appendChild(ipcEmpty);
     ipcMessageCount = 0;
-    unreadIpcCount = 0;
     exportLines.length = 0;
     exportDropped = 0;
-    updateIpcCount();
   }
 
   function exportIpcLog() {
@@ -85,23 +47,37 @@ function createIpcLog({ sessions, getActiveSession }) {
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
-  ipcLogHeader.addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    toggleIpcLog();
-  });
-  ipcToggleBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleIpcLog(); });
-  ipcClearBtn.addEventListener('click', (e) => { e.stopPropagation(); clearIpcLog(); });
-  ipcExportBtn.addEventListener('click', (e) => { e.stopPropagation(); exportIpcLog(); });
+  function mount(pane, actions) {
+    pane.innerHTML = `
+      <div id="ipc-log-body">
+        <div id="ipc-empty">No messages yet. Inter-agent DMs will appear here.</div>
+      </div>`;
+    ipcLogBody = pane.querySelector('#ipc-log-body');
+    ipcEmpty = pane.querySelector('#ipc-empty');
 
-  function appendIpcEntry(msg) {
+    const exportBtn = document.createElement('button');
+    exportBtn.type = 'button';
+    exportBtn.id = 'ipc-export';
+    exportBtn.title = 'Save log as a text file';
+    exportBtn.textContent = 'Export';
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.id = 'ipc-clear';
+    clearBtn.title = 'Clear log';
+    clearBtn.textContent = 'Clear';
+    exportBtn.addEventListener('click', (e) => { e.stopPropagation(); exportIpcLog(); });
+    clearBtn.addEventListener('click', (e) => { e.stopPropagation(); clearIpcLog(); });
+    actions.appendChild(exportBtn);
+    actions.appendChild(clearBtn);
+  }
+
+  function renderEntry(msg) {
+    // Unmounted: the tab was declined by available(), so there is no pane to
+    // render into. The export mirror above still records the line, and
+    // peers-ui's deploy-failure call must not throw on the way past.
+    if (!ipcLogBody) return;
     if (ipcMessageCount === 0 && ipcEmpty.parentNode === ipcLogBody) ipcEmpty.remove();
     ipcMessageCount++;
-
-    exportLines.push(formatIpcLine(msg, new Date()));
-    if (exportLines.length > MAX_EXPORT_LINES) {
-      exportLines.shift();
-      exportDropped++;
-    }
 
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const entry = document.createElement('div');
@@ -118,23 +94,35 @@ function createIpcLog({ sessions, getActiveSession }) {
     // Auto-scroll if already near the bottom
     const nearBottom = ipcLogBody.scrollHeight - ipcLogBody.scrollTop - ipcLogBody.clientHeight < 40;
     if (nearBottom) ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-
-    // Update unread counter if panel is collapsed
-    if (ipcLog.classList.contains('collapsed')) {
-      unreadIpcCount++;
-      updateIpcCount();
-    }
   }
+
+  function appendIpcEntry(msg) {
+    exportLines.push(formatIpcLine(msg, new Date()));
+    if (exportLines.length > MAX_EXPORT_LINES) {
+      exportLines.shift();
+      exportDropped++;
+    }
+
+    renderEntry(msg);
+
+    // The host decides whether this counts as unread — it knows whether the
+    // log tab is the visible one.
+    notify('activity');
+  }
+
+  notify = host.register({
+    id: 'log',
+    label: 'IPC Traffic',
+    available: () => true,
+    mount,
+    onShow() { ipcLogBody.scrollTop = ipcLogBody.scrollHeight; },
+  });
 
   window.api.onIpcMessage((msg) => {
     appendIpcEntry(msg);
   });
 
-  window.api.onRequestOpenIpcLog(() => {
-    if (ipcLog.classList.contains('collapsed')) toggleIpcLog();
-  });
-
-  return { appendIpcEntry, toggleIpcLog };
+  return { appendIpcEntry };
 }
 
 module.exports = { createIpcLog };
