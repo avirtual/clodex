@@ -44,6 +44,16 @@ blocks a release.
   another tab. If a very long-running subagent overflows the history we keep,
   the feed says so at the top rather than quietly closing the gap.
 
+- **Feed rows say what a tool did, not just which tool ran.** A busy subagent
+  read `Bash Bash Read Bash Bash` — every row true and the column as a whole
+  useless. Each row now carries the argument that identifies the call: the
+  command for `Bash`, the pattern for `Grep` and `Glob`, the path for a file
+  tool, the description for a spawned `Task`. Snippets are trimmed to their
+  first line and capped, so a heredoc or a multi-line script stays one row.
+  This costs nothing extra on the wire: the arguments were already streaming
+  past the collector that watches which files get touched, and it now keeps
+  the part it was throwing away.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link
