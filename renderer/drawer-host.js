@@ -37,8 +37,16 @@
 //      toggle. renderer.js's observer watches #terminal-container only and
 //      refits the session terminal — nothing else watches the drawer.
 //   4. mount() runs BEFORE the pane has geometry (the click path selects, then
-//      expands), so a tenant that measures itself must do it in onShow, never
-//      in mount(). Build DOM in mount; call terminal.open()/fit() from onShow.
+//      expands), so a tenant that measures itself must not do it in mount().
+//      But onShow is not the authoritative measurement either: it fires one rAF
+//      (~16ms) after the collapse class flips, while #drawer transitions its
+//      height over 200ms — so the pane there has non-zero but NOT FINAL
+//      geometry, and a fit() computes rows for a mid-transition box. So: build
+//      DOM in mount, OPEN in onShow, FIT in onResize. The ResizeObserver fires
+//      through the transition and dispatchResize's per-frame coalescing always
+//      schedules once more after the last callback, so the final onResize
+//      carries settled geometry. A tenant that fits only in onShow is wrong in a
+//      way that looks right, because the numbers it reads are plausible.
 //
 // DOM-bound, so no unit tests per the R1 rule.
 

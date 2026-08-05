@@ -49,7 +49,8 @@ const { createTermSearch } = require('./term-search');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
-const { initSubagentPopover } = require('./subagent-popover');
+const { createActivityTab } = require('./activity-tab');
+const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
 const { initReportPanel } = require('./popovers/report-panel');
@@ -725,7 +726,9 @@ function removeSessionFromSidebar(name) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (el) el.remove();
   sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
-  if (isSubagentPopoverForParent(name)) closeSubagentPopover();
+  // The parent is gone, so its feeds can never update again — this is what
+  // bounds the drawer's retained history against a long-lived window.
+  dropActivityFeeds(name);
   sidebarMeta.delete(name);
   if (typeof refreshSidebarView === 'function') refreshSidebarView();
 }
@@ -1221,7 +1224,9 @@ function switchSession(name) {
   if (!sessions.has(name)) return;
 
   if (isSearchOpen()) closeSearch();
-  if (isSubagentPopoverOpen()) closeSubagentPopover();
+  // No subagent teardown here on purpose: the Activity feed survives a session
+  // switch. The popover this replaced had to close (it was anchored to a row);
+  // surviving the switch is the drawer's whole point.
 
   activeSession = name;
 
@@ -2816,6 +2821,9 @@ window.api.onSessionProxy((name, payload) => {
   proxyState.set(name, { payload, at: Date.now() });
   applyWarmBadge(name);
   applySubagents(name);
+  // The drawer's chip strip is window-wide, so it re-reads all of proxyState
+  // rather than this one payload — no argument to pass.
+  refreshActivityChips();
   if (name === activeSession) renderProxyBar();
 });
 
@@ -2836,12 +2844,9 @@ function applyThinkBadge(el) {
 }
 
 // Task/background subagents share the parent's session_id on the wire, so they arrive in
-// the parent's payload.subagents. There is NO wire signal for "subagent done" — a Task sub
-// just stops making requests — so done/aging is POLICY we own here: effective inactivity =
-// lastActiveS + age-of-this-payload; under ACTIVE_S → live, past DROP_S → stop rendering
-// (the entry lingers in the array until the whole session is swept).
-const SUBAGENT_ACTIVE_S = 30;   // seen within this window → "live"
-const SUBAGENT_DROP_S = 300;    // stale past this → drop the row entirely
+// the parent's payload.subagents. Whether one is live/done/dropped is POLICY (there is no
+// wire signal for "subagent done") and it lives in lib/subagent-policy.js — the drawer's
+// Activity chips classify through the same copy, so the two surfaces cannot disagree.
 
 function subagentRows(name) {
   return sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`);
@@ -2858,16 +2863,15 @@ function applySubagents(name) {
 
   const live = [];
   for (const s of subs) {
-    const eff = (s.lastActiveS == null) ? 0 : s.lastActiveS + ageS;
-    if (eff > SUBAGENT_DROP_S) continue;
-    live.push({ s, state: eff < SUBAGENT_ACTIVE_S ? 'active' : 'done' });
+    const state = classifySubagent(s, ageS);
+    if (state) live.push({ s, state });
   }
 
   const existing = subagentRows(name);
   if (!live.length) { existing.forEach((el) => el.remove()); return; }
 
-  // Reconcile by key: update in place where possible so a popped-open popover's
-  // anchor row survives a re-render, append the rest in order after the parent.
+  // Reconcile by key: update in place where possible so a row's identity (and
+  // its click handler) survives a re-render, append the rest after the parent.
   const have = new Map();
   existing.forEach((el) => have.set(el.dataset.key, el));
   const seen = new Set();
@@ -2883,7 +2887,7 @@ function applySubagents(name) {
       row.innerHTML = '<span class="child-dot"></span><span class="child-label"></span><span class="child-meta"></span>';
       row.addEventListener('click', (e) => {
         e.stopPropagation();
-        openSubagentPopover(name, s.key, row);
+        openActivityFeed(name, s.key, s.label || s.key);
       });
     }
     row.dataset.state = state;
@@ -2898,17 +2902,11 @@ function applySubagents(name) {
     anchor = row;
   }
   existing.forEach((el) => { if (!seen.has(el.dataset.key)) el.remove(); });
-
-  const openKey = subagentPopoverKeyForParent(name);
-  if (openKey && !seen.has(openKey)) {
-    closeSubagentPopover();
-  }
+  // A sub that ages out of the sidebar does NOT close its Activity feed: the
+  // captured history is the reason the drawer replaced the popover, and the
+  // chip stays (styled `ended`) for as long as it holds turns.
 }
 
-const {
-  openSubagentPopover, closeSubagentPopover,
-  isSubagentPopoverForParent, isSubagentPopoverOpen, subagentPopoverKeyForParent,
-} = initSubagentPopover();
 
 initSessionHovercard({
   sessionList, proxyState, ctxPct, ctxTokens,
@@ -3144,6 +3142,13 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 // the drawer refits through the SAME peer-aware path as every other caller.
 const drawerHost = createDrawerHost({ refitActiveTerminal });
 const { appendIpcEntry } = createIpcLog({ host: drawerHost });
+// Registered after the log, so the log stays the boot-active tab (drawer-host
+// activates the first registration); the strip's ORDER is the host's frozen id
+// list, not this. The three handles are called from event handlers only, so
+// this may sit below their call sites.
+const {
+  openActivityFeed, refreshChips: refreshActivityChips, dropParent: dropActivityFeeds,
+} = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
 
 createInboxDrawer();
 

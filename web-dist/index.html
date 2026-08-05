@@ -1022,35 +1022,6 @@ body {
 .child-meta:empty::before {
   content: none;
 }
-#subagent-popover {
-  position: fixed;
-  z-index: 50;
-  width: 760px;
-  max-width: calc(100vw - 16px);
-  max-height: 78vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--sidebar-bg);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  padding: 0;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
-}
-#subagent-popover.hidden {
-  display: none;
-}
-#subagent-popover .popover-title {
-  flex: 0 0 auto;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 13px 16px 11px;
-  border-bottom: 1px solid var(--border);
-}
-#subagent-popover-body {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 12px 16px 14px;
-}
 .subagent-detail-meta {
   font-size: 12px;
   color: var(--text-dim);
@@ -1085,12 +1056,6 @@ body {
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 6px;
-}
-.subagent-detail-asof {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-top: 10px;
-  text-align: right;
 }
 .subagent-detail-empty {
   font-size: 12px;
@@ -4667,6 +4632,92 @@ body {
   flex: 1;
   min-width: 0;
 }
+.activity-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--border);
+}
+.activity-chips-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 2px 0;
+}
+.activity-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 9px;
+  max-width: 260px;
+}
+.activity-chip:hover {
+  color: var(--text);
+}
+.activity-chip.selected {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.activity-chip-parent {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.activity-chip-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+.activity-chip[data-state=active] .activity-chip-dot {
+  background: #4ade80;
+}
+.activity-chip[data-state=done] {
+  opacity: 0.7;
+}
+.activity-chip[data-state=ended] {
+  opacity: 0.5;
+}
+.activity-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 14px;
+}
+.activity-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.activity-boundary {
+  font-style: italic;
+}
+.activity-asof {
+  margin-left: auto;
+}
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -4680,15 +4731,13 @@ body {
 #tools-popover,
 #skills-popover,
 #agents-popover,
-#intents-popover,
-#subagent-popover {
+#intents-popover {
   overflow: hidden;
 }
 #tools-popover,
 #skills-popover,
 #agents-popover,
 #intents-popover,
-#subagent-popover,
 #ctx-popover,
 #cost-popover,
 #bust-popover,
@@ -5598,10 +5647,6 @@ body {
     <div id="session-info-popover" class="hidden">
       <div class="popover-title"><span>Session Info — <span id="session-info-popover-name"></span></span><button type="button" class="popover-close" id="session-info-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="session-info-popover-body"></div>
-    </div>
-    <div id="subagent-popover" class="hidden">
-      <div class="popover-title"><span><span id="subagent-popover-name"></span></span><button type="button" class="popover-close" id="subagent-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div id="subagent-popover-body"></div>
     </div>
     <div id="bust-popover" class="hidden">
       <div class="popover-title"><span>Cache Busts — <span id="bust-popover-name"></span></span><button type="button" class="popover-close" id="bust-popover-close" title="Close" aria-label="Close">&times;</button></div>
@@ -21655,189 +21700,369 @@ helper=${d.helperPath}`;
     }
   });
 
-  // renderer/subagent-popover.js
-  var require_subagent_popover = __commonJS({
-    "renderer/subagent-popover.js"(exports, module) {
-      var { esc, fmtCountdown } = require_format();
-      function initSubagentPopover() {
-        const subagentPopover = document.getElementById("subagent-popover");
-        const subagentPopoverName = document.getElementById("subagent-popover-name");
-        const subagentPopoverBody = document.getElementById("subagent-popover-body");
-        const SUBAGENT_DETAIL_MS = 1500;
-        let subagentPollTimer = null;
-        let subagentFeed = [];
-        let subagentFeedSeen = /* @__PURE__ */ new Set();
-        let subagentFeedMeta = null;
-        let subagentFeedEnded = false;
-        function resetSubagentFeed() {
-          subagentFeed = [];
-          subagentFeedSeen = /* @__PURE__ */ new Set();
-          subagentFeedMeta = null;
-          subagentFeedEnded = false;
-        }
-        function closeSubagentPopover() {
-          if (subagentPollTimer) {
-            clearInterval(subagentPollTimer);
-            subagentPollTimer = null;
-          }
-          subagentPopover.classList.add("hidden");
-          subagentPopover.dataset.name = "";
-          subagentPopover.dataset.key = "";
-          resetSubagentFeed();
-        }
-        function openSubagentPopover(name, key, anchorRow) {
-          if (!subagentPopover.classList.contains("hidden") && subagentPopover.dataset.name === name && subagentPopover.dataset.key === key) {
-            return closeSubagentPopover();
-          }
-          if (subagentPollTimer) {
-            clearInterval(subagentPollTimer);
-            subagentPollTimer = null;
-          }
-          subagentPopover.dataset.name = name;
-          subagentPopover.dataset.key = key;
-          resetSubagentFeed();
-          const label = anchorRow.querySelector(".child-label")?.textContent || key;
-          subagentPopoverName.textContent = label;
-          subagentPopoverBody.innerHTML = '<div class="subagent-detail-empty">Loading\u2026</div>';
-          subagentPopover.classList.remove("hidden");
-          const r = anchorRow.getBoundingClientRect();
-          const w = subagentPopover.offsetWidth || 760;
-          const hMax = window.innerHeight * 0.78;
-          subagentPopover.style.left = `${Math.max(8, Math.min(r.right + 6, window.innerWidth - w - 8))}px`;
-          subagentPopover.style.top = `${Math.max(8, Math.min(r.top, window.innerHeight - hMax - 8))}px`;
-          subagentPopover.style.bottom = "auto";
-          const poll = () => fetchSubagentDetail(name, key);
-          poll();
-          subagentPollTimer = setInterval(poll, SUBAGENT_DETAIL_MS);
-        }
-        async function fetchSubagentDetail(name, key) {
-          const stillOpen = () => subagentPopover.dataset.name === name && subagentPopover.dataset.key === key && !subagentPopover.classList.contains("hidden");
-          if (!stillOpen()) return;
-          let res;
-          try {
-            res = await window.api.getProxySubagentDetail(name, key, 800);
-          } catch (e) {
-            res = { ok: false, error: String(e) };
-          }
-          if (!stillOpen()) return;
-          if (!res || !res.ok) {
-            if (!subagentFeed.length) {
-              subagentPopoverBody.innerHTML = `<div class="subagent-detail-empty">${esc(res && res.error ? res.error : "unavailable")}</div>`;
-            }
-            return;
-          }
-          const d = res.data || {};
+  // renderer/lib/subagent-feed.js
+  var require_subagent_feed = __commonJS({
+    "renderer/lib/subagent-feed.js"(exports, module) {
+      var MAX_FEED_ENTRIES = 500;
+      function createSubagentFeed() {
+        let entries = [];
+        let seen = /* @__PURE__ */ new Set();
+        let meta = null;
+        let ended = false;
+        let reason = null;
+        function ingest(d) {
+          if (!d || typeof d !== "object") return { appended: false };
           if (d.found === false) {
-            if (subagentFeed.length) {
-              if (d.reason === "session_cold" && !subagentFeedEnded) {
-                subagentFeedEnded = true;
-                if (subagentPollTimer) {
-                  clearInterval(subagentPollTimer);
-                  subagentPollTimer = null;
-                }
-                renderSubagentFeed();
-              }
-              return;
-            }
-            const reason = d.reason === "session_cold" ? "Session ended \u2014 no live activity." : d.reason === "no_request_body" ? "No activity captured yet." : "Subagent is no longer tracked.";
-            subagentPopoverBody.innerHTML = `<div class="subagent-detail-empty">${esc(reason)}</div>`;
-            if (d.reason === "session_cold") closeSubagentPopover();
-            return;
+            reason = d.reason || null;
+            if (d.reason === "session_cold") ended = true;
+            return { appended: false };
           }
-          const appended = ingestSubagentTurn(d);
-          const sc = subagentPopoverBody;
-          const nearBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-          renderSubagentFeed();
-          if (appended || nearBottom) sc.scrollTop = sc.scrollHeight;
-        }
-        function ingestSubagentTurn(d) {
-          if (!subagentFeedMeta && (d.role || d.model)) {
-            subagentFeedMeta = { role: d.role || null, model: d.model || null };
+          reason = null;
+          if (!meta && (d.role || d.model)) {
+            meta = { role: d.role || null, model: d.model || null };
           }
-          if (!d.last_tool && !d.last_text) return false;
+          if (!d.last_tool && !d.last_text) return { appended: false };
           const sig = typeof d.turn_ts === "number" ? `t:${d.turn_ts}` : `c:${d.last_tool || ""}|${(d.last_text || "").slice(0, 80)}`;
-          if (subagentFeedSeen.has(sig)) return false;
-          subagentFeedSeen.add(sig);
-          subagentFeed.push({
+          if (seen.has(sig)) return { appended: false };
+          seen.add(sig);
+          entries.push({
             ts: typeof d.turn_ts === "number" ? d.turn_ts : null,
             tool: d.last_tool || null,
             toolInput: d.last_tool_input || null,
             truncated: !!d.truncated,
             text: d.last_text || null
           });
-          return true;
+          if (entries.length > MAX_FEED_ENTRIES) entries.shift();
+          return { appended: true };
         }
-        function subagentToolPreview(input) {
-          if (!input || typeof input !== "object") return "";
-          for (const k of ["command", "file_path", "path", "pattern", "query", "url", "prompt", "description"]) {
-            if (typeof input[k] === "string" && input[k]) return input[k];
+        return {
+          ingest,
+          entries: () => entries,
+          meta: () => meta,
+          ended: () => ended,
+          reason: () => reason
+        };
+      }
+      function toolPreview(input) {
+        if (!input || typeof input !== "object") return "";
+        for (const k of ["command", "file_path", "path", "pattern", "query", "url", "prompt", "description"]) {
+          if (typeof input[k] === "string" && input[k]) return input[k];
+        }
+        try {
+          return JSON.stringify(input);
+        } catch {
+          return "";
+        }
+      }
+      module.exports = { createSubagentFeed, toolPreview, MAX_FEED_ENTRIES };
+    }
+  });
+
+  // renderer/lib/subagent-policy.js
+  var require_subagent_policy = __commonJS({
+    "renderer/lib/subagent-policy.js"(exports, module) {
+      var SUBAGENT_ACTIVE_S = 30;
+      var SUBAGENT_DROP_S = 300;
+      function classifySubagent(sub, payloadAgeS) {
+        const lastActiveS = sub && sub.lastActiveS;
+        const eff = lastActiveS == null ? 0 : lastActiveS + payloadAgeS;
+        if (eff > SUBAGENT_DROP_S) return null;
+        return eff < SUBAGENT_ACTIVE_S ? "active" : "done";
+      }
+      module.exports = { classifySubagent, SUBAGENT_ACTIVE_S, SUBAGENT_DROP_S };
+    }
+  });
+
+  // renderer/activity-tab.js
+  var require_activity_tab = __commonJS({
+    "renderer/activity-tab.js"(exports, module) {
+      var { esc, fmtCountdown, fmtUsd } = require_format();
+      var { createSubagentFeed, toolPreview } = require_subagent_feed();
+      var { classifySubagent } = require_subagent_policy();
+      var DETAIL_MS = 1500;
+      var DETAIL_MAXLEN = 800;
+      var TOOL_ARG_MAX = 600;
+      var TEXT_MAX = 1200;
+      var MAX_RETAINED_FEEDS = 20;
+      var feedKeyOf = (name, key) => `${name} ${key}`;
+      function createActivityTab({ host, proxyState, proxyPollMs }) {
+        let chipsEl = null;
+        let bodyEl = null;
+        let asOfEl = null;
+        let notify = () => {
+        };
+        const feeds = /* @__PURE__ */ new Map();
+        const notified = /* @__PURE__ */ new Set();
+        let selected = null;
+        let pollTimer = null;
+        let tickTimer = null;
+        let gen = 0;
+        function liveSubs() {
+          const out = /* @__PURE__ */ new Map();
+          for (const [name, st] of proxyState) {
+            const p = st && st.payload;
+            const ageS = st ? (Date.now() - st.at) / 1e3 : 0;
+            if (!p || !p.linked || ageS > proxyPollMs * 4 / 1e3) continue;
+            if (!Array.isArray(p.subagents)) continue;
+            for (const sub of p.subagents) {
+              const state = classifySubagent(sub, ageS);
+              if (!state) continue;
+              out.set(feedKeyOf(name, sub.key), {
+                name,
+                key: sub.key,
+                label: sub.label || sub.key,
+                state,
+                sub
+              });
+            }
           }
-          try {
-            return JSON.stringify(input);
-          } catch {
-            return "";
+          return out;
+        }
+        function feedFor(name, key, label) {
+          const fk = feedKeyOf(name, key);
+          let rec = feeds.get(fk);
+          if (!rec) {
+            rec = { name, key, label: label || key, feed: createSubagentFeed() };
+            feeds.set(fk, rec);
+          } else if (label) {
+            rec.label = label;
+          }
+          return rec;
+        }
+        function pruneFeeds(live) {
+          if (feeds.size <= MAX_RETAINED_FEEDS) return;
+          for (const fk of feeds.keys()) {
+            if (feeds.size <= MAX_RETAINED_FEEDS) break;
+            if (fk === selected || live.has(fk)) continue;
+            feeds.delete(fk);
           }
         }
-        function renderSubagentFeed() {
-          const parts = [];
-          if (subagentFeedMeta) {
-            const meta = [];
-            if (subagentFeedMeta.role) meta.push(esc(subagentFeedMeta.role));
-            if (subagentFeedMeta.model) meta.push(esc(subagentFeedMeta.model));
-            if (meta.length) parts.push(`<div class="subagent-detail-meta">${meta.join(" \xB7 ")}</div>`);
+        function chipState(fk, live) {
+          const rec = feeds.get(fk);
+          if (rec && rec.feed.ended()) return "ended";
+          const l = live.get(fk);
+          return l ? l.state : "ended";
+        }
+        function noticeSubs(live) {
+          for (const [fk, l] of live) {
+            if (!notified.has(fk)) {
+              notified.add(fk);
+              notify("activity");
+            }
+            if (feeds.has(fk)) feedFor(l.name, l.key, l.label);
           }
-          if (!subagentFeed.length) {
-            parts.push('<div class="subagent-detail-empty">No activity captured yet.</div>');
-            subagentPopoverBody.innerHTML = parts.join("");
+        }
+        function buildChip(fk, meta) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "activity-chip";
+          chip.dataset.fk = fk;
+          chip.innerHTML = '<span class="activity-chip-dot"></span><span class="activity-chip-parent"></span><span class="activity-chip-label"></span>';
+          chip.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const rec = feeds.get(fk) || meta;
+            selectFeed(fk, rec.name, rec.key, rec.label);
+          });
+          return chip;
+        }
+        function updateChip(chip, fk, meta, live) {
+          const l = live.get(fk);
+          const sub = l && l.sub;
+          chip.dataset.state = chipState(fk, live);
+          chip.classList.toggle("selected", fk === selected);
+          const costTxt = sub && typeof sub.estUsd === "number" ? `~${fmtUsd(sub.estUsd)}` : "";
+          chip.title = `${meta.name} \u25B8 ${meta.label}${sub && sub.model ? " \xB7 " + sub.model : ""}${sub && sub.requests ? " \xB7 " + sub.requests + " turn" + (sub.requests === 1 ? "" : "s") : ""}${costTxt ? " \xB7 " + costTxt : ""}`;
+          chip.querySelector(".activity-chip-parent").textContent = meta.name;
+          chip.querySelector(".activity-chip-label").textContent = meta.label;
+        }
+        function renderChips() {
+          const live = liveSubs();
+          noticeSubs(live);
+          pruneFeeds(live);
+          if (!chipsEl) return;
+          const keys = [.../* @__PURE__ */ new Set([...live.keys(), ...feeds.keys()])].filter((fk) => live.has(fk) || feeds.has(fk));
+          let empty = chipsEl.querySelector(".activity-chips-empty");
+          if (!keys.length) {
+            chipsEl.querySelectorAll(".activity-chip").forEach((el) => el.remove());
+            if (!empty) {
+              empty = document.createElement("div");
+              empty.className = "activity-chips-empty";
+              empty.textContent = "No subagents running.";
+              chipsEl.appendChild(empty);
+            }
             return;
           }
-          subagentFeed.forEach((e) => {
+          if (empty) empty.remove();
+          const have = /* @__PURE__ */ new Map();
+          chipsEl.querySelectorAll(".activity-chip").forEach((el) => have.set(el.dataset.fk, el));
+          let anchor = null;
+          for (const fk of keys) {
+            const meta = live.get(fk) || feeds.get(fk);
+            const chip = have.get(fk) || buildChip(fk, meta);
+            updateChip(chip, fk, meta, live);
+            const next = anchor ? anchor.nextSibling : chipsEl.firstChild;
+            if (next !== chip) chipsEl.insertBefore(chip, next);
+            anchor = chip;
+          }
+          const keep = new Set(keys);
+          for (const [fk, el] of have) {
+            if (!keep.has(fk)) el.remove();
+          }
+        }
+        function renderFeed() {
+          if (!bodyEl) return;
+          const rec = selected && feeds.get(selected);
+          if (!rec) {
+            bodyEl.innerHTML = '<div class="subagent-detail-empty">Select a subagent above to follow what it is doing.</div>';
+            renderAsOf();
+            return;
+          }
+          const parts = [];
+          const meta = rec.feed.meta();
+          if (meta) {
+            const bits = [];
+            if (meta.role) bits.push(esc(meta.role));
+            if (meta.model) bits.push(esc(meta.model));
+            if (bits.length) parts.push(`<div class="subagent-detail-meta">${bits.join(" \xB7 ")}</div>`);
+          }
+          const entries = rec.feed.entries();
+          if (!entries.length) {
+            const reason = rec.feed.reason();
+            const msg = reason === "session_cold" ? "Session ended \u2014 no activity was captured." : reason === "no_request_body" ? "No activity captured yet." : reason ? "Subagent is no longer tracked." : "No activity captured yet.";
+            parts.push(`<div class="subagent-detail-empty">${esc(msg)}</div>`);
+          }
+          for (const e of entries) {
             const entry = [];
             if (e.tool) {
-              const preview = subagentToolPreview(e.toolInput);
-              const clamped = preview.length > 600 ? preview.slice(0, 600) + "\u2026" : preview;
+              const preview = toolPreview(e.toolInput);
+              const clamped = preview.length > TOOL_ARG_MAX ? preview.slice(0, TOOL_ARG_MAX) + "\u2026" : preview;
               const nameTxt = clamped ? `${esc(e.tool)}:` : esc(e.tool);
               entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${nameTxt}</span>` + (clamped ? ` <span class="subagent-tool-arg">${esc(clamped)}</span>` : "") + "</div>");
               if (e.truncated) entry.push('<div class="subagent-detail-note">(arguments truncated)</div>');
             }
             if (e.text) {
-              const t = e.text.length > 1200 ? e.text.slice(0, 1200) + "\u2026" : e.text;
+              const t = e.text.length > TEXT_MAX ? e.text.slice(0, TEXT_MAX) + "\u2026" : e.text;
               entry.push(`<div class="subagent-detail-text">${esc(t)}</div>`);
             }
             parts.push(`<div class="subagent-feed-entry">${entry.join("")}</div>`);
-          });
-          const latest = subagentFeed[subagentFeed.length - 1];
-          if (latest && latest.ts != null) {
-            const agoS = Math.max(0, Math.round(Date.now() / 1e3 - latest.ts));
-            parts.push(`<div class="subagent-detail-asof">${fmtCountdown(agoS)} ago</div>`);
           }
-          if (subagentFeedEnded) {
+          if (rec.feed.ended()) {
             parts.push('<div class="subagent-detail-note">Session ended \u2014 no further activity.</div>');
           }
-          subagentPopoverBody.innerHTML = parts.join("");
+          bodyEl.innerHTML = parts.join("");
+          renderAsOf();
         }
-        document.getElementById("subagent-popover-close").addEventListener("click", closeSubagentPopover);
-        document.addEventListener("click", (e) => {
-          if (subagentPopover.classList.contains("hidden")) return;
-          if (subagentPopover.contains(e.target)) return;
-          if (e.target.closest(".session-child")) return;
-          closeSubagentPopover();
+        function renderAsOf() {
+          if (!asOfEl) return;
+          const rec = selected && feeds.get(selected);
+          const entries = rec ? rec.feed.entries() : [];
+          const latest = entries[entries.length - 1];
+          if (!latest || latest.ts == null) {
+            asOfEl.textContent = "";
+            return;
+          }
+          const agoS = Math.max(0, Math.round(Date.now() / 1e3 - latest.ts));
+          asOfEl.textContent = `last turn ${fmtCountdown(agoS)} ago`;
+        }
+        async function fetchDetail() {
+          const fk = selected;
+          if (!fk) return;
+          const rec = feeds.get(fk);
+          if (!rec || rec.feed.ended()) return;
+          const myGen = gen;
+          let res;
+          try {
+            res = await window.api.getProxySubagentDetail(rec.name, rec.key, DETAIL_MAXLEN);
+          } catch (e) {
+            res = { ok: false, error: String(e) };
+          }
+          if (!pollTimer || selected !== fk || myGen !== gen) return;
+          if (!res || !res.ok) {
+            if (!rec.feed.entries().length) {
+              bodyEl.innerHTML = `<div class="subagent-detail-empty">${esc(res && res.error ? res.error : "unavailable")}</div>`;
+            }
+            return;
+          }
+          const hadMeta = !!rec.feed.meta();
+          const wasEnded = rec.feed.ended();
+          const { appended } = rec.feed.ingest(res.data || {});
+          const metaArrived = !hadMeta && !!rec.feed.meta();
+          const endedFlipped = !wasEnded && rec.feed.ended();
+          if (!appended && !metaArrived && !endedFlipped) return;
+          const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
+          renderFeed();
+          if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+          if (endedFlipped) renderChips();
+        }
+        function startPolling() {
+          gen++;
+          fetchDetail();
+          pollTimer = setInterval(fetchDetail, DETAIL_MS);
+          tickTimer = setInterval(renderAsOf, 1e3);
+        }
+        function stopPolling() {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          clearInterval(tickTimer);
+          tickTimer = null;
+        }
+        function mount(pane) {
+          pane.innerHTML = `
+      <div class="activity-chips"></div>
+      <div class="activity-body"></div>
+      <div class="activity-footer">
+        <span class="activity-boundary">updates at turn boundaries \u2014 the in-flight stream is not on the wire</span>
+        <span class="activity-asof"></span>
+      </div>`;
+          chipsEl = pane.querySelector(".activity-chips");
+          bodyEl = pane.querySelector(".activity-body");
+          asOfEl = pane.querySelector(".activity-asof");
+          renderChips();
+          renderFeed();
+        }
+        notify = host.register({
+          id: "activity",
+          label: "Activity",
+          available: () => true,
+          mount,
+          onShow() {
+            renderChips();
+            renderFeed();
+            bodyEl.scrollTop = bodyEl.scrollHeight;
+            startPolling();
+          },
+          onHide: stopPolling
         });
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && !subagentPopover.classList.contains("hidden")) closeSubagentPopover();
-        });
-        const isSubagentPopoverForParent = (name) => subagentPopover.dataset.name === name;
-        const isSubagentPopoverOpen = () => !subagentPopover.classList.contains("hidden");
-        const subagentPopoverKeyForParent = (name) => subagentPopover.dataset.name === name ? subagentPopover.dataset.key : "";
-        return {
-          openSubagentPopover,
-          closeSubagentPopover,
-          isSubagentPopoverForParent,
-          isSubagentPopoverOpen,
-          subagentPopoverKeyForParent
-        };
+        function selectFeed(fk, name, key, label) {
+          if (selected === fk) return;
+          selected = fk;
+          feedFor(name, key, label);
+          renderChips();
+          renderFeed();
+          if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight;
+          if (pollTimer) fetchDetail();
+        }
+        function openActivityFeed(name, key, label) {
+          selectFeed(feedKeyOf(name, key), name, key, label);
+          host.open("activity");
+        }
+        function dropParent(name) {
+          for (const [fk, rec] of feeds) {
+            if (rec.name !== name) continue;
+            feeds.delete(fk);
+            if (selected === fk) {
+              selected = null;
+              renderFeed();
+            }
+          }
+          for (const fk of [...notified]) {
+            if (fk.startsWith(`${name} `)) notified.delete(fk);
+          }
+          renderChips();
+        }
+        return { openActivityFeed, refreshChips: renderChips, dropParent };
       }
-      module.exports = { initSubagentPopover };
+      module.exports = { createActivityTab };
     }
   });
 
@@ -26847,7 +27072,8 @@ ${detail}` });
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { initLibraryDrawers } = require_library_drawers();
-      var { initSubagentPopover } = require_subagent_popover();
+      var { createActivityTab } = require_activity_tab();
+      var { classifySubagent } = require_subagent_policy();
       var { initSessionHovercard } = require_session_hovercard();
       var { initTooltips } = require_tooltip();
       var { initReportPanel } = require_report_panel();
@@ -27490,7 +27716,7 @@ ${detail}` });
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (el) el.remove();
         sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
-        if (isSubagentPopoverForParent(name)) closeSubagentPopover();
+        dropActivityFeeds(name);
         sidebarMeta.delete(name);
         if (typeof refreshSidebarView === "function") refreshSidebarView();
       }
@@ -27931,7 +28157,6 @@ ${detail}` });
       function switchSession(name) {
         if (!sessions.has(name)) return;
         if (isSearchOpen()) closeSearch();
-        if (isSubagentPopoverOpen()) closeSubagentPopover();
         activeSession = name;
         for (const [n, s] of sessions) {
           s.wrapperEl.classList.toggle("visible", n === name);
@@ -29423,6 +29648,7 @@ ${detail}` });
         proxyState.set(name, { payload, at: Date.now() });
         applyWarmBadge(name);
         applySubagents(name);
+        refreshActivityChips();
         if (name === activeSession) renderProxyBar();
       });
       var THINK_BADGE_MS = 2 * 60 * 1e3;
@@ -29440,8 +29666,6 @@ ${detail}` });
         badge.textContent = `${Math.floor(elapsed / 6e4)}m`;
         badge.dataset.state = elapsed >= THINK_LONG_MS ? "long" : "on";
       }
-      var SUBAGENT_ACTIVE_S = 30;
-      var SUBAGENT_DROP_S = 300;
       function subagentRows(name) {
         return sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`);
       }
@@ -29457,9 +29681,8 @@ ${detail}` });
         const subs = p && p.linked && !dead && Array.isArray(p.subagents) ? p.subagents : [];
         const live = [];
         for (const s of subs) {
-          const eff = s.lastActiveS == null ? 0 : s.lastActiveS + ageS;
-          if (eff > SUBAGENT_DROP_S) continue;
-          live.push({ s, state: eff < SUBAGENT_ACTIVE_S ? "active" : "done" });
+          const state = classifySubagent(s, ageS);
+          if (state) live.push({ s, state });
         }
         const existing = subagentRows(name);
         if (!live.length) {
@@ -29481,7 +29704,7 @@ ${detail}` });
             row.innerHTML = '<span class="child-dot"></span><span class="child-label"></span><span class="child-meta"></span>';
             row.addEventListener("click", (e) => {
               e.stopPropagation();
-              openSubagentPopover(name, s.key, row);
+              openActivityFeed(name, s.key, s.label || s.key);
             });
           }
           row.dataset.state = state;
@@ -29496,18 +29719,7 @@ Click for live activity`;
         existing.forEach((el) => {
           if (!seen.has(el.dataset.key)) el.remove();
         });
-        const openKey = subagentPopoverKeyForParent(name);
-        if (openKey && !seen.has(openKey)) {
-          closeSubagentPopover();
-        }
       }
-      var {
-        openSubagentPopover,
-        closeSubagentPopover,
-        isSubagentPopoverForParent,
-        isSubagentPopoverOpen,
-        subagentPopoverKeyForParent
-      } = initSubagentPopover();
       initSessionHovercard({
         sessionList,
         proxyState,
@@ -29754,6 +29966,11 @@ Click for live activity`;
       });
       var drawerHost = createDrawerHost({ refitActiveTerminal });
       var { appendIpcEntry } = createIpcLog({ host: drawerHost });
+      var {
+        openActivityFeed,
+        refreshChips: refreshActivityChips,
+        dropParent: dropActivityFeeds
+      } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
       createInboxDrawer();
       createPotDrawer();
       var {

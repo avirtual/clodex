@@ -251,7 +251,12 @@ adapter that hosts it. The modules below are what the engine assembles.
   caches behind setters), `session-actions.js` (the type→entries mapping for
   the consolidated `⚙ session ▾` menu, unit-tested), `session-info-view.js`
   (the ⓘ panel's rows as data — pure so the four cost scopes and their labels
-  are unit-testable; the 07-15 three-scopes ruling is pinned there).
+  are unit-testable; the 07-15 three-scopes ruling is pinned there),
+  `subagent-policy.js` (`classifySubagent` — live/done/drop is POLICY, there is
+  no wire signal for it, and the sidebar child rows and the drawer's Activity
+  chips share this one copy so they cannot disagree), `subagent-feed.js`
+  (the accumulating turn feed as pure state: the detail endpoint repeats the
+  latest completed turn on every poll, so dedup is the whole job).
 - **Islands** (own state + DOM, `init*(deps)`): `drawer-host.js` (the bottom
   drawer as a TAB HOST — owns collapsed state, the tab strip, badges, the
   `#main` layout contract and pane swapping; tenants register with
@@ -259,8 +264,13 @@ adapter that hosts it. The modules below are what the engine assembles.
   `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
   Its header comment carries four rules a tenant author must not re-derive),
   `ipc-log.js` (the `log` tenant: rows + export only),
+  `activity-tab.js` (the `activity` tenant: subagent chips off the free 5s
+  `session-proxy` payload, plus ONE `/_subagents` detail poll for the selected
+  feed — started in `onShow`, stopped in `onHide`, so a hidden or collapsed tab
+  costs nothing. Replaced `subagent-popover.js`, whose feed died on any click
+  elsewhere),
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
-  (prompts/agents/skills drawers), `subagent-popover.js`,
+  (prompts/agents/skills drawers),
   `inbox-drawer.js` (operator inbox for `[agent:notify-user]` notes +
   the sidebar-footer unread badge; self-contained, no core deps).
 - **renderer/popovers/** — the popover family behind `popoverApi`:

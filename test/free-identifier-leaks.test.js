@@ -177,7 +177,13 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/banners.js',
   'renderer/themes.js',
   'renderer/library-drawers.js',
-  'renderer/subagent-popover.js',
+  // The drawer's Activity tenant (t204), which replaced subagent-popover.js.
+  // Its two leaves are what the popover's untestable logic became, and both
+  // directions matter: renderer.js kept `applySubagents` but gave the policy
+  // away, so a leftover SUBAGENT_ACTIVE_S there is the reverse-scan case.
+  'renderer/activity-tab.js',
+  'renderer/lib/subagent-feed.js',
+  'renderer/lib/subagent-policy.js',
   'renderer/session-hovercard.js',
   'renderer/tooltip.js',
   'renderer/popovers/report-panel.js',

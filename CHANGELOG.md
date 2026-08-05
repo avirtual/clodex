@@ -20,6 +20,19 @@ blocks a release.
   buttons — but there is now somewhere for the activity feed, a clodexctl
   console and a terminal to live. Those arrive next.
 
+- **Subagent activity is now a drawer tab, and it stays put.** Clicking a
+  subagent row used to open a popover that vanished the moment you clicked
+  anywhere else, taking everything it had collected with it. That popover is
+  gone; the drawer's new **Activity** tab holds a chip per subagent across the
+  window's sessions, and the feed you select keeps accumulating while you switch
+  sessions, look away, or the subagent finishes. Aged-out subagents keep their
+  chip for as long as there is history behind it. The tab costs nothing while it
+  is hidden or the drawer is collapsed — the chips ride telemetry that already
+  arrives, and the one detail poll runs only for the feed you are looking at.
+  It is still honest about the lag it always had: the feed updates at turn
+  boundaries, the footer says so, and it tells you how long ago the last turn
+  landed rather than pretending to be live.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link
