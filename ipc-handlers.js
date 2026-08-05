@@ -11,6 +11,7 @@ const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, PLUGIN_CAPABILITIES, pluginReaches } = require('./plugin-api');
 const { catalogRows, allowlistFromChecked, pluginRowFor } = require('./intent-registry');
+const { feedSince } = require('./subagent-ring');
 // contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
 // — an imported token must never round-trip through the renderer (see the
 // peer:import handlers below).
@@ -398,21 +399,18 @@ function registerIpcHandlers(deps) {
 
   handle('proxy:bust', (_e, name) => fetchProxyBust(name));
 
-  handle('proxy:subagentDetail', async (_e, name, child, maxlen) => {
+  // Wire-fed subagent feed: a plain read of an in-memory ring, no proxy round
+  // trip. It needs no wirescope link — any wire-routed session has the turns,
+  // which is why it replaced the proxy-polled endpoint. `since` is the caller's
+  // last seen `seq`;
+  // the reply's `seq` is the store HEAD, so polling a quiet feed still advances
+  // the cursor and rows can never be served twice.
+  handle('proxy:subagentFeed', (_e, name, child, since) => {
     const s = manager.sessions.get(name);
-    if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
-    const snap = proxyPoller.snapshot(name);
-    if (!snap || !snap.linked || !snap.sessionId) {
-      return { ok: false, error: 'No live proxy session (unlinked)' };
-    }
+    if (!s || !s.subagentStore) return { ok: false, error: 'Session has no wire feed' };
     if (typeof child !== 'string' || !child) return { ok: false, error: 'Missing child key' };
-    try {
-      const r = await ProxyClient.subagentDetail(s.proxyBase, snap.sessionId, child, maxlen);
-      if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
-      return { ok: true, data: r.json };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
-    }
+    const n = Number(since);
+    return { ok: true, data: feedSince(s.subagentStore, child, Number.isFinite(n) ? n : 0) };
   });
 
   handle('app:openExternal', (_e, url) => {

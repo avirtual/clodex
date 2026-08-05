@@ -312,6 +312,8 @@ function createSessionManager(deps) {
     mergeCodexInstructions,
     normalizeProxyBase,
     noteFileTouches,
+    createSubagentStore,
+    noteSubagentTurn,
     os,
     outboxHasOrigin,
     parkDelivery,
@@ -446,6 +448,7 @@ function createSessionManager(deps) {
             if (s) {
               if (Array.isArray(t.files) && t.files.length) this._noteFileTouches(s, t.files, isSubagentRole(t.role));
               this._recordHeat(s, t.reads, t.files);
+              if (isSubagentRole(t.role)) this._noteSubagentTurn(s, t);
             }
           }
           if (t.sideCall || isSubagentRole(t.role)) return; // intents: main line only
@@ -1205,6 +1208,12 @@ function createSessionManager(deps) {
         proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
         fileTouches: [],
+        // Wire-fed subagent turn feeds, bounded by subagent-ring.js itself.
+        // Called defensively because this runs AFTER the agent socket is bound:
+        // an observer dep that is merely absent must degrade to "no feed" (which
+        // `_noteSubagentTurn` already handles), never throw out of create() and
+        // strand a listening socket.
+        subagentStore: createSubagentStore ? createSubagentStore() : null,
         // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
         // since-when, updated in _emitActivity. Restores seed from the resumed
         // transcript's mtime (= last real turn) — seeding "now" would make every
@@ -2181,6 +2190,41 @@ function createSessionManager(deps) {
         if (!intent || intent.type === 'escape' || intent.type === 'end') continue;
         this._handleIntent(session.name, intent);
       }
+    }
+
+    // One subagent turn into the session's ring. Observer-grade like
+    // _noteFileTouches: this runs from the wire tee's turn.completed, which the
+    // proxy emits only AFTER the client's final byte (wire/proxy.js — "client
+    // bytes first, always"), so a throw here cannot reach the request. The catch
+    // is the second line of that defence, not the first.
+    //
+    // ACCEPTED MISATTRIBUTION WINDOW (operator ruling, t209): RoleClassifier's
+    // per-session fingerprint map is empty on a fresh Clodex process, so until
+    // the first main-line turn establishes it, the documented cc_is_subagent
+    // leak (wire/role.js — a parent turn carrying a recycled
+    // x-claude-code-agent-id, wire-confirmed 2026-06-14) can file ONE parent
+    // turn as a subagent row here. It is self-clearing and deliberately not
+    // gated: do not "fix" a misattributed row by weakening genuineSubagent's
+    // fingerprint backstop — that trades a cosmetic, one-turn artefact for the
+    // leak the backstop exists to catch.
+    //
+    // The key must stay byte-identical to wirescope's instance key (agent-id
+    // verbatim, role as fallback): the chip strip is wirescope's and the feed is
+    // looked up by the chip's key, so a mismatch shows an empty feed for a live
+    // subagent rather than failing.
+    _noteSubagentTurn(session, t) {
+      try {
+        if (!session.subagentStore) return;
+        noteSubagentTurn(session.subagentStore, {
+          key: t.agentId || t.role,
+          role: t.role,
+          model: t.model,
+          text: t.text,
+          tools: t.toolUses,
+          truncated: t.truncated,
+          ts: Date.now(),
+        });
+      } catch { /* observer-grade — never near the PTY/intent path */ }
     }
 
     _noteFileTouches(session, touches, sub = false) {

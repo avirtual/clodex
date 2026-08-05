@@ -43,7 +43,7 @@ const PINNED_NAMES = [
   // (compactions, the four cost scopes, transcript size).
   'sessionInfo', 'getProxySnapshot',
   'getProxyContext', 'getProxyReport', 'getProxyBust', 'proxyHold',
-  'wireHold', 'setStripLevel', 'setAutoCompact', 'getProxySubagentDetail',
+  'wireHold', 'setStripLevel', 'setAutoCompact',
   'onSessionMention', 'onRequestSwitchSession', 'onRequestOpenNewDialog', 'onRequestOpenDiscovery', 'onRequestRenameWorkspace',
   'onRequestOpenPreferences', 'onRequestOpenPeersDialog', 'onRequestOpenPeerSession', 'onRequestOpenAgentsDrawer',
   'onRequestOpenSkillsDrawer', 'onRequestOpenExecDrawer', 'onRequestOpenInboxDrawer', 'onRequestOpenPromptsDrawer',
@@ -114,6 +114,11 @@ const PINNED_NAMES = [
   // a core dialog — the same shape as onRequestOpenPeersDialog — so it does NOT
   // widen the plugin transport, which is still exactly the five rows above.
   'onRequestOpenPluginsDialog',
+  // t209: the wire-fed subagent Activity feed, which REPLACED the proxy-polled
+  // `getProxySubagentDetail` on this surface rather than joining it — it reads a
+  // per-session ring Clodex fills from its own tee, so it needs no wirescope
+  // link. Net zero rows, which is why the count below is unchanged.
+  'getSubagentFeed',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {

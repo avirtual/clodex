@@ -846,6 +846,7 @@ html, body {
 .subagent-tool-name {
   font-weight: 600; color: var(--accent);
 }
+.subagent-tool-more { color: var(--text-dim); }
 .subagent-tool-arg {
   font-family: 'SF Mono', Menlo, monospace; color: var(--text);
   word-break: break-all;

@@ -1,90 +1,77 @@
 // subagent-feed.js — the accumulating turn feed for one subagent, as pure
-// state. One `/_subagents` detail response goes in; what the operator has seen
-// so far comes out.
+// state. One `proxy:subagentFeed` reply goes in; what the operator has seen so
+// far comes out.
 //
-// The detail endpoint only ever returns the LATEST COMPLETED turn (keyed by
-// turn_ts), so a consumer that replaced its view each poll would render a
-// slideshow. Instead every newly-seen turn is appended, which is why dedup is
-// the whole job here: the same turn arrives on every poll until the next one
-// completes. Honest caveat, and the reason the UI must not claim to be live: we
-// observe only the latest completed turn per poll, so a sub finishing several
-// turns inside our 1.5s cadence skips the in-between ones. The feed is "the
-// turns we caught", not a transcript.
+// Fed from Clodex's OWN wire tee (subagent-ring.js). The cursor IS the dedup:
+// a monotonic per-session seq cannot repeat or skip, so do not reintroduce
+// dedup by content signature — that guesswork discarded distinct turns.
 //
-// Extracted from subagent-popover.js (t204) — the popover's only logic worth
-// testing, which as DOM-bound code it was never allowed to have.
+// The feed no longer has an `ended` state. Whether a subagent is still running
+// is wirescope's call (the chip strip's classifySubagent), and this module
+// having its own opinion would be the second running/idle/done policy the repo
+// has a standing rule against.
 
 // A persistent tenant polls one feed for as long as the operator leaves it
-// selected, so history is capped; the popover's version died with its DOM.
+// selected. The main-process ring is bounded too (subagent-ring.js FEED_CAP);
+// this is the renderer's own bound on what it has accumulated across polls.
 const MAX_FEED_ENTRIES = 500;
 
 function createSubagentFeed() {
-  let entries = [];          // [{ ts, tool, toolInput, truncated, text }]
-  let seen = new Set();      // turn signatures already appended
-  let meta = null;           // { role, model } captured once
-  let ended = false;         // session went cold — stop polling, keep history
-  let reason = null;         // last found:false reason, for the empty state
+  let entries = [];   // [{ seq, ts, text, tools, truncated }]
+  let cursor = 0;     // highest seq ingested; what the next poll asks past
+  let meta = null;    // { role, model } captured once
+  // Sticky: once a reply reports rows were evicted past our cursor, later polls
+  // ask from a cursor that no longer predates the eviction and report false.
+  // Clearing it would retract an admission that is still true of what is shown.
+  let missed = false;
 
-  // Fold one detail response into the feed. Returns `{ appended }` — true iff a
-  // new entry landed, which is the consumer's cue to re-pin the scroll.
+  // Fold one reply into the feed. Returns `{ appended }` — true iff a new entry
+  // landed, which is the consumer's cue to re-pin the scroll.
   function ingest(d) {
     if (!d || typeof d !== 'object') return { appended: false };
 
-    if (d.found === false) {
-      reason = d.reason || null;
-      // session_cold means the proxy's in-memory bodies are gone: nothing more
-      // will ever arrive, so the poll must stop. Any other reason is transient
-      // (the child may not have made its first request yet).
-      if (d.reason === 'session_cold') ended = true;
-      return { appended: false };
-    }
-    reason = null;
-
+    if (d.missed === true) missed = true;
     if (!meta && (d.role || d.model)) {
       meta = { role: d.role || null, model: d.model || null };
     }
-    if (!d.last_tool && !d.last_text) return { appended: false }; // nothing to show this turn
 
-    // Dedup by turn_ts (the per-turn key); without one, fall back to a content
-    // signature so identical repeats don't pile up.
-    const sig = (typeof d.turn_ts === 'number')
-      ? `t:${d.turn_ts}`
-      : `c:${d.last_tool || ''}|${(d.last_text || '').slice(0, 80)}`;
-    if (seen.has(sig)) return { appended: false };
-    seen.add(sig);
-    entries.push({
-      ts: typeof d.turn_ts === 'number' ? d.turn_ts : null,
-      tool: d.last_tool || null,
-      toolInput: d.last_tool_input || null,
-      truncated: !!d.truncated,
-      text: d.last_text || null,
-    });
-    // Oldest turns drop; `seen` keeps their signatures, so a dropped turn that
-    // is still the endpoint's "latest" does not reappear at the bottom.
-    if (entries.length > MAX_FEED_ENTRIES) entries.shift();
-    return { appended: true };
+    let appended = false;
+    for (const e of Array.isArray(d.entries) ? d.entries : []) {
+      // A row at or below the cursor is a server that ignored `since` or a reply
+      // that overtook an earlier one; either way re-appending it would duplicate
+      // a turn already on screen.
+      if (!e || typeof e.seq !== 'number' || e.seq <= cursor) continue;
+      cursor = e.seq;
+      entries.push({
+        seq: e.seq,
+        ts: typeof e.ts === 'number' ? e.ts : null,
+        text: e.text || null,
+        tools: Array.isArray(e.tools) ? e.tools : [],
+        // Distinct from `truncated`, which is about the TEXT only.
+        toolsOmitted: typeof e.toolsOmitted === 'number' && e.toolsOmitted > 0 ? e.toolsOmitted : 0,
+        truncated: e.truncated === true,
+      });
+      appended = true;
+    }
+    // The reply's `seq` is the store HEAD, so a poll that returned nothing still
+    // advances past turns that belong to OTHER subagents (seq is per-session).
+    // Without this the cursor would stall at this feed's last turn and every
+    // poll would re-ask for a range the server has to walk.
+    if (typeof d.seq === 'number' && d.seq > cursor) cursor = d.seq;
+
+    if (entries.length > MAX_FEED_ENTRIES) {
+      entries = entries.slice(-MAX_FEED_ENTRIES);
+    }
+    return { appended };
   }
 
   return {
     ingest,
     entries: () => entries,
+    cursor: () => cursor,
     meta: () => meta,
-    ended: () => ended,
-    reason: () => reason,
+    missed: () => missed,
   };
 }
 
-// Pull a compact one-line preview out of a tool_use input object. The keys are
-// whatever the model emitted (wirescope forwards it verbatim) so we probe the
-// common primaries and fall back to compact JSON — the caller still truncates on
-// render, since an unexpected key could be large even past the server-side
-// maxlen clamp.
-function toolPreview(input) {
-  if (!input || typeof input !== 'object') return '';
-  for (const k of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt', 'description']) {
-    if (typeof input[k] === 'string' && input[k]) return input[k];
-  }
-  try { return JSON.stringify(input); } catch { return ''; }
-}
-
-module.exports = { createSubagentFeed, toolPreview, MAX_FEED_ENTRIES };
+module.exports = { createSubagentFeed, MAX_FEED_ENTRIES };

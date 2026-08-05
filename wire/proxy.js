@@ -263,6 +263,9 @@ class WireProxy extends EventEmitter {
     let sideCall = false;
     let model = null;
     let bodyObj = null; // held for the warmth stamp at tee close
+    // Hoisted out of the parse block: the subagent feed keys on this, and it
+    // must reach turn.completed even when classification says nothing useful.
+    let agentId = null;
     if (body && req.method === 'POST') {
       try {
         const obj = JSON.parse(body.toString('utf8'));
@@ -270,7 +273,13 @@ class WireProxy extends EventEmitter {
         sessionId = sessionIdFrom(obj);
         if (typeof obj.model === 'string') model = obj.model;
         if (provider === 'anthropic') {
-          const agentId = req.headers['x-claude-code-agent-id'] || null;
+          // Coerced to null unless it is a non-empty string: consumers key on
+          // `agentId || role`, and a truthy non-string (a duplicate header Node
+          // chose to surface as an array) would satisfy the `||` and then fail a
+          // type check downstream, dropping the turn instead of falling back to
+          // the role.
+          const rawAgentId = req.headers['x-claude-code-agent-id'];
+          agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
           sideCall = isTitleCall(obj) || isProbeCall(obj);
           role = this._roles.classify(obj, sessionId, agentId);
           if (!sideCall && !isSubagentRole(role)) {
@@ -343,7 +352,7 @@ class WireProxy extends EventEmitter {
         this.on('stream-end', onEnd);
         try {
           tee = this._buildTee(
-            { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj,
+            { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, agentId,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -354,7 +363,7 @@ class WireProxy extends EventEmitter {
         if (isCount || base.endsWith('/v1/messages')) {
           try {
             tee = this._buildJsonTee(
-              { agent, provider, reqId, sessionId, role, sideCall, model,
+              { agent, provider, reqId, sessionId, role, sideCall, model, agentId,
                 requestId: upRes.headers['request-id'] || null,
                 status: upRes.statusCode },
               upRes.headers['content-encoding'], isCount);
@@ -412,7 +421,7 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, agentId, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
@@ -512,6 +521,18 @@ class WireProxy extends EventEmitter {
                 stop, sessionTotals, warmth: warmthRec,
                 files: ftools ? ftools.files : [],
                 reads: ftools ? ftools.reads : [],
+                // Subagent feed inputs. `agentId` is the x-claude-code-agent-id
+                // header verbatim (the key proxylab/meta.py buckets on, so the
+                // wire-fed feed and wirescope's chips address the same
+                // instance). `toolUses` is collected by UsageCollector on the
+                // events it already parses — no per-chunk work is added for it.
+                //
+                // NAMES only, deliberately. Adding tool INPUTS here means
+                // parsing input_json_delta — the highest-volume event on the
+                // stream — on the thread forwarding the client's bytes; see
+                // FileToolCollector in sse.js for what that costs.
+                agentId: agentId || null,
+                toolUses: (provider === 'anthropic' && usage.toolUses) ? usage.toolUses : [],
               });
             }
           } catch (e) { fail(e); }
@@ -522,7 +543,7 @@ class WireProxy extends EventEmitter {
   }
 
   _buildJsonTee(turnCtx, contentEncoding, isCount) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestId, status } = turnCtx;
     const chunks = [];
     let size = 0;
     let dead = false;
@@ -565,6 +586,7 @@ class WireProxy extends EventEmitter {
                 usage: null, truncated: false, model, status, billing: bill,
                 stop, sessionTotals: { ...this.billing.session(sessionKey) },
                 warmth: null, files: [], reads: [],
+                agentId: agentId || null, toolUses: [],
               });
             }
           } catch (e) { fail(e); }

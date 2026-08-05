@@ -2,12 +2,19 @@
 // the window's Task subagents are doing. Replaces subagent-popover.js, whose
 // feed died the moment the operator clicked anywhere else.
 //
-// COST INVARIANT, the thing not to regress: chips ride the 5s `session-proxy`
-// payload the renderer already receives, so they are free. The DETAIL endpoint
-// (`/_subagents` via proxy:subagentDetail) reads heavy request bodies and was
-// deliberately kept off that cheap path — so it is fetched for exactly ONE feed,
-// the selected one, and only while this tab is visible. A hidden or collapsed
-// Activity tab polls nothing.
+// TWO SOURCES, and which owns what is the thing not to blur. The CHIPS are
+// wirescope's — cost, status and last_seen ride the free 5s `session-proxy`
+// payload, and wirescope stays the one authority on whether a subagent is
+// running. The FEED is ours: turns come off Clodex's own wire tee
+// (subagent-ring.js) via `proxy:subagentFeed`, because wirescope keeps one slot
+// per subagent and serves it from the request body, which is lossy AND one turn
+// stale by construction. So the feed is looked up BY the chip's key and a feed
+// with no chip is not shown — one roster, no drift.
+//
+// COST INVARIANT: the feed is fetched for exactly ONE subagent, the selected
+// one, and only while this tab is visible. A hidden or collapsed Activity tab
+// polls nothing. The reply is bounded by the cursor rather than by a clamp —
+// it carries only turns past what we already hold.
 //
 // That gating is the host's `onShow`/`onHide` pair and NOTHING ELSE. The host
 // guarantees those are strictly alternating at-most-once edges (drawer-host.js
@@ -20,13 +27,14 @@
 // live/done/drop policy live in lib/ where they are tested.
 
 const { esc, fmtCountdown, fmtUsd } = require('./lib/format');
-const { createSubagentFeed, toolPreview } = require('./lib/subagent-feed');
+const { createSubagentFeed } = require('./lib/subagent-feed');
 const { classifySubagent } = require('./lib/subagent-policy');
 
-const DETAIL_MS = 1500;   // the popover's cadence, unchanged
-const DETAIL_MAXLEN = 800; // server-side clamp, unchanged
-const TOOL_ARG_MAX = 600;
-const TEXT_MAX = 1200;
+// Latency only, not correctness: turns accumulate in the main-process ring
+// whether or not we poll, so a slower cadence delays rows, it does not lose
+// them. That is the difference from the wirescope-polled version, where the
+// interval was racing a one-slot store.
+const DETAIL_MS = 1500;
 // Feeds outlive their subagents on purpose (history is the point), so memory is
 // bounded here: the oldest feeds that are neither live nor selected are evicted.
 // A SOFT cap, not a guarantee — `pruneFeeds` skips live and selected feeds, so
@@ -60,9 +68,14 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   // that did something while the operator was NOT LOOKING, so its unit is the
   // away-period, not the window. `awayReq` is each sub's `requests` count as the
   // away-period began and `lastReq` the newest seen, so "took a turn since you
-  // looked away" is answerable with no fetch at all — `requests` rides the free
-  // 5s chip payload (proxy-util.js `shapeSubagent`) and the detail poll is
-  // stopped while hidden, so this is the only evidence of a turn there is.
+  // looked away" is answerable with no fetch at all.
+  //
+  // `requests` deliberately, even though the feed now counts turns itself: it
+  // rides the free 5s chip payload, whereas the feed poll is stopped while
+  // hidden — which is exactly when the badge has to work. It is used ONLY as an
+  // advanced/not-advanced edge here and is never rendered as a turn count;
+  // `requests` counts forwarded REQUESTS and the ring counts completed turns, so
+  // the two legitimately disagree and only one may reach the screen (`seq`).
   const notified = new Set();   // subs already badged in the CURRENT away-period
   const lastReq = new Map();    // feedKey -> newest `requests` seen
   const awayReq = new Map();    // feedKey -> `requests` when this away-period began
@@ -134,12 +147,11 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
 
   // --- rendering -------------------------------------------------------------
 
+  // Liveness is wirescope's alone. The feed used to be able to override this
+  // with its own `ended` (session_cold from the detail endpoint); a wire-fed
+  // ring has no such signal and must not invent one — a second running/idle/done
+  // policy is the drift this design exists to avoid.
   function chipState(fk, live) {
-    const rec = feeds.get(fk);
-    // `ended` outranks the aging policy: session_cold means the proxy has
-    // dropped the bodies, so no further turn can ever arrive regardless of how
-    // recently the sub was seen.
-    if (rec && rec.feed.ended()) return 'ended';
     const l = live.get(fk);
     return l ? l.state : 'ended';
   }
@@ -218,9 +230,15 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     chip.dataset.state = chipState(fk, live);
     chip.classList.toggle('selected', fk === selected);
     const costTxt = sub && typeof sub.estUsd === 'number' ? `~${fmtUsd(sub.estUsd)}` : '';
+    // Turn count comes from OUR ring, never from wirescope's `requests`: that
+    // counts forwarded requests (~4 per user turn), so the tooltip used to
+    // disagree with the rows visible right below it. Cost and model stay
+    // wirescope's — we do not compute those.
+    const rec = feeds.get(fk);
+    const turns = rec ? rec.feed.entries().length : 0;
     chip.title = `${meta.name} ▸ ${meta.label}`
       + `${sub && sub.model ? ' · ' + sub.model : ''}`
-      + `${sub && sub.requests ? ' · ' + sub.requests + ' turn' + (sub.requests === 1 ? '' : 's') : ''}`
+      + `${turns ? ' · ' + turns + ' turn' + (turns === 1 ? '' : 's') + ' captured' : ''}`
       + `${costTxt ? ' · ' + costTxt : ''}`;
     chip.querySelector('.activity-chip-parent').textContent = meta.name;
     chip.querySelector('.activity-chip-label').textContent = meta.label;
@@ -295,84 +313,76 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     }
 
     const entries = rec.feed.entries();
+    // A subagent the ring has never heard of is the normal state between a chip
+    // appearing and its first turn completing — the chip comes from wirescope's
+    // 5s payload, which can see a subagent's first request before its response
+    // has crossed our tee.
     if (!entries.length) {
-      const reason = rec.feed.reason();
-      const msg = reason === 'session_cold' ? 'Session ended — no activity was captured.'
-        : reason === 'no_request_body' ? 'No activity captured yet.'
-        : reason ? 'Subagent is no longer tracked.'
-        : 'No activity captured yet.';
-      parts.push(`<div class="subagent-detail-empty">${esc(msg)}</div>`);
+      parts.push('<div class="subagent-detail-empty">No activity captured yet.</div>');
+    }
+    // The ring's FEED_CAP evicted turns this feed's cursor predates, so the rows
+    // below are NOT contiguous. Exact, not an estimate: the server compares the
+    // cursor against the seq it actually dropped.
+    if (rec.feed.missed()) {
+      parts.push('<div class="subagent-detail-note">'
+        + 'Earlier turns dropped — the feed exceeded its capture limit.</div>');
     }
 
     for (const e of entries) {
       const entry = [];
-      if (e.tool) {
-        const preview = toolPreview(e.toolInput);
-        const clamped = preview.length > TOOL_ARG_MAX ? preview.slice(0, TOOL_ARG_MAX) + '…' : preview;
-        // Tool name is the colored first word, args flow inline after it: "Read: …".
-        const nameTxt = clamped ? `${esc(e.tool)}:` : esc(e.tool);
-        entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${nameTxt}</span>`
-          + (clamped ? ` <span class="subagent-tool-arg">${esc(clamped)}</span>` : '') + '</div>');
-        if (e.truncated) entry.push('<div class="subagent-detail-note">(arguments truncated)</div>');
+      if (e.tools && e.tools.length) {
+        const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t)}</span>`);
+        // Beside the tools, never under the text: an omitted tool name says
+        // nothing about whether the text is complete.
+        if (e.toolsOmitted > 0) {
+          names.push(`<span class="subagent-tool-more">+${e.toolsOmitted} more</span>`);
+        }
+        entry.push(`<div class="subagent-detail-tool">${names.join(' ')}</div>`);
       }
-      if (e.text) {
-        const t = e.text.length > TEXT_MAX ? e.text.slice(0, TEXT_MAX) + '…' : e.text;
-        entry.push(`<div class="subagent-detail-text">${esc(t)}</div>`);
-      }
+      if (e.text) entry.push(`<div class="subagent-detail-text">${esc(e.text)}</div>`);
+      if (e.truncated) entry.push('<div class="subagent-detail-note">(truncated)</div>');
       parts.push(`<div class="subagent-feed-entry">${entry.join('')}</div>`);
     }
 
-    // What the feed MISSED, because it is a sampler that looks like a stream:
-    // `/_subagents` publishes only the latest forwarded request, so a turn that
-    // completes between two polls is never seen by anyone. A feed that admits
-    // that is trustworthy; one that silently drops turns reads as broken, which
-    // is how this was reported.
-    //
-    // An ESTIMATE and it must never render as a ledger — three separate skews,
-    // all in the same direction: `requests` counts forwarded REQUESTS rather
-    // than published turns, the newest request has no assistant turn to capture
-    // yet, and a feed at the 500-entry cap has discarded entries this still
-    // counts as missed. A gap of 1 is the off-by-one on its own, so it shows
-    // nothing rather than a wrong-looking "~1".
-    const req = lastReq.get(selected);
-    const gap = typeof req === 'number' ? req - entries.length : 0;
-    if (gap > 1) {
-      parts.push(`<div class="subagent-detail-note">~${gap} turns not captured — this feed samples, it does not stream.</div>`);
-    }
-
-    if (rec.feed.ended()) {
-      parts.push('<div class="subagent-detail-note">Session ended — no further activity.</div>');
-    }
     bodyEl.innerHTML = parts.join('');
     renderAsOf();
   }
 
-  // The honest half of the footer. The timestamp is server data (`turn_ts`) and
-  // the countdown is client math, so this ticks once a second at ZERO fetch
-  // cost — and it is the only motion in the tab. A spinner or a "live" pulse
-  // would claim a liveness the pipe cannot deliver: the endpoint publishes a
-  // turn only once that turn has COMPLETED.
+  // The honest half of the footer. The countdown is client math over a stamp we
+  // took ourselves, so this ticks once a second at ZERO fetch cost — and it is
+  // the only motion in the tab. A spinner or a "live" pulse would claim a
+  // liveness the pipe cannot deliver: a turn is captured only once it COMPLETES,
+  // so an in-flight one is invisible however fast we poll.
   function renderAsOf() {
     if (!asOfEl) return;
     const rec = selected && feeds.get(selected);
     const entries = rec ? rec.feed.entries() : [];
     const latest = entries[entries.length - 1];
     if (!latest || latest.ts == null) { asOfEl.textContent = ''; return; }
-    const agoS = Math.max(0, Math.round(Date.now() / 1000 - latest.ts));
+    // The ring stamps in ms (Date.now at turn close), unlike the old endpoint's
+    // epoch-seconds turn_ts.
+    const agoS = Math.max(0, Math.round((Date.now() - latest.ts) / 1000));
     asOfEl.textContent = `last turn ${fmtCountdown(agoS)} ago`;
   }
 
   // --- polling ---------------------------------------------------------------
 
+  // Polls the selected feed for as long as the tab is shown, including after the
+  // subagent is done. Deliberate, not an oversight left by the removed `ended()`:
+  // the reply is an O(1) map read, and stopping on wirescope's liveness would
+  // reintroduce the second running/idle/done policy this design removed.
   async function fetchDetail() {
     const fk = selected;
     if (!fk) return;
     const rec = feeds.get(fk);
-    if (!rec || rec.feed.ended()) return; // cold session: nothing more will arrive
+    if (!rec) return;
     const myGen = gen;
 
+    // The cursor is read HERE, not captured when the interval was armed: a
+    // selection change or an ingest between ticks moves it, and asking from a
+    // stale cursor would re-fetch turns already on screen.
     let res;
-    try { res = await window.api.getProxySubagentDetail(rec.name, rec.key, DETAIL_MAXLEN); }
+    try { res = await window.api.getSubagentFeed(rec.name, rec.key, rec.feed.cursor()); }
     catch (e) { res = { ok: false, error: String(e) }; }
 
     // The await straddles a possible hide, re-selection, or hide-then-show.
@@ -391,29 +401,21 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       return;
     }
 
-    // Re-render ONLY on a real change. The endpoint's steady state is the same
-    // latest turn repeated every 1.5s, so `appended` is false most polls — and
-    // renderFeed replaces the pane's children, which collapses scrollHeight and
-    // clamps scrollTop to 0. Rendering unconditionally would yank an operator
-    // who scrolled up to read history back to the top ~40 times a minute, which
-    // is the one thing this tab exists to make possible. It also avoids
-    // rebuilding up to 500 entries against the session terminal's main thread.
+    // Re-render ONLY on a real change. An idle subagent returns an empty entry
+    // list every 1.5s — and renderFeed replaces the pane's children, which
+    // collapses scrollHeight and clamps scrollTop to 0. Rendering unconditionally
+    // would yank an operator who scrolled up to read history back to the top ~40
+    // times a minute, which is the one thing this tab exists to make possible.
     const hadMeta = !!rec.feed.meta();
-    const wasEnded = rec.feed.ended();
     const { appended } = rec.feed.ingest(res.data || {});
     const metaArrived = !hadMeta && !!rec.feed.meta();
-    const endedFlipped = !wasEnded && rec.feed.ended();
-    if (!appended && !metaArrived && !endedFlipped) return;
+    if (!appended && !metaArrived) return;
 
     // Keep the view pinned to the bottom when a fresh turn lands or the operator
     // is already there; otherwise leave their scroll alone so they can read back.
     const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
     renderFeed();
     if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
-    // The chip carries the ended state, and the flip arrives on a poll that
-    // appended nothing (session_cold has no turn) — so this must not hang off
-    // `appended`.
-    if (endedFlipped) renderChips();
   }
 
   function startPolling() {
@@ -441,7 +443,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       <div class="activity-chips"></div>
       <div class="activity-body"></div>
       <div class="activity-footer">
-        <span class="activity-boundary">samples completed turns — turns between polls are not captured</span>
+        <span class="activity-boundary">updates at turn boundaries — the in-flight stream is not on the wire</span>
         <span class="activity-asof"></span>
       </div>`;
     chipsEl = pane.querySelector('.activity-chips');

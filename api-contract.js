@@ -148,7 +148,7 @@ const API_CONTRACT = [
   { name: 'wireHold', kind: 'invoke', channel: 'wire:hold' },
   { name: 'setStripLevel', kind: 'invoke', channel: 'proxy:setStripLevel' },
   { name: 'setAutoCompact', kind: 'invoke', channel: 'session:setAutoCompact' },
-  { name: 'getProxySubagentDetail', kind: 'invoke', channel: 'proxy:subagentDetail' },
+  { name: 'getSubagentFeed', kind: 'invoke', channel: 'proxy:subagentFeed' },
   { name: 'onSessionMention', kind: 'on', channel: 'session-mention' },
   { name: 'onRequestSwitchSession', kind: 'on', channel: 'request-switch-session' },
   { name: 'onRequestOpenNewDialog', kind: 'on', channel: 'request-open-new-dialog' },

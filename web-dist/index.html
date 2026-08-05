@@ -1037,6 +1037,9 @@ body {
   font-weight: 600;
   color: var(--accent);
 }
+.subagent-tool-more {
+  color: var(--text-dim);
+}
 .subagent-tool-arg {
   font-family:
     "SF Mono",
@@ -6447,7 +6450,7 @@ body {
         { name: "wireHold", kind: "invoke", channel: "wire:hold" },
         { name: "setStripLevel", kind: "invoke", channel: "proxy:setStripLevel" },
         { name: "setAutoCompact", kind: "invoke", channel: "session:setAutoCompact" },
-        { name: "getProxySubagentDetail", kind: "invoke", channel: "proxy:subagentDetail" },
+        { name: "getSubagentFeed", kind: "invoke", channel: "proxy:subagentFeed" },
         { name: "onSessionMention", kind: "on", channel: "session-mention" },
         { name: "onRequestSwitchSession", kind: "on", channel: "request-switch-session" },
         { name: "onRequestOpenNewDialog", kind: "on", channel: "request-open-new-dialog" },
@@ -21706,55 +21709,45 @@ helper=${d.helperPath}`;
       var MAX_FEED_ENTRIES = 500;
       function createSubagentFeed() {
         let entries = [];
-        let seen = /* @__PURE__ */ new Set();
+        let cursor = 0;
         let meta = null;
-        let ended = false;
-        let reason = null;
+        let missed = false;
         function ingest(d) {
           if (!d || typeof d !== "object") return { appended: false };
-          if (d.found === false) {
-            reason = d.reason || null;
-            if (d.reason === "session_cold") ended = true;
-            return { appended: false };
-          }
-          reason = null;
+          if (d.missed === true) missed = true;
           if (!meta && (d.role || d.model)) {
             meta = { role: d.role || null, model: d.model || null };
           }
-          if (!d.last_tool && !d.last_text) return { appended: false };
-          const sig = typeof d.turn_ts === "number" ? `t:${d.turn_ts}` : `c:${d.last_tool || ""}|${(d.last_text || "").slice(0, 80)}`;
-          if (seen.has(sig)) return { appended: false };
-          seen.add(sig);
-          entries.push({
-            ts: typeof d.turn_ts === "number" ? d.turn_ts : null,
-            tool: d.last_tool || null,
-            toolInput: d.last_tool_input || null,
-            truncated: !!d.truncated,
-            text: d.last_text || null
-          });
-          if (entries.length > MAX_FEED_ENTRIES) entries.shift();
-          return { appended: true };
+          let appended = false;
+          for (const e of Array.isArray(d.entries) ? d.entries : []) {
+            if (!e || typeof e.seq !== "number" || e.seq <= cursor) continue;
+            cursor = e.seq;
+            entries.push({
+              seq: e.seq,
+              ts: typeof e.ts === "number" ? e.ts : null,
+              text: e.text || null,
+              tools: Array.isArray(e.tools) ? e.tools : [],
+              // Distinct from `truncated`, which is about the TEXT only.
+              toolsOmitted: typeof e.toolsOmitted === "number" && e.toolsOmitted > 0 ? e.toolsOmitted : 0,
+              truncated: e.truncated === true
+            });
+            appended = true;
+          }
+          if (typeof d.seq === "number" && d.seq > cursor) cursor = d.seq;
+          if (entries.length > MAX_FEED_ENTRIES) {
+            entries = entries.slice(-MAX_FEED_ENTRIES);
+          }
+          return { appended };
         }
         return {
           ingest,
           entries: () => entries,
+          cursor: () => cursor,
           meta: () => meta,
-          ended: () => ended,
-          reason: () => reason
+          missed: () => missed
         };
       }
-      function toolPreview(input) {
-        if (!input || typeof input !== "object") return "";
-        for (const k of ["command", "file_path", "path", "pattern", "query", "url", "prompt", "description"]) {
-          if (typeof input[k] === "string" && input[k]) return input[k];
-        }
-        try {
-          return JSON.stringify(input);
-        } catch {
-          return "";
-        }
-      }
-      module.exports = { createSubagentFeed, toolPreview, MAX_FEED_ENTRIES };
+      module.exports = { createSubagentFeed, MAX_FEED_ENTRIES };
     }
   });
 
@@ -21777,12 +21770,9 @@ helper=${d.helperPath}`;
   var require_activity_tab = __commonJS({
     "renderer/activity-tab.js"(exports, module) {
       var { esc, fmtCountdown, fmtUsd } = require_format();
-      var { createSubagentFeed, toolPreview } = require_subagent_feed();
+      var { createSubagentFeed } = require_subagent_feed();
       var { classifySubagent } = require_subagent_policy();
       var DETAIL_MS = 1500;
-      var DETAIL_MAXLEN = 800;
-      var TOOL_ARG_MAX = 600;
-      var TEXT_MAX = 1200;
       var MAX_RETAINED_FEEDS = 20;
       var feedKeyOf = (name, key) => `${name} ${key}`;
       function createActivityTab({ host, proxyState, proxyPollMs }) {
@@ -21849,8 +21839,6 @@ helper=${d.helperPath}`;
           }
         }
         function chipState(fk, live) {
-          const rec = feeds.get(fk);
-          if (rec && rec.feed.ended()) return "ended";
           const l = live.get(fk);
           return l ? l.state : "ended";
         }
@@ -21893,7 +21881,9 @@ helper=${d.helperPath}`;
           chip.dataset.state = chipState(fk, live);
           chip.classList.toggle("selected", fk === selected);
           const costTxt = sub && typeof sub.estUsd === "number" ? `~${fmtUsd(sub.estUsd)}` : "";
-          chip.title = `${meta.name} \u25B8 ${meta.label}${sub && sub.model ? " \xB7 " + sub.model : ""}${sub && sub.requests ? " \xB7 " + sub.requests + " turn" + (sub.requests === 1 ? "" : "s") : ""}${costTxt ? " \xB7 " + costTxt : ""}`;
+          const rec = feeds.get(fk);
+          const turns = rec ? rec.feed.entries().length : 0;
+          chip.title = `${meta.name} \u25B8 ${meta.label}${sub && sub.model ? " \xB7 " + sub.model : ""}${turns ? " \xB7 " + turns + " turn" + (turns === 1 ? "" : "s") + " captured" : ""}${costTxt ? " \xB7 " + costTxt : ""}`;
           chip.querySelector(".activity-chip-parent").textContent = meta.name;
           chip.querySelector(".activity-chip-label").textContent = meta.label;
         }
@@ -21949,32 +21939,23 @@ helper=${d.helperPath}`;
           }
           const entries = rec.feed.entries();
           if (!entries.length) {
-            const reason = rec.feed.reason();
-            const msg = reason === "session_cold" ? "Session ended \u2014 no activity was captured." : reason === "no_request_body" ? "No activity captured yet." : reason ? "Subagent is no longer tracked." : "No activity captured yet.";
-            parts.push(`<div class="subagent-detail-empty">${esc(msg)}</div>`);
+            parts.push('<div class="subagent-detail-empty">No activity captured yet.</div>');
+          }
+          if (rec.feed.missed()) {
+            parts.push('<div class="subagent-detail-note">Earlier turns dropped \u2014 the feed exceeded its capture limit.</div>');
           }
           for (const e of entries) {
             const entry = [];
-            if (e.tool) {
-              const preview = toolPreview(e.toolInput);
-              const clamped = preview.length > TOOL_ARG_MAX ? preview.slice(0, TOOL_ARG_MAX) + "\u2026" : preview;
-              const nameTxt = clamped ? `${esc(e.tool)}:` : esc(e.tool);
-              entry.push(`<div class="subagent-detail-tool"><span class="subagent-tool-name">${nameTxt}</span>` + (clamped ? ` <span class="subagent-tool-arg">${esc(clamped)}</span>` : "") + "</div>");
-              if (e.truncated) entry.push('<div class="subagent-detail-note">(arguments truncated)</div>');
+            if (e.tools && e.tools.length) {
+              const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t)}</span>`);
+              if (e.toolsOmitted > 0) {
+                names.push(`<span class="subagent-tool-more">+${e.toolsOmitted} more</span>`);
+              }
+              entry.push(`<div class="subagent-detail-tool">${names.join(" ")}</div>`);
             }
-            if (e.text) {
-              const t = e.text.length > TEXT_MAX ? e.text.slice(0, TEXT_MAX) + "\u2026" : e.text;
-              entry.push(`<div class="subagent-detail-text">${esc(t)}</div>`);
-            }
+            if (e.text) entry.push(`<div class="subagent-detail-text">${esc(e.text)}</div>`);
+            if (e.truncated) entry.push('<div class="subagent-detail-note">(truncated)</div>');
             parts.push(`<div class="subagent-feed-entry">${entry.join("")}</div>`);
-          }
-          const req = lastReq.get(selected);
-          const gap = typeof req === "number" ? req - entries.length : 0;
-          if (gap > 1) {
-            parts.push(`<div class="subagent-detail-note">~${gap} turns not captured \u2014 this feed samples, it does not stream.</div>`);
-          }
-          if (rec.feed.ended()) {
-            parts.push('<div class="subagent-detail-note">Session ended \u2014 no further activity.</div>');
           }
           bodyEl.innerHTML = parts.join("");
           renderAsOf();
@@ -21988,18 +21969,18 @@ helper=${d.helperPath}`;
             asOfEl.textContent = "";
             return;
           }
-          const agoS = Math.max(0, Math.round(Date.now() / 1e3 - latest.ts));
+          const agoS = Math.max(0, Math.round((Date.now() - latest.ts) / 1e3));
           asOfEl.textContent = `last turn ${fmtCountdown(agoS)} ago`;
         }
         async function fetchDetail() {
           const fk = selected;
           if (!fk) return;
           const rec = feeds.get(fk);
-          if (!rec || rec.feed.ended()) return;
+          if (!rec) return;
           const myGen = gen;
           let res;
           try {
-            res = await window.api.getProxySubagentDetail(rec.name, rec.key, DETAIL_MAXLEN);
+            res = await window.api.getSubagentFeed(rec.name, rec.key, rec.feed.cursor());
           } catch (e) {
             res = { ok: false, error: String(e) };
           }
@@ -22011,15 +21992,12 @@ helper=${d.helperPath}`;
             return;
           }
           const hadMeta = !!rec.feed.meta();
-          const wasEnded = rec.feed.ended();
           const { appended } = rec.feed.ingest(res.data || {});
           const metaArrived = !hadMeta && !!rec.feed.meta();
-          const endedFlipped = !wasEnded && rec.feed.ended();
-          if (!appended && !metaArrived && !endedFlipped) return;
+          if (!appended && !metaArrived) return;
           const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
           renderFeed();
           if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
-          if (endedFlipped) renderChips();
         }
         function startPolling() {
           gen++;
@@ -22038,7 +22016,7 @@ helper=${d.helperPath}`;
       <div class="activity-chips"></div>
       <div class="activity-body"></div>
       <div class="activity-footer">
-        <span class="activity-boundary">samples completed turns \u2014 turns between polls are not captured</span>
+        <span class="activity-boundary">updates at turn boundaries \u2014 the in-flight stream is not on the wire</span>
         <span class="activity-asof"></span>
       </div>`;
           chipsEl = pane.querySelector(".activity-chips");

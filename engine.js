@@ -480,6 +480,7 @@ function rebuildAllStatusScripts(manager) {
 const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies, boxWirescopeView } = require('./proxy-util');
 const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
+const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent-ring');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById } = require('./pending-store');
@@ -838,6 +839,8 @@ const SessionManager = createSessionManager({
     mergeCodexInstructions,
     normalizeProxyBase,
     noteFileTouches,
+    createSubagentStore,
+    noteSubagentTurn,
     os,
     outboxHasOrigin,
     parkDelivery,
