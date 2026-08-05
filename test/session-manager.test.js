@@ -2535,6 +2535,13 @@ function mkReview(extra = {}) {
       if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
     },
     remove: (n) => { const i = store.findIndex((x) => x.name === n); if (i >= 0) store.splice(i, 1); },
+    // Resolves the entry BY NAME and no-ops when it is absent — same shape as
+    // the real store, which is why the call has to land after create().
+    setStripLevel: (n, level) => {
+      const e = store.find((x) => x.name === n);
+      if (!e) return;
+      if (level === 1 || level === 2) e.stripLevel = level; else delete e.stripLevel;
+    },
   };
   const overrides = {
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
@@ -3270,6 +3277,61 @@ test('team-review C2: a claude reviewer spawns with no force-claude notice', asy
 });
 
 // --- Task 29a → T52: `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
+// The template's stripLevel reaches the reviewer, and the ORDER is the whole
+// mechanism: setStripLevel resolves the entry by name and no-ops when it isn't
+// there, so a call placed before create() would leave the seat at level 0 while
+// every visible signal — template on disk, spawn reply, tools — looked right.
+// The spawn-intent path applies the level the same way; team-review skipped it
+// entirely until 2026-08-05, so an operator who set L2 on the template got an
+// unstripped reviewer with nothing anywhere saying so.
+test('team-review: the template stripLevel lands on the seat, and only after create()', async () => {
+  const { m, injected, created, persistence } = mkReview({
+    reviewTemplate: { stripLevel: 2 },
+  });
+  // mkReview's default create() is a no-op, so the handler's identity seed sits
+  // in the store from the start and setStripLevel would resolve an entry
+  // wherever it was called — leaving this test's ordering claim untested.
+  // setStripLevel is what carries the claim, so gate IT on create() having run:
+  // before that, it must find nothing to write to, exactly as against the real
+  // store, where the durable record does not exist until create() makes it.
+  let createDone = false;
+  const realSetStripLevel = persistence.setStripLevel;
+  persistence.setStripLevel = (n, level) => {
+    if (!createDone) return; // pre-create(): no record yet, so the write is lost
+    realSetStripLevel(n, level);
+  };
+  m.create = async (...args) => { created.push(args); createDone = true; };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  // ENTER: no spawn means no entry to carry a level, and every assertion below
+  // would be vacuously true of a handler that did nothing at all.
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const name = created[0][0];
+  const entry = persistence.get(name);
+  assert.ok(entry, `ENTER: the seat ${name} has a persistence entry to carry the level`);
+  assert.strictEqual(entry.stripLevel, 2,
+    'the template asked for L2 and the seat runs at L2 — an unstripped reviewer is invisible from inside the seat');
+  assert.ok(entry.ephemeral === true && entry.reviewFor === 'lead',
+    'and the identity seed survived the later setStripLevel write');
+  assert.ok(!injected.some((t) => /error/i.test(t)), 'no error surfaced to the lead');
+});
+
+// A template with no stripLevel must not write one: absent is a real value
+// (level 0), and freezing an explicit 0 onto the record would defeat the
+// global/default resolution in stripLevelOf.
+test('team-review: a template with no stripLevel leaves the seat unset, not zeroed', async () => {
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const entry = persistence.get(created[0][0]);
+  assert.ok(entry, 'ENTER: the seat has a persistence entry');
+  assert.ok(!('stripLevel' in entry),
+    'the shipped default carries no stripLevel, so the key stays ABSENT and resolution falls through');
+});
+
 // Both the reviewer TEMPLATE and the role manifest are agent-writable, so neither
 // can WIDEN the cold reviewer past the code-level cap (Read/Grep/Glob). The
 // template is the primary tools source (T52); it's capped exactly like the role

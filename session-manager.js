@@ -3718,6 +3718,14 @@ function createSessionManager(deps) {
             null, false, session.proxy ?? null, [], [], disabledTools, [], [],
             reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
           );
+          // AFTER create(), not before: setStripLevel resolves the entry by name
+          // and silently no-ops if it isn't there yet. The spawn-intent path
+          // applies the template's level the same way; a reviewer that skipped
+          // this ran unstripped no matter what the template said, which is
+          // invisible from inside the seat.
+          if (reviewTpl && (reviewTpl.stripLevel === 1 || reviewTpl.stripLevel === 2)) {
+            getPersistence().setStripLevel(name, reviewTpl.stripLevel);
+          }
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
