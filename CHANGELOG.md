@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **The bottom drawer is now a tab host.** It used to be the IPC log and
+  nothing else; it now owns a tab strip with per-tab unread badges, and the IPC
+  log is simply the first tab. Everything about the old drawer still works the
+  same way — the same toggle, the same menu item, the same export and clear
+  buttons — but there is now somewhere for the activity feed, a clodexctl
+  console and a terminal to live. Those arrive next.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link
