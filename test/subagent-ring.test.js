@@ -14,7 +14,7 @@ const {
 
 const turn = (over = {}) => ({
   key: 'a@s1', role: 'general-purpose', model: 'claude-opus-5',
-  text: 'hello', tools: ['Read'], truncated: false, ts: 1000, ...over,
+  text: 'hello', tools: [{ name: 'Read', arg: '/a.js' }], truncated: false, ts: 1000, ...over,
 });
 
 test('a turn lands as a fully-shaped entry', () => {
@@ -26,7 +26,7 @@ test('a turn lands as a fully-shaped entry', () => {
     known: true, key: 'a@s1', role: 'general-purpose', model: 'claude-opus-5',
     displayName: null,
     entries: [{
-      seq: 1, ts: 1000, text: 'hello', tools: ['Read'],
+      seq: 1, ts: 1000, text: 'hello', tools: [{ name: 'Read', arg: '/a.js' }],
       toolsOmitted: 0, truncated: false,
     }],
     seq: 1, missed: false,
@@ -98,10 +98,40 @@ test('a text-only turn lands', () => {
   assert.deepStrictEqual(feedSince(s, 'a@s1', 0).entries[0].tools, []);
 });
 
-test('non-string tool entries are filtered out', () => {
+test('unusable tool entries are filtered out', () => {
   const s = createSubagentStore();
-  noteSubagentTurn(s, turn({ tools: ['Read', null, 42, '', 'Bash'] }));
-  assert.deepStrictEqual(feedSince(s, 'a@s1', 0).entries[0].tools, ['Read', 'Bash']);
+  noteSubagentTurn(s, turn({
+    tools: [{ name: 'Read', arg: '/a' }, null, 42, {}, { name: '' }, { name: 'Bash', arg: 'ls' }],
+  }));
+  assert.deepStrictEqual(feedSince(s, 'a@s1', 0).entries[0].tools,
+    [{ name: 'Read', arg: '/a' }, { name: 'Bash', arg: 'ls' }]);
+});
+
+// A ring outlives the change that added snippets: entries written by the older
+// wire arrive as bare name strings, and dropping them would blank tool rows
+// already on screen rather than fail.
+test('a bare tool-name string normalizes to a snippet-less record', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ tools: ['Read', { name: 'Bash', arg: 'ls' }] }));
+  assert.deepStrictEqual(feedSince(s, 'a@s1', 0).entries[0].tools,
+    [{ name: 'Read', arg: null }, { name: 'Bash', arg: 'ls' }]);
+});
+
+// null and absent are the same claim here (no snippet), and both must be
+// DISTINGUISHABLE from a snippet that exists — an `arg: undefined` leaking
+// through would render as the string "undefined".
+test('a missing, empty or non-string arg normalizes to exactly null', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({
+    tools: [{ name: 'A' }, { name: 'B', arg: '' }, { name: 'C', arg: 42 }, { name: 'D', arg: null }],
+  }));
+  const got = feedSince(s, 'a@s1', 0).entries[0].tools;
+  assert.strictEqual(got.length, 4, 'ENTER: none of the four rows was dropped');
+  for (const t of got) {
+    assert.ok('arg' in t, `${t.name}: arg present, not absent`);
+    assert.notStrictEqual(t.arg, undefined, `${t.name}: arg is not undefined`);
+    assert.strictEqual(t.arg, null, `${t.name}: arg is exactly null`);
+  }
 });
 
 test('a non-array tools field does not throw', () => {

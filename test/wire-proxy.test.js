@@ -72,6 +72,15 @@ const MIXED_SSE_BODY = [
   'event: content_block_stop',
   'data: {"type":"content_block_stop","index":1}',
   '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tu_b","name":"Bash","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\": \\"npm test\\\\nsecond line\\"}"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":2}',
+  '',
   'event: message_delta',
   'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}',
   '',
@@ -203,6 +212,11 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.deepEqual(turn.files, [{ tool: 'Edit', path: '/tmp/wire-touched.js' }]);
   // This turn read nothing — the Edit must NOT leak into the reads channel.
   assert.deepEqual(turn.reads, []);
+  // The feed's row text, and the only assertion standing between the operator
+  // and `Bash Bash Read Bash`. Sourcing this from UsageCollector.toolUses (which
+  // knows names only) still yields a plausible-looking ['Edit'] that both
+  // normalizers downstream accept, so nothing else here would go red.
+  assert.deepEqual(turn.toolUses, [{ name: 'Edit', arg: '/tmp/wire-touched.js' }]);
 
   assert.equal(events.session[0].agent, 'tester');
   assert.equal(events.session[0].sessionId, SESSION_ID);
@@ -237,6 +251,15 @@ test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-
   // refactor of the collector's block routing would break silently.
   assert.deepEqual(turn.reads, [{ tool: 'Read', path: '/tmp/read-me.js', offset: 40, limit: 12 }]);
   assert.deepEqual(turn.files, [{ tool: 'Edit', path: '/tmp/edited.js' }]);
+  // The Bash snippet is a value ONLY the FileToolCollector can produce — Bash
+  // touches neither channel above, and the names-only collector has no
+  // arguments at all. Its first-line clamp survives the emit, so this pins the
+  // whole path from input_json_delta to turn.completed.
+  assert.deepEqual(turn.toolUses, [
+    { name: 'Read', arg: '/tmp/read-me.js' },
+    { name: 'Edit', arg: '/tmp/edited.js' },
+    { name: 'Bash', arg: 'npm test' },
+  ]);
 
   await proxy.close();
   up.server.close();

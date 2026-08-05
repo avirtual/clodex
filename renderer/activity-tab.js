@@ -342,7 +342,8 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     for (const e of entries) {
       const entry = [];
       if (e.tools && e.tools.length) {
-        const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t)}</span>`);
+        const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t.name)}</span>`
+          + (t.arg ? `<span class="subagent-tool-arg">${esc(t.arg)}</span>` : ''));
         // Beside the tools, never under the text: an omitted tool name says
         // nothing about whether the text is complete.
         if (e.toolsOmitted > 0) {

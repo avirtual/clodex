@@ -849,7 +849,7 @@ html, body {
 .subagent-tool-more { color: var(--text-dim); }
 .subagent-tool-arg {
   font-family: 'SF Mono', Menlo, monospace; color: var(--text);
-  word-break: break-all;
+  word-break: break-all; margin-left: 4px;
 }
 .subagent-detail-text {
   font-size: 13px; line-height: 1.55; color: var(--text);

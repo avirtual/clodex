@@ -160,13 +160,20 @@ class UsageCollector {
 // at, off the same framer feed the text/usage collectors ride. Feeds the
 // touched-files UI — a FACT extractor (tool name + target path), no policy.
 //
+// Third channel, `calls`: one record per tool_use block in stream order,
+// carrying the tool name plus ONE capped argument snippet. This is the activity
+// feed's row text — without it a busy subagent reads `Bash Bash Read Bash`,
+// true and useless. It rides HERE rather than in a second accumulator because
+// the arguments arrive on input_json_delta, and this collector is already the
+// one thing on the hot path licensed to parse those.
+//
 // Hot-path discipline: tool inputs stream as input_json_delta fragments inside
 // content_block_delta — the highest-volume event type. This collector JSON-
-// parses a delta ONLY while a tracked file-tool block is open and its path is
-// still unknown (the path key arrives early in the input object — though not
-// always first: real Edit calls stream `replace_all` ahead of it); outside
-// those windows deltas are dropped on the event-name check alone. A per-block
-// accumulation cap bounds memory even if a path key never shows up.
+// parses a delta ONLY while a tracked block is open and still missing what it
+// wants (the path key arrives early in the input object — though not always
+// first: real Edit calls stream `replace_all` ahead of it); outside those
+// windows deltas are dropped on the event-name check alone. A per-block
+// accumulation cap bounds memory even if the wanted key never shows up.
 //
 // Semantics note: a tool_use in the response is the model's REQUEST to touch
 // the file — the CLI runs it (or the user denies it) after this stream ends.
@@ -188,11 +195,47 @@ const _FT_EVENTS = new Set(['content_block_start', 'content_block_delta', 'conte
 const _FT_BUF_CAP = 65536;
 const _FT_PATH_RE = /"(?:file_path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
+// Argument snippet bounds. ONE key per tool, deliberately: a feed row has room
+// for one fact, and a second one only invites the reader to reconcile them.
+// Tools whose argument IS a path (Read + FILE_TOOLS) are not listed — their
+// snippet reuses the path this collector already extracts, so no tool's input
+// is parsed twice.
+const ARG_CAP = 120;
+const ARG_TOOLS = new Map([
+  ['Bash', 'command'],
+  ['Grep', 'pattern'],
+  ['Glob', 'pattern'],
+  ['Task', 'description'],
+]);
+const _ARG_KEY_RES = new Map(
+  [...new Set(ARG_TOOLS.values())].map((k) => [k, new RegExp(`"${k}"\\s*:\\s*"`)]),
+);
+
+// The Buffer round-trip is a FORCED FLATTEN and must not be "simplified" back
+// to a bare `.slice()` (subagent-ring.js carries the same rule for turn text).
+// A slice yields a V8 SlicedString that pins its parent, and a parent here is a
+// tool input up to _FT_BUF_CAP — or, for a reused path, whatever rope that
+// string came out of. These snippets are retained for the life of a session's
+// feed, so nothing downstream drops the parent for us. The reversion is silent
+// because `.length` is identical either way and every assertion still passes.
+//
+// UNCONDITIONAL, and gating it on `length > ARG_CAP` is the same bug one level
+// up: an UNDER-cap string can pin just as much. `_tryArg`'s decode fallback
+// hands us a cons of 64KB buffer fragments whose decoded length is well under
+// the cap, and a JSON.parse result is not guaranteed to be a fresh allocation
+// either. Length is not evidence about retention.
+function clampArg(s) {
+  if (typeof s !== 'string' || !s) return null;
+  const cut = s.length > ARG_CAP ? s.slice(0, ARG_CAP) : s;
+  return Buffer.from(cut, 'utf8').toString('utf8');
+}
+
 class FileToolCollector {
   constructor() {
-    this._blocks = new Map(); // index -> { kind:'edit'|'read', tool, buf, path }
+    this._blocks = new Map(); // index -> { kind:'edit'|'read'|'arg', tool, buf, rec, ... }
     this._files = [];         // { tool, path } mutations, in stream order
     this._reads = [];         // { tool:'Read', path, offset?, limit? } in stream order
+    this._calls = [];         // { name, arg } per tool_use block, in stream order
   }
 
   _tryExtract(entry) {
@@ -201,6 +244,46 @@ class FileToolCollector {
     try { entry.path = JSON.parse(`"${m[1]}"`); } catch { entry.path = m[1]; }
     entry.buf = '';
     this._files.push({ tool: entry.tool, path: entry.path });
+    if (entry.rec) entry.rec.arg = clampArg(entry.path);
+    return true;
+  }
+
+  // Scan the raw JSON-string body of the tool's argument key, decoding as we
+  // go, and stop at the FIRST of: an escaped newline, the closing quote, or
+  // ARG_CAP decoded chars. The newline stop is what keeps a heredoc or a
+  // multi-line Bash body to one line — clamping alone would not, since the cap
+  // can fall past several line breaks.
+  //
+  // Returns false while the stop is still ahead of the buffer, so a fragmented
+  // delta stream keeps accumulating rather than committing half an escape;
+  // `final` (the block ended) makes a truncated buffer a stop of its own.
+  _tryArg(entry, final) {
+    const m = _ARG_KEY_RES.get(entry.key).exec(entry.buf);
+    if (!m) return false;
+    const buf = entry.buf;
+    let i = m.index + m[0].length;
+    let seg = '';
+    let n = 0;
+    let stopped = false;
+    while (i < buf.length && n < ARG_CAP) {
+      const c = buf[i];
+      if (c === '"') { stopped = true; break; }
+      if (c !== '\\') { seg += c; n += 1; i += 1; continue; }
+      const e = buf[i + 1];
+      if (e === undefined) break;              // escape split across deltas
+      if (e === 'n' || e === 'r') { stopped = true; break; }
+      if (e === 'u') {
+        if (i + 6 > buf.length) break;         // \uXXXX split across deltas
+        seg += buf.slice(i, i + 6); n += 1; i += 6; continue;
+      }
+      seg += buf.slice(i, i + 2); n += 1; i += 2;
+    }
+    if (!stopped && n < ARG_CAP && !final) return false;
+    let out;
+    try { out = JSON.parse(`"${seg}"`); } catch { out = seg; }
+    entry.rec.arg = clampArg(out);
+    entry.buf = '';
+    entry.done = true;
     return true;
   }
 
@@ -226,6 +309,7 @@ class FileToolCollector {
     if (offset != null) rec.offset = offset;
     if (limit != null) rec.limit = limit;
     this._reads.push(rec);
+    if (entry.rec) entry.rec.arg = clampArg(filePath);
   }
 
   onEvent(event, data) {
@@ -240,10 +324,22 @@ class FileToolCollector {
     if (t === 'content_block_start') {
       const cb = obj.content_block || {};
       if (cb.type === 'tool_use' && typeof obj.index === 'number') {
+        // Every tool_use gets a `calls` record up front, even one whose input
+        // we never track — a name with no snippet is still a row the feed must
+        // show, and the record is filled IN PLACE by whichever extractor runs.
+        // Pairing by object reference rather than by index into a second list
+        // is what keeps a dropped/give-up block from shifting every later
+        // snippet onto the wrong tool.
+        const rec = { name: typeof cb.name === 'string' ? cb.name : null, arg: null };
+        this._calls.push(rec);
         if (FILE_TOOLS.has(cb.name)) {
-          this._blocks.set(obj.index, { kind: 'edit', tool: cb.name, buf: '', path: null });
+          this._blocks.set(obj.index, { kind: 'edit', tool: cb.name, buf: '', path: null, rec });
         } else if (cb.name === 'Read') {
-          this._blocks.set(obj.index, { kind: 'read', tool: 'Read', buf: '', path: null });
+          this._blocks.set(obj.index, { kind: 'read', tool: 'Read', buf: '', path: null, rec });
+        } else if (ARG_TOOLS.has(cb.name)) {
+          this._blocks.set(obj.index, {
+            kind: 'arg', tool: cb.name, buf: '', key: ARG_TOOLS.get(cb.name), rec, done: false,
+          });
         }
       }
     } else if (t === 'content_block_delta') {
@@ -258,6 +354,14 @@ class FileToolCollector {
         if (entry.buf.length > _FT_BUF_CAP) this._blocks.delete(obj.index);
         return;
       }
+      if (entry.kind === 'arg') {
+        if (entry.done) return; // snippet settled — stop touching the hot path
+        entry.buf += d.partial_json;
+        if (!this._tryArg(entry, false) && entry.buf.length > _FT_BUF_CAP) {
+          this._blocks.delete(obj.index); // unbounded input, no arg key — drop
+        }
+        return;
+      }
       if (entry.path !== null) return; // edit: accumulate only until path known
       entry.buf += d.partial_json;
       if (!this._tryExtract(entry) && entry.buf.length > _FT_BUF_CAP) {
@@ -267,6 +371,9 @@ class FileToolCollector {
       const entry = this._blocks.get(obj.index);
       if (entry) {
         if (entry.kind === 'read') this._extractRead(entry);
+        // Final pass: a snippet still short of its stop commits what it has,
+        // since no more deltas are coming.
+        else if (entry.kind === 'arg') { if (!entry.done && entry.buf) this._tryArg(entry, true); }
         else if (entry.path === null && entry.buf) this._tryExtract(entry);
         this._blocks.delete(obj.index);
       }
@@ -280,6 +387,13 @@ class FileToolCollector {
   // [{ tool:'Read', path, offset?, limit? }] for every Read call, in stream
   // order. Empty when the turn read nothing.
   get reads() { return this._reads; }
+
+  // [{ name, arg }] for EVERY tool_use block, in stream order — including tools
+  // whose input is not tracked, which arrive with `arg: null`. This is a
+  // superset of `files`/`reads` by construction and does not replace either:
+  // those two carry the exact paths the touched-files and heat UIs read, this
+  // one carries display text.
+  get calls() { return this._calls; }
 }
 
 // Codex/openai Responses-API stream: response.completed (or incomplete /
@@ -323,4 +437,4 @@ class OpenAIUsageCollector {
   }
 }
 
-module.exports = { SSEFramer, anthropicTextDelta, openaiTextDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, FILE_TOOLS };
+module.exports = { SSEFramer, anthropicTextDelta, openaiTextDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, FILE_TOOLS, ARG_CAP, ARG_TOOLS, clampArg };

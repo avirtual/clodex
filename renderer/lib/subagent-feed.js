@@ -46,7 +46,16 @@ function createSubagentFeed() {
         seq: e.seq,
         ts: typeof e.ts === 'number' ? e.ts : null,
         text: e.text || null,
-        tools: Array.isArray(e.tools) ? e.tools : [],
+        // `{ name, arg }`, with a bare string accepted as a name-only tool —
+        // the main-process ring normalizes both, but a peer on an older build
+        // is a second source for this reply.
+        tools: (Array.isArray(e.tools) ? e.tools : []).reduce((acc, t) => {
+          if (typeof t === 'string' && t) acc.push({ name: t, arg: null });
+          else if (t && typeof t.name === 'string' && t.name) {
+            acc.push({ name: t.name, arg: typeof t.arg === 'string' && t.arg ? t.arg : null });
+          }
+          return acc;
+        }, []),
         // Distinct from `truncated`, which is about the TEXT only.
         toolsOmitted: typeof e.toolsOmitted === 'number' && e.toolsOmitted > 0 ? e.toolsOmitted : 0,
         truncated: e.truncated === true,

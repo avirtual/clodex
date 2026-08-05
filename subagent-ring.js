@@ -49,8 +49,19 @@ function noteSubagentTurn(store, turn) {
   if (typeof key !== 'string' || !key) return null;
 
   const rawText = typeof turn.text === 'string' ? turn.text : '';
+  // Two accepted shapes: `{ name, arg }` (current wire) and a bare name string
+  // (what the wire carried before snippets existed). Both normalize to the
+  // object form so the renderer has one case — a live ring can hold entries
+  // written on either side of that change, so dropping the string branch would
+  // blank tool rows already on screen.
   const tools = Array.isArray(turn.tools)
-    ? turn.tools.filter((t) => typeof t === 'string' && t)
+    ? turn.tools.reduce((acc, t) => {
+      if (typeof t === 'string' && t) acc.push({ name: t, arg: null });
+      else if (t && typeof t.name === 'string' && t.name) {
+        acc.push({ name: t.name, arg: typeof t.arg === 'string' && t.arg ? t.arg : null });
+      }
+      return acc;
+    }, [])
     : [];
   // Nothing to show: a tool-loop hop that streamed neither text nor a tool call
   // would render as a blank row.

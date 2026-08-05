@@ -10,7 +10,7 @@ const assert = require('node:assert');
 const { createSubagentFeed, MAX_FEED_ENTRIES } = require('../renderer/lib/subagent-feed');
 
 const entry = (seq, over = {}) => ({
-  seq, ts: 1000 + seq, text: `t${seq}`, tools: ['Read'],
+  seq, ts: 1000 + seq, text: `t${seq}`, tools: [{ name: 'Read', arg: '/a.js' }],
   toolsOmitted: 0, truncated: false, ...over,
 });
 const reply = (entries, over = {}) => ({
@@ -24,8 +24,30 @@ test('a turn is appended and reported as appended', () => {
   // Whole-entry equality: a field silently dropped by the mapping (tools,
   // truncated) reads as undefined and a shape-agnostic check sails past it.
   assert.deepStrictEqual(f.entries(), [{
-    seq: 1, ts: 1001, text: 't1', tools: ['Read'], toolsOmitted: 0, truncated: false,
+    seq: 1, ts: 1001, text: 't1', tools: [{ name: 'Read', arg: '/a.js' }],
+    toolsOmitted: 0, truncated: false,
   }]);
+});
+
+// A peer on an older build is a second source for this reply, so the renderer
+// cannot rely on the main-process ring having normalized the shape for it.
+test('a bare tool-name string from an older peer normalizes to a record', () => {
+  const f = createSubagentFeed();
+  f.ingest(reply([entry(1, { tools: ['Read', { name: 'Bash', arg: 'ls -la' }, { name: '' }, null] })]));
+  assert.deepStrictEqual(f.entries()[0].tools,
+    [{ name: 'Read', arg: null }, { name: 'Bash', arg: 'ls -la' }]);
+});
+
+test('a tool arg that is missing, empty or non-string normalizes to exactly null', () => {
+  const f = createSubagentFeed();
+  f.ingest(reply([entry(1, { tools: [{ name: 'A' }, { name: 'B', arg: '' }, { name: 'C', arg: 7 }] })]));
+  const got = f.entries()[0].tools;
+  assert.strictEqual(got.length, 3, 'ENTER: no row was dropped by the normalization');
+  for (const t of got) {
+    assert.ok('arg' in t, `${t.name}: arg present, not absent`);
+    assert.notStrictEqual(t.arg, undefined, `${t.name}: arg is not undefined`);
+    assert.strictEqual(t.arg, null, `${t.name}: arg is exactly null`);
+  }
 });
 
 test('the cursor advances to the last ingested seq', () => {
@@ -169,4 +191,25 @@ test('feeds are independent instances', () => {
   assert.deepStrictEqual(b.entries(), []);
   assert.strictEqual(b.meta(), null);
   assert.strictEqual(b.cursor(), 0);
+});
+
+// The browser frontend runs its own copy of the tool row out of the committed
+// bundle, so a renderer-only change leaves web users reading bare tool names —
+// the exact state the snippet exists to end, and silent because the desktop app
+// looks right. esbuild emits this expression byte-identically, which is the only
+// reason one string gates both files. If a later edit breaks that byte-identity,
+// pin the bundle's own shape rather than deleting the gate.
+test('the tool-arg span is in the committed web bundle, not just the renderer', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const ROOT = path.join(__dirname, '..');
+  const SPAN = '<span class="subagent-tool-arg">';
+  const rsrc = fs.readFileSync(path.join(ROOT, 'renderer', 'activity-tab.js'), 'utf8');
+  assert.ok(rsrc.includes(SPAN), 'ENTER: the renderer still renders a tool-arg span at all');
+  const wsrc = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
+  assert.ok(wsrc.includes(SPAN),
+    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
+    + 'browser frontend keeps showing tool names with no arguments');
+  assert.ok(wsrc.includes('.subagent-tool-arg {'),
+    'the bundle carries the markup but not its CSS — the snippet would render unstyled');
 });

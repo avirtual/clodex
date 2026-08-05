@@ -1,11 +1,12 @@
 // Run: node --test
 // Touched-files feed: the wire-side SSE collector (streamed input_json_delta
-// reassembly, hot-path gating, give-up cap) and the pure jsonl extraction +
-// ring semantics (dedupe-by-path, newest-first, cap, subagent badge).
+// reassembly, hot-path gating, give-up cap), its `calls` channel (the activity
+// feed's tool name + argument snippet) and the pure jsonl extraction + ring
+// semantics (dedupe-by-path, newest-first, cap, subagent badge).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { FileToolCollector } = require('../wire/sse');
+const { FileToolCollector, ARG_CAP, clampArg } = require('../wire/sse');
 const { extractFileTouches, noteFileTouches, TOUCH_RING_CAP } = require('../file-touch');
 
 // --- wire/sse.js FileToolCollector -----------------------------------------
@@ -127,6 +128,199 @@ test('collector: an oversized Read input is dropped (memory bound)', () => {
   for (let i = 0; i < 80; i++) chunks.push('"pad": "' + 'z'.repeat(1000) + '", ');
   feedToolUse(c, 0, 'Read', ['{'].concat(chunks).concat(['"file_path": "/late"}']));
   assert.deepStrictEqual(c.reads, []); // exceeded the cap before stop — dropped
+});
+
+// --- calls channel (feed row text) ------------------------------------------
+
+test('collector: every tool_use gets a calls record, in stream order', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Bash', ['{"command": "npm test"}']);
+  feedToolUse(c, 1, 'Read', ['{"file_path": "/a/b.js"}']);
+  feedToolUse(c, 2, 'Edit', ['{"file_path": "/a/c.js", "old_string": "x"}']);
+  feedToolUse(c, 3, 'Grep', ['{"pattern": "TODO", "path": "/src"}']);
+  feedToolUse(c, 4, 'Glob', ['{"pattern": "**/*.ts"}']);
+  feedToolUse(c, 5, 'Task', ['{"description": "audit the ring", "prompt": "long..."}']);
+  assert.deepStrictEqual(c.calls, [
+    { name: 'Bash', arg: 'npm test' },
+    { name: 'Read', arg: '/a/b.js' },      // reuses the reads extraction
+    { name: 'Edit', arg: '/a/c.js' },      // reuses the files extraction
+    { name: 'Grep', arg: 'TODO' },
+    { name: 'Glob', arg: '**/*.ts' },
+    { name: 'Task', arg: 'audit the ring' },
+  ]);
+});
+
+// A name with no snippet is still a row the feed must show — dropping it would
+// under-report the turn's work rather than merely showing it thinly.
+test('collector: an untracked tool still lands as a name-only record', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'WebFetch', ['{"url": "https://example.com"}']);
+  assert.deepStrictEqual(c.calls, [{ name: 'WebFetch', arg: null }]);
+  assert.deepStrictEqual(c.files, []);
+  assert.deepStrictEqual(c.reads, []);
+});
+
+// Clamping alone would NOT do this: ARG_CAP can fall well past several line
+// breaks, so a heredoc would paste its whole body into one feed row.
+test('collector: a multi-line Bash command yields a single-line snippet', () => {
+  const c = new FileToolCollector();
+  const command = 'cat <<EOF > /tmp/x\nline two\nline three\nEOF';
+  feedToolUse(c, 0, 'Bash', [JSON.stringify({ command })]);
+  assert.deepStrictEqual(c.calls, [{ name: 'Bash', arg: 'cat <<EOF > /tmp/x' }]);
+  assert.ok(!c.calls[0].arg.includes('\n'), 'ENTER: the snippet carries no newline');
+});
+
+test('collector: a carriage return also ends the snippet', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Bash', [JSON.stringify({ command: 'first\r\nsecond' })]);
+  assert.strictEqual(c.calls[0].arg, 'first');
+});
+
+test('collector: a long single-line command is clamped to ARG_CAP', () => {
+  const c = new FileToolCollector();
+  const command = 'echo ' + 'a'.repeat(500);
+  feedToolUse(c, 0, 'Bash', [JSON.stringify({ command })]);
+  assert.strictEqual(c.calls[0].arg.length, ARG_CAP);
+  assert.strictEqual(c.calls[0].arg, command.slice(0, ARG_CAP));
+});
+
+test('collector: a snippet split across deltas reassembles', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Bash', ['{"comm', 'and": "git ', 'status --sh', 'ort"}']);
+  assert.strictEqual(c.calls[0].arg, 'git status --short');
+});
+
+// A `\uXXXX` or `\"` straddling a delta boundary must not be committed as the
+// half the buffer happens to hold — the decode would then be of a broken escape.
+test('collector: an escape split across deltas is not committed half-read', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Grep', ['{"pattern": "a\\u00', 'e9b"}']);
+  assert.strictEqual(c.calls[0].arg, 'aéb');
+});
+
+test('collector: an escaped quote inside the snippet does not end it early', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Bash', [JSON.stringify({ command: 'echo "hi there"' })]);
+  assert.strictEqual(c.calls[0].arg, 'echo "hi there"');
+});
+
+// The snippet must not force the block to buffer past the point the path
+// machinery would have stopped at — the give-up cap is the memory bound.
+test('collector: a tool whose arg key never arrives lands name-only', () => {
+  const c = new FileToolCollector();
+  const chunks = [];
+  for (let i = 0; i < 80; i++) chunks.push('"pad": "' + 'z'.repeat(1000) + '", ');
+  feedToolUse(c, 0, 'Bash', ['{'].concat(chunks));
+  assert.deepStrictEqual(c.calls, [{ name: 'Bash', arg: null }]);
+});
+
+test('collector: an arg key arriving late but under the cap is still captured', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Task', ['{"subagent_type": "explore", ', '"prompt": "go", ', '"description": "sweep"}']);
+  assert.strictEqual(c.calls[0].arg, 'sweep');
+});
+
+// The block is dropped from tracking once the snippet is settled; a later delta
+// on the same index must neither grow memory nor overwrite the snippet.
+test('collector: a settled snippet ignores the rest of the input', () => {
+  const c = new FileToolCollector();
+  c.onEvent(...ev('content_block_start', { index: 0, content_block: { type: 'tool_use', name: 'Bash', input: {} } }));
+  c.onEvent(...ev('content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: '{"command": "ls"' } }));
+  c.onEvent(...ev('content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: ', "x": "' + 'q'.repeat(200000) + '"}' } }));
+  c.onEvent(...ev('content_block_stop', { index: 0 }));
+  assert.deepStrictEqual(c.calls, [{ name: 'Bash', arg: 'ls' }]);
+});
+
+// Records are paired to their block BY REFERENCE, not by index into a second
+// list: a dropped or give-up block in the middle would otherwise shift every
+// later snippet onto the wrong tool — silently, since both lists stay plausible.
+test('collector: a dropped block does not shift later snippets onto other tools', () => {
+  const c = new FileToolCollector();
+  feedToolUse(c, 0, 'Bash', ['{"command": "first"}']);
+  const chunks = [];
+  for (let i = 0; i < 80; i++) chunks.push('"pad": "' + 'z'.repeat(1000) + '", ');
+  feedToolUse(c, 1, 'Edit', ['{'].concat(chunks));   // gives up, no path
+  feedToolUse(c, 2, 'Bash', ['{"command": "third"}']);
+  assert.deepStrictEqual(c.calls, [
+    { name: 'Bash', arg: 'first' },
+    { name: 'Edit', arg: null },
+    { name: 'Bash', arg: 'third' },
+  ]);
+});
+
+test('collector: interleaved blocks fill their own records', () => {
+  const c = new FileToolCollector();
+  const start = (i, name) => c.onEvent(...ev('content_block_start', { index: i, content_block: { type: 'tool_use', name, input: {} } }));
+  const d = (i, s) => c.onEvent(...ev('content_block_delta', { index: i, delta: { type: 'input_json_delta', partial_json: s } }));
+  start(0, 'Bash'); start(1, 'Grep');
+  d(1, '{"pattern": "abc"}');
+  d(0, '{"command": "def"}');
+  c.onEvent(...ev('content_block_stop', { index: 0 }));
+  c.onEvent(...ev('content_block_stop', { index: 1 }));
+  assert.deepStrictEqual(c.calls, [{ name: 'Bash', arg: 'def' }, { name: 'Grep', arg: 'abc' }]);
+});
+
+// --- clampArg retention -----------------------------------------------------
+
+// The flatten is the whole point of clampArg, and it is INVISIBLE to every
+// ordinary assertion: a SlicedString and a flat string have identical length,
+// content, equality — and identical v8.serialize bytes, so a serialized-size
+// assertion cannot tell them apart either. Only heap retention differs. Measured
+// here rather than asserted structurally: a reversion to a bare `.slice()`
+// pins the whole parent input per snippet, so retention scales with the number
+// of snippets kept; the flatten's does not.
+test('clampArg: a clamped snippet does not retain its parent', () => {
+  const v8 = require('node:v8');
+  const vm = require('node:vm');
+  v8.setFlagsFromString('--expose-gc');
+  const gc = vm.runInNewContext('gc');
+  const PARENT = 1_000_000;
+
+  // Retained bytes for `n` snippets, each cut from its OWN million-char parent.
+  // The parents are unreachable after the loop, so anything still held is held
+  // BY the snippets.
+  const retainedFor = (n, cut, wantLen) => {
+    gc(); gc();
+    const before = process.memoryUsage().heapUsed;
+    const kept = [];
+    for (let i = 0; i < n; i++) {
+      kept.push(cut(String(i).padStart(8, '0') + 'x'.repeat(PARENT)));
+    }
+    gc(); gc();
+    const after = process.memoryUsage().heapUsed;
+    assert.strictEqual(kept.length, n, 'ENTER: the snippets are alive across the measurement');
+    assert.strictEqual(kept[0].length, wantLen, 'ENTER: the cut produced the length under test');
+    return after - before;
+  };
+
+  const flat10 = retainedFor(10, clampArg, ARG_CAP);
+  const flat80 = retainedFor(80, clampArg, ARG_CAP);
+  // Slicing is the reversion this guards against — measured, so the numbers
+  // below are a real contrast and not a threshold picked to pass.
+  const sliced80 = retainedFor(80, (s) => s.slice(0, ARG_CAP), ARG_CAP);
+
+  assert.ok(sliced80 > 40 * PARENT,
+    `ENTER: the sliced control DID pin its parents (retained ${sliced80} for 80)`);
+  assert.ok(flat80 < 8 * PARENT,
+    `flattened snippets retain far less than their parents (retained ${flat80} for 80)`);
+  // The shape, not the absolute number: 8x the snippets must not mean ~8x the
+  // bytes. Slicing gives 8x here; the flatten's growth is noise-level.
+  assert.ok(flat80 < flat10 + 8 * PARENT,
+    `flattened retention does not scale with snippet count (n=10 ${flat10}, n=80 ${flat80})`);
+
+  // The UNDER-cap branch, and the reason the flatten cannot be gated on
+  // `length > ARG_CAP`: a short string pins its parent exactly as hard as a long
+  // one. `_tryArg`'s decode fallback reaches here for real — a malformed escape
+  // inside the first 120 chars leaves `seg`, a cons of 64KB buffer fragments,
+  // whose decoded length is under the cap. Without this the gated version passes
+  // everything above.
+  const SHORT = 40;
+  const shortFlat = retainedFor(80, (s) => clampArg(s.slice(0, SHORT)), SHORT);
+  const shortSliced = retainedFor(80, (s) => s.slice(0, SHORT), SHORT);
+  assert.ok(shortSliced > 40 * PARENT,
+    `ENTER: the under-cap sliced control DID pin its parents (retained ${shortSliced} for 80)`);
+  assert.ok(shortFlat < 8 * PARENT,
+    `an UNDER-cap snippet is flattened too (retained ${shortFlat} for 80)`);
 });
 
 // --- file-touch.js ----------------------------------------------------------

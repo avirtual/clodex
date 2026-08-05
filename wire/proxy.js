@@ -524,15 +524,15 @@ class WireProxy extends EventEmitter {
                 // Subagent feed inputs. `agentId` is the x-claude-code-agent-id
                 // header verbatim (the key proxylab/meta.py buckets on, so the
                 // wire-fed feed and wirescope's chips address the same
-                // instance). `toolUses` is collected by UsageCollector on the
-                // events it already parses — no per-chunk work is added for it.
+                // instance).
                 //
-                // NAMES only, deliberately. Adding tool INPUTS here means
-                // parsing input_json_delta — the highest-volume event on the
-                // stream — on the thread forwarding the client's bytes; see
-                // FileToolCollector in sse.js for what that costs.
+                // `toolUses` is [{ name, arg }] and comes from FileToolCollector,
+                // NOT from UsageCollector.toolUses (names only, still fed for
+                // usage.meta). Sourcing it here is what keeps input_json_delta —
+                // the highest-volume event on the stream — parsed by exactly one
+                // collector on the thread forwarding the client's bytes.
                 agentId: agentId || null,
-                toolUses: (provider === 'anthropic' && usage.toolUses) ? usage.toolUses : [],
+                toolUses: ftools ? ftools.calls : [],
               });
             }
           } catch (e) { fail(e); }
