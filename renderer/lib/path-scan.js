@@ -18,6 +18,7 @@ const EXTENSIONS = [
   'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'md', 'css', 'html',
   'sh', 'bash', 'zsh', 'py', 'rb', 'rs', 'go', 'java', 'c', 'h', 'cpp',
   'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'sql', 'txt', 'log',
+  'tf', 'tfvars', 'tfstate', 'hcl',
 ];
 
 // The `~` alternative must carry its slash. Written as a bare `~`, the group

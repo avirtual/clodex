@@ -65,6 +65,23 @@ test('a trailing colon with no digits is not a line number', () => {
   ]);
 });
 
+// `tf` sits before `tfvars` in the allowlist, so the alternation reaches it
+// first and only the `\b` after the group stops `main.tfvars` from being
+// claimed as `main.tf` plus stray text. Dropping that `\b` — or sorting the
+// list — silently truncates every prefix pair.
+test('an extension that prefixes another still matches the longer one whole', () => {
+  assert.deepStrictEqual(hits('terraform.tfvars and network.tf').map((h) => h.path),
+    ['terraform.tfvars', 'network.tf']);
+  assert.deepStrictEqual(hits('terraform.tfstate').map((h) => h.path), ['terraform.tfstate']);
+});
+
+test('finds infra paths with a line number', () => {
+  assert.deepStrictEqual(hits('modules/vpc/main.tf:42 blew up'), [
+    { start: 0, end: 22, text: 'modules/vpc/main.tf:42', path: 'modules/vpc/main.tf', line: 42 },
+  ]);
+  assert.deepStrictEqual(hits('providers.hcl').map((h) => h.path), ['providers.hcl']);
+});
+
 test('an unknown extension is not claimed', () => {
   assert.deepStrictEqual(hits('archive.tar and thing.xyz'), []);
 });
