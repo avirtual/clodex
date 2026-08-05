@@ -49,6 +49,20 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
 
   const feeds = new Map();      // feedKey -> { name, key, label, feed }
   const notified = new Set();   // child keys already badged (once per subagent)
+  // feedKey -> a monotonic stamp taken when the key is FIRST observed. The chip
+  // strip orders by this and never by anything the wire controls: the payload
+  // arrives in RECENCY order (proxylab meta.py sorts sub_agents by last_seen
+  // descending) and that order permutes every time two subs take turns, so
+  // rendering it directly makes chips trade places under the operator's cursor
+  // every 5s. Position is an operator affordance — you learn where a chip is —
+  // and it must be stable for the life of the window, including after the sub
+  // ends. Never renumbered, so an ended chip keeps its slot.
+  const firstSeen = new Map();
+  let seenSeq = 0;
+  function stamp(fk) {
+    if (!firstSeen.has(fk)) firstSeen.set(fk, ++seenSeq);
+    return firstSeen.get(fk);
+  }
   let selected = null;          // feedKey | null
   let pollTimer = null;
   let tickTimer = null;
@@ -79,6 +93,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
 
   function feedFor(name, key, label) {
     const fk = feedKeyOf(name, key);
+    stamp(fk);
     let rec = feeds.get(fk);
     if (!rec) {
       rec = { name, key, label: label || key, feed: createSubagentFeed() };
@@ -119,6 +134,12 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   // the feature inverted: its whole job is to report the tab you are NOT on.
   function noticeSubs(live) {
     for (const [fk, l] of live) {
+      // Stamped HERE, in payload-iteration order, rather than lazily in the sort
+      // comparator: a comparator assigns in whatever order it happens to visit
+      // pairs, which would make the very first ordering depend on the sort
+      // algorithm. This also runs while the pane is unmounted, so a sub observed
+      // before the operator ever opened the tab still keeps its slot.
+      stamp(fk);
       if (!notified.has(fk)) {
         notified.add(fk);
         // Once per SUBAGENT, never per turn: a badge that counted turns would
@@ -171,8 +192,14 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     // Chips = live subs, plus any feed with retained history that is no longer
     // live. An aged-out sub keeps its chip (styled `ended`) rather than
     // vanishing while its history is still on screen.
+    //
+    // Sorted by first-seen stamp, NOT by the order either source iterates in:
+    // `live` carries the wire's recency order, and `feeds` is insertion-ordered
+    // but loses its place when pruneFeeds evicts. Ascending = oldest chip
+    // leftmost, so a new sub appears at the end and nothing already on screen
+    // moves.
     const keys = [...new Set([...live.keys(), ...feeds.keys()])]
-      .filter((fk) => live.has(fk) || feeds.has(fk));
+      .sort((a, b) => stamp(a) - stamp(b));
 
     let empty = chipsEl.querySelector('.activity-chips-empty');
     if (!keys.length) {
@@ -409,6 +436,12 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     }
     for (const fk of [...notified]) {
       if (fk.startsWith(`${name} `)) notified.delete(fk);
+    }
+    // Same cleanup as `notified`, and for the same reason: the parent is gone,
+    // so these keys can never be observed again. `seenSeq` is deliberately NOT
+    // rewound — reusing a stamp would place a future chip in a dead one's slot.
+    for (const fk of [...firstSeen.keys()]) {
+      if (fk.startsWith(`${name} `)) firstSeen.delete(fk);
     }
     renderChips();
   }

@@ -29,6 +29,13 @@ cat >/dev/null 2>/dev/null
 # "raise the timeout" — makes the next collision longer instead of impossible.
 # The suite takes ~24s; anything past this wait is a wedge, not contention.
 #
+# But a timeout is NOT evidence of a second runner: until 46cd13d a SINGLE run
+# could wedge alone, because an unguarded tail `close()` in attach.test.js left
+# a listening handle when an assertion threw, and node's default per-test
+# timeout is infinite — so a FAILED test presented as a hang. Three occurrences
+# were diagnosed as contention and searched for a second runner that never
+# existed. Check for one, but do not assume it.
+#
 # mkdir is the atomic test-and-set on every POSIX filesystem. A lock holding a
 # DEAD pid is stale (a killed runner never cleans up) and is reclaimed, or the
 # first crash would wedge every later run forever.

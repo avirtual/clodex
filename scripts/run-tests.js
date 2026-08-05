@@ -50,6 +50,12 @@ function die(msg, code) {
 // concurrent runs, two permanently wedged on attach.test.js, the older one for
 // 13h47m. Any new entry point to the suite must take this lock too.
 //
+// Contention is not the only way to wedge, and reading it as the only way cost
+// three misdiagnoses: until 46cd13d a SINGLE run hung on attach.test.js by
+// itself, on an unguarded tail close() plus node's infinite default per-test
+// timeout, which turned a failing assertion into a silent hang. The lock cannot
+// fix that shape and never could.
+//
 // REFUSES rather than waits. The digest's 120s wait is for a run that is about
 // to finish; a human or agent at a prompt wants the reason NOW, and waiting
 // only converts a wedge into a timeout somewhere further up (the exec's own cap

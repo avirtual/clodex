@@ -21793,6 +21793,12 @@ helper=${d.helperPath}`;
         };
         const feeds = /* @__PURE__ */ new Map();
         const notified = /* @__PURE__ */ new Set();
+        const firstSeen = /* @__PURE__ */ new Map();
+        let seenSeq = 0;
+        function stamp(fk) {
+          if (!firstSeen.has(fk)) firstSeen.set(fk, ++seenSeq);
+          return firstSeen.get(fk);
+        }
         let selected = null;
         let pollTimer = null;
         let tickTimer = null;
@@ -21820,6 +21826,7 @@ helper=${d.helperPath}`;
         }
         function feedFor(name, key, label) {
           const fk = feedKeyOf(name, key);
+          stamp(fk);
           let rec = feeds.get(fk);
           if (!rec) {
             rec = { name, key, label: label || key, feed: createSubagentFeed() };
@@ -21845,6 +21852,7 @@ helper=${d.helperPath}`;
         }
         function noticeSubs(live) {
           for (const [fk, l] of live) {
+            stamp(fk);
             if (!notified.has(fk)) {
               notified.add(fk);
               notify("activity");
@@ -21880,7 +21888,7 @@ helper=${d.helperPath}`;
           noticeSubs(live);
           pruneFeeds(live);
           if (!chipsEl) return;
-          const keys = [.../* @__PURE__ */ new Set([...live.keys(), ...feeds.keys()])].filter((fk) => live.has(fk) || feeds.has(fk));
+          const keys = [.../* @__PURE__ */ new Set([...live.keys(), ...feeds.keys()])].sort((a, b) => stamp(a) - stamp(b));
           let empty = chipsEl.querySelector(".activity-chips-empty");
           if (!keys.length) {
             chipsEl.querySelectorAll(".activity-chip").forEach((el) => el.remove());
@@ -22057,6 +22065,9 @@ helper=${d.helperPath}`;
           }
           for (const fk of [...notified]) {
             if (fk.startsWith(`${name} `)) notified.delete(fk);
+          }
+          for (const fk of [...firstSeen.keys()]) {
+            if (fk.startsWith(`${name} `)) firstSeen.delete(fk);
           }
           renderChips();
         }
