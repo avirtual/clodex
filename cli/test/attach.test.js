@@ -191,7 +191,46 @@ function attachStub(opts = {}) {
   return { server, seen, state };
 }
 
-function listen(server) { return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port))); }
+// Start a stub and register its teardown as an UNCONDITIONAL after-hook.
+//
+// Teardown must NEVER be a trailing statement in a test body. A listening server
+// is a live handle, so an assertion that throws above the close skips it and
+// `node --test` then never exits: the run sits at 0% CPU holding the port, with
+// no summary and no exit code, and a FAILED assertion presents as a hang. That
+// is the t205 wedge — a hang is a coin flip on the operator's patience, a
+// failure is information. An after-hook runs on the throwing path too.
+//
+// closeAllConnections() is load-bearing next to close(): these tests hold an SSE
+// response open on purpose, and close() only stops ACCEPTING — it then waits for
+// live sockets, so on its own it preserves the very hang it is here to end.
+async function startStub(t, opts = {}) {
+  const stub = attachStub(opts);
+  const port = await new Promise((r) => stub.server.listen(0, '127.0.0.1', () => r(stub.server.address().port)));
+  t.after(() => {
+    try { stub.server.closeAllConnections(); } catch {}
+    try { stub.server.close(); } catch {}
+  });
+  return { ...stub, port };
+}
+
+// The after-hooks above close the handle-leak route into a hang. This closes the
+// OTHER one, and both are needed: a never-settling await hangs with the hooks in
+// place, because nothing ever ends the test that would run them (measured — the
+// hooks fire only once the timeout kills the test).
+//
+// The route is real and named in this file already: attach() resolves ONLY
+// through teardown, so any path that loses the detach wakeup — the queueing at
+// fakeTty's `arm`/`fire` fixes the one we know about — blocks forever at 0% CPU
+// with no error and no timeout. Node's default per-test timeout is INFINITE, so
+// "no timeout" is a choice this file was making by omission.
+//
+// 30s against a 2.5s worst case: wide enough that a loaded machine cannot reach
+// it (measured 6s wall for the file under 2× CPU oversubscription, unchanged),
+// tight enough that the answer arrives inside a human's attention. It is a
+// backstop for a hang, NOT a margin for slow — a test that needs more than this
+// is broken, and a green run must never come near it.
+const T = { timeout: 30000 };
+
 function pushOutput(res, s) { res.write(`event: output\ndata: ${JSON.stringify({ b64: b64(s) })}\n\n`); }
 
 async function attachCli(name, extraArgs, port, tty, spawnFn) {
@@ -205,12 +244,11 @@ async function attachCli(name, extraArgs, port, tty, spawnFn) {
   return { code, stdout, stderr };
 }
 
-test('attach: replay resets + writes scrollback, output streams, acquire+resize on entry, release on detach', async () => {
-  const { server, seen } = attachStub({
+test('attach: replay resets + writes scrollback, output streams, acquire+resize on entry, release on detach', T, async (t) => {
+  const { seen, port } = await startStub(t, {
     scrollback: 'PRIOR OUTPUT\n',
     onAttach: (state) => { setTimeout(() => pushOutput(state.attach, 'live line\r\n'), 30); },
   });
-  const port = await listen(server);
   const tty = fakeTty();
   // Detach shortly after the live output lands.
   setTimeout(() => tty.push(Buffer.from([0x1c])), 90);
@@ -232,12 +270,10 @@ test('attach: replay resets + writes scrollback, output streams, acquire+resize 
   assert.ok(acq, 'acquire sent'); assert.ok(rz, 'resize sent'); assert.ok(rel, 'release sent');
   assert.strictEqual(rz.body.token, 'ctl-1');
   assert.ok(rz.body.cols >= 20 && rz.body.rows >= 5);
-  server.close();
 });
 
-test('attach: keystrokes before the escape are forwarded with the token; escape is not', async () => {
-  const { server, seen } = attachStub({});
-  const port = await listen(server);
+test('attach: keystrokes before the escape are forwarded with the token; escape is not', T, async (t) => {
+  const { seen, port } = await startStub(t);
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from([0x6c, 0x73, 0x0d, 0x1c])), 40); // "ls\r" then Ctrl-\
   const { code } = await attachCli('bash', [], port, tty.tty);
@@ -246,12 +282,10 @@ test('attach: keystrokes before the escape are forwarded with the token; escape 
   assert.ok(input, 'input forwarded');
   assert.strictEqual(input.body.data, 'ls\r');       // escape byte dropped
   assert.strictEqual(input.body.token, 'ctl-1');
-  server.close();
 });
 
-test('attach --read-only: never acquires control or forwards input; still detaches on Ctrl-\\', async () => {
-  const { server, seen } = attachStub({ holder: 'someone' });
-  const port = await listen(server);
+test('attach --read-only: never acquires control or forwards input; still detaches on Ctrl-\\', T, async (t) => {
+  const { seen, port } = await startStub(t, { holder: 'someone' });
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from('xyz')), 30);       // typed but must NOT forward
   setTimeout(() => tty.push(Buffer.from([0x1c])), 60);
@@ -261,41 +295,35 @@ test('attach --read-only: never acquires control or forwards input; still detach
   assert.ok(!seen.some((s) => s.url.startsWith('/api/input/')), 'no input in read-only');
   assert.match(tty.err(), /\(read-only\)/);
   assert.deepStrictEqual(tty.rawLog, [true, false]);        // raw mode still restored
-  server.close();
 });
 
-test('attach: banner notes taking control from the current holder', async () => {
-  const { server } = attachStub({ holder: 'gui@laptop' });
-  const port = await listen(server);
+test('attach: banner notes taking control from the current holder', T, async (t) => {
+  const { port } = await startStub(t, { holder: 'gui@laptop' });
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from([0x1c])), 40);
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   assert.match(tty.err(), /taking control from gui@laptop/);
-  server.close();
 });
 
-test('attach: SIGINT/SIGTERM is treated as a detach (exit 0, terminal restored)', async () => {
-  const { server, seen } = attachStub({});
-  const port = await listen(server);
+test('attach: SIGINT/SIGTERM is treated as a detach (exit 0, terminal restored)', T, async (t) => {
+  const { seen, port } = await startStub(t);
   const tty = fakeTty();
   setTimeout(() => tty.signal(), 40);
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(tty.rawLog, [true, false]);
   assert.ok(seen.some((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'release'));
-  server.close();
 });
 
-test('attach: reconnect on a dropped stream does reset + re-replay + re-acquire', async () => {
+test('attach: reconnect on a dropped stream does reset + re-replay + re-acquire', T, async (t) => {
   let attaches = 0;
-  const { server, seen } = attachStub({
+  const { seen, port } = await startStub(t, {
     onAttach: (state, all, res) => {
       attaches++;
       if (attaches === 1) { setTimeout(() => { try { res.end(); } catch {} }, 30); } // drop it
     },
   });
-  const port = await listen(server);
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from([0x1c])), 2500); // detach after the reconnect
   const { code } = await attachCli('bash', [], port, tty.tty);
@@ -305,22 +333,20 @@ test('attach: reconnect on a dropped stream does reset + re-replay + re-acquire'
   const acquires = seen.filter((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire').length;
   assert.ok(acquires >= 2, `re-acquired control on reconnect (saw ${acquires})`);
   assert.match(tty.err(), /reconnecting \(attempt 1\)/);
-  server.close();
 });
 
-test('attach: a keystroke during the reconnect gap is not fatal — attach reconnects, re-acquires, later input flows', async () => {
+test('attach: a keystroke during the reconnect gap is not fatal — attach reconnects, re-acquires, later input flows', T, async (t) => {
   // MF1: a clean SSE close makes the server auto-release control, so a keystroke
   // typed in the gap posts with a stale token and 403s. That must NOT tear down
   // the attach — the guard reconnects + re-acquires and later input flows again.
   let attaches = 0;
-  const { server, seen, state } = attachStub({
+  const { seen, state, port } = await startStub(t, {
     autoRelease: true,
     onAttach: (st, all, res) => {
       attaches++;
       if (attaches === 1) setTimeout(() => { try { res.end(); } catch {} }, 30); // drop → gap
     },
   });
-  const port = await listen(server);
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from('a')), 400);   // in the reconnect gap → 403, swallowed
   setTimeout(() => tty.push(Buffer.from('b')), 1500);  // after re-acquire → 200
@@ -331,48 +357,40 @@ test('attach: a keystroke during the reconnect gap is not fatal — attach recon
   assert.ok(attachCount >= 2, `reconnected (saw ${attachCount})`);
   assert.ok(state.inputStatuses.includes(403), 'gap keystroke 403d');
   assert.ok(state.inputStatuses.includes(200), 'post-reconnect keystroke flowed');
-  server.close();
 });
 
-test('attach: a stale-token 403 on input is swallowed (not fatal)', async () => {
+test('attach: a stale-token 403 on input is swallowed (not fatal)', T, async (t) => {
   // MF1: every /api/input 403s (holder changed underneath us). A viewer typing
   // into a stolen session sees silent no-ops, matching the GUI — never exit 4.
-  const { server, state } = attachStub({ input403: true });
-  const port = await listen(server);
+  const { state, port } = await startStub(t, { input403: true });
   const tty = fakeTty();
   setTimeout(() => tty.push(Buffer.from('ls\r')), 40);   // 403, swallowed
   setTimeout(() => tty.push(Buffer.from([0x1c])), 120);  // then detach cleanly
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0, 'a 403 input did not tear down the attach');
   assert.ok(state.inputStatuses.includes(403), 'input actually 403d');
-  server.close();
 });
 
-test('attach: a 404 on the session → give up, terminal restored, exit 5', async () => {
-  const { server } = attachStub({ attach404: true });
-  const port = await listen(server);
+test('attach: a 404 on the session → give up, terminal restored, exit 5', T, async (t) => {
+  const { port } = await startStub(t, { attach404: true });
   const tty = fakeTty();
   const { code } = await attachCli('ghost', [], port, tty.tty);
   assert.strictEqual(code, 5); // NOTFOUND — no endless reconnect on a definitive 404
   // Raw mode is never entered (no replay ever arrived), so nothing to restore.
-  server.close();
 });
 
-test('attach: non-TTY stdin/stdout → USAGE with a scripting hint', async () => {
-  const { server } = attachStub({});
-  const port = await listen(server);
+test('attach: non-TTY stdin/stdout → USAGE with a scripting hint', T, async (t) => {
+  const { port } = await startStub(t);
   const tty = fakeTty();
   tty.tty.isInTTY = false;
   const { code, stderr } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 2);
   assert.match(stderr, /attach needs a terminal/);
-  server.close();
 });
 
-test('attach: detach exits 0 and kills the tunnel child (real proxy child)', async () => {
+test('attach: detach exits 0 and kills the tunnel child (real proxy child)', T, async (t) => {
   const fs = require('node:fs');
-  const { server } = attachStub({});
-  const stubPort = await listen(server);
+  const { port: stubPort } = await startStub(t);
   // A REAL detached tunnel child: a TCP proxy that listens on the substituted
   // {port} and forwards to the stub, so the wire genuinely rides the tunnel and
   // we can assert the child is reaped on detach. A tunnel transport is a STORED
@@ -381,6 +399,7 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', asy
     + `net.createServer(c=>{const u=net.connect(remote,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{});})`
     + `.listen(local,'127.0.0.1');setInterval(()=>{},1000);`;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-attach-'));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
   const cf = path.join(dir, 'contexts.json');
   fs.writeFileSync(cf, JSON.stringify({
     current: 'tun',
@@ -392,6 +411,16 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', asy
   const spawnReal = require('node:child_process').spawn;
   let child = null;
   const spawnFn = (cmd, args, opts) => { child = spawnReal(cmd, args, opts); return child; };
+  // The backstop for the case this test is ABOUT. The child is spawned detached
+  // and listens on a port, so if the assertions below throw — i.e. the reap the
+  // test exists to prove did not happen — nothing else would ever kill it, and a
+  // failing run would leak a live listener into every later run on this machine.
+  // Group-kill, matching transport.js's own close(); ESRCH is the good outcome.
+  t.after(() => {
+    if (!child || !child.pid) return;
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { process.kill(child.pid, 'SIGKILL'); } catch {}
+  });
   let stdout = '', stderr = '';
   const code = await run(['attach', 'bash', '--ctx', 'tun'], {
     stdout: (s) => (stdout += s), stderr: (s) => (stderr += s),
@@ -419,6 +448,4 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', asy
   // helper in the same group survived; this asks the OS directly.
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' },
     'and the pid must be gone from the process table, not merely reported exited by its own handle');
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-  server.close();
 });
