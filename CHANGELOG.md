@@ -28,10 +28,21 @@ blocks a release.
   sessions, look away, or the subagent finishes. Aged-out subagents keep their
   chip for as long as there is history behind it. The tab costs nothing while it
   is hidden or the drawer is collapsed — the chips ride telemetry that already
-  arrives, and the one detail poll runs only for the feed you are looking at.
-  It is still honest about the lag it always had: the feed updates at turn
-  boundaries, the footer says so, and it tells you how long ago the last turn
-  landed rather than pretending to be live.
+  arrives, and the one feed poll runs only for the feed you are looking at.
+  It is honest about the lag it has: the feed updates at turn boundaries, the
+  footer says so, and it tells you how long ago the last turn landed rather
+  than pretending to be live.
+
+- **The activity feed now shows every subagent turn, not one in five.** It read
+  its turns from wirescope, which keeps only the most recent one per subagent
+  and replaces it on the next request — so a subagent working faster than the
+  poll had most of its work silently dropped, and what you did see was already
+  a turn behind. Clodex sits in front of wirescope on the same connection, so
+  those turns were crossing our own process the whole time; the feed now reads
+  them there and keeps them. Turns that happen between two polls queue up
+  instead of disappearing, which means nothing is lost while you are looking at
+  another tab. If a very long-running subagent overflows the history we keep,
+  the feed says so at the top rather than quietly closing the gap.
 
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
