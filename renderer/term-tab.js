@@ -19,7 +19,7 @@
 
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
-const { termAvailableFor } = require('./lib/drawer-avail');
+const { termAvailableFor } = require('../drawer-avail');
 
 function createTermTab({ host, xtermTheme, getActiveSession }) {
   // The seat this pane is currently showing a shell for. One xterm is reused

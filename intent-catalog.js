@@ -35,6 +35,7 @@ const GATEABLE_INTENTS = [
   // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
   // OFF unless explicitly granted (absence does NOT enable it), and an
   // agent-initiated grant is stripped at the mint/wire boundary.
+  { type: 'term', label: "Run commands in the seat's terminal (term) — privileged, off by default" },
   { type: 'reboot', label: 'Relaunch the app (reboot) — privileged, off by default' },
 ];
 
@@ -44,7 +45,11 @@ const GATEABLE_INTENTS = [
 //   * intentEnabled: an absent/all-enabled seat does NOT get a privileged intent.
 //   * withoutPrivilegedIntents: agent-initiated grants (spawn-intent templates,
 //     the peer wire) are stripped of these — only an operator's local GUI may grant.
-const PRIVILEGED_INTENTS = new Set(['reboot']);
+// `term` (run a command in the seat's own terminal tab) is privileged for the
+// second reason more than the first: a seat that was deliberately given no shell
+// tool would acquire one through it, and without the strip a seat could spawn a
+// peer holding a capability nobody granted it.
+const PRIVILEGED_INTENTS = new Set(['reboot', 'term']);
 
 // The bare type set, for O(1) "is this gateable at all?" checks.
 const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));

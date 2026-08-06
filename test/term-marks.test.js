@@ -92,6 +92,66 @@ test('an abandoned command is not resurrected by a later bare prompt', () => {
   assert.strictEqual(recs.length, 0, 'a command that never ran is never reported');
 });
 
+// --- the abandon signal ---------------------------------------------------
+// The drop above is right; doing it SILENTLY is what was wrong. Nothing else in
+// the stream ever mentions an abandoned command again, so anything waiting on it
+// waits forever. These pin the announcement without changing what is dropped.
+
+test('an abandoned command is ANNOUNCED, carrying what was abandoned', () => {
+  const dropped = [];
+  const recs = [];
+  const p = createMarkParser({ onCommand: (r) => recs.push(r), onAbandon: (r) => dropped.push(r) });
+  p.feed(`${A}${C('sleep 900')}partial output\n${A}`);
+
+  assert.deepStrictEqual(recs, [], 'still not reported as a command that ran');
+  assert.strictEqual(dropped.length, 1, 'ENTER: the drop was announced');
+  // The command TEXT rides along: "something you asked for was abandoned" is not
+  // actionable for a consumer that may have several commands in flight.
+  assert.deepStrictEqual(dropped[0], { command: 'sleep 900', output: 'partial output\n' });
+  // No exitCode field at all. There is none, and inventing 130 would claim a
+  // SIGINT that may not be what happened — the shell may simply have reset.
+  assert.ok(!('exitCode' in dropped[0]), 'an abandoned command has no exit status');
+});
+
+test('a prompt with nothing open announces nothing', () => {
+  // A is emitted before EVERY prompt, so an unconditional announcement would
+  // fire on every keystroke-free redraw in the operator's terminal.
+  const dropped = [];
+  const p = createMarkParser({ onAbandon: (r) => dropped.push(r) });
+  p.feed(`${A}${A}${D(0)}${A}`);
+  assert.deepStrictEqual(dropped, []);
+});
+
+test('a command that FINISHED is not also announced as abandoned', () => {
+  // The A that follows every D closes the prompt cycle. If emit() left the
+  // capture open, that A would report every successful command as abandoned too.
+  const recs = [];
+  const dropped = [];
+  const p = createMarkParser({ onCommand: (r) => recs.push(r), onAbandon: (r) => dropped.push(r) });
+  p.feed(`${A}${C('ls')}x\n${D(0)}${A}`);
+  assert.strictEqual(recs.length, 1, 'ENTER: it was reported as a finished command');
+  assert.deepStrictEqual(dropped, [], 'and not a second time as abandoned');
+});
+
+test('the abandoned state is cleared, so the next command is clean', () => {
+  const recs = [];
+  const dropped = [];
+  const p = createMarkParser({ onCommand: (r) => recs.push(r), onAbandon: (r) => dropped.push(r) });
+  p.feed(`${C('abandoned')}stale\n${A}${C('real')}mine\n${D(0)}`);
+
+  assert.strictEqual(dropped.length, 1, 'ENTER: the first was announced as abandoned');
+  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'mine\n' }],
+    "the abandoned command's output did not leak into the next one");
+});
+
+test('no onAbandon listener is not an error — the drop is still a drop', () => {
+  // Every passive consumer omits it: an operator Ctrl-C'ing their own command is
+  // not news to report, only news to whoever was waiting on it.
+  const { recs, parser } = collect();
+  parser.feed(`${A}${C('rm -rf /')}${A}${C('real')}x\n${D(0)}`);
+  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'x\n' }]);
+});
+
 // precmd fires before anything has been typed, so the first prompt emits a bare
 // D. Reporting it would invent a command.
 test('a D with no preceding C reports nothing', () => {

@@ -10,14 +10,20 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 11 gateable types in grammar order (reboot privileged, last), name excluded', () => {
+test('catalog: the 12 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'reboot'],
+    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'term', 'reboot'],
   );
-  // reboot is the (only, for now) privileged intent.
-  assert.deepStrictEqual([...PRIVILEGED_INTENTS], ['reboot']);
+  // The privileged set, and the reason it is worth naming both members: `term`
+  // runs arbitrary shell in the operator's own login shell, so a seat
+  // deliberately given no shell tool would acquire one through it. Membership
+  // here is what makes withoutPrivilegedIntents strip it at the mint/wire
+  // boundary — a non-privileged term could be granted by a spawn template or a
+  // peer, i.e. by an agent rather than by the operator.
+  assert.deepStrictEqual([...PRIVILEGED_INTENTS], ['reboot', 'term']);
   assert.strictEqual(GATEABLE_TYPES.has('reboot'), true);
+  assert.strictEqual(GATEABLE_TYPES.has('term'), true);
   // Identity is never gateable.
   assert.strictEqual(GATEABLE_TYPES.has('name'), false);
   // Every catalog row has a non-empty label for the checklist.

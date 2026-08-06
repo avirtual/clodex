@@ -779,6 +779,13 @@ function spillToFile(sender, body, recipient) {
 }
 
 
+// Required HERE, not down beside createDrawerPtys where the rest of the
+// terminal wiring lives: the session-manager deps object below reads
+// `termAvailableFor` eagerly, and a `const` destructured later in the file is in
+// its temporal dead zone at that moment — a ReferenceError at startup, not a
+// lazy binding.
+const { termAvailableFor, vetTermCommand } = require('./drawer-avail');
+
 const { createSessionManager } = require('./session-manager');
 
 const { createPluginHostEngine } = require('./plugin-host-engine');
@@ -921,6 +928,8 @@ const SessionManager = createSessionManager({
     stripLevelOf,
     unionEnabled,
     vetFileIntent,
+    termAvailableFor,
+    termExec,
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
@@ -1368,7 +1377,7 @@ const ctlService = enableDrawerServices ? createCtlService({}) : null;
 // terminal spawned after the operator opens sessions lands in the directory
 // they are actually working in.
 const { createDrawerPtys } = require('./drawer-pty');
-const { buildZshShim } = require('./term-shim');
+const { buildZshShim, isZsh } = require('./term-shim');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
 const drawerPtys = enableDrawerServices ? createDrawerPtys({
@@ -1406,12 +1415,85 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
     if (!uiSettings.get().terminalReporting) return;
     const text = formatCommand(rec, { stripAnsi });
     if (!text) return;
-    try {
-      fs.appendFileSync(pathFor(REGISTRY_DIR, seat, 'selection'), `${JSON.stringify({ text })}\n`);
-    } catch {}
+    queueForSeat(seat, text);
+  },
+  // The framing rules for a command the AGENT asked for, which is a different
+  // product from the passive report above and differs from it twice: it is not
+  // gated on the reporting pref (the pref governs the unasked-for firehose the
+  // operator rejected, not an answer to a question), and it passes
+  // `always: true` so output rides even on a clean exit — a successful `git
+  // status` whose output was dropped answers nothing.
+  //
+  // Every branch here delivers SOMETHING. An outcome that produced no message
+  // would leave the agent waiting for a turn that never comes, which is the
+  // failure this whole path was built to prevent.
+  vetCommand: vetTermCommand,
+  onExecResult: (seat, res) => {
+    const late = res.late ? '\n(this is the command reported as still running above — it has now finished)' : '';
+    let text;
+    if (res.status === 'ok') {
+      text = formatCommand(res.record, { stripAnsi, always: true })
+        // formatCommand returns null for a record whose command line did not
+        // survive; the agent still asked, so it still gets an answer.
+        || `[terminal] ${res.command}\nfinished, but the shell did not report which command ran`;
+    } else if (res.status === 'abandoned') {
+      text = `[terminal] ${res.command}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
+    } else if (res.status === 'timeout') {
+      text = `[terminal] ${res.command}\nstill running after ${Math.round(res.afterMs / 1000)}s. NOT cancelled — it is still going, and you will get its output when it finishes. Do not run it again.`;
+    } else if (res.status === 'shell-exit') {
+      text = `[terminal] ${res.command}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
+    } else {
+      text = `[terminal] ${res.command}\n${res.reason || 'the terminal went away'} before the command reported back. Whether it ran is unknown.`;
+    }
+    queueForSeat(seat, `${text}${late}`);
   },
   log,
 }) : null;
+
+// The seat's existing selection queue: a line-delimited file the CLI's
+// UserPromptSubmit hook drains and claims by rename. Both terminal paths append
+// through this one helper so a second delivery mechanism (with a second set of
+// the same bugs) never appears.
+function queueForSeat(seat, text) {
+  try {
+    fs.appendFileSync(pathFor(REGISTRY_DIR, seat, 'selection'), `${JSON.stringify({ text })}\n`);
+  } catch {}
+}
+
+// Why an agent's terminal command cannot be reported on, stated so the OPERATOR
+// can fix it — "no marks" alone tells them nothing. The three causes are
+// genuinely different actions, and the shell's own birth state is what
+// distinguishes the last from the second: the shim is applied at spawn, so a
+// shell older than the pref emits nothing however the checkbox reads now.
+function termShimDiagnosis() {
+  if (!isZsh(process.env.SHELL)) {
+    return `your terminal runs ${process.env.SHELL || 'a non-zsh shell'}, and only zsh reports command results back`;
+  }
+  if (!uiSettings.get().terminalReporting) {
+    return 'terminal reporting is switched off in Settings, so the shell emits no completion marks';
+  }
+  return 'this shell was opened before terminal reporting was switched on — close the terminal tab and reopen it';
+}
+
+// Run one command on a seat's own terminal. The seam session-manager gets: it
+// passes a seat and a workspace it derived from the sender and receives a
+// refusal it can hand straight to the agent, without learning drawer-pty's
+// shape or the reporting pref's existence.
+function termExec(workspaceId, seat, command) {
+  if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };
+  const r = drawerPtys.exec(workspaceId, seat, command);
+  if (r.ok) return r;
+  switch (r.code) {
+    case 'bad-command': return { ok: false, error: r.error };
+    case 'no-shell': return { ok: false, error: 'no terminal is open for your seat — ask your operator to open the terminal tab in the drawer. Nothing was queued.' };
+    case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
+    case 'busy': return { ok: false, error: 'your terminal is busy — a command is running, or a full-screen program (an editor, a pager, a REPL) has it. Typing now would go into that program, not the shell.' };
+    case 'pending': return { ok: false, error: `you already have \`${r.running}\` running in your terminal — wait for its result before sending another.` };
+    case 'write-failed': return { ok: false, error: `the terminal did not accept the command (${r.error}). Nothing ran.` };
+    case 'no-seat': return { ok: false, error: 'your session has no terminal of its own' };
+    default: return { ok: false, error: `terminal refused the command (${r.code})` };
+  }
+}
 
 // "Workspace root" as the design names it. There is no root field on a
 // workspace record (workspaces.json holds id/name/bounds/lastFocusedAt/open/

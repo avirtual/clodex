@@ -763,6 +763,18 @@ test('t170 memory spills only for `remember`', async () => {
   assert.match(f.last(), /Your memory recall body \(1 bytes\) was NOT saved/);
 });
 
+// term's body is a shell command the agent can retype from the line it just
+// wrote, and it is worthless without the terminal that was refused — so it is
+// reported as lost and NOT written to disk. The verdict that matters is the
+// second half: spilling it would leave a file full of shell commands in the
+// messages directory, minted by the one verb the operator explicitly withheld.
+test('t218 a denied term reports the loss but writes nothing', async () => {
+  const f = mkDenied();
+  await f.m._handleIntent('a', { type: 'term', sub: 'exec', body: 'npm test' });
+  assert.strictEqual(f.spills.length, 0, 'a refused shell command is not spilled to disk');
+  assert.match(f.last(), /Your term body \(8 bytes\) was NOT saved/, 'but the loss is announced');
+});
+
 // The five bodiless gateable verbs. The spec asks that a spill on these be
 // IMPOSSIBLE rather than merely unreached, so this walks the catalogue against the
 // grammar table instead of listing verbs by hand — a verb that gains a body later
@@ -770,11 +782,13 @@ test('t170 memory spills only for `remember`', async () => {
 test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const { GATEABLE_INTENTS } = require('../intent-catalog');
   const { bodyModeFor } = require('../intent-registry');
-  // Probed across subs, not called bare: `context` and `memory` answer 'none' for a
-  // MISSING sub and 'greedy' for compact/remember, so a single bare call would
-  // misfile both as bodiless and this test would then certify a spill path it never
-  // exercised. Bodiless means bodiless for every sub the verb can carry.
-  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list'];
+  // Probed across subs, not called bare: `context`, `memory` and `term` answer
+  // 'none' for a MISSING sub and 'greedy' for compact/remember/exec, so a single
+  // bare call would misfile all three as bodiless and this test would then certify
+  // a spill path it never exercised. Bodiless means bodiless for every sub the verb
+  // can carry — so a verb whose body hides behind ONE sub needs that sub in this
+  // list, or the ratchet below silently stops guarding it.
+  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec'];
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));

@@ -133,6 +133,11 @@ const GRAMMAR_LINES = [
   [agent:spawn name:X template:Y]  Same, but from template Y — a saved template NAME (case-insensitive) or a JSON template FILE path (Y containing / or starting with ~ or . is a path, resolved against your cwd). The template supplies type/config incl. model-via-args; cwd optional if the template has one, and cwd: still overrides it.` },
   { type: 'file', text: `  [agent:file view PATH]           Show a file on your operator's screen in Clodex's viewer (contents + git diff). Relative paths resolve against your cwd.
   [agent:file open PATH]           Open a file with the operator's default app for that type (reports, docs, images). Launchable/executable files are refused — use view for those. Use these when your operator asks to see or open a file; errors come back as an [agent:file] line, success is silent.` },
+  // term is PRIVILEGED too, so the same reasoning applies: this line renders
+  // only for a seat explicitly granted it, and IPC_PROMPT above does NOT carry
+  // it — adding it there would break both byte-pins, since neither passes a
+  // privileged grant.
+  { type: 'term', text: `  [agent:term exec <command>]      Run ONE command in your own terminal tab, where your operator can watch it (privileged, operator-granted). The command is the rest of the line — no quoting or escaping, and it must be a single line with no control characters. The result does not come back in this turn: it arrives later as a [terminal] line carrying the command, its exit code and its output, so this costs you a turn per command and is for the ones your operator wants to SEE, not for ordinary work your own shell tool does better. Refused, with the reason, if your terminal is busy, has a full-screen program open, is not open at all, or cannot report results back. One command at a time: wait for the result before sending another.` },
   // reboot is PRIVILEGED (intent-catalog PRIVILEGED_INTENTS) — off unless the
   // operator explicitly granted it, so intentEnabled('reboot', …) is false for
   // BOTH byte-pinned calls (absent list and the all-NON-privileged list) and this

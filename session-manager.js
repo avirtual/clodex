@@ -345,6 +345,8 @@ function createSessionManager(deps) {
     stripLevelOf,
     unionEnabled,
     vetFileIntent,
+    termAvailableFor,
+    termExec: termExecDep,
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
@@ -382,6 +384,12 @@ function createSessionManager(deps) {
     forget() {},
   };
   const selectionArm = selectionArmDep || NO_SELECTION_ARM;
+
+  // Same shape and same reason as NO_SELECTION_ARM above: a host that built no
+  // drawer service must still answer the agent, because the alternative is an
+  // exec that does nothing and reports nothing.
+  const termExec = termExecDep
+    || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
@@ -2965,6 +2973,11 @@ function createSessionManager(deps) {
           this._handleFileIntent(session, intent.sub, intent.path);
           break;
         }
+        case 'term': {
+          if (!session || !session.agentType) break;
+          this._handleTermIntent(session, intent.sub, intent.body || '');
+          break;
+        }
         case 'exec': {
           if (!session || !session.agentType) break;
           this._handleExecIntent(session, intent.cmd, intent.body || '');
@@ -3331,6 +3344,59 @@ function createSessionManager(deps) {
           if (child.stdin) { child.stdin.write(payloadJson); child.stdin.end(); }
         } catch { /* a fast-exiting child may EPIPE — the exit handler reports it */ }
       });
+    }
+
+    // `[agent:term exec <cmd>]` — run one command on the agent's OWN terminal
+    // tab, where the operator can watch it happen, and report the result back to
+    // that agent alone.
+    //
+    // BOTH halves of the target are derived from the sender: the seat is the
+    // session's name and the window is its workspace. The agent supplies
+    // neither, so there is no seat string to validate and no way to reach
+    // another agent's terminal or the seatless workspace shell. That is stronger
+    // than the IPC path, which takes the seat from its payload.
+    //
+    // The result does NOT come back from here. It arrives later, on the seat's
+    // selection queue, when the shell's D mark says the command ended — see the
+    // onExecResult wiring where the drawer PTYs are built.
+    _handleTermIntent(session, sub, rawBody) {
+      const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
+      if (sub !== 'exec') {
+        reply(`unknown form \`term ${sub}\` — the only one is [agent:term exec] followed by the command`);
+        return;
+      }
+      // The seat TYPE check: a bash session is already a shell and a peer
+      // session lives on another box, so neither has a terminal tab of its own.
+      // The same predicate the renderer uses to decide whether to DRAW the tab,
+      // read from the shared leaf so the two answers cannot drift.
+      //
+      // Today it cannot fire, and that is worth stating rather than leaving a
+      // reader to assume it is load-bearing: the switch above requires
+      // `agentType`, which is non-null only for claude/codex, and a peer is not
+      // a local session at all (nothing but create() writes `sessions`, and it
+      // only ever stores claude/codex/bash). The refusal that ACTUALLY fires for
+      // a seat with no terminal is `no-shell`, from the exec itself. This stays
+      // because the structural reason is an accident of two other decisions:
+      // make bash sessions intent-capable, or give a peer a local session
+      // record, and this becomes the only thing standing between them and a
+      // shell they should not have.
+      if (termAvailableFor && !termAvailableFor(session.type)) {
+        reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
+        return;
+      }
+      const res = termExec(session.workspaceId, session.name, rawBody);
+      this._broadcast('ipc-message', {
+        type: 'term', from: session.name, to: session.name,
+        body: res.ok ? `exec: ${res.command}` : `exec REFUSED: ${res.error}`,
+      });
+      if (!res.ok) {
+        log.warn('intent', `term exec by ${session.name}: refused (${res.error})`);
+        reply(res.error);
+        return;
+      }
+      log.info('intent', `term exec by ${session.name}: ${res.command}`);
+      // No "sent" acknowledgement. It would cost the agent a turn to read
+      // something it already knows, and the result is coming on its own.
     }
 
     _handleFileIntent(session, sub, rawPath) {

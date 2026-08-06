@@ -51,6 +51,16 @@ function parseExec(cleaned) {
   return m ? { type: 'exec', cmd: m[1], body: m[2] } : null;
 }
 
+// Body-based, not bracket-based, and that is forced: a shell command contains
+// `]`, quotes and arbitrary bytes, so any argument inside the brackets would
+// need an escaping scheme the agent has to get right on every command. The body
+// takes the line verbatim and drawer-avail's vetTermCommand is what refuses the
+// bytes that must not reach a PTY.
+function parseTerm(cleaned) {
+  const m = cleaned.match(/^\[agent:term\s+(\S+)\]\s*(.*)/s);
+  return m ? { type: 'term', sub: m[1].toLowerCase(), body: m[2] } : null;
+}
+
 function parseRemind(cleaned) {
   const m = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
   return m ? { type: 'remind', spec: m[1].trim(), body: m[2] } : null;
@@ -143,6 +153,7 @@ const CORE_ROWS = [
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
+  { type: 'term', parse: parseTerm, bodyMode: (i) => (i.sub === 'exec' ? 'greedy' : 'none') },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
   { type: 'remind', parse: parseRemind, bodyMode: GREEDY },
   { type: 'notify-user', parse: parseNotifyUser, bodyMode: GREEDY },

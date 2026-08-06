@@ -39,7 +39,7 @@ const MARK_RE = /\x1b\]133;([^\x07]*)\x07/g;
 // output and then fail to frame anything.
 const PARTIAL_RE = /\x1b(?:\](?:1(?:3(?:3(?:;[^\x07]*)?)?)?)?)?$/;
 
-function createMarkParser({ onCommand, maxOutput } = {}) {
+function createMarkParser({ onCommand, onAbandon, maxOutput } = {}) {
   const MAX_OUT = maxOutput || 64 * 1024;
   let carry = '';
   let capturing = false;
@@ -76,10 +76,20 @@ function createMarkParser({ onCommand, maxOutput } = {}) {
         const body = m[1];
         if (body === 'A') {
           // A fresh prompt while a command is open means it never finished and
-          // never will — Ctrl-C at the prompt, or a shell that reset. Drop it
-          // rather than reporting it: an abandoned line has no exit code, and
-          // holding it open would attribute the NEXT command's output to it.
-          if (capturing) { capturing = false; command = ''; out = ''; }
+          // never will — Ctrl-C at the prompt, or a shell that reset. The record
+          // is still DROPPED (an abandoned line has no exit code, and holding it
+          // open would attribute the NEXT command's output to it), but dropping
+          // it SILENTLY is a hang for anything waiting on this command: nothing
+          // else in the stream ever mentions it again. So the drop is announced
+          // and the announcement carries no exitCode — there is none, and
+          // inventing 130 would claim a SIGINT that may not be what happened.
+          if (capturing) {
+            const rec = { command, output: out };
+            capturing = false;
+            command = '';
+            out = '';
+            if (onAbandon) onAbandon(rec);
+          }
         } else if (body === 'C' || body.startsWith('C;')) {
           let cmd = '';
           try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }
@@ -108,9 +118,14 @@ function createMarkParser({ onCommand, maxOutput } = {}) {
         text(rest);
       }
     },
-    // Test/diagnostic read. The live state is deliberately not exposed to the
-    // rest of the app: a consumer that could see a half-finished command would
-    // be tempted to report it before its exit code exists.
+    // Whether a command is open. The ONE piece of live state exposed, and only
+    // as a boolean: an agent-driven exec must refuse to type while something is
+    // already running rather than injecting a line into a program's stdin. The
+    // command TEXT and the partial output stay private — a consumer that could
+    // see a half-finished command would be tempted to report it before its exit
+    // code exists.
+    isBusy: () => capturing,
+    // Test/diagnostic read.
     _state: () => ({ capturing, command, carry: carry.length, out: out.length }),
   };
 }

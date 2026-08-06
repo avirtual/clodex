@@ -26,7 +26,7 @@
 //
 // A seatless key is still valid and is the workspace-wide shell: the drawer
 // opened with no session selected has nowhere else to belong.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL joins the two halves because it is the one byte neither can contain: a
@@ -39,6 +39,18 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   const later = setTimeoutFn || setTimeout;
   const killProcess = killPid || ((pid, sig) => process.kill(pid, sig));
   let disposed = false;
+  // Two minutes. Long enough for a build, short enough that a wedged command
+  // does not leave an agent waiting for the rest of its life. It does NOT cancel
+  // anything (see execTimedOut) — it is a deadline on the SILENCE, not on the
+  // command.
+  const EXEC_TIMEOUT = execTimeoutMs || 120000;
+  // Ctrl-U, from a code point rather than a literal byte in this source: a raw
+  // control character is invisible, does not reliably survive reformatting or an
+  // editor that sanitizes on save, and its loss would be silent — the write
+  // would simply stop clearing the line. Same reason drawer-avail builds its
+  // detector pattern from a string.
+  const KILL_LINE = String.fromCharCode(0x15);
+  const ENTER = String.fromCharCode(0x0d);
 
   function shellFor() {
     // $SHELL, then the platform default. A login shell (`-l`) is deliberate:
@@ -71,6 +83,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // feature existed — reporting is the thing that degrades, never the
     // terminal.
     const extraEnv = (shimEnv && shimEnv(seat)) || null;
+    // Whether THIS shell was born shimmed, remembered because the pref can be
+    // toggled afterwards and the shell keeps whatever startup it got. Anything
+    // asking "will a command in here report back?" must consult the shell, not
+    // the current setting — a shell spawned before the pref was turned on emits
+    // no marks however the checkbox reads now.
+    const shimmed = !!extraEnv;
 
     let proc;
     try {
@@ -91,7 +109,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // is ALREADY inside the scrollback it was handed: the two arrive over
     // different IPC paths, so their relative order is not guaranteed and a
     // seq-less renderer must either double-print the overlap or drop the tail.
-    const rec = { proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0 };
+    const rec = { proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, pending: null };
     // The mark parser is per SHELL, not per window: it holds the open command's
     // state, and one shared across seats would attribute one seat's output to
     // another's command. Only built for a shell that belongs to a seat — there
@@ -100,7 +118,19 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // untouched: xterm ignores an unknown OSC, and stripping them here would
     // mean two divergent copies of the same bytes.
     rec.marks = (onCommand && makeMarkParser && seat)
-      ? makeMarkParser({ onCommand: (c) => { try { onCommand(seat, c); } catch {} } })
+      ? makeMarkParser({
+        onCommand: (c) => {
+          // The pending exec is settled FIRST and independently of passive
+          // reporting: the agent asked for this one, so it is delivered even
+          // when reporting is switched off (that pref governs the firehose the
+          // operator rejected, not an answer to a question).
+          settle(rec, { status: 'ok', record: c });
+          try { onCommand(seat, c); } catch {}
+        },
+        // Abandonment has no passive consumer — a command the operator Ctrl-C'd
+        // is not news to report, it is only news to whoever was waiting on it.
+        onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
+      })
       : null;
     ptys.set(key, rec);
 
@@ -117,6 +147,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     });
 
     proc.onExit(({ exitCode }) => {
+      // Before the identity guard below: a shell that died took its pending
+      // command with it whether or not this record is still the live one, and
+      // the waiter must hear about it either way.
+      settle(rec, { status: 'shell-exit', exitCode });
       // Identity, not key. A shell whose foreground child traps SIGHUP outlives
       // the kill() that closed its window; if the operator reopens that
       // workspace (same id) a successor is spawned at this same key, and a
@@ -130,6 +164,35 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     });
 
     return rec;
+  }
+
+  // Settle a shell's pending exec, if it has one, and tell the waiter. EVERY
+  // path that can end a command routes here — the D mark, the abandon signal,
+  // shell exit, and the seat/window kills — because the failure this whole
+  // mechanism exists to prevent is an agent waiting forever on a command whose
+  // ending nobody announced. A silent drop is the worst outcome; a wrong-ish
+  // message is recoverable.
+  //
+  // Idempotent by clearing `pending` first: two paths can legitimately fire for
+  // one command (a Ctrl-C at the prompt produces an abandon, and closing the
+  // window right after produces an exit), and the second must be a no-op rather
+  // than a second delivery.
+  // The deadline timer is never cleared — it is IDENTITY-CHECKED instead
+  // (`rec.pending !== p` ⇒ the command already ended). drawer-pty takes every
+  // dependency by injection and its own test pins that it requires nothing, so
+  // reaching for a global clearTimeout would either break that or add a second
+  // seam to keep aligned with the first; an unref'd timer that wakes up once to
+  // find its work done costs nothing.
+  function settle(rec, outcome) {
+    const p = rec.pending;
+    if (!p) return false;
+    rec.pending = null;
+    if (!onExecResult) return true;
+    // `late` distinguishes "here is your output" from "here is the output of the
+    // command I already told you had outrun its deadline" — the agent has by now
+    // reported the timeout upstream and needs to know this supersedes it.
+    try { onExecResult(rec.seat, { ...outcome, command: p.command, late: !!p.timedOut }); } catch {}
+    return true;
   }
 
   // Kill one shell, with the SIGHUP→SIGKILL escalation. Factored out when kill()
@@ -177,6 +240,69 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
+    // Run one command on a seat's own shell on that seat's behalf, and answer
+    // through onExecResult when it ends. Unlike write() this NEVER spawns: a
+    // seat with no terminal open is told so, because spawning one would put a
+    // shell on the operator's screen that they did not ask for and run a command
+    // in it before they could see it.
+    //
+    // Every refusal is checked HERE rather than by a caller reading a status
+    // first. The gap between a check and the write is the whole hazard: a
+    // foreground program can start inside it, and the command then lands in that
+    // program's stdin instead of the shell's.
+    exec(windowId, seat, command) {
+      // Seatless is not addressable: there is nobody to answer, and the
+      // workspace-wide shell has no parser (see spawnFor) so nothing would ever
+      // settle. Callers derive the seat from the sender, so this is a guard on
+      // the module's contract rather than on a user-supplied value.
+      if (!seat) return { ok: false, code: 'no-seat' };
+      const vet = vetCommand ? vetCommand(command) : { ok: true, command };
+      if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
+      const rec = ptys.get(keyFor(windowId, seat));
+      if (!rec) return { ok: false, code: 'no-shell' };
+      // No marks ⇒ no D ⇒ nothing would ever tell the agent this finished. Firing
+      // blind and hoping is worse than refusing: the command would still RUN.
+      if (!rec.shimmed || !rec.marks) return { ok: false, code: 'no-marks' };
+      // A command of MINE is still outstanding. Distinct from `busy` on purpose —
+      // between the write and the C mark the parser is not capturing yet, so a
+      // second exec in the same turn passes a busy check and would type over the
+      // first.
+      if (rec.pending) return { ok: false, code: 'pending', running: rec.pending.command };
+      // Something is running, or a foreground program (vim, a REPL, a pager)
+      // holds the terminal. Typing would go into ITS stdin.
+      if (rec.marks.isBusy()) return { ok: false, code: 'busy' };
+
+      const p = { command: vet.command, timedOut: false };
+      rec.pending = p;
+      try {
+        // Ctrl-U first. `isBusy()` false says no command is RUNNING; it says
+        // nothing about the line editor, which may hold a half-typed line the
+        // operator walked away from — appending to that would run their fragment
+        // plus our command as one line.
+        rec.proc.write(KILL_LINE + vet.command + ENTER);
+      } catch (e) {
+        rec.pending = null;
+        return { ok: false, code: 'write-failed', error: String((e && e.message) || e) };
+      }
+
+      const timer = later(() => {
+        // Identity, not a cleared handle: by now this record may hold a LATER
+        // command, and timing that one out would be a lie about a command still
+        // well inside its own deadline.
+        if (rec.pending !== p || p.timedOut) return;
+        p.timedOut = true;
+        // The pending record deliberately SURVIVES. The command was not
+        // cancelled — killing the operator's foreground process to meet our own
+        // deadline would be far worse than a late answer — so this reports the
+        // silence and the eventual D mark still delivers, flagged `late`.
+        if (onExecResult) {
+          try { onExecResult(seat, { status: 'timeout', command: p.command, afterMs: EXEC_TIMEOUT }); } catch {}
+        }
+      }, EXEC_TIMEOUT);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+      return { ok: true, command: vet.command };
+    },
+
     resize(windowId, seat, cols, rows) {
       const rec = ptys.get(keyFor(windowId, seat));
       if (!rec) return false;
@@ -199,6 +325,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       for (const [k, rec] of [...ptys]) {
         if (rec.windowId !== windowId) continue;
         ptys.delete(k);
+        // Before the kill, while the seat is still knowable: closing the window
+        // ends any command an agent was waiting on, and the D mark that would
+        // have settled it is never coming.
+        settle(rec, { status: 'shell-gone', reason: 'the workspace window was closed' });
         endShell(rec);
         killed = true;
       }
@@ -214,6 +344,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const rec = ptys.get(key);
       if (!rec) return false;
       ptys.delete(key);
+      settle(rec, { status: 'shell-gone', reason: 'the terminal was closed' });
       endShell(rec);
       return true;
     },
@@ -223,6 +354,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       for (const id of [...ptys.keys()]) {
         const rec = ptys.get(id);
         ptys.delete(id);
+        // Deliberately NOT settled. dispose() is app quit: every agent that
+        // could read the answer is being killed in the same teardown, so a
+        // delivery here writes into a queue nobody will drain — and on the
+        // desktop path it would run during before-quit, which is the wrong place
+        // to start appending files.
+        rec.pending = null;
         try { rec.proc.kill(); } catch {}
       }
     },
@@ -230,6 +367,21 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Test/diagnostic read. Deliberately not exposed over IPC: the renderer gets
     // its scrollback once, from spawn().
     _count: () => ptys.size,
+
+    // Test/diagnostic read of one shell's exec-relevant state. Separate from
+    // _count because the refusal decisions above are made INSIDE exec() — this
+    // exists to assert them, never for a caller to pre-check and then act on
+    // (that race is the reason exec takes the decisions itself).
+    _execState: (windowId, seat) => {
+      const rec = ptys.get(keyFor(windowId, seat));
+      if (!rec) return null;
+      return {
+        shimmed: rec.shimmed,
+        busy: !!(rec.marks && rec.marks.isBusy()),
+        pending: rec.pending ? rec.pending.command : null,
+        timedOut: !!(rec.pending && rec.pending.timedOut),
+      };
+    },
   };
 }
 

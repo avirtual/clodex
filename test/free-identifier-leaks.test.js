@@ -142,6 +142,12 @@ const SCANNED_MODULES = [
   // coordinator that neither is allowed to see.
   'term-marks.js',
   'term-shim.js',
+  // Moved out of renderer/lib/ when [agent:term exec] gave it a SECOND reader
+  // in the main process (session-manager's refusal path) — one predicate, two
+  // processes, and a copy in each is how the two drift. It is scanned against
+  // main.js now rather than renderer.js: the renderer half (term-tab) still
+  // reads it, but a leaked identifier here would be a main-scope name.
+  'drawer-avail.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
@@ -186,8 +192,6 @@ const RENDERER_SCANNED_MODULES = [
   // Same shape as path-scan: a pure leaf feeding the DOM-bound link provider,
   // where the buffer walking that calls it has no unit tests of its own.
   'renderer/lib/gutter-scan.js',
-  // Read by term-tab (DOM-bound, untested) and pinned by drawer-avail.test.js.
-  'renderer/lib/drawer-avail.js',
   // The bottom drawer's tab host (t201) and its first tenant. The host took
   // the toggle/layout/refit mechanics OUT of ipc-log.js, so the reverse scan
   // matters as much as the forward one here: ipc-log.js keeping a name that

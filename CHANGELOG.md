@@ -35,6 +35,30 @@ blocks a release.
   manifest to keep working there; the built-in plugins are already updated. If
   you only ever use the desktop app, nothing changes.
 
+- **The agent can run a command in the terminal you are watching.** Off by
+  default, and granted per session: tick "Run commands in the seat's terminal"
+  in the session's intents list. With it on, the agent can type one command into
+  its own Terminal tab — you see it run, in your shell, with your aliases and
+  your history — and gets the output back. It is for the moment you hand a
+  debugging session over but still want to watch: the agent drives, the terminal
+  is still yours.
+
+  The safeguards are the interesting part. It only ever reaches the terminal of
+  the session that asked, never yours or another session's. It refuses rather
+  than guesses: if the tab is not open, if something is already running in it, if
+  a full-screen program like an editor or a pager has the terminal, or if the
+  command is anything other than a single line, the agent is told why and nothing
+  is typed. It never opens a terminal on your screen by itself. And it always
+  gets an answer — if you Ctrl-C the command, close the tab, or the command is
+  still going after two minutes, the agent is told that instead of waiting
+  forever. A command that outruns the two minutes is *not* cancelled; it keeps
+  running and its output arrives when it finishes.
+
+  Reporting must be on for this to work, since it is the same completion marks
+  that carry the result back. If it is off, or your shell is not zsh, or the tab
+  was opened before you turned reporting on, the agent is told which of those it
+  is rather than running the command blind.
+
 - **The agent can see what you run in its terminal.** Off by default;
   Preferences → "Report the commands I run in a session's terminal". With it on,
   each command you run in a session's Terminal tab is reported to that session's

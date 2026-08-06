@@ -49,6 +49,9 @@ function parseIntentLegacy(rawLine) {
   const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
   if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
 
+  const termMatch = cleaned.match(/^\[agent:term\s+(\S+)\]\s*(.*)/s);
+  if (termMatch) return { type: 'term', sub: termMatch[1].toLowerCase(), body: termMatch[2] };
+
   const execMatch = cleaned.match(/^\[agent:exec\s+(\S+)\]\s*(.*)/s);
   if (execMatch) return { type: 'exec', cmd: execMatch[1], body: execMatch[2] };
 
@@ -173,6 +176,14 @@ const ADVERSARIAL = [
   '[agent:file VIEW x]', '[agent:file view]', '[agent:file view x] trailing',
   '[agent:exec cmd]', '[agent:exec cmd] {"a":1}', '[agent:exec]',
   '[agent:exec a b] x',
+  // term is body-based because a shell command contains `]`, quotes and
+  // arbitrary bytes. The bracket-content cases below are the ones that would
+  // break a bracket-based parse, and the `term exec` / `exec` pair is the
+  // order-sensitive one: `[agent:term exec ...]` must never be read as an exec.
+  '[agent:term exec] ls -la', '[agent:term exec] git log --oneline | head -3',
+  '[agent:term exec] echo "a]b" && echo \'c;d\'', '[agent:term exec]',
+  '[agent:term EXEC] ls', '[agent:term]', '[agent:term exec ls]',
+  '[agent:term status]', '[agent:term exec] multi\nline body',
   '[agent:remind every 30m] text', '[agent:remind in 45m]',
   '[agent:remind on compact] re-read', '[agent:remind cron 0 9 * * *] x',
   '[agent:remind list]', '[agent:remind]', '[agent:remind cancel abc]',
@@ -308,6 +319,15 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // explicitly rather than folded into legacyGreedy above, so the legacy record
   // stays a record and a second silent widening still fails here.
   const deliberatelyWidened = (i) => i.type === 'context' && i.sub === 'clear';
+  // Verbs that did not EXIST when the legacy chain was frozen. Kept apart from
+  // both lists above because it is a different claim: those two say the capture
+  // for an existing verb did or did not change, this one says the oracle has
+  // nothing to say. Folding a new verb into legacyGreedy would forge the record;
+  // folding it into deliberatelyWidened would call it a change to something that
+  // was never there. `term exec` captures greedily because a shell command
+  // cannot live inside the brackets — it contains `]`, quotes and arbitrary
+  // bytes — and every other term sub is bodiless.
+  const newSinceLegacy = (i) => i.type === 'term' && i.sub === 'exec';
   for (const line of CORPUS) {
     const i = parseIntent(line);
     if (!i || i.type === 'escape' || i.type === 'end') continue;
@@ -316,7 +336,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     // greedy capture (it terminates at the complete JSON value); it was in the
     // allow-set then and still captures now.
     const capturesNow = mode === 'greedy' || mode === 'json';
-    assert.strictEqual(capturesNow, legacyGreedy(i) || deliberatelyWidened(i), `body capture differs for ${JSON.stringify(line)}`);
+    assert.strictEqual(capturesNow, legacyGreedy(i) || deliberatelyWidened(i) || newSinceLegacy(i), `body capture differs for ${JSON.stringify(line)}`);
   }
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
 });
