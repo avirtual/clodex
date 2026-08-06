@@ -3391,6 +3391,10 @@ html, body {
   transition: transform 0.2s;
 }
 
+/* The glyph names the DESTINATION, not the current state: the markup's ▼ means
+   "click to send the drawer down" while it is open, and the rotate flips it to
+   ▲ ("click to bring it up") while collapsed. Flipping either the base glyph or
+   this rule alone inverts the pair — they only read correctly together. */
 #drawer.collapsed #drawer-toggle {
   transform: rotate(180deg);
 }
@@ -3414,6 +3418,17 @@ html, body {
 
 .drawer-pane.active {
   visibility: visible;
+}
+
+/* The two terminal-shaped tenants sit on --bg, not the drawer's --sidebar-bg.
+   That is not a taste call: --bg holds each theme's xterm `background` byte for
+   byte (constants.js THEMES, paired by renderer-constants.test.js), so the ctl
+   console and the session terminal above it are the same colour by
+   construction. The term pane needs it too — xterm paints its own rows, but
+   #wterm-host's padding would otherwise frame them in drawer chrome. */
+.drawer-pane[data-tab="ctl"],
+.drawer-pane[data-tab="term"] {
+  background: var(--bg);
 }
 
 #ipc-log-body {

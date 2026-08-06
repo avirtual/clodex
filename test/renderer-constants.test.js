@@ -18,6 +18,37 @@ test('THEMES: four themes, each with a label + full xterm palette', () => {
   }
 });
 
+// The chrome palette lives in CSS and the terminal palette lives here, so
+// nothing but this test holds them together. It matters because the drawer's
+// terminal-shaped tenants (`ctl`, `term`) paint their ground with `var(--bg)`
+// specifically to match the xterm above them — retune one side's ground alone
+// and the console goes back to being a differently-coloured strip under the
+// terminal, which is the defect this pairing fixed.
+const CSS_THEME_SELECTOR = {
+  midnight: ':root',                    // the default carries no data-theme attr
+  claude: '[data-theme="claude"]',
+  paper: '[data-theme="paper"]',
+  light: '[data-theme="light"]',
+};
+
+test('THEMES: each xterm background equals its theme\'s CSS --bg', () => {
+  const css = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+
+  const checked = [];
+  for (const [name, selector] of Object.entries(CSS_THEME_SELECTOR)) {
+    // Non-greedy to the first `}` — these blocks are flat custom-property lists.
+    const block = css.match(new RegExp(`${selector.replace(/[[\]"]/g, '\\$&')}\\s*\\{([^}]*)\\}`));
+    assert.ok(block, `ENTER: found the ${name} block in styles.css — otherwise nothing below is compared`);
+    const bg = block[1].match(/--bg:\s*(#[0-9a-f]{3,8})/i);
+    assert.ok(bg, `ENTER: ${name}'s block declares --bg`);
+    assert.strictEqual(bg[1].toLowerCase(), C.THEMES[name].xterm.background.toLowerCase(),
+      `${name}: CSS --bg and xterm.background must be the same colour`);
+    checked.push(name);
+  }
+  assert.deepStrictEqual(checked, Object.keys(C.THEMES), 'every theme was compared, none skipped');
+});
+
 test('STRIP_LEVELS: levels 0..2, each with name + desc', () => {
   assert.strictEqual(C.STRIP_LEVELS.length, 3);
   C.STRIP_LEVELS.forEach((s, i) => {
