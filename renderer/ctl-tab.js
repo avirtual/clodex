@@ -182,7 +182,13 @@ function createCtlTab({ host }) {
     // The refusal list comes from the service (`deferred`), not a literal here,
     // for the same reason the verb rows do — it is the other half of the same
     // table and would drift the same way.
-    el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}`
+    // The bare-ctx shorthand, from the service's own computed list rather than a
+    // literal — it drops a sub the day a top-level verb shadows it.
+    const aliases = Array.isArray(data.ctxAliases) && data.ctxAliases.length
+      ? `<div class="ctl-help-note"><code>${data.ctxAliases.map(esc).join('</code> <code>')}</code> `
+        + `also work without the <code>ctx</code> prefix.</div>`
+      : '';
+    el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}${aliases}`
       + `<div class="ctl-help-note">${esc(data.deferred || '')}<br>`
       + `A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>`
       + `Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb `

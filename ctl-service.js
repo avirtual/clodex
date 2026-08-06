@@ -101,6 +101,28 @@ const DEFERRED_HINT = 'not available here: attach, kill, restart-app, deploy, un
 // Verbs that run against the local contexts file and need NO wire client.
 const CTX_SUBS = ['add', 'use', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
 
+// `list` for `ctx list`. The pane already shows the current context in its
+// status line, so a bare ctx subcommand reads as naturally here as `sessions`
+// does, and having to prefix one family and not the other is the odd part.
+//
+// Gated on `isVerb` rather than on CTX_SUBS alone, and that is the whole point
+// of the function: today no ctx sub collides with any registry verb, so a bare
+// alias table would work and would keep working right up until someone adds a
+// top-level `list` — at which point the alias SHADOWS it, and the new verb
+// appears to run while doing something else entirely. Deferring to a real verb
+// also keeps a refusal message accurate (`deploy` must say it is deferred, not
+// become `ctx deploy` and report an unknown subcommand).
+//
+// Rewrites positionals only, so it must run on the PARSED form for the reason
+// the gate does: `--json list` puts the verb in slot 0 of `_` and nowhere near
+// slot 0 of argv.
+function aliasCtx(positionals, isVerb) {
+  const first = positionals[0];
+  if (!first || !CTX_SUBS.includes(first)) return positionals;
+  if (isVerb(first)) return positionals;
+  return ['ctx', ...positionals];
+}
+
 // Split a typed line into argv. Honours single/double quotes and backslash
 // escapes so `query --kind foo "two words"` arrives as the CLI would see it.
 // Deliberately NOT a shell: no globbing, no substitution, no operators — the
@@ -369,8 +391,16 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // the flags-only refusal because bare `--help` is the index, not an empty
     // line. Without it the flag is ignored entirely and `sessions --help`
     // opens a WireClient and returns live session data.
+    // A bare ctx subcommand becomes `ctx <sub>` here, AHEAD of help routing and
+    // the gate. Ahead of help specifically: `list --help` short-circuits below,
+    // so aliasing after it would leave the one command someone types to find out
+    // what the shorthand IS reporting an unknown verb.
+    const isVerb = (t) => !!H.resolveEntry(t);
+    flags._ = aliasCtx(flags._, isVerb);
     if (flags.help || flags._[0] === 'help') {
-      const tokens = flags._[0] === 'help' ? flags._.slice(1) : flags._;
+      // `help list` needs the same rewrite and does not get it above, where the
+      // slot-0 token is `help`.
+      const tokens = flags._[0] === 'help' ? aliasCtx(flags._.slice(1), isVerb) : flags._;
       const { text, code } = H.help(tokens);
       return done(`${text}\n`, code, currentName());
     }
@@ -551,7 +581,12 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
         });
       }
       rows.sort((a, b) => a.verb.localeCompare(b.verb));
-      return { verbs: rows, deferred: DEFERRED_HINT };
+      // Which bare ctx subs actually alias, computed the same way execute()
+      // decides rather than listed — a sub shadowed by a future top-level verb
+      // must drop out of the cheat sheet in the same release it stops working,
+      // and a literal CTX_SUBS here would go on advertising it.
+      const ctxAliases = CTX_SUBS.filter((s) => aliasCtx([s], (t) => byName.has(t))[0] === 'ctx');
+      return { verbs: rows, deferred: DEFERRED_HINT, ctxAliases };
     },
     // The scrub anything leaving this console must pass through, offered to
     // callers that did not produce the text. The drawer's selection path is the
@@ -568,4 +603,4 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS };
+module.exports = { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS };

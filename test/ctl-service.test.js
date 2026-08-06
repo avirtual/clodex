@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createCtlService, tokenize, refuse, ALLOWED, MAX_BLOCK_CHARS } = require('../ctl-service');
+const { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, MAX_BLOCK_CHARS } = require('../ctl-service');
 
 function tmpCtxFile() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ctl-'));
@@ -770,4 +770,94 @@ test('helpIndex carries summaries and no credential material', () => {
   // future edit ("show the current context in the popover") would change that.
   assert.doesNotMatch(JSON.stringify(idx), /token/i);
   svc.dispose();
+});
+
+// ── bare ctx subcommands ─────────────────────────────────────────────────────
+// `list` means `ctx list`. The property that needs pinning is not the rewrite —
+// it is the GUARD: no ctx sub collides with a registry verb today, so a plain
+// alias table passes every test below except the shadowing one, right up until
+// someone adds a top-level verb by that name and it silently stops running.
+
+test('aliasCtx rewrites a bare ctx sub, and a real verb always wins', () => {
+  const isVerb = (t) => ['sessions', 'info', 'ctx'].includes(t);
+  assert.deepStrictEqual(aliasCtx(['list'], isVerb), ['ctx', 'list']);
+  assert.deepStrictEqual(aliasCtx(['use', 'prod'], isVerb), ['ctx', 'use', 'prod']);
+  assert.deepStrictEqual(aliasCtx(['show'], isVerb), ['ctx', 'show']);
+  // Not a ctx sub: untouched, or every unknown verb would become `ctx <junk>`
+  // and report an unknown SUBCOMMAND instead of an unknown verb.
+  assert.deepStrictEqual(aliasCtx(['sessions'], isVerb), ['sessions']);
+  assert.deepStrictEqual(aliasCtx(['deploy', 'host'], isVerb), ['deploy', 'host']);
+  assert.deepStrictEqual(aliasCtx([], isVerb), []);
+  // Already prefixed: `ctx` is itself a verb, so the guard stops a second pass
+  // producing `ctx ctx list`.
+  assert.deepStrictEqual(aliasCtx(['ctx', 'list'], isVerb), ['ctx', 'list']);
+  // THE GUARD. A future top-level `list` must keep its own dispatch. Nothing
+  // else in this file fails if the isVerb check is dropped.
+  const withList = (t) => isVerb(t) || t === 'list';
+  assert.deepStrictEqual(aliasCtx(['list'], withList), ['list'],
+    'a real verb is never shadowed by the alias');
+});
+
+test('a bare ctx sub runs the ctx command end to end', async () => {
+  const { svc } = mkService();
+  await svc.run('ctx add prod --url http://prod.example --token SEKRIT');
+  const bare = await svc.run('list');
+  // ENTER: the bare form produced a real listing, not a usage error — every
+  // comparison below is vacuous against two identical refusals.
+  assert.strictEqual(bare.exitCode, 0, `ENTER: bare \`list\` ran (${bare.output})`);
+  assert.match(bare.output, /prod/, 'ENTER: the context it added is in the listing');
+  const prefixed = await svc.run('ctx list');
+  assert.strictEqual(bare.output, prefixed.output, 'the two spellings are the same command');
+  // The redaction that `ctx list` gets is not a property of the prefix.
+  assert.doesNotMatch(bare.output, /SEKRIT/, 'the bare form redacts too');
+  svc.dispose();
+});
+
+test('a bare ctx sub is not a way past the allowlist', async () => {
+  const { svc } = mkService();
+  // `test` is a ctx sub AND the one that dials, so it is the alias most worth
+  // checking lands inside the gate rather than around it. It is allowed
+  // (ctx: '*'), so what is pinned is that it reaches the ctx runner at all.
+  const b = await svc.run('deploy somehost');
+  assert.match(b.output, /refused: "deploy"/, 'a deferred verb stays deferred');
+  // An unknown word that is not a ctx sub must still read as an unknown VERB.
+  const junk = await svc.run('frobnicate');
+  assert.match(junk.output, /refused: "frobnicate"/);
+  svc.dispose();
+});
+
+test('help routing sees the alias — `list --help` explains ctx', async () => {
+  const { svc } = mkService();
+  // Help short-circuits ahead of the gate, so an alias applied after it would
+  // leave the one command someone types to learn the shorthand saying "no help
+  // for list". Both spellings of the ask are covered.
+  const flag = await svc.run('list --help');
+  assert.strictEqual(flag.exitCode, 0, `ENTER: help resolved (${flag.output})`);
+  assert.match(flag.output, /ctx/, 'it is the ctx entry that renders');
+  assert.doesNotMatch(flag.output, /no help for/);
+  const word = await svc.run('help list');
+  assert.strictEqual(word.exitCode, 0, `ENTER: \`help list\` resolved (${word.output})`);
+  assert.doesNotMatch(word.output, /no help for/, '`help list` needs its own rewrite');
+  svc.dispose();
+});
+
+test('a leading flag still finds the aliased verb', async () => {
+  const { svc } = mkService();
+  // The alias reads PARSED positionals for the same reason the gate does:
+  // `--json list` has the verb in slot 0 of `_` and nowhere near slot 0 of argv.
+  const b = await svc.run('--json list');
+  assert.strictEqual(b.exitCode, 0, `ENTER: it ran rather than refusing (${b.output})`);
+  svc.dispose();
+});
+
+test('helpIndex advertises the aliases it actually computes', () => {
+  const { svc } = mkService();
+  const idx = svc.helpIndex();
+  assert.ok(Array.isArray(idx.ctxAliases) && idx.ctxAliases.length, 'ENTER: aliases are reported');
+  assert.ok(idx.ctxAliases.includes('list'), 'list is advertised');
+  // Derived through aliasCtx, so a sub shadowed by a future top-level verb
+  // leaves the cheat sheet in the same release it stops working.
+  for (const s of idx.ctxAliases) {
+    assert.ok(!idx.verbs.some((v) => v.verb === s), `${s} is advertised as an alias but is a verb`);
+  }
 });
