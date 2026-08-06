@@ -152,10 +152,36 @@ function createCtlTab({ host }) {
     bodyEl.appendChild(emptyEl);
   }
 
-  function copyAll() {
-    // The blocks, reconstituted — this is why the model is not a blob: each
-    // command is reproduced with its own output under it.
-    const text = blocks.map((b) => `$ ${b.command}\n${b.output}`).join('\n');
+  // A selection inside the pane WINS over the whole-pane copy. Selecting text
+  // and then reaching for the button is a request for that text; ignoring it and
+  // writing 200 blocks over the clipboard is not a smaller version of the same
+  // answer, it is the wrong one, and the operator only finds out on paste.
+  //
+  // Containment-checked rather than just non-empty: a selection living in the
+  // sidebar or the terminal above is not this pane's to copy, and treating it as
+  // one would make the button's behaviour depend on where the user last dragged.
+  function selectionInPane() {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !bodyEl) return '';
+    for (let i = 0; i < sel.rangeCount; i++) {
+      // commonAncestorContainer is a text node for a within-line selection, so
+      // ask the pane whether it contains the node rather than walking upward.
+      if (!bodyEl.contains(sel.getRangeAt(i).commonAncestorContainer)) return '';
+    }
+    return String(sel).trim();
+  }
+
+  // Selection first, else the LAST block — never the whole pane. Copying 200
+  // blocks is almost never what the hand reaching for this button meant, and the
+  // cost of guessing wrong is paid downstream: the clipboard is an input to
+  // other contexts, so a copy that quietly multiplies by 200 is expensive
+  // somewhere the operator is not looking. Both cases are one command's worth.
+  function copySelectionOrLast() {
+    const picked = selectionInPane();
+    const last = blocks[blocks.length - 1];
+    // A block is command + its own output, which is the unit the operator
+    // reasons about — flattening to bare output would lose which command wrote it.
+    const text = picked || (last ? `$ ${last.command}\n${last.output}` : '');
     if (text) navigator.clipboard.writeText(text);
   }
 
@@ -271,9 +297,22 @@ function createCtlTab({ host }) {
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.id = 'ctl-copy';
-    copyBtn.title = 'Copy every block as text';
+    copyBtn.title = 'Copy the last block';
     copyBtn.textContent = 'Copy';
-    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyAll(); });
+    // Pressing a toolbar button collapses the document selection as part of
+    // mousedown's default action, so by the time `click` runs the selection this
+    // button is meant to honour is already gone. preventDefault keeps it (and
+    // keeps focus in the input, which is where the operator wants it back).
+    copyBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copySelectionOrLast(); });
+    // The label answers "did it see my selection?" before the paste does — the
+    // failure this whole path had was silent, and a button that reports its own
+    // target is what makes it not silent.
+    document.addEventListener('selectionchange', () => {
+      const has = !!selectionInPane();
+      copyBtn.textContent = has ? 'Copy selection' : 'Copy';
+      copyBtn.title = has ? 'Copy the selected text' : 'Copy the last block';
+    });
     wireHelpButton(pane, actions);
     actions.appendChild(copyBtn);
     actions.appendChild(clearBtn);
