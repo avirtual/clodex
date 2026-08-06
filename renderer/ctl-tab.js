@@ -152,67 +152,9 @@ function createCtlTab({ host }) {
     bodyEl.appendChild(emptyEl);
   }
 
-  // A selection inside the pane WINS over the whole-pane copy. Selecting text
-  // and then reaching for the button is a request for that text; ignoring it and
-  // writing 200 blocks over the clipboard is not a smaller version of the same
-  // answer, it is the wrong one, and the operator only finds out on paste.
-  //
-  // Containment-checked rather than just non-empty: a selection living in the
-  // sidebar or the terminal above is not this pane's to copy, and treating it as
-  // one would make the button's behaviour depend on where the user last dragged.
-  function selectionInPane() {
-    const sel = window.getSelection && window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount || !bodyEl) return '';
-    for (let i = 0; i < sel.rangeCount; i++) {
-      // commonAncestorContainer is a text node for a within-line selection, so
-      // ask the pane whether it contains the node rather than walking upward.
-      if (!bodyEl.contains(sel.getRangeAt(i).commonAncestorContainer)) return '';
-    }
-    return String(sel).trim();
-  }
-
-  // Selection first, else the LAST block — never the whole pane. Copying 200
-  // blocks is almost never what the hand reaching for this button meant, and the
-  // cost of guessing wrong is paid downstream: the clipboard is an input to
-  // other contexts, so a copy that quietly multiplies by 200 is expensive
-  // somewhere the operator is not looking. Both cases are one command's worth.
-  function copySelectionOrLast() {
-    const picked = selectionInPane();
-    const last = blocks[blocks.length - 1];
-    // A block is command + its own output, which is the unit the operator
-    // reasons about — flattening to bare output would lose which command wrote it.
-    const text = picked || (last ? `$ ${last.command}\n${last.output}` : '');
-    if (!text) { flashCopy('nothing to copy', true); return; }
-    // A clipboard write is async and CAN reject (permissions, an unfocused
-    // document). Unreported, a rejection is indistinguishable from a copy that
-    // worked — which is the exact failure the label flip exists to prevent, so
-    // report both arms rather than only the happy one.
-    navigator.clipboard.writeText(text)
-      .then(() => flashCopy(`copied ${picked ? 'selection' : 'block'} · ${bytesLabel(text.length)}`))
-      .catch((e) => flashCopy(`copy failed: ${e && e.message ? e.message : e}`, true));
-  }
-
-  function bytesLabel(n) {
-    return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
-  }
-
-  // Confirmation on the PROMPT line, not a toast: it is the pane's existing
-  // status surface, it is already where the eye is after a command, and it costs
-  // no new element or z-index. Restores by calling renderPrompt rather than
-  // stashing the old string, so it cannot resurrect a stale context name.
-  let copyFlash = null;
-  function flashCopy(msg, failed = false) {
-    if (!promptEl) return;
-    clearTimeout(copyFlash);
-    promptEl.textContent = `${msg} ❯`;
-    promptEl.classList.toggle('flash-bad', !!failed);
-    copyFlash = setTimeout(() => {
-      promptEl.classList.remove('flash-bad');
-      // Never over a command's elapsed counter: that one is live and this one is
-      // stale by construction.
-      if (!running) renderPrompt();
-    }, 1600);
-  }
+  // Host rule 5, scoped to the block list rather than the pane: the input row is
+  // inside the pane too, and its text is what the operator is still typing.
+  const selectionInPane = () => host.domSelection(bodyEl);
 
   // The cheat sheet. Anchored to its button and rendered from ctl:help, which
   // DERIVES the list from the service's allowlist — deliberately not a literal
@@ -323,27 +265,10 @@ function createCtlTab({ host }) {
     clearBtn.title = 'Clear blocks';
     clearBtn.textContent = 'Clear';
     clearBtn.addEventListener('click', (e) => { e.stopPropagation(); clear(); });
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.id = 'ctl-copy';
-    copyBtn.title = 'Copy the last block';
-    copyBtn.textContent = 'Copy';
-    // Pressing a toolbar button collapses the document selection as part of
-    // mousedown's default action, so by the time `click` runs the selection this
-    // button is meant to honour is already gone. preventDefault keeps it (and
-    // keeps focus in the input, which is where the operator wants it back).
-    copyBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copySelectionOrLast(); });
-    // The label answers "did it see my selection?" before the paste does — the
-    // failure this whole path had was silent, and a button that reports its own
-    // target is what makes it not silent.
-    document.addEventListener('selectionchange', () => {
-      const has = !!selectionInPane();
-      copyBtn.textContent = has ? 'Copy selection' : 'Copy';
-      copyBtn.title = has ? 'Copy the selected text' : 'Copy the last block';
-    });
+    // No Copy button here: the drawer header owns one for every tenant, fed by
+    // the `selection` hook below (host rule 5). A per-tenant copy would be a
+    // second implementation of the same gesture.
     wireHelpButton(pane, actions);
-    actions.appendChild(copyBtn);
     actions.appendChild(clearBtn);
   }
 
@@ -366,6 +291,7 @@ function createCtlTab({ host }) {
     available: () => !window.__CLODEX_WEB__,
     mount,
     onShow,
+    selection: selectionInPane,
   });
 
   return { open: () => host.open('ctl') };

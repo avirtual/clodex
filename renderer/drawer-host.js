@@ -47,6 +47,13 @@
 //      schedules once more after the last callback, so the final onResize
 //      carries settled geometry. A tenant that fits only in onShow is wrong in a
 //      way that looks right, because the numbers it reads are plausible.
+//   5. `selection()` is the tenant's, not the host's. A generic
+//      document.getSelection() read would work for the DOM tenants and return
+//      EMPTY for the terminal — xterm paints rows into a canvas, so its selected
+//      text exists only in its own model. A host-side read is therefore not a
+//      simpler version of this contract, it is one that silently excludes the
+//      tenant most worth selecting from. A tenant that omits it has no selection
+//      and the shared button stays disabled for it, which is honest.
 //
 // DOM-bound, so no unit tests per the R1 rule.
 
@@ -65,6 +72,8 @@ function createDrawerHost({ refitActiveTerminal }) {
   const actionsEl = document.getElementById('drawer-actions');
   const toggleBtn = document.getElementById('drawer-toggle');
   const tallBtn = document.getElementById('drawer-tall');
+  const copyBtn = document.getElementById('drawer-copy');
+  const statusEl = document.getElementById('drawer-status');
   const panesEl = document.getElementById('drawer-panes');
 
   const tenants = new Map(); // id -> { id, def, pane, actions, tabEl, badgeEl, unread, mounted }
@@ -160,6 +169,9 @@ function createDrawerHost({ refitActiveTerminal }) {
     mountIfNeeded(rec);
     clearBadge(rec);
     if (!isCollapsed()) dispatchShow(rec);
+    // Each tenant owns its own selection, so the shared button's state is only
+    // meaningful relative to the active one.
+    syncCopy();
   }
 
   // Tall mode is remembered across collapses but only ever REACHES the layout
@@ -204,6 +216,9 @@ function createDrawerHost({ refitActiveTerminal }) {
         dispatchHide(rec);
       }
     }
+    // Collapse gates the copy button (see syncCopy), and collapsing fires no
+    // selectionchange — so without this the state set while expanded persists.
+    syncCopy();
     refitSessionTerminal();
   }
 
@@ -266,12 +281,18 @@ function createDrawerHost({ refitActiveTerminal }) {
     tabsEl.insertBefore(tabEl, after ? after.tabEl : null);
 
     if (activeId === null) selectFirst(rec);
-    return function notify(level) {
+    function notify(level) {
       if (isVisible(rec.id)) return; // the operator is looking at it
       rec.unread++;
       if (level === 'attention') rec.attention = true;
       renderBadge(rec);
-    };
+    }
+    // A tenant whose selection changes without a document `selectionchange`
+    // (xterm, which owns its own selection model) calls this to re-sync the
+    // shared copy button. Guarded on being the active tenant so a background
+    // tenant cannot arm a button that would copy someone else's text.
+    notify.selectionChanged = () => { if (rec.id === activeId) syncCopy(); };
+    return notify;
   }
 
   // The first registered tenant is active from boot (collapsed, but active) so
@@ -285,6 +306,95 @@ function createDrawerHost({ refitActiveTerminal }) {
     // The drawer boots collapsed, so this is a no-op today — but the onShow
     // contract must not depend on that ordering.
     if (!isCollapsed()) dispatchShow(rec);
+  }
+
+  // ONE copy button for every tenant, in the header rather than per-tenant
+  // action groups: the gesture is the same everywhere (select, copy) and four
+  // implementations would drift into four behaviours. It reads the ACTIVE
+  // tenant's selection through rule 5.
+  // RAW, never trimmed: the operator selected indented output and the leading
+  // whitespace is part of it — a diff, a stack trace and a YAML block all mean
+  // something different one column left. Emptiness is decided by the CALLERS
+  // trimming their own test copy, so whitespace-only never arms the button while
+  // real indentation survives the copy.
+  function activeSelection() {
+    const rec = tenants.get(activeId);
+    if (!rec || !rec.def.selection) return '';
+    try { return String(rec.def.selection() || ''); } catch { return ''; }
+  }
+
+  function bytesLabel(n) {
+    return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
+  }
+
+  // The DOM tenants' half of rule 5, offered here so three panes share one
+  // implementation. Scoped by CONTAINMENT rather than just non-empty: a
+  // selection living in the sidebar, a dialog, or a sibling pane is not this
+  // tenant's to hand over, and treating it as one would make the copy button's
+  // behaviour depend on where the operator last dragged.
+  function domSelection(el) {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !el) return '';
+    for (let i = 0; i < sel.rangeCount; i++) {
+      // commonAncestorContainer is a TEXT NODE for a within-line selection, so
+      // ask the container whether it contains the node rather than walking up
+      // looking for an element.
+      if (!el.contains(sel.getRangeAt(i).commonAncestorContainer)) return '';
+    }
+    // Raw for the same reason activeSelection is — indentation is content.
+    return String(sel);
+  }
+
+  let statusTimer = null;
+  function flash(msg, failed = false) {
+    if (!statusEl) return;
+    clearTimeout(statusTimer);
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('bad', !!failed);
+    statusTimer = setTimeout(() => {
+      statusEl.textContent = '';
+      statusEl.classList.remove('bad');
+    }, 1600);
+  }
+
+  // Disabled rather than hidden when there is nothing selected: a button that
+  // appears and disappears under the cursor moves the two beside it, and the
+  // operator clicks the wrong one.
+  //
+  // COLLAPSED COUNTS AS NOTHING SELECTED, and that is not belt-and-braces: a
+  // DOM selection dies when the operator drags elsewhere, but xterm's SURVIVES
+  // collapse. Without this, term-active → collapse → select in the sidebar
+  // leaves the button armed and copying terminal text the operator can no longer
+  // see, reporting a confident byte count for it.
+  function syncCopy() {
+    if (!copyBtn) return;
+    const has = !isCollapsed() && !!activeSelection().trim();
+    copyBtn.disabled = !has;
+    copyBtn.classList.toggle('armed', has);
+  }
+
+  function copySelection() {
+    const text = activeSelection();
+    if (isCollapsed() || !text.trim()) { flash('nothing selected', true); return; }
+    // A clipboard write is async and CAN reject (permissions, an unfocused
+    // document). Unreported, a rejection is indistinguishable from a copy that
+    // worked, which is the failure this whole affordance exists to close.
+    navigator.clipboard.writeText(text)
+      .then(() => flash(`copied · ${bytesLabel(text.length)}`))
+      .catch((e) => flash(`copy failed: ${e && e.message ? e.message : e}`, true));
+  }
+
+  if (copyBtn) {
+    // Pressing a toolbar button collapses the document selection as part of
+    // mousedown's default action, so by the time `click` runs the selection this
+    // button exists to honour is already gone. (xterm's own selection survives —
+    // but the DOM tenants' does not, and one handler serves both.)
+    copyBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copySelection(); });
+    // Covers the DOM tenants. xterm fires no selectionchange, so term-tab drives
+    // the same sync through the `onSelectionChange` handle it gets at register.
+    document.addEventListener('selectionchange', syncCopy);
+    syncCopy();
   }
 
   // Cmd-chords are captured at document level and act on the active SIDEBAR
@@ -328,7 +438,7 @@ function createDrawerHost({ refitActiveTerminal }) {
   // its behaviour is now "open the drawer on the log tab".
   window.api.onRequestOpenIpcLog(() => open('log'));
 
-  return { register, open, toggle, hasFocus };
+  return { register, open, toggle, hasFocus, domSelection };
 }
 
 module.exports = { createDrawerHost, TAB_IDS };

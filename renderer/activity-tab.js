@@ -439,14 +439,45 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     const hadMeta = !!rec.feed.meta();
     const { appended } = rec.feed.ingest(res.data || {});
     const metaArrived = !hadMeta && !!rec.feed.meta();
+    // BEFORE the no-change return, or a deferred rebuild strands: a selection
+    // can end without a `selectionchange` (the pane's DOM replaced under it, a
+    // tab switch), and if the feed then goes idle nothing else would ever flush
+    // what was deferred. The poll is the backstop that makes the deferral safe.
+    flushDeferredRender();
     if (!appended && !metaArrived) return;
 
     // Keep the view pinned to the bottom when a fresh turn lands or the operator
     // is already there; otherwise leave their scroll alone so they can read back.
     const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
-    renderFeed();
-    if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+    renderFeedUnlessSelecting(() => {
+      if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+    });
   }
+
+  // Same hazard as the scroll clamp above, one step worse: replacing the pane's
+  // children destroys a selection INSIDE it, so on a live feed the operator's
+  // drag dies at the next turn boundary and the copy button disarms under their
+  // hand. Defer the rebuild while a selection is up and flush it the moment the
+  // selection goes; entries accumulate in the feed model meanwhile, so nothing
+  // is lost — only shown late, which is the right trade against destroying what
+  // the operator is actively holding.
+  let renderDeferred = null;
+  function renderFeedUnlessSelecting(after) {
+    if (bodyEl && host.domSelection(bodyEl).trim()) { renderDeferred = after || (() => {}); return; }
+    renderDeferred = null;
+    renderFeed();
+    if (after) after();
+  }
+
+  function flushDeferredRender() {
+    if (!renderDeferred) return;
+    if (bodyEl && host.domSelection(bodyEl).trim()) return;
+    const after = renderDeferred;
+    renderDeferred = null;
+    renderFeed();
+    after();
+  }
+  document.addEventListener('selectionchange', flushDeferredRender);
 
   function startPolling() {
     gen++;
@@ -490,6 +521,9 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     mount,
     onShow() {
       renderChips();
+      // A deferred rebuild is stale by the time the tab is re-shown, and the
+      // selection that deferred it is gone with the pane's visibility.
+      renderDeferred = null;
       renderFeed();
       bodyEl.scrollTop = bodyEl.scrollHeight;
       startPolling();
@@ -498,6 +532,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       stopPolling();
       armBadge();
     },
+    selection: () => host.domSelection(bodyEl),
   });
   // Drain anything badged during `register` (see queuedNotifies): the host
   // mounts the first tenant from inside the call that produces this function.

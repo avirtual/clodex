@@ -116,6 +116,7 @@ function createIpcLog({ host }) {
     available: () => true,
     mount,
     onShow() { ipcLogBody.scrollTop = ipcLogBody.scrollHeight; },
+    selection: () => host.domSelection(ipcLogBody),
   });
 
   window.api.onIpcMessage((msg) => {

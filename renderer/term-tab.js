@@ -26,7 +26,11 @@ function createTermTab({ host, xtermTheme }) {
   let hostEl = null;
   let opened = false;    // terminal.open() has run against a laid-out box
   let drawn = false;     // this pane has content for the current shell on screen
-  let notify = () => {};
+  // The stub carries `selectionChanged` too: mount() can only run from inside
+  // register() (before the real notify is assigned) and today's registration
+  // order makes that unreachable for this tenant — but a bare `() => {}` turns
+  // that ordering fact, stated in another file, into a TypeError here.
+  let notify = Object.assign(() => {}, { selectionChanged: () => {} });
 
   function mount(pane, actions) {
     pane.innerHTML = '<div id="wterm-host"></div>';
@@ -60,6 +64,14 @@ function createTermTab({ host, xtermTheme }) {
       // badge for a visible tab itself.
       notify();
     });
+
+    // xterm owns its selection model and fires no document `selectionchange`,
+    // so the shared copy button would never learn about one. This is the push
+    // half of drawer-host rule 5.
+    // Uncaught on purpose: the stub above makes the ordering hazard impossible,
+    // so anything thrown here is a real fault in the host's sync and swallowing
+    // it would leave the button silently wrong.
+    terminal.onSelectionChange(() => notify.selectionChanged());
 
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
@@ -127,6 +139,8 @@ function createTermTab({ host, xtermTheme }) {
     mount,
     onShow,
     onResize,
+    // Rule 5: the terminal's selected text lives in xterm's model, not the DOM.
+    selection: () => (terminal ? terminal.getSelection() : ''),
   });
 
   return { open: () => host.open('term') };

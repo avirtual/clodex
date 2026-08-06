@@ -3303,6 +3303,10 @@ html, body {
   align-items: stretch;
   gap: 2px;
   height: 100%;
+  /* The strip is what gives up space when the header is tight. A flex item
+     defaults to min-width:auto and refuses to shrink below its content, which
+     makes the RIGHT-hand controls the ones that clip (#drawer is overflow:hidden). */
+  min-width: 0;
 }
 
 .drawer-tab {
@@ -3375,6 +3379,43 @@ html, body {
   background: var(--sidebar-hover);
   color: var(--text);
 }
+
+/* Shared across every tenant (host rule 5). Disabled rather than hidden with
+   nothing selected: a button that appears and disappears under the cursor moves
+   the two beside it, and the operator clicks the wrong one. */
+#drawer-copy:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+#drawer-copy:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+#drawer-copy.armed {
+  color: var(--accent);
+}
+
+/* The copy confirmation. min-width alone is only a FLOOR — a failure message
+   ("copy failed: Document is not focused") is ~175px, and since #drawer has
+   overflow:hidden the growth clips off the RIGHT, taking the tall and toggle
+   buttons off screen for the 1.6s the flash is up. So the width is bounded at
+   both ends and long text ellipsises instead of pushing. */
+#drawer-status {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 0 6px;
+  white-space: nowrap;
+  min-width: 92px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  text-align: right;
+}
+#drawer-copy, #drawer-tall, #drawer-toggle { flex-shrink: 0; }
+/* A failed copy must not read as a confirmation at a glance — the message says
+   so, but the colour is what gets seen first. */
+#drawer-status.bad { color: var(--danger, #e06c75); }
 
 /* Inherits the header button rule above; only the ON state is new. The active
    colour rather than a background so it reads as a mode that is engaged, the
@@ -3676,9 +3717,6 @@ html, body {
 }
 
 #ctl-prompt.none { color: var(--text-dim); }
-/* A failed copy must not read as a confirmation at a glance — the message says
-   so, but the colour is what gets seen first. */
-#ctl-prompt.flash-bad { color: var(--danger, #e06c75); }
 
 #ctl-input {
   flex: 1;
