@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { UsageCollector, OpenAIUsageCollector } = require('../wire/sse');
+const { UsageCollector, OpenAIUsageCollector, openaiDelta } = require('../wire/sse');
 
 test('multi-iteration server-tool turn: final message_delta usage wins (cumulative)', () => {
   // Billing contract (wirescope, billing.py:241): receipts price
@@ -129,4 +129,27 @@ test('OpenAIUsageCollector: response.failed surfaces the error', () => {
   }));
   assert.equal(u.meta.status, 'failed');
   assert.equal(u.meta.error.code, 'server_error');
+});
+
+// --- openaiDelta -------------------------------------------------------------
+
+// The openai half of the discriminated-return change, which has no e2e fixture:
+// this function's output becomes turn.text, and turn.text is what the intent
+// scanner reads. A reversion to a bare string leaves `d.s` undefined, blanking
+// every Codex turn's text — intents stop firing and nothing else goes red.
+test('openaiDelta returns the discriminated shape both APIs share', () => {
+  assert.deepStrictEqual(
+    openaiDelta('', JSON.stringify({ type: 'response.output_text.delta', delta: 'hi' })),
+    { kind: 'text', s: 'hi' },
+  );
+  assert.deepStrictEqual(
+    openaiDelta('', JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })),
+    { kind: 'text', s: 'hi' },
+  );
+  // Never 'thinking': reasoning summaries are opt-in, arrive on their own event
+  // and are deliberately not captured here.
+  assert.strictEqual(openaiDelta('', '[DONE]'), null);
+  assert.strictEqual(openaiDelta('', 'not json'), null);
+  assert.strictEqual(openaiDelta('', ''), null);
+  assert.strictEqual(openaiDelta('', JSON.stringify({ choices: [] })), null);
 });

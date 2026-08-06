@@ -176,8 +176,8 @@ adapter that hosts it. The modules below are what the engine assembles.
   SCANNED_MODULES.
 - **subagent-ring.js** — the per-session ring of subagent turns: `createSubagentStore`
   (one store per session, hung off the Session), `noteSubagentTurn` on the wire
-  tee's write side, `feedSince` behind `proxy:subagentFeed`. Owns all four bounds
-  (`FEED_CAP`/`SUB_CAP`/`TEXT_CAP`/`TOOLS_CAP`) rather than trusting callers — a
+  tee's write side, `feedSince` behind `proxy:subagentFeed`. Owns all five bounds
+  (`FEED_CAP`/`SUB_CAP`/`TEXT_CAP`/`TOOLS_CAP`/`THINKING_CAP`) rather than trusting callers — a
   feed lives as long as its session, so nothing upstream is positioned to
   remember. `seq` is monotonic per SESSION, not per feed, which is what lets one
   cursor order every subagent's turns and answer a single feed without gaps; the

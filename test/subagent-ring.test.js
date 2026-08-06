@@ -8,7 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  FEED_CAP, SUB_CAP, TEXT_CAP, TOOLS_CAP,
+  FEED_CAP, SUB_CAP, TEXT_CAP, TOOLS_CAP, THINKING_CAP,
   createSubagentStore, noteSubagentTurn, feedSince, feedKeys,
 } = require('../subagent-ring');
 
@@ -26,8 +26,9 @@ test('a turn lands as a fully-shaped entry', () => {
     known: true, key: 'a@s1', role: 'general-purpose', model: 'claude-opus-5',
     displayName: null,
     entries: [{
-      seq: 1, ts: 1000, text: 'hello', tools: [{ name: 'Read', arg: '/a.js' }],
-      toolsOmitted: 0, truncated: false,
+      seq: 1, ts: 1000, text: 'hello', thinking: null,
+      tools: [{ name: 'Read', arg: '/a.js' }],
+      toolsOmitted: 0, truncated: false, thinkingTruncated: false,
     }],
     seq: 1, missed: false,
   });
@@ -190,6 +191,153 @@ test('a turn within both caps omits no tools', () => {
   const s = createSubagentStore();
   noteSubagentTurn(s, turn());
   assert.strictEqual(feedSince(s, 'a@s1', 0).entries[0].toolsOmitted, 0);
+});
+
+// --- thinking ----------------------------------------------------------------
+
+test('thinking rides its own field and is never folded into text', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ text: 'the answer', thinking: 'the reasoning' }));
+  const e = feedSince(s, 'a@s1', 0).entries[0];
+  assert.strictEqual(e.thinking, 'the reasoning');
+  assert.strictEqual(e.text, 'the answer', 'ENTER: text is untouched by the thinking capture');
+});
+
+// The shape this ticket exists for: a tool-loop hop with reasoning and no prose.
+// Before thinking was captured, the blank-row guard dropped a reasoning-only
+// turn entirely, so the feed showed nothing at all for it.
+test('a turn with ONLY thinking is kept, not dropped as a blank row', () => {
+  const s = createSubagentStore();
+  const e = noteSubagentTurn(s, turn({ text: '', tools: [], thinking: 'just reasoning' }));
+  assert.ok(e, 'a reasoning-only turn is not a blank row');
+  assert.strictEqual(feedSince(s, 'a@s1', 0).entries.length, 1);
+  assert.strictEqual(e.text, null);
+  assert.strictEqual(e.thinking, 'just reasoning');
+});
+
+test('a turn with no text, no tools and no thinking is still dropped', () => {
+  const s = createSubagentStore();
+  assert.strictEqual(noteSubagentTurn(s, turn({ text: '', tools: [], thinking: '' })), null);
+  assert.strictEqual(noteSubagentTurn(s, turn({ text: '', tools: [], thinking: null })), null);
+  assert.strictEqual(feedSince(s, 'a@s1', 0).known, false);
+});
+
+test('thinking is clamped at THINKING_CAP and says so, independently of text', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ text: 'short', thinking: 'y'.repeat(THINKING_CAP + 50) }));
+  const e = feedSince(s, 'a@s1', 0).entries[0];
+  assert.strictEqual(e.thinking.length, THINKING_CAP);
+  assert.strictEqual(e.thinkingTruncated, true);
+  // The renderer prints "(truncated)" under the TEXT. Thinking is clipped by a
+  // different cap at a different rate, so reporting it through that flag would
+  // be a false statement about text that is complete.
+  assert.strictEqual(e.truncated, false, 'ENTER: a thinking clamp must not claim the text was cut');
+});
+
+test('a text clamp and a thinking clamp are reported independently', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ text: 'x'.repeat(TEXT_CAP + 1), thinking: 'short reasoning' }));
+  const e = feedSince(s, 'a@s1', 0).entries[0];
+  assert.strictEqual(e.truncated, true);
+  assert.strictEqual(e.thinkingTruncated, false);
+});
+
+test('thinking exactly at the cap is not marked truncated', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ thinking: 'y'.repeat(THINKING_CAP) }));
+  assert.strictEqual(feedSince(s, 'a@s1', 0).entries[0].thinkingTruncated, false);
+});
+
+// The tee has its OWN 4MB cap upstream; a turn cut there arrives whole from our
+// point of view, and dropping that admission would show a clipped block as complete.
+test('an upstream thinking truncation survives even when we clamp nothing', () => {
+  const s = createSubagentStore();
+  noteSubagentTurn(s, turn({ thinking: 'brief', thinkingTruncated: true }));
+  assert.strictEqual(feedSince(s, 'a@s1', 0).entries[0].thinkingTruncated, true);
+});
+
+test('a missing or non-string thinking normalizes to exactly null', () => {
+  const s = createSubagentStore();
+  for (const v of [undefined, null, 42, {}]) {
+    const e = noteSubagentTurn(s, turn({ thinking: v }));
+    assert.ok('thinking' in e, `${String(v)}: thinking present, not absent`);
+    assert.notStrictEqual(e.thinking, undefined, `${String(v)}: not undefined`);
+    assert.strictEqual(e.thinking, null, `${String(v)}: exactly null`);
+  }
+});
+
+// The flatten that makes THINKING_CAP bound RETAINED bytes rather than merely
+// rendered ones. Invisible to every ordinary assertion — length, content,
+// equality and even v8.serialize output are identical for a SlicedString and a
+// flat one, so only heap retention can tell them apart. The ring is the SOLE
+// retainer of this text after the tee's emit, and its parent is a turn-sized
+// rope (TURN_TEXT_CAP, 4MB), so a reversion to a bare `.slice()` pins a parent
+// per entry for the life of the session.
+test('a clamped thinking block does not retain the turn it was cut from', () => {
+  const v8 = require('node:v8');
+  const vm = require('node:vm');
+  v8.setFlagsFromString('--expose-gc');
+  const gc = vm.runInNewContext('gc');
+  const PARENT = 1_000_000;
+
+  // Retained bytes for `n` thinking blocks, each cut from its OWN million-char
+  // parent. `keep` turns a parent into the thing held: the real ring for the
+  // measurement under test, a bare slice for the control. The parents are
+  // unreachable after the loop, so whatever is still held is held by `kept`.
+  // The ring cannot be handed a pre-sliced string as a control — it flattens
+  // whatever it receives, which is the property being measured — so the control
+  // has to bypass it.
+  const retainedFor = (n, keep, wantLen) => {
+    gc(); gc();
+    const before = process.memoryUsage().heapUsed;
+    const kept = [];
+    for (let i = 0; i < n; i++) {
+      kept.push(keep(String(i).padStart(8, '0') + 'y'.repeat(PARENT), i));
+    }
+    gc(); gc();
+    const after = process.memoryUsage().heapUsed;
+    assert.strictEqual(kept.length, n, 'ENTER: the blocks are alive across the measurement');
+    assert.strictEqual(kept[0].length, wantLen, 'ENTER: the clamp produced the length under test');
+    return after - before;
+  };
+
+  // n stays under FEED_CAP so no entry is evicted — an eviction would drop the
+  // very parents being measured and make a reversion look flat.
+  const N = 80;
+  const store = createSubagentStore();
+  const viaRing = (parent) => noteSubagentTurn(store, turn({ thinking: parent })).thinking;
+  const flat10 = retainedFor(10, (p) => noteSubagentTurn(
+    createSubagentStore(), turn({ thinking: p }),
+  ).thinking, THINKING_CAP);
+  const flat80 = retainedFor(N, viaRing, THINKING_CAP);
+  assert.strictEqual(feedSince(store, 'a@s1', 0).entries.length, N,
+    'ENTER: every measured entry is still in the ring');
+  // The reversion this guards against, measured rather than assumed, so the
+  // bounds are a real contrast and not thresholds picked to pass.
+  const sliced80 = retainedFor(N, (p) => p.slice(0, THINKING_CAP), THINKING_CAP);
+
+  assert.ok(sliced80 > (N / 2) * PARENT,
+    `ENTER: the sliced control DID pin its parents (retained ${sliced80} for ${N})`);
+  assert.ok(flat80 < 8 * PARENT,
+    `the ring's thinking clamp retains far less than its parents (retained ${flat80} for ${N})`);
+  // The shape, not the absolute number: 8x the entries must not mean ~8x the
+  // bytes. Slicing gives 8x here; the flatten's growth is noise-level.
+  assert.ok(flat80 < flat10 + 8 * PARENT,
+    `retention does not scale with entry count (n=10 ${flat10}, n=80 ${flat80})`);
+
+  // The UNDER-cap branch, and the reason the flatten is not gated on
+  // `length > THINKING_CAP`: a short string pins its parent exactly as hard as a
+  // long one, and the tee hands us a string built by += from delta fragments.
+  // Without this a gated version passes everything above.
+  const SHORT = 40;
+  const shortFlat = retainedFor(N, (p) => noteSubagentTurn(
+    createSubagentStore(), turn({ thinking: p.slice(0, SHORT) }),
+  ).thinking, SHORT);
+  const shortSliced = retainedFor(N, (p) => p.slice(0, SHORT), SHORT);
+  assert.ok(shortSliced > (N / 2) * PARENT,
+    `ENTER: the under-cap sliced control DID pin its parents (retained ${shortSliced} for ${N})`);
+  assert.ok(shortFlat < 8 * PARENT,
+    `an UNDER-cap thinking block is flattened too (retained ${shortFlat} for ${N})`);
 });
 
 // NOTE: the flatten that makes TEXT_CAP bound RETAINED bytes (not just rendered

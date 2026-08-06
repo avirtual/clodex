@@ -17,7 +17,7 @@
 const MAX_FEED_ENTRIES = 500;
 
 function createSubagentFeed() {
-  let entries = [];   // [{ seq, ts, text, tools, truncated }]
+  let entries = [];   // [{ seq, ts, text, thinking, tools, truncated }]
   let cursor = 0;     // highest seq ingested; what the next poll asks past
   let meta = null;    // { role, model } captured once
   // Sticky: once a reply reports rows were evicted past our cursor, later polls
@@ -46,6 +46,11 @@ function createSubagentFeed() {
         seq: e.seq,
         ts: typeof e.ts === 'number' ? e.ts : null,
         text: e.text || null,
+        // Kept apart from `text` all the way to the DOM. The split starts at the
+        // wire (wire/sse.js) because turn text feeds the intent scanner; a
+        // renderer that merged them back would not reintroduce that bug, but it
+        // would hide which half the operator is reading.
+        thinking: typeof e.thinking === 'string' && e.thinking ? e.thinking : null,
         // `{ name, arg }`, with a bare string accepted as a name-only tool —
         // the main-process ring normalizes both, but a peer on an older build
         // is a second source for this reply.
@@ -59,6 +64,7 @@ function createSubagentFeed() {
         // Distinct from `truncated`, which is about the TEXT only.
         toolsOmitted: typeof e.toolsOmitted === 'number' && e.toolsOmitted > 0 ? e.toolsOmitted : 0,
         truncated: e.truncated === true,
+        thinkingTruncated: e.thinkingTruncated === true,
       });
       appended = true;
     }

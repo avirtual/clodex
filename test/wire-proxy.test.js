@@ -7,33 +7,54 @@ const { WireProxy } = require('../wire/proxy');
 
 // Synthetic Anthropic SSE turn: usage on message_start, an intent split
 // across two text deltas, final output_tokens on message_delta.
+//
+// Block 0 is a thinking block that REASONS about sending a dm — the shape that
+// must never reach turn.text, because turn.text is what session-manager.js
+// feeds the intent scanner. Its own `[agent:dm]` line differs from the text
+// block's, so a leak in either direction is visible in the exact-equality
+// assertions rather than hiding behind a substring match.
 const SSE_BODY = [
   'event: message_start',
   'data: {"type":"message_start","message":{"id":"msg_test1","usage":{"input_tokens":10,"cache_read_input_tokens":5}}}',
   '',
   'event: content_block_start',
-  'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+  'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
   '',
   'event: content_block_delta',
-  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"On it.\\n[agent:dm bo"}}',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I could reply with\\n[agent:dm ali"}}',
   '',
   'event: content_block_delta',
-  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"b] hello from the wire\\ndone."}}',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ce] secret plan\\nbut I will not."}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc"}}',
   '',
   'event: content_block_stop',
   'data: {"type":"content_block_stop","index":0}',
   '',
   'event: content_block_start',
-  'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu_1","name":"Edit","input":{}}}',
+  'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}',
   '',
   'event: content_block_delta',
-  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"replace_all\\": false, \\"file_pa"}}',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"On it.\\n[agent:dm bo"}}',
   '',
   'event: content_block_delta',
-  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"th\\": \\"/tmp/wire-touched.js\\", \\"old_string\\": \\"a\\"}"}}',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"b] hello from the wire\\ndone."}}',
   '',
   'event: content_block_stop',
   'data: {"type":"content_block_stop","index":1}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tu_1","name":"Edit","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"replace_all\\": false, \\"file_pa"}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"th\\": \\"/tmp/wire-touched.js\\", \\"old_string\\": \\"a\\"}"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":2}',
   '',
   'event: message_delta',
   'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}',
@@ -217,6 +238,10 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   // knows names only) still yields a plausible-looking ['Edit'] that both
   // normalizers downstream accept, so nothing else here would go red.
   assert.deepEqual(turn.toolUses, [{ name: 'Edit', arg: '/tmp/wire-touched.js' }]);
+  // Thinking rides its OWN field, whole, and the signature_delta in the same
+  // block contributes nothing to it.
+  assert.equal(turn.thinking, 'I could reply with\n[agent:dm alice] secret plan\nbut I will not.');
+  assert.equal(turn.thinkingTruncated, false);
 
   assert.equal(events.session[0].agent, 'tester');
   assert.equal(events.session[0].sessionId, SESSION_ID);
@@ -230,6 +255,46 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.equal(events['stream-start'].length, 1);
   assert.equal(events['stream-end'].length, 1);
   assert.deepEqual(order, ['usage', 'turn.completed', 'stream-end']);
+
+  await proxy.close();
+  up.server.close();
+});
+
+// The reason turn text and thinking are two fields rather than one. This is
+// not a display concern: session-manager.js hands `turn.text` — and ONLY
+// `turn.text` — to the intent scanner, so a thinking block that reached it
+// would let an agent REASONING about `[agent:dm alice]` actually send it.
+// Nothing else in this file would go red: the wire would still look correct,
+// the feed would still render, and the misfire would surface as a real message
+// to a real peer.
+//
+// It runs the REAL parseIntent (a pure leaf, no electron) over the REAL text
+// the tee accumulated, so it fails on any merge at any point in the chain,
+// rather than restating the fixture.
+test('e2e: an intent inside a thinking block never reaches the scanner', async () => {
+  const { parseIntent } = require('../intent-scanner');
+  const up = await startFakeUpstream();
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  const events = collect(proxy, ['turn.completed']);
+
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
+  await new Promise((r) => setTimeout(r, 50));
+
+  const turn = events['turn.completed'][0];
+  // ENTER: the fixture's thinking really did carry a well-formed dm — if the
+  // block stopped being captured, or the intent grammar moved out from under
+  // this line, every assertion below would pass over an empty set.
+  const inThinking = turn.thinking.split('\n').map(parseIntent).filter(Boolean);
+  assert.deepEqual(inThinking.map((i) => i.type), ['dm'],
+    'ENTER: the thinking block must contain exactly one parseable intent');
+  assert.equal(inThinking[0].target, 'alice');
+
+  const fired = turn.text.split('\n').map(parseIntent).filter(Boolean);
+  assert.deepEqual(fired.map((i) => i.target), ['bob'],
+    'the thinking block\'s dm must NOT be in the text the scanner reads');
+  assert.ok(!turn.text.includes('alice'), 'no thinking bytes leaked into turn text');
+  assert.ok(!turn.thinking.includes('bob'), 'and no text bytes leaked the other way');
 
   await proxy.close();
   up.server.close();
@@ -260,6 +325,12 @@ test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-
     { name: 'Edit', arg: '/tmp/edited.js' },
     { name: 'Bash', arg: 'npm test' },
   ]);
+  // A tool-loop hop with no prose is the MAJORITY shape (measured: turns that
+  // carry thinking have a median of 0 visible text chars), and it is the one
+  // the feed was blind to. Empty text must stay empty — not become null, and
+  // not absorb the absent thinking.
+  assert.equal(turn.text, '');
+  assert.equal(turn.thinking, null, 'no thinking_delta on this stream means null, not ""');
 
   await proxy.close();
   up.server.close();

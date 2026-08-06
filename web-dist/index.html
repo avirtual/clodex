@@ -1055,6 +1055,20 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.subagent-detail-thinking {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.subagent-thinking-cut {
+  opacity: 0.7;
+}
 .subagent-detail-note {
   font-size: 11px;
   color: var(--text-dim);
@@ -21737,6 +21751,11 @@ helper=${d.helperPath}`;
               seq: e.seq,
               ts: typeof e.ts === "number" ? e.ts : null,
               text: e.text || null,
+              // Kept apart from `text` all the way to the DOM. The split starts at the
+              // wire (wire/sse.js) because turn text feeds the intent scanner; a
+              // renderer that merged them back would not reintroduce that bug, but it
+              // would hide which half the operator is reading.
+              thinking: typeof e.thinking === "string" && e.thinking ? e.thinking : null,
               // `{ name, arg }`, with a bare string accepted as a name-only tool —
               // the main-process ring normalizes both, but a peer on an older build
               // is a second source for this reply.
@@ -21749,7 +21768,8 @@ helper=${d.helperPath}`;
               }, []),
               // Distinct from `truncated`, which is about the TEXT only.
               toolsOmitted: typeof e.toolsOmitted === "number" && e.toolsOmitted > 0 ? e.toolsOmitted : 0,
-              truncated: e.truncated === true
+              truncated: e.truncated === true,
+              thinkingTruncated: e.thinkingTruncated === true
             });
             appended = true;
           }
@@ -21796,6 +21816,7 @@ helper=${d.helperPath}`;
       var ICON = {
         tool: '<span class="subagent-icon" aria-hidden="true">&#128296;</span>',
         text: '<span class="subagent-icon" aria-hidden="true">&#128172;</span>',
+        think: '<span class="subagent-icon" aria-hidden="true">&#129504;</span>',
         alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>'
       };
       var MAX_RETAINED_FEEDS = 20;
@@ -21971,6 +21992,12 @@ helper=${d.helperPath}`;
           }
           for (const e of entries) {
             const entry = [];
+            if (e.thinking) {
+              entry.push(`<div class="subagent-detail-thinking">${ICON.think}${esc(e.thinking)}</div>`);
+              if (e.thinkingTruncated) {
+                entry.push('<div class="subagent-detail-note subagent-thinking-cut">(reasoning truncated)</div>');
+              }
+            }
             if (e.tools && e.tools.length) {
               const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t.name)}</span>` + (t.arg ? `<span class="subagent-tool-arg">${esc(t.arg)}</span>` : ""));
               if (e.toolsOmitted > 0) {

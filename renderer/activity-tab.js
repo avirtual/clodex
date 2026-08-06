@@ -37,13 +37,13 @@ const { classifySubagent } = require('./lib/subagent-policy');
 const DETAIL_MS = 1500;
 // Row-kind glyphs. Emoji, not SVG: the statusbar, the strip toggle and the
 // context popover all mark context/thinking with a literal glyph, so a bespoke
-// icon set here would be a second vocabulary for the same window. Reserve the
-// brain for actual thinking blocks — the feed cannot show them yet (turn.text is
-// visible assistant text only, wire/sse.js), so using it for prose would make
-// the one glyph mean two things the day thinking lands.
+// icon set here would be a second vocabulary for the same window. The brain
+// means an actual thinking block and nothing else — it is the same mark the
+// strip toggle uses for the same bytes, so do not borrow it for prose.
 const ICON = {
   tool: '<span class="subagent-icon" aria-hidden="true">&#128296;</span>',
   text: '<span class="subagent-icon" aria-hidden="true">&#128172;</span>',
+  think: '<span class="subagent-icon" aria-hidden="true">&#129504;</span>',
   alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>',
 };
 // Feeds outlive their subagents on purpose (history is the point), so memory is
@@ -341,6 +341,24 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
 
     for (const e of entries) {
       const entry = [];
+      // First: thinking precedes tool_use and text in the block stream, and the
+      // reader wants the reasoning before the action it explains. Clamped by CSS
+      // rather than a <details> disclosure BECAUSE the whole body is rebuilt
+      // whenever any new turn lands — every few seconds for an active subagent —
+      // so an open <details> slams shut under the operator. Only keyed
+      // incremental rendering would make DOM-held state safe here.
+      //
+      // The cut marker is a SIBLING, never a child of the clamped div: the clamp
+      // hides everything past three lines, and thinkingTruncated only fires at
+      // THINKING_CAP (2048 chars, ~20 lines), so a marker inside the box is
+      // always clipped. That would collapse the one distinction the separate
+      // flag exists to draw — clamped for display vs. cut at capture.
+      if (e.thinking) {
+        entry.push(`<div class="subagent-detail-thinking">${ICON.think}${esc(e.thinking)}</div>`);
+        if (e.thinkingTruncated) {
+          entry.push('<div class="subagent-detail-note subagent-thinking-cut">(reasoning truncated)</div>');
+        }
+      }
       if (e.tools && e.tools.length) {
         const names = e.tools.map((t) => `<span class="subagent-tool-name">${esc(t.name)}</span>`
           + (t.arg ? `<span class="subagent-tool-arg">${esc(t.arg)}</span>` : ''));

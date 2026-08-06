@@ -28,6 +28,13 @@
 const FEED_CAP = 100;   // entries per subagent
 const SUB_CAP = 24;     // subagents per session, LRU by last turn
 const TEXT_CAP = 1024;  // chars of assistant text per entry
+// Thinking gets its own, larger cap — measured, not assumed. Over 312 real
+// thinking-carrying assistant turns: p50 399 chars, p75 783, p90 3095, max
+// 17534. TEXT_CAP would clip 19% of them; 2048 keeps 87% whole, and 4096 buys
+// only 5 points more for double the retention. Worst case here is
+// 2048 × FEED_CAP × SUB_CAP ≈ 4.9MB, the same order as ONE tee turn's
+// TURN_TEXT_CAP.
+const THINKING_CAP = 2048;
 // A single turn can open many tool_use blocks; without this an entry's size is
 // set by the model rather than by us.
 const TOOLS_CAP = 12;
@@ -64,8 +71,11 @@ function noteSubagentTurn(store, turn) {
     }, [])
     : [];
   // Nothing to show: a tool-loop hop that streamed neither text nor a tool call
-  // would render as a blank row.
-  if (!rawText && !tools.length) return null;
+  // would render as a blank row. Thinking counts as something to show — a turn
+  // that only reasoned is the common case this feed was blind to (measured: the
+  // turns that carry thinking have a MEDIAN of 0 visible text chars).
+  const hasThinking = typeof turn.thinking === 'string' && turn.thinking !== '';
+  if (!rawText && !tools.length && !hasThinking) return null;
 
   let feed = store.feeds.get(key);
   if (feed) {
@@ -91,11 +101,24 @@ function noteSubagentTurn(store, turn) {
   const text = textClamped
     ? Buffer.from(rawText.slice(0, TEXT_CAP), 'utf8').toString('utf8')
     : rawText;
+  // Same flatten, UNCONDITIONALLY — an under-cap thinking string skips the
+  // slice, but it is still whatever the tee handed us, and this ring retains it
+  // for the life of the session. Gating the flatten on length is the mistake
+  // t213 found one level down: length is not evidence about what a string
+  // retains. The round-trip costs one copy per TURN, not per chunk.
+  const rawThinking = typeof turn.thinking === 'string' ? turn.thinking : '';
+  const thinkingClamped = rawThinking.length > THINKING_CAP;
+  const thinking = rawThinking
+    ? Buffer.from(
+      thinkingClamped ? rawThinking.slice(0, THINKING_CAP) : rawThinking, 'utf8',
+    ).toString('utf8')
+    : '';
   store.seq += 1;
   feed.entries.push({
     seq: store.seq,
     ts: typeof turn.ts === 'number' ? turn.ts : null,
     text: text || null,
+    thinking: thinking || null,
     tools: tools.slice(0, TOOLS_CAP),
     // Tool overflow gets its OWN count rather than riding `truncated`: the
     // renderer prints "(truncated)" under the TEXT, so a dropped tool name
@@ -104,6 +127,11 @@ function noteSubagentTurn(store, turn) {
     // Text only — ours, or the tee's own 4MB cap upstream. Either way the
     // reader needs to know the text they can see is partial.
     truncated: textClamped || turn.truncated === true,
+    // Its own flag for the same reason toolsOmitted is not `truncated`: the
+    // renderer prints "(truncated)" under the TEXT, and thinking is clipped by
+    // a different cap at a different rate (2048 vs 1024), so reporting it
+    // through that flag would be a false statement about the text.
+    thinkingTruncated: thinkingClamped || turn.thinkingTruncated === true,
   });
   if (feed.entries.length > FEED_CAP) {
     // Record the last seq that no longer exists, so a cursor predating the
@@ -160,6 +188,6 @@ function feedKeys(store) {
 }
 
 module.exports = {
-  FEED_CAP, SUB_CAP, TEXT_CAP, TOOLS_CAP,
+  FEED_CAP, SUB_CAP, TEXT_CAP, TOOLS_CAP, THINKING_CAP,
   createSubagentStore, noteSubagentTurn, feedSince, feedKeys,
 };

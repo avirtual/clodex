@@ -16,7 +16,7 @@ const { EventEmitter } = require('events');
 const { URL } = require('url');
 
 const { parseAgentPath, inferProvider } = require('./route');
-const { SSEFramer, anthropicTextDelta, openaiTextDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
+const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
@@ -39,6 +39,12 @@ const DEFAULT_UPSTREAMS = {
 };
 
 const TURN_TEXT_CAP = 4 * 1024 * 1024;
+// Thinking gets its own, much smaller bound: turn text is consumed whole (the
+// intent scanner reads all of it), but nothing downstream reads more than
+// subagent-ring's THINKING_CAP of it. Sharing TURN_TEXT_CAP would let one
+// in-flight turn retain 8MB instead of 4MB to no end. Truncating sooner is
+// honest — `thinkingTruncated` says so.
+const TURN_THINKING_CAP = 256 * 1024;
 
 
 const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
@@ -423,10 +429,16 @@ class WireProxy extends EventEmitter {
   _buildTee(turnCtx, contentEncoding) {
     const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, agentId, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
-    const extract = provider === 'anthropic' ? anthropicTextDelta : openaiTextDelta;
+    const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
     let text = '';
     let truncated = false;
+    // Its own accumulator, never appended to `text`. `text` is what reaches the
+    // intent scanner (session-manager.js), so folding thinking in would let an
+    // agent REASONING about `[agent:dm ...]` fire it for real. Same cap: a
+    // thinking block is unbounded on the wire exactly as text is.
+    let thinking = '';
+    let thinkingTruncated = false;
     // First guard level: zlib delivers on its own ticks, so an exception
     // in the framer/extractor path can't be caught by the forwarding
     // handlers — it must be contained here or it takes down the process.
@@ -440,10 +452,17 @@ class WireProxy extends EventEmitter {
       try {
         if (usage) usage.onEvent(event, data);
         if (ftools) ftools.onEvent(event, data);
-        const t = extract(event, data);
-        if (t && !truncated) {
-          if (text.length + t.length > TURN_TEXT_CAP) truncated = true;
-          else text += t;
+        const d = extract(event, data);
+        if (d && d.s) {
+          if (d.kind === 'thinking') {
+            if (!thinkingTruncated) {
+              if (thinking.length + d.s.length > TURN_THINKING_CAP) thinkingTruncated = true;
+              else thinking += d.s;
+            }
+          } else if (!truncated) {
+            if (text.length + d.s.length > TURN_TEXT_CAP) truncated = true;
+            else text += d.s;
+          }
         }
       } catch (e) { fail(e); }
     });
@@ -533,6 +552,14 @@ class WireProxy extends EventEmitter {
                 // collector on the thread forwarding the client's bytes.
                 agentId: agentId || null,
                 toolUses: ftools ? ftools.calls : [],
+                // Empty means the turn carried no thinking (thinking off, or a
+                // provider that streams none) — emitted as null so a consumer
+                // renders nothing rather than an empty reasoning row. Strip
+                // level does NOT affect this: wirescope's strips rewrite the
+                // REQUEST body's prior turns, so the current turn's response
+                // still streams thinking_delta at every level.
+                thinking: thinking || null,
+                thinkingTruncated,
               });
             }
           } catch (e) { fail(e); }
@@ -587,6 +614,7 @@ class WireProxy extends EventEmitter {
                 stop, sessionTotals: { ...this.billing.session(sessionKey) },
                 warmth: null, files: [], reads: [],
                 agentId: agentId || null, toolUses: [],
+                thinking: null, thinkingTruncated: false,
               });
             }
           } catch (e) { fail(e); }

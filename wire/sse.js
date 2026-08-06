@@ -40,28 +40,47 @@ class SSEFramer {
   }
 }
 
-function anthropicTextDelta(event, data) {
+// The two kinds are returned DISCRIMINATED rather than split across two
+// extractor functions, and that is a cost argument, not a style choice: the tee
+// calls this on every SSE event, so a second extractor means a second
+// JSON.parse of the same bytes. JSON.parse dominates this function — everything
+// else is two or three property reads — so a second one roughly doubles the
+// per-delta cost, and a substring pre-gate only softens that because it still
+// scans every payload. The object allocated here is noise by comparison, and is
+// allocated only on the deltas that matched.
+//
+// `thinking` must reach the caller as its OWN field and must never be
+// concatenated into turn text: session-manager.js feeds turn text to the intent
+// scanner, so an agent merely REASONING about `[agent:dm ...]` would fire it for
+// real. Anything that flattens these two back into one string is that bug.
+function anthropicDelta(event, data) {
   if (!data) return null;
   let obj;
   try { obj = JSON.parse(data); } catch { return null; }
   if (obj.type !== 'content_block_delta') return null;
   const d = obj.delta || {};
-  // thinking_delta / input_json_delta intentionally ignored — turn text is
-  // visible assistant text only.
-  return d.type === 'text_delta' ? (d.text || '') : null;
+  // input_json_delta stays ignored here — tool inputs are FileToolCollector's,
+  // which is the one collector licensed to parse that (highest-volume) event.
+  if (d.type === 'text_delta') return { kind: 'text', s: d.text || '' };
+  if (d.type === 'thinking_delta') return { kind: 'thinking', s: d.thinking || '' };
+  return null;
 }
 
-function openaiTextDelta(event, data) {
+// Same return shape as its anthropic twin so the tee has one routing path.
+// Reasoning summaries on the Responses API are not captured: they are opt-in,
+// arrive on their own event, and no OpenAI-routed session feeds the activity
+// feed today.
+function openaiDelta(event, data) {
   if (!data || data.trim() === '[DONE]') return null;
   let obj;
   try { obj = JSON.parse(data); } catch { return null; }
   // Responses API
-  if (obj.type === 'response.output_text.delta') return obj.delta || '';
+  if (obj.type === 'response.output_text.delta') return { kind: 'text', s: obj.delta || '' };
   // Chat Completions
   const choices = obj.choices;
   if (Array.isArray(choices) && choices.length) {
     const delta = choices[0].delta || {};
-    if (typeof delta.content === 'string') return delta.content;
+    if (typeof delta.content === 'string') return { kind: 'text', s: delta.content };
   }
   return null;
 }
@@ -437,4 +456,4 @@ class OpenAIUsageCollector {
   }
 }
 
-module.exports = { SSEFramer, anthropicTextDelta, openaiTextDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, FILE_TOOLS, ARG_CAP, ARG_TOOLS, clampArg };
+module.exports = { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, FILE_TOOLS, ARG_CAP, ARG_TOOLS, clampArg };

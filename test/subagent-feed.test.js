@@ -10,8 +10,9 @@ const assert = require('node:assert');
 const { createSubagentFeed, MAX_FEED_ENTRIES } = require('../renderer/lib/subagent-feed');
 
 const entry = (seq, over = {}) => ({
-  seq, ts: 1000 + seq, text: `t${seq}`, tools: [{ name: 'Read', arg: '/a.js' }],
-  toolsOmitted: 0, truncated: false, ...over,
+  seq, ts: 1000 + seq, text: `t${seq}`, thinking: null,
+  tools: [{ name: 'Read', arg: '/a.js' }],
+  toolsOmitted: 0, truncated: false, thinkingTruncated: false, ...over,
 });
 const reply = (entries, over = {}) => ({
   known: true, role: 'Explore', model: 'claude-opus-5', missed: false,
@@ -24,8 +25,9 @@ test('a turn is appended and reported as appended', () => {
   // Whole-entry equality: a field silently dropped by the mapping (tools,
   // truncated) reads as undefined and a shape-agnostic check sails past it.
   assert.deepStrictEqual(f.entries(), [{
-    seq: 1, ts: 1001, text: 't1', tools: [{ name: 'Read', arg: '/a.js' }],
-    toolsOmitted: 0, truncated: false,
+    seq: 1, ts: 1001, text: 't1', thinking: null,
+    tools: [{ name: 'Read', arg: '/a.js' }],
+    toolsOmitted: 0, truncated: false, thinkingTruncated: false,
   }]);
 });
 
@@ -147,8 +149,46 @@ test('missing text and tools normalize rather than arriving undefined', () => {
   const f = createSubagentFeed();
   f.ingest(reply([{ seq: 1 }]));
   assert.deepStrictEqual(f.entries(), [{
-    seq: 1, ts: null, text: null, tools: [], toolsOmitted: 0, truncated: false,
+    seq: 1, ts: null, text: null, thinking: null, tools: [],
+    toolsOmitted: 0, truncated: false, thinkingTruncated: false,
   }]);
+});
+
+test('thinking passes through as its own field, never merged into text', () => {
+  const f = createSubagentFeed();
+  f.ingest(reply([entry(1, { text: 'the answer', thinking: 'the reasoning' })]));
+  const e = f.entries()[0];
+  assert.strictEqual(e.thinking, 'the reasoning');
+  assert.strictEqual(e.text, 'the answer', 'ENTER: text is untouched by the thinking capture');
+});
+
+// An older peer, or a turn the model did no thinking on, is the same case to the
+// renderer: nothing to draw. It must be `null` and not `undefined`, because the
+// row is emitted on truthiness and an absent field would be a third state that
+// looks identical here but serializes differently over the peer link.
+test('a missing, empty or non-string thinking normalizes to exactly null', () => {
+  const f = createSubagentFeed();
+  f.ingest(reply([
+    entry(1, { thinking: undefined }), entry(2, { thinking: '' }), entry(3, { thinking: 7 }),
+  ]));
+  const got = f.entries();
+  assert.strictEqual(got.length, 3, 'ENTER: no row was dropped by the normalization');
+  for (const e of got) {
+    assert.ok('thinking' in e, `${e.seq}: thinking present, not absent`);
+    assert.notStrictEqual(e.thinking, undefined, `${e.seq}: not undefined`);
+    assert.strictEqual(e.thinking, null, `${e.seq}: exactly null`);
+  }
+});
+
+test('thinkingTruncated is carried through and is independent of truncated', () => {
+  const f = createSubagentFeed();
+  f.ingest(reply([
+    entry(1, { thinking: 'cut', thinkingTruncated: true }),
+    entry(2, { truncated: true }),
+  ]));
+  const [a, b] = f.entries();
+  assert.deepStrictEqual([a.thinkingTruncated, a.truncated], [true, false]);
+  assert.deepStrictEqual([b.thinkingTruncated, b.truncated], [false, true]);
 });
 
 test('the truncated flag passes through', () => {
@@ -212,4 +252,23 @@ test('the tool-arg span is in the committed web bundle, not just the renderer', 
     + 'browser frontend keeps showing tool names with no arguments');
   assert.ok(wsrc.includes('.subagent-tool-arg {'),
     'the bundle carries the markup but not its CSS — the snippet would render unstyled');
+});
+
+// Same gate, same reason, for the thinking row. Its CSS is load-bearing rather
+// than cosmetic: unstyled, the clamp is gone and a 2048-char reasoning block
+// pushes every other row out of the pane.
+test('the thinking row is in the committed web bundle, not just the renderer', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const ROOT = path.join(__dirname, '..');
+  const DIV = '<div class="subagent-detail-thinking">';
+  const rsrc = fs.readFileSync(path.join(ROOT, 'renderer', 'activity-tab.js'), 'utf8');
+  assert.ok(rsrc.includes(DIV), 'ENTER: the renderer still renders a thinking row at all');
+  const wsrc = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
+  assert.ok(wsrc.includes(DIV),
+    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
+    + 'browser frontend shows no reasoning at all');
+  assert.ok(wsrc.includes('-webkit-line-clamp: 3'),
+    'the bundle carries the thinking row but not its clamp — a long block would '
+    + 'push the rest of the feed out of the pane');
 });

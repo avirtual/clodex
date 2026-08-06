@@ -855,6 +855,20 @@ html, body {
   font-size: 13px; line-height: 1.55; color: var(--text);
   white-space: pre-wrap; word-break: break-word;
 }
+/* Subordinate to the assistant text on purpose — smaller, dimmer, and clamped
+   to 3 lines. The feed is a scannable log, not a transcript viewer, and a
+   thinking block runs 400 chars at the median and 17k at the tail; unclamped it
+   would push every other row off the pane. The clamp is CSS-only because the
+   pane's innerHTML is rebuilt whenever a new turn lands, so any expanded state
+   held in the DOM (a <details>, a toggled class) is destroyed under the
+   operator. Only keyed incremental rendering would make that state safe. */
+.subagent-detail-thinking {
+  font-size: 12px; line-height: 1.5; color: var(--text-dim);
+  white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.subagent-thinking-cut { opacity: 0.7; }
 .subagent-detail-note { font-size: 11px; color: var(--text-dim); }
 .subagent-detail-empty { font-size: 12px; color: var(--text-dim); font-style: italic; }
 

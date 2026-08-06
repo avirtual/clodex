@@ -54,6 +54,15 @@ blocks a release.
   past the collector that watches which files get touched, and it now keeps
   the part it was throwing away.
 
+- **The feed shows what a subagent was thinking, not just what it did.** A
+  reasoning block used to be dropped on the wire, so the feed could show a tool
+  call and the sentence after it but never the thinking that led there. Turns
+  now carry their reasoning as its own field, shown above the tools it explains
+  and clamped to a few lines so the feed stays scannable. It is kept strictly
+  separate from the turn's visible text on purpose: that text is what Clodex
+  scans for `[agent:...]` commands, and an agent that merely reasons about
+  sending a message must never be treated as having sent one.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link

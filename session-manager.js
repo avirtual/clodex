@@ -2220,8 +2220,13 @@ function createSessionManager(deps) {
           role: t.role,
           model: t.model,
           text: t.text,
+          // Separate field, deliberately: `text` is the only one that reaches
+          // the intent scanner, and merging the two here would make an agent
+          // reasoning about an intent fire it.
+          thinking: t.thinking,
           tools: t.toolUses,
           truncated: t.truncated,
+          thinkingTruncated: t.thinkingTruncated,
           ts: Date.now(),
         });
       } catch { /* observer-grade — never near the PTY/intent path */ }
