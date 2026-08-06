@@ -189,6 +189,11 @@ const API_CONTRACT = [
   // registration is gated on enableDrawerServices (ipc-handlers.js).
   { name: 'ctlRun', kind: 'invoke', channel: 'ctl:run' },
   { name: 'ctlContext', kind: 'invoke', channel: 'ctl:context' },
+  // The drawer's terminal tenant (t215), same reasoning.
+  { name: 'wtermSpawn', kind: 'invoke', channel: 'wterm:spawn' },
+  { name: 'wtermWrite', kind: 'invoke', channel: 'wterm:write' },
+  { name: 'wtermResize', kind: 'invoke', channel: 'wterm:resize' },
+  { name: 'onWtermData', kind: 'on', channel: 'wterm:data' },
   { name: 'sandboxDetect', kind: 'invoke', channel: 'sandbox:detect' },
   { name: 'sandboxStatus', kind: 'invoke', channel: 'sandbox:status' },
   { name: 'sandboxGetConfig', kind: 'invoke', channel: 'sandbox:getConfig' },

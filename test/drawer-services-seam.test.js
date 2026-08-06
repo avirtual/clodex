@@ -12,10 +12,8 @@
 // shell. The seam is `enableDrawerServices`, same construction-time shape as
 // `enableSandbox`.
 //
-// The prefixes have no handlers yet (step 1 ships the host and the log tenant
-// only). That is exactly why this test exists NOW: it fails the moment step 3
-// or 4 registers one without gating it, which is the point at which the mistake
-// is otherwise invisible.
+// Both prefixes now have handlers behind the gate, so the absence assertion is
+// no longer vacuous — it fails the moment one is registered ungated.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -133,6 +131,87 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('session:list'), 'ENTER: the capture is real');
   assert.ok(registered.has('ctl:run'), 'the desktop path must register the verb runner');
   assert.ok(registered.has('ctl:context'), 'and the prompt-line context read');
+  assert.ok(registered.has('wterm:spawn'), 'the desktop path must register the workbench shell');
+  assert.ok(registered.has('wterm:write'), 'and its input');
+  assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
+});
+
+// The SECOND property of the wterm handlers, and the one a comment alone cannot
+// keep true: the workspace is resolved from the SENDER, never from the payload.
+// A handler that honoured a caller-supplied id would let one connection type
+// into another window's shell — and every other test in this file passes under
+// that mutation, because registration and gating are both still correct.
+//
+// Driven at the REGISTRAR level with a captured pty service: the property lives
+// in the handler body, so a test against drawer-pty.js alone cannot see it.
+function registerDesktop(overrides) {
+  const handlers = {};
+  const capture = {
+    handle: (ch, fn) => { handlers[ch] = fn; },
+    on: (ch, fn) => { handlers[ch] = fn; },
+    enableDrawerServices: true,
+    ...overrides,
+  };
+  const stub = () => () => {};
+  const deps = new Proxy(capture, {
+    get(target, prop) { return prop in target ? target[prop] : stub(); },
+    has(target, prop) { return prop in target; },
+  });
+  require('../ipc-handlers').registerIpcHandlers(deps);
+  return handlers;
+}
+
+test('wterm:* resolve the workspace from the SENDER, not the payload', () => {
+  const calls = [];
+  const handlers = registerDesktop({
+    // The sender is in ws1. Every payload below claims ws2. The wterm handlers
+    // resolve through the STRICT variant (no default-workspace fallback), so
+    // faking the shared helper here would prove nothing.
+    workspaceOfSenderStrict: () => 'ws1',
+    workspaceOfSender: () => 'ws-WRONG',
+    getDrawerPtys: () => ({
+      spawn: (id, opts) => { calls.push(['spawn', id, opts]); return { ok: true }; },
+      write: (id, data) => { calls.push(['write', id, data]); return true; },
+      resize: (id, c, r) => { calls.push(['resize', id, c, r]); return true; },
+    }),
+  });
+
+  assert.ok(handlers['wterm:spawn'], 'ENTER: the handlers registered, so the calls below are real');
+
+  handlers['wterm:spawn']({}, { cols: 80, rows: 24, workspaceId: 'ws2' });
+  // write is the sharpest of the three: it is the one that actually delivers
+  // keystrokes into a shell, so a payload-honouring version is a live
+  // cross-workspace write, not merely a misfiled spawn.
+  handlers['wterm:write']({}, 'rm -rf /\r');
+  handlers['wterm:resize']({}, 200, 60);
+
+  assert.deepStrictEqual(calls, [
+    ['spawn', 'ws1', { cols: 80, rows: 24, workspaceId: 'ws2' }],
+    ['write', 'ws1', 'rm -rf /\r'],
+    ['resize', 'ws1', 200, 60],
+  ], 'every wterm handler addressed the SENDER\'s workspace, ignoring the payload\'s claim');
+});
+
+test('wterm:* refuse when the sender resolves to no workspace', () => {
+  // The window closed with a keystroke in flight. The SHARED helper answers
+  // DEFAULT_WORKSPACE_ID here, which would deliver those bytes into a different
+  // workspace's shell — so these three handlers must refuse instead.
+  const calls = [];
+  const handlers = registerDesktop({
+    workspaceOfSenderStrict: () => null,
+    workspaceOfSender: () => 'default',   // what the fallback WOULD have said
+    getDrawerPtys: () => ({
+      spawn: (...a) => { calls.push(['spawn', ...a]); return { ok: true }; },
+      write: (...a) => { calls.push(['write', ...a]); return true; },
+      resize: (...a) => { calls.push(['resize', ...a]); return true; },
+    }),
+  });
+
+  const res = handlers['wterm:spawn']({}, {});
+  assert.strictEqual(res.ok, false, 'spawn refuses rather than defaulting');
+  assert.strictEqual(handlers['wterm:write']({}, 'x'), false);
+  assert.strictEqual(handlers['wterm:resize']({}, 80, 24), false);
+  assert.deepStrictEqual(calls, [], 'nothing reached the pty service at all');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

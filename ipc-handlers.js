@@ -49,7 +49,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, getCtlService,
+    enableDrawerServices, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
     getPluginHost,
   } = deps;
 
@@ -1579,16 +1579,17 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return true;
   });
-  // The drawer's clodexctl REPL. GATED AT REGISTRATION, and the `if` is the
-  // whole boundary: web-host.js runs this same registrar and its invoke frame
-  // dispatches any registered channel BY NAME without consulting api-contract,
-  // so a `ctl:run` that exists at all is a token-backed verb runner any
-  // authenticated web connection can call. A renderer-side `available()` is
-  // chosen by the client and protects nothing. Do not convert this into a
-  // handler that checks the flag in its body.
+  // The drawer's service-backed tenants. GATED AT REGISTRATION, and the `if` is
+  // the whole boundary: web-host.js runs this same registrar and its invoke
+  // frame dispatches any registered channel BY NAME without consulting
+  // api-contract, so a `ctl:run` that exists at all is a token-backed verb
+  // runner — and a `wterm:spawn` that exists at all is a remote shell — for any
+  // authenticated web connection. A renderer-side `available()` is chosen by
+  // the client and protects nothing. Do not convert this into a handler that
+  // checks the flag in its body.
   //
-  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:` is ABSENT from
-  // the web-host handler map — absent, not present-and-guarded).
+  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:`/`wterm:` are
+  // ABSENT from the web-host handler map — absent, not present-and-guarded).
   if (enableDrawerServices) {
     handle('ctl:run', async (_e, line) => {
       const svc = getCtlService();
@@ -1598,6 +1599,34 @@ function registerIpcHandlers(deps) {
     handle('ctl:context', () => {
       const svc = getCtlService();
       return svc ? svc.context() : null;
+    });
+    // The workbench terminal, under the SAME gate for a sharper reason: an
+    // unconditionally registered `wterm:spawn` is a remote shell on the host,
+    // for any authenticated web connection, with no verb allowlist in front of
+    // it. The workspace comes from the SENDER, never from the payload — a
+    // caller-supplied window id would let one connection write into another
+    // workspace's shell.
+    // STRICT resolution, unlike every other handler here: the shared helper
+    // falls back to the default workspace when the sender's window is gone, so
+    // an in-flight keystroke from a closing window would land in a DIFFERENT
+    // workspace's shell. Unresolved is a refusal, not a default.
+    const wtermWorkspace = (e) => (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
+    handle('wterm:spawn', (e, opts) => {
+      const w = getDrawerPtys();
+      if (!w) return { ok: false, error: 'drawer terminals are unavailable on this host' };
+      const ws = wtermWorkspace(e);
+      if (!ws) return { ok: false, error: 'no workspace for this window' };
+      return w.spawn(ws, opts || {});
+    });
+    handle('wterm:write', (e, data) => {
+      const w = getDrawerPtys();
+      const ws = wtermWorkspace(e);
+      return w && ws ? w.write(ws, data) : false;
+    });
+    handle('wterm:resize', (e, cols, rows) => {
+      const w = getDrawerPtys();
+      const ws = wtermWorkspace(e);
+      return w && ws ? w.resize(ws, cols, rows) : false;
     });
   }
 

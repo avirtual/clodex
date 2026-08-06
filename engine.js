@@ -1315,6 +1315,42 @@ const sandboxManager = enableSandbox ? createSandboxManager({
 const { createCtlService } = require('./ctl-service');
 const ctlService = enableDrawerServices ? createCtlService({}) : null;
 
+// The drawer's workbench terminal, same capability and same shape. `cwdFor`
+// resolves per workspace through the manager rather than being captured, so a
+// terminal spawned after the operator opens sessions lands in the directory
+// they are actually working in.
+const { createDrawerPtys } = require('./drawer-pty');
+const drawerPtys = enableDrawerServices ? createDrawerPtys({
+  spawn: pty.spawn.bind(pty),
+  send: (workspaceId, channel, ...args) => {
+    const win = manager.windowForWorkspace(workspaceId);
+    // No pendingOutput spill as sessions get: a workbench terminal belongs to
+    // its window, and a detached one is being killed, not buffered.
+    if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
+  },
+  cwdFor: (workspaceId) => drawerPtyCwd(workspaceId),
+  scrollbackMax: SCROLLBACK_MAX,
+  log,
+}) : null;
+
+// "Workspace root" as the design names it. There is no root field on a
+// workspace record (workspaces.json holds id/name/bounds/lastFocusedAt/open/
+// view), so the operator's own sessions are the best available statement of
+// where this workspace lives — the same signal session:cwdSuggestions already
+// mines for the new-session dialog.
+function drawerPtyCwd(workspaceId) {
+  try {
+    const counts = new Map();
+    for (const s of manager.listForWorkspace(workspaceId)) {
+      if (!s.cwd) continue;
+      counts.set(s.cwd, (counts.get(s.cwd) || 0) + 1);
+    }
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (best && fs.existsSync(best[0])) return best[0];
+  } catch {}
+  return process.env.HOME || os.homedir();
+}
+
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
 
@@ -1464,6 +1500,9 @@ const toolCache = createToolCache({ whichBin });
     // The REPL's warm transport may be an ssh/tunnel CHILD process; without this
     // a quit leaves it orphaned holding a local port.
     if (ctlService) { try { ctlService.dispose(); } catch {} }
+    // Workbench shells are children of this process with no persistence record
+    // to resume from, so a quit that skipped this would orphan them outright.
+    if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
     manager.killAll();
   }
 
@@ -1483,6 +1522,7 @@ const toolCache = createToolCache({ whichBin });
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
     getCtlService: () => ctlService,
+    getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog,

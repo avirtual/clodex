@@ -51,6 +51,7 @@ const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
 const { createActivityTab } = require('./activity-tab');
 const { createCtlTab } = require('./ctl-tab');
+const { createTermTab } = require('./term-tab');
 const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
@@ -3152,6 +3153,10 @@ const {
 } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
 
 createCtlTab({ host: drawerHost });
+
+// The workbench shell takes the session terminals' theme, read per-mount so a
+// theme switch before first open is picked up.
+createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme });
 
 createInboxDrawer();
 

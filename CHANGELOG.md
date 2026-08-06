@@ -74,6 +74,14 @@ blocks a release.
   `ctx show` always has. The console exists only in the desktop app: a Clodex
   reached over the web has no such channel registered at all.
 
+- **The drawer has a terminal.** A **term** tab with a real login shell, one per
+  window, opening in the directory your sessions in that window already work in.
+  It starts the first time you look at it, not at launch, and keeps its
+  scrollback while you switch tabs or collapse the drawer. Closing the window
+  closes its shell. Like the ctl console, it exists only in the desktop app —
+  there is no such channel on a Clodex reached over the web — and it is yours
+  alone: no agent can read it or type into it.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link

@@ -320,6 +320,10 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     // must not (quit closes every window — clearing here would collapse the
     // next launch to one window).
     if (!appQuitting) workspaces.setOpen(workspaceId, false);
+    // A workbench terminal belongs to its window and has no record to resume
+    // from, so it dies with the window — unlike sessions, which survive a close
+    // detached and replay their buffered output on reattach.
+    if (engine) { const w = engine.getDrawerPtys(); if (w) w.kill(workspaceId); }
     manager.unregisterWindow(workspaceId);
     refreshAppMenu();
     refreshTrayMenu();
@@ -392,6 +396,19 @@ function workspaceOfSender(e) {
     if (w === win) return wsId;
   }
   return DEFAULT_WORKSPACE_ID;
+}
+
+// Same resolution WITHOUT the default-workspace fallback: null when the sender's
+// window is gone. Only the wterm:* handlers use this — an in-flight keystroke
+// from a closing window must not land in the default workspace's shell, whereas
+// every other handler wants the fallback and would break without it.
+function workspaceOfSenderStrict(e) {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return null;
+  for (const [wsId, w] of manager.windows) {
+    if (w === win) return wsId;
+  }
+  return null;
 }
 
 
@@ -473,7 +490,7 @@ app.whenReady().then(() => {
     getDesktopPath: () => app.getPath('desktop'),
     fs, https, os, path, log,
     UPDATE_REPO, checkForUpdate,
-    createWindow, openWirescopeWindow, workspaceOfSender,
+    createWindow, openWirescopeWindow, workspaceOfSender, workspaceOfSenderStrict,
     refreshAppMenu, refreshTrayMenu, setUiTheme,
     getUpdateInfo: () => updateInfo,
     getReleasesCache: () => releasesCache,

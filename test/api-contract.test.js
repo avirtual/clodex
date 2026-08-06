@@ -126,6 +126,7 @@ const PINNED_NAMES = [
   // map has neither). So the web build binds `ctlRun` to a channel with no
   // handler behind it, deliberately.
   'ctlRun', 'ctlContext',
+  'wtermSpawn', 'wtermWrite', 'wtermResize', 'onWtermData',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {
@@ -149,8 +150,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 234-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 234, 'pinned list is the full 234-method surface');
+test('contract covers exactly the pinned 238-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 238, 'pinned list is the full 238-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -174,7 +175,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 234, 'window.api has exactly 234 methods');
+    assert.equal(generated.length, 238, 'window.api has exactly 238 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
@@ -212,7 +213,7 @@ function captureRegistrations() {
 // Main→renderer pushes, so they are NOT ipcMain registrations and must be
 // excluded from both directions below. `kind: 'on'` names a renderer-side
 // subscription; `deps.on` is ipcMain.on, which carries `kind: 'send'`. Same
-// word, opposite direction — comparing registrations against all 234 rows
+// word, opposite direction — comparing registrations against all 238 rows
 // would report every one of these as missing.
 const CALLABLE_KINDS = ['invoke', 'send'];
 

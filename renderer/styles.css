@@ -3632,6 +3632,27 @@ html, body {
 
 #ctl-input:disabled { color: var(--text-dim); }
 
+/* --- Drawer: terminal tenant (`term`) ---------------------------------- */
+/* An xterm host, so the ONLY job here is to give it a box with real geometry.
+   No `display:none` anywhere in this subtree (the drawer-wide rule): an xterm
+   whose ancestor is display:none measures zero and never recovers. Padding
+   rather than margin so fit() reads the padded content box directly. */
+#wterm-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 4px 8px;
+  overflow: hidden;
+}
+
+/* xterm's own viewport scrollbar, matched to the app's. The terminal draws its
+   own scrollback — the pane must never scroll, or the drawer and the terminal
+   would each hold half the history. */
+#wterm-host .xterm-viewport::-webkit-scrollbar { width: 6px; }
+#wterm-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
 
 /* Scrollbar */
 ::-webkit-scrollbar {

@@ -4847,6 +4847,19 @@ body {
 #ctl-input:disabled {
   color: var(--text-dim);
 }
+#wterm-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 4px 8px;
+  overflow: hidden;
+}
+#wterm-host .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+#wterm-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -6617,6 +6630,11 @@ body {
         // registration is gated on enableDrawerServices (ipc-handlers.js).
         { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
+        // The drawer's terminal tenant (t215), same reasoning.
+        { name: "wtermSpawn", kind: "invoke", channel: "wterm:spawn" },
+        { name: "wtermWrite", kind: "invoke", channel: "wterm:write" },
+        { name: "wtermResize", kind: "invoke", channel: "wterm:resize" },
+        { name: "onWtermData", kind: "on", channel: "wterm:data" },
         { name: "sandboxDetect", kind: "invoke", channel: "sandbox:detect" },
         { name: "sandboxStatus", kind: "invoke", channel: "sandbox:status" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
@@ -22422,6 +22440,93 @@ ${b.output}`).join("\n");
     }
   });
 
+  // renderer/term-tab.js
+  var require_term_tab = __commonJS({
+    "renderer/term-tab.js"(exports, module) {
+      var { Terminal } = require_xterm();
+      var { FitAddon } = require_addon_fit();
+      function createTermTab({ host, xtermTheme }) {
+        let terminal = null;
+        let fitAddon = null;
+        let hostEl = null;
+        let opened = false;
+        let drawn = false;
+        let notify = () => {
+        };
+        function mount(pane, actions) {
+          pane.innerHTML = '<div id="wterm-host"></div>';
+          hostEl = pane.querySelector("#wterm-host");
+          terminal = new Terminal({
+            fontSize: 13,
+            fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
+            theme: xtermTheme(),
+            cursorBlink: true,
+            allowProposedApi: true
+          });
+          fitAddon = new FitAddon();
+          terminal.loadAddon(fitAddon);
+          terminal.onData((d) => {
+            window.api.wtermWrite(d);
+          });
+          window.api.onWtermData((data) => {
+            if (!terminal) return;
+            terminal.write(data);
+            notify();
+          });
+          const clearBtn = document.createElement("button");
+          clearBtn.type = "button";
+          clearBtn.id = "wterm-clear";
+          clearBtn.title = "Clear the terminal view";
+          clearBtn.textContent = "Clear";
+          clearBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (terminal) terminal.clear();
+          });
+          actions.appendChild(clearBtn);
+        }
+        function onShow() {
+          if (!terminal) return;
+          if (!opened) {
+            terminal.open(hostEl);
+            opened = true;
+          }
+          const dims = fitAddon.proposeDimensions();
+          window.api.wtermSpawn({ cols: dims && dims.cols, rows: dims && dims.rows }).then((res) => {
+            if (!terminal) return;
+            if (!res || !res.ok) {
+              terminal.write(`\r
+\x1B[31m${res && res.error || "failed to start a shell"}\x1B[0m\r
+`);
+              return;
+            }
+            if (!drawn && !res.fresh && res.scrollback) terminal.write(res.scrollback);
+            drawn = true;
+          }).catch(() => {
+          });
+          terminal.focus();
+        }
+        function onResize() {
+          if (!terminal || !opened) return;
+          fitAddon.fit();
+          window.api.wtermResize(terminal.cols, terminal.rows);
+        }
+        notify = host.register({
+          id: "term",
+          label: "Terminal",
+          // A UI nicety only: on the web surface the `wterm:*` handlers are ABSENT
+          // from that host's map (engine's enableDrawerServices gate), so the tab
+          // would be inert rather than a remote shell. The boundary is registration.
+          available: () => !window.__CLODEX_WEB__,
+          mount,
+          onShow,
+          onResize
+        });
+        return { open: () => host.open("term") };
+      }
+      module.exports = { createTermTab };
+    }
+  });
+
   // renderer/session-hovercard.js
   var require_session_hovercard = __commonJS({
     "renderer/session-hovercard.js"(exports, module) {
@@ -27430,6 +27535,7 @@ ${detail}` });
       var { initLibraryDrawers } = require_library_drawers();
       var { createActivityTab } = require_activity_tab();
       var { createCtlTab } = require_ctl_tab();
+      var { createTermTab } = require_term_tab();
       var { classifySubagent } = require_subagent_policy();
       var { initSessionHovercard } = require_session_hovercard();
       var { initTooltips } = require_tooltip();
@@ -30329,6 +30435,7 @@ Click for live activity`;
         dropParent: dropActivityFeeds
       } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
       createCtlTab({ host: drawerHost });
+      createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme });
       createInboxDrawer();
       createPotDrawer();
       var {

@@ -126,6 +126,11 @@ const SCANNED_MODULES = [
   // exactly this test's case. It must also stay electron-free, which the
   // require-shape test in ctl-service.test.js pins separately.
   'ctl-service.js',
+  // The drawer's workbench PTY (t215). Same standing, and the forward scan
+  // carries an extra claim here: this module takes node-pty and the window send
+  // by injection, so a bare `pty` or `manager` name appearing in it means it
+  // reached for the session machinery it is defined by not using.
+  'drawer-pty.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
@@ -195,6 +200,11 @@ const RENDERER_SCANNED_MODULES = [
   // point — the pane must reach main only through `window.api`, and a
   // renderer.js name appearing in it is the first sign it grew a second path.
   'renderer/ctl-tab.js',
+  // The drawer's workbench terminal tenant (t215), same standing as ctl-tab:
+  // it must reach main only through `window.api`, and it owns an xterm, so a
+  // renderer.js terminal-management name appearing here is the sign it started
+  // borrowing the SESSION terminal path instead of holding its own.
+  'renderer/term-tab.js',
   'renderer/session-hovercard.js',
   'renderer/tooltip.js',
   'renderer/popovers/report-panel.js',
