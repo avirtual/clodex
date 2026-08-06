@@ -186,6 +186,8 @@ const RENDERER_SCANNED_MODULES = [
   // Same shape as path-scan: a pure leaf feeding the DOM-bound link provider,
   // where the buffer walking that calls it has no unit tests of its own.
   'renderer/lib/gutter-scan.js',
+  // Read by term-tab (DOM-bound, untested) and pinned by drawer-avail.test.js.
+  'renderer/lib/drawer-avail.js',
   // The bottom drawer's tab host (t201) and its first tenant. The host took
   // the toggle/layout/refit mechanics OUT of ipc-log.js, so the reverse scan
   // matters as much as the forward one here: ipc-log.js keeping a name that

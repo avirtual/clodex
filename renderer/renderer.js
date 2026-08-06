@@ -1238,6 +1238,10 @@ function switchSession(name) {
   // switch, and a peek left behind rides a request the operator is no longer
   // watching. Not on first activation (nothing was armed yet).
   if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
+  // Unconditional: the FIRST activation takes the branch above's else, and the
+  // seat it lands on may be one the terminal cannot serve. Idempotent, so the
+  // switch path calling both is a repeated read and nothing more.
+  else drawerHost.syncSeatAvailability();
 
   // Toggle visibility — use visibility so xterm can still measure
   for (const [n, s] of sessions) {
@@ -3159,6 +3163,9 @@ let refreshSelectionBadge = () => {};
 const drawerHost = createDrawerHost({
   refitActiveTerminal,
   getActiveSession: () => activeSession,
+  // The seat axis for `availableFor`. Routed through sessionTypeOf so the
+  // sidebar's `dataset.type` has exactly one reader.
+  getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),
   onArmChanged: () => refreshSelectionBadge(),
 });
 

@@ -27,6 +27,13 @@ blocks a release.
   and VSCode use). Your own `.zshrc` is sourced normally and is never modified.
   Requires zsh; another shell simply gets an ordinary terminal with no reporting.
 
+- **The Terminal tab now hides itself where it made no sense.** A bash session is
+  already a shell, so the drawer offered it a second, unrelated one. Worse, a
+  peered session showed a terminal running on *your* box rather than the peer's —
+  and every peer session in a workspace was quietly sharing that one shell. The
+  tab now appears only for sessions it can actually serve. A terminal on the peer
+  itself is a separate feature and is not in this release.
+
 - **Each session gets its own terminal.** The drawer's Terminal tab used to be
   one shell per window, so switching sessions left you in the previous one's
   shell and directory. Every session now has its own, opening in its own working

@@ -3336,6 +3336,14 @@ html, body {
   color: var(--text);
 }
 
+/* A tab whose tenant cannot serve the current seat. `display:none` rather than
+   visibility so the strip closes up — a reserved gap reads as a rendering bug.
+   Safe here and nowhere else in the drawer: the no-display rule protects xterm's
+   measurements, and a tab BUTTON never contains a terminal. */
+.drawer-tab.unavailable {
+  display: none;
+}
+
 .drawer-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);

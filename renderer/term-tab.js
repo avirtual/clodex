@@ -19,6 +19,7 @@
 
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
+const { termAvailableFor } = require('./lib/drawer-avail');
 
 function createTermTab({ host, xtermTheme, getActiveSession }) {
   // The seat this pane is currently showing a shell for. One xterm is reused
@@ -187,6 +188,11 @@ function createTermTab({ host, xtermTheme, getActiveSession }) {
     // from that host's map (engine's enableDrawerServices gate), so the tab
     // would be inert rather than a remote shell. The boundary is registration.
     available: () => !window.__CLODEX_WEB__,
+    // The seat axis, re-evaluated on every session switch (drawer-host's
+    // `availableFor`). A bash seat already IS a shell and a peer seat's shell is
+    // on another box — see drawer-avail.js for what the peer case was actually
+    // doing before this existed.
+    availableFor: termAvailableFor,
     mount,
     onShow,
     onResize,

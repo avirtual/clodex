@@ -20,6 +20,9 @@
 //      xterm inside a display:none ancestor measures zero and never recovers
 //      (the CLAUDE.md gotcha); a per-tenant version of this rule is one every
 //      tenant has to remember and one will forget, so it lives in .drawer-pane.
+//      The ONE exception is a tab BUTTON hidden by `availableFor` — it can never
+//      contain a terminal, and reserving its space leaves a gap that reads as a
+//      rendering bug. The rule still binds everything that can hold content.
 //   2. onShow fires inside a rAF AFTER the visibility flip — a terminal hidden
 //      across a window resize has stale measurements the instant it is shown,
 //      and reading them in the same frame as the flip reads the old geometry.
@@ -74,8 +77,14 @@ const BADGE_MAX = 99;
 // onArmChanged: something was armed, handed over, or released — the inspector's
 // badge is stale. Fired rather than polled so the badge costs a proxy read only
 // when the state it reports actually moved.
-function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged = null }) {
+// getSeatType: the ACTIVE session's type ('claude' | 'codex' | 'bash' |
+// 'remote' | null), injected rather than derived here — the sidebar's DOM is
+// renderer.js's, and a second reader of `dataset.type` would drift from
+// `sessionTypeOf` the first time a type is added. Absent, every tenant serves
+// every seat, which is the pre-`availableFor` behaviour.
+function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType = null, onArmChanged = null }) {
   const armChanged = () => { try { if (onArmChanged) onArmChanged(); } catch {} };
+  const seatType = () => { try { return getSeatType ? getSeatType() : null; } catch { return null; } };
   const drawer = document.getElementById('drawer');
   const drawerHeader = document.getElementById('drawer-header');
   const tabsEl = document.getElementById('drawer-tabs');
@@ -246,6 +255,41 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged 
   // by IPC is kept off the web surface by its handlers being absent from that
   // host's map at REGISTRATION (engine's enableDrawerServices seam), because
   // web-host dispatches any registered channel by name.
+  // `availableFor(type)` is the SEAT axis, and it is separate from `available()`
+  // on purpose: `available()` answers "can this environment ever serve this
+  // tab?" and is therefore correct to evaluate once, while this one changes
+  // every time the operator switches sessions. Collapsing them would mean
+  // re-running the environment test on every switch, or — the defect this
+  // fixes — never re-running the seat test at all.
+  //
+  // A tenant without it is available for every seat, which is what the three
+  // non-terminal tenants want: their content is workspace-wide.
+  function servesSeat(rec) {
+    if (!rec.def.availableFor) return true;
+    try { return rec.def.availableFor(seatType()); } catch { return true; }
+  }
+
+  // Hide the TAB, and move off it if it was active. A tenant that cannot serve
+  // the current seat must not merely refuse — an inert visible pane is what the
+  // peer terminal looked like while it was quietly sharing a shell.
+  function syncSeatAvailability() {
+    let activeLost = false;
+    for (const rec of tenants.values()) {
+      const ok = servesSeat(rec);
+      // visibility, never display — the no-display rule covers the whole drawer
+      // subtree and a tab button is inside it.
+      rec.tabEl.classList.toggle('unavailable', !ok);
+      if (!ok && rec.id === activeId) activeLost = true;
+      // A hidden tab keeps counting nothing: clear so a switch back does not
+      // show a badge for bytes that arrived while it was inapplicable.
+      if (!ok) clearBadge(rec);
+    }
+    if (!activeLost) return;
+    // Fall back to the first tenant that CAN serve this seat, in strip order.
+    const next = TAB_IDS.map((id) => tenants.get(id)).find((r) => r && servesSeat(r));
+    if (next) select(next.id);
+  }
+
   function register(def) {
     if (!TAB_IDS.includes(def.id)) throw new Error(`drawer: unknown tab id ${def.id}`);
     if (def.available && !def.available()) return () => {};
@@ -290,7 +334,11 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged 
       .map((id) => tenants.get(id)).find(Boolean);
     tabsEl.insertBefore(tabEl, after ? after.tabEl : null);
 
-    if (activeId === null) selectFirst(rec);
+    // Before selectFirst: the boot seat may already be one this tenant cannot
+    // serve, and activating it first would fire onShow for a pane that is about
+    // to be hidden — for the terminal that is a spawned shell nobody asked for.
+    syncSeatAvailability();
+    if (activeId === null && servesSeat(rec)) selectFirst(rec);
     function notify(level) {
       if (isVisible(rec.id)) return; // the operator is looking at it
       rec.unread++;
@@ -606,6 +654,10 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged 
     clearTimeout(armTimer);
     armTimer = null;
     releasePeek();
+    // BEFORE the re-acquire below: a tenant that cannot serve the new seat must
+    // not be told to re-acquire for it. Without this ordering the terminal is
+    // asked to spawn a shell for the very seat it is being hidden for.
+    syncSeatAvailability();
     // Tenants that are SCOPED to a seat need to re-acquire, and the onShow/
     // onHide pair cannot tell them: rule 2 makes it strictly alternating, so a
     // switch while the tab is already visible fires neither. Only the VISIBLE
@@ -643,6 +695,11 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged 
   return {
     register, open, toggle, hasFocus, domSelection,
     onSessionChanged, forgetSession, onSelectionSent,
+    // Separate from onSessionChanged because that one is deliberately skipped on
+    // the FIRST activation (nothing was armed yet, so there is no peek to
+    // release) — while tab availability must be right for the first seat the
+    // operator lands on, which is the common case at boot.
+    syncSeatAvailability,
   };
 }
 
