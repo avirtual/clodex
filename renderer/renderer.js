@@ -1230,7 +1230,13 @@ function switchSession(name) {
   // switch. The popover this replaced had to close (it was anchored to a row);
   // surviving the switch is the drawer's whole point.
 
+  const wasActive = activeSession;
   activeSession = name;
+  // An armed drawer selection is registered on ONE session's wirescope route, so
+  // leaving that session has to take it back — the drawer cannot see this
+  // switch, and a peek left behind rides a request the operator is no longer
+  // watching. Not on first activation (nothing was armed yet).
+  if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
 
   // Toggle visibility — use visibility so xterm can still measure
   for (const [n, s] of sessions) {
@@ -1282,6 +1288,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     s.wrapperEl.remove();
     sessions.delete(name);
   }
+  drawerHost.forgetSession(name);
   removeSessionFromSidebar(name);
   updateWindowTitle();
   proxyState.delete(name);
@@ -3142,7 +3149,7 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 // sorts by its frozen id list).
 // refitActiveTerminal is a hoisted declaration below — passed by reference so
 // the drawer refits through the SAME peer-aware path as every other caller.
-const drawerHost = createDrawerHost({ refitActiveTerminal });
+const drawerHost = createDrawerHost({ refitActiveTerminal, getActiveSession: () => activeSession });
 const { appendIpcEntry } = createIpcLog({ host: drawerHost });
 // Registered after the log, so the log stays the boot-active tab (drawer-host
 // activates the first registration); the strip's ORDER is the host's frozen id
@@ -3501,6 +3508,7 @@ const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp'
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
+const prefsSelectionHints = document.getElementById('prefs-selection-hints');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
@@ -5092,6 +5100,7 @@ function applyPrefsGate() {
     ['compactOnResume', prefsCompactOnResume],
     ['contextHints', prefsContextHints],
     ['semanticHints', prefsSemanticHints],
+    ['selectionHints', prefsSelectionHints],
   ]) {
     if (!el) continue;
     const g = gate[key];
@@ -5118,6 +5127,7 @@ async function openPrefs() {
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
+  if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
@@ -5161,6 +5171,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
+    selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });

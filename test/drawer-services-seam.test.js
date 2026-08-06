@@ -27,7 +27,7 @@ const { createWebHost } = require('../web-host');
 // service registered as `clodexctl:run` rather than `ctl:run` would sail past
 // every assertion below, so a new drawer service either picks a covered prefix
 // or adds its own here.
-const GATED_PREFIXES = ['ctl:', 'wterm:'];
+const GATED_PREFIXES = ['ctl:', 'wterm:', 'drawer:'];
 const silentLog = { info() {}, warn() {}, error() {} };
 
 function mkEngine(seams) {
@@ -138,6 +138,10 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('wterm:spawn'), 'the desktop path must register the workbench shell');
   assert.ok(registered.has('wterm:write'), 'and its input');
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
+  // The one channel here that writes into an agent's request rather than
+  // running something on the host.
+  assert.ok(registered.has('drawer:armSelection'), 'and the drawer selection hint');
+  assert.ok(registered.has('drawer:releaseSelection'), 'and its release');
 });
 
 // The SECOND property of the wterm handlers, and the one a comment alone cannot

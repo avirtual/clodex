@@ -3424,6 +3424,11 @@ html, body {
 /* A failed copy must not read as a confirmation at a glance — the message says
    so, but the colour is what gets seen first. */
 #drawer-status.bad { color: var(--danger, #e06c75); }
+/* The STANDING state (text is riding the agent's next request) rather than a
+   flash. Brighter than the dim default because it is the only thing on screen
+   saying the operator's selection is being sent — a status colour that reads as
+   "nothing to see" is the wrong one for a claim about outgoing content. */
+#drawer-status.armed { color: var(--accent, #61afef); }
 
 /* Inherits the header button rule above; only the ON state is new. The active
    colour rather than a background so it reads as a mode that is engaged, the

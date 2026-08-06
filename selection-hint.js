@@ -87,13 +87,15 @@ function attachText(where, body) {
     + '<attachment>\n' + body + '\n</attachment>';
 }
 
-// Human labels for the drawer tab ids. Unknown ids degrade to a generic phrase
-// rather than leaking a raw id into model-visible text.
+// Human labels for the drawer tab ids. The VISIBLE tab names, so the operator
+// and the model are talking about the same surface — "it's in the ctl tab"
+// resolves against what the hint already said. Unknown ids degrade to a generic
+// phrase rather than leaking a raw id into model-visible text.
 const WHERE = Object.freeze({
-  term: 'workbench terminal',
-  ctl: 'clodexctl console',
-  log: 'IPC traffic log',
-  activity: 'subagent activity feed',
+  term: 'Terminal tab',
+  ctl: 'clodexctl tab',
+  log: 'IPC log tab',
+  activity: 'subagent Activity tab',
 });
 
 // Build the hint payload for a tier, or null when there is nothing to send.
@@ -104,10 +106,16 @@ function buildSelectionHint({ text, tab, attach = false, scrub = (s) => s, token
   // Trim only for the EMPTINESS test; the body keeps its indentation, which is
   // content for a diff, a stack trace or a YAML block.
   if (!raw.trim()) return null;
-  const where = WHERE[tab] || 'workbench drawer';
+  const where = WHERE[tab] || 'bottom panel';
   const max = attach ? ATTACH_MAX_CHARS : PEEK_MAX_CHARS;
   const body = clampAndScrub(raw, max, scrub, tokens);
   return {
+    // `bytes`/`truncated` describe what actually went, for the operator's status
+    // line. The caller strips them: reporting the RAW length is a lie in exactly
+    // the direction that matters — "48.8 KB riding" for a selection the cap cut
+    // to 2 KB tells the operator the agent has context it does not have.
+    bytes: body.length,
+    truncated: raw.length > max,
     id: attach ? ATTACH_ID : PEEK_ID,
     text: attach ? attachText(where, body) : peekText(where, body),
     ttl_s: attach ? ATTACH_TTL_S : PEEK_TTL_S,

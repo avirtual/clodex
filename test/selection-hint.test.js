@@ -77,7 +77,7 @@ test('the peek framing carries its hedge and its silence clause', () => {
   assert.match(h.text, /do not mention it/);
   // The SURFACE is named — that is what lets a model tell an error the operator
   // hit from a line they were merely reading.
-  assert.match(h.text, /IPC traffic log/);
+  assert.match(h.text, /IPC log tab/);
 });
 
 test('the attach framing says it persists, so it is not re-acknowledged', () => {
@@ -93,7 +93,7 @@ test('an unknown tab id never reaches the model as a raw id', () => {
   const h = buildSelectionHint({ text: 'x', tab: 'nonesuch' });
   assert.ok(h, 'ENTER: the hint was built');
   assert.ok(!h.text.includes('nonesuch'), 'raw id did not leak into model-visible text');
-  assert.match(h.text, /workbench drawer/);
+  assert.match(h.text, /bottom panel/);
 });
 
 test('each tier caps at its own limit and says it truncated', () => {

@@ -74,6 +74,11 @@ const SCANNED_MODULES = [
   // none of its internals — the reverse scan is what keeps the retriever seam
   // real, since a second retriever must slot in without hint-arm.js changing.
   'hint-arm.js',
+  // The drawer selection's armer, same shape and the same reason: its proxy
+  // calls, its pref and its scrubber all arrive injected, so the reverse scan is
+  // what keeps session-manager from reaching into its registers instead of
+  // going through arm/release.
+  'selection-arm.js',
   'hint-retrieve.js',
   // The second retriever the seam above was built for. It shares only the
   // tokenizer with hint-retrieve.js; its thresholds are deliberately its own,

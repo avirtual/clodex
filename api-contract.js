@@ -190,6 +190,13 @@ const API_CONTRACT = [
   { name: 'ctlRun', kind: 'invoke', channel: 'ctl:run' },
   { name: 'ctlContext', kind: 'invoke', channel: 'ctl:context' },
   { name: 'ctlHelp', kind: 'invoke', channel: 'ctl:help' },
+  // The drawer's selection → wirescope tail hint. Under the SAME gate as the
+  // rest of the drawer family and for a sharper reason than either: it puts
+  // caller-supplied text into an agent's next request, so an ungated
+  // registration is a prompt-injection channel for any authenticated web
+  // connection.
+  { name: 'drawerArmSelection', kind: 'invoke', channel: 'drawer:armSelection' },
+  { name: 'drawerReleaseSelection', kind: 'invoke', channel: 'drawer:releaseSelection' },
   // The drawer's terminal tenant (t215), same reasoning.
   { name: 'wtermSpawn', kind: 'invoke', channel: 'wterm:spawn' },
   { name: 'wtermWrite', kind: 'invoke', channel: 'wterm:write' },

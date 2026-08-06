@@ -308,6 +308,7 @@ function createSessionManager(deps) {
     commonMemoryRecall,
     memoryLoad,
     hintArm,
+    selectionArm: selectionArmDep,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,
@@ -369,6 +370,17 @@ function createSessionManager(deps) {
   // no state that only exists when armed.
   const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
+
+  // Same shape, same reason, for the drawer selection. Its stand-in REPORTS the
+  // refusal rather than resolving to a bare success: the renderer prints what
+  // comes back on the operator's status line, and a silent `{armed:false}` would
+  // read as "nothing selected" on a host that simply never built the armer.
+  const NO_SELECTION_ARM = {
+    arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
+    release: () => Promise.resolve({ armed: false }),
+    forget() {},
+  };
+  const selectionArm = selectionArmDep || NO_SELECTION_ARM;
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
@@ -1588,6 +1600,26 @@ function createSessionManager(deps) {
       };
     }
 
+    // The drawer's selection, armed on the session the operator is looking at.
+    // Routed through _armCtx like every other hint so the route grammar and the
+    // proxy-off rule have ONE implementation — a second base resolution here
+    // would re-introduce the captured-base bug that comment describes.
+    //
+    // A session that is not in the map is not an error the operator needs to see:
+    // it is a selection that outlived the tab it came from (the debounce fires
+    // ~300ms after the drag, and a session can die inside that window).
+    armSelection(name, payload) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return Promise.resolve({ armed: false, reason: 'no such session' });
+      return selectionArm.arm(s.name, payload || {}, this._armCtx(s));
+    }
+
+    releaseSelection(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return Promise.resolve({ armed: false });
+      return selectionArm.release(s.name, this._armCtx(s));
+    }
+
     // The read API for the contextual-hint injector: 'full' (body is in
     // context — skip the hint), 'title' (an index line rode, so the model knows
     // the unit exists and cannot read it — the BEST hint candidate), 'absent'.
@@ -2148,6 +2180,12 @@ function createSessionManager(deps) {
       // cooldown goes too: a retired seat's name is reused by its replacement,
       // and the replacement must not start life already suppressed.
       try { arm.forget(name, name); } catch {}
+      // Same hazard, sharper, and it does not stop at the memo: _armCtx falls
+      // back to a NAME GLOB when the exact route is unknown, so a dead seat's
+      // ATTACHMENT still matches its same-named replacement for the rest of its
+      // 1800s TTL. Passing the dying session's ctx is what lets forget take the
+      // registration off the proxy rather than only forgetting it here.
+      try { selectionArm.forget(name, this._armCtx(s)); } catch {}
       s._compactPending = null; // no timer, but null for symmetry with the valve state
       s._postClearContinuation = null;
       // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are

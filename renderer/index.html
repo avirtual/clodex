@@ -923,6 +923,13 @@
           <span>Rank hints with a local embedding model</span>
         </label>
         <span id="prefs-semantic-hints-why" class="prefs-dep-reason"></span>
+        <h5>Send the panel selection</h5>
+        <p class="hint-text">Select text in any bottom-panel tab and it rides the active session's next request as an ephemeral note the agent may ignore, so you can point at a log line or a command's output without pasting it. Selecting alone attaches it for one request and says it may be irrelevant; the panel's Copy button attaches it deliberately until you click it again, and still copies to your clipboard. Nothing is sent while the panel is collapsed, and any token from your clodexctl contexts is redacted first. This is a separate decision from memory hints — it forwards whatever you highlighted, not what the agent wrote.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-selection-hints">
+          <span>Send text I select in the panel</span>
+        </label>
+        <span id="prefs-selection-hints-why" class="prefs-dep-reason"></span>
         <div id="ws-logs-block" style="display: none;">
           <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>

@@ -713,6 +713,7 @@ function registerIpcHandlers(deps) {
       compactOnResume: s.compactOnResume,
       contextHints: s.contextHints,
       semanticHints: s.semanticHints,
+      selectionHints: s.selectionHints,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       sidebarWidth: s.sidebarWidth,
@@ -1608,6 +1609,31 @@ function registerIpcHandlers(deps) {
       const svc = getCtlService();
       return svc ? svc.helpIndex() : null;
     });
+    // The drawer selection as a tail hint on the named session's route. Inside
+    // this gate for the sharpest reason of the three: every other channel here
+    // runs something on the host, while this one writes caller-supplied text
+    // into an agent's next request — an ungated registration is a prompt
+    // injection channel for any authenticated web connection.
+    //
+    // The tier comes from the payload because the two gestures are genuinely
+    // different (a drag vs a click) and the renderer is the only thing that can
+    // tell them apart; everything ELSE about how a tier behaves — its id, TTL,
+    // framing and cap — is decided in selection-hint.js, so a doctored payload
+    // can choose which of two vetted shapes it gets and nothing more.
+    handle('drawer:armSelection', async (_e, name, payload) => {
+      const p = payload && typeof payload === 'object' ? payload : {};
+      return await manager.armSelection(String(name || ''), {
+        // Bounded HERE and not only by the composer's cap: the composer clamps
+        // what goes on the wire, which leaves an unbounded string crossing the
+        // transport and getting scrubbed token-by-token first. The slice is
+        // generously above the 8000-char attach cap so it can only ever cut
+        // something the composer was going to cut anyway.
+        text: typeof p.text === 'string' ? p.text.slice(0, 64 * 1024) : '',
+        tab: typeof p.tab === 'string' ? p.tab : '',
+        attach: p.attach === true,
+      });
+    });
+    handle('drawer:releaseSelection', async (_e, name) => await manager.releaseSelection(String(name || '')));
     // The workbench terminal, under the SAME gate for a sharper reason: an
     // unconditionally registered `wterm:spawn` is a remote shell on the host,
     // for any authenticated web connection, with no verb allowlist in front of

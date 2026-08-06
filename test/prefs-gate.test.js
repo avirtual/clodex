@@ -60,6 +60,7 @@ test('every gated control has a checkbox and a reason element in the markup', ()
     compactOnResume: 'prefs-compact-on-resume',
     contextHints: 'prefs-context-hints',
     semanticHints: 'prefs-semantic-hints',
+    selectionHints: 'prefs-selection-hints',
   };
   for (const [key] of PROXY_DEPENDENT) {
     const id = ids[key];

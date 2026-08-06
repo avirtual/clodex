@@ -57,6 +57,12 @@
 //
 // DOM-bound, so no unit tests per the R1 rule.
 
+// Selection → wirescope debounce, same value and same reason as hint-arm's:
+// `selectionchange` fires on every mouse move during a drag, so arming on the
+// raw event would POST dozens of times for one selection. Cancelled per event,
+// so only the pause after the operator stops dragging arms.
+const ARM_DEBOUNCE_MS = 300;
+
 // Fixed order and the frozen id set: tab ids are part of the agent-facing
 // source grammar (`drawer:<tabId>`), so they are chosen once and an unknown id
 // is a programming error, not a new tab.
@@ -65,7 +71,7 @@ const TAB_IDS = Object.freeze(['log', 'activity', 'ctl', 'term']);
 // Beyond this the badge is "a lot"; the count itself keeps counting.
 const BADGE_MAX = 99;
 
-function createDrawerHost({ refitActiveTerminal }) {
+function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
   const drawer = document.getElementById('drawer');
   const drawerHeader = document.getElementById('drawer-header');
   const tabsEl = document.getElementById('drawer-tabs');
@@ -345,15 +351,45 @@ function createDrawerHost({ refitActiveTerminal }) {
     return String(sel);
   }
 
+  // The status line carries two things with different lifetimes: a transient
+  // report of what just happened (copied, failed) and a STANDING statement of
+  // what is currently riding the agent's next request. The standing one is what
+  // the operator needs — text is being sent on their behalf and nothing else on
+  // screen says so — so a flash borrows the line and hands it back rather than
+  // clearing it.
+  //
+  // The standing claim is COMPOSED from two independent facts rather than
+  // stored as one string, because the two have different lifetimes and one
+  // clearing the other is a silent leak: a peek dies on the next click, while
+  // an attachment rides every request for half an hour and its only off switch
+  // is a gesture the operator will not make if nothing says it is there.
   let statusTimer = null;
+  function stickyText() {
+    // Attach outranks peek: it is deliberate, it persists, and the arm
+    // suppresses a peek carrying the same bytes anyway.
+    const name = activeName();
+    if (name && attachedBy.has(name)) return attachedBy.get(name);
+    return peekOn && peekOn === name ? peekLabel : '';
+  }
+  function paintStatus() {
+    if (!statusEl) return;
+    const sticky = stickyText();
+    statusEl.textContent = sticky;
+    statusEl.classList.toggle('bad', false);
+    statusEl.classList.toggle('armed', !!sticky);
+  }
+  function refreshStatus() {
+    if (!statusTimer) paintStatus();
+  }
   function flash(msg, failed = false) {
     if (!statusEl) return;
     clearTimeout(statusTimer);
     statusEl.textContent = msg;
     statusEl.classList.toggle('bad', !!failed);
+    statusEl.classList.remove('armed');
     statusTimer = setTimeout(() => {
-      statusEl.textContent = '';
-      statusEl.classList.remove('bad');
+      statusTimer = null;
+      paintStatus();
     }, 1600);
   }
 
@@ -371,17 +407,141 @@ function createDrawerHost({ refitActiveTerminal }) {
     const has = !isCollapsed() && !!activeSelection().trim();
     copyBtn.disabled = !has;
     copyBtn.classList.toggle('armed', has);
+    // Every selection change in the drawer funnels through here — the document
+    // listener, xterm's own callback, tab switches and collapse all call it — so
+    // this is the one place the arm has to hang off to cover all four tenants.
+    scheduleArm();
   }
 
-  function copySelection() {
+  // ── The selection's trip to the agent ──────────────────────────────────────
+  //
+  // Two gestures, and the difference in how they REPORT is deliberate. Merely
+  // selecting is passive: the operator did not ask for anything, so a refusal
+  // (the pref is off, this session does not route through wirescope) is silent —
+  // a status line that nattered on every drag would be trained out of sight, and
+  // the line is the only thing that says text is riding. Clicking Copy is an
+  // explicit ask, so every outcome including a refusal is reported.
+
+  let armTimer = null;
+  // The session a peek is currently registered on, so a switch away can take it
+  // back from the session that holds it rather than from the new one.
+  let peekOn = null;
+  let peekLabel = '';
+  // Attachments are per-session BY CONSTRUCTION (each rides its own route), so
+  // the claim has to be too — one string would follow the operator to a session
+  // that has nothing attached and vanish from the one that does.
+  const attachedBy = new Map();
+  // Every peek arm carries the generation it was issued in; a Copy click or a
+  // session switch bumps it. A result from a superseded generation is DISCARDED
+  // rather than painted — it describes a selection that is no longer the one on
+  // screen, and painting it flips `attached` back to `riding next`.
+  let armGen = 0;
+
+  const activeName = () => (getActiveSession ? getActiveSession() : null);
+
+  // Only the peek half. An attachment is deliberate and is taken back by the
+  // second Copy click, never by clicking away.
+  function releasePeek() {
+    const name = peekOn;
+    armGen++;
+    peekOn = null;
+    peekLabel = '';
+    refreshStatus();
+    if (!name || !window.api.drawerReleaseSelection) return;
+    window.api.drawerReleaseSelection(name).catch(() => {});
+  }
+
+  function label(res, fallback) {
+    const size = bytesLabel(res && res.bytes != null ? res.bytes : fallback);
+    return res && res.truncated ? `${size} (truncated)` : size;
+  }
+
+  async function armPeek() {
+    const name = activeName();
+    const text = activeSelection();
+    // Collapsed counts as no selection here for the same reason it does on the
+    // button: xterm's selection survives a collapse, and text the operator can
+    // no longer see must not keep riding their requests.
+    if (!name || isCollapsed() || !text.trim()) { releasePeek(); return; }
+    if (peekOn && peekOn !== name) releasePeek();
+    if (!window.api.drawerArmSelection) { releasePeek(); return; }
+    // Claimed BEFORE the await, not after: a session switch landing mid-flight
+    // has to find a handle to release, or the peek stays registered on the
+    // session the operator walked away from and rides one of its requests. The
+    // main-process clear is memo-gated, so releasing a peek that never armed
+    // costs nothing.
+    const gen = ++armGen;
+    peekOn = name;
+    let res;
+    try {
+      res = await window.api.drawerArmSelection(name, { text, tab: activeId, attach: false });
+    } catch {
+      if (gen === armGen) { peekOn = null; peekLabel = ''; refreshStatus(); }
+      return;
+    }
+    if (gen !== armGen) return;
+    if (res && res.armed) {
+      peekLabel = `riding next · ${label(res, text.length)}`;
+    } else {
+      // Not armed for whatever reason (off, no route, already attached) — say
+      // nothing, but do not leave a stale claim that something is riding.
+      peekOn = null;
+      peekLabel = '';
+    }
+    refreshStatus();
+  }
+
+  // Cancelled per event so only the pause arms — a drag fires selectionchange on
+  // every mouse move, and each one would otherwise be a POST.
+  function scheduleArm() {
+    clearTimeout(armTimer);
+    armTimer = setTimeout(() => { armTimer = null; armPeek(); }, ARM_DEBOUNCE_MS);
+  }
+
+  // The clipboard and the wire, not either/or: Copy is an ATTACH gesture, and
+  // the operator also expects to be able to paste what they just copied.
+  async function copySelection() {
     const text = activeSelection();
     if (isCollapsed() || !text.trim()) { flash('nothing selected', true); return; }
-    // A clipboard write is async and CAN reject (permissions, an unfocused
-    // document). Unreported, a rejection is indistinguishable from a copy that
-    // worked, which is the failure this whole affordance exists to close.
-    navigator.clipboard.writeText(text)
-      .then(() => flash(`copied · ${bytesLabel(text.length)}`))
-      .catch((e) => flash(`copy failed: ${e && e.message ? e.message : e}`, true));
+    const name = activeName();
+    // A pending peek would re-register the same bytes under the weaker framing a
+    // moment after this attaches them. The generation bump covers the half this
+    // cannot: a peek arm already awaiting its round trip is not cancellable, so
+    // its result is discarded instead (the main process takes it off the wire).
+    clearTimeout(armTimer);
+    armTimer = null;
+    armGen++;
+    peekOn = null;
+    peekLabel = '';
+    // Both legs are started before either is awaited: the clipboard write must
+    // not wait on a proxy round trip, and a proxy that is down must not cost the
+    // operator the copy.
+    const clip = navigator.clipboard.writeText(text).then(() => null, (e) => (e && e.message ? e.message : String(e)));
+    const wire = (name && window.api.drawerArmSelection)
+      ? window.api.drawerArmSelection(name, { text, tab: activeId, attach: true })
+        .catch((e) => ({ armed: false, reason: e && e.message ? e.message : String(e) }))
+      : Promise.resolve({ armed: false, reason: 'no active session' });
+    const [clipErr, res] = await Promise.all([clip, wire]);
+    if (clipErr) { flash(`copy failed: ${clipErr}`, true); return; }
+    const clipSize = bytesLabel(text.length);
+    // Detaching is the second click on the same text — reported as its own
+    // outcome, because "copied" alone would read as though it is still attached.
+    // Dropping the attach claim is this path's job ALONE: nothing else in the
+    // renderer may clear it, or the text keeps riding with the line blank.
+    if (res && res.detached) {
+      if (name) attachedBy.delete(name);
+      refreshStatus();
+      flash(`copied · ${clipSize} · detached`);
+      return;
+    }
+    if (res && res.armed) {
+      // The attachment supersedes any peek: same bytes, stronger framing.
+      if (name) attachedBy.set(name, `attached · ${label(res, text.length)}`);
+      refreshStatus();
+      flash(`copied · ${clipSize} · attached`);
+      return;
+    }
+    flash(`copied · ${clipSize} · not attached (${(res && res.reason) || 'unavailable'})`);
   }
 
   if (copyBtn) {
@@ -438,7 +598,33 @@ function createDrawerHost({ refitActiveTerminal }) {
   // its behaviour is now "open the drawer on the log tab".
   window.api.onRequestOpenIpcLog(() => open('log'));
 
-  return { register, open, toggle, hasFocus, domSelection };
+  // Called when the operator switches SESSIONS. The peek is registered on one
+  // session's route, so leaving that session must take it back — otherwise the
+  // status line claims text is riding a request the operator is no longer
+  // looking at, and the text rides it anyway. An ATTACHMENT deliberately stays
+  // where it was put; it is per-session by construction and the operator asked
+  // for it.
+  function onSessionChanged() {
+    clearTimeout(armTimer);
+    armTimer = null;
+    releasePeek();
+    // The attachment stays where it was put, so switching BACK has to find the
+    // claim again — stickyText() reads it off the map by the now-current name,
+    // and this repaint is what makes that visible without a selection change.
+    refreshStatus();
+  }
+
+  // A session the operator deleted cannot be switched back to, so its claim has
+  // no owner left to repaint it. The main process clears the registration
+  // itself (selectionArm.forget); this drops the renderer's half so a rebuilt
+  // session of the same name does not inherit a claim it never made.
+  function forgetSession(name) {
+    if (!name || !attachedBy.delete(name)) return;
+    if (peekOn === name) releasePeek();
+    refreshStatus();
+  }
+
+  return { register, open, toggle, hasFocus, domSelection, onSessionChanged, forgetSession };
 }
 
 module.exports = { createDrawerHost, TAB_IDS };

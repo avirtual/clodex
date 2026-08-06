@@ -326,6 +326,7 @@ const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library',
 // checkbox. `enabled` is a getter rather than a construction-time value so the
 // checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
+const { createSelectionArm } = require('./selection-arm');
 const {
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
   compose: composeHint, terms: hintTerms, unitsAsRecords, personalAsk,
@@ -395,6 +396,25 @@ const hintArm = createHintArm({
   loadState: (agent, id) => memoryLoad.stateOf(agent, id),
   armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
+  clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
+  log,
+});
+
+// The drawer selection's own armer. A SEPARATE consent decision from
+// contextHints and so a separate pref: that one offers the agent memories it
+// wrote itself, this one forwards whatever the operator happened to highlight —
+// a token in a log line, a path, a name. Folding them would let ticking the
+// memory feature start sending screen content.
+//
+// The scrubber is the ctl service's, resolved per call and null on a host that
+// did not build one: the selection can be text that console printed, and a
+// second token list here would drift from the one that redacted it on the way
+// in. `ctlService` is declared far below, so this reads it through the closure
+// rather than capturing it.
+const selectionArm = createSelectionArm({
+  enabled: () => !!uiSettings.get().selectionHints,
+  scrubber: () => (ctlService && ctlService.scrubber ? ctlService.scrubber() : null),
+  armHints: ({ base, route, hint }) => ProxyClient.armHints(base, route, [hint]),
   clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
   log,
 });
@@ -835,6 +855,7 @@ const SessionManager = createSessionManager({
     commonMemoryRecall,
     memoryLoad,
     hintArm,
+    selectionArm,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,

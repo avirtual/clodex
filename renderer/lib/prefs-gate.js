@@ -19,6 +19,7 @@ const PROXY_DEPENDENT = [
   ['compactOnResume', 'Needs wirescope — it is what bakes the transcript.'],
   ['contextHints', 'Needs wirescope — it is what attaches the hint.'],
   ['semanticHints', 'Needs wirescope — it is what attaches the hint.'],
+  ['selectionHints', 'Needs wirescope — it is what attaches the selection.'],
 ];
 
 // state: the live checkbox values, NOT saved settings — the gate must respond to

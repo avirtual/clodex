@@ -253,6 +253,34 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     return [...seen];
   }
 
+  // The scrub function alone, WITHOUT forcing the rest of the CLI tree. The
+  // selection path calls this per armed selection, and loadCli() pulls
+  // deploy/upgrade/cloud — a cost the lazy require at the top of this file
+  // exists to keep off a launch that never runs a command. Requiring client.js
+  // directly is that same laziness held one level finer; it takes only
+  // errors.js and sse-frame.js with it.
+  function loadScrub() {
+    return (cli ? cli.client : require('./cli/src/client')).scrub;
+  }
+
+  // A short-lived cache over scrubbableTokens, which reads contexts.json
+  // synchronously on the main process. Per COMMAND that read is noise; per
+  // armed SELECTION it is on the operator's drag path. The window is small
+  // enough that a `ctx add` is covered within a second — and the tokens a
+  // selection can contain are the ones already ON SCREEN, which the block that
+  // printed them was scrubbed against at the time.
+  let tokenCache = null;
+  let tokenCacheAt = 0;
+  const TOKEN_CACHE_MS = 1000;
+  function cachedTokens() {
+    const t = Date.now();
+    if (!tokenCache || t - tokenCacheAt > TOKEN_CACHE_MS) {
+      tokenCache = scrubbableTokens(null);
+      tokenCacheAt = t;
+    }
+    return tokenCache;
+  }
+
   // THE ONLY EXIT from execute(). It scrubs the VALUE being returned — the
   // previous shape scrubbed in a `finally`, which runs after the return
   // expression is evaluated, so the block had already captured the unscrubbed
@@ -524,6 +552,17 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       }
       rows.sort((a, b) => a.verb.localeCompare(b.verb));
       return { verbs: rows, deferred: DEFERRED_HINT };
+    },
+    // The scrub anything leaving this console must pass through, offered to
+    // callers that did not produce the text. The drawer's selection path is the
+    // first: the operator can select a block this console printed and hand it to
+    // an agent, which is the same string on the same trip out — so it redacts
+    // against the SAME store rather than a second token list that would drift.
+    // Read per call for the reason scrubbableTokens exists: a `ctx add` between
+    // two selections must not leave the new token unredacted. (Behind a 1s
+    // cache — this rides the operator's drag, not a command.)
+    scrubber() {
+      return { scrub: loadScrub(), tokens: cachedTokens() };
     },
     dispose() { disposed = true; closeWarm(); },
   };
