@@ -3525,6 +3525,114 @@ html, body {
 .activity-asof { margin-left: auto; }
 
 
+/* clodexctl tenant (drawer tab `ctl`). Two bands: the scrolling block list and
+   a fixed input row pinned to the bottom. Nothing here may use `display:none` —
+   see the rule at the top of the drawer block. */
+#ctl-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+}
+
+#ctl-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  text-align: center;
+  padding: 30px 0;
+}
+
+#ctl-empty code {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-style: normal;
+  color: var(--text);
+}
+
+/* A block is one command and its output, and the left border is what makes the
+   pair readable as a unit when several scroll past — not decoration. */
+.ctl-block {
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 8px;
+  margin-bottom: 8px;
+}
+
+.ctl-block.failed { border-left-color: var(--error); }
+
+.ctl-block-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ctl-block-ctx {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ctl-block-cmd {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+.ctl-block-time {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ctl-block-exit {
+  color: var(--error);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ctl-block-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+#ctl-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+}
+
+#ctl-prompt {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+#ctl-prompt.none { color: var(--text-dim); }
+
+#ctl-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+#ctl-input:disabled { color: var(--text-dim); }
+
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -120,6 +120,12 @@ const SCANNED_MODULES = [
   // main.js), so a main.js name reaching it through that path is exactly the
   // escape this test exists to catch.
   'tunnel-supervisor.js',
+  // The drawer's clodexctl REPL service (t214). Same standing as
+  // tunnel-supervisor above: a root main-process module required BY engine.js
+  // (itself an extraction), so a main.js name reaching it through that path is
+  // exactly this test's case. It must also stay electron-free, which the
+  // require-shape test in ctl-service.test.js pins separately.
+  'ctl-service.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
@@ -184,6 +190,11 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/activity-tab.js',
   'renderer/lib/subagent-feed.js',
   'renderer/lib/subagent-policy.js',
+  // The drawer's clodexctl tenant (t214). It holds NO logic renderer.js gave
+  // up, so the reverse scan is the quiet one here; the forward scan is the
+  // point — the pane must reach main only through `window.api`, and a
+  // renderer.js name appearing in it is the first sign it grew a second path.
+  'renderer/ctl-tab.js',
   'renderer/session-hovercard.js',
   'renderer/tooltip.js',
   'renderer/popovers/report-panel.js',

@@ -119,6 +119,13 @@ const PINNED_NAMES = [
   // per-session ring Clodex fills from its own tee, so it needs no wirescope
   // link. Net zero rows, which is why the count below is unchanged.
   'getSubagentFeed',
+  // t214: the drawer's clodexctl REPL. These two rows are on the surface for
+  // BOTH hosts, which is not the same as being reachable on both — the contract
+  // is a binding table, and `ctl:*` registration is gated on
+  // enableDrawerServices (test/drawer-services-seam.test.js asserts the web-host
+  // map has neither). So the web build binds `ctlRun` to a channel with no
+  // handler behind it, deliberately.
+  'ctlRun', 'ctlContext',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {
@@ -142,8 +149,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 232-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 232, 'pinned list is the full 232-method surface');
+test('contract covers exactly the pinned 234-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 234, 'pinned list is the full 234-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -167,7 +174,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 232, 'window.api has exactly 232 methods');
+    assert.equal(generated.length, 234, 'window.api has exactly 234 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
@@ -205,7 +212,7 @@ function captureRegistrations() {
 // Main→renderer pushes, so they are NOT ipcMain registrations and must be
 // excluded from both directions below. `kind: 'on'` names a renderer-side
 // subscription; `deps.on` is ipcMain.on, which carries `kind: 'send'`. Same
-// word, opposite direction — comparing registrations against all 232 rows
+// word, opposite direction — comparing registrations against all 234 rows
 // would report every one of these as missing.
 const CALLABLE_KINDS = ['invoke', 'send'];
 

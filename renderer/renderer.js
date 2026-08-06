@@ -50,6 +50,7 @@ const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
 const { createActivityTab } = require('./activity-tab');
+const { createCtlTab } = require('./ctl-tab');
 const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
@@ -3149,6 +3150,8 @@ const { appendIpcEntry } = createIpcLog({ host: drawerHost });
 const {
   openActivityFeed, refreshChips: refreshActivityChips, dropParent: dropActivityFeeds,
 } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
+
+createCtlTab({ host: drawerHost });
 
 createInboxDrawer();
 

@@ -194,4 +194,8 @@ function safeLoad(io) {
   catch { return { current: null, contexts: {} }; }
 }
 
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS };
+// PARSE_OPTS is exported for the in-process REPL (ctl-service.js), which parses
+// the same lines this dispatcher does. A second copy of the flag table there
+// would drift silently, and the failure mode is invisible: a flag the terminal
+// CLI honours parsed as a positional in the REPL.
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS };

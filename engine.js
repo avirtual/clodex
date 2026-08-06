@@ -1308,6 +1308,13 @@ const sandboxManager = enableSandbox ? createSandboxManager({
   log,
 }) : null;
 
+// The drawer's clodexctl REPL. Constructed only when the host granted the
+// capability — same shape as sandboxManager above, and the reason is the same:
+// a null service is a handler that cannot be registered, rather than a
+// registered handler that decides at call time whether to serve.
+const { createCtlService } = require('./ctl-service');
+const ctlService = enableDrawerServices ? createCtlService({}) : null;
+
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
 
@@ -1454,6 +1461,9 @@ const toolCache = createToolCache({ whichBin });
     if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
     if (webTunnelManager) { try { webTunnelManager.stopAll(); } catch {} webTunnelManager = null; }
+    // The REPL's warm transport may be an ssh/tunnel CHILD process; without this
+    // a quit leaves it orphaned holding a local port.
+    if (ctlService) { try { ctlService.dispose(); } catch {} }
     manager.killAll();
   }
 
@@ -1472,6 +1482,7 @@ const toolCache = createToolCache({ whichBin });
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
+    getCtlService: () => ctlService,
     getPluginHost: () => pluginHost,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog,

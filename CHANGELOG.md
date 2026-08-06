@@ -63,6 +63,17 @@ blocks a release.
   scans for `[agent:...]` commands, and an agent that merely reasons about
   sending a message must never be treated as having sent one.
 
+- **The drawer has a clodexctl console.** A new **ctl** tab runs the read-only
+  half of `clodexctl` — `info`, `sessions`, `query`, `args get` and the `ctx`
+  family — against your contexts without leaving the app or opening a terminal.
+  Each command and its output stay together as one block, so Copy gives you a
+  transcript rather than a flattened blob, and ↑/↓ walks your history. The
+  connection stays warm between commands instead of re-dialing each time.
+  Anything that mutates is refused by name, bearer tokens are stripped from
+  every block including error output, and `ctx list` masks them the way
+  `ctx show` always has. The console exists only in the desktop app: a Clodex
+  reached over the web has no such channel registered at all.
+
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
 - **Terraform and HCL paths in the terminal are now clickable.** The link

@@ -4746,6 +4746,107 @@ body {
 .activity-asof {
   margin-left: auto;
 }
+#ctl-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+  font-size: 12px;
+}
+#ctl-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  text-align: center;
+  padding: 30px 0;
+}
+#ctl-empty code {
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+  font-style: normal;
+  color: var(--text);
+}
+.ctl-block {
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 8px;
+  margin-bottom: 8px;
+}
+.ctl-block.failed {
+  border-left-color: var(--error);
+}
+.ctl-block-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.ctl-block-ctx {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.ctl-block-cmd {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+.ctl-block-time {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.ctl-block-exit {
+  color: var(--error);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.ctl-block-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+}
+#ctl-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+  font-size: 12px;
+}
+#ctl-prompt {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+#ctl-prompt.none {
+  color: var(--text-dim);
+}
+#ctl-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+}
+#ctl-input:disabled {
+  color: var(--text-dim);
+}
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -6510,6 +6611,12 @@ body {
         { name: "wirescopeRestart", kind: "invoke", channel: "wirescope:restart" },
         { name: "wirescopePruneInfo", kind: "invoke", channel: "wirescope:pruneInfo" },
         { name: "wirescopePrune", kind: "invoke", channel: "wirescope:prune" },
+        // The drawer's clodexctl REPL (t214). Present in the contract on BOTH
+        // surfaces because the contract is a binding table, not a permission list —
+        // the web build's `ctl:run` binding simply has no handler to reach, since
+        // registration is gated on enableDrawerServices (ipc-handlers.js).
+        { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
+        { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
         { name: "sandboxDetect", kind: "invoke", channel: "sandbox:detect" },
         { name: "sandboxStatus", kind: "invoke", channel: "sandbox:status" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
@@ -22136,6 +22243,185 @@ helper=${d.helperPath}`;
     }
   });
 
+  // renderer/ctl-tab.js
+  var require_ctl_tab = __commonJS({
+    "renderer/ctl-tab.js"(exports, module) {
+      var { esc } = require_format();
+      var MAX_BLOCKS = 200;
+      var MAX_HISTORY = 100;
+      function createCtlTab({ host }) {
+        const blocks = [];
+        const history = [];
+        let histIdx = -1;
+        let draft = "";
+        let bodyEl = null;
+        let inputEl = null;
+        let promptEl = null;
+        let emptyEl = null;
+        let ctxName = null;
+        let running = false;
+        let notify = () => {
+        };
+        function renderPrompt() {
+          if (!promptEl) return;
+          promptEl.textContent = ctxName ? `${ctxName} \u276F` : "(no context) \u276F";
+          promptEl.classList.toggle("none", !ctxName);
+        }
+        function blockNode(b) {
+          const el = document.createElement("div");
+          el.className = "ctl-block" + (b.exitCode ? " failed" : "");
+          const time = new Date(b.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          const head = `<div class="ctl-block-head"><span class="ctl-block-ctx">${esc(b.ctx || "(no context)")}</span><span class="ctl-block-cmd">${esc(b.command)}</span><span class="ctl-block-time">${time}</span>` + (b.exitCode ? `<span class="ctl-block-exit">exit ${b.exitCode}</span>` : "") + `</div>`;
+          const out = String(b.output || "").replace(/\n+$/, "");
+          el.innerHTML = head + (out ? `<pre class="ctl-block-out">${esc(out)}</pre>` : "");
+          return el;
+        }
+        function pushBlock(b) {
+          blocks.push(b);
+          if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
+          bodyEl.appendChild(blockNode(b));
+          while (blocks.length > MAX_BLOCKS) {
+            blocks.shift();
+            if (bodyEl.firstElementChild) bodyEl.firstElementChild.remove();
+          }
+          bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+        async function submit() {
+          const line = inputEl.value;
+          if (!line.trim() || running) return;
+          inputEl.value = "";
+          histIdx = -1;
+          draft = "";
+          if (history[history.length - 1] !== line) history.push(line);
+          while (history.length > MAX_HISTORY) history.shift();
+          running = true;
+          inputEl.disabled = true;
+          try {
+            const block = await window.api.ctlRun(line);
+            pushBlock(block);
+            if (block && block.ctx !== void 0) {
+              ctxName = block.ctx;
+              renderPrompt();
+            }
+            if (block && block.exitCode) notify("attention");
+          } catch (e) {
+            pushBlock({ command: line, output: `clodexctl: ${e && e.message ? e.message : String(e)}
+`, exitCode: 1, ctx: ctxName, ts: Date.now() });
+            notify("attention");
+          } finally {
+            running = false;
+            inputEl.disabled = false;
+            inputEl.focus();
+          }
+        }
+        function browseHistory(dir) {
+          if (!history.length) return;
+          if (histIdx === -1) {
+            if (dir > 0) return;
+            draft = inputEl.value;
+            histIdx = history.length - 1;
+          } else {
+            histIdx += dir;
+            if (histIdx >= history.length) {
+              histIdx = -1;
+              inputEl.value = draft;
+              return;
+            }
+            if (histIdx < 0) histIdx = 0;
+          }
+          inputEl.value = history[histIdx];
+          requestAnimationFrame(() => {
+            inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+          });
+        }
+        function clear() {
+          blocks.length = 0;
+          bodyEl.innerHTML = "";
+          bodyEl.appendChild(emptyEl);
+        }
+        function copyAll() {
+          const text = blocks.map((b) => `$ ${b.command}
+${b.output}`).join("\n");
+          if (text) navigator.clipboard.writeText(text);
+        }
+        function mount(pane, actions) {
+          pane.innerHTML = `
+      <div id="ctl-body">
+        <div id="ctl-empty">clodexctl \u2014 read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx \u2026</code>, <code>args get</code>.</div>
+      </div>
+      <div id="ctl-input-row">
+        <span id="ctl-prompt">(no context) \u276F</span>
+        <input id="ctl-input" type="text" spellcheck="false" autocomplete="off" placeholder="sessions" />
+      </div>`;
+          bodyEl = pane.querySelector("#ctl-body");
+          emptyEl = pane.querySelector("#ctl-empty");
+          inputEl = pane.querySelector("#ctl-input");
+          promptEl = pane.querySelector("#ctl-prompt");
+          renderPrompt();
+          inputEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submit();
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              browseHistory(-1);
+              return;
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              browseHistory(1);
+              return;
+            }
+          });
+          pane.querySelector("#ctl-input-row").addEventListener("click", () => inputEl.focus());
+          const clearBtn = document.createElement("button");
+          clearBtn.type = "button";
+          clearBtn.id = "ctl-clear";
+          clearBtn.title = "Clear blocks";
+          clearBtn.textContent = "Clear";
+          clearBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            clear();
+          });
+          const copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.id = "ctl-copy";
+          copyBtn.title = "Copy every block as text";
+          copyBtn.textContent = "Copy";
+          copyBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            copyAll();
+          });
+          actions.appendChild(copyBtn);
+          actions.appendChild(clearBtn);
+        }
+        function onShow() {
+          window.api.ctlContext().then((name) => {
+            ctxName = name;
+            renderPrompt();
+          }).catch(() => {
+          });
+          inputEl.focus();
+          bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+        notify = host.register({
+          id: "ctl",
+          label: "clodexctl",
+          // A UI nicety only: on the web surface the `ctl:*` handlers are ABSENT from
+          // the host's map (engine's enableDrawerServices gate), so the tab would be
+          // inert rather than dangerous. The boundary is registration, not this.
+          available: () => !window.__CLODEX_WEB__,
+          mount,
+          onShow
+        });
+        return { open: () => host.open("ctl") };
+      }
+      module.exports = { createCtlTab, MAX_BLOCKS };
+    }
+  });
+
   // renderer/session-hovercard.js
   var require_session_hovercard = __commonJS({
     "renderer/session-hovercard.js"(exports, module) {
@@ -27143,6 +27429,7 @@ ${detail}` });
       var { initThemes } = require_themes();
       var { initLibraryDrawers } = require_library_drawers();
       var { createActivityTab } = require_activity_tab();
+      var { createCtlTab } = require_ctl_tab();
       var { classifySubagent } = require_subagent_policy();
       var { initSessionHovercard } = require_session_hovercard();
       var { initTooltips } = require_tooltip();
@@ -30041,6 +30328,7 @@ Click for live activity`;
         refreshChips: refreshActivityChips,
         dropParent: dropActivityFeeds
       } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
+      createCtlTab({ host: drawerHost });
       createInboxDrawer();
       createPotDrawer();
       var {

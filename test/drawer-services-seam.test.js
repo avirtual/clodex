@@ -111,5 +111,29 @@ test('no ctl:/wterm: channel is registered on the web-host surface', () => {
     `drawer-service channels registered on the web surface: ${gated.join(', ')} — gate them on enableDrawerServices`);
 });
 
+// The other half, and it is not optional: the absence above is ALSO true of a
+// build where `ctl:run` was never written, was renamed, or was gated on a flag
+// that is never true anywhere. Without this, the whole file passes on a broken
+// desktop app — the assertion that matters most is the one whose failure mode
+// is silence.
+test('the SAME registrar registers ctl:* when the capability is granted', () => {
+  const registered = new Set();
+  const capture = {
+    handle: (ch) => registered.add(ch),
+    on: (ch) => registered.add(ch),
+    enableDrawerServices: true,   // the desktop value — the only difference
+  };
+  const stub = () => () => {};
+  const deps = new Proxy(capture, {
+    get(target, prop) { return prop in target ? target[prop] : stub(); },
+    has(target, prop) { return prop in target; },
+  });
+  require('../ipc-handlers').registerIpcHandlers(deps);
+
+  assert.ok(registered.has('session:list'), 'ENTER: the capture is real');
+  assert.ok(registered.has('ctl:run'), 'the desktop path must register the verb runner');
+  assert.ok(registered.has('ctl:context'), 'and the prompt-line context read');
+});
+
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });

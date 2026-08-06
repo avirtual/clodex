@@ -49,6 +49,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
+    enableDrawerServices, getCtlService,
     getPluginHost,
   } = deps;
 
@@ -1578,6 +1579,28 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return true;
   });
+  // The drawer's clodexctl REPL. GATED AT REGISTRATION, and the `if` is the
+  // whole boundary: web-host.js runs this same registrar and its invoke frame
+  // dispatches any registered channel BY NAME without consulting api-contract,
+  // so a `ctl:run` that exists at all is a token-backed verb runner any
+  // authenticated web connection can call. A renderer-side `available()` is
+  // chosen by the client and protects nothing. Do not convert this into a
+  // handler that checks the flag in its body.
+  //
+  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:` is ABSENT from
+  // the web-host handler map — absent, not present-and-guarded).
+  if (enableDrawerServices) {
+    handle('ctl:run', async (_e, line) => {
+      const svc = getCtlService();
+      if (!svc) return { command: String(line || ''), output: 'clodexctl: the ctl service is unavailable on this host\n', exitCode: 2, ctx: null, ts: Date.now() };
+      return await svc.run(line);
+    });
+    handle('ctl:context', () => {
+      const svc = getCtlService();
+      return svc ? svc.context() : null;
+    });
+  }
+
   handle('workspace:new', () => {
     const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // Persist the record HERE, not only inside createWindow: the web host stubs
